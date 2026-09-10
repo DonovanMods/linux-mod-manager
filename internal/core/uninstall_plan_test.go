@@ -34,31 +34,27 @@ func TestPlanUninstall_ExplicitSource_ResolvesThatSourcesCopy(t *testing.T) {
 	assert.True(t, plan.KeepCache)
 }
 
-// TestPlanUninstall_BareID_TakesTheFirstIDMatchAcrossSources pins the
-// cross-source disambiguation the CLI used to do inline: with no -s, every
-// installed mod is scanned by ID and the FIRST hit wins. The expected mod is
-// derived from GetInstalledMods' own order rather than hardcoded, because
-// "first" is defined by that order, not by this fixture's seeding order.
-func TestPlanUninstall_BareID_TakesTheFirstIDMatchAcrossSources(t *testing.T) {
+// TestPlanUninstall_BareID_RefusesWhenTwoSourcesShareTheID pins #373. The
+// pre-lift CLI scanned every installed mod by ID and took the FIRST hit,
+// which this test used to pin - but an uninstall deletes game-directory
+// files and a cache entry, so "first" being the wrong mod roughly half the
+// time is not a behaviour worth preserving. A bare ID that matches more than
+// one source is refused, naming both.
+func TestPlanUninstall_BareID_RefusesWhenTwoSourcesShareTheID(t *testing.T) {
 	svc, game := newDeployableService(t)
 	seedNamedInstalledMod(t, svc, game, "other", "1", "Other One", "1.0", true, map[string][]byte{"other.esp": []byte("o")})
 	seedProfileWithMod(t, svc, "g1", "default", "other", "1", "1.0")
 
-	all, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
-	require.NoError(t, err)
-	var want *domain.InstalledMod
-	for i := range all {
-		if all[i].ID == "1" {
-			want = &all[i]
-			break
-		}
-	}
-	require.NotNil(t, want, "fixture: two sources both carry mod ID 1")
+	_, err := svc.PlanUninstall(context.Background(), game, "default", "", "1", core.UninstallOptions{})
+	require.Error(t, err)
+	var ambiguous *core.AmbiguousModError
+	require.ErrorAs(t, err, &ambiguous)
+	assert.Equal(t, []string{"other", "src"}, ambiguous.Sources)
 
-	plan, err := svc.PlanUninstall(context.Background(), game, "default", "", "1", core.UninstallOptions{})
+	// A bare ID only ONE source carries still resolves without a flag.
+	plan, err := svc.PlanUninstall(context.Background(), game, "default", "other", "1", core.UninstallOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, want.SourceID, plan.Mod.SourceID, "first ID match wins, as the pre-lift CLI did")
-	assert.Equal(t, want.Name, plan.Mod.Name)
+	assert.Equal(t, "Other One", plan.Mod.Name)
 }
 
 // TestPlanUninstall_NotFound_PreservesHistoricalErrorText pins both

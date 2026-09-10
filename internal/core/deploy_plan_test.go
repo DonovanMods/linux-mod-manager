@@ -641,3 +641,33 @@ func TestDeployProfile_MatchesPlanPlusApply(t *testing.T) {
 	}
 	assert.Equal(t, keys(treeA), keys(treeB))
 }
+
+// TestPlanDeploy_StampsTheProfileRefsLock is #380: PlanDeploy built its
+// domain.ModReferences from the installed ROW, which carries no lock, so
+// `lmm deploy --dry-run --json` and the web's deploy confirm-plan reported
+// locked:false for every locked mod - while GET /api/v1/mods reported the
+// same mod as locked, so the two documents disagreed. Deploy is where a lock
+// has teeth, which makes a preview claiming otherwise the most misleading
+// place for it to be wrong.
+func TestPlanDeploy_StampsTheProfileRefsLock(t *testing.T) {
+	svc, game := newDeployableService(t)
+	seedNamedInstalledMod(t, svc, game, "src", "2", "Mod Two", "1.0", true, map[string][]byte{"two.esp": []byte("2")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "2", "1.0")
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.SetModLock(context.Background(), "g1", "default", "src", "1", ""))
+
+	plan, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{})
+	require.NoError(t, err)
+	require.Len(t, plan.Mods, 2)
+
+	assert.True(t, plan.Mods[0].Ref.Locked, "the locked profile ref must be reported as locked")
+	assert.False(t, plan.Mods[1].Ref.Locked, "and an unlocked one must not be")
+
+	// The single-mod path builds its own refs, including the disabled-mod
+	// skip - both must carry the lock too.
+	single, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{SourceID: "src", ModID: "1"})
+	require.NoError(t, err)
+	require.Len(t, single.Mods, 1)
+	assert.True(t, single.Mods[0].Ref.Locked)
+}

@@ -19,6 +19,12 @@ Useful for:
 - Adding missing metadata
 
 .PP
+A mod ID is unique only within a source. When the same ID is installed
+from more than one, name the one you mean with the mod group's own
+-s/--source; without it, lmm refuses rather than editing a mod you did
+not name.
+
+.PP
 Providing --to-source and/or --to-source-id re-links the mod: whichever of
 the two you omit keeps its current value. (They are named apart from the
 \&'lmm mod' group's own -s/--source, which says which source the mod you are
@@ -41,6 +47,7 @@ Examples:
   lmm mod edit abc123 --name "Better Mod Name" --version 1.2.3
   lmm mod edit abc123 --to-source curseforge --to-source-id 12345
   lmm mod edit abc123 -s local --author "ModAuthor"
+  lmm mod edit abc123 -s localmods --name "Better Mod Name"
 
 
 .SH OPTIONS

@@ -227,6 +227,50 @@ func TestList_ShowsTheExternalMarkerAndADateNotAContentID(t *testing.T) {
 	assert.NotContains(t, out, "7987119735124793734")
 }
 
+// TestImportWorkshop_UnavailableItemReadsAsOneOutcome is #393: an item Steam
+// could not describe printed two adjacent lines - "! <name>: Steam does not
+// describe this item…" and then "✓ <name>" - which read as "failed", then
+// "succeeded", for one item that in fact succeeded. The caveat belongs on the
+// success line.
+func TestImportWorkshop_UnavailableItemReadsAsOneOutcome(t *testing.T) {
+	svc, game, src, _ := setupWorkshopCLI(t)
+	src.describe = nil // Steam describes nothing: every item is Unavailable
+	withWorkshopImportFlags(t, false, true)
+
+	out := captureStdout(t, func() error {
+		return runImportWorkshop(context.Background(), svc, game, "default")
+	})
+
+	assert.NotContains(t, out, "  ! ", "the caveat must not be its own line above the success")
+	assert.Contains(t, out, "  ✓ Workshop item 3617086610 (not described)",
+		"one line, saying both what happened and what lmm could not learn")
+	assert.Contains(t, out, "Tracked: 1")
+}
+
+// TestList_ExternalRowsReportNoLinkMethodOrDeployedFlag is #392: `lmm list
+// -v` rendered METHOD symlink and DEPLOYED yes for a row marked EXTERNAL,
+// but lmm never deploys or links one - it tracks the item where Steam put
+// it, and `import --workshop`'s own preamble says so. METHOD reads "-", like
+// LOCKED and CONVERT already do for a row the column does not apply to, and
+// DEPLOYED names who actually has it there.
+func TestList_ExternalRowsReportNoLinkMethodOrDeployedFlag(t *testing.T) {
+	svc, game, _, _ := setupWorkshopCLI(t)
+	withWorkshopImportFlags(t, false, true)
+	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+
+	out := listVerbose(t, svc, game, false)
+
+	var externalRow string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "EXTERNAL") && !strings.Contains(line, "--------") {
+			externalRow = line
+		}
+	}
+	require.NotEmpty(t, externalRow, "the fixture must produce an EXTERNAL row")
+	assert.NotContains(t, externalRow, "symlink", "lmm links nothing for an external mod")
+	assert.Contains(t, externalRow, "Steam", "DEPLOYED names who has the files there")
+}
+
 func TestList_ExternalJSONGolden(t *testing.T) {
 	svc, game, _, steamDir := setupWorkshopCLI(t)
 	withWorkshopImportFlags(t, false, true)

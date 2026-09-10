@@ -154,9 +154,15 @@ func TestJSONGoldens(t *testing.T) {
 			// Remove is deliberately left nil (no `omitempty` on the tag) to
 			// pin that a nil slice marshals as "[]", not "null"; Skipped is
 			// left empty to pin that its `omitempty` drops the key.
+			// #380: the ref is LOCKED here. PlanDeploy built its refs from
+			// the installed row, which carries no lock, so this golden's
+			// hand-built literal (locked: false) matched a plan that could
+			// never say otherwise - and every locked mod's deploy preview
+			// disagreed with GET /api/v1/mods about the same mod.
+			// TestPlanDeploy_StampsTheProfileRefsLock is the behaviour half.
 			"deploy_plan_mod",
 			core.DeployPlanMod{
-				Ref:    domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"},
+				Ref:    domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.3", Locked: true},
 				Name:   "Sample Mod",
 				Class:  core.DeployModMerged,
 				Link:   []string{"Data/Sample.esp"},
@@ -1054,8 +1060,9 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{
 			// Missing is deliberately left nil to pin that a nil slice
-			// marshals as "[]", not "null" - Installed/NeedsRedownload
-			// (also non-omitempty) each carry an entry instead.
+			// marshals as "[]", not "null" - Installed/AlreadyCached/
+			// NeedsRedownload (also non-omitempty) each carry an entry
+			// instead.
 			"import_plan",
 			core.ImportPlan{
 				Profile: &domain.Profile{
@@ -1063,7 +1070,11 @@ func TestJSONGoldens(t *testing.T) {
 					Mods:       []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"}},
 					LinkMethod: domain.LinkSymlink,
 				},
-				Installed:       []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"}},
+				Installed: []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"}},
+				// #371: a mod installed under some OTHER profile - its bytes
+				// are cached, so this import writes the row without
+				// downloading anything.
+				AlreadyCached:   []domain.ModReference{{SourceID: "nexusmods", ModID: "13", Version: "2.0.0"}},
 				NeedsRedownload: []domain.ModReference{{SourceID: "nexusmods", ModID: "7", Version: "1.0.0"}},
 				Missing:         nil,
 				Exists:          true,
@@ -1555,6 +1566,18 @@ func TestJSONGoldens(t *testing.T) {
 			core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}},
 		},
 		{
+			// #373: a bare mod ID that matched more than one source. Caveat
+			// is populated here because `update` alone adds one; the
+			// uninstall/mod-edit refusals omit it (omitempty).
+			"ambiguous_mod_error",
+			core.AmbiguousModError{
+				ModID: "alpha", Profile: "default",
+				Sources: []string{"localmods", "repo"},
+				Flag:    "--source",
+				Caveat:  "(local mods cannot be update-checked)",
+			},
+		},
+		{
 			// #79: the credential a frontend cannot read and the action
 			// that fixes it. Sources is present because a single damaged
 			// row names only itself - a key-file-level failure (missing,
@@ -1838,6 +1861,14 @@ func TestJSONGoldens(t *testing.T) {
 					Reason: "the stored copy is missing",
 				}},
 				Disabled: 1, Enabled: 2, Installed: 3, Replaced: 1, Deployed: 7,
+				// #386: a mod the restored profile does not list. Its
+				// download and its row are kept, so it is neither a refusal
+				// nor a failure - it is the reason `lmm list` counts one
+				// more mod than the profile has.
+				LeftInstalled: []core.InstalledRef{{
+					SourceID: "nexusmods", ModID: "13", Name: "Stock Override",
+					Version: "2.0", Reason: "not listed in the restored profile; its download is kept",
+				}},
 				Refused: []core.InstalledRef{{
 					SourceID: "curseforge", ModID: "7", Name: "Gone Mod",
 					Version: "0.9", Reason: "no downloadable files",

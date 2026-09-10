@@ -233,9 +233,9 @@ func TestApplyWorkshopCollectionImport_SavesTheProfileAndInstallsNothing(t *test
 // TestApplyWorkshopCollectionImport_ATrackedItemIsNotInstalledIntoTheProfile
 // pins what the docs now say, after they said the opposite (W2 review,
 // Important 5). An item `lmm import --workshop` already tracks is
-// classified by the plan as `installed` — but applyImport writes installed
-// rows only for mods it DOWNLOADS, and a collection import downloads
-// nothing, so the new profile gets the REF and no row. That is right: a
+// classified by the plan as already-cached (`installed` before #371) — but
+// ApplyWorkshopCollectionImport forces Install off, so the new profile gets
+// the REF and no row. That is right: a
 // Workshop item is game-global and lmm profiles are not (design §2), and
 // switch.go skips an external installed row anyway. The claim being pinned
 // is that the profile is a RECORD of the list, not a set of installed mods.
@@ -256,7 +256,8 @@ func TestApplyWorkshopCollectionImport_ATrackedItemIsNotInstalledIntoTheProfile(
 
 	plan, err := svc.PlanWorkshopCollectionImport(context.Background(), game, "", "2500900001")
 	require.NoError(t, err)
-	require.Len(t, plan.Installed, 1, "the plan classifies the tracked item as installed")
+	require.Len(t, plan.AlreadyCached, 1,
+		"the tracked item's row lives under `default`, so #371 classifies it as already-cached")
 
 	_, err = svc.ApplyWorkshopCollectionImport(context.Background(), game, plan,
 		core.ProfileImportOptions{}, nil)

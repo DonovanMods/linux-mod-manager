@@ -18,6 +18,15 @@
   "installed": 3,
   "replaced": 1,
   "deployed": 7,
+  "left_installed": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "13",
+      "name": "Stock Override",
+      "version": "2.0",
+      "reason": "not listed in the restored profile; its download is kept"
+    }
+  ],
   "refused": [
     {
       "source_id": "curseforge",

@@ -193,24 +193,28 @@ func TestDoProfileSync_MissingProfile_EmptyDiff_StillCreatesProfile(t *testing.T
 }
 
 // TestDoProfileSync_DeclinedPrompt_PrintsPromptAndCancels pins the prompt
-// itself (printed with no trailing newline, so "Cancelled." lands on the
-// same line) and the fact that declining mutates nothing.
+// itself and the fact that declining mutates nothing - and, since #382, that
+// it returns the shared cancellation sentinel Execute maps to exit 2.
 func TestDoProfileSync_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	seedSyncInstalledMod(t, svc, game, "src", "dec1", "Decline Me", "1.0", "default", true, nil)
 
 	var out string
+	var declineErr error
 	withStdin(t, "n\n", func() {
 		out = captureStdout(t, func() error {
-			return doProfileSync(context.Background(), svc, game, nil)
+			declineErr = doProfileSync(context.Background(), svc, game, nil)
+			return nil
 		})
 	})
 
+	// #382: the decline is ErrCancelled (exit 2, "Cancelled." on stderr from
+	// Execute), so stdout ends at the prompt.
+	require.ErrorIs(t, declineErr, ErrCancelled)
 	assert.Equal(t, "Syncing profile: default\n\n"+
 		"Will add to profile:\n"+
 		"  + Decline Me (src:dec1)\n"+
-		"\nProceed? [Y/n]: "+
-		"Cancelled.\n", out)
+		"\nProceed? [Y/n]: ", out)
 
 	pm := getProfileManager(svc)
 	profile, err := pm.Get(context.Background(), game.ID, "default")

@@ -904,6 +904,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	newMod.Version = effectiveVersion
 
 	var downloadedFileIDs []string
+	var checksums []fileChecksum // #372 - saved after applyModUpdate below
 	for _, file := range filesToDownload {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -918,9 +919,11 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 			}
 			emit(DownloadEvent{Scope: scope, Phase: UpdateDownloading, Percent: d.Percent})
 		}
-		if _, err := s.downloadMod(ctx, mod.SourceID, game, newMod, file, progressFn); err != nil {
+		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, newMod, file, progressFn)
+		if err != nil {
 			return result, fmt.Errorf("downloading update: %w", err)
 		}
+		checksums = appendChecksum(checksums, file.ID, downloadResult)
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
 	}
 	emit(StepEvent{Scope: scope, Phase: UpdateDownloadDone})
@@ -993,6 +996,13 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 			s.logger().Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
 		}
 		return result, fmt.Errorf("updating database: %w", err)
+	}
+
+	// #372: applyModUpdate has just rewritten the installed_mod_files rows,
+	// so this is the first moment the checksums have somewhere to live.
+	for _, msg := range s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profileName, checksums) {
+		result.Warnings = append(result.Warnings, msg)
+		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 
 	if err := s.setModLinkMethod(ctx, mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {

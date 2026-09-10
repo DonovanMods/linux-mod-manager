@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
-	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -32,6 +30,11 @@ Useful for:
 - Re-linking a local mod to its CurseForge or NexusMods ID
 - Adding missing metadata
 
+A mod ID is unique only within a source. When the same ID is installed
+from more than one, name the one you mean with the mod group's own
+-s/--source; without it, lmm refuses rather than editing a mod you did
+not name.
+
 Providing --to-source and/or --to-source-id re-links the mod: whichever of
 the two you omit keeps its current value. (They are named apart from the
 'lmm mod' group's own -s/--source, which says which source the mod you are
@@ -51,7 +54,8 @@ does not help. Metadata-only edits (--name/--author) are always allowed.
 Examples:
   lmm mod edit abc123 --name "Better Mod Name" --version 1.2.3
   lmm mod edit abc123 --to-source curseforge --to-source-id 12345
-  lmm mod edit abc123 -s local --author "ModAuthor"`,
+  lmm mod edit abc123 -s local --author "ModAuthor"
+  lmm mod edit abc123 -s localmods --name "Better Mod Name"`,
 	Args: cobra.ExactArgs(1),
 	RunE: runModEdit,
 }
@@ -91,7 +95,7 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
-	var matches []*domain.InstalledMod
+	var matches []domain.InstalledMod
 	for i := range allMods {
 		if allMods[i].ID != currentID {
 			continue
@@ -99,33 +103,29 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 		if modSource != "" && allMods[i].SourceID != modSource {
 			continue
 		}
-		matches = append(matches, &allMods[i])
+		matches = append(matches, allMods[i])
 	}
-	switch len(matches) {
-	case 0:
-		if modSource != "" {
-			// The remedy is named here because -s is also where a
-			// pre-#396 `--source <target>` re-link now lands: the flag was
-			// removed with no alias (an alias would re-create the
-			// shadowing that IS the defect), and the group's persistent
-			// -s/--source it falls through to means the opposite thing, so
-			// the run reads as "no such mod" with nothing about the rename
-			// (P1b review F4).
-			return fmt.Errorf("mod %s not found in profile %s for source %s; to re-link it to another source use --to-source",
-				currentID, profileName, modSource)
-		}
-		return fmt.Errorf("mod %s not found in profile %s", currentID, profileName)
-	case 1:
-	default:
-		ids := make([]string, 0, len(matches))
-		for _, m := range matches {
-			ids = append(ids, m.SourceID)
-		}
-		sort.Strings(ids)
-		return fmt.Errorf("%d mods with id %s in profile %s (%s); pass -s/--source to choose one",
-			len(matches), currentID, profileName, strings.Join(ids, ", "))
+	if len(matches) == 0 && modSource != "" {
+		// The remedy is named here because -s is also where a pre-#396
+		// `--source <target>` re-link now lands: the flag was removed with
+		// no alias (an alias would re-create the shadowing that IS the
+		// defect), and the group's persistent -s/--source it falls through
+		// to means the opposite thing, so the run reads as "no such mod"
+		// with nothing about the rename (P1b review F4).
+		return fmt.Errorf("mod %s not found in profile %s for source %s; to re-link it to another source use --to-source",
+			currentID, profileName, modSource)
 	}
-	installedMod := matches[0]
+	// #373: the ambiguity refusal is the SHARED one `uninstall` and `update`
+	// give, so the message is worded once and `--json` carries the candidate
+	// list as details rather than only in a sentence. -s/--source is the
+	// flag that chooses here since #396 renamed the re-link pair away from
+	// it (this is where #373's own --current-source went: the group flag
+	// already means "which installed mod", so a second flag for the same
+	// job would be one flag too many).
+	installedMod, err := core.ResolveInstalledByID(matches, currentID, profileName, "-s/--source")
+	if err != nil {
+		return err
+	}
 
 	plan, err := service.PlanRelinkMod(ctx, game, profileName, installedMod.SourceID, installedMod.ID, editToSource, editToID)
 	if err != nil {

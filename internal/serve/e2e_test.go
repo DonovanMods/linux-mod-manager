@@ -4153,10 +4153,9 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	assert.Contains(t, exported, `"b"`)
 
 	// Doctor the export into a NEW profile's document and import it -
-	// both mods are already fully cached (newE2EFixtureWithDeployableMods),
-	// so Install triggers no network at all; ApplyImport just saves the
-	// profile (kind_profile_import.go's own doc comment: "nothing to do
-	// for these").
+	// both mods are already fully cached (newE2EFixtureWithDeployableMods)
+	// under "default", so the plan's AlreadyCached bucket (#371) offers to
+	// give the NEW profile its own rows without any network at all.
 	restoredDoc := strings.Replace(string(exported), `"name": "default"`, `"name": "restored"`, 1)
 	require.NotEqual(t, string(exported), restoredDoc, "the exported document's own name field must actually be found and replaced")
 	importPath := filepath.Join(t.TempDir(), "restored.json")
@@ -4174,18 +4173,16 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	var importPlanBody string
 	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &importPlanBody))
 	assert.Contains(t, importPlanBody, "restored")
-	assert.Contains(t, importPlanBody, "Already installed")
+	assert.Contains(t, importPlanBody, "Already downloaded, added to this profile",
+		"#371: rows that live under another profile are pending work here, not \"already installed\"")
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
 		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
 	)
 	// Both mods land in the imported profile as real, version-matched
-	// references - core.ProfileImportResult's own bucket (Installed, since
-	// both are already cached at the imported version: api_profiles.go/
-	// kind_profile_import.go's own doc comment, "nothing to do for these")
-	// rather than skipped or missing - proving the import produced usable
-	// references, not just names that happen to parse.
+	// references rather than skipped or missing - proving the import
+	// produced usable references, not just names that happen to parse.
 	var restored *domain.Profile
 	require.Eventually(t, func() bool {
 		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "restored")
@@ -4395,11 +4392,11 @@ mods:
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_ProfilesModal_ImportOfAlreadyInstalledModsReadsDone is N2's own
-// scenario (unit 6 re-review): a profile_import whose every mod is already
-// installed (the plan's Installed bucket, pending == 0) returns a
-// core.ProfileImportResult that is all zeroes - {installed: 0, failed: 0,
-// skipped: 0} - which resultTally used to still read as a tally-shaped
+// TestE2E_ProfilesModal_ImportWithNothingPendingReadsDone is N2's own
+// scenario (unit 6 re-review): a profile_import with nothing pending
+// (pending == 0) returns a core.ProfileImportResult that is all zeroes -
+// {installed: 0, failed: 0, skipped: 0} - which resultTally used to still
+// read as a tally-shaped
 // result, replacing the tray's usual bare state word with an honest-looking
 // but empty "0 installed · 0 skipped" - worse copy for a batch that did
 // not, in truth, batch anything. resultTally now returns null for an
@@ -4408,18 +4405,16 @@ mods:
 // state word here (jobprogress.js's InlineJob, the only surface that
 // renders the literal word "Done", never mounts for profile_import: it has
 // no owning mod row to attach to).
-func TestE2E_ProfilesModal_ImportOfAlreadyInstalledModsReadsDone(t *testing.T) {
+// It used to reach that all-zero result by importing a profile whose every
+// mod was already installed - which since #371 is real work, not a no-op:
+// those rows belong to ANOTHER profile, and the imported one needs its own.
+// A profile with no mods at all is the honest remaining all-zero shape.
+func TestE2E_ProfilesModal_ImportWithNothingPendingReadsDone(t *testing.T) {
 	f := newE2EFixtureWithDeployableMods(t)
 
 	doc := fmt.Sprintf(`name: reimport
 game_id: %s
-mods:
-  - source_id: fake
-    mod_id: a
-    version: "1.0"
-  - source_id: fake
-    mod_id: b
-    version: "1.0"
+mods: []
 `, f.Game.ID)
 	importPath := filepath.Join(t.TempDir(), "reimport.yaml")
 	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
@@ -4449,7 +4444,7 @@ mods:
 	)
 	var planText string
 	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &planText))
-	require.NotContains(t, planText, "Download and install", "both mods are already installed - there is nothing pending to offer a checkbox for")
+	require.NotContains(t, planText, "Download and install", "the profile lists no mods - there is nothing pending to offer a checkbox for")
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
@@ -4458,7 +4453,7 @@ mods:
 
 	require.Eventually(t, func() bool {
 		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "reimport")
-		return err == nil && len(p.Mods) == 2
+		return err == nil && len(p.Mods) == 0
 	}, 5*time.Second, 20*time.Millisecond, "the import job must succeed and save the profile")
 
 	f.runInBrowser(t,

@@ -259,7 +259,10 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 			return readErr
 		}
 		if !proceed {
-			return fmt.Errorf("import cancelled")
+			// #382: the shared cancellation sentinel, so a declined
+			// import exits 2 like a declined purge - it used to be a bare
+			// error, reported as "Error: import cancelled" with exit 1.
+			return ErrCancelled
 		}
 		opts.AcceptConflicts = true
 	}
@@ -542,7 +545,10 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 			return err
 		}
 		if input != "y" && input != "yes" {
-			return fmt.Errorf("import cancelled")
+			// #382: the shared cancellation sentinel, so a declined
+			// import exits 2 like a declined purge - it used to be a bare
+			// error, reported as "Error: import cancelled" with exit 1.
+			return ErrCancelled
 		}
 	}
 
@@ -627,10 +633,29 @@ func runImportWorkshop(ctx context.Context, service *core.Service, game *domain.
 			return err
 		}
 		if input != "y" && input != "yes" {
-			return fmt.Errorf("import cancelled")
+			// #382: the shared cancellation sentinel, so a declined
+			// import exits 2 like a declined purge - it used to be a bare
+			// error, reported as "Error: import cancelled" with exit 1.
+			return ErrCancelled
 		}
 	}
 
+	// #393: core reports an item Steam could not describe as a caveat
+	// (WorkshopUnavailable) and then adopts it anyway, which printed two
+	// adjacent lines per item reading "failed", then "succeeded". The caveat
+	// is held and folded into whichever line ends that item - it qualifies
+	// the outcome, it is not an outcome of its own. Safe to keep as a single
+	// value: applyWorkshopAdopt emits it inside the item's own iteration,
+	// immediately before that item's terminal event.
+	var caveat string
+	withCaveat := func(line string) string {
+		if caveat == "" {
+			return line
+		}
+		out := fmt.Sprintf("%s (%s)", line, caveat)
+		caveat = ""
+		return out
+	}
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
@@ -638,11 +663,11 @@ func runImportWorkshop(ctx context.Context, service *core.Service, game *domain.
 		}
 		switch p.Phase {
 		case core.WorkshopAdopted:
-			fmt.Printf("  ✓ %s\n", p.ModName)
+			fmt.Printf("  ✓ %s\n", withCaveat(p.ModName))
 		case core.WorkshopUnavailable:
-			fmt.Printf("  ! %s: %s\n", p.ModName, p.Detail)
+			caveat = p.Detail
 		case core.WorkshopSkipped:
-			fmt.Printf("  ⊘ %s: %s\n", p.ModName, p.Detail)
+			fmt.Printf("  ⊘ %s: %s\n", withCaveat(p.ModName), p.Detail)
 		case core.WorkshopScanned:
 			if verbose {
 				fmt.Printf("  %s\n", p.Detail)

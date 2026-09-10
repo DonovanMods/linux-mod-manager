@@ -108,6 +108,22 @@ type ProfileApplyInstall struct {
 	// longer serves behind for `lmm verify` to surface - strictly better
 	// than failing to converge at all).
 	Replaces *domain.InstalledMod `json:"replaces,omitempty"`
+	// External marks an entry that is TRACKED rather than installed: a
+	// Steam Workshop item Steam itself put on disk, whose row lmm already
+	// holds under some other profile of this game (#371, #269). installed_
+	// mods is keyed by profile, so this profile still needs its own row -
+	// but it is copied, never fetched. Resolving one against its source
+	// would either fail outright (a delisted item) or, for a live one, run
+	// the Tier 3 download and replace a Steam-managed item with an
+	// lmm-managed copy, silently changing what the profile means. Mod and
+	// Version come from that row, and Files is nil: there is nothing to
+	// download and nothing to deploy. omitzero, so no existing document
+	// gains a key.
+	External bool `json:"external,omitzero"`
+	// ExternalPath is the directory Steam owns, copied from the same row so
+	// the apply can record it without a second lookup. Only meaningful when
+	// External.
+	ExternalPath string `json:"external_path,omitempty"`
 	// Error is a plan-time resolution failure, already worded exactly as
 	// the CLI prints it ("failed to fetch mod: ...", "failed to get files:
 	// ...", "no downloadable files", or selectFilesForVersion's own text).
@@ -287,15 +303,40 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 	// profile.Mods, not a range over profileKeys; seen reproduces the dedup
 	// profileKeys gave that pass for free.
 	seen := make(map[string]bool, len(profile.Mods))
+	// #371/#269: resolved once, and only if pass 2 actually finds a ref
+	// with no row here - the common apply has nothing to look up.
+	var externalElsewhere map[string]domain.InstalledMod
 	for _, ref := range profile.Mods {
 		key := domain.ModKey(ref.SourceID, ref.ModID)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		if _, installed := installedByKey[key]; !installed {
-			plan.ToInstall = append(plan.ToInstall, ProfileApplyInstall{Ref: ref})
+		if _, installed := installedByKey[key]; installed {
+			continue
 		}
+		if externalElsewhere == nil {
+			externalElsewhere = s.externalRowsElsewhere(ctx, pm, game.ID, profileName)
+		}
+		entry := ProfileApplyInstall{Ref: ref}
+		if row, ok := externalElsewhere[key]; ok {
+			// Tracked, not installed: copy the row rather than fetching a
+			// mod Steam already owns - see ProfileApplyInstall.External.
+			mod := row.Mod
+			mod.GameID = game.ID
+			entry.External = true
+			entry.ExternalPath = row.ExternalPath
+			entry.Mod = &mod
+			entry.Version = mod.Version
+			// #365: stamp the ref's own display facts, so no renderer has
+			// to print a Workshop content id where a version goes - the
+			// same two additive fields PlanImport/PlanProfileSync stamp
+			// (see domain.ModReference.External's doc comment: core stamps
+			// them, nothing else may).
+			entry.Ref.External = true
+			entry.Ref.UpdatedAt = mod.UpdatedAt
+		}
+		plan.ToInstall = append(plan.ToInstall, entry)
 	}
 
 	plan.NoChanges = len(plan.ToDisable) == 0 && len(plan.ToEnable) == 0 && len(plan.ToInstall) == 0
@@ -318,6 +359,12 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 // fetch/get-files/select sequence, verbatim, with each failure worded as it
 // printed it.
 func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.Game, entry *ProfileApplyInstall) {
+	if entry.External {
+		// #371: already resolved from the tracking row it was built from,
+		// and the one entry that must never reach a source.
+		return
+	}
+
 	mod, err := s.GetMod(ctx, entry.Ref.SourceID, game.ID, entry.Ref.ModID)
 	if err != nil {
 		entry.Error = fmt.Sprintf("failed to fetch mod: %v", err)
@@ -355,6 +402,36 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 	// by file name (an extracted archive's members match no
 	// DownloadableFile, so every archive-based mod would redownload).
 	entry.Cached = s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, profileApplyFileIDs(selected))
+}
+
+// externalRowsElsewhere collects the EXTERNAL installed rows (#269) of every
+// saved profile of gameID EXCEPT exceptProfile, keyed by domain.ModKey.
+//
+// An external row records a mod another agent - Steam - installed for the
+// whole game, so which profile happens to hold the row says nothing about
+// where the files are; that is what makes copying one into another profile
+// the right answer, and fetching it the wrong one (#371). Best-effort: a
+// missing or unreadable profile simply contributes nothing, exactly as
+// PlanImport's own cross-profile scan treats one.
+func (s *Service) externalRowsElsewhere(ctx context.Context, pm *ProfileManager, gameID, exceptProfile string) map[string]domain.InstalledMod {
+	rows := make(map[string]domain.InstalledMod)
+	profiles, _ := pm.List(ctx, gameID)
+	for _, p := range profiles {
+		if p.Name == exceptProfile {
+			continue
+		}
+		mods, _ := s.GetInstalledMods(ctx, gameID, p.Name)
+		for _, im := range mods {
+			if !im.External {
+				continue
+			}
+			key := domain.ModKey(im.SourceID, im.ID)
+			if _, seen := rows[key]; !seen {
+				rows[key] = im
+			}
+		}
+	}
+	return rows
 }
 
 // profileApplyFileIDs is the ID list of the files an entry will download -
@@ -509,8 +586,33 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 
 			mod := entry.Mod
 			scope.ModName = mod.Name
+
+			if entry.External {
+				// #371/#269: Steam owns the files; this profile only needs
+				// the same tracking row. Nothing is downloaded and nothing
+				// is deployed - see ProfileApplyInstall.External.
+				external := &domain.InstalledMod{
+					Mod:          *mod,
+					ProfileName:  plan.Profile,
+					UpdatePolicy: domain.UpdateNotify,
+					Enabled:      true,
+					Deployed:     true, // Steam has it where the game reads it
+					External:     true,
+					ExternalPath: entry.ExternalPath,
+				}
+				external.GameID = game.ID
+				if err := s.saveInstalledMod(ctx, external); err != nil {
+					fail(fmt.Sprintf("save failed: %v", err))
+					continue
+				}
+				result.Installed++
+				emit(ModEvent{Scope: scope, Phase: SwitchInstalled})
+				continue
+			}
+
 			fileIDs := profileApplyFileIDs(entry.Files)
 
+			var checksums []fileChecksum // #372 - saved after the DB row below
 			if !entry.Cached {
 				downloadFailed := false
 				for _, file := range entry.Files {
@@ -524,7 +626,8 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 						}
 						emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
 					}
-					if _, err := s.downloadMod(ctx, entry.Ref.SourceID, game, mod, file, progressFn); err != nil {
+					downloadResult, err := s.downloadMod(ctx, entry.Ref.SourceID, game, mod, file, progressFn)
+					if err != nil {
 						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
 						// Cannot use fail(): SwitchDownloadFailed above already
 						// renders this mod's Error line; fail() would emit a
@@ -534,6 +637,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 						downloadFailed = true
 						break
 					}
+					checksums = appendChecksum(checksums, file.ID, downloadResult)
 				}
 				// Fires on success AND failure: doProfileApply's own
 				// unconditional Println after the download loop, which
@@ -573,6 +677,12 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 				fail(fmt.Sprintf("save failed: %v", err))
 				continue
+			}
+
+			// #372: the row exists now, so what was downloaded above finally
+			// has somewhere to record its checksum.
+			for _, msg := range s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, plan.Profile, checksums) {
+				warn(scope, SwitchInstallWarning, msg)
 			}
 
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}

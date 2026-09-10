@@ -95,9 +95,9 @@ func TestDoProfileApply_DisableAndEnable_PrintsExactOutput(t *testing.T) {
 }
 
 // TestDoProfileApply_DeclinedPrompt_PrintsPromptAndCancels pins the prompt
-// itself (printed with no trailing newline, so "Cancelled." lands on the
-// same line) and the fact that declining mutates nothing. Note the prompt
-// sits AFTER the whole plan print and BEFORE any mutation.
+// itself and the fact that declining mutates nothing - and, since #382, that
+// it returns the shared cancellation sentinel Execute maps to exit 2. Note
+// the prompt sits AFTER the whole plan print and BEFORE any mutation.
 func TestDoProfileApply_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
@@ -105,17 +105,21 @@ func TestDoProfileApply_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ins1", Version: "1.0"}))
 
 	var out string
+	var declineErr error
 	withStdin(t, "n\n", func() {
 		out = captureStdout(t, func() error {
-			return doProfileApply(context.Background(), svc, game, nil)
+			declineErr = doProfileApply(context.Background(), svc, game, nil)
+			return nil
 		})
 	})
 
+	// #382: the decline is ErrCancelled (exit 2, "Cancelled." on stderr from
+	// Execute), so stdout ends at the prompt.
+	require.ErrorIs(t, declineErr, ErrCancelled)
 	assert.Equal(t, "Applying profile: default\n\n"+
 		"Will install 1 mod(s):\n"+
 		"  ↓ src:ins1 v1.0\n"+
-		"\nProceed? [Y/n]: "+
-		"Cancelled.\n", out)
+		"\nProceed? [Y/n]: ", out)
 
 	_, err := svc.GetInstalledMod(context.Background(), "src", "ins1", game.ID, "default")
 	assert.Error(t, err, "declining must not install anything")

@@ -13,7 +13,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -228,14 +227,14 @@ func TestRunImportScan_DuplicateSkip_NoDBWriteNoCacheWrite(t *testing.T) {
 	assert.Empty(t, cacheMatches, "a skipped duplicate must not write a cache entry")
 }
 
-// TestRunImportScan_ConfirmDecline_ReturnsPlainCancelledError_NotErrCancelled
-// pins the confirm-prompt decline path, including a real gap this
-// characterization surfaces: unlike purge/install's declined prompts, scan
-// import's decline returns a bare fmt.Errorf("import cancelled"), NOT the
-// shared cmd/lmm.ErrCancelled sentinel root.go's exit-code-2 handling checks
-// via errors.Is - this test pins that fact so a future lift decision to
-// unify onto ErrCancelled is a deliberate, visible change, not an accident.
-func TestRunImportScan_ConfirmDecline_ReturnsPlainCancelledError_NotErrCancelled(t *testing.T) {
+// TestRunImportScan_ConfirmDecline_ReturnsErrCancelled pins the
+// confirm-prompt decline path. This characterization originally pinned the
+// gap it found - scan import's decline was a bare fmt.Errorf("import
+// cancelled"), NOT the shared cmd/lmm.ErrCancelled sentinel root.go's
+// exit-code-2 handling checks - so that unifying the two would be "a
+// deliberate, visible change, not an accident". #382 is that change: a
+// declined confirmation exits 2 wherever it happens.
+func TestRunImportScan_ConfirmDecline_ReturnsErrCancelled(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	game.DeployMode = domain.DeployCopy
 	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "LooseMod-1.0.zip"), []byte("loose-payload"), 0644))
@@ -255,8 +254,7 @@ func TestRunImportScan_ConfirmDecline_ReturnsPlainCancelledError_NotErrCancelled
 	})
 
 	require.Error(t, err)
-	assert.Equal(t, "import cancelled", err.Error())
-	assert.False(t, errors.Is(err, ErrCancelled), "scan import's decline is NOT the shared ErrCancelled sentinel today")
+	assert.ErrorIs(t, err, ErrCancelled, "a declined import is a cancellation, exit 2")
 
 	expected := "Scanning " + game.ModPath + " for untracked mods...\n" +
 		"Found 1 files, 1 untracked\n" +
@@ -460,8 +458,7 @@ func TestDoImport_ConflictPromptDecline_CancelsWithoutOverwriting(t *testing.T) 
 	})
 
 	require.Error(t, err)
-	assert.Equal(t, "import cancelled", err.Error())
-	assert.False(t, errors.Is(err, ErrCancelled))
+	assert.ErrorIs(t, err, ErrCancelled)
 	assert.Equal(t, expectedConflictBlockAndPromptFor(archiveBPath), out)
 	assert.Empty(t, errOut)
 

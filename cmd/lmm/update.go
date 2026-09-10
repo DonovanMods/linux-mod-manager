@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -135,7 +136,8 @@ mod ID is installed from more than one source in the profile, use
 --json prints the rollback document (see 'lmm update --help') with status
 "rolled_back", or status "skipped" with reason "locked" when the mod is
 locked (unlock to roll back; moving the lock does not help, since this
-gate refuses whatever version is locked).
+gate refuses whatever version is locked). A locked refusal exits non-zero
+in both output modes: nothing was rolled back.
 
 Examples:
   lmm update rollback 12345 --game skyrim-se
@@ -145,7 +147,7 @@ Examples:
 }
 
 func init() {
-	updateCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured)")
+	updateCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source for a single-mod update (default: the sole configured source; prompts when several are configured). A bulk check never needs it")
 	updateCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile to check (default: active profile)")
 	updateCmd.Flags().BoolVar(&updateAll, "all", false, "apply all available updates")
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "show what would update without applying")
@@ -167,13 +169,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
-	// Resolve source: use flag if set, otherwise first configured source
-	var err error
-	updateSource, err = resolveSource(service, game, updateSource, false)
-	if err != nil {
-		return err
-	}
-
+	// #375: the source is resolved inside the single-mod branch below, not
+	// here. The bulk check walks every installed mod against ITS OWN
+	// recorded source and never reads updateSource, so resolving it up front
+	// prompted - and under --json refused outright - for an answer that made
+	// no difference, blocking every multi-source game non-interactively.
 	// Determine profile
 	profileName, err := resolveProfile(ctx, service, game.ID, updateProfile)
 	if err != nil {
@@ -204,6 +204,11 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	// If specific mod ID provided, update just that mod
 	if len(args) > 0 {
+		// The single-mod path IS the one that reads the source: it picks
+		// between two installed mods sharing an ID (#373's ambiguity).
+		if updateSource, err = resolveSource(service, game, updateSource, false); err != nil {
+			return err
+		}
 		modID := args[0]
 		var targetMod *domain.InstalledMod
 		// Mod IDs are only unique within a source, so the same ID can appear
@@ -248,6 +253,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 				return fmt.Errorf("mod %s in profile %s belongs to source %q, not %q; retry with --source %s",
 					modID, profileName, candidates[0].SourceID, updateSource, candidates[0].SourceID)
 			default:
+				// #373: the same refusal `uninstall` and `mod edit` now
+				// give, through the one shared core error - with the local
+				// caveat this command alone has to add.
 				sources := make([]string, 0, len(candidates))
 				hasLocal := false
 				for _, c := range candidates {
@@ -262,10 +270,12 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 				// (nexusmods vs curseforge) it is noise.
 				caveat := ""
 				if hasLocal {
-					caveat = " (local mods cannot be update-checked)"
+					caveat = "(local mods cannot be update-checked)"
 				}
-				return fmt.Errorf("mod %s is in profile %s under multiple sources (%s); retry with --source to choose%s",
-					modID, profileName, strings.Join(sources, ", "), caveat)
+				return &core.AmbiguousModError{
+					ModID: modID, Profile: profileName, Sources: sources,
+					Flag: "--source", Caveat: caveat,
+				}
 			}
 		}
 
@@ -291,7 +301,11 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	updates, checkErr := service.CheckGameUpdates(ctx, game, profileName, installed, sink, core.UpdateCheckOptions{Refresh: updateRefresh})
 	if checkErr != nil {
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
-			return authPromptError(updateSource)
+			// The bulk path has no -s/--source of its own since #375, so
+			// the remedy names the source whose check actually refused
+			// (P1a review F3); the flag is the fallback for the single-mod
+			// path, which does read it.
+			return authPromptError(cmp.Or(core.AuthRequiredSource(checkErr), updateSource))
 		}
 		// Surface warning but continue to show partial updates - under
 		// --json the same message already reaches the document via
@@ -987,6 +1001,13 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	// as a skip (nil error / "skipped"+"locked" document) like the update
 	// path does, and names both remedy commands instead of surfacing the
 	// core gate's raw error.
+	// #382: a refusal exits non-zero. It used to `return nil`, so
+	// `lmm update rollback X && echo restored` printed "restored" over a
+	// rollback that never happened - and `--json`'s {"status":"skipped",
+	// "reason":"locked"} came with exit 0 too. ErrReported: both branches
+	// below have already said what happened, in their own output format, so
+	// Execute must exit 1 without printing a second thing (which under
+	// --json would be a second document on stdout).
 	if plan.Locked {
 		if jsonOutput {
 			// Nothing was written, so nothing changed - but Mod.Version is
@@ -994,14 +1015,17 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 			// doc comment, on every branch including this refusal one (final
 			// review, Important #4 / #302): here that's the same value as
 			// ToVersion below, since core never applies past this refusal.
-			return emitJSON(&core.RollbackResult{
+			if err := emitJSON(&core.RollbackResult{
 				Mod:         domain.ModReference{SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID, Version: plan.ToVersion, Locked: true},
 				ModName:     plan.Mod.Name,
 				FromVersion: plan.FromVersion,
 				ToVersion:   plan.ToVersion,
 				Status:      core.UpdateSkipped,
 				Reason:      "locked",
-			})
+			}); err != nil {
+				return err
+			}
+			return ErrReported
 		}
 		// #294 (Ruling 5): RollbackPlan.Refusal, the same canonical text
 		// applySingleUpdate's locked branch prints - it carries -s/-p on
@@ -1011,7 +1035,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		// refuses on the lock alone).
 		fmt.Printf("Rollback available: %s → %s\n", plan.FromVersion, plan.ToVersion)
 		fmt.Println(plan.Refusal)
-		return nil
+		return ErrReported
 	}
 
 	if !jsonOutput {

@@ -526,3 +526,31 @@ exit 1`)
 	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should already be removed by the time after_each runs")
 }
+
+// TestPlanUninstall_AmbiguousBareID_RefusesInsteadOfPickingTheFirst is #373:
+// a mod ID is unique only within a source, so `lmm uninstall <id>` without
+// -s/--source could delete the game-directory files AND the cache entry of a
+// mod the user never named - silently, and unrecoverably by re-running the
+// command with the flag. The plan refuses and names every candidate.
+func TestPlanUninstall_AmbiguousBareID_RefusesInsteadOfPickingTheFirst(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	seedInstalledModUnderProfile(t, svc, game, "default", "repo", "alpha", "Alpha Overhaul", "1.0", true,
+		map[string][]byte{"alpha.esp": []byte("r")})
+	seedInstalledModUnderProfile(t, svc, game, "default", "localmods", "alpha", "Alpha (local)", "1.0", true,
+		map[string][]byte{"local-alpha.esp": []byte("l")})
+
+	_, err := svc.PlanUninstall(context.Background(), game, "default", "", "alpha", core.UninstallOptions{})
+	require.Error(t, err)
+
+	var ambiguous *core.AmbiguousModError
+	require.ErrorAs(t, err, &ambiguous)
+	assert.Equal(t, []string{"localmods", "repo"}, ambiguous.Sources, "sorted, so the message never depends on install order")
+	assert.Contains(t, err.Error(), "-s/--source")
+
+	// Naming the source still resolves cleanly.
+	plan, err := svc.PlanUninstall(context.Background(), game, "default", "localmods", "alpha", core.UninstallOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "localmods", plan.Mod.SourceID)
+}

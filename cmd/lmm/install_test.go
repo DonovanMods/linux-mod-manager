@@ -822,7 +822,7 @@ func TestDoInstall_DependencyConfirmPrompt_DeclinedYieldsZeroMutations(t *testin
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "installation cancelled")
+	assert.ErrorIs(t, err, ErrCancelled, "a declined prompt returns the one cancellation sentinel (#382)")
 	assert.Contains(t, out, "Dependency tree (install order):\n")
 	assert.Contains(t, out, "1. Dep One v1.0 (ID: dep1) [dependency]\n")
 	assert.Contains(t, out, "2. Mod One v1.0 (ID: mod1) [target]\n")
@@ -1110,7 +1110,7 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 		})
 
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "installation cancelled")
+		assert.ErrorIs(t, err, ErrCancelled, "a declined prompt returns the one cancellation sentinel (#382)")
 		assert.Contains(t, out, "File conflicts detected:")
 		assert.Contains(t, out, "will be overwritten. Continue? [y/N]: ")
 
@@ -1226,7 +1226,7 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 		})
 
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "installation cancelled")
+		assert.ErrorIs(t, err, ErrCancelled, "a declined prompt returns the one cancellation sentinel (#382)")
 		assert.Contains(t, out, "File conflicts detected:", "an UNCACHED mod's conflict must now be detected - silently missed before this fix")
 
 		extractIdx := strings.Index(out, "Extracting to cache...")

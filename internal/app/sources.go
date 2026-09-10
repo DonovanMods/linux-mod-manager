@@ -39,12 +39,29 @@ var builtinSourceFactories = []func(Paths) source.ModSource{
 	},
 }
 
+// builtinSourceIDs names every source builtinSourceFactories builds, written
+// down so a check can ask "is this one registered" without constructing it.
+// TestBuiltinSourceIDsMatchTheFactories keeps the two in step.
+var builtinSourceIDs = []string{"nexusmods", "curseforge", "icarus", "steamworkshop"}
+
 // registerSources registers the built-in sources followed by every custom
 // source definition under <ConfigDir>/sources. Built-ins register first, so a
 // custom definition reusing a built-in ID loses the collision (and warns).
 func registerSources(ctx context.Context, svc *core.Service, p Paths, warn io.Writer) {
 	for _, factory := range builtinSourceFactories {
 		registerSource(ctx, svc, factory(p), warn)
+	}
+	// #381: a built-in that did not register is a bug in lmm, not a
+	// configuration problem the user can act on - and every symptom it
+	// produces ("source not found: steamworkshop" from install, mod show and
+	// search) names the source without saying that. registerSource's one
+	// skip path reports through warn, which `lmm source list` sets to
+	// io.Discard, so if it ever fired there nothing said so at all. This
+	// goes to stderr unconditionally, whatever writer the caller chose.
+	for _, id := range builtinSourceIDs {
+		if _, err := svc.GetSource(id); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: built-in source %q did not register: %v\n", id, err) //nolint:errcheck // best-effort warning write
+		}
 	}
 	registerCustomSources(ctx, svc, p.ConfigDir, warn)
 }
@@ -410,6 +427,25 @@ func SourceInfos(ctx context.Context, svc *core.Service, game *domain.Game, all 
 			// failed. Re-run it to recover the actual error for display.
 			if _, cerr := ConstructSource(d); cerr != nil {
 				errRows = append(errRows, newSourceInfoError(d.ID, cerr))
+			}
+		}
+	}
+
+	// #381: a built-in this game MAPS but the registry does not hold gets an
+	// error row rather than silently vanishing from the list. `lmm source
+	// list` claiming a source is configured and in use while
+	// `install --source <id>` answers "source not found" is a contradiction
+	// the two surfaces are not allowed to have; an ERROR row says which one
+	// is true. Only mapped built-ins are checked: a source nothing uses is
+	// not a claim this list is making.
+	if game != nil {
+		for _, id := range builtinSourceIDs {
+			if _, mapped := game.SourceIDs[id]; !mapped {
+				continue
+			}
+			if _, err := svc.GetSource(id); err != nil {
+				errRows = append(errRows, newSourceInfoError(id,
+					fmt.Errorf("built-in source is not registered (%s is configured to use it)", game.Name)))
 			}
 		}
 	}

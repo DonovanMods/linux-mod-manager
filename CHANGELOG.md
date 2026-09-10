@@ -957,6 +957,140 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **`lmm import --workshop` no longer reads as a failure and a success for
+  the same item (#393).** An item Steam could not describe printed
+  `! <name>: Steam does not describe this item…` and then `✓ <name>` on the
+  next line. The caveat is now folded into the outcome line it qualifies.
+
+- **`lmm list -v` no longer reports a link method for a Steam Workshop item
+  (#392).** External rows showed `METHOD symlink` and `DEPLOYED yes`, but lmm
+  never links or deploys one — it tracks the item where Steam put it. METHOD
+  reads `-`, matching LOCKED and CONVERT, and DEPLOYED reads `Steam`.
+
+- **A restore's counts add up, and it says what it left behind (#386).**
+  `snapshot restore --dry-run` headed its list with "Will restore 3 mod(s)"
+  and then printed five bullets — the count excluded the Steam Workshop items
+  the list included. The header now names both ("…, and leave 2 Steam
+  Workshop item(s) as Steam has them"). And a mod installed _after_ the
+  snapshot is correctly undeployed and dropped from the profile, but its
+  download and its database row are deliberately kept — so `lmm list` counted
+  one more mod than the restored profile had, with nothing said. The restore
+  summary now names them ("1 mod(s) left installed but disabled: …"), and
+  `--json` carries an additive `left_installed` array.
+
+- **Declining a prompt exits 2, whichever command asked (#382).** `lmm --help`
+  documents exit code 2 as "cancelled by the user", but the same "no" exited
+  2 from `purge` and `snapshot restore`, **1** from `import` (as
+  `Error: import cancelled`) and **0** from `profile switch`, `profile apply`
+  and `profile sync` — so `lmm profile switch p && echo switched` printed
+  "switched" over a switch that never happened. Declining the same
+  conflict-overwrite prompt even exited **2** from `import <archive>` and
+  **1** from `install`. Every declined confirmation now returns the one
+  cancellation sentinel, and a table test measures the exit code of each
+  confirming command under a declining stdin. Declining a prompt prints
+  `Cancelled.` on **stderr** rather than stdout, so a `--json` consumer's
+  stdout stays one document. Separately, a
+  locked-mod refusal from **`lmm update rollback`** exits non-zero in both
+  output modes (it printed its refusal, or its `{"status":"skipped",
+"reason":"locked"}` document, and exited 0 — so
+  `lmm update rollback X && echo restored` printed "restored"). Not changed:
+  `lmm uninstall` still performs its delete with no confirmation prompt at
+  all — adding one is a behaviour change in its own right.
+
+- **`lmm source list` can no longer claim a source `install` cannot find
+  (#381).** A built-in source that failed to register was invisible: the one
+  skip path in the registration pipeline reports through a writer
+  `lmm source list` sets to `io.Discard`, so a process whose registry lacked
+  (say) `steamworkshop` still listed it as configured and in use, while
+  `install`, `mod show` and `search` in that same process answered
+  "source not found: steamworkshop". Three guards close that gap: a built-in
+  that does not register now says so on **stderr** whatever writer the caller
+  chose; `source list` renders an **ERROR row** for a built-in a game is
+  configured to use but the registry does not hold; and a test asserts every
+  built-in is retrievable once registration returns. The underlying trigger
+  was not reproducible and is not claimed to be fixed — what is fixed is that
+  the two surfaces can no longer disagree in silence.
+
+- **A deploy preview reports a locked mod as locked (#380).** `PlanDeploy`
+  built its mod references from the installed database row, which carries no
+  lock — the lock lives on the profile reference — so
+  `lmm deploy --dry-run --json` and the web UI's deploy confirm-plan said
+  `locked: false` for every locked mod, while `GET /api/v1/mods` said
+  `locked: true` about the same one. Deploy is where a lock has teeth, which
+  makes its preview the worst place for that field to be wrong. The plan now
+  reads the profile reference. (The version it shows stays the installed
+  one — that is what the deploy will actually link.)
+
+- **A bulk `lmm update` no longer asks which source to use (#375).** The
+  source was resolved at the top of the command, so a game with more than one
+  configured source prompted — and under `--json` refused outright with
+  "confirmation required" — before doing anything, even though the bulk check
+  walks every installed mod against **its own** recorded source and never
+  reads the answer. A cron job running `lmm update --json` on any
+  Workshop-bearing game (which `lmm init` produces by default) failed for
+  nothing. The prompt now belongs to the single-mod path, which is the one
+  that genuinely uses it. That refusal also named three flags, two of which
+  `lmm update` does not have: a prompt whose remedy is a specific flag now
+  says only that ("confirmation required: pass -s/--source to select a mod
+  source"). And when a bulk check does fail for want of credentials, the
+  remedy names the source that refused — with no flag to read, it used to
+  print `run 'lmm auth login ' to authenticate`.
+
+- **A bare mod ID that names two mods is refused, not guessed (#373).** Mod
+  IDs are unique only WITHIN a source, so the same ID can name a different
+  mod in each source a game maps. `lmm uninstall <id>` and
+  `lmm mod edit <id>` took the first match across sources with no warning —
+  uninstall deleting the game-directory files and the cache entry of a mod
+  the user never named, and `mod edit` rewriting one, silently. Both now
+  collect every candidate and refuse when there is more than one, naming the
+  sources and the flag that chooses (`--json`: an additive `details` object
+  with `mod_id`, `profile`, `sources` and `flag`). `lmm update` already did
+  this; its block is now the shared one. For `lmm mod edit` the flag that
+  refusal names is the mod group's own **`-s/--source`** — which says which
+  source the mod you are editing is IN, the opposite end of the move from
+  `--to-source`/`--to-source-id` (#396).
+
+- **A file lmm just downloaded is no longer reported as having no checksum
+  (#372).** `install` computed and stored each downloaded file's checksum,
+  but `update`, `deploy`'s cache-miss redownload, `profile apply`, `profile
+switch` and `profile import` all discarded the download's result — so
+  `installed_mod_files.checksum` stayed NULL and `lmm verify` reported
+  `NO CHECKSUM` for a file it had fetched seconds earlier. The first update
+  to any mod therefore degraded it from verifiable to unverifiable until the
+  next `verify --fix`, which is how a user ends up with a `verify` that
+  always warns and learns to ignore it. All five flows now record the
+  checksum, after the database row it attaches to exists. A `profile import`
+  that installs a mod from the cache entry another profile already has
+  downloads nothing, so it copies that row's checksums instead — the same
+  bytes are verifiable under both profiles.
+
+- **`profile import` gives the imported profile its own mods (#371).** A mod
+  already installed under some OTHER profile was classified "already
+  installed", and the import wrote nothing for it — leaving a profile whose
+  YAML listed N mods and whose database held none. `lmm list` showed nothing,
+  `status` reported "3 mod(s)" and "Installed Mods: 0" on one screen, and
+  `profile sync` — offered right alongside Apply, and unconditionally in the
+  web UI's Profile card — then proposed erasing every ref the import had just
+  written. That cross-profile hit answers "are the bytes downloaded", which
+  is the right question for whether to DOWNLOAD and the wrong one for whether
+  this profile has the mod, so the two are now separate: such a mod is listed
+  as already downloaded and installed into the profile from the cache entry
+  that is already there — no fetch and no download — while "already
+  installed" is reserved for rows the profile being imported into genuinely
+  has. The scan weighs EVERY other profile's row for the mod, so which one
+  answers does not depend on what the profiles are called: a friend's build
+  of mods you already own, held at another version by a profile that happens
+  to sort first, is still recognised as downloaded. `ImportPlan` gains an
+  additive `already_cached` bucket, and both
+  frontends offer those mods as pending work rather than reporting a clean
+  success over an empty profile. A tracked Steam Workshop item is copied as
+  the tracking row it is, never fetched; `profile apply` learned the same
+  rule, so a profile naming a Workshop item lmm already tracks records it
+  instead of failing on a delisted one — or, worse, downloading an
+  lmm-managed copy over what Steam manages. Both frontends' apply previews
+  say so: such an entry reads as tracked rather than as a download, and shows
+  the item's revision date instead of Steam's 19-digit content id.
+
 - **Two overlapping reloads of the same web UI slice no longer commit out of
   order (#370).** The SPA already dropped an answer fetched for a route the
   user had left, but nothing fenced one load of a slice against another load

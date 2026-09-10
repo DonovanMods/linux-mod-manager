@@ -123,7 +123,10 @@ func TestDoUpdateRollback_Locked_RefusesBeforeHeader_Text(t *testing.T) {
 		callErr = doUpdateRollback(context.Background(), svc, game, "mod1")
 		return nil
 	})
-	require.NoError(t, callErr, "a locked rollback is a skip, like a locked single-mod update, not a failure")
+	// #382: a refusal exits non-zero. ErrReported, because the two lines
+	// below ARE the report - `lmm update rollback X && echo restored` used
+	// to print "restored" over a rollback that never happened.
+	require.ErrorIs(t, callErr, ErrReported)
 	assert.NotContains(t, out, "Rolling back", "the optimistic header must never print for a refused rollback")
 	// #294 (Ruling 5): the whole refused-rollback readout, byte-exact - see
 	// lock_visibility_test.go's sibling capture.
@@ -143,9 +146,12 @@ func TestDoUpdateRollback_Locked_JSON_SkippedDocument(t *testing.T) {
 	withJSONOutput(t)
 	setLockedForUpdate(t, svc, game, "test-src", "mod1", "2.0")
 
+	var callErr error
 	out := captureStdout(t, func() error {
-		return doUpdateRollback(context.Background(), svc, game, "mod1")
+		callErr = doUpdateRollback(context.Background(), svc, game, "mod1")
+		return nil
 	})
+	require.ErrorIs(t, callErr, ErrReported, "#382: the document is emitted, and the command still exits non-zero")
 
 	var doc core.RollbackResult
 	decodeSingleDoc(t, out, &doc)

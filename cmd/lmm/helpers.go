@@ -113,15 +113,21 @@ const (
 	remedyNameAuthSource = "pass the source ID as a positional argument (e.g. lmm auth logout <source>)"
 )
 
-// confirmationRequiredVia returns core.ErrConfirmationRequired augmented
-// with how, the specific flag or argument that would have answered this
-// particular prompt without one. Most prompts share the sentinel's own
-// generic --yes/--force text (their deciding flag already gates the call to
-// readPromptLine, so the plain sentinel is accurate); the few prompts with
-// no such flag - a source or game selection - use this instead so the
-// --json envelope names the actual way out.
+// confirmationRequiredVia reports a refused prompt whose remedy is how - the
+// specific flag or argument that would have answered THIS prompt without
+// one. Most prompts share the sentinel's own generic --yes/--force text
+// (their deciding flag already gates the call to readPromptLine, so the
+// plain sentinel is accurate); the few prompts with no such flag - a source
+// or game selection - use this instead so the --json envelope names the
+// actual way out.
+//
+// #375: it says only that. Wrapping the sentinel with %w concatenated the
+// two, producing "pass --yes (or --force where documented) in
+// non-interactive mode: pass -s/--source to select a mod source" - naming
+// three flags for a prompt whose command has one of them. errors.Is still
+// matches core.ErrConfirmationRequired, which is what callers branch on.
 func confirmationRequiredVia(how string) error {
-	return fmt.Errorf("%w: %s", core.ErrConfirmationRequired, how)
+	return &confirmationViaError{how: how}
 }
 
 // interactiveOnlyVia returns core.ErrInteractiveOnly naming how - the flag
@@ -163,6 +169,17 @@ func promptReadError(err error, how string) error {
 	}
 	return fmt.Errorf("reading input: %w", err)
 }
+
+// confirmationViaError is confirmationRequiredVia's error: it IS
+// core.ErrConfirmationRequired for errors.Is, without inheriting its
+// sentence.
+type confirmationViaError struct{ how string }
+
+func (e *confirmationViaError) Error() string {
+	return "confirmation required: " + e.how
+}
+
+func (e *confirmationViaError) Unwrap() error { return core.ErrConfirmationRequired }
 
 // resolveSource determines which source to use for a game.
 // If sourceFlag is provided, validates it's configured for the game.

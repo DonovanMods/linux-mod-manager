@@ -619,3 +619,48 @@ func TestApplySnapshotRestore_ARestoredOriginalKeepsItsMode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "#!/bin/sh\necho stock\n", string(data))
 }
+
+// TestApplySnapshotRestore_LeftInstalledNamesOnlyWhatItDisabled is P1a review
+// finding F9: the list was built from applyPlan.ToDisable BEFORE
+// applyProfileApply ran, so a restore that stopped part-way reported mods it
+// never got to disable - a result that names work the flow did not do.
+//
+// The sink cancels the context the moment the first mod is disabled, so the
+// disable loop's own top-of-iteration check stops it before the second: one
+// disabled, one untouched, and exactly one entry in the list.
+func TestApplySnapshotRestore_LeftInstalledNamesOnlyWhatItDisabled(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+	require.NoError(t, err)
+
+	// Two mods installed AFTER the snapshot: both are ToDisable, in
+	// profile order.
+	for _, m := range []string{"latecomer", "straggler"} {
+		seedNamedInstalledMod(t, svc, game, "src", m, m, "1.0", true,
+			map[string][]byte{"Data/" + m + ".esp": []byte(m)})
+		seedProfileWithMod(t, svc, "g1", "default", "src", m, "1.0")
+	}
+	_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "known-good")
+	require.NoError(t, err)
+
+	disabled := 0
+	sink := func(e core.Event) {
+		if me, ok := e.(core.ModEvent); ok && me.Phase == core.SwitchDisabled {
+			disabled++
+			cancel()
+		}
+	}
+
+	result, err := svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{NoSafetySnapshot: true}, sink)
+	require.Error(t, err, "the cancelled restore must report itself as incomplete")
+	require.NotNil(t, result)
+	require.Equal(t, 1, disabled, "the fixture must stop the loop after exactly one mod")
+	assert.Len(t, result.LeftInstalled, 1,
+		"the result must name only the row the restore actually left behind, not every candidate")
+}

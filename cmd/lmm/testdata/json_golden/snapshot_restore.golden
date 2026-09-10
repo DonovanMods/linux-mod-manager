@@ -9,6 +9,15 @@
   "installed": 0,
   "replaced": 0,
   "deployed": 1,
+  "left_installed": [
+    {
+      "source_id": "src",
+      "mod_id": "wrecker",
+      "name": "Wrecker",
+      "version": "1.0",
+      "reason": "not listed in the restored profile; its download is kept"
+    }
+  ],
   "notes": [
     "the current state was recorded as auto-<OP>-<STAMP>"
   ]

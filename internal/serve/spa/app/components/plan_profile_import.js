@@ -122,11 +122,23 @@ function CollectionHeader({ collection }) {
 export function ProfileImportPlanView({ plan, modal, actions }) {
   const collection = plan.workshop_collection ?? null;
   const installed = plan.installed ?? [];
+  // Issue 371: installed under ANOTHER profile. The bytes are cached, so
+  // nothing is downloaded - but this profile still needs its own rows, so
+  // these are pending work rather than "already installed".
+  const alreadyCached = plan.already_cached ?? [];
   const needsRedownload = plan.needs_redownload ?? [];
   const missing = plan.missing ?? [];
   // A collection import installs nothing whatever this preview offers, so
   // it has no pending count to offer it for.
-  const pending = collection ? 0 : needsRedownload.length + missing.length;
+  const pending = collection
+    ? 0
+    : alreadyCached.length + needsRedownload.length + missing.length;
+  // A Workshop item is tracked game-wide, so for a collection BOTH buckets
+  // count as already present; an ordinary import counts only the rows this
+  // profile itself already has.
+  const alreadyPresent = collection
+    ? installed.length + alreadyCached.length
+    : installed.length;
 
   /** setInstall is the one apply-time choice this preview offers -
    * core.ProfileImportOptions.Install, the v2 Phase 3 Ruling 1 case in its
@@ -145,12 +157,12 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
       <p class="plan__summary">
         Importing <span class="mono">${plan.profile?.name}</span> as a new
         profile${
-          installed.length === 0
+          alreadyPresent === 0
             ? ""
             : // "tracked", not "installed", for a collection: an already
               // tracked Workshop item is not deployed into the new profile,
               // and a switch to it changes nothing (W2 review, Important 5).
-              ` (${installed.length} ${collection ? "item" : "mod"}${installed.length === 1 ? "" : "s"} already ${collection ? "tracked" : "installed"})`
+              ` (${alreadyPresent} ${collection ? "item" : "mod"}${alreadyPresent === 1 ? "" : "s"} already ${collection ? "tracked" : "installed"})`
         }.
       </p>
 
@@ -187,6 +199,10 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
           ? html`<${CollectionItemList} items=${collection.items} />`
           : html`
               <${RefList} heading="Already installed" refs=${installed} />
+              <${RefList}
+                heading="Already downloaded, added to this profile"
+                refs=${alreadyCached}
+              />
               <${RefList} heading="Needs redownload" refs=${needsRedownload} />
               <${RefList} heading="Missing entirely" refs=${missing} />
             `

@@ -377,7 +377,8 @@ func TestDoImport_ConflictDecline_LeavesAPreExistingCacheEntryIntact(t *testing.
 	})
 
 	require.Error(t, err)
-	assert.Equal(t, "import cancelled", err.Error())
+	// #382: the shared cancellation sentinel, so a declined import exits 2.
+	assert.ErrorIs(t, err, ErrCancelled)
 	assert.Equal(t, before, dumpTree(t, svc.GetGameCachePath(game)),
 		"a declined conflict must leave the cache tree exactly as it found it")
 

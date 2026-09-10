@@ -12,6 +12,7 @@
 // row is rendered as a warning, in place, with the source's own words.
 
 import { html } from "../render.js";
+import { displayVersion } from "../version.js";
 
 /** ModList renders one bucket of installed mods (to_enable/to_disable),
  * which carry their own names. */
@@ -41,6 +42,22 @@ function installLabel(entry) {
   if (entry.mod?.name) return entry.mod.name;
   const ref = entry.ref ?? {};
   return `${ref.source_id}:${ref.mod_id}`;
+}
+
+/** installVersion is one ProfileApplyInstall row's version text.
+ *
+ * An EXTERNAL entry is a Steam Workshop item lmm already tracks, whose
+ * version is Steam's 19-digit content id - so it goes through the shared
+ * helper, which shows the item's revision date instead (issue 365, part of
+ * 269). Since core stamps that flag and date onto the entry's own ref, the
+ * ref IS the document displayVersion wants.
+ *
+ * Everything else is the resolved version (the issue-94 stamp, which is what
+ * the apply will actually install), falling back to the ref's own for an
+ * entry whose source lookup failed and has no resolved mod. */
+function installVersion(entry) {
+  if (entry.external) return displayVersion(entry.ref);
+  return entry.version || entry.ref?.version || "";
 }
 
 /** ProfileApplyPlanView renders core.ProfileApplyPlan
@@ -84,8 +101,14 @@ export function ProfileApplyPlanView({ plan }) {
                     <span class="plan__mod-name">${installLabel(entry)}</span
                     >${" "}
                     <span class="plan__mod-detail mono"
-                      >${entry.version || ref.version}</span
+                      >${installVersion(entry)}</span
                     >${" "}
+                    ${
+                      entry.external &&
+                      html`<span class="plan__mod-detail"
+                        >tracked - Steam already has it</span
+                      >`
+                    }
                     ${
                       entry.replaces &&
                       html`<span class="plan__mod-detail"

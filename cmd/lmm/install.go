@@ -587,7 +587,9 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 				return err
 			}
 			if input == "n" || input == "no" {
-				return fmt.Errorf("installation cancelled")
+				// #382: the one cancellation sentinel, so declining here
+				// exits 2 like every other declined confirmation.
+				return ErrCancelled
 			}
 		}
 	}
@@ -767,11 +769,13 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		if readErr != nil {
 			// A genuine stdin read failure, not an ordinary decline - see
 			// confirmInstallConflicts' doc comment. Propagate the real
-			// error instead of the generic "installation cancelled".
+			// error instead of the ordinary cancellation.
 			return readErr
 		}
 		if !proceed {
-			return fmt.Errorf("installation cancelled")
+			// #382: declining the SAME conflict-overwrite prompt used to
+			// exit 2 from `lmm import <archive>` and 1 from here.
+			return ErrCancelled
 		}
 		opts.AcceptConflicts = true
 		result, err = service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
