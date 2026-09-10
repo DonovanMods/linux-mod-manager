@@ -422,3 +422,74 @@ func runImportWorkshopQuiet(t *testing.T, svc *core.Service, game *domain.Game) 
 	})
 	return err
 }
+
+// TestProfileSwitch_NamesTheWorkshopItemsItLeavesActive is design §2's
+// `profile switch / apply / sync` row: "one advisory note: 'N Steam Workshop
+// items stay active regardless of profile - manage subscriptions in the Steam
+// client.'" Core did its half all along - both flows append
+// core.NoteExternalProfileScope to result.Notes AND emit it as a
+// DeployExternalSkipped step event - but neither CLI renderer had a case for
+// that phase, and both deliberately skip batch-printing result.Notes, so
+// `lmm profile switch` said nothing at all about what it left alone.
+//
+// The no-work path is covered too: a profile holding only Workshop items has
+// nothing to disable, enable or install, so plan.NoChanges is true - which is
+// exactly the run most likely to leave a user wondering.
+func TestProfileSwitch_NamesTheWorkshopItemsItLeavesActive(t *testing.T) {
+	const advisory = "1 Steam Workshop item(s) stay active regardless of profile"
+
+	t.Run("with other work to do", func(t *testing.T) {
+		svc, game, _, _ := setupWorkshopCLI(t)
+		withWorkshopImportFlags(t, false, true)
+		require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "other")
+		require.NoError(t, err)
+		withProfileSwitchYes(t)
+
+		out := captureStdout(t, func() error {
+			return doProfileSwitch(context.Background(), svc, game, "other")
+		})
+		assert.Contains(t, out, advisory)
+		assert.Contains(t, out, "manage subscriptions in the Steam client")
+	})
+
+	t.Run("with nothing else to do", func(t *testing.T) {
+		svc, game, _, _ := setupWorkshopCLI(t)
+		withWorkshopImportFlags(t, false, true)
+		require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+		_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "other")
+		require.NoError(t, err)
+		withProfileSwitchYes(t)
+
+		out := captureStdout(t, func() error {
+			return doProfileSwitch(context.Background(), svc, game, "other")
+		})
+		assert.Contains(t, out, advisory,
+			"the plan.NoChanges path passed core a nil sink, so the one note it does emit was thrown away")
+	})
+}
+
+// TestProfileApply_NamesTheWorkshopItemsItLeavesActive is the same §2 row for
+// the sibling flow. ApplyProfileApply returns before emitting anything when
+// plan.NoChanges (core's own guard), so this covers the path that has work.
+func TestProfileApply_NamesTheWorkshopItemsItLeavesActive(t *testing.T) {
+	svc, game, _, _ := setupWorkshopCLI(t)
+	withWorkshopImportFlags(t, false, true)
+	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+	// Installed + enabled but absent from profile.Mods -> the disable
+	// bucket, so the apply has real work and core gets past its own
+	// plan.NoChanges guard.
+	seedApplyCandidateMod(t, svc, game, "src", "dis1", "Dis One", "1.0", true,
+		map[string][]byte{"dis1.esp": []byte("dis")})
+
+	origYes := profileApplyYes
+	profileApplyYes = true
+	t.Cleanup(func() { profileApplyYes = origYes })
+
+	out := captureStdout(t, func() error {
+		return doProfileApply(context.Background(), svc, game, nil)
+	})
+	assert.Contains(t, out, "1 Steam Workshop item(s) stay active regardless of profile")
+	assert.Contains(t, out, "manage subscriptions in the Steam client")
+}

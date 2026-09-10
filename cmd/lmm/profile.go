@@ -414,6 +414,63 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 	}
 
+	// progress prints every diagnostic and per-mod status line at its exact
+	// point of occurrence, driven entirely by core.ApplyProfileSwitch's
+	// events. result.Notes is never separately batch-printed below: every
+	// Notes entry (the disable/enable loops' --verbose-gated warnings, and
+	// #269's profile-scope advisory) has a corresponding event here already.
+	// The install loop's UpsertMod refusal is a SwitchInstallWarning now, not
+	// a Note (#294, Ruling 5's class extension - Task 13b) - it reaches the
+	// user unconditionally through result.Warnings below instead of a case
+	// here.
+	//
+	// Declared HERE, above the no-work branch, rather than beside the Apply
+	// call it usually feeds: a profile holding only Steam Workshop items has
+	// nothing to disable, enable or install, so plan.NoChanges is true - and
+	// that branch used to pass core a nil sink, throwing away the one event
+	// core does emit on that path (#345, N3).
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		switch p.Phase {
+		case core.SwitchDisableNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		case core.SwitchDisabled:
+			fmt.Printf("  ✓ Disabled: %s\n", p.ModName)
+		case core.SwitchEnableNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		case core.SwitchEnabled:
+			fmt.Printf("  ✓ Enabled: %s\n", p.ModName)
+		case core.SwitchInstalling:
+			fmt.Println("\nInstalling missing mods...")
+		case core.SwitchInstallingMod:
+			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
+		case core.SwitchInstallError:
+			fmt.Printf("    Error: %s\n", p.Detail)
+		case core.SwitchDownloading:
+			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
+		case core.SwitchDownloadFailed:
+			fmt.Println()
+			fmt.Printf("    Error: %s\n", p.Detail)
+		case core.SwitchDownloadDone:
+			fmt.Println()
+		case core.SwitchInstalled:
+			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+		case core.DeployExternalSkipped:
+			// #269/#345 N3: design §2's advisory - "N Steam Workshop items
+			// stay active regardless of profile". Unconditional, not
+			// --verbose-gated: it explains a fact about the switch the user
+			// cannot see any other way.
+			fmt.Printf("  %s\n", p.Detail)
+		}
+	}
+
 	if plan.NoChanges {
 		// No mod changes, just switch the default - ApplyProfileSwitch's
 		// three loops are all empty, so this is exactly a SetDefault call.
@@ -421,7 +478,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		if profileSwitchDryRun {
 			return nil
 		}
-		result, err := service.ApplyProfileSwitch(ctx, game, plan, nil)
+		result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
 		if err != nil {
 			return err
 		}
@@ -474,50 +531,6 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		if input != "" && input != "y" && input != "yes" {
 			fmt.Println("Cancelled.")
 			return nil
-		}
-	}
-
-	// progress prints every diagnostic and per-mod status line at its exact
-	// point of occurrence, driven entirely by core.ApplyProfileSwitch's
-	// events. result.Notes is never separately batch-printed below: every
-	// Notes entry (the disable/enable loops' --verbose-gated warnings) has
-	// a corresponding event here already. The install loop's UpsertMod
-	// refusal is a SwitchInstallWarning now, not a Note (#294, Ruling 5's
-	// class extension - Task 13b) - it reaches the user unconditionally
-	// through result.Warnings below instead of a case here.
-	progress := func(e core.Event) {
-		p, ok := lineOf(e)
-		if !ok {
-			return
-		}
-		switch p.Phase {
-		case core.SwitchDisableNote:
-			if verbose {
-				fmt.Printf("  %s\n", p.Detail)
-			}
-		case core.SwitchDisabled:
-			fmt.Printf("  ✓ Disabled: %s\n", p.ModName)
-		case core.SwitchEnableNote:
-			if verbose {
-				fmt.Printf("  %s\n", p.Detail)
-			}
-		case core.SwitchEnabled:
-			fmt.Printf("  ✓ Enabled: %s\n", p.ModName)
-		case core.SwitchInstalling:
-			fmt.Println("\nInstalling missing mods...")
-		case core.SwitchInstallingMod:
-			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
-		case core.SwitchInstallError:
-			fmt.Printf("    Error: %s\n", p.Detail)
-		case core.SwitchDownloading:
-			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
-		case core.SwitchDownloadFailed:
-			fmt.Println()
-			fmt.Printf("    Error: %s\n", p.Detail)
-		case core.SwitchDownloadDone:
-			fmt.Println()
-		case core.SwitchInstalled:
-			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
 		}
 	}
 
@@ -1195,6 +1208,11 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			fmt.Println()
 		case core.SwitchInstalled:
 			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+		case core.DeployExternalSkipped:
+			// #269/#345 N3: design §2's advisory - "N Steam Workshop items
+			// stay active regardless of profile". Unconditional, for the
+			// reason doProfileSwitch's identical case states.
+			fmt.Printf("  %s\n", p.Detail)
 		}
 	}
 
