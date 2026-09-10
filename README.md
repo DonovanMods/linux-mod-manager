@@ -141,15 +141,16 @@ These are deliberate omissions, tracked so they are not mistaken for oversights:
   config of its own. What is not planned is a _second_ application with its
   own build, its own packaging and its own drift.
 
-### Post-2.0 direction
+### The adapter seam
 
 The Icarus support is the interesting one: lmm does not merely copy that game's
 archives, it converts prebuilt `.pak` mods, derives their changes against the
 current base game, merges them by profile precedence and regenerates the result
 when load order changes. Making that a **documented adapter seam** — so Unreal,
-Unity and the rest land without contaminating the generic core — is the
-direction after 2.0:
-[#353](https://github.com/DonovanMods/linux-mod-manager/issues/353).
+Unity and the rest land without contaminating the generic core — is in
+progress for 2.0: [#353](https://github.com/DonovanMods/linux-mod-manager/issues/353)
+(design approved; the seam and a generic adapter land first, then Icarus and
+BepInEx move behind it).
 
 ## Installation
 
@@ -2302,8 +2303,8 @@ The mod cache location can be customized via `cache_path` in `config.yaml`. Sett
 
 ## Roadmap
 
-Everything under the first three headings shipped; the last two are what is
-still open. The full entry for each shipped item — what changed and why — is
+Everything under the first three headings shipped; the last heading is what
+is still open. The full entry for each shipped item — what changed and why — is
 in [CHANGELOG.md](CHANGELOG.md); the 2.0 line is under `[Unreleased]` until the
 release is cut.
 
@@ -2338,12 +2339,11 @@ release is cut.
 - [ ] BepInEx support, tiered: plugin archives deploy correctly, the loader
       handled as a per-game prerequisite rather than a mod, and a Thunderstore
       source gated behind a locally cached index
-      ([#357](https://github.com/DonovanMods/linux-mod-manager/issues/357))
-
-### After 2.0
-
-- [ ] A documented game-adapter seam — deploy mode, compile and verify — so
-      Unreal, Unity and the rest land without touching the generic core
+      ([#357](https://github.com/DonovanMods/linux-mod-manager/issues/357),
+      [#360](https://github.com/DonovanMods/linux-mod-manager/issues/360))
+- [ ] A documented game-adapter seam — archive normalisation, compile, file
+      routing and verify — so Unreal, Unity and the rest land without touching
+      the generic core; Icarus and BepInEx move behind it
       ([#353](https://github.com/DonovanMods/linux-mod-manager/issues/353))
 
 Game auto-detection beyond Steam (Lutris, Heroic, Flatpak) was considered and
