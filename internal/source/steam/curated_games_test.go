@@ -1,7 +1,6 @@
 package steam
 
 import (
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -312,22 +311,41 @@ func TestKnownGames_DetectOnlyStayUncurated(t *testing.T) {
 // <install>/mods default (the rule for an UNCURATED row, applied by
 // core.GameSpecFromDetected) fails here rather than silently deploying a
 // BepInEx archive one level too deep.
+//
+// It asserts THROUGH DetectGames against a fabricated Steam library, not
+// against a copy of the join pasted into the test: the earlier spelling did
+// the resolution itself and compared the result to itself, so mutating
+// steam.go's `modPath := installPath` to a subdirectory left it green.
 func TestKnownGames_EmptyModPathMeansTheInstallRoot(t *testing.T) {
-	sandboxEnv(t)
-	games, err := LoadKnownGames(t.TempDir())
+	steamapps := fakeSteamLibrary(t)
+	configDir := t.TempDir()
+
+	games, err := LoadKnownGames(configDir)
 	require.NoError(t, err)
 
-	install := t.TempDir()
-	for _, appID := range []string{"892970", "1284190", "1466060", "527230", "2393970", "1091500"} {
+	// One install directory per app, as Steam really lays them out.
+	gameRootApps := []string{"892970", "1284190", "1466060", "527230", "2393970", "1091500"}
+	installs := make(map[string]string, len(gameRootApps))
+	for _, appID := range gameRootApps {
 		info, ok := games[appID]
 		require.True(t, ok, "no known-games entry for app id %s", appID)
 		require.Empty(t, info.ModPath, "app %s is a game-root entry", appID)
 
-		modPath := install
-		if info.ModPath != "" {
-			modPath = filepath.Join(install, info.ModPath)
-		}
-		assert.Equal(t, install, modPath,
+		installs[appID] = installApp(t, steamapps, "app-"+appID)
+		writeAppManifestNamed(t, steamapps, appID, info.Name, "app-"+appID)
+	}
+
+	detected, _, err := DetectGames(configDir, DetectOptions{})
+	require.NoError(t, err)
+
+	byApp := make(map[string]DetectedGame, len(detected))
+	for _, g := range detected {
+		byApp[g.SteamAppID] = g
+	}
+	for _, appID := range gameRootApps {
+		g, ok := byApp[appID]
+		require.Truef(t, ok, "DetectGames did not report app %s", appID)
+		assert.Equalf(t, installs[appID], g.ModPath,
 			"app %s: an empty mod_path must resolve to the install root, not to a subdirectory", appID)
 	}
 }
