@@ -5,7 +5,7 @@ A mod manager for Linux for searching, installing, updating, and managing game m
 ## Features
 
 - **Multi-Source Support**: Search, download, install mods from NexusMods and CurseForge
-- **Steam Workshop tracking**: track the Workshop items you are already subscribed to, and get told when Steam publishes an update — see [Steam Workshop](#steam-workshop)
+- **Steam Workshop**: track the Workshop items you are already subscribed to and get told when Steam publishes an update, or download an item so lmm manages its own copy — see [Steam Workshop](#steam-workshop)
 - **Profile System**: Manage multiple mod configurations per game
 - **Update Management**: Check for updates with configurable policies (auto, notify, pinned)
 - **Version Locking**: Lock a mod's profile entry to an exact version, independent of update policy — see [Locking mods to a version](#locking-mods-to-a-version)
@@ -1780,9 +1780,9 @@ The third mode, `lmm import --workshop`, is described under [Steam Workshop](#st
 
 ### Steam Workshop
 
-lmm can **track** the Steam Workshop items you are already subscribed to. It reads Steam's own bookkeeping (`steamapps/workshop/appworkshop_<appid>.acf`) across every Steam library on the machine, records each installed item, and checks it for updates through Valve's keyless metadata API.
+lmm can **track** the Steam Workshop items you are already subscribed to, and **download** an item so it manages its own copy. Tracking reads Steam's own bookkeeping (`steamapps/workshop/appworkshop_<appid>.acf`) across every Steam library on the machine, records each installed item, and checks it for updates through Valve's keyless metadata API.
 
-**What Tier 1 does:**
+**Tracking what Steam already installed:**
 
 - `lmm game detect` maps a game whose Workshop manifest shows installed items to the `steamworkshop` source automatically (the per-source game id is the Steam **app id**). Suppress it with `--no-workshop`, or add the mapping later with `lmm game edit --source steamworkshop=<appid>`.
 - `lmm import --workshop` records every subscribed item lmm does not already track. `--dry-run` previews it; `--refresh` bypasses the cached Steam metadata. In `lmm serve`, the same flow is **Add mods ▾ → Track Steam Workshop items…**, offered once the game maps the `steamworkshop` source.
@@ -1798,7 +1798,18 @@ lmm can **track** the Steam Workshop items you are already subscribed to. It rea
 - **Conflict detection cannot see them.** `lmm conflicts` compares files deployed under the game's `mod_path`, and a Workshop item has none there. lmm cannot see inside a game's own Workshop loader.
 - **`lmm profile reorder` omits them.** Load order decides deploy precedence, and a tracked-only item deploys nothing, so any position it held would be inert.
 - **A snapshot records them; a restore leaves them alone.** lmm never captures a Workshop item into the [originals store](#snapshots) and holds no copy to put back, so `lmm snapshot restore` undeploys nothing for it and downloads nothing for it. An item Steam no longer has on disk is reported as a finding — the same judgement `lmm verify` makes — not a refusal.
-- **Search and downloading are not in this tier.** Searching the Workshop needs a personal Steam Web API key, and downloading items needs `steamcmd`; both land in later units.
+- **Search is not in this tier.** Searching the Workshop needs a personal Steam Web API key; it lands in its own unit.
+
+**Downloading an item lmm manages itself.** `lmm install steamworkshop:<file id>` (and the same Install action in `lmm serve`) downloads a Workshop item into lmm's own cache and deploys it like any other mod. Nothing about it is special once the bytes are on disk: it appears in `lmm list` without the `EXTERNAL` marker, deploys, disables, updates and uninstalls normally, and takes part in conflict detection and load order.
+
+lmm gets the bytes one of two ways, and neither needs your Steam password:
+
+- A handful of **old UGC-era items** are still published at a plain URL, which lmm downloads directly and checks against the exact byte count Valve reports for it.
+- Everything else needs **[steamcmd](https://developer.valvesoftware.com/wiki/SteamCMD)**, which lmm shells out to anonymously. Install it from your distribution's packages; lmm never bundles it, never installs it for you, and tells you so with the install link if it is missing when you try. steamcmd runs pinned to lmm's own staging directory with an isolated `HOME`, so it can neither find nor write to your real Steam library.
+
+**Not every game allows this.** Anonymous Workshop downloads are a per-app opt-in, and there is no way to know before trying — an item whose download is refused still describes itself perfectly. When a publisher has not opted in, lmm says so and points you at the route that does work: subscribe to the item in the Steam client, then run `lmm import --workshop` and lmm will track it in place.
+
+**What downloading deliberately does NOT do.** lmm never signs in to your Steam account, never stores a Steam password or session, never manages your subscriptions, and never rehosts or proxies Workshop content. If anonymous download is refused, tracking a subscription is the answer — there is no fallback that logs in as you.
 
 Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop/meta/` — six hours for an item Valve describes, one hour for one it refuses. The directory is safe to delete at any time; `--refresh` bypasses it for one run.
 
@@ -2064,6 +2075,7 @@ lmm follows the XDG Base Directory specification. `--config` and `--data` overri
 | Download Staging        | `<data>/downloads/` (in-flight downloads and archive extraction)                                                                                                                                                                                                                      |
 | Steam Workshop metadata | `<data>/cache/_steamworkshop/meta/` (cached item descriptions; safe to delete)                                                                                                                                                                                                        |
 | Snapshots               | `<data>/snapshots/<game-id>/` — one `<name>.json` per snapshot, plus `_originals/` (the files lmm has replaced; the only copy of them). A snapshot name may use letters, digits, `.`, `_` and `-`, and may not start with `.` or `_` — which is what keeps `_originals/` out of reach |
+| steamcmd home           | `<data>/cache/_steamworkshop/steamcmd-home/` (steamcmd's isolated `HOME`; safe to delete)                                                                                                                                                                                             |
 
 **Precedence.** `--config`/`--data` win outright. Otherwise an `XDG_CONFIG_HOME`/`XDG_DATA_HOME` set to an **absolute** path decides, whether or not `$XDG_…/lmm` exists yet — setting the variable is an explicit instruction, and lmm never silently writes somewhere else (#297). Only when the variable is **unset** — or set to a relative path, which the XDG spec requires be ignored — does lmm fall back to the legacy `~/.config/lmm` / `~/.local/share/lmm`, which is the situation an install predating XDG support is in. If you set an XDG variable and want your existing data, move the directory to the new location (or point `--data`/`--config` at the old one).
 

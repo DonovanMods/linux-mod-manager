@@ -157,3 +157,35 @@ would bury it. Anything that needs no credential keeps working throughout.
 The local web UI's own posture — no authentication, loopback bind, the
 `Host`/`Origin`/CSRF guards and the CSP — is documented in the README under
 [Security posture](../README.md#security-posture).
+
+## External tools
+
+lmm shells out to two programs it does not bundle and never installs for
+you: `7z` (to extract `.7z`/`.rar` archives) and `steamcmd` (to download a
+Steam Workshop item — #269 Tier 3). Both are probed at the moment they are
+needed, and a missing one is an answer with an install hint, not a crash.
+
+`steamcmd` is the one that gets a threat model of its own, because it is a
+program that goes looking for a Steam installation:
+
+- **It is always pinned to lmm's own staging directory.** Every invocation
+  passes `+force_install_dir <staging>` before `+login`. Without the pin,
+  steamcmd resolves your real Steam library and writes into it — this is
+  observed behaviour, not a theoretical risk, and the test suite's fake
+  steamcmd fails the build if the pin is ever missing or ordered after the
+  login.
+- **Its environment is built, not filtered.** lmm hands it an `HOME` of
+  `$XDG_DATA_HOME/lmm/cache/_steamworkshop/steamcmd-home` with the `XDG_*`
+  variables pointed inside it, plus `PATH` and (for display only) `TERM`
+  and `LANG`. Nothing else is passed through, so no variable naming your
+  real Steam install — `STEAM_ROOT`, `STEAM_COMPAT_*`, your actual `HOME` —
+  can reach it by being forgotten. That directory is lmm's to create and
+  yours to delete at any time; it is persistent only so steamcmd's ~200 MB
+  self-bootstrap is paid once rather than per download.
+- **It only ever logs in anonymously.** lmm has no Steam account
+  credential of any kind: no password, no cached session, no fallback that
+  signs in as you. When a publisher has not opted its app into anonymous
+  Workshop downloads, lmm reports the refusal and points at subscribing in
+  the Steam client instead.
+- **A run is bounded.** 30 minutes, cancellable, with only the tail of its
+  output retained for the error message.
