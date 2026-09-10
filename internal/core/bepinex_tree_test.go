@@ -87,6 +87,14 @@ func TestNormalizeBepInExTree_RewritesEachShapeInPlace(t *testing.T) {
 			want:    []string{"BepInEx/plugins/Thing.dll"},
 		},
 		{
+			// Review F4 on disk: the case-variant directory is RENAMED to
+			// BepInEx's own spelling, because that is the path the loader
+			// reads.
+			name:    "a case-variant bepinex/ directory is renamed to the canonical spelling",
+			members: []string{"bepinex/plugins/Thing.dll", "manifest.json"},
+			want:    []string{"BepInEx/plugins/Thing.dll"},
+		},
+		{
 			name:           "shape B gains the BepInEx/ prefix for a declared game",
 			members:        []string{"patchers/HookGen/HookGenPatcher.dll", "config/HookGenPatcher.cfg", "manifest.json"},
 			loaderDeclared: true,

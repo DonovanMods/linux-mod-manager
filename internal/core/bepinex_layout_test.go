@@ -132,6 +132,25 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			wantPaths: map[string]string{"./BepInEx/plugins/Foo.dll": "BepInEx/plugins/Foo.dll"},
 		},
 		{
+			// The BepInEx directory tests were case-sensitive while the
+			// metadata and shape-B tests folded case, so a lowercase
+			// `bepinex/` root was neither normalised NOR refused: it fell
+			// through to "unrecognised", was warned about, and deployed a
+			// plugin to a path the loader does not read (review F4). Real
+			// packs are correctly cased, but a SAFETY rule must not turn
+			// on one character.
+			name:      "a lowercase bepinex/ root is normalised to the canonical spelling",
+			members:   []string{"bepinex/plugins/Thing.dll", "manifest.json"},
+			wantShape: bepinexShapeRooted,
+			wantPaths: map[string]string{"bepinex/plugins/Thing.dll": "BepInEx/plugins/Thing.dll"},
+		},
+		{
+			name:      "a wrapper containing a case-variant BepInEx/ is still shape C",
+			members:   []string{"SomePack/BEPINEX/plugins/Thing.dll", "SomePack/manifest.json"},
+			wantShape: bepinexShapeWrapped,
+			wantPaths: map[string]string{"SomePack/BEPINEX/plugins/Thing.dll": "BepInEx/plugins/Thing.dll"},
+		},
+		{
 			name:      "a loose root .dll becomes a plugin under its own directory",
 			members:   []string{"CoolMod.dll", "manifest.json", "README.md"},
 			wantShape: bepinexShapePlugin,
@@ -193,6 +212,12 @@ func TestBepInExLayout_FrameworkPackIsRefused(t *testing.T) {
 	for _, members := range [][]string{
 		{"BepInEx/core/BepInEx.Preloader.dll", "BepInEx/core/0Harmony.dll", "doorstop_config.ini", "winhttp.dll"},
 		{"BepInExPack/BepInEx/core/BepInEx.Preloader.dll", "BepInExPack/winhttp.dll", "manifest.json"},
+		// Review F4: a one-character difference used to install the
+		// preloader as a MOD - under lmm's deployed-files bookkeeping,
+		// where the next profile switch tears the loader out from under
+		// every plugin. That is exactly what this refusal exists to
+		// prevent, so it cannot be case-dependent.
+		{"bepinex/core/BepInEx.Preloader.dll", "winhttp.dll"},
 	} {
 		layout, err := bepinexNormalise(members, "BepInExPack", false)
 		assert.Nil(t, layout)

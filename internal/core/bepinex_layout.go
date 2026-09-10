@@ -87,6 +87,14 @@ func (s bepinexShape) String() string {
 	}
 }
 
+// bepinexDirName is BepInEx's own spelling of its game-root directory, and
+// the CANONICAL one every rewrite produces. An archive may spell it any way
+// its author's filesystem allowed (`bepinex/`, `BEPINEX/`); lmm folds case
+// when it recognises the directory and writes this spelling when it deploys,
+// because the loader reads a fixed path and a safety rule that turns on one
+// character is not a safety rule.
+const bepinexDirName = "BepInEx"
+
 // bepinexRootDirs are the directories BepInEx itself owns under BepInEx/,
 // and therefore the root names that identify shape B. patchers and monomod
 // are preload-time; plugins is the ordinary case; config is seeded
@@ -212,7 +220,7 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 
 	stripped := make([]string, len(payload))
 	for i, m := range payload {
-		stripped[i] = strings.TrimPrefix(m, strip)
+		stripped[i] = bepinexCanonicalRoot(strings.TrimPrefix(m, strip))
 	}
 
 	// Step 2b: drop the metadata AGAIN, now against the stripped paths.
@@ -239,10 +247,11 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 		origins, payload, stripped = keptOrigins, keptPayload, keptStripped
 	}
 
-	// Step 3: classify what the (possibly stripped) root now holds.
+	// Step 3: classify what the (possibly stripped, always canonically
+	// spelled) root now holds.
 	prefix := ""
 	switch {
-	case bepinexRootHas(stripped, "BepInEx"):
+	case bepinexRootHas(stripped, bepinexDirName):
 		// shape A, or shape C after the strip: deploys as-is.
 	case bepinexRelativeRoot(stripped):
 		shape, prefix = bepinexShapeRelative, "BepInEx/"
@@ -265,7 +274,7 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 	// worst outcome available - the loader lands under lmm's deployed-files
 	// bookkeeping and the next profile switch removes it.
 	for _, m := range stripped {
-		if strings.HasPrefix(prefix+m, "BepInEx/core/") {
+		if strings.HasPrefix(prefix+m, bepinexDirName+"/core/") {
 			return nil, fmt.Errorf("%w: it installs BepInEx/core/, which lmm configures per game as a loader rather than tracking as a profile member - install BepInEx into the game directory yourself and declare it with `lmm game edit <game> --loader bepinex` (`lmm game show <game>` then prints the launch option to paste)", ErrBepInExFrameworkPack)
 		}
 	}
@@ -306,9 +315,25 @@ func isBepInExMetadata(member string) bool {
 	return false
 }
 
+// bepinexCanonicalRoot rewrites a member's leading BepInEx directory to the
+// project's own spelling, so a case-variant archive deploys where the loader
+// actually looks and every rule below it (the shape-A test, the framework
+// refusal, isBepInExConfigMember) can go on comparing exactly.
+//
+// Only the FIRST segment: a plugin's own `bepinex/` subdirectory deeper in
+// the tree is that plugin's business.
+func bepinexCanonicalRoot(member string) string {
+	name, rest, nested := strings.Cut(member, "/")
+	if !nested || name == bepinexDirName || !strings.EqualFold(name, bepinexDirName) {
+		return member
+	}
+	return bepinexDirName + "/" + rest
+}
+
 // bepinexWrapperDir reports shape C: exactly one root entry, that entry a
-// directory, and that directory containing BepInEx/. strip is the prefix to
-// remove ("Wrapper/"), empty when there is no wrapper.
+// directory, and that directory containing BepInEx/ (any spelling of it -
+// bepinexCanonicalRoot fixes the spelling once the strip has happened).
+// strip is the prefix to remove ("Wrapper/"), empty when there is no wrapper.
 func bepinexWrapperDir(members []string) (strip string, wrapped bool) {
 	roots := bepinexRootNames(members)
 	if len(roots) != 1 {
@@ -316,7 +341,8 @@ func bepinexWrapperDir(members []string) (strip string, wrapped bool) {
 	}
 	strip = roots[0] + "/"
 	for _, m := range members {
-		if strings.HasPrefix(m, strip+"BepInEx/") {
+		inner, _, nested := strings.Cut(strings.TrimPrefix(m, strip), "/")
+		if nested && strings.EqualFold(inner, bepinexDirName) {
 			return strip, true
 		}
 	}
@@ -342,7 +368,8 @@ func bepinexRootNames(members []string) []string {
 }
 
 // bepinexRootHas reports whether members place anything under the root
-// DIRECTORY named dir.
+// DIRECTORY named dir. Compared exactly: callers pass paths that
+// bepinexCanonicalRoot has already put into BepInEx's own spelling.
 func bepinexRootHas(members []string, dir string) bool {
 	for _, m := range members {
 		if strings.HasPrefix(m, dir+"/") {
