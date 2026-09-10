@@ -6826,29 +6826,39 @@ func TestE2E_SearchTagFilterAppearsOnlyForASourceThatHonoursIt(t *testing.T) {
 		"a game whose sources do not honour tags must not offer a tag filter")
 	assert.Empty(t, f.BrowserErrors())
 
-	g := newE2EFixtureWithATagCapableSource(t)
-	var tagged string
-	g.runInBrowser(t,
-		chromedp.Navigate(g.BaseURL+"/g/"+g.Game.ID+"/"+g.Profile+"/search?q=mod"),
-		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.search-page input[name="tag"]`, chromedp.ByQuery),
-		chromedp.SetValue(`.search-page input[name="tag"]`, "armour", chromedp.ByQuery),
-		// The filter is server-side: the row that survives is the one the
-		// SOURCE kept, not one this page hid. Polled on BOTH halves - the
-		// negative alone is momentarily true of the loading state, which
-		// contains neither row.
-		chromedp.Poll(`(() => {
-			const t = document.querySelector(".search-page")?.textContent ?? "";
-			return t.includes("Armoured Mod") && !t.includes("Plain Mod");
-		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
-		textContent(`.search-page`, &tagged),
-	)
+	// EVERY id in TAG_CAPABLE_SOURCES, not just the first (#409, T1
+	// re-review Minor 2): "thunderstore" was added to that set by #408 with
+	// no test anywhere in the module, so dropping it again would have gone
+	// unnoticed - and the README's "--category and --tag both filter
+	// Thunderstore's own categories" would have quietly become false of the
+	// web UI.
+	for _, sourceID := range []string{"nexusmods", "thunderstore"} {
+		t.Run(sourceID, func(t *testing.T) {
+			g := newE2EFixtureWithATagCapableSource(t, sourceID)
+			var tagged string
+			g.runInBrowser(t,
+				chromedp.Navigate(g.BaseURL+"/g/"+g.Game.ID+"/"+g.Profile+"/search?q=mod"),
+				chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+				chromedp.WaitVisible(`.search-page input[name="tag"]`, chromedp.ByQuery),
+				chromedp.SetValue(`.search-page input[name="tag"]`, "armour", chromedp.ByQuery),
+				// The filter is server-side: the row that survives is the one the
+				// SOURCE kept, not one this page hid. Polled on BOTH halves - the
+				// negative alone is momentarily true of the loading state, which
+				// contains neither row.
+				chromedp.Poll(`(() => {
+					const t = document.querySelector(".search-page")?.textContent ?? "";
+					return t.includes("Armoured Mod") && !t.includes("Plain Mod");
+				})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+				textContent(`.search-page`, &tagged),
+			)
 
-	assert.Contains(t, tagged, "Armoured Mod",
-		"the tagged row must survive the filter")
-	assert.NotContains(t, tagged, "Plain Mod",
-		"the untagged row must not")
-	assert.Empty(t, g.BrowserErrors())
+			assert.Contains(t, tagged, "Armoured Mod",
+				"the tagged row must survive the filter")
+			assert.NotContains(t, tagged, "Plain Mod",
+				"the untagged row must not")
+			assert.Empty(t, g.BrowserErrors())
+		})
+	}
 }
 
 // TestE2E_DeployPreviewMarksWhichContenderWins is M-9 of the epic live

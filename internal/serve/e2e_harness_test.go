@@ -2307,23 +2307,30 @@ func newE2EFixtureWithAConvertibleMod(t *testing.T) e2eFixture {
 }
 
 // newE2EFixtureWithATagCapableSource is the world `lmm search --tag` acts
-// on: a game whose one source is registered under the id the SPA's own
-// TAG_CAPABLE_SOURCES list names (searchpage.js), holding one tagged mod
-// and one untagged one so the filter has something to actually narrow.
+// on: a game whose one source is registered under sourceID, which must be
+// one of the ids the SPA's own TAG_CAPABLE_SOURCES list names
+// (searchpage.js), holding one tagged mod and one untagged one so the
+// filter has something to actually narrow.
 //
-// The source is this package's fakeSource under the nexusmods id, not a
-// real client: nothing here talks to NexusMods, and the property under test
-// is that the FILTER reaches the source at all - which fakeSource's own tag
-// support (fakeModHasEveryTag) answers exactly as well.
-func newE2EFixtureWithATagCapableSource(t *testing.T) e2eFixture {
+// PARAMETERISED by the id (#409, T1 re-review Minor 2) because the list has
+// more than one member: "thunderstore" joined it with #408 and nothing
+// asserted it, so removing it again would have left every test in the
+// module green. The id IS the behaviour here - the gate is what this
+// fixture exists to drive.
+//
+// The source is this package's fakeSource under that id, not a real client:
+// nothing here talks to NexusMods or Thunderstore, and the property under
+// test is that the FILTER reaches the source at all - which fakeSource's
+// own tag support (fakeModHasEveryTag) answers exactly as well.
+func newE2EFixtureWithATagCapableSource(t *testing.T, sourceID string) e2eFixture {
 	t.Helper()
-	src := newFakeSource("nexusmods")
+	src := newFakeSource(sourceID)
 	src.addMod(fakeSourceMod{
-		Mod:  domain.Mod{ID: "armoured", SourceID: "nexusmods", Name: "Armoured Mod", Version: "1.0"},
+		Mod:  domain.Mod{ID: "armoured", SourceID: sourceID, Name: "Armoured Mod", Version: "1.0"},
 		Tags: []string{"armour"},
 	})
 	src.addMod(fakeSourceMod{
-		Mod: domain.Mod{ID: "plain", SourceID: "nexusmods", Name: "Plain Mod", Version: "1.0"},
+		Mod: domain.Mod{ID: "plain", SourceID: sourceID, Name: "Plain Mod", Version: "1.0"},
 	})
 	return newE2EFixtureFromSource(t, src)
 }
