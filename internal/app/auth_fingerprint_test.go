@@ -127,6 +127,9 @@ func TestAuthStatus_UnreadableStoredRowFallsBackToTheEnvironment(t *testing.T) {
 	assert.True(t, report.Sources[0].Authenticated)
 	assert.Equal(t, "env", report.Sources[0].Via)
 	assert.True(t, report.Sources[0].Unreadable, "the damaged row is still worth reporting")
+	assert.False(t, report.Sources[0].StoredKeyShadowed,
+		"#356: a credential that cannot authenticate anything is not being outranked - "+
+			"'shadowed' would send the user looking for a working key that is not there")
 }
 
 // corruptToken flips the last byte of sourceID's stored ciphertext.
