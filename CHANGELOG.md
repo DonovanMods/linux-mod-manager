@@ -884,6 +884,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and both are accepted at all times: **`#3`** is row 3, **`app:10`** is
   Steam app id 10.
 
+- **The man pages no longer drop placeholders and env-var names out of the
+  commands they tell you to run (#368).** `man lmm-game-detect` rendered
+  `lmm game add --from-detected ` — the `<app-id>` placeholder gone, leaving
+  an incomplete command in the one place a user copies from — because the
+  generator only escaped Markdown-active characters in each command's
+  SYNOPSIS line, not in its help text. `man lmm-auth-login` lost two
+  environment variable names the same way, to Markdown emphasis:
+  `CURSEFORGE_API_KEY` and `LMM_<ID>_API_KEY` rendered as
+  `CURSEFORGE_APIKEY` and `LMM_API_KEY`. Both are fixed in the generator, so
+  it cannot recur; `--help` output is untouched.
+
 - **Re-picking an already-configured uncurated detect row now says what to
   do instead (#368).** Detect refuses to overwrite a row it has no
   known-games entry for - there is nothing curated to repair it from - and

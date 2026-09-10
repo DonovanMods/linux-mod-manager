@@ -134,16 +134,83 @@ func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
 		"expected exactly 25 commands with angle-bracket Use args; update this count if the command tree changed")
 }
 
+// TestGenManTree_AngleBracketPlaceholdersSurviveInLongHelp is the same
+// finding one section down (#368 review Minor 4): the Use-line escaping only
+// covered SYNOPSIS, so a placeholder inside a command's Long or Short help
+// was still parsed as inline HTML and dropped from DESCRIPTION - `lmm game
+// detect`'s help pointed twice at "lmm game add --from-detected <app-id>",
+// and the man page rendered "lmm game add --from-detected " with the
+// placeholder gone, leaving an incomplete command in the one place a user
+// copies from.
+//
+// Exhaustive over the tree, like its SYNOPSIS twin, and the count pins how
+// many pages actually carry such a placeholder so a new one is a deliberate
+// change rather than a silent one.
+func TestGenManTree_AngleBracketPlaceholdersSurviveInLongHelp(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, genManTree(dir))
+
+	checked := 0
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if c.IsAvailableCommand() {
+			if args := helpPlaceholderRE.FindAllString(c.Long+"\n"+c.Short, -1); len(args) > 0 {
+				checked++
+				page := strings.ReplaceAll(c.CommandPath(), " ", "-") + ".1"
+				body := readSection(t, filepath.Join(dir, page), ".SH DESCRIPTION")
+				for _, arg := range args {
+					assert.Contains(t, body, arg,
+						"%s DESCRIPTION should keep the %s placeholder its help text spells out", page, arg)
+				}
+			}
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(rootCmd)
+
+	assert.Equal(t, 3, checked,
+		"expected exactly 3 commands whose Long/Short help spells an angle-bracket placeholder (game detect, auth login, verify); update this count if the help text changed")
+}
+
+// TestGenManTree_UnderscoredNamesSurviveMarkdown is the same generator
+// defect one character over (#368 review Minor 4): a PAIR of underscores in
+// prose is Markdown emphasis, so `lmm auth login`'s help rendered
+// "CURSEFORGE_API_KEY, or the derived LMM_<ID>_API_KEY" as
+// "CURSEFORGE_APIKEY ... LMM_API_KEY" - two environment variable names that
+// do not exist, in the sentence telling a user which one to set.
+func TestGenManTree_UnderscoredNamesSurviveMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, genManTree(dir))
+
+	body := readSection(t, filepath.Join(dir, "lmm-auth-login.1"), ".SH DESCRIPTION")
+	assert.Contains(t, body, "CURSEFORGE_API_KEY")
+	assert.Contains(t, body, "LMM_<ID>_API_KEY")
+}
+
 var angleBracketArgsRE = regexp.MustCompile(`<[^>]+>`)
+
+// helpPlaceholderRE is angleBracketArgsRE narrowed to a PLACEHOLDER token -
+// no whitespace, so a shell redirect in `lmm completion`'s help ("lmm
+// completion zsh > ...") is not read as one.
+var helpPlaceholderRE = regexp.MustCompile(`<[A-Za-z][A-Za-z0-9|._-]*>`)
 
 // readSynopsis extracts the roff SYNOPSIS section's body from a generated
 // man page for content assertions.
 func readSynopsis(t *testing.T, path string) string {
 	t.Helper()
+	return readSection(t, path, ".SH SYNOPSIS")
+}
+
+// readSection extracts one roff section's body (up to the next .SH) from a
+// generated man page, so an assertion about DESCRIPTION cannot be satisfied
+// by the same text appearing in SYNOPSIS.
+func readSection(t *testing.T, path, marker string) string {
+	t.Helper()
 	data, err := os.ReadFile(path)
 	require.NoError(t, err, "reading %s", path)
 
-	const marker = ".SH SYNOPSIS"
 	content := string(data)
 	start := strings.Index(content, marker)
 	require.NotEqual(t, -1, start, "%s has no %s section", path, marker)

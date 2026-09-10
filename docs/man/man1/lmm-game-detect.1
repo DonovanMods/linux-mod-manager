@@ -50,13 +50,13 @@ mapped to the 'steamworkshop' source automatically, so 'lmm import
 LISTED even when lmm has no curated entry for it - the downloaded items
 are what say it is moddable - with its item count beside it, and
 selecting it configures it straight from the detection, exactly as 'lmm
-game add --from-detected \&' would.
+game add --from-detected <app-id>\&' would.
 
 .PP
 --include-unknown also lists every OTHER installed Steam game, in the same
 uncurated section (#206). Nothing tells lmm where those keep their mods,
 so selecting one is refused with a pointer to 'lmm game add
---from-detected \&', which prefills the name, install path, game id
+--from-detected <app-id>\&', which prefills the name, install path, game id
 and a default mod path and asks only for the source. Under --json,
 --include-unknown with neither --all nor --select emits the detect LISTING
 document (every candidate, known and unknown) instead of prompting: search

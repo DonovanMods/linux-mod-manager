@@ -51,8 +51,8 @@ underscores) - lmm reads that on every run.
 
 .PP
 Non-interactive (#307): --key-from-env reads the source's own environment
-variable (NEXUSMODS_API_KEY, CURSEFORGE_API\fIKEY, or the derived
-LMM\fP_API_KEY), and --key-stdin reads exactly one line from stdin with
+variable (NEXUSMODS_API_KEY, CURSEFORGE_API_KEY, or the derived
+LMM_<ID>_API_KEY), and --key-stdin reads exactly one line from stdin with
 no prompt. Either works under --json, which then emits the same
 authentication report 'lmm auth status --json' does. The two are mutually
 exclusive, and both require the source to be named positionally.

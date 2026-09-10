@@ -80,9 +80,19 @@ func genManTree(dir string) error {
 	// affected; square-bracket placeholders like "[flags]" were unaffected).
 	// Escaping "<"/">" as their Markdown backslash-escapes survives that
 	// pass and round-trips to the literal character. Restore afterward so
-	// --help (which reads Use directly, unescaped) is never affected, and
-	// so this is safe to call repeatedly, e.g. from tests.
-	restore := escapeUseAngleBrackets(rootCmd)
+	// --help (which reads these fields directly, unescaped) is never
+	// affected, and so this is safe to call repeatedly, e.g. from tests.
+	//
+	// The SAME pass runs over Short/Long/Example, because DESCRIPTION is
+	// rendered through the same Markdown step (#368 review Minor 4): `lmm
+	// game detect`'s help pointed twice at `lmm game add --from-detected
+	// <app-id>` and the page rendered "--from-detected " - an incomplete
+	// command in the one place a user copies from. Underscores go with them,
+	// for the same reason one step further on: a PAIR of them is Markdown
+	// emphasis, so `lmm auth login`'s "CURSEFORGE_API_KEY, or the derived
+	// LMM_<ID>_API_KEY" rendered as "CURSEFORGE_APIKEY ... LMM_API_KEY" -
+	// two environment variable names that do not exist.
+	restore := escapeHelpAngleBrackets(rootCmd)
 	defer restore()
 
 	header := &doc.GenManHeader{
@@ -121,28 +131,63 @@ func removeStaleManPages(dir string) error {
 	return nil
 }
 
-// useAngleBracketEscaper rewrites "<" and ">" to their Markdown
-// backslash-escaped form so blackfriday (via go-md2man) treats them as
-// literal characters instead of attempting to parse inline HTML.
-var useAngleBracketEscaper = strings.NewReplacer("<", `\<`, ">", `\>`)
+// helpMarkdownEscaper rewrites the characters blackfriday (via go-md2man)
+// reads as markup to their Markdown backslash-escaped form, so they reach
+// roff as the literal characters the help text wrote: "<"/">" would parse as
+// inline HTML and be dropped, and a pair of "_" as emphasis.
+var helpMarkdownEscaper = strings.NewReplacer("<", `\<`, ">", `\>`, "_", `\_`)
 
-// escapeUseAngleBrackets walks cmd and its descendants, escaping "<"/">" in
-// each command's Use string in place. Returns a restore func - callers
-// must defer it - that puts every changed Use string back exactly as it
-// was.
-func escapeUseAngleBrackets(cmd *cobra.Command) (restore func()) {
+// helpMarkdownUnescaper undoes that first, so a help string that already
+// spells the escape by hand (`lmm verify`'s Long has `\<mod-id\>`, written
+// back when only Use was escaped) is escaped ONCE rather than rendering a
+// literal backslash.
+var helpMarkdownUnescaper = strings.NewReplacer(`\<`, "<", `\>`, ">", `\_`, "_")
+
+// escapeHelpText escapes a help string line by line, leaving CODE lines
+// alone: an indented line is a Markdown code block, where nothing is parsed
+// as markup - "<mod-id>" already survives verbatim there (`lmm verify`'s
+// report legend) and a backslash would render AS a backslash. Prose is where
+// the text gets eaten, and prose is what gets escaped.
+//
+// A string that already spells the escape by hand is normalized first, so it
+// is escaped exactly once.
+func escapeHelpText(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
+			continue
+		}
+		lines[i] = helpMarkdownEscaper.Replace(helpMarkdownUnescaper.Replace(line))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// escapeHelpAngleBrackets walks cmd and its descendants, escaping every
+// help string the man generator renders through Markdown - Use (SYNOPSIS)
+// plus Short/Long/Example (NAME and DESCRIPTION) - in place. Returns a
+// restore func - callers must defer it - that puts every changed string back
+// exactly as it was, so --help is never affected.
+func escapeHelpAngleBrackets(cmd *cobra.Command) (restore func()) {
 	type saved struct {
-		cmd *cobra.Command
-		use string
+		field   *string
+		content string
 	}
 	var originals []saved
 
+	escape := func(field *string) {
+		if !strings.ContainsAny(*field, "<>_") {
+			return
+		}
+		originals = append(originals, saved{field, *field})
+		*field = escapeHelpText(*field)
+	}
+
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
-		if strings.ContainsAny(c.Use, "<>") {
-			originals = append(originals, saved{c, c.Use})
-			c.Use = useAngleBracketEscaper.Replace(c.Use)
-		}
+		escape(&c.Use)
+		escape(&c.Short)
+		escape(&c.Long)
+		escape(&c.Example)
 		for _, sub := range c.Commands() {
 			walk(sub)
 		}
@@ -151,7 +196,7 @@ func escapeUseAngleBrackets(cmd *cobra.Command) (restore func()) {
 
 	return func() {
 		for _, o := range originals {
-			o.cmd.Use = o.use
+			*o.field = o.content
 		}
 	}
 }
