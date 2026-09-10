@@ -168,3 +168,84 @@ func TestDownloadIngest_BepInEx_WrappedPackageDropsTheMetadataInsideTheWrapper(t
 	_, err = os.Lstat(filepath.Join(fixture.game.InstallPath, "manifest.json"))
 	assert.True(t, os.IsNotExist(err))
 }
+
+// TestDownloadIngest_BepInEx_RefusedIngestKeepsTheArchiveForTheRetry is
+// review F9. The loader precondition lands at ingest, which is the earliest
+// point an archive's SHAPE is knowable - but the refusal discarded the bytes
+// with the staging directory, so the re-run after `lmm game edit --loader
+// bepinex` downloaded the whole archive again. For a NexusMods free-tier
+// user that is a second manual download.
+//
+// The end state of the refusal is unchanged and still asserted here: nothing
+// deployed, no cache entry, no DB row. Only the downloaded FILE is kept.
+func TestDownloadIngest_BepInEx_RefusedIngestKeepsTheArchiveForTheRetry(t *testing.T) {
+	fixture := newBepInExDownloadFixture(t, map[string]string{
+		"BepInEx/plugins/Thing.dll": "assembly",
+		"manifest.json":             "{}",
+	}, false)
+
+	err := fixture.download(t)
+	var loaderErr *core.LoaderRequiredError
+	require.ErrorAs(t, err, &loaderErr)
+	assert.Equal(t, int64(1), fixture.downloads.Load(), "the archive was fetched once")
+
+	assert.False(t, fixture.svc.GetGameCache(fixture.game).Exists(
+		fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version),
+		"a refused ingest commits no cache entry")
+
+	// The user does what the error told them to.
+	_, err = fixture.svc.UpdateGameLoader(context.Background(), fixture.game.ID,
+		&core.LoaderSpec{Kind: domain.LoaderKindBepInEx})
+	require.NoError(t, err)
+	game, err := fixture.svc.GetGame(fixture.game.ID)
+	require.NoError(t, err)
+	fixture.game = game
+
+	require.NoError(t, fixture.download(t))
+	assert.Equal(t, int64(1), fixture.downloads.Load(),
+		"the retry reuses the archive the refusal kept - no second download")
+
+	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(
+		fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version)
+	require.NoError(t, err)
+	require.Len(t, cached, 1)
+	assert.Equal(t, filepath.FromSlash("BepInEx/plugins/Thing.dll"), cached[0])
+}
+
+// Only the loader precondition retains. A framework pack is refused for a
+// reason no game edit fixes - the archive is BepInEx itself, not a mod - so
+// nothing is kept and the next attempt is an ordinary download. Keeping
+// every refused archive would be a general download cache, which this is
+// deliberately not.
+func TestDownloadIngest_BepInEx_AFrameworkPackRefusalRetainsNothing(t *testing.T) {
+	fixture := newBepInExDownloadFixture(t, map[string]string{
+		"BepInEx/core/BepInEx.Preloader.dll": "preloader",
+		"winhttp.dll":                        "proxy",
+		"manifest.json":                      "{}",
+	}, true)
+
+	require.ErrorIs(t, fixture.download(t), core.ErrBepInExFrameworkPack)
+	assert.Equal(t, int64(1), fixture.downloads.Load())
+
+	require.ErrorIs(t, fixture.download(t), core.ErrBepInExFrameworkPack)
+	assert.Equal(t, int64(2), fixture.downloads.Load(),
+		"nothing was retained, so the second attempt fetches again")
+}
+
+// A successful ingest leaves no retained copy behind: the bytes are in the
+// cache, so a second one would be dead weight in the user's data directory.
+func TestDownloadIngest_BepInEx_ASuccessfulIngestRetainsNothing(t *testing.T) {
+	fixture := newBepInExDownloadFixture(t, map[string]string{
+		"BepInEx/plugins/Thing.dll": "assembly",
+		"manifest.json":             "{}",
+	}, true)
+	require.NoError(t, fixture.download(t))
+
+	retained := filepath.Join(fixture.svc.DataDirForTest(), "downloads", "retained")
+	entries, err := os.ReadDir(retained)
+	if err == nil {
+		assert.Empty(t, entries, "a successful ingest keeps no archive")
+	} else {
+		assert.True(t, os.IsNotExist(err), "unexpected error reading %s: %v", retained, err)
+	}
+}

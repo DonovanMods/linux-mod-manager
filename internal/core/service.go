@@ -1056,13 +1056,24 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	// left untouched for display purposes (the SHA256 mismatch message).
 	safeFileName := filepath.Base(file.FileName)
 	archivePath := filepath.Join(tempDir, safeFileName)
-	var headers map[string]string
-	if hp, ok := src.(source.DownloadHeaderProvider); ok {
-		headers = hp.DownloadHeaders(url)
-	}
-	downloadResult, err := s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, sink)
-	if err != nil {
-		return nil, fmt.Errorf("downloading mod: %w", err)
+
+	// An earlier ingest of this exact file may have been refused for a
+	// reason the user answers by reconfiguring the GAME (#359's loader
+	// precondition), in which case the bytes were kept and there is nothing
+	// to fetch (retained_download.go). Everything below is unchanged either
+	// way, integrity checks included.
+	retainedPath, downloadResult, reused := s.reuseRetainedDownload(sourceID, mod.ID, file.ID)
+	if !reused {
+		var headers map[string]string
+		if hp, ok := src.(source.DownloadHeaderProvider); ok {
+			headers = hp.DownloadHeaders(url)
+		}
+		downloadResult, err = s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, sink)
+		if err != nil {
+			return nil, fmt.Errorf("downloading mod: %w", err)
+		}
+	} else {
+		archivePath = retainedPath
 	}
 
 	if file.SHA256 != "" && !strings.EqualFold(downloadResult.SHA256, file.SHA256) {
@@ -1158,11 +1169,15 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 
 	members, err := s.extractIntoStaging(ctx, game, mod, archivePath, cachePath, stagePath)
 	if err != nil {
+		s.retainRefusedDownload(err, sourceID, mod.ID, file.ID, archivePath, downloadResult)
 		return nil, fmt.Errorf("extracting mod: %w", err)
 	}
 	if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, members); err != nil {
 		return nil, err
 	}
+	// The bytes are in the cache now, so any copy kept for a retry is dead
+	// weight.
+	s.dropRetainedDownload(sourceID, mod.ID, file.ID)
 
 	// Count extracted files
 	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
