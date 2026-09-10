@@ -34,15 +34,47 @@ game, which is exactly the set you are editing). A game must keep at
 least one source, so removing the last one is refused.
 
 .PP
+--loader declares a mod loader installed in the game directory (today
+\&'bepinex'), with --loader-version, --loader-runtime (mono|il2cpp) and
+--loader-bootstrap (native|proton) refining it; leave the last two out and
+lmm reads them off the install directory. Declaring a loader is what makes
+lmm normalise ambiguous BepInEx archive layouts for this game, refuse to
+deploy a plugin the game cannot load, and run 'lmm verify's loader checks.
+\&'--loader ""' removes the declaration. lmm never installs the loader and
+never writes a Steam launch option - 'lmm game show' prints the exact
+string to paste.
+
+.PP
+Sources and the loader are separate edits: pass one or the other.
+
+.PP
 Examples:
   lmm game edit skyrim-se --source curseforge=skyrim
   lmm game edit icarus --source local-mods= --remove-source nexusmods
+  lmm game edit valheim --loader bepinex --loader-version 5.4.23.5 --loader-bootstrap proton
+  lmm game edit valheim --loader ""
   lmm game edit skyrim-se --source nexusmods=skyrimspecialedition --json
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
 	help for edit
+
+.PP
+\fB--loader\fP=""
+	declare a mod loader installed in the game directory (today: bepinex); "" removes the declaration
+
+.PP
+\fB--loader-bootstrap\fP=""
+	how the loader is injected: native or proton (default: read from the install directory)
+
+.PP
+\fB--loader-runtime\fP=""
+	the game's Unity scripting backend: mono or il2cpp (default: read from the install directory)
+
+.PP
+\fB--loader-version\fP=""
+	the loader version installed in the game directory, e.g. 5.4.23.5 (checked by 'lmm verify')
 
 .PP
 \fB--remove-source\fP=[]

@@ -1,0 +1,36 @@
+{
+  "id": "valheim",
+  "name": "Valheim",
+  "install_path": "/home/user/.steam/steam/steamapps/common/Valheim",
+  "mod_path": "/home/user/.steam/steam/steamapps/common/Valheim",
+  "source_ids": {
+    "nexusmods": "valheim"
+  },
+  "link_method": "symlink",
+  "link_method_explicit": false,
+  "hooks": {
+    "install": {},
+    "uninstall": {}
+  },
+  "deploy_mode": "extract",
+  "convert_paks_explicit": false,
+  "loader": {
+    "kind": "bepinex",
+    "version": "5.4.23.5"
+  },
+  "default": true,
+  "loader_status": {
+    "game_id": "valheim",
+    "declared": {
+      "kind": "bepinex",
+      "version": "5.4.23.5"
+    },
+    "detected_runtime": "mono",
+    "detected_bootstrap": "proton",
+    "effective_runtime": "mono",
+    "effective_bootstrap": "proton",
+    "launch_option": "WINEDLLOVERRIDES=\"winhttp=n,b\" %command%",
+    "installed": true,
+    "loaded_at": "2026-08-27T12:00:00Z"
+  }
+}

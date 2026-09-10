@@ -1882,6 +1882,34 @@ func TestJSONGoldens(t *testing.T) {
 			core.SnapshotDeleteResult{Name: "before-tweaks", GameID: "skyrim-se", Deleted: true},
 		},
 		{
+			// #359: `lmm game show <id>`'s document - a game-list row plus
+			// the loader report. The embedded Game carries the DECLARATION
+			// under "loader"; what is actually on disk is the separate
+			// "loader_status".
+			"game_detail",
+			core.GameDetail{
+				GameListEntry: core.GameListEntry{
+					Game: domain.Game{
+						ID: "valheim", Name: "Valheim",
+						InstallPath: "/home/user/.steam/steam/steamapps/common/Valheim",
+						ModPath:     "/home/user/.steam/steam/steamapps/common/Valheim",
+						SourceIDs:   map[string]string{"nexusmods": "valheim"},
+						Loader:      &domain.GameLoader{Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5"},
+					},
+					Default: true,
+				},
+				Loader: &core.LoaderStatus{
+					GameID:          "valheim",
+					Declared:        &domain.GameLoader{Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5"},
+					DetectedRuntime: domain.LoaderRuntimeMono, DetectedBootstrap: domain.LoaderBootstrapProton,
+					EffectiveRuntime: domain.LoaderRuntimeMono, EffectiveBootstrap: domain.LoaderBootstrapProton,
+					LaunchOption: core.BepInExLaunchOptionProton,
+					Installed:    true,
+					LoadedAt:     "2026-08-27T12:00:00Z",
+				},
+			},
+		},
+		{
 			// #359 unit 3: the loader report `lmm game show` prints and the
 			// web game page renders. It carries the declared AND the detected
 			// answer, so a disagreement is visible on the wire rather than

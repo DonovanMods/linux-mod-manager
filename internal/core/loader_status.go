@@ -262,3 +262,41 @@ func loaderStatusWarnings(status *LoaderStatus) []string {
 	}
 	return warnings
 }
+
+// GameDetail is `lmm game show <id>`'s document and the web game page's
+// hydrate: one configured game's row, plus the loader report for it.
+//
+// It embeds GameListEntry rather than nesting it, matching GameSummary and
+// GameStatus (Ruling 15's shape for a game document), so a consumer that
+// already decodes a game-list row needs no second decoder. The embedded
+// domain.Game carries the DECLARATION under "loader"; LoaderStatus is the
+// separate question of what is actually on disk, so it lands under
+// "loader_status" rather than shadowing it.
+type GameDetail struct {
+	GameListEntry
+	// Loader is the loader report. Always present - a game that declares no
+	// loader still gets one, because "here is the build and the launch
+	// option you would need" is exactly what someone setting one up reads.
+	Loader *LoaderStatus `json:"loader_status,omitzero"`
+}
+
+// GameDetail returns the full document for gameID: its `lmm game list` row
+// and its loader report. Read-only, so it takes no mutation gate.
+//
+// An unknown game is domain.ErrGameNotFound, the 404 every other
+// game-scoped surface answers with.
+func (s *Service) GameDetail(ctx context.Context, gameID string) (*GameDetail, error) {
+	game, ok := s.game(gameID)
+	if !ok {
+		return nil, domain.ErrGameNotFound
+	}
+	defaultGame, err := s.DefaultGame(ctx)
+	if err != nil {
+		return nil, err
+	}
+	status, err := s.LoaderStatus(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	return &GameDetail{GameListEntry: newGameListEntry(game, defaultGame), Loader: status}, nil
+}

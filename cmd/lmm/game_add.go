@@ -108,6 +108,13 @@ var (
 	gameAddPath         string
 	gameAddModPath      string
 	gameAddFromDetected string
+	// #359's loader declaration. --loader alone is enough (a game whose
+	// runtime and bootstrap lmm can read off the install directory needs
+	// nothing more); the other three refine it.
+	gameAddLoader          string
+	gameAddLoaderVersion   string
+	gameAddLoaderRuntime   string
+	gameAddLoaderBootstrap string
 )
 
 func init() {
@@ -121,6 +128,14 @@ func init() {
 	gameAddCmd.Flags().StringVar(&gameAddGameID, "game-id", "", "the LOCAL games.yaml key (default: derived from the catalog match's slug, or from --id)")
 	gameAddCmd.Flags().StringVar(&gameAddPath, "path", "", "game install path (must exist)")
 	gameAddCmd.Flags().StringVar(&gameAddModPath, "mod-path", "", "mod directory, absolute or relative to the install path (default: <install path>/mods)")
+	gameAddCmd.Flags().StringVar(&gameAddLoader, "loader", "",
+		"declare a mod loader installed in the game directory (today: bepinex) - see 'lmm game show' for the launch option it needs")
+	gameAddCmd.Flags().StringVar(&gameAddLoaderVersion, "loader-version", "",
+		"the loader version installed in the game directory, e.g. 5.4.23.5 (checked by 'lmm verify')")
+	gameAddCmd.Flags().StringVar(&gameAddLoaderRuntime, "loader-runtime", "",
+		"the game's Unity scripting backend: mono or il2cpp (default: read from the install directory)")
+	gameAddCmd.Flags().StringVar(&gameAddLoaderBootstrap, "loader-bootstrap", "",
+		"how the loader is injected: native or proton (default: read from the install directory)")
 	gameAddCmd.Flags().StringVar(&gameAddFromDetected, "from-detected", "",
 		"Steam app id of an installed game to prefill from (list them with 'lmm game detect --include-unknown')")
 	gameAddCmd.MarkFlagsMutuallyExclusive("id", "query")
@@ -156,6 +171,15 @@ func doGameAdd(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, se
 		Name: gameAddName, ID: gameAddGameID,
 		InstallPath: gameAddPath, ModPath: gameAddModPath,
 	}
+
+	// #359: the loader declaration, if any. Validated by core (which owns
+	// the vocabulary and names the wire field a rejection is about); the
+	// CLI only rejects the detail flags with no --loader to attach them to.
+	loader, err := loaderSpecFromFlags(gameAddLoader, gameAddLoaderVersion, gameAddLoaderRuntime, gameAddLoaderBootstrap)
+	if err != nil {
+		return err
+	}
+	spec.Loader = loader
 
 	// --from-detected prefills the spec from an installed Steam game
 	// before any flag is consulted (#206). core.GameSpecFromDetected is
