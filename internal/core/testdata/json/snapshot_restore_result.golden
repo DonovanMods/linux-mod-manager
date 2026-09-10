@@ -1,0 +1,36 @@
+{
+  "snapshot": "before-tweaks",
+  "profile": "default",
+  "safety_snapshot": "auto-snapshot_restore-20260827-120000",
+  "switched_from": "survival",
+  "purged": 4,
+  "originals_restored": 2,
+  "originals_skipped": [
+    {
+      "root": "install_path",
+      "relative_path": "Data/game.ini",
+      "status": "unavailable",
+      "reason": "the stored copy is missing"
+    }
+  ],
+  "disabled": 1,
+  "enabled": 2,
+  "installed": 3,
+  "replaced": 1,
+  "deployed": 7,
+  "refused": [
+    {
+      "source_id": "curseforge",
+      "mod_id": "7",
+      "name": "Gone Mod",
+      "version": "0.9",
+      "reason": "no downloadable files"
+    }
+  ],
+  "notes": [
+    "the current state was recorded as auto-snapshot_restore-20260827-120000"
+  ],
+  "warnings": [
+    "could not sync merged pak"
+  ]
+}

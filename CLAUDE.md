@@ -91,7 +91,7 @@ internal/
     ├── conflicts.go       # File-conflict detection: ConflictModRef/ConflictReport for `lmm conflicts`
     ├── converge.go        # convergeDeployedFiles: remove-only reconciliation of deployed state (#168/#212)
     ├── deployable.go      # deployableFiles: the deploy-direction file resolver (#210)
-    ├── overrides.go       # ApplyProfileOverrides: profile config-override files written to the game dir
+    ├── overrides.go       # applyProfileOverrides: profile config-override files written to the game dir
     ├── merged_pak.go      # DeployCompile merged-artifact sync (singleton synthetic mod per game/profile, #197)
     ├── downloader.go      # HTTP downloads with retry/backoff + checksum verification
     ├── extractor.go       # Archive extraction (.zip native, .7z/.rar via system tools)

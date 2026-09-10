@@ -541,3 +541,28 @@ func TestScrubTokenPlaintext_HonoursItsDeadline(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+// TestScrubTokenPlaintext_BudgetExhaustionNamesTheFileAndTheRemedy pins
+// re-review N3: the budget's own exit used to return a bare `context
+// deadline exceeded`, so the ONE failure a user is most likely to hit -
+// another lmm process holding the database - lost both the file name and
+// the "close the other process and run it again" remedy that every other
+// scrub failure carries. The safety property was never in question; the
+// actionable half of the message was.
+func TestScrubTokenPlaintext_BudgetExhaustionNamesTheFileAndTheRemedy(t *testing.T) {
+	d, _, _ := openFileDB(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := d.scrubTokenPlaintext(ctx)
+	require.Error(t, err)
+	// Still the context error underneath, so errors.Is keeps working for
+	// any caller that only wants to know the wait was cut short.
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Contains(t, err.Error(), d.path, "the message must name the database file")
+	assert.Contains(t, err.Error(), "close any other lmm process",
+		"the message must carry the same remedy every other scrub failure carries")
+	assert.Contains(t, err.Error(), "pre-encryption credentials",
+		"the message must say what could not be removed")
+}

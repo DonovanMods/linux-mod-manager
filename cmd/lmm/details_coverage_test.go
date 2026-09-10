@@ -28,11 +28,12 @@ var detailsCoverage = map[string]string{
 	"core.GameSpecError":          "TestReportError_JSON_GameSpecError",
 	// #317's cross-process mutation refusal: the holder's pid/started_at
 	// reach the envelope as data, not only as the sentence.
-	"core.OperationInProgressError": "TestReportError_JSON_OperationInProgressError",
-	"core.ProfileWarningsError":     "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
-	"core.SourceInUseError":         "TestReportError_JSON_SourceInUseError",
-	"core.TokenKeyError":            "TestReportError_JSON_TokenKeyError",
-	"sourceValidationError":         "TestReportError_JSON_SourceValidationError",
+	"core.OperationInProgressError":    "TestReportError_JSON_OperationInProgressError",
+	"core.ProfileWarningsError":        "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
+	"core.SnapshotRestorePartialError": "TestReportError_JSON_SnapshotRestorePartialError",
+	"core.SourceInUseError":            "TestReportError_JSON_SourceInUseError",
+	"core.TokenKeyError":               "TestReportError_JSON_TokenKeyError",
+	"sourceValidationError":            "TestReportError_JSON_SourceValidationError",
 }
 
 // TestDetailsTypesAreCovered enforces detailsCoverage: every type found to

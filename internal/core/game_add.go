@@ -19,6 +19,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // ErrGameExists is returned by AddGame when games.yaml already holds the
@@ -211,9 +212,13 @@ func ExactGameCatalogMatch(report *GameCatalogReport, name string) *GameCatalogM
 //     that is what keeps a CurseForge add keyed "minecraft" rather than
 //     "432".
 //   - ModPath is optional: empty defaults to <InstallPath>/mods, exactly
-//     the default the CLI's prompt offered. A non-empty value must be
-//     ABSOLUTE (#313); a relative one is refused rather than silently
-//     resolved against the process working directory.
+//     the default the CLI's prompt offered. A non-empty value may be
+//     absolute OR relative to InstallPath: a relative one is resolved
+//     against it, the same rule config.ResolveModPath applies when
+//     games.yaml is read (#363), and the ABSOLUTE result is what gets
+//     written - so the recorded value never depends on the working
+//     directory lmm ran from. Both this and InstallPath are ~-expanded
+//     first, so "~/mods" is an absolute path rather than a relative one.
 //   - LinkMethod is optional in the strongest sense: domain.LinkSymlink IS
 //     its zero value, so an unset field writes exactly the symlink method
 //     the CLI has always written, with no defaulting step to drift.
@@ -259,8 +264,14 @@ type GameSpec struct {
 // at the first deploy): the install path must exist and be a directory;
 // the mod path is NOT created - deploy creates it on demand, and a game is
 // routinely configured before its mod directory exists - but it must not
-// already exist as a non-directory; and it must be ABSOLUTE (#313), since
-// a relative one resolves against the caller's working directory.
+// already exist as a non-directory. Both paths are ~-expanded, and a
+// RELATIVE mod path is resolved against the install path exactly as
+// config.ResolveModPath resolves one at load (#363), with the resolved
+// absolute value being what gets written - so "Data" means the same thing
+// in a hand-written games.yaml, at this prompt, in the web form and at
+// POST /api/v1/games. A relative mod path with no install path to resolve
+// against is still refused (review M6), reported against install_path,
+// which is the missing value.
 //
 // A duplicate id is refused with ErrGameExists rather than overwritten.
 // That is the one place AddGame does NOT reproduce the old CLI flow, which
@@ -402,7 +413,14 @@ func (spec GameSpec) game() (*domain.Game, error) {
 		}
 	}
 
-	installPath := strings.TrimSpace(spec.InstallPath)
+	// Both paths are expanded exactly as the LOADER expands them
+	// (config.LoadGames runs ExpandPath over install_path and mod_path
+	// before resolving one against the other), so "~/games/skyrim" typed
+	// at a prompt - where no shell expanded it - means what it says
+	// instead of failing as a directory that does not exist. Expansion
+	// before resolution also keeps "~/mods" from being mistaken for a
+	// relative value and joined onto the install path (#363).
+	installPath := config.ExpandPath(strings.TrimSpace(spec.InstallPath))
 	if installPath == "" {
 		return nil, newGameSpecError("install_path", "", "the game's install path is required")
 	}
@@ -410,19 +428,33 @@ func (spec GameSpec) game() (*domain.Game, error) {
 		return nil, &GameSpecError{Field: "install_path", Value: installPath, Reason: err.Error(), Err: err}
 	}
 
-	modPath := strings.TrimSpace(spec.ModPath)
+	modPath := config.ExpandPath(strings.TrimSpace(spec.ModPath))
 	if modPath == "" {
 		modPath = filepath.Join(installPath, "mods")
 	}
-	// #313: a relative mod_path resolves against whatever directory lmm was
-	// run from, so the value written today would name a different directory
-	// tomorrow. A hand-written games.yaml gets it joined onto install_path
-	// at load (config.ResolveModPath); a WRITE is refused outright, because
-	// there is no reason for a frontend to send one.
-	if !filepath.IsAbs(modPath) {
-		return nil, newGameSpecError("mod_path", modPath,
-			"the mod path must be absolute (a relative path would resolve against the current directory)")
+	// #363: the WRITE side applies the LOADER's rule. A relative mod_path
+	// has always meant "relative to install_path" in a hand-written
+	// games.yaml (config.ResolveModPath); refusing the same string here -
+	// which is what #313 settled on, reasoning that "a frontend has no
+	// reason to send one" - made one value mean two things, and the
+	// reasoning was wrong: a user typing "Data" at the `game add` prompt,
+	// in the web form or at POST /api/v1/games is exactly that frontend.
+	//
+	// The value lmm WRITES is the resolved absolute path, so every later
+	// run reads the same directory regardless of the working directory it
+	// was started from - the property #313 was protecting, kept.
+	//
+	// The one refusal that survives is review M6's: a relative value with
+	// no install_path to resolve it against. In practice install_path is
+	// required and already checked above, so that refusal is reported
+	// against install_path (the actual fault) and this branch is
+	// unreachable from AddGame - it stays because ResolveModPath owns the
+	// rule and this must not silently diverge from it if that ever changes.
+	resolved, err := config.ResolveModPath(installPath, modPath)
+	if err != nil {
+		return nil, &GameSpecError{Field: "mod_path", Value: modPath, Reason: err.Error(), Err: err}
 	}
+	modPath = resolved
 	// Absent is fine (deploy creates it); present-but-not-a-directory is
 	// not, and would otherwise fail every later deploy with a confusing
 	// link error.

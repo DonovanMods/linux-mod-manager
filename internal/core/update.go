@@ -811,6 +811,15 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	profileName := plan.Mod.ProfileName
 	upd := *plan.Update
 
+	// #350's opt-in auto-snapshot: after the freshness and plan checks
+	// (neither of which mutates anything), before the first download. Off
+	// by default; a failure is a warning, never a refusal.
+	// Both are recorded, not one or the other - see applyDeploy's own call
+	// and prependWarning/prependSnapshotNote, which no-op on "".
+	autoName, autoWarn := s.autoSnapshot(ctx, game, profileName, OpUpdate)
+	result.Warnings = prependWarning(result.Warnings, autoWarn)
+	result.Notes = prependSnapshotNote(result.Notes, autoName)
+
 	// #286 review (Important 1): resolved before the download loop below,
 	// applyUpdate's first mutation - mirroring every other flow
 	// (uninstallMod/deployProfile/purgeProfile/applyInstall/applyRollback
@@ -1009,6 +1018,10 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	result.ToVersion = effectiveVersion
 	result.Changelog = upd.Changelog
 	result.Status = UpdateUpdated
+
+	// Review finding 5: an update deploys over whatever is at the path, so
+	// a capture it could not take is reported here, on the same channel.
+	s.takeCaptureWarnings(game.ID, OpUpdate, UpdateWarning, &result.Warnings, emit)
 
 	// #197 postsmoke fix: also emit UpdateWarning - appending to
 	// result.Warnings alone is not loud enough, since applyUpdate

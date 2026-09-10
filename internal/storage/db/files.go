@@ -88,6 +88,31 @@ func (d *DB) GetFileOwner(ctx context.Context, gameID, profileName, relativePath
 	return &owner, nil
 }
 
+// AnyProfileOwnsFile reports whether ANY profile of gameID has a
+// deployed-file record for relativePath.
+//
+// GetFileOwner is scoped to a game AND a profile, which is right for
+// "whose file is this in the deployment I am changing" but wrong for
+// "did lmm put this here at all" (#350 review minor 7): with `lmm deploy
+// -p B` over a copy/hardlink deployment made under profile A, A's own file
+// looked foreign to B - stored as an "original", so a later restore would
+// have written a mod's bytes back as if they were stock content.
+func (d *DB) AnyProfileOwnsFile(ctx context.Context, gameID, relativePath string) (bool, error) {
+	var one int
+	err := d.QueryRowContext(ctx, `
+		SELECT 1 FROM deployed_files
+		WHERE game_id = ? AND relative_path = ?
+		LIMIT 1
+	`, gameID, relativePath).Scan(&one)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking file ownership: %w", err)
+	}
+	return true, nil
+}
+
 // DeleteDeployedFiles removes all deployed file records for a specific mod.
 func (d *DB) DeleteDeployedFiles(ctx context.Context, gameID, profileName, sourceID, modID string) error {
 	_, err := d.ExecContext(ctx, `
@@ -181,4 +206,42 @@ func (d *DB) CheckFileConflicts(ctx context.Context, gameID, profileName string,
 		conflicts = append(conflicts, c)
 	}
 	return conflicts, rows.Err()
+}
+
+// DeployedPath is one deployed_files row: a game-dir-relative path and the
+// mod that owns it.
+type DeployedPath struct {
+	RelativePath string
+	SourceID     string
+	ModID        string
+}
+
+// ListDeployedFiles returns every tracked path for gameID/profileName,
+// path-sorted so a caller's output is stable. The per-mod
+// GetDeployedFilesForMod answers "what did THIS mod deploy"; this answers
+// "what is deployed at all", which is what `lmm snapshot create` records
+// as the profile's deployed-files manifest (#350).
+func (d *DB) ListDeployedFiles(ctx context.Context, gameID, profileName string) (files []DeployedPath, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT relative_path, source_id, mod_id FROM deployed_files
+		WHERE game_id = ? AND profile_name = ?
+		ORDER BY relative_path
+	`, gameID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("querying deployed files: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+
+	for rows.Next() {
+		var f DeployedPath
+		if err := rows.Scan(&f.RelativePath, &f.SourceID, &f.ModID); err != nil {
+			return nil, fmt.Errorf("scanning deployed file: %w", err)
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
 }

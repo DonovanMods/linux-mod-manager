@@ -347,6 +347,28 @@ func TestServeJSONGoldens(t *testing.T) {
 			purgeApplyRequest{Uninstall: true, Force: true, SkipHooks: true},
 		},
 		{
+			// #350's three snapshot request bodies. The create's name is
+			// optional (an empty one gets core's shared default, which is
+			// what the card's "Snapshot now" button relies on); the
+			// restore names its snapshot in the body, like every kind that
+			// acts on something you picked from a list rather than on the
+			// current selection.
+			"snapshot_create_request",
+			snapshotCreateRequest{Name: "before-tweaks"},
+		},
+		{
+			"snapshot_restore_plan_request",
+			snapshotRestorePlanRequest{Snapshot: "before-tweaks"},
+		},
+		{
+			// no_safety_snapshot is named in the NEGATIVE, as the CLI flag
+			// is, because the safety copy is the default: a restore's whole
+			// purpose is to discard the present state, so a caller should
+			// not have to remember to ask for a way back.
+			"snapshot_restore_apply_request",
+			snapshotRestoreApplyRequest{SkipHooks: true, Force: true, NoSafetySnapshot: true},
+		},
+		{
 			// profile_sync names its target profile in the body, like its
 			// two siblings; ApplyProfileSync takes no options, so its apply
 			// struct has no json tags and pins nothing (the same shape

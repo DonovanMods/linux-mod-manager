@@ -418,3 +418,46 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 	}
 	return p, nil
 }
+
+// ProfileFromExported is ExportProfileValue's inverse: the *domain.Profile
+// an exported document describes.
+//
+// It exists for `lmm snapshot restore` (#350), which has to put a recorded
+// profile document back on disk without going through the YAML round trip
+// ImportProfile performs - the snapshot stores the document as JSON, and
+// re-serialising it to YAML just to parse it again would make a snapshot's
+// fidelity depend on the YAML DTO's own lossiness. Keeping the two
+// functions adjacent is what stops them drifting: a field added to one
+// must be answered in the other, and profiles_test.go round-trips them.
+//
+// IsDefault is NOT part of the exported document (it never was - an export
+// is portable, and "is this game's default" is local state), so it is left
+// zero here and the caller preserves the live profile's own value.
+func ProfileFromExported(exported *domain.ExportedProfile) *domain.Profile {
+	if exported == nil {
+		return nil
+	}
+	profile := &domain.Profile{
+		Name:          exported.Name,
+		GameID:        exported.GameID,
+		Mods:          exported.Mods,
+		Hooks:         exported.Hooks,
+		HooksExplicit: exported.HooksExplicit,
+	}
+	// LinkMethod is only carried when it was EXPLICIT: ExportProfileValue
+	// writes it as "" otherwise, and turning "" into a phantom symlink
+	// override is exactly what SaveProfile's own LinkMethodExplicit guard
+	// exists to prevent.
+	if exported.LinkMethod != "" {
+		if method, ok := domain.ParseLinkMethod(exported.LinkMethod); ok {
+			profile.LinkMethod, profile.LinkMethodExplicit = method, true
+		}
+	}
+	if len(exported.Overrides) > 0 {
+		profile.Overrides = make(map[string][]byte, len(exported.Overrides))
+		for path, content := range exported.Overrides {
+			profile.Overrides[path] = []byte(content)
+		}
+	}
+	return profile
+}

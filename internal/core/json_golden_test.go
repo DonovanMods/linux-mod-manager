@@ -1494,6 +1494,220 @@ func TestJSONGoldens(t *testing.T) {
 				Warnings: []string{"steam library /mnt/games could not be read"},
 			},
 		},
+		{
+			// #350's originals-store manifest row, which is also what
+			// every snapshot document carries as "the originals in
+			// force". The deploy shape (a mod identity beside the op) -
+			// a profile override's row carries the same keys with
+			// source_id/mod_id omitted.
+			"original_file",
+			core.OriginalFile{
+				Root:         core.OriginalRootModPath,
+				RelativePath: "Data/shipped.esp",
+				SHA256:       "3f786850e387550fdab836ed7e6dc881de23001b1b4bd0e0e2a4a9d1d8d1a1f1",
+				Size:         4096,
+				// Review finding 6: the mode the file had, so an
+				// executable comes back executable.
+				Mode:       0o755,
+				CapturedAt: fixedTime,
+				Op:         core.OriginalOpDeploy,
+				SourceID:   "nexusmods",
+				ModID:      "42",
+				Profile:    "default",
+			},
+		},
+		{
+			// The snapshot document itself (#350): the file on disk AND
+			// the wire shape /api/v1 hands back. Four halves - the
+			// profile export, the installed rows, the deployed-files
+			// manifest, the originals in force.
+			"snapshot",
+			core.Snapshot{
+				Name: "before-tweaks", GameID: "skyrim-se", Profile: "default",
+				CreatedAt: fixedTime,
+				ProfileDocument: &domain.ExportedProfile{
+					Name: "default", GameID: "skyrim-se",
+					Mods: []domain.ModReference{{
+						SourceID: "nexusmods", ModID: "42", Version: "1.2.3",
+						FileIDs: []string{"1"}, Locked: true,
+					}},
+				},
+				Installed: []domain.InstalledMod{{
+					Mod:         jsonGoldenMod,
+					ProfileName: "default", UpdatePolicy: domain.UpdateNotify,
+					InstalledAt: fixedTime, Enabled: true, Deployed: true,
+					LinkMethod: domain.LinkSymlink, FileIDs: []string{"1"},
+				}},
+				DeployedFiles: []core.SnapshotFile{{
+					RelativePath: "Data/mod.esp", SourceID: "nexusmods", ModID: "42",
+					SHA256: "3f786850e387550fdab836ed7e6dc881de23001b1b4bd0e0e2a4a9d1d8d1a1f1", Size: 2048,
+				}},
+				Originals: []core.OriginalFile{{
+					Root: core.OriginalRootModPath, RelativePath: "Data/shipped.esp",
+					SHA256: "9c1185a5c5e9fc54612808977ee8f548b2258d31", Size: 4096,
+					CapturedAt: fixedTime, Op: core.OriginalOpDeploy,
+					SourceID: "nexusmods", ModID: "42", Profile: "default",
+				}},
+			},
+		},
+		{
+			// A tracked path that was NOT on disk: recorded rather than
+			// dropped, with no checksum, because "tracked and absent" is a
+			// different fact from "never tracked".
+			"snapshot_file_missing",
+			core.SnapshotFile{
+				RelativePath: "Data/gone.esp", SourceID: "nexusmods", ModID: "42", Missing: true,
+			},
+		},
+		{
+			"snapshot_file",
+			core.SnapshotFile{
+				RelativePath: "Data/mod.esp", SourceID: "nexusmods", ModID: "42",
+				SHA256: "3f786850e387550fdab836ed7e6dc881de23001b1b4bd0e0e2a4a9d1d8d1a1f1", Size: 2048,
+			},
+		},
+		{
+			"snapshot_result",
+			core.SnapshotResult{
+				Name: "before-tweaks", GameID: "skyrim-se", Profile: "default",
+				CreatedAt: fixedTime, Path: "/home/u/.local/share/lmm/snapshots/skyrim-se/before-tweaks.json",
+				Mods: 12, DeployedFiles: 340, Originals: 3, SizeBytes: 1048576,
+			},
+		},
+		{
+			"snapshot_info",
+			core.SnapshotInfo{
+				Name: "auto-deploy-20260827-120000", GameID: "skyrim-se", Profile: "default",
+				CreatedAt: fixedTime, Auto: true,
+				Mods: 12, DeployedFiles: 340, Originals: 3, SizeBytes: 1048576,
+			},
+		},
+		{
+			"snapshot_listing",
+			core.SnapshotListing{
+				GameID: "skyrim-se",
+				Snapshots: []core.SnapshotInfo{{
+					Name: "before-tweaks", GameID: "skyrim-se", Profile: "default",
+					CreatedAt: fixedTime, Mods: 12, DeployedFiles: 340, Originals: 3, SizeBytes: 1048576,
+				}},
+				Warnings: []string{"broken.json could not be read: parsing the snapshot: unexpected EOF"},
+			},
+		},
+		{
+			// The restore plan (#350): what `snapshot restore --dry-run`
+			// prints and what the confirm modal renders. The refusals
+			// list is the point - a version a source can no longer serve
+			// is visible BEFORE anything is purged.
+			"snapshot_restore_plan",
+			core.SnapshotRestorePlan{
+				GameID: "skyrim-se", Profile: "default",
+				Snapshot: "before-tweaks", CreatedAt: fixedTime,
+				ToPurge: []domain.InstalledMod{{
+					Mod:         jsonGoldenMod,
+					ProfileName: "default", UpdatePolicy: domain.UpdateNotify,
+					InstalledAt: fixedTime, Enabled: true, Deployed: true,
+					LinkMethod: domain.LinkSymlink,
+				}},
+				// Review finding 2: the restore also carries the switch
+				// back to the snapshot's profile, so the plan says which
+				// profile it is switching away from and what that costs.
+				ActiveProfile: "survival",
+				ToPurgeActive: []domain.InstalledMod{{
+					Mod:         jsonGoldenMod,
+					ProfileName: "survival", UpdatePolicy: domain.UpdateNotify,
+					InstalledAt: fixedTime, Enabled: true, Deployed: true,
+					LinkMethod: domain.LinkSymlink,
+				}},
+				Originals: []core.SnapshotRestoreOriginal{{
+					Root: core.OriginalRootModPath, RelativePath: "Data/shipped.esp",
+					Status: core.SnapshotOriginalRestorable,
+				}, {
+					Root: core.OriginalRootInstallPath, RelativePath: "Data/game.ini",
+					Status: core.SnapshotOriginalUnavailable,
+					Reason: "checksum 9c11 does not match the recorded 3f78",
+				}},
+				Mods: []core.SnapshotRestoreMod{{
+					SourceID: "nexusmods", ModID: "42", Name: "Sample Mod",
+					Version: "1.2.3", Cached: true,
+				}, {
+					SourceID: "curseforge", ModID: "7", Name: "Gone Mod",
+					Version: "0.9", Error: "no downloadable files",
+				}},
+				Refusals: []core.InstalledRef{{
+					SourceID: "curseforge", ModID: "7", Name: "Gone Mod",
+					Version: "0.9", Reason: "no downloadable files",
+				}},
+				ProfileChanged: true,
+			},
+		},
+		{
+			// #269 x #350: the restore's account of a Steam Workshop item.
+			// ToPurge is EMPTY and external names it - the same split
+			// purge_plan_external pins - and the Mods row carries
+			// external/updated_at with Cached FALSE and no Error, because
+			// "not cached" here must not read as "will be downloaded".
+			// external_missing is the second row: the item was unsubscribed
+			// after the snapshot, which is a finding, not a refusal, so
+			// refusals stays absent.
+			"snapshot_restore_plan_external",
+			core.SnapshotRestorePlan{
+				GameID: "skyrim-se", Profile: "default",
+				Snapshot: "before-tweaks", CreatedAt: fixedTime,
+				ToPurge:   []domain.InstalledMod{},
+				External:  []string{"Workshop Item", "Gone Workshop Item"},
+				Originals: []core.SnapshotRestoreOriginal{},
+				Mods: []core.SnapshotRestoreMod{{
+					SourceID: "steamworkshop", ModID: "3617086610", Name: "Workshop Item",
+					Version: "7987119735124793734", External: true, UpdatedAt: fixedTime,
+				}, {
+					SourceID: "steamworkshop", ModID: "3617086611", Name: "Gone Workshop Item",
+					Version: "7987119735124793735", External: true, ExternalMissing: true,
+				}},
+			},
+		},
+		{
+			"snapshot_restore_original",
+			core.SnapshotRestoreOriginal{
+				Root: core.OriginalRootModPath, RelativePath: "Data/shipped.esp",
+				Status: core.SnapshotOriginalRestorable,
+			},
+		},
+		{
+			"snapshot_restore_mod",
+			core.SnapshotRestoreMod{
+				SourceID: "nexusmods", ModID: "42", Name: "Sample Mod",
+				Version: "1.2.3", Cached: true,
+			},
+		},
+		{
+			// The restore result, in its most informative shape: a
+			// partial restore. This is also what
+			// SnapshotRestorePartialError's "details" carries.
+			"snapshot_restore_result",
+			core.SnapshotRestoreResult{
+				Snapshot: "before-tweaks", Profile: "default",
+				SwitchedFrom:      "survival",
+				SafetySnapshot:    "auto-snapshot_restore-20260827-120000",
+				Purged:            4,
+				OriginalsRestored: 2,
+				OriginalsSkipped: []core.SnapshotRestoreOriginal{{
+					Root: core.OriginalRootInstallPath, RelativePath: "Data/game.ini",
+					Status: core.SnapshotOriginalUnavailable,
+					Reason: "the stored copy is missing",
+				}},
+				Disabled: 1, Enabled: 2, Installed: 3, Replaced: 1, Deployed: 7,
+				Refused: []core.InstalledRef{{
+					SourceID: "curseforge", ModID: "7", Name: "Gone Mod",
+					Version: "0.9", Reason: "no downloadable files",
+				}},
+				Notes:    []string{"the current state was recorded as auto-snapshot_restore-20260827-120000"},
+				Warnings: []string{"could not sync merged pak"},
+			},
+		},
+		{
+			"snapshot_delete_result",
+			core.SnapshotDeleteResult{Name: "before-tweaks", GameID: "skyrim-se", Deleted: true},
+		},
 	}
 
 	seen := make(map[string]bool, len(tests))

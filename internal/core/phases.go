@@ -74,7 +74,7 @@ const (
 	// DeployWarning fires wherever DeployProfile appends an entry to
 	// DeployResult.Warnings other than a DeployBeforeAllForced one: a
 	// failed install.after_each hook (ModName/ModID set), a failed
-	// install.after_all hook, or a failed ApplyProfileOverrides (neither
+	// install.after_all hook, or a failed applyProfileOverrides (neither
 	// has a mod in scope). The pre-extraction CLI printed the overrides
 	// warning immediately once computed, then its batched hook warnings
 	// (after_each in mod order, then after_all) right after - so
@@ -836,6 +836,40 @@ const (
 	// (delisted, deleted or private). It is still adoptable - it is on disk
 	// and the game loads it - but with only the identity the ACF carries.
 	WorkshopUnavailable
+
+	// --- snapshot restore (#350) ---
+	//
+	// A restore is five stages - purge, originals, the profile document,
+	// the convergence, the deploy - and the three that SHOW anything are
+	// worth naming, because a user watching it needs to know which is
+	// running: the purge emits the DeployPurging/PurgeMod* family through
+	// the shared purge loop, the originals stage emits the three phases
+	// below, and the convergence and deploy emit the Switch*/Deploy*
+	// families through the profile-apply engine and deployProfile. The two
+	// bracketing phases here are what tell them apart in one stream. ---
+
+	// SnapshotRestoringOriginals fires once, before the first original is
+	// written. Total is how many will be attempted; Index/ModName are
+	// zero/empty.
+	SnapshotRestoringOriginals
+	// SnapshotOriginalRestored fires per file put back. Detail is the
+	// file's game-dir-relative path.
+	SnapshotOriginalRestored
+	// SnapshotOriginalSkipped fires per recorded original that could NOT
+	// be put back - a stored copy that is missing, or whose checksum no
+	// longer matches. Detail is the path and the reason. It is a refusal,
+	// not a failure: the restore continues, and the result records it, so
+	// a partial restore always says which parts were partial.
+	SnapshotOriginalSkipped
+	// SnapshotConverging fires once, after the originals stage, before the
+	// profile-apply engine starts bringing the installed set back to the
+	// snapshot's profile.
+	SnapshotConverging
+	// SnapshotNote is a verbose-gated diagnostic from a restore (a DB
+	// setting that could not be put back, say).
+	SnapshotNote
+	// SnapshotWarning is an unconditional diagnostic from a restore.
+	SnapshotWarning
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -879,6 +913,9 @@ var deployPhaseNames = [...]string{
 	DeployExternalSkipped: "deploy_external_skipped", PurgeExternalSkipped: "purge_external_skipped",
 	WorkshopScanned: "workshop_scanned", WorkshopAdopted: "workshop_adopted",
 	WorkshopSkipped: "workshop_skipped", WorkshopUnavailable: "workshop_unavailable",
+	SnapshotRestoringOriginals: "snapshot_restoring_originals", SnapshotOriginalRestored: "snapshot_original_restored",
+	SnapshotOriginalSkipped: "snapshot_original_skipped", SnapshotConverging: "snapshot_converging",
+	SnapshotNote: "snapshot_note", SnapshotWarning: "snapshot_warning",
 }
 
 // String returns the phase's wire name.

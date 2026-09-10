@@ -15,6 +15,63 @@ Global application settings. Optional; defaults apply if the file is missing.
 | `keybindings`         | string | `vim`     | Ignored. Kept so existing config files that set it still parse (it was reserved for the removed TUI) |
 | `cache_path`          | string | (empty)   | Override default mod cache directory (`<data dir>/cache`)                                            |
 | `hook_timeout`        | int    | 60        | Timeout in seconds for hook scripts                                                                  |
+| `auto_snapshot`       | bool   | `false`   | Record a snapshot before every deploy, profile switch and update (see below)                         |
+| `auto_snapshot_keep`  | int    | `10`      | How many AUTOMATIC snapshots to keep per game; `0` means unlimited (see below)                       |
+
+### `auto_snapshot`
+
+With `auto_snapshot: true`, lmm records a snapshot named
+`auto-<op>-<timestamp>` before each deploy, profile switch and update — the
+three operations that change what is in the game directory.
+
+It is **off by default**. Creating a snapshot hashes the whole deployed
+tree, which on a large install is real work to do on every deploy, and a
+user who wants the safety net can say so once. An automatic snapshot that
+FAILS is reported as a warning and the operation continues: a backup that
+blocks the thing it is protecting is worse than no backup.
+
+Automatic snapshots are listed by `lmm snapshot list` like any other, marked
+`(auto)`, and are deleted the same way.
+
+### `auto_snapshot_keep`
+
+Automatic snapshots are **pruned**: each time lmm records one, the oldest
+automatic snapshots beyond `auto_snapshot_keep` (default `10`) are deleted.
+Set it to `0` for unlimited.
+
+Only automatic snapshots are ever pruned — one you named with
+`lmm snapshot create --name` is yours until you delete it — and the
+originals store is never touched by a prune: it lives outside the
+snapshot-name namespace entirely (`_originals/`), and it holds the only
+copy of what it holds.
+
+### What a snapshot does and does not contain
+
+A snapshot never contains mod bytes. It records the profile (load order and
+locks), the installed versions and per-mod settings, the deployed files with
+their checksums, and the originals in force — a few kilobytes. The mod files
+themselves are in the mod cache (`<data>/cache/...`).
+
+So a restore needs, for each mod it puts back: the cached files for the
+**recorded version** if they are still there, and otherwise a download of
+that exact version from the mod's source. A version the source can no longer
+serve — deleted, hidden, or superseded with the old file removed — is
+reported as a refusal in the preview, before anything is touched. Clearing
+the cache does not invalidate a snapshot, but it does make restoring it need
+the network, and a source that has dropped a version can no longer supply
+it at all.
+
+The one thing a snapshot restore does NOT need from anywhere is the stock
+game content lmm replaced: those bytes are in the originals store, which is
+the only copy of them and is never pruned or deleted by lmm.
+
+Removing the mod that replaced a file puts that file back on its own — an
+uninstall, a purge, an update that drops a file the previous version
+shipped, a rolled-back install, or the deploy-time convergence — and the
+stored copy is dropped only once the original is back in place. `lmm
+snapshot restore` remains the whole-state path, and the one that can put
+back everything at once.
+
 
 ## games.yaml
 
@@ -35,20 +92,24 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 
 #### `mod_path` and relative values
 
-`mod_path` is normally an absolute path (`~` is expanded). A **relative**
-value — `mod_path: Data` — is resolved against that game's `install_path`,
-not against the directory you happen to run `lmm` from, so the entry means
-the same thing from every shell.
+`mod_path` may be **absolute, or relative to `install_path` — everywhere**.
+A relative value — `mod_path: Data` — is resolved against that game's
+`install_path`, never against the directory you happen to run `lmm` from,
+so the entry means the same thing from every shell. `~` is expanded first,
+so `~/mods` is an absolute path, not a relative one.
+
+The same rule applies on every path that *writes* a game, not just to a
+hand-written file: `lmm game add`, `lmm game add --from-detected`,
+`lmm game detect`, `POST /api/v1/games` and the web UI's add-game form all
+accept `Data` and store the resolved absolute path, so the file lmm writes
+reads back identically from any working directory.
 
 A relative `mod_path` needs an `install_path` to resolve against, so an
-entry that carries one without the other is refused when `games.yaml` is
-read, naming the game and the field — the alternative is the CWD-relative
-behaviour this rule exists to end, applied silently.
-
-lmm itself never *writes* a relative `mod_path`: `lmm game add`,
-`lmm game add --from-detected`, `lmm game detect` and the web UI's add-game
-form all refuse one and ask for an absolute path instead. The join above is
-purely for hand-written `games.yaml` entries.
+entry that carries one without the other is refused — when `games.yaml` is
+read, naming the game and the field, and at the prompt/form/API, where the
+refusal names `install_path`, the value that is actually missing. The
+alternative is the CWD-relative behaviour this rule exists to end, applied
+silently.
 
 ### Hooks (games.yaml)
 
@@ -167,6 +228,10 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 | `<data>/.oplock`                           | Advisory mutation lock (#317) — see below                               |
 | `<data>/cache/`                            | Mod file cache (or `cache_path` override)                               |
 | `<data>/downloads/`                        | Staging area for in-flight downloads and archive extraction             |
+| `<data>/key`                               | Token-encryption key (`0600`, created on first `auth login`)            |
+| `<data>/snapshots/<game-id>/<name>.json`   | One snapshot's record (`lmm snapshot`)                                  |
+| `<data>/snapshots/<game-id>/_originals/manifest.json` | Manifest of the files lmm has replaced for that game          |
+| `<data>/snapshots/<game-id>/_originals/files/` | The replaced files themselves, split by root (`mod_path`/`install_path`) |
 
 ## Custom Sources
 

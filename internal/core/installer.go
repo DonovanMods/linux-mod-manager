@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -21,6 +22,15 @@ type Installer struct {
 	linker linker.Linker
 	db     *db.DB // Optional: enables file tracking for conflict detection
 	log    *slog.Logger
+
+	// originals is #350's originals store, set by
+	// Service.getInstallerForProfile. Nil disables capture entirely, which
+	// is what keeps the white-box tests that build an Installer directly
+	// working unchanged. Every deploy in the product funnels through this
+	// type, which is why ONE field here covers the accepted-Overwrite
+	// install, the archive import and a compile game's merged artifact
+	// alike - see internal/core/originals.go's package comment.
+	originals *originalsStore
 }
 
 // NewInstaller creates a new installer
@@ -41,6 +51,106 @@ func (i *Installer) SetLogger(l *slog.Logger) {
 		l = slog.New(slog.DiscardHandler)
 	}
 	i.log = l
+}
+
+// setOriginals wires the originals store this Installer captures into
+// (#350). Unexported: an Installer is a core primitive, and the store is
+// resolved from the Service's data directory, never by a caller.
+func (i *Installer) setOriginals(store *originalsStore) { i.originals = store }
+
+// captureOriginal preserves whatever is at dstPath before a deploy
+// replaces it, when that file is one lmm does not own.
+//
+// "Does not own" is three cheap tests in order of cost: the destination
+// must exist (Lstat), it must be a REGULAR file (a symlink is lmm's own
+// deployment, or another manager's link - never stock content), and the
+// deployed_files table must not already attribute it to a mod in this GAME
+// (any profile - minor 7). The DB query only ever runs for a destination
+// that is already a real file, which on a normal deploy is nothing at all,
+// so this costs a stat per file and no more.
+//
+// A capture failure does NOT fail the deploy - a backup that blocks the
+// operation it exists to protect is worse than no backup - but it is not
+// silent either: the store records it on the always-on user channel and on
+// the pending list the running flow drains onto its result's Warnings
+// (review finding 5; the diagnostic Warn line stays for the log).
+func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, profileName, relPath, dstPath string, mod *domain.Mod) {
+	if i.originals == nil {
+		return
+	}
+	info, err := os.Lstat(dstPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	if i.db != nil {
+		// Game-scoped, not profile-scoped (#350 review minor 7): the
+		// question here is "did lmm put this here at all", and `lmm deploy
+		// -p B` over a copy deployment made under profile A must not treat
+		// A's own file as stock content.
+		owned, err := i.db.AnyProfileOwnsFile(ctx, game.ID, filepath.ToSlash(relPath))
+		if err == nil && owned {
+			return
+		}
+	}
+	row := OriginalFile{
+		Root: OriginalRootModPath, RelativePath: filepath.ToSlash(relPath),
+		Op: OriginalOpDeploy, Profile: profileName,
+	}
+	if mod != nil {
+		row.SourceID, row.ModID = mod.SourceID, mod.ID
+	}
+	if err := i.originals.capture(row, dstPath); err != nil {
+		i.log.Warn("could not preserve the file this deploy replaces; it will not be restorable from a snapshot",
+			"path", dstPath, "err", err)
+		i.originals.noteFailure(fmt.Sprintf(
+			"could not preserve %s before replacing it; it will not be restorable from a snapshot: %v", dstPath, err))
+	}
+}
+
+// restoreReplacedOriginal puts back whatever lmm displaced at relPath, at
+// the moment lmm's own file there is removed (coordinator ruling on review
+// note 13). No-op when this Installer has no store, or when nothing was
+// ever captured for that path - which is every ordinary uninstall.
+//
+// Never fatal: a removal that succeeded must not be reported as a failure
+// because the original could not go back. The failure is recorded on the
+// store's always-on channel instead (review finding 5), which is where a
+// user needs it - the file lmm cannot return is the one it holds the only
+// copy of.
+func (i *Installer) restoreReplacedOriginal(relPath, dstPath string) {
+	if i.originals == nil {
+		return
+	}
+	restored, err := i.originals.release(OriginalRootModPath, filepath.ToSlash(relPath), dstPath)
+	if err != nil {
+		i.log.Warn("could not put back the file this mod replaced", "path", dstPath, "err", err)
+		i.originals.noteFailure(fmt.Sprintf(
+			"could not put back the file lmm replaced at %s; `lmm snapshot restore` can still do it: %v", dstPath, err))
+		return
+	}
+	if restored {
+		i.log.Debug("put back the file this mod replaced", "path", dstPath)
+	}
+}
+
+// foreignFile reports whether dstPath holds content lmm did not put there:
+// a REGULAR file (a symlink is a deployment, lmm's or another tool's) with
+// no deployed_files row for this game and profile.
+//
+// It is the same judgement captureOriginal makes before storing an
+// original, and it is deliberately conservative in the same direction: an
+// Installer with no database cannot tell, and answers false, so a
+// db-less Installer behaves exactly as it always has.
+func (i *Installer) foreignFile(ctx context.Context, game *domain.Game, profileName, relPath, dstPath string) bool {
+	if i.db == nil {
+		return false
+	}
+	info, err := os.Lstat(dstPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	owner, err := i.db.GetFileOwner(ctx, game.ID, profileName, relPath)
+	return err == nil && owner == nil
 }
 
 // Install deploys a mod to the game directory. If DB tracking is enabled and a
@@ -70,8 +180,15 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		srcPath := i.cache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
 
+		// #350: preserve whatever is there before the deploy replaces it.
+		i.captureOriginal(ctx, game, profileName, file, dstPath, mod)
+
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			rollbackErr := rollbackDeploy(i.linker, game.ModPath, deployed)
+			// A rolled-back install must leave no hole either: every file
+			// it removed on the way out gets its original back, including
+			// the one whose deploy just failed (capture ran before it).
+			i.restoreReplacedOriginals(game, append(append([]string(nil), deployed...), file))
 			if i.db != nil {
 				_ = i.db.DeleteDeployedFiles(ctx, game.ID, profileName, mod.SourceID, mod.ID)
 			}
@@ -87,7 +204,9 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 			if err := i.db.SaveDeployedFile(ctx, game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
 				// Roll back only the file that failed to track; leave previously
 				// deployed+tracked files and DB records intact.
-				if rollbackErr := rollbackDeploy(i.linker, game.ModPath, []string{file}); rollbackErr != nil {
+				rollbackErr := rollbackDeploy(i.linker, game.ModPath, []string{file})
+				i.restoreReplacedOriginals(game, []string{file})
+				if rollbackErr != nil {
 					return &domain.DeployError{Op: fmt.Sprintf("tracking deployed file %s", file), Primary: err, Rollback: rollbackErr}
 				}
 				return fmt.Errorf("tracking deployed file %s: %w", file, err)
@@ -208,7 +327,21 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		if newSet[file] {
 			continue
 		}
-		if err := i.linker.Undeploy(filepath.Join(game.ModPath, file)); err != nil {
+		dstPath := filepath.Join(game.ModPath, file)
+		// #350 / review finding 4: this loop iterates the OLD entry's RAW
+		// ListFiles union, not its deployable set, so a member lmm never
+		// deployed is visited here - the #210 narrowing case, and the
+		// stale-unclaimed-member case. Under copy or hardlink Undeploy
+		// removes whatever is at the path, which for such a member is the
+		// game's own content. Same guard, same reason, as Uninstall's:
+		// leave a regular file with no deployed_files row alone. Nothing
+		// is captured, because nothing is being replaced - the file stays
+		// exactly where it is.
+		if i.foreignFile(ctx, game, profileName, file, dstPath) {
+			i.log.Debug("leaving a file this update does not own where it is", "path", dstPath)
+			continue
+		}
+		if err := i.linker.Undeploy(dstPath); err != nil {
 			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, nil, oldSet); rollbackErr != nil {
 				return &domain.DeployError{Op: fmt.Sprintf("removing obsolete file %s", file), Primary: err, Rollback: rollbackErr}
 			}
@@ -230,6 +363,15 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 
 		srcPath := newCache.GetFilePath(game.ID, newMod.SourceID, newMod.ID, newMod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
+		// #350: a replace can also land on a file lmm does not own - a
+		// new version whose file list grew into stock content - so the
+		// original is preserved here before the new file goes over it.
+		// The obsolete-file loop above needs no capture of its own: since
+		// review finding 4 it SKIPS a path lmm does not own rather than
+		// removing it, and restoreOldFiles only ever puts lmm's own files
+		// back. What that loop DOES need is the release, which is at the
+		// end of this function - see the comment there.
+		i.captureOriginal(ctx, game, profileName, file, dstPath, newMod)
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			cleanupErr := i.linker.Undeploy(dstPath)
 			rollbackFiles := append(append([]string(nil), replacedOrAdded...), file)
@@ -262,6 +404,24 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 			}
 		}
 	}
+
+	// #350 re-review finding N1 - ruling (a) for the obsolete-file loop.
+	// That loop removed lmm's OWN files (a member the new side no longer
+	// ships), which is exactly the removal ruling (a) covers: whatever each
+	// of them replaced goes back, so `lmm update` and `lmm update rollback`
+	// stop leaving the hole every other removal path has stopped leaving.
+	//
+	// Deliberately HERE rather than inside the loop, because this function -
+	// unlike Uninstall and Install's rollbacks - can still fail after the
+	// removal: every error path above replays removedOld through
+	// restoreOldFiles, which would deploy the old mod's file back OVER a
+	// just-restored original whose manifest row had already been dropped,
+	// leaving lmm with no record and the user with the wrong bytes. Past the
+	// last failure point there is nothing left to roll back, and "the row
+	// goes once the original is back in place" stays true. A failed put-back
+	// is reported on the always-on channel and keeps its row, so
+	// `lmm snapshot restore` can still do it (restoreReplacedOriginal).
+	i.restoreReplacedOriginals(game, removedOld)
 
 	return nil
 }
@@ -427,6 +587,17 @@ func (i *Installer) restoreOldFiles(oldCache *cache.Cache, game *domain.Game, ol
 
 // rollbackDeploy undeploys the given relative paths under modPath (reverse order).
 // Returns the first Undeploy error encountered, if any.
+// restoreReplacedOriginals is restoreReplacedOriginal over a set of
+// relative paths - the rollback shape.
+func (i *Installer) restoreReplacedOriginals(game *domain.Game, relativePaths []string) {
+	if i.originals == nil {
+		return
+	}
+	for _, rel := range relativePaths {
+		i.restoreReplacedOriginal(rel, filepath.Join(game.ModPath, rel))
+	}
+}
+
 func rollbackDeploy(lnk linker.Linker, modPath string, relativePaths []string) error {
 	var firstErr error
 	for j := len(relativePaths) - 1; j >= 0; j-- {
@@ -477,9 +648,31 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 
 		dstPath := filepath.Join(game.ModPath, file)
 
+		// #350: never delete a file lmm does not own.
+		//
+		// This loop undeploys every path the mod's cache entry NAMES,
+		// which is not the same as every path the mod actually put there.
+		// The copy and hardlink linkers remove whatever is at the path, so
+		// a deploy (which undeploys before it installs), a purge or an
+		// ordinary uninstall would DELETE stock game content sitting where
+		// one of this mod's files would go - silently, and with no way
+		// back. The symlink linker refuses to remove a non-symlink, which
+		// is exactly why this went unnoticed: the default link method does
+		// not have the bug.
+		//
+		// lmm's own deployments are unaffected: a symlink is not a regular
+		// file, and a copy/hardlink deployment carries a deployed_files
+		// row written by the same loop that created it.
+		if i.foreignFile(ctx, game, profileName, file, dstPath) {
+			i.log.Debug("leaving a file this mod does not own where it is", "path", dstPath)
+			continue
+		}
+
 		if err := i.linker.Undeploy(dstPath); err != nil {
 			return fmt.Errorf("undeploying %s: %w", file, err)
 		}
+		// lmm's own file is gone; whatever it displaced goes back.
+		i.restoreReplacedOriginal(file, dstPath)
 	}
 
 	// Remove file ownership records from database

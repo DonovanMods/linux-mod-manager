@@ -132,9 +132,13 @@ func setupDoUninstallTest(t *testing.T) (*core.Service, *domain.Game) {
 		Enabled:      true,
 	}))
 	require.NoError(t, svc.GetGameCache(game).Store("g1", "src", "1", "1.0", "plugin.esp", []byte("data")))
-	// The undeploy obstruction: a foreign regular file where the symlink
-	// linker expects its own link.
-	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "plugin.esp"), []byte("not a symlink"), 0644))
+	// The undeploy obstruction: a DIRECTORY where the symlink linker
+	// expects its own link. It used to be a foreign regular FILE, which
+	// #350 changed the meaning of - a regular file with no deployed_files
+	// row is content lmm did not put there, and the undeploy now leaves it
+	// alone rather than deleting it. A directory is still an undeploy
+	// failure and nothing else, which is what these tests are about.
+	require.NoError(t, os.MkdirAll(filepath.Join(gameDir, "plugin.esp"), 0755))
 	pm := svc.NewProfileManager()
 	_, err = pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)

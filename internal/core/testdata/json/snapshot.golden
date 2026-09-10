@@ -1,0 +1,93 @@
+{
+  "name": "before-tweaks",
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "created_at": "2026-08-27T12:00:00Z",
+  "auto": false,
+  "profile_document": {
+    "name": "default",
+    "game_id": "skyrim-se",
+    "mods": [
+      {
+        "source_id": "nexusmods",
+        "mod_id": "42",
+        "version": "1.2.3",
+        "file_ids": [
+          "1"
+        ],
+        "locked": true
+      }
+    ],
+    "hooks": {
+      "install": {},
+      "uninstall": {}
+    },
+    "hooks_explicit": {
+      "install": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      },
+      "uninstall": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      }
+    }
+  },
+  "installed": [
+    {
+      "id": "42",
+      "source_id": "nexusmods",
+      "name": "Sample Mod",
+      "version": "1.2.3",
+      "author": "",
+      "summary": "",
+      "description": "",
+      "game_id": "skyrim-se",
+      "category": "",
+      "downloads": 0,
+      "picture_url": "",
+      "source_url": "",
+      "files": [],
+      "dependencies": [],
+      "updated_at": "2026-08-27T12:00:00Z",
+      "profile_name": "default",
+      "update_policy": "notify",
+      "installed_at": "2026-08-27T12:00:00Z",
+      "enabled": true,
+      "deployed": true,
+      "link_method": "symlink",
+      "file_ids": [
+        "1"
+      ],
+      "manual_download": false,
+      "convert_paks": false
+    }
+  ],
+  "deployed_files": [
+    {
+      "relative_path": "Data/mod.esp",
+      "source_id": "nexusmods",
+      "mod_id": "42",
+      "sha256": "3f786850e387550fdab836ed7e6dc881de23001b1b4bd0e0e2a4a9d1d8d1a1f1",
+      "size": 2048,
+      "missing": false
+    }
+  ],
+  "originals": [
+    {
+      "root": "mod_path",
+      "relative_path": "Data/shipped.esp",
+      "sha256": "9c1185a5c5e9fc54612808977ee8f548b2258d31",
+      "size": 4096,
+      "captured_at": "2026-08-27T12:00:00Z",
+      "op": "deploy",
+      "source_id": "nexusmods",
+      "mod_id": "42",
+      "profile": "default"
+    }
+  ]
+}

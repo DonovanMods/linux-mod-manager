@@ -210,22 +210,30 @@ async function hydrate(route) {
   // snapshot of every retained job and maintains it from there
   // (activity.js), so a per-route poll could only ever disagree with the
   // live stream about what the machine is doing.
-  const [mods, updates, health, conflicts] = await Promise.allSettled([
-    get(scoped("/api/v1/mods", context)),
-    get(scoped("/api/v1/updates", context)),
-    get(scoped("/api/v1/health", context)),
-    get(scoped("/api/v1/conflicts", context)),
-  ]);
+  const [mods, updates, health, conflicts, snapshots] =
+    await Promise.allSettled([
+      get(scoped("/api/v1/mods", context)),
+      get(scoped("/api/v1/updates", context)),
+      get(scoped("/api/v1/health", context)),
+      get(scoped("/api/v1/conflicts", context)),
+      // issue 350: the Snapshots card's own read. Fetched here rather than
+      // lazily on card mount for the reason every other card's document
+      // is - one hydrate, one set of fetchErrors, and a card that can
+      // tell "no snapshots" from "couldn't list them".
+      get(scoped("/api/v1/snapshots", context)),
+    ]);
   commitHydration(seq, {
     mods: settled(mods),
     updates: settled(updates),
     health: settled(health),
     conflicts: settled(conflicts),
+    snapshots: settled(snapshots),
     fetchErrors: {
       mods: failureMessage(mods),
       updates: failureMessage(updates),
       health: failureMessage(health),
       conflicts: failureMessage(conflicts),
+      snapshots: failureMessage(snapshots),
     },
   });
 }
@@ -1567,6 +1575,7 @@ const actions = {
   // job completion is exactly the repeated caller the memo exists for.
   reloadHealth: () => reload("health", "/api/v1/health?force=1"),
   reloadConflicts: () => reload("conflicts", "/api/v1/conflicts"),
+  reloadSnapshots: () => reload("snapshots", "/api/v1/snapshots"),
   reloadModPage: () => {
     const route = store.get().route;
     if (route.view === "mod")

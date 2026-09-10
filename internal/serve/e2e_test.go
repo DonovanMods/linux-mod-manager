@@ -5909,13 +5909,18 @@ func TestE2E_EveryRouteRendersItsSectionsAsHeadings(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		chromedp.Poll(`document.querySelectorAll("h2").length === 5`,
+		chromedp.Poll(`document.querySelectorAll("h2").length === 6`,
 			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 		headingTexts("h2", &home),
 	)
+	// The Snapshots card (issue 350) is the sixth, and it is LAST because it
+	// renders below the library rather than in the attention row - and it
+	// is present with a count of zero because, unlike an attention card,
+	// it renders whether or not it has anything to show.
 	assert.Equal(t, []string{
 		"⬆ Updates (1)", "⚠ Health (2)", "◎ Profile (1)", "⇄ Conflicts (1)", "Library (3)",
-	}, home, "Mission Control's four attention cards and its library are its sections")
+		"⏱ Snapshots (0)",
+	}, home, "Mission Control's four attention cards, its library and its snapshots are its sections")
 
 	var modPage []string
 	f.runInBrowser(t,
@@ -6950,5 +6955,137 @@ func TestE2E_ModDescriptionRendersAsProseNotMarkup(t *testing.T) {
 	)
 	assert.NotContains(t, panelText, "<p>", "the slide-over must not render the source's markup either")
 	assert.NotContains(t, panelText, "<b>")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// --- Snapshots (issue 350) ---
+
+// newE2EFixtureWithASnapshottableProfile is newE2EFixtureWithLibrarySample
+// plus a real deploy, so the game directory genuinely holds something a
+// snapshot can record and a restore can put back.
+func newE2EFixtureWithASnapshottableProfile(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithLibrarySample(t)
+
+	// The library sample's mods are installed but not deployed, and a
+	// snapshot's deployed-files manifest is one of the four halves the card
+	// reports on - so deploy for real, through the plan/apply pair.
+	plan, err := f.Svc.PlanDeploy(t.Context(), f.Game, f.Profile, core.DeployOptions{})
+	require.NoError(t, err)
+	_, err = f.Svc.ApplyDeploy(t.Context(), f.Game, plan, core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	return f
+}
+
+// TestE2E_SnapshotsCard_RendersEmptyAndAlwaysOffersToRecordOne pins the
+// card's own premise: unlike an attention card, it renders when there is
+// nothing to show, because its value is knowing the safety net is there.
+func TestE2E_SnapshotsCard_RendersEmptyAndAlwaysOffersToRecordOne(t *testing.T) {
+	f := newE2EFixtureWithASnapshottableProfile(t)
+
+	var card string
+	var buttons int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="snapshots-card"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="snapshots-empty"]`, chromedp.ByQuery),
+		textContent(`[data-testid="snapshots-card"]`, &card),
+		chromedp.Evaluate(`document.querySelectorAll('[data-action="snapshot-now"]').length`, &buttons),
+	)
+
+	assert.Contains(t, card, "Snapshots (0)")
+	assert.Contains(t, card, "No snapshots yet.")
+	assert.Equal(t, 1, buttons, "the primary action is available precisely when there is nothing to show")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SnapshotsCard_SnapshotNowRecordsOneAndTheRowAppears drives the
+// create write end to end - the button carries no text input at all,
+// because the server applies core's own shared default name.
+func TestE2E_SnapshotsCard_SnapshotNowRecordsOneAndTheRowAppears(t *testing.T) {
+	f := newE2EFixtureWithASnapshottableProfile(t)
+
+	var card string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="snapshots-empty"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="snapshot-now"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-action="snapshot-restore"]`, chromedp.ByQuery),
+		textContent(`[data-testid="snapshots-card"]`, &card),
+	)
+
+	assert.Contains(t, card, "Snapshots (1)")
+	assert.Contains(t, card, "3 mods", "the row says what the snapshot recorded")
+
+	// And it really landed in the store the CLI reads.
+	listing, err := f.Svc.ListSnapshots(t.Context(), f.Game.ID)
+	require.NoError(t, err)
+	require.Len(t, listing.Snapshots, 1)
+	assert.Equal(t, 3, listing.Snapshots[0].Mods)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SnapshotsCard_RestoreGoesThroughTheConfirmPlanModal is the
+// point of the card: the destructive half runs through the SAME confirm
+// framework every other mutation in this UI uses, and its preview is what
+// the user says yes to.
+func TestE2E_SnapshotsCard_RestoreGoesThroughTheConfirmPlanModal(t *testing.T) {
+	f := newE2EFixtureWithASnapshottableProfile(t)
+	_, err := f.Svc.CreateSnapshot(t.Context(), f.Game, f.Profile, "known-good")
+	require.NoError(t, err)
+
+	var plan string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-action="snapshot-restore"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="snapshot-restore"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="snapshot_restore"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="snapshot_restore"]`, &plan),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, plan, "Snapshot known-good")
+	assert.Contains(t, plan, "undeploys 3 mods", "the preview says what it is about to do")
+
+	// The restore's own safety copy is what proves the default applied
+	// through the whole browser -> plan -> job path, not just in core.
+	listing, err := f.Svc.ListSnapshots(t.Context(), f.Game.ID)
+	require.NoError(t, err)
+	require.Len(t, listing.Snapshots, 2, "the restore recorded where we were first")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SnapshotsCard_DeleteConfirmsInlineAndSaysWhatItKeeps pins the
+// inline confirm ("modals stack at most one deep") AND the sentence that
+// matters most on that control: deleting a snapshot never deletes the
+// stored originals, which are the only copy of the files lmm replaced.
+func TestE2E_SnapshotsCard_DeleteConfirmsInlineAndSaysWhatItKeeps(t *testing.T) {
+	f := newE2EFixtureWithASnapshottableProfile(t)
+	_, err := f.Svc.CreateSnapshot(t.Context(), f.Game, f.Profile, "doomed")
+	require.NoError(t, err)
+
+	var confirmRow string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-action="snapshot-delete"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="snapshot-delete"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-action="snapshot-delete-confirm"]`, chromedp.ByQuery),
+		textContent(`[data-testid="snapshots-card"]`, &confirmRow),
+		chromedp.Click(`[data-action="snapshot-delete-confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="snapshots-empty"]`, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, confirmRow, "Delete doomed?")
+	assert.Contains(t, confirmRow, "stored originals are kept")
+
+	listing, err := f.Svc.ListSnapshots(t.Context(), f.Game.ID)
+	require.NoError(t, err)
+	assert.Empty(t, listing.Snapshots)
 	assert.Empty(t, f.BrowserErrors())
 }

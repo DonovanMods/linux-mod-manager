@@ -1,0 +1,33 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "snapshot": "before-tweaks",
+  "created_at": "2026-08-27T12:00:00Z",
+  "to_purge": [],
+  "external": [
+    "Workshop Item",
+    "Gone Workshop Item"
+  ],
+  "originals": [],
+  "mods": [
+    {
+      "source_id": "steamworkshop",
+      "mod_id": "3617086610",
+      "name": "Workshop Item",
+      "version": "7987119735124793734",
+      "cached": false,
+      "external": true,
+      "updated_at": "2026-08-27T12:00:00Z"
+    },
+    {
+      "source_id": "steamworkshop",
+      "mod_id": "3617086611",
+      "name": "Gone Workshop Item",
+      "version": "7987119735124793735",
+      "cached": false,
+      "external": true,
+      "external_missing": true
+    }
+  ],
+  "profile_changed": false
+}

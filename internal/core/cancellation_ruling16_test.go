@@ -224,3 +224,68 @@ func TestService_ApplyRelinkMod_CancelledBeforeApply_LeavesEverythingUntouched(t
 	require.NotNil(t, prof.FindRef("src", "a"), "the old profile ref must be untouched")
 	assert.Nil(t, prof.FindRef("src", "b"))
 }
+
+// cancelAtRestoringOriginals is live until core reaches a snapshot
+// restore's ORIGINALS stage, then cancels itself - putting the
+// cancellation in the widest window the product has: after stage 1 has
+// emptied the game directory, before stage 3 makes the profile and the
+// database agree with the snapshot again.
+type cancelAtRestoringOriginals struct {
+	context.Context
+	cancel context.CancelFunc
+	fired  atomic.Bool
+}
+
+func (c *cancelAtRestoringOriginals) Err() error {
+	if pc, _, _, ok := runtime.Caller(1); ok &&
+		strings.HasSuffix(runtime.FuncForPC(pc).Name(), "core.(*Service).restoreOriginals") &&
+		c.fired.CompareAndSwap(false, true) {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+// TestService_ApplySnapshotRestore_CancellationBetweenPurgeAndProfileWrite
+// is #350 review minor 8. A restore has the longest window in the product
+// between "the game directory is empty" and "the database and the profile
+// agree again", and the claim that a cancellation there reports HOW FAR IT
+// GOT - rather than a bare "context canceled" - was untested.
+func TestService_ApplySnapshotRestore_CancellationBetweenPurgeAndProfileWrite(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+
+	// A mod that REPLACES the fixture's stock file, so the store has an
+	// original for the cancelled stage to be interrupted before restoring.
+	seedNamedInstalledMod(t, svc, game, "src", "wrecker", "Wrecker", "2.0", true,
+		map[string][]byte{"Data/shipped.esp": []byte("WRECKED")})
+	seedProfileWithMod(t, svc, game.ID, "default", "src", "wrecker", "2.0")
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	_, err = svc.CreateSnapshot(context.Background(), game, "default", "known-good")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(context.Background(), game, "known-good")
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.ToPurge, "the fixture must have something to purge")
+	require.NotEmpty(t, plan.Originals, "and an original to be cancelled before restoring")
+
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &cancelAtRestoringOriginals{Context: base, cancel: cancel}
+
+	result, err := svc.ApplySnapshotRestore(ctx, game, plan,
+		core.SnapshotRestoreOptions{NoSafetySnapshot: true}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+
+	var partial *core.SnapshotRestorePartialError
+	require.ErrorAs(t, err, &partial,
+		"a restore that dies after the purge must report what it had done")
+	require.NotNil(t, partial.Result)
+	assert.Equal(t, len(plan.ToPurge), partial.Result.Purged,
+		"the purge completed, and the partial result says so")
+	assert.Zero(t, partial.Result.OriginalsRestored,
+		"the originals stage was cancelled before it wrote anything")
+	assert.Same(t, result, partial.Result,
+		"the returned result and the error's are the same document")
+}

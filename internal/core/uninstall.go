@@ -336,5 +336,15 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
 
+	// #350 re-review finding N2, the uninstall half: an uninstall puts
+	// originals back (ruling (a)), so a failed put-back has to reach the
+	// result, not just WarnWriter - which under `lmm serve` is the server's
+	// stderr, invisible to the browser, and would otherwise surface late on
+	// the next deploy/install/update. There is no event sink on this flow
+	// (an uninstall has no live stream), so neither the op nor the phase
+	// ever reaches a wire; OpPurge/PurgeWarning is the family a removal's
+	// diagnostics belong to.
+	s.takeCaptureWarnings(game.ID, OpPurge, PurgeWarning, &result.Warnings, nil)
+
 	return result, nil
 }

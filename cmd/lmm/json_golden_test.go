@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -588,4 +589,101 @@ func TestJSONGolden_Update(t *testing.T) {
 		})
 		assertJSONCLIGolden(t, "update_rollback", out)
 	})
+}
+
+// --- snapshot (#350) ---
+
+// TestJSONGolden_Snapshot pins the CLI-facing documents of all four
+// `lmm snapshot` subcommands. The types themselves are already goldened at
+// the core level (internal/core/testdata/json/snapshot_*.golden); these
+// pin that the COMMANDS still emit them, which is the convention gap
+// TestJSONGolden_GameAdd's own comment records.
+func TestJSONGolden_Snapshot(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		snapshotName = "before-tweaks"
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotCreate(context.Background(), svc, game) })
+		assertJSONCLIGolden(t, "snapshot_create", scrubSnapshotSize(out), dataDir, "/GOLDEN/data")
+	})
+
+	t.Run("list", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		_, err := svc.CreateSnapshot(context.Background(), game, "default", "before-tweaks")
+		require.NoError(t, err)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotList(context.Background(), svc, game) })
+		assertJSONCLIGolden(t, "snapshot_list", scrubSnapshotSize(out))
+	})
+
+	t.Run("list_empty", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotList(context.Background(), svc, game) })
+		assertJSONCLIGolden(t, "snapshot_list_empty", out)
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		_, err := svc.CreateSnapshot(context.Background(), game, "default", "doomed")
+		require.NoError(t, err)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotDelete(context.Background(), svc, game, "doomed") })
+		assertJSONCLIGolden(t, "snapshot_delete", out)
+	})
+
+	t.Run("restore_dry_run", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		ctx := context.Background()
+		_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+		require.NoError(t, err)
+		seedSnapshotMod(t, svc, game, "wrecker", "Wrecker", "Data/shipped.esp")
+		_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+		require.NoError(t, err)
+		snapshotRestoreDry = true
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotRestore(ctx, svc, game, "known-good") })
+		assertJSONCLIGolden(t, "snapshot_restore_dry_run", out)
+	})
+
+	t.Run("restore", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		ctx := context.Background()
+		_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+		require.NoError(t, err)
+		seedSnapshotMod(t, svc, game, "wrecker", "Wrecker", "Data/shipped.esp")
+		_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+		require.NoError(t, err)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotRestore(ctx, svc, game, "known-good") })
+		// The safety snapshot's name carries a wall-clock stamp, so it is
+		// substituted the way every other volatile value in these goldens
+		// is - the KEY stays pinned, which is what a golden is for.
+		assertJSONCLIGolden(t, "snapshot_restore", volatileAutoName.ReplaceAllString(out, "auto-<OP>-<STAMP>"))
+	})
+}
+
+// volatileAutoName matches an automatic snapshot's generated name, whose
+// stamp changes every run.
+var volatileAutoName = regexp.MustCompile(`auto-[a-z_]+-\d{8}-\d{6}`)
+
+// volatileSize matches a snapshot document's size_bytes.
+//
+// It IS volatile, for a reason worth writing down: size_bytes is the
+// snapshot FILE's own length, and the file embeds real timestamps -
+// installed_at comes back from SQLite with a fractional part whose
+// trailing zeros are trimmed, so the document is a byte or two shorter on
+// some runs than others. Pinning the number would make this golden flake;
+// pinning the KEY is what the golden is for.
+var volatileSize = regexp.MustCompile(`"size_bytes": \d+`)
+
+// scrubSnapshotSize replaces the volatile byte count with a placeholder.
+func scrubSnapshotSize(out string) string {
+	return volatileSize.ReplaceAllString(out, `"size_bytes": <SIZE>`)
 }

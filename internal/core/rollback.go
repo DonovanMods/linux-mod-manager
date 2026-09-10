@@ -456,5 +456,13 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 		}
 	}
 
+	// #350 re-review finding N1/N2: a rollback reaches the same
+	// obsolete-file loop an update does, so it is a path that PUTS ORIGINALS
+	// BACK - and a put-back it could not make has to reach the result, not
+	// just WarnWriter (the server's stderr under `lmm serve`, where a
+	// rollback is a job with an event stream). Drained here exactly as
+	// applyUpdate does it.
+	s.takeCaptureWarnings(game.ID, OpRollback, UpdateWarning, &result.Warnings, emit)
+
 	return result, nil
 }

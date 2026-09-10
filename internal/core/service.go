@@ -106,6 +106,13 @@ type Service struct {
 	configDir string
 	dataDir   string
 	cacheDir  string
+	// warnWriter is ServiceConfig.WarnWriter, kept so the originals store
+	// can reach the always-on user channel (review finding 5).
+	warnWriter io.Writer
+	// originalsStores memoises one originals store per game - see
+	// originalsStoreFor's own comment for why sharing matters.
+	originalsMu     sync.Mutex
+	originalsStores map[string]*originalsStore
 	// opLockPath is ServiceConfig.OpLockPath: the advisory lock file
 	// beginOp takes around every mutation, or "" for no cross-process lock.
 	opLockPath string
@@ -176,6 +183,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		configDir:  cfg.ConfigDir,
 		dataDir:    cfg.DataDir,
 		cacheDir:   cfg.CacheDir,
+		warnWriter: cfg.WarnWriter,
 		opLockPath: cfg.OpLockPath,
 	}, nil
 }
@@ -1704,6 +1712,9 @@ func (s *Service) getInstallerForProfile(ctx context.Context, game *domain.Game,
 func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *Installer {
 	installer := NewInstaller(s.GetGameCache(game), lnk, s.db)
 	installer.SetLogger(s.log)
+	// #350: every Installer this Service hands out captures into the
+	// game's originals store, so no flow has to remember to ask for it.
+	installer.setOriginals(s.originalsStoreFor(game.ID))
 	return installer
 }
 

@@ -19,7 +19,33 @@ type Config struct {
 	Keybindings       string            `yaml:"keybindings"`
 	CachePath         string            `yaml:"cache_path"`
 	HookTimeout       int               `yaml:"hook_timeout"`
+
+	// AutoSnapshot records a snapshot before each deploy, profile switch
+	// and update (#350). OFF by default in 2.0: every one of those
+	// operations reads the whole deployed tree to hash it, which on a large
+	// install is a real cost to pay on every deploy - and a user who wants
+	// the safety net can say so once. The failure of an automatic snapshot
+	// is never fatal to the operation it precedes: a backup that blocks
+	// what it is protecting is worse than no backup.
+	AutoSnapshot bool `yaml:"auto_snapshot"`
+
+	// AutoSnapshotKeep is how many AUTOMATIC snapshots a game keeps: the
+	// newest N survive each automatic snapshot, the rest are deleted.
+	// Default 10; 0 means unlimited. Only automatic ones are ever pruned -
+	// a snapshot you named is yours until you delete it.
+	//
+	// Coordinator ruling on the #350 review's note 13: "nothing prunes
+	// them" was disclosed rather than hidden, but an opt-in that grows a
+	// directory without bound for as long as it is on is a slow leak, and
+	// the whole point of the automatic ones is that you do not think about
+	// them.
+	AutoSnapshotKeep int `yaml:"auto_snapshot_keep"`
 }
+
+// DefaultAutoSnapshotKeep is AutoSnapshotKeep's value when config.yaml
+// does not set it: enough automatic snapshots to cover a session's worth
+// of deploys, few enough that the directory stays legible.
+const DefaultAutoSnapshotKeep = 10
 
 // Load reads configuration from the given directory
 func Load(configDir string) (*Config, error) {
@@ -27,6 +53,10 @@ func Load(configDir string) (*Config, error) {
 		DefaultLinkMethod: domain.LinkSymlink,
 		Keybindings:       "vim",
 		HookTimeout:       60, // Default 60 seconds
+		// Pre-set, so an ABSENT auto_snapshot_keep keeps the default
+		// while an explicit `auto_snapshot_keep: 0` still means
+		// unlimited.
+		AutoSnapshotKeep: DefaultAutoSnapshotKeep,
 	}
 
 	configPath := filepath.Join(configDir, "config.yaml")

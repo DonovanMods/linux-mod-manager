@@ -541,3 +541,50 @@ func TestImportProfile_PreservesLockedMarker(t *testing.T) {
 	require.Len(t, imported.Mods, 1)
 	assert.True(t, imported.Mods[0].Locked, "locked marker should be preserved on import")
 }
+
+// TestProfileFromExported_RoundTripsExportProfileValue pins the pair that
+// `lmm snapshot restore` depends on (#350): a profile exported and rebuilt
+// must be the same profile, or a restore silently drops whatever the two
+// functions disagree about.
+func TestProfileFromExported_RoundTripsExportProfileValue(t *testing.T) {
+	original := &domain.Profile{
+		Name: "survival", GameID: "skyrim-se",
+		LinkMethod: domain.LinkHardlink, LinkMethodExplicit: true,
+		Mods: []domain.ModReference{
+			{SourceID: "nexusmods", ModID: "42", Version: "1.2.3", FileIDs: []string{"1"}, Locked: true},
+			{SourceID: "curseforge", ModID: "7", Version: "2.0"},
+		},
+		Overrides: map[string][]byte{"Data/skyrim.ini": []byte("[General]\nfoo=bar")},
+		Hooks:     domain.GameHooks{Install: domain.HookConfig{BeforeAll: "/bin/true"}},
+		HooksExplicit: domain.GameHooksExplicit{
+			Install: domain.HookExplicitFlags{BeforeAll: true},
+		},
+	}
+
+	rebuilt := ProfileFromExported(ExportProfileValue(original))
+	require.NotNil(t, rebuilt)
+	assert.Equal(t, original.Name, rebuilt.Name)
+	assert.Equal(t, original.GameID, rebuilt.GameID)
+	assert.Equal(t, original.Mods, rebuilt.Mods)
+	assert.Equal(t, original.LinkMethod, rebuilt.LinkMethod)
+	assert.True(t, rebuilt.LinkMethodExplicit)
+	assert.Equal(t, original.Overrides, rebuilt.Overrides)
+	assert.Equal(t, original.Hooks, rebuilt.Hooks)
+	assert.Equal(t, original.HooksExplicit, rebuilt.HooksExplicit)
+}
+
+// TestProfileFromExported_AnImplicitLinkMethodStaysImplicit pins the one
+// asymmetry: an export carries no link_method when the profile never set
+// one, and turning that back into an explicit symlink would bake a phantom
+// override into every restored profile.
+func TestProfileFromExported_AnImplicitLinkMethodStaysImplicit(t *testing.T) {
+	rebuilt := ProfileFromExported(ExportProfileValue(
+		&domain.Profile{Name: "default", GameID: "g1", LinkMethod: domain.LinkSymlink},
+	))
+	require.NotNil(t, rebuilt)
+	assert.False(t, rebuilt.LinkMethodExplicit)
+}
+
+func TestProfileFromExported_NilIsNil(t *testing.T) {
+	assert.Nil(t, ProfileFromExported(nil))
+}
