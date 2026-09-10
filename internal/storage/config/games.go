@@ -263,6 +263,20 @@ func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
+	// NOT atomic: os.WriteFile truncates in place, so a reader in another
+	// process can see a partial document (#403). `lmm serve` re-reads this
+	// file on every request it serves (freshGames, #376), which makes it the
+	// likeliest such reader.
+	//
+	// Accepted for v2.0.0 rather than fixed. A partial read normally fails
+	// to parse, and that path is already correct - core.ReloadGames keeps
+	// the last good set and does NOT advance its stat fingerprint, so the
+	// next request retries instead of caching the failure. The residual is a
+	// truncation landing on a game boundary, which parses as a valid subset
+	// and is served until the writer's completion moves the file again: a
+	// window measured in microseconds, self-healing on the very next
+	// request. #403 carries the durable fix (temp file + os.Rename), which
+	// also stops an interrupted `lmm game add` leaving a truncated file.
 	gamesPath := filepath.Join(configDir, "games.yaml")
 	if err := os.WriteFile(gamesPath, data, 0644); err != nil {
 		return fmt.Errorf("writing games.yaml: %w", err)
