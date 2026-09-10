@@ -1490,6 +1490,17 @@ source list --all` when there is more to show. `lmm game edit --help`
   candidate sources named when it is ambiguous instead of silently editing
   whichever it found first.
 
+- **`lmm list` shows which mods are not live, without `-v` (#397).** The
+  default view is ID / NAME / VERSION / AUTHOR, so a disabled, undeployed
+  mod rendered identically to a working one and the header count included
+  it — which is how the final review's orphaned row read as a normal mod.
+  Row tinting already carried the state, but colour is gone under
+  `--no-color`, in a pipe, and for anyone who cannot see it. A `STATE`
+  column now marks `disabled` / `not deployed`, appearing only when there
+  is such a mod (the rule the `EXTERNAL` column already follows), and the
+  header says how many are disabled. `-v` is unchanged: its
+  `ENABLED`/`DEPLOYED` pair says it in full.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

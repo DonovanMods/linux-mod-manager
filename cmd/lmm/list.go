@@ -27,6 +27,10 @@ still survive). A mod installed but missing from the load order is
 still shown (never silently dropped), placed first since it has no
 claim to the final say.
 
+A mod that is not enabled, or enabled but not yet deployed, is marked in
+a STATE column; the column appears only when there is such a mod, and
+-v/--verbose replaces it with the full ENABLED/DEPLOYED pair.
+
 Use --profiles to list profile names for the game instead of mods.
 
 Examples:
@@ -79,10 +83,16 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	}
 
 	// Always show total count (no longer requires --verbose)
-	external := 0
+	external, disabled, offState := 0, 0, 0
 	for _, m := range mods {
 		if m.External {
 			external++
+		}
+		if !m.Enabled {
+			disabled++
+		}
+		if modStateLabel(m) != "" {
+			offState++
 		}
 	}
 	fmt.Printf("Installed mods in %s (profile: %s) — %d mod(s)", game.Name, profileName, len(mods))
@@ -90,6 +100,12 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		// #269: said here rather than left to the reader to infer from the
 		// EXTERNAL markers, so the count and its explanation arrive together.
 		fmt.Printf(", %d tracked from Steam", external)
+	}
+	if disabled > 0 {
+		// #397, same reasoning: the count above includes mods that are off,
+		// so it says how many rather than leaving the reader to tally the
+		// STATE column.
+		fmt.Printf(", %d disabled", disabled)
 	}
 	fmt.Println()
 	if verbose && game.CachePath != "" {
@@ -104,6 +120,17 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	if verbose {
 		header = "ID\tNAME\tVERSION\tAUTHOR\tSOURCE\tENABLED\tDEPLOYED\tMETHOD\tPOLICY\tLOCKED\tCONVERT"
 		sep = "--\t----\t-------\t------\t------\t-------\t--------\t------\t------\t------\t-------"
+	}
+	// #397: the default view was ID/NAME/VERSION/AUTHOR, so a disabled,
+	// undeployed mod rendered identically to a live one. Row tinting
+	// carried the state already, but colour is gone under --no-color, in a
+	// pipe, and for anyone who cannot see it. The column follows the
+	// EXTERNAL rule below - present only when there is something to say -
+	// so a profile whose mods are all live keeps the shape it has always
+	// had. Under --verbose the ENABLED/DEPLOYED columns say it in full.
+	if !verbose && offState > 0 {
+		header += "\tSTATE"
+		sep += "\t-----"
 	}
 	// #269: the EXTERNAL column appears only when the profile actually has
 	// such a mod, so every existing listing keeps the shape it has always
@@ -167,6 +194,13 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String(), policyToString(mod.UpdatePolicy), locked, convert)
 		} else {
 			row = fmt.Sprintf("%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), version, truncate(author, 20))
+			if offState > 0 {
+				state := modStateLabel(mod)
+				if state == "" {
+					state = "-"
+				}
+				row += "\t" + state
+			}
 		}
 		if external > 0 {
 			marker := "-"
@@ -202,6 +236,23 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	}
 
 	return nil
+}
+
+// modStateLabel names a mod's state when it is NOT the ordinary one
+// (enabled and deployed), and returns "" when it is (#397).
+//
+// Disabled wins over undeployed: a disabled mod is undeployed as a
+// CONSEQUENCE, and naming the cause is what tells the reader which command
+// to reach for.
+func modStateLabel(mod core.ModListing) string {
+	switch {
+	case !mod.Enabled:
+		return "disabled"
+	case !mod.Deployed:
+		return "not deployed"
+	default:
+		return ""
+	}
 }
 
 // runListProfiles takes the caller's ctx rather than reading cmd.Context():
