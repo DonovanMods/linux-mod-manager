@@ -1868,3 +1868,29 @@ func TestDoInstall_VersionAndAuthorPresent_KeepsTheLabels(t *testing.T) {
 	assert.Contains(t, out, "Selected: Mod One v1.0 by Someone\n")
 	assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
 }
+
+// TestSearchAndSelectMods_EOFNamesTheSameRemedyAsJSON is #385 at the third
+// prompt that has a --json remedy of its own: a piped `lmm install <query>`
+// matching more than one mod reported "reading input: EOF" instead of
+// naming -y/--yes or --id.
+func TestSearchAndSelectMods_EOFNamesTheSameRemedyAsJSON(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false // the flag whose absence is what makes this a prompt
+	src.searchResults = []domain.Mod{
+		{ID: "mod1", SourceID: "test-src", Name: "Alpha", Version: "1.0", GameID: "g1"},
+		{ID: "mod2", SourceID: "test-src", Name: "Alpha Two", Version: "1.0", GameID: "g1"},
+	}
+
+	var selErr error
+	captureStdout(t, func() error {
+		withStdin(t, "", func() {
+			_, selErr = searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "Alpha", "default")
+		})
+		return nil
+	})
+
+	require.Error(t, selErr)
+	assert.NotContains(t, selErr.Error(), "EOF")
+	require.ErrorIs(t, selErr, core.ErrConfirmationRequired)
+	assert.Contains(t, selErr.Error(), "--id")
+}

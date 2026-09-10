@@ -832,3 +832,32 @@ func TestDoAuthLogout_PlainTextUnchanged(t *testing.T) {
 	})
 	assert.Equal(t, "Removed Acme Mods credentials.\n", out)
 }
+
+// TestPromptForSource_EOFNamesTheSameRemedyAsJSON is #385 at the auth
+// picker: a piped `lmm auth logout` (no --json) reported
+// "reading input: EOF", while the --json path for the same prompt already
+// named the positional source argument. Both renderings now carry the
+// remedy.
+func TestPromptForSource_EOFNamesTheSameRemedyAsJSON(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	svc.RegisterSource(curseforge.New(nil, ""))
+
+	var promptErr error
+	captureStdout(t, func() error {
+		withStdin(t, "", func() {
+			_, promptErr = promptForSource(svc)
+		})
+		return nil
+	})
+
+	require.Error(t, promptErr)
+	assert.NotContains(t, promptErr.Error(), "EOF")
+	require.ErrorIs(t, promptErr, core.ErrConfirmationRequired)
+	assert.Contains(t, promptErr.Error(), "lmm auth logout <source>")
+}

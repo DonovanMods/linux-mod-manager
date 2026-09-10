@@ -307,8 +307,9 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 
 		fmt.Printf("\nSelect mod(s) (e.g., 1 or 1,3,5 or 1-3) [1]: ")
 		input, err := reader.ReadString('\n')
-		if err != nil {
-			return nil, fmt.Errorf("reading input: %w", err)
+		if err != nil && strings.TrimSpace(input) == "" {
+			// Same remedy the --json path names just above (#385).
+			return nil, promptReadError(err, "pass -y/--yes to auto-select the first result, or --id to install a specific mod directly")
 		}
 		input = strings.TrimSpace(input)
 

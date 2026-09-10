@@ -184,8 +184,8 @@ func promptForSource(service *core.Service) (string, error) {
 
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("reading input: %w", err)
+	if err != nil && strings.TrimSpace(input) == "" {
+		return "", promptReadError(err, "pass the source ID as a positional argument (e.g. lmm auth logout <source>)")
 	}
 
 	choice, err := strconv.Atoi(strings.TrimSpace(input))

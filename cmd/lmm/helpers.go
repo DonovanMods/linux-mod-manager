@@ -107,6 +107,23 @@ func confirmationRequiredVia(how string) error {
 	return fmt.Errorf("%w: %s", core.ErrConfirmationRequired, how)
 }
 
+// promptReadError words a failed prompt read for a caller whose --json path
+// already names a remedy via confirmationRequiredVia.
+//
+// At EOF - stdin closed by a pipe, a redirect or Ctrl-D - no answer is ever
+// coming, and the plain-mode run used to report "reading input: EOF": an
+// implementation detail, with no way forward, handed to exactly the
+// scripted/cron caller the exit-code table exists for (#385). It now gets
+// the same remedy the --json envelope carries, so the two renderings say
+// the same thing. Any OTHER read failure is a genuine stdin fault and keeps
+// its "reading input:" wrapper.
+func promptReadError(err error, how string) error {
+	if errors.Is(err, io.EOF) {
+		return confirmationRequiredVia(how)
+	}
+	return fmt.Errorf("reading input: %w", err)
+}
+
 // resolveSource determines which source to use for a game.
 // If sourceFlag is provided, validates it's configured for the game.
 // If sourceFlag is empty and only one source is configured, uses that.
@@ -193,8 +210,8 @@ func promptForGameSource(gameName string, sources []string, resolve func(string)
 
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("reading input: %w", err)
+	if err != nil && strings.TrimSpace(input) == "" {
+		return "", promptReadError(err, "pass -s/--source to select a mod source")
 	}
 
 	choice, err := strconv.Atoi(strings.TrimSpace(input))

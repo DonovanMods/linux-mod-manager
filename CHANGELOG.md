@@ -1411,6 +1411,16 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   `games.yaml` does not say. It now reads "extract- and compile-mode
   games".
 
+- **A prompt that can never be answered names the flag that answers it, in
+  plain output too (#385).** Piping lmm without `--json` — `lmm mod lock
+alpha < /dev/null`, the scripted/cron case the exit-code table exists for
+  — reported `Error: reading input: EOF`, an implementation detail with no
+  way forward, while the `--json` path for the very same prompt already
+  named `-s/--source`. The source-selection prompt, `lmm auth`'s source
+  picker and `lmm install`'s search picker now return the same remedy in
+  both renderings. A genuine stdin failure (anything other than EOF) still
+  reports as `reading input: …`.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

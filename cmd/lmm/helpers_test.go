@@ -415,3 +415,23 @@ func TestWithGameService_ResolvesGame(t *testing.T) {
 	require.NotNil(t, seen)
 	assert.Equal(t, "testgame", seen.ID)
 }
+
+// TestPromptForGameSource_EOFNamesTheSameRemedyAsJSON is #385: piping lmm
+// without --json ("lmm mod lock alpha < /dev/null") reported
+// "Error: reading input: EOF" - an implementation detail with no way
+// forward - while the --json path for the very same prompt already named
+// -s/--source. One shared error, two renderings.
+func TestPromptForGameSource_EOFNamesTheSameRemedyAsJSON(t *testing.T) {
+	var promptErr error
+	captureStdout(t, func() error {
+		withStdin(t, "", func() {
+			_, promptErr = promptForGameSource("My Game", []string{"acme", "beta"}, nil)
+		})
+		return nil
+	})
+
+	require.Error(t, promptErr)
+	assert.NotContains(t, promptErr.Error(), "EOF")
+	require.ErrorIs(t, promptErr, core.ErrConfirmationRequired)
+	assert.Contains(t, promptErr.Error(), "--source")
+}
