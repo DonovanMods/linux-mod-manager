@@ -6,10 +6,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -296,4 +298,69 @@ func TestRewriteExtractedTreeRefusesAnEscapingPath(t *testing.T) {
 	_, err := rewriteExtractedTree(root, layout, []string{"a.dll"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "escaping")
+}
+
+// TestValidateInstallFileSelectionAsksTheAdapter is I5's regression test
+// (#411). Every other compile-capability site asks adapterCompiler first
+// and carries a `temporary until U2 (#412)` marker;
+// ValidateInstallFileSelection kept a direct src.(source.MergeCompiler)
+// assertion that was neither marked nor inventoried. When U2 moves the
+// MergeCompiler methods off *icarus.Icarus, the assertion becomes false for
+// the Icarus SOURCE and #211's guard against mixing a merge-compile
+// source's .exmodz variant with any other file in one selection would
+// silently become dead code that always returns nil - a released fix
+// regressing in a deletion pass.
+// exmodzCompiler is compileStub with the one format question the
+// variant-exclusivity rule asks.
+type exmodzCompiler struct{ compileStub }
+
+func (exmodzCompiler) IsNativeMergeSource(name string) bool {
+	return strings.HasSuffix(name, ".exmodz")
+}
+
+// plainTestSource is the smallest source.ModSource that implements NO
+// optional capability - in particular no source.MergeCompiler.
+type plainTestSource struct{}
+
+func (plainTestSource) ID() string      { return "plain" }
+func (plainTestSource) Name() string    { return "Plain" }
+func (plainTestSource) AuthURL() string { return "" }
+func (plainTestSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, nil
+}
+func (plainTestSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{}, nil
+}
+func (plainTestSource) GetMod(context.Context, string, string) (*domain.Mod, error) {
+	return nil, domain.ErrModNotFound
+}
+func (plainTestSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, nil
+}
+func (plainTestSource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, nil
+}
+func (plainTestSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", nil
+}
+func (plainTestSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, nil
+}
+
+func TestValidateInstallFileSelectionAsksTheAdapter(t *testing.T) {
+	svc := newAdapterTestService(t)
+	svc.RegisterAdapter(exmodzCompiler{compileStub: compileStub{id: "compiler"}})
+	game := &domain.Game{ID: "g1", Adapter: "compiler", SourceIDs: map[string]string{"plain": "g1"}}
+	svc.games[game.ID] = game
+	svc.RegisterSource(plainTestSource{})
+
+	files := []domain.DownloadableFile{
+		{ID: "pak", FileName: "Mod_P.pak"},
+		{ID: "exmodz", FileName: "Mod.exmodz"},
+	}
+
+	// The SOURCE implements no MergeCompiler; the game's ADAPTER does.
+	err := svc.ValidateInstallFileSelection(game, "plain", files)
+	require.Error(t, err, "the variant-exclusivity rule must follow the adapter, not only the source")
+	assert.Contains(t, err.Error(), "alternate forms of the same mod")
 }

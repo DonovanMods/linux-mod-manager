@@ -1316,7 +1316,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		// doc comment), so validating its result immediately after this fold
 		// is equivalent to validating inside it, and plan.Files is the only
 		// value that matters to fillPrimaryCache either way.
-		if err := s.ValidateInstallFileSelection(plan.SourceID, plan.Files); err != nil {
+		if err := s.ValidateInstallFileSelection(game, plan.SourceID, plan.Files); err != nil {
 			return result, err
 		}
 	}
@@ -1354,7 +1354,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		// before any dependency (or the primary itself) is touched -
 		// mirrors the STRICT path's fold-site validation above for the
 		// BATCH path's one place a caller can pin more than one file.
-		if err := s.ValidateInstallFileSelection(primary.SourceID, primaryOverrideFiles); err != nil {
+		if err := s.ValidateInstallFileSelection(game, primary.SourceID, primaryOverrideFiles); err != nil {
 			return result, err
 		}
 	}

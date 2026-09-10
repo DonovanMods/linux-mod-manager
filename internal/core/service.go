@@ -361,11 +361,16 @@ func (s *Service) GetSource(id string) (source.ModSource, error) {
 // merge-compile source's exmodz variant with any other file (#211): the two
 // are alternate forms of the same mod, and installing both double-applies
 // its table edits (the pak deploys standalone while the exmodz joins the
-// merged pak). Sources that don't implement source.MergeCompiler are never
-// restricted, single-file selections are always fine, and an unknown
-// sourceID is not this check's problem - pool resolution errors on it
-// first.
-func (s *Service) ValidateInstallFileSelection(sourceID string, files []domain.DownloadableFile) error {
+// merged pak). A game with no compile capability is never restricted,
+// single-file selections are always fine, and an unknown sourceID is not
+// this check's problem - pool resolution errors on it first.
+//
+// #353: the capability is resolved through compilerForSource, like every
+// other compile site - the game's ADAPTER first, the source assertion only
+// as the fallback that is `temporary until U2 (#412)`. Asking the source
+// directly is what would make this guard silently dead the day U2 moves
+// the MergeCompiler methods off *icarus.Icarus.
+func (s *Service) ValidateInstallFileSelection(game *domain.Game, sourceID string, files []domain.DownloadableFile) error {
 	if len(files) < 2 {
 		return nil
 	}
@@ -373,7 +378,7 @@ func (s *Service) ValidateInstallFileSelection(sourceID string, files []domain.D
 	if err != nil {
 		return nil
 	}
-	mc, ok := src.(source.MergeCompiler)
+	mc, ok := s.compilerForSource(game, src)
 	if !ok {
 		return nil
 	}

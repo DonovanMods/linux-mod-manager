@@ -92,7 +92,7 @@ func TestValidateInstallFileSelection(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := svc.ValidateInstallFileSelection(tc.sourceID, tc.files)
+			err := svc.ValidateInstallFileSelection(&domain.Game{ID: "g1"}, tc.sourceID, tc.files)
 			if tc.wantErr {
 				require.ErrorContains(t, err, "alternate forms of the same mod")
 			} else {
