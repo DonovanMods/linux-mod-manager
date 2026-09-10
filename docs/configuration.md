@@ -16,6 +16,7 @@ Global application settings. Optional; defaults apply if the file is missing.
 | `cache_path`          | string | (empty)   | Override default mod cache directory (`<data dir>/cache`)                                            |
 | `hook_timeout`        | int    | 60        | Timeout in seconds for hook scripts                                                                  |
 | `auto_snapshot`       | bool   | `false`   | Record a snapshot before every deploy, profile switch and update (see below)                         |
+| `auto_snapshot_keep`  | int    | `10`      | How many AUTOMATIC snapshots to keep per game; `0` means unlimited (see below)                       |
 
 ### `auto_snapshot`
 
@@ -30,9 +31,39 @@ FAILS is reported as a warning and the operation continues: a backup that
 blocks the thing it is protecting is worse than no backup.
 
 Automatic snapshots are listed by `lmm snapshot list` like any other, marked
-`(auto)`, and are deleted the same way. Nothing prunes them — a machine that
-deploys often will accumulate them, and they are cheap (kilobytes each) but
-not free.
+`(auto)`, and are deleted the same way.
+
+### `auto_snapshot_keep`
+
+Automatic snapshots are **pruned**: each time lmm records one, the oldest
+automatic snapshots beyond `auto_snapshot_keep` (default `10`) are deleted.
+Set it to `0` for unlimited.
+
+Only automatic snapshots are ever pruned — one you named with
+`lmm snapshot create --name` is yours until you delete it — and the
+originals store is never touched by a prune: it lives outside the
+snapshot-name namespace entirely (`_originals/`), and it holds the only
+copy of what it holds.
+
+### What a snapshot does and does not contain
+
+A snapshot never contains mod bytes. It records the profile (load order and
+locks), the installed versions and per-mod settings, the deployed files with
+their checksums, and the originals in force — a few kilobytes. The mod files
+themselves are in the mod cache (`<data>/cache/...`).
+
+So a restore needs, for each mod it puts back: the cached files for the
+**recorded version** if they are still there, and otherwise a download of
+that exact version from the mod's source. A version the source can no longer
+serve — deleted, hidden, or superseded with the old file removed — is
+reported as a refusal in the preview, before anything is touched. Clearing
+the cache does not invalidate a snapshot, but it does make restoring it need
+the network, and a source that has dropped a version can no longer supply
+it at all.
+
+The one thing a snapshot restore does NOT need from anywhere is the stock
+game content lmm replaced: those bytes are in the originals store, which is
+the only copy of them and is never pruned or deleted by lmm.
 
 
 ## games.yaml

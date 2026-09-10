@@ -1869,6 +1869,13 @@ cache, so a snapshot costs kilobytes. Creating one hashes the deployed tree,
 which is the same work `lmm verify` does — so on a large install it is not
 instant.
 
+Because a snapshot holds no mod bytes, a **restore** needs each mod's
+recorded version from the cache, or a download of that exact version from
+its source when the cache no longer has it. A version the source can no
+longer serve is a refusal in the preview, before anything is touched. The
+stock content lmm replaced is the exception: that IS kept, in the originals
+store below, which is the only copy of it.
+
 **The originals store** is the part lmm cannot reconstruct any other way.
 Whenever a deploy, or a profile override, would replace a file lmm did not
 put there — stock game content, or a file another tool left — the original
@@ -1906,7 +1913,9 @@ restore of that.
 
 **Automatic snapshots** are opt-in. Set `auto_snapshot: true` in
 `config.yaml` and lmm records one before every deploy, profile switch and
-update, named `auto-<op>-<timestamp>`. Off by default because hashing a
+update, named `auto-<op>-<timestamp>`. They are pruned: the newest
+`auto_snapshot_keep` (default 10, `0` for unlimited) survive, and only the
+automatic ones — a snapshot you named is yours until you delete it. Off by default because hashing a
 large deployed tree on every deploy is a real cost, and because a user who
 wants the safety net can say so once. An automatic snapshot that fails is a
 warning, never a refusal — a backup that blocks the operation it is

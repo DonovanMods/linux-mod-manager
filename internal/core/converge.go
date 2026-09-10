@@ -193,9 +193,20 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				continue
 			}
 
-			if err := lnk.Undeploy(filepath.Join(game.ModPath, path)); err != nil {
+			dstPath := filepath.Join(game.ModPath, path)
+			if err := lnk.Undeploy(dstPath); err != nil {
 				errs = append(errs, fmt.Errorf("undeploying %s: %w", path, err))
 				continue
+			}
+			// Coordinator ruling on review note 13: a convergence removes
+			// a file lmm deployed, so whatever that file displaced goes
+			// back at the same moment - the same contract uninstall and
+			// purge follow.
+			if store := s.originalsStoreFor(game.ID); store != nil {
+				if _, err := store.release(OriginalRootModPath, filepath.ToSlash(path), dstPath); err != nil {
+					store.noteFailure(fmt.Sprintf(
+						"could not put back the file lmm replaced at %s; `lmm snapshot restore` can still do it: %v", dstPath, err))
+				}
 			}
 			result.Removed = append(result.Removed, cf)
 			if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {

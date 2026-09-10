@@ -482,6 +482,19 @@ func (s *Service) takeCaptureWarnings(gameID string, op Op, phase DeployPhase, w
 // directory would turn "lmm kept your original" into "lmm broke your
 // install". A mismatch or a missing stored copy is reported, never written.
 func (s *originalsStore) restore(row OriginalFile, absPath string) error {
+	// ALREADY back? Then this is done, whatever the store still holds.
+	// A restore purges first, and a purge now puts each original back as it
+	// removes the file that replaced it (coordinator ruling (a) on the
+	// review's note 13), taking the stored copy with it - so by the time
+	// the originals stage runs, the file it is there to write is often
+	// already exactly right. Reporting that as "the stored copy is
+	// missing" would turn a correct restore into a partial one.
+	if row.SHA256 != "" {
+		if sum, _, err := hashFile(absPath); err == nil && sum == row.SHA256 {
+			return applyOriginalMode(absPath, row)
+		}
+	}
+
 	stored := s.storedPath(row.Root, row.RelativePath)
 	sum, _, err := hashFile(stored)
 	if err != nil {
@@ -510,6 +523,13 @@ func (s *originalsStore) restore(row OriginalFile, absPath string) error {
 	// this store exists to cover means launcher scripts, wrappers and
 	// shipped binaries. 0644 remains the fallback for a row written before
 	// the mode was recorded.
+	return applyOriginalMode(absPath, row)
+}
+
+// applyOriginalMode puts row's recorded permission bits back on absPath,
+// falling back to 0644 for a row written before the mode was recorded
+// (review finding 6).
+func applyOriginalMode(absPath string, row OriginalFile) error {
 	mode := fs.FileMode(0644)
 	if row.Mode != 0 {
 		mode = fs.FileMode(row.Mode).Perm()
@@ -518,6 +538,65 @@ func (s *originalsStore) restore(row OriginalFile, absPath string) error {
 		return fmt.Errorf("setting permissions on the restored %s: %w", row.RelativePath, err)
 	}
 	return nil
+}
+
+// release puts back the original recorded for (root, relPath) at absPath,
+// for the moment lmm REMOVES the file that replaced it - an uninstall, a
+// purge, a convergence, or the rollback of a failed install.
+//
+// Coordinator ruling on review note 13. "Undo what lmm did" has to include
+// the file lmm displaced: without this, an ordinary uninstall left a HOLE
+// where stock content used to be, and the only way back was `snapshot
+// restore`, which is a whole-state operation nobody wants for one mod.
+// `snapshot restore` stays the whole-state path; this is the per-file one.
+//
+// The manifest row survives until the bytes are actually back in place: a
+// restore that fails leaves the row (and the stored copy) exactly where a
+// later `snapshot restore` can still find them. Once the original IS back,
+// the row goes - lmm no longer holds the only copy, and a later deploy over
+// that same file captures it afresh.
+//
+// Returns whether anything was put back. A row this store has never heard
+// of is (false, nil), not an error: most removals are of files that
+// replaced nothing.
+func (s *originalsStore) release(root OriginalRoot, relPath, absPath string) (bool, error) {
+	rel, err := cleanOriginalRelPath(relPath)
+	if err != nil {
+		return false, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	m, err := s.read()
+	if err != nil {
+		return false, err
+	}
+	idx := -1
+	for j, existing := range m.Originals {
+		if existing.Root == root && existing.RelativePath == rel {
+			idx = j
+			break
+		}
+	}
+	if idx < 0 {
+		return false, nil
+	}
+	row := m.Originals[idx]
+	if err := s.restore(row, absPath); err != nil {
+		return false, err
+	}
+
+	stored := s.storedPath(row.Root, row.RelativePath)
+	m.Originals = append(m.Originals[:idx:idx], m.Originals[idx+1:]...)
+	if err := s.write(m); err != nil {
+		// The file is back; the row merely outlives it. A later
+		// `snapshot restore` would rewrite identical bytes over it, which
+		// is harmless - so this is reported, not fatal.
+		return true, err
+	}
+	_ = os.Remove(stored) //nolint:errcheck // the record is what matters; orphaned bytes are inert
+	return true, nil
 }
 
 // verify reports whether row's stored copy is present and matches its

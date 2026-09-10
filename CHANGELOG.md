@@ -252,6 +252,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the one thing lmm cannot re-download. Names use letters, digits, `.`,
   `_` and `-`.
 
+  **An uninstall, purge, convergence or rolled-back install now puts the
+  original BACK** at the moment it removes the file that replaced it. That
+  is what "undo what lmm did" has to mean: before this, removing a mod left
+  a hole where stock content had been, and the only way to get it back was
+  `snapshot restore` — a whole-state operation nobody wants for one mod.
+  `snapshot restore` remains the whole-state path. The manifest row
+  survives until the bytes are actually back in place, so a restore that
+  fails leaves both the row and the stored copy where a later
+  `snapshot restore` can still find them.
+
+  **Automatic snapshots are pruned.** `auto_snapshot_keep` (default 10, `0`
+  for unlimited) bounds how many a game keeps: an opt-in that grows a
+  directory for as long as it is on is a slow leak, and the point of the
+  automatic ones is not having to think about them. Only automatic
+  snapshots are ever pruned, and the originals store is never touched by
+  one.
+
   A stored original records its file **mode** and comes back with it, so a
   stock launcher script or shipped binary is executable again rather than
   `rw-r--r--` (`core.OriginalFile` gains an additive `mode`).

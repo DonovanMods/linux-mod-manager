@@ -576,5 +576,49 @@ func (s *Service) autoSnapshot(ctx context.Context, game *domain.Game, profileNa
 	if err != nil {
 		return "", fmt.Sprintf("could not record an automatic snapshot before this %s: %v", op, err)
 	}
-	return result.Name, ""
+	return result.Name, s.pruneAutoSnapshots(ctx, game.ID)
+}
+
+// pruneAutoSnapshots deletes the oldest AUTOMATIC snapshots beyond
+// config.yaml's auto_snapshot_keep, and returns a warning if it could not.
+//
+// Coordinator ruling on the #350 review's note 13. Only automatic
+// snapshots are ever considered: one you named is yours until you delete
+// it. 0 means unlimited, which is what an explicit `auto_snapshot_keep: 0`
+// asks for; the default is config.DefaultAutoSnapshotKeep.
+//
+// Called from INSIDE a flow's mutation slot, so it removes the documents
+// itself rather than going through DeleteSnapshot (which takes the slot).
+// The originals store is never touched: it is not in the snapshot-name
+// namespace at all, and it holds the only copy of what it holds.
+func (s *Service) pruneAutoSnapshots(ctx context.Context, gameID string) string {
+	keep := config.DefaultAutoSnapshotKeep
+	if s.config != nil {
+		keep = s.config.AutoSnapshotKeep
+	}
+	if keep <= 0 {
+		return ""
+	}
+	listing, err := s.ListSnapshots(ctx, gameID)
+	if err != nil {
+		return fmt.Sprintf("could not prune old automatic snapshots: %v", err)
+	}
+	seen := 0
+	var failed []string
+	for _, row := range listing.Snapshots { // newest first
+		if !row.Auto {
+			continue
+		}
+		seen++
+		if seen <= keep {
+			continue
+		}
+		if err := os.Remove(s.snapshotPath(gameID, row.Name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			failed = append(failed, row.Name)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Sprintf("could not delete %d old automatic snapshot(s): %s", len(failed), strings.Join(failed, ", "))
+	}
+	return ""
 }

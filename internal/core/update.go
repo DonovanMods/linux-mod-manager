@@ -814,11 +814,11 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// #350's opt-in auto-snapshot: after the freshness and plan checks
 	// (neither of which mutates anything), before the first download. Off
 	// by default; a failure is a warning, never a refusal.
-	if name, warning := s.autoSnapshot(ctx, game, profileName, OpUpdate); warning != "" {
-		result.Warnings = prependWarning(result.Warnings, warning)
-	} else {
-		result.Notes = prependSnapshotNote(result.Notes, name)
-	}
+	// Both are recorded, not one or the other - see applyDeploy's own call
+	// and prependWarning/prependSnapshotNote, which no-op on "".
+	autoName, autoWarn := s.autoSnapshot(ctx, game, profileName, OpUpdate)
+	result.Warnings = prependWarning(result.Warnings, autoWarn)
+	result.Notes = prependSnapshotNote(result.Notes, autoName)
 
 	// #286 review (Important 1): resolved before the download loop below,
 	// applyUpdate's first mutation - mirroring every other flow

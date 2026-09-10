@@ -103,6 +103,32 @@ func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, prof
 	}
 }
 
+// restoreReplacedOriginal puts back whatever lmm displaced at relPath, at
+// the moment lmm's own file there is removed (coordinator ruling on review
+// note 13). No-op when this Installer has no store, or when nothing was
+// ever captured for that path - which is every ordinary uninstall.
+//
+// Never fatal: a removal that succeeded must not be reported as a failure
+// because the original could not go back. The failure is recorded on the
+// store's always-on channel instead (review finding 5), which is where a
+// user needs it - the file lmm cannot return is the one it holds the only
+// copy of.
+func (i *Installer) restoreReplacedOriginal(relPath, dstPath string) {
+	if i.originals == nil {
+		return
+	}
+	restored, err := i.originals.release(OriginalRootModPath, filepath.ToSlash(relPath), dstPath)
+	if err != nil {
+		i.log.Warn("could not put back the file this mod replaced", "path", dstPath, "err", err)
+		i.originals.noteFailure(fmt.Sprintf(
+			"could not put back the file lmm replaced at %s; `lmm snapshot restore` can still do it: %v", dstPath, err))
+		return
+	}
+	if restored {
+		i.log.Debug("put back the file this mod replaced", "path", dstPath)
+	}
+}
+
 // foreignFile reports whether dstPath holds content lmm did not put there:
 // a REGULAR file (a symlink is a deployment, lmm's or another tool's) with
 // no deployed_files row for this game and profile.
@@ -155,6 +181,10 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			rollbackErr := rollbackDeploy(i.linker, game.ModPath, deployed)
+			// A rolled-back install must leave no hole either: every file
+			// it removed on the way out gets its original back, including
+			// the one whose deploy just failed (capture ran before it).
+			i.restoreReplacedOriginals(game, append(append([]string(nil), deployed...), file))
 			if i.db != nil {
 				_ = i.db.DeleteDeployedFiles(ctx, game.ID, profileName, mod.SourceID, mod.ID)
 			}
@@ -170,7 +200,9 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 			if err := i.db.SaveDeployedFile(ctx, game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
 				// Roll back only the file that failed to track; leave previously
 				// deployed+tracked files and DB records intact.
-				if rollbackErr := rollbackDeploy(i.linker, game.ModPath, []string{file}); rollbackErr != nil {
+				rollbackErr := rollbackDeploy(i.linker, game.ModPath, []string{file})
+				i.restoreReplacedOriginals(game, []string{file})
+				if rollbackErr != nil {
 					return &domain.DeployError{Op: fmt.Sprintf("tracking deployed file %s", file), Primary: err, Rollback: rollbackErr}
 				}
 				return fmt.Errorf("tracking deployed file %s: %w", file, err)
@@ -532,6 +564,17 @@ func (i *Installer) restoreOldFiles(oldCache *cache.Cache, game *domain.Game, ol
 
 // rollbackDeploy undeploys the given relative paths under modPath (reverse order).
 // Returns the first Undeploy error encountered, if any.
+// restoreReplacedOriginals is restoreReplacedOriginal over a set of
+// relative paths - the rollback shape.
+func (i *Installer) restoreReplacedOriginals(game *domain.Game, relativePaths []string) {
+	if i.originals == nil {
+		return
+	}
+	for _, rel := range relativePaths {
+		i.restoreReplacedOriginal(rel, filepath.Join(game.ModPath, rel))
+	}
+}
+
 func rollbackDeploy(lnk linker.Linker, modPath string, relativePaths []string) error {
 	var firstErr error
 	for j := len(relativePaths) - 1; j >= 0; j-- {
@@ -605,6 +648,8 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 		if err := i.linker.Undeploy(dstPath); err != nil {
 			return fmt.Errorf("undeploying %s: %w", file, err)
 		}
+		// lmm's own file is gone; whatever it displaced goes back.
+		i.restoreReplacedOriginal(file, dstPath)
 	}
 
 	// Remove file ownership records from database

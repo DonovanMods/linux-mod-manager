@@ -300,11 +300,12 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// - that is the state a user would want back. After the freshness
 	// check, before the first mutation; a failure is a warning, never a
 	// refusal.
-	if name, warning := s.autoSnapshot(ctx, game, plan.From, OpSwitch); warning != "" {
-		result.Warnings = prependWarning(result.Warnings, warning)
-	} else {
-		result.Notes = prependSnapshotNote(result.Notes, name)
-	}
+	// Both are recorded, not one or the other: since the prune ruling a
+	// successful snapshot can still carry a warning (the prune that could
+	// not run), and prependWarning/prependSnapshotNote both no-op on "".
+	autoName, autoWarn := s.autoSnapshot(ctx, game, plan.From, OpSwitch)
+	result.Warnings = prependWarning(result.Warnings, autoWarn)
+	result.Notes = prependSnapshotNote(result.Notes, autoName)
 
 	// #269: said once, up front, so the user reads it before the per-mod
 	// lines rather than wondering afterwards why their Workshop items

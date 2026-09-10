@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -469,4 +470,52 @@ func TestDeploy_AFailedCaptureIsVisibleAtDefaultVerbosity(t *testing.T) {
 		"and it must reach a live progress stream as a WarningEvent")
 	assert.Contains(t, warned.String(), "could not preserve",
 		"and the always-on user channel, since the CLI's default log level discards logs")
+}
+
+// TestUninstall_PutsBackTheFileItReplaced is the coordinator's ruling on
+// the review's note 13. An ordinary uninstall or purge used to leave the
+// HOLE where stock content had been: the original was in the store, but the
+// only way to get it back was `lmm snapshot restore`, a whole-state
+// operation nobody wants for one mod. "Undo what lmm did" has to include
+// the file lmm displaced, so it goes back at the moment lmm's own file is
+// removed - and the manifest row goes with it, because lmm no longer holds
+// the only copy.
+func TestUninstall_PutsBackTheFileItReplaced(t *testing.T) {
+	svc, dataDir := newOriginalsService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir,
+		LinkMethod: domain.LinkCopy, LinkMethodExplicit: true,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	stock := filepath.Join(gameDir, "Data", "shipped.esp")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stock), 0755))
+	require.NoError(t, os.WriteFile(stock, []byte("as the game shipped"), 0755))
+
+	seedNamedInstalledMod(t, svc, game, "src", "m1", "Mod One", "1.0", true,
+		map[string][]byte{"Data/shipped.esp": []byte("the mod's version")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "m1", "1.0")
+
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	data, err := os.ReadFile(stock)
+	require.NoError(t, err)
+	require.Equal(t, "the mod's version", string(data), "the mod really did replace it")
+	require.Len(t, readOriginalsManifest(t, dataDir, "g1"), 1)
+
+	_, err = svc.PurgeProfile(context.Background(), game,
+		"default", modsOf(t, svc, "g1", "default"), core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+
+	data, err = os.ReadFile(stock)
+	require.NoError(t, err, "the stock file must be BACK, not merely absent")
+	assert.Equal(t, "as the game shipped", string(data))
+
+	info, err := os.Stat(stock)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0755), info.Mode().Perm(), "and with the mode it had")
+
+	assert.Empty(t, readOriginalsManifest(t, dataDir, "g1"),
+		"the row goes once the original is back in place: lmm no longer holds the only copy")
 }
