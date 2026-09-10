@@ -904,6 +904,14 @@ number 1-2, a Steam app id, all, or none)` — naming the spelling just used
   as accepted. It now says a Steam app id **from the list above**, and names
   `--include-unknown` as the flag that would list the row.
 
+- **Every detect row now prints its Steam app id, not just the uncurated
+  ones (#368).** The app id column was the uncurated section's alone, while
+  the prompt accepts — and the ambiguity check matches — any listed row's
+  app id. So a curated row's app id could be named in a refusal ("also the
+  Steam app id of row 3") for something that appeared nowhere on screen, and
+  "use a row number or a Steam app id **from the list above**" was not
+  literally true for every spelling the prompt takes. Both are now.
+
 - **The Setup page's Steam Workshop card no longer butts against the card
   above it (#348).** The Adopt panel is the first place in the web UI to show
   two cards in one panel, and nothing put space between them, so the "Steam

@@ -72,9 +72,8 @@ var gameDetectCmd = &cobra.Command{
 	Long: `Scan Steam libraries for moddable games and optionally add them to games.yaml.
 
 Prompts for which games to add (e.g. 1,2 or all or none). Every listed
-row is numbered, curated games first, and the prompt takes either a row
-number or a game's Steam app id - the app id does not shift when the
-listing widens. A bare number that is BOTH a row number and some other
+row is numbered and prints its Steam app id, curated games first, and the
+prompt takes either - the app id does not shift when the listing widens. A bare number that is BOTH a row number and some other
 row's Steam app id is refused rather than guessed at (Steam's own back
 catalogue occupies the low integers - 10, 20, 70, 220, 400 - and a wide
 listing has that many rows): spell it '#3' to mean row 3, or 'app:10' to
@@ -601,7 +600,7 @@ func printDetectedGames(cmd *cobra.Command, listed []domain.DetectedGame, curate
 			}
 			cmd.Printf("Installed but not in the known-games list - pick one by number or app id here, or add it with `lmm game add --from-detected <app-id>`:\n")
 		}
-		printDetectedGameRow(cmd, i+1, g, existingGames, i >= curatedCount)
+		printDetectedGameRow(cmd, i+1, g, existingGames)
 	}
 }
 
@@ -624,17 +623,23 @@ func detectedGamesNoun(listed []domain.DetectedGame) string {
 	return "moddable"
 }
 
-// printDetectedGameRow renders one listed row. showAppID is set for the
-// uncurated section, where the app id is the handle that does not shift
-// when the scan finds one more game - and the one `lmm game add
-// --from-detected` takes.
-func printDetectedGameRow(cmd *cobra.Command, n int, g domain.DetectedGame, existingGames map[string]*domain.Game, showAppID bool) {
+// printDetectedGameRow renders one listed row, app id included: it is the
+// handle that does not shift when the scan finds one more game, and the one
+// `lmm game add --from-detected` takes.
+//
+// EVERY row prints it, curated ones too (#368 re-review N3). It used to be
+// the uncurated section's column alone, while the prompt accepts - and the
+// ambiguity check matches - any listed row's app id. So a curated row's app
+// id could be named in a refusal ("also the Steam app id of row 3") for
+// something that appeared nowhere on screen, and "a Steam app id from the
+// list above" was not literally true for every spelling the selector takes.
+func printDetectedGameRow(cmd *cobra.Command, n int, g domain.DetectedGame, existingGames map[string]*domain.Game) {
 	marker := ""
 	if _, ok := existingGames[g.Slug]; ok {
 		marker = " " + colorGreen("[configured]")
 	}
 	appID := ""
-	if showAppID && g.SteamAppID != "" {
+	if g.SteamAppID != "" {
 		appID = "  app id " + g.SteamAppID
 	}
 	cmd.Printf("  %d. %s (%s)%s%s\n", n, g.Name, g.Slug, appID, marker)

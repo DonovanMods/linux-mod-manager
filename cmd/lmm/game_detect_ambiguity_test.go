@@ -207,3 +207,30 @@ func TestGameDetectSelector_ARowThatIsItsOwnAppIDIsNotAmbiguous(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
 }
+
+// TestDoGameDetect_AmbiguityRefusalNamesAnAppIDTheListingPrinted is #368
+// re-review N3: the refusal is only usable if the user can SEE the
+// collision. The app id was printed for the UNCURATED section only, while
+// the collision check matches every listed row, so a curated row's app id
+// could be named in an error about something that appears nowhere on
+// screen - and "a Steam app id from the list above", the refusal one branch
+// over, was not literally true either.
+func TestDoGameDetect_AmbiguityRefusalNamesAnAppIDTheListingPrinted(t *testing.T) {
+	configDir = t.TempDir()
+	scan := ambiguousDetectScan(t)[:10] // ten curated rows, no uncurated one
+	scan[2].SteamAppID = "10"           // ...but row 3's app id is "10"
+	svc := workshopDetectService(t)
+	cmd, buf := newDetectCmd(t)
+
+	err := doGameDetect(context.Background(), cmd,
+		bufio.NewReader(strings.NewReader("10\n")), svc, scan, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the Steam app id of row 3",
+		"the collision is against a CURATED row")
+	assert.Contains(t, buf.String(), "app id 10",
+		"the listing must print the app id the refusal names")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.Empty(t, saved, "an ambiguous line writes nothing")
+}
