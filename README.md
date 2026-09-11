@@ -2435,8 +2435,11 @@ reporting seven statuses:
   disk were deployed, so nothing proves the current set ever loaded.
 - **LOADER PLUGIN UNLINKED** — an enabled mod's plugin files are not in the
   game directory; `--fix` re-deploys the mod.
-- **LOADER DEPLOYED OUTSIDE LOADER** — a mod's files are deployed somewhere
-  other than `BepInEx/`, which on a BepInEx game means nothing loads them.
+- **LOADER DEPLOYED OUTSIDE LOADER** — a mod has an **assembly** deployed
+  somewhere other than `BepInEx/`, so the loader reads none of it. (An
+  assembly, not merely a file: on a BepInEx game `mod_path` is the game
+  root, so a mod that legitimately writes into the game's own directories
+  is not misplaced.)
   This is what an install made before lmm recognised that archive's layout
   looks like. `--fix` re-lays the mod's cache entry out through the layout
   rules and re-deploys it — in every profile that shares the entry. When

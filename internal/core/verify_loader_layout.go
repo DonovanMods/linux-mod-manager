@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -44,12 +45,13 @@ const loaderRelayoutRemedy = "lmm cannot place this mod's files under BepInEx/ o
 // the game root, and a row is the only durable evidence that lmm put a file
 // somewhere rather than the user doing it by hand.
 //
-// A file OUTSIDE BepInEx/ is the whole test. It is deliberately blunt: for
-// a BepInEx game mod_path IS the game root, so a mod placing content there
-// is either a pre-#424 deployment or a mod that genuinely writes into the
-// game's own directories - and lmm has no way to tell those apart except by
-// asking whether the normaliser would place it differently, which is
-// exactly what the repair's own classification below asks.
+// An ASSEMBLY outside BepInEx/ is the test, not merely a file. For a
+// BepInEx game mod_path IS the game root, so a mod that legitimately writes
+// into the game's own directories - a texture pack under
+// <Game>_Data/ - has every one of its files "outside BepInEx/" and is not
+// misplaced at all. A `.dll` is the difference: BepInEx loads assemblies
+// and only from its own directories, so one sitting anywhere else is a
+// plugin nothing will load, whatever else the mod ships.
 func (r *verifyRun) loaderMisplacedDeployCheck(installedMods []domain.InstalledMod) {
 	for i := range installedMods {
 		mod := &installedMods[i]
@@ -75,7 +77,7 @@ func (r *verifyRun) loaderMisplacedDeployCheck(installedMods []domain.InstalledM
 		r.result.Issues++
 		r.finding(VerifyFinding{
 			ModID: mod.ID, ModName: mod.Name, Status: "loader_deployed_outside_loader",
-			Note: fmt.Sprintf("%d file(s) this mod deploys sit outside BepInEx/, starting with %s - this game has BepInEx, so nothing there is loaded",
+			Note: fmt.Sprintf("%d file(s) this mod deploys sit outside BepInEx/, including an assembly - starting with %s - so this game's loader reads none of them",
 				len(misplaced), misplaced[0]),
 			Fixable:       repairable && !fixing,
 			FixableReason: loaderRelayoutRefusal(repairable, fixing),
@@ -102,7 +104,12 @@ func loaderRelayoutRefusal(repairable, fixing bool) string {
 }
 
 // misplacedLoaderRows lists the mod's recorded deploy paths that are not
-// under BepInEx/, slash-separated and in row order.
+// under BepInEx/, slash-separated and in row order - or nothing at all when
+// none of them is an assembly, which is loaderMisplacedDeployCheck's test.
+//
+// All of them once one is, not just the assemblies: a plugin's .pdb, .xml
+// and asset bundle are as misplaced as the .dll beside them and move with
+// it, so the count the finding reports is the count the repair moves.
 //
 // A row-lookup failure yields nothing: verify does not turn a DB read error
 // into a layout accusation.
@@ -112,12 +119,19 @@ func (r *verifyRun) misplacedLoaderRows(mod *domain.InstalledMod) []string {
 		return nil
 	}
 	var misplaced []string
+	assembly := false
 	for _, p := range rows {
 		slash := filepath.ToSlash(p)
 		if strings.HasPrefix(slash, bepinexDirName+"/") {
 			continue
 		}
+		if strings.EqualFold(path.Ext(slash), ".dll") {
+			assembly = true
+		}
 		misplaced = append(misplaced, slash)
+	}
+	if !assembly {
+		return nil
 	}
 	return misplaced
 }

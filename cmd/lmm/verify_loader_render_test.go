@@ -25,7 +25,7 @@ func TestRenderVerifyFinding_LoaderTierRowsArePrinted(t *testing.T) {
 	}{
 		{status: "loader_missing", want: "loader - no plugin will load"},
 		{status: "loader_stale_log", want: "loader - launch the game once"},
-		{status: "loader_deployed_outside_loader", modName: "Jotunn", want: "Jotunn - 2 file(s) sit outside BepInEx/"},
+		{status: "loader_deployed_outside_loader", modName: "Jotunn", want: "Jotunn - 2 file(s) sit outside BepInEx/, including an assembly"},
 		{status: "fixed_loader_deployed_outside_loader", modName: "Jotunn", want: "Fixed: Jotunn - re-laid out 2 file(s)"},
 	} {
 		t.Run(tc.status, func(t *testing.T) {

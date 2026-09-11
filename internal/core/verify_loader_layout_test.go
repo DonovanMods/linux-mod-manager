@@ -223,3 +223,32 @@ func TestVerify_LoaderTier_FixRelaysOutEveryProfileSharingTheCacheEntry(t *testi
 		}, slashed, "profile %s must be re-linked, not left pointing at the old layout", profile)
 	}
 }
+
+// TestVerify_LoaderTier_ContentThatIsNotAPluginIsNotAFinding: for a BepInEx
+// game mod_path IS the game root, so a mod that legitimately writes into the
+// game's own directories has every one of its files "outside BepInEx/". The
+// check is about an ASSEMBLY nothing will load, not about a path - a mod
+// with no assembly outside BepInEx/ is not a misplaced plugin, and telling
+// its owner otherwise would put a permanent finding on a working install
+// whose "remedy" would do nothing.
+func TestVerify_LoaderTier_ContentThatIsNotAPluginIsNotAFinding(t *testing.T) {
+	svc, game := newVerifyLoaderService(t, &domain.GameLoader{
+		Kind: domain.LoaderKindBepInEx, Bootstrap: domain.LoaderBootstrapNative,
+	})
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapNative, time.Now())
+
+	archivePath := filepath.Join(t.TempDir(), "Textures-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"valheim_Data/textures/rock.bundle": "bytes",
+		"valheim_Data/textures/tree.bundle": "bytes",
+	})
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(res.Result, "loader_deployed_outside_loader"),
+		"statuses were %v", findingStatuses(res.Result))
+}

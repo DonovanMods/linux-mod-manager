@@ -1207,8 +1207,8 @@ bepinex` when the installation is what answered, and stops refusing an
   unmistakable BepInEx archive over missing paperwork while the loader is
   on disk. A game with neither is unchanged in both directions.
 
-  And **`lmm verify` finds the installs this already broke.** A mod whose
-  deployed files sit outside `BepInEx/` on a BepInEx game is reported —
+  And **`lmm verify` finds the installs this already broke.** A mod with an
+  assembly deployed outside `BepInEx/` on a BepInEx game is reported —
   nothing else could see it, because the cache, the deployed-file rows and
   the game directory all agree with each other and the plugin still loads
   nothing. `--fix` re-lays that mod's cache entry out through the layout
