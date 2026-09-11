@@ -334,7 +334,7 @@ func TestMergeCompilePakSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opening merged: %v", err)
 	}
-	defer merged.Close()
+	defer merged.Close() //nolint:errcheck // test cleanup; this package spells it this way everywhere else
 	data, err := merged.ReadFile("data/Test/D_Growth.json")
 	if err != nil {
 		t.Fatalf("merged table missing: %v", err)
@@ -382,7 +382,7 @@ func TestMergeCompilePakFailureSkipsModOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opening merged: %v", err)
 	}
-	defer merged.Close()
+	defer merged.Close() //nolint:errcheck // test cleanup; this package spells it this way everywhere else
 	data, err := merged.ReadFile("data/Test/D_Growth.json")
 	if err != nil {
 		t.Fatalf("good mod's table missing: %v", err)
@@ -475,7 +475,7 @@ func TestApplyBundleAssetCollisionKeyedByRef(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer base.Close()
+	defer base.Close() //nolint:errcheck // test cleanup; this package spells it this way everywhere else
 
 	tables := map[string][]byte{}
 	assets := map[string][]byte{}

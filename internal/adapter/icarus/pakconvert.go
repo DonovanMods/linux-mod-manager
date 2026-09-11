@@ -105,9 +105,11 @@ func parsePakDataTable(data []byte) (*pakDataTable, error) {
 	for i, r := range rawRows {
 		row, ok := r.(map[string]any)
 		if !ok {
+			//nolint:staticcheck // ST1005: "Rows" is the JSON field's own name, not a sentence.
 			return nil, fmt.Errorf("Rows[%d] is not an object", i)
 		}
 		if _, ok := row["Name"].(string); !ok {
+			//nolint:staticcheck // ST1005: "Rows" is the JSON field's own name, not a sentence.
 			return nil, fmt.Errorf("Rows[%d] has no string Name", i)
 		}
 		t.rows = append(t.rows, row)
