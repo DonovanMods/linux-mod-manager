@@ -173,8 +173,13 @@ findings/issues are possible and only whatever the deploy-convergence
 sweep found appears. status is one of "ok", "missing", "no_checksum",
 "file_count_mismatch", "skipped", "version_mismatch",
 "version_unverifiable", "stale_compile", "stale_deployment",
-"fixed_stale_deployment", "conversion_failed", "needs_reingest", or
-"fixed_needs_reingest"; note adds detail where there's something extra to
+"fixed_stale_deployment", "conversion_failed", "needs_reingest",
+"fixed_needs_reingest", or one of the loader tier's own rows -
+"loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
+"loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
+"fixed_loader_plugin_unlinked", "loader_deployed_outside_loader" and
+"fixed_loader_deployed_outside_loader", each of which carries its whole
+sentence in note; note adds detail where there's something extra to
 say - a blocked cache rename, sibling-repair results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
@@ -410,6 +415,59 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		// main line and a separate green sub-line, a --fix stale-deployment
 		// removal has no main line of its own to have printed first.
 		fmt.Println(colorGreen(fmt.Sprintf("Fixed: removed %s (%s)", f.FileID, f.Note)))
+
+	default:
+		renderVerifyLoaderFinding(f)
+	}
+}
+
+// loaderFindingStatuses are the loader tier's own statuses (#359, #424) -
+// the rows renderVerifyLoaderFinding prints, mapped to the marker each one
+// deserves. A row NOT in this table prints nothing, which is the switch's
+// pre-existing behaviour for a status the CLI does not know.
+//
+// The tier's rows reach text mode through one generic arm rather than a
+// branch each, because unlike every other status above them they carry no
+// per-status extras: each is a complete, already-formatted sentence in
+// Note, written by the check that raised it precisely so a frontend does
+// not have to reword it. That is exactly how the web UI renders them
+// (spa/app/verify.js), so this is the CLI catching up to it rather than a
+// second vocabulary.
+var loaderFindingStatuses = map[string]string{
+	"loader_missing":                       "X",
+	"loader_version_mismatch":              "X",
+	"loader_bootstrap_incomplete":          "X",
+	"loader_never_ran":                     "X",
+	"loader_plugin_unlinked":               "X",
+	"loader_deployed_outside_loader":       "X",
+	"loader_stale_log":                     "?",
+	"fixed_loader_plugin_unlinked":         "+",
+	"fixed_loader_deployed_outside_loader": "+",
+}
+
+// renderVerifyLoaderFinding prints one loader-tier row: its marker, the mod
+// it is about when it is about one, and the check's own sentence.
+//
+// Before this the whole tier was INVISIBLE in text mode - `lmm verify`
+// counted the issues in its summary and printed no line for any of them,
+// so a user was told "1 issue(s)" with nothing to read. The web UI has
+// always rendered them.
+func renderVerifyLoaderFinding(f core.VerifyFinding) {
+	marker, known := loaderFindingStatuses[f.Status]
+	if !known {
+		return
+	}
+	subject := "loader"
+	if f.ModName != "" {
+		subject = f.ModName
+	}
+	switch marker {
+	case "+":
+		fmt.Println(colorGreen(fmt.Sprintf("Fixed: %s - %s", subject, f.Note)))
+	case "?":
+		fmt.Printf("%s %s - %s\n", colorYellow("?"), subject, f.Note)
+	default:
+		fmt.Printf("%s %s - %s\n", colorRed("X"), subject, f.Note)
 	}
 }
 
