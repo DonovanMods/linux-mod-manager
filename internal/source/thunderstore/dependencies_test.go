@@ -122,6 +122,38 @@ func TestLoaderRequirementIsWhatTheDroppedEntryBECOMES(t *testing.T) {
 	assert.False(t, required)
 }
 
+// TestAVersionlessLoaderPackIsStillTheLoader (#409 review F2). A dependency
+// string with no version field - "BepInEx-BepInExPack" - is not a shape
+// Thunderstore's own manifest schema allows today, so this is robustness
+// rather than a live bug. What it protects is real: routed on the strict
+// Namespace-Name-Version split alone, that string falls through as an
+// ORDINARY dependency naming a package the index really holds, so the plan
+// promises to install the framework, the download happens for nothing, and
+// #358's extract-time refusal is the first thing that says no - by which
+// point the install has a Failed entry instead of the three setup steps.
+// On a game with no loader declared, the plan-time precondition never fires
+// at all.
+//
+// So both halves fall back to the PACKAGE split when the dependency split
+// fails: the loader is recognised, and the version it is pinned to is
+// simply unknown (empty), which is what the pack's own release page is for.
+func TestAVersionlessLoaderPackIsStillTheLoader(t *testing.T) {
+	s := searchable(t)
+	mod := s.mod(t, "Evaisa-Ghostbird_Tools")
+
+	deps, err := s.src.GetDependencies(t.Context(), mod)
+	require.NoError(t, err)
+	assert.Empty(t, deps, "the framework is the loader whether or not the string pins a version")
+
+	requirer, ok := any(s.src).(source.LoaderRequirer)
+	require.True(t, ok)
+	kind, version, required, err := requirer.LoaderRequirement(t.Context(), mod)
+	require.NoError(t, err)
+	assert.True(t, required, "the dropped entry still has to become the precondition")
+	assert.Equal(t, domain.LoaderKindBepInEx, kind)
+	assert.Empty(t, version, "the string pinned none, and lmm does not invent one")
+}
+
 // TestDependenciesCapabilityIsDeclared: the resolver consults it before
 // asking, so it has to become true in the commit that makes it true.
 func TestDependenciesCapabilityIsDeclared(t *testing.T) {

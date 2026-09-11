@@ -47,6 +47,29 @@ func isLoaderPack(name string) bool {
 		strings.EqualFold(name[:len(loaderPackName)+1], loaderPackName+"_")
 }
 
+// unversionedLoaderPack reports whether a dependency string SplitDependency
+// could not parse is nonetheless a BepInEx framework pack named with no
+// version at all - "BepInEx-BepInExPack" rather than
+// "BepInEx-BepInExPack-5.4.2100".
+//
+// Thunderstore's manifest schema pins every dependency, so no such string is
+// served today; this exists because the consequence of missing one is bad
+// out of proportion to the odds. The pack is a real package in the index, so
+// an unrecognised loader entry does not surface as a missing dependency - it
+// resolves, downloads and only then hits #358's extract-time refusal, with
+// the plan-time precondition never fired at all.
+//
+// It is deliberately stricter than SplitPackage alone: both halves must
+// match the measured namespace/name invariant, so "BepInExPack_Valheim-oops"
+// - a name no package can have - is not read as the loader.
+func unversionedLoaderPack(dep string) bool {
+	ns, name, ok := SplitPackage(dep)
+	if !ok || !identifierPattern.MatchString(ns) || !identifierPattern.MatchString(name) {
+		return false
+	}
+	return isLoaderPack(name)
+}
+
 // GetDependencies returns the INSTALLED version's dependencies as ordinary
 // same-source references, with the loader entry routed out.
 //
@@ -73,6 +96,9 @@ func (s *Source) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain
 	for _, dep := range deps {
 		ns, name, version, ok := SplitDependency(dep)
 		if !ok {
+			if unversionedLoaderPack(dep) {
+				continue // the loader, pinned to nothing - see LoaderRequirement
+			}
 			refs = append(refs, domain.ModReference{SourceID: sourceID, ModID: dep})
 			continue
 		}
@@ -90,7 +116,8 @@ func (s *Source) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain
 // It reports the FIRST loader pack the installed version declares, at the
 // version that pack was pinned to - which is the version the user is about
 // to be told to go and install, and the one piece of information the setup
-// steps cannot derive for themselves.
+// steps cannot derive for themselves. A dependency string that pins no
+// version at all still reports the requirement, with an empty version.
 func (s *Source) LoaderRequirement(ctx context.Context, mod *domain.Mod) (kind, version string, required bool, err error) {
 	deps, err := s.declaredDependencies(ctx, mod)
 	if err != nil {
@@ -98,8 +125,13 @@ func (s *Source) LoaderRequirement(ctx context.Context, mod *domain.Mod) (kind, 
 	}
 	for _, dep := range deps {
 		_, name, pinned, ok := SplitDependency(dep)
-		if ok && isLoaderPack(name) {
+		switch {
+		case ok && isLoaderPack(name):
 			return domain.LoaderKindBepInEx, pinned, true, nil
+		case !ok && unversionedLoaderPack(dep):
+			// The pack, pinned to nothing: still the requirement, with no
+			// version to name. Reported as "" rather than guessed at.
+			return domain.LoaderKindBepInEx, "", true, nil
 		}
 	}
 	return "", "", false, nil

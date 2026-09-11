@@ -406,7 +406,7 @@
         "description": "Developer tools. Named after nobody in particular.",
         "icon": "https://gcdn.thunderstore.io/live/repository/icons/Evaisa-Ghostbird_Tools-0.1.0.png",
         "version_number": "0.1.0",
-        "dependencies": [],
+        "dependencies": ["BepInEx-BepInExPack"],
         "download_url": "https://thunderstore.io/package/download/Evaisa/Ghostbird_Tools/0.1.0/",
         "downloads": 120,
         "date_created": "2026-08-31T10:00:00.000000Z",
