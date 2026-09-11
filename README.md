@@ -633,9 +633,9 @@ lmm game edit lethal-company --loader ""   # remove the declaration
   what lmm asks you for; an installed loader is a fact lmm can read, and
   refusing to place a plugin because of missing paperwork while the thing
   the paperwork describes is sitting on disk helps nobody. When the
-  installation is what answered, lmm places the files and prints one line —
-  `BepInEx found in <path>; declare it with lmm game edit <id> --loader
-bepinex` — so the answer becomes permanent.
+  installation is what answered, lmm places the files and prints one line,
+  `BepInEx found in <path>; declare it with lmm game edit <id> --loader bepinex`,
+  so the answer becomes permanent.
 
 - **Seeds plugin configuration instead of linking it.** BepInEx writes its
   `BepInEx/config/*.cfg` files on first run and you hand-edit them
@@ -676,12 +676,16 @@ bepinex` — so the answer becomes permanent.
   adds five checks: the preloader is present, the installed version matches
   what you declared, the bootstrap files match the declared mode,
   `BepInEx/LogOutput.log` exists and is newer than your last deploy, and
-  every enabled plugin is actually linked. The log check is the point of
+  every enabled plugin is actually linked. A sixth runs for any game that
+  HAS BepInEx, declared or not: a mod with an assembly deployed outside
+  `BepInEx/`, which is what an install made before lmm recognised that
+  archive's layout looks like. The log check is the point of
   the tier — it is the only honest evidence the loader **ran**, as opposed
   to being installed correctly, and it is how you find out you pasted the
   launch option wrong instead of finding out from a mod that mysteriously
-  does nothing. Only the last check is `--fix`-able (it re-deploys the mod);
-  the others report and point at the setup.
+  does nothing. Only the last two checks are `--fix`-able (they re-deploy
+  the mod, re-laying its cache entry out first where that is what is
+  wrong); the others report and point at the setup.
 
 - **Keeps the download when it refuses one.** A plugin archive installed
   into a game that declares no loader is refused at ingest, which is the
@@ -2456,8 +2460,10 @@ reporting seven statuses:
   rules and re-deploys it — in every profile that has it **deployed**; a
   profile where the mod is disabled is left exactly as it was. When
   the entry is a layout lmm cannot place on its own, the row says so and
-  names the remedy (re-import the archive) instead of claiming a repair it
-  cannot make.
+  names what has to change — move the files under `BepInEx/plugins/` inside
+  the archive and re-import it — instead of claiming a repair it cannot
+  make, or pointing at a re-import of the same archive that would lay it out
+  the same way again.
 
   This check also runs for a game that has BepInEx installed without
   declaring it, since that is exactly where misplaced deployments came

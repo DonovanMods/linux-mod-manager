@@ -1210,8 +1210,8 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   `loader:` block, and every ambiguous archive shape used to fall through
   that gap — which is how the plugin reached the game root in the first
   place. lmm now reads the installation as well as the declaration, prints
-  `BepInEx found in <path>; declare it with lmm game edit <id> --loader
-bepinex` when the installation is what answered, and stops refusing an
+  `BepInEx found in <path>; declare it with lmm game edit <id> --loader bepinex`
+  when the installation is what answered, and stops refusing an
   unmistakable BepInEx archive over missing paperwork while the loader is
   on disk. A game with neither is unchanged in both directions.
 
