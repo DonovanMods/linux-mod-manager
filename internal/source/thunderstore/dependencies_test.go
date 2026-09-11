@@ -103,21 +103,23 @@ func TestLoaderRequirementIsWhatTheDroppedEntryBECOMES(t *testing.T) {
 	requirer, ok := any(s.src).(source.LoaderRequirer)
 	require.True(t, ok, "the source must be able to report a loader requirement")
 
-	kind, version, required, err := requirer.LoaderRequirement(t.Context(), s.mod(t, "RugbugRedfern-Skinwalkers"))
+	kind, version, dependency, required, err := requirer.LoaderRequirement(t.Context(), s.mod(t, "RugbugRedfern-Skinwalkers"))
 	require.NoError(t, err)
 	assert.True(t, required)
 	assert.Equal(t, domain.LoaderKindBepInEx, kind)
 	assert.Equal(t, "5.4.2100", version)
+	assert.Equal(t, "BepInEx-BepInExPack-5.4.2100", dependency,
+		"the string the requirement was read off, so the refusal can quote it")
 
 	// A third-party pack in another namespace is the same loader.
 	valheim := s.mod(t, "denikson-BepInExPack_Valheim")
 	valheim.Version = "5.4.2202"
-	_, _, required, err = requirer.LoaderRequirement(t.Context(), valheim)
+	_, _, _, required, err = requirer.LoaderRequirement(t.Context(), valheim)
 	require.NoError(t, err)
 	assert.False(t, required, "the pack itself declares no dependency on a pack")
 
 	// A package that declares none needs none.
-	_, _, required, err = requirer.LoaderRequirement(t.Context(), s.mod(t, "Umlaut-Cafe_Mod"))
+	_, _, _, required, err = requirer.LoaderRequirement(t.Context(), s.mod(t, "Umlaut-Cafe_Mod"))
 	require.NoError(t, err)
 	assert.False(t, required)
 }
@@ -147,11 +149,12 @@ func TestAVersionlessLoaderPackIsStillTheLoader(t *testing.T) {
 
 	requirer, ok := any(s.src).(source.LoaderRequirer)
 	require.True(t, ok)
-	kind, version, required, err := requirer.LoaderRequirement(t.Context(), mod)
+	kind, version, dependency, required, err := requirer.LoaderRequirement(t.Context(), mod)
 	require.NoError(t, err)
 	assert.True(t, required, "the dropped entry still has to become the precondition")
 	assert.Equal(t, domain.LoaderKindBepInEx, kind)
 	assert.Empty(t, version, "the string pinned none, and lmm does not invent one")
+	assert.Equal(t, "BepInEx-BepInExPack", dependency, "the evidence is still quotable")
 }
 
 // TestDependenciesCapabilityIsDeclared: the resolver consults it before

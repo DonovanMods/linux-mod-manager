@@ -45,13 +45,24 @@ func (s *Service) requireSourceDeclaredLoader(ctx context.Context, sourceID stri
 	if !ok {
 		return nil
 	}
-	kind, version, required, err := requirer.LoaderRequirement(ctx, mod)
+	kind, version, dependency, required, err := requirer.LoaderRequirement(ctx, mod)
 	if err != nil || !required || kind == "" {
 		return nil
 	}
 	if game.DeclaresLoader(kind) {
 		return nil
 	}
-	return newLoaderRequirement(game, mod.Name, kind, version,
-		"the package declares a dependency on the "+loaderDisplayName(kind)+" framework")
+	return newLoaderRequirement(game, mod.Name, kind, version, sourceLoaderEvidence(kind, dependency))
+}
+
+// sourceLoaderEvidence is what LoaderRequiredError.Layout carries when a
+// SOURCE reported the requirement: the dependency string itself, which is
+// the package a doubting user would go and look at, rather than a sentence
+// naming no package at all (#409 review F5). A source with nothing
+// quotable falls back to the generic phrasing.
+func sourceLoaderEvidence(kind, dependency string) string {
+	if dependency == "" {
+		return "the package declares a dependency on the " + loaderDisplayName(kind) + " framework"
+	}
+	return "the package depends on " + dependency
 }

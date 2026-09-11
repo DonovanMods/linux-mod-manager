@@ -575,6 +575,12 @@ type LocalIndexSource interface {
 // required false means this mod needs no loader, which is the answer for
 // most mods and for every source that has nothing to read it off.
 //
+// dependency is the metadata the requirement was READ OFF, in the source's
+// own spelling ("BepInEx-BepInExPack-5.4.2100"), so the refusal can show a
+// user why lmm decided this is a loader mod - the package they would go and
+// look at. Empty when the source has nothing quotable to point at, which is
+// what the archive-shape half of the same refusal is in.
+//
 // Same optional-capability pattern as WorkshopScanner: core type-asserts
 // for it, so internal/core never imports a concrete source package.
 //
@@ -585,7 +591,7 @@ type LocalIndexSource interface {
 // requirement rather than refusing an install over a question it could not
 // ask - the archive-shape rule downstream is the second line of defence.
 type LoaderRequirer interface {
-	LoaderRequirement(ctx context.Context, mod *domain.Mod) (kind, version string, required bool, err error)
+	LoaderRequirement(ctx context.Context, mod *domain.Mod) (kind, version, dependency string, required bool, err error)
 }
 
 // ErrIndexUnavailable reports that a LocalIndexSource has no usable index on

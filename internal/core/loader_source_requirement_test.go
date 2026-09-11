@@ -29,15 +29,15 @@ import (
 // Thunderstore's "this package depends on BepInEx-BepInExPack-5.4.2100".
 type loaderDeclaringSource struct {
 	*perModFileSource
-	kind, version string
-	required      bool
-	err           error
-	asked         int
+	kind, version, dependency string
+	required                  bool
+	err                       error
+	asked                     int
 }
 
-func (s *loaderDeclaringSource) LoaderRequirement(ctx context.Context, mod *domain.Mod) (string, string, bool, error) {
+func (s *loaderDeclaringSource) LoaderRequirement(ctx context.Context, mod *domain.Mod) (string, string, string, bool, error) {
 	s.asked++
-	return s.kind, s.version, s.required, s.err
+	return s.kind, s.version, s.dependency, s.required, s.err
 }
 
 // newLoaderRequiringService registers such a source with one downloadable
@@ -56,7 +56,10 @@ func newLoaderRequiringService(t *testing.T, loader *domain.GameLoader) (*core.S
 
 	src := &loaderDeclaringSource{
 		perModFileSource: &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("thunderstore")},
-		kind:             domain.LoaderKindBepInEx, version: "5.4.2100", required: true,
+		kind:             domain.LoaderKindBepInEx,
+		version:          "5.4.2100",
+		dependency:       "BepInEx-BepInExPack-5.4.2100",
+		required:         true,
 	}
 	t.Cleanup(src.Close)
 	svc.RegisterSource(src)
@@ -82,6 +85,8 @@ func TestPlanInstall_RefusesAPackageThatNeedsAnUndeclaredLoader(t *testing.T) {
 	assert.Equal(t, "Skinwalkers", loaderErr.ModName)
 	assert.Equal(t, "5.4.2100", loaderErr.Version,
 		"the version the package pinned is the one piece of information the steps cannot derive")
+	assert.Equal(t, "the package depends on BepInEx-BepInExPack-5.4.2100", loaderErr.Layout,
+		"the evidence names the package the user would go and look at, not a sentence naming none")
 	require.NotEmpty(t, loaderErr.Setup, "the same three sentences #359 prints")
 	assert.Positive(t, src.asked)
 	assert.Zero(t, src.DownloadCount(), "nothing may be downloaded by a refused plan")
@@ -168,6 +173,20 @@ func TestDeclaresLoaderIsKindAgnostic(t *testing.T) {
 	bep := &domain.Game{Loader: &domain.GameLoader{Kind: "BepInEx"}}
 	assert.True(t, bep.DeclaresLoader(domain.LoaderKindBepInEx))
 	assert.True(t, bep.DeclaresBepInEx(), "and the BepInEx question is now one call into it")
+}
+
+// TestPlanInstall_ASourceWithNothingQuotableStillRefuses: the evidence is a
+// nicety, not the refusal. A source that reports the requirement but names
+// no dependency string falls back to the generic sentence rather than
+// quoting an empty one.
+func TestPlanInstall_ASourceWithNothingQuotableStillRefuses(t *testing.T) {
+	svc, game, src := newLoaderRequiringService(t, nil)
+	src.dependency = ""
+
+	_, err := svc.PlanInstall(context.Background(), game, "default", "thunderstore", "RugbugRedfern-Skinwalkers", false)
+	var loaderErr *core.LoaderRequiredError
+	require.ErrorAs(t, err, &loaderErr)
+	assert.Equal(t, "the package declares a dependency on the BepInEx framework", loaderErr.Layout)
 }
 
 // assertAnError is a stand-in failure for "the source could not answer".

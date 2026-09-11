@@ -118,23 +118,30 @@ func (s *Source) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain
 // to be told to go and install, and the one piece of information the setup
 // steps cannot derive for themselves. A dependency string that pins no
 // version at all still reports the requirement, with an empty version.
-func (s *Source) LoaderRequirement(ctx context.Context, mod *domain.Mod) (kind, version string, required bool, err error) {
+//
+// The third return is that dependency string verbatim, which is the
+// evidence the refusal quotes back: "the package depends on
+// BepInEx-BepInExPack-5.4.2100" names the thing a doubting user would go
+// and read, where "it declares a dependency on the BepInEx framework" names
+// nothing at all.
+func (s *Source) LoaderRequirement(ctx context.Context, mod *domain.Mod) (kind, version, dependency string, required bool, err error) {
 	deps, err := s.declaredDependencies(ctx, mod)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	for _, dep := range deps {
 		_, name, pinned, ok := SplitDependency(dep)
 		switch {
 		case ok && isLoaderPack(name):
-			return domain.LoaderKindBepInEx, pinned, true, nil
+			return domain.LoaderKindBepInEx, pinned, dep, true, nil
 		case !ok && unversionedLoaderPack(dep):
 			// The pack, pinned to nothing: still the requirement, with no
-			// version to name. Reported as "" rather than guessed at.
-			return domain.LoaderKindBepInEx, "", true, nil
+			// version to name. Reported as "" rather than guessed at - but
+			// the string itself is still the evidence to quote.
+			return domain.LoaderKindBepInEx, "", dep, true, nil
 		}
 	}
-	return "", "", false, nil
+	return "", "", "", false, nil
 }
 
 // declaredDependencies is the raw dependency strings of the version
