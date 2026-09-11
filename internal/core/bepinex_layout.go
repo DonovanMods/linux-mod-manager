@@ -638,9 +638,73 @@ func (l *bepinexLayout) warnings() []string {
 	return l.Warnings
 }
 
+// bepinexGate answers the one question every rule in this file is gated on:
+// is this a BepInEx game? And, when it is, did the DECLARATION say so or did
+// the disk?
+//
+// Two sources, because they answer different halves of the same fact and a
+// user has only ever supplied one of them (#424). The `loader:` block is a
+// statement of intent lmm asks for; BepInEx/core/BepInEx.Preloader.dll in
+// the install directory is a fact lmm can read, and nothing else plausibly
+// puts that file there. A Valheim entry added before the catalog declared
+// the loader (#416) has the second and not the first, and treating that as
+// "not a BepInEx game" is what let a plugin extract verbatim into a Steam
+// install directory and report success.
+//
+// DetectedOnly is what the caller owes the user for acting on the disk
+// rather than on their configuration: one notice naming the command that
+// makes the answer permanent (bepinexUndeclaredNotice). It is never set for
+// a declaring game, because there is nothing for that user to do.
+type bepinexGate struct {
+	// Gated reports that the BepInEx layout rules apply to this game.
+	Gated bool
+	// DetectedOnly reports that Gated is true because of the install
+	// directory alone - the game declares no loader.
+	DetectedOnly bool
+}
+
+// bepinexGateFor resolves the gate for game. A nil game is not a BepInEx
+// game, so every caller can ask without a guard.
+func bepinexGateFor(game *domain.Game) bepinexGate {
+	if game.DeclaresBepInEx() {
+		return bepinexGate{Gated: true}
+	}
+	if game != nil && regularFileAt(game.InstallPath, bepinexPreloaderPath) {
+		return bepinexGate{Gated: true, DetectedOnly: true}
+	}
+	return bepinexGate{}
+}
+
+// noteUndeclaredBepInEx appends the one notice a detected-but-undeclared
+// game gets, to a layout that actually DID something on the strength of that
+// detection.
+//
+// On the layout's own Warnings rather than through a channel of its own, so
+// it rides every route #358's "layout lmm cannot place" warning already
+// takes: the import PLAN both frontends render before committing, and each
+// ingest's log. Nothing on the wire grows a field for it.
+//
+// Only when the layout applies: a game whose BepInEx install lmm noticed
+// while importing a mod that is not a BepInEx mod at all has been told
+// nothing useful, and saying it anyway would put the notice on every import
+// into that game forever.
+func noteUndeclaredBepInEx(layout *bepinexLayout, game *domain.Game, gate bepinexGate) {
+	if !gate.DetectedOnly || !layout.Applies() {
+		return
+	}
+	layout.Warnings = append(layout.Warnings, bepinexUndeclaredNotice(game))
+}
+
+// bepinexUndeclaredNotice is that notice's exact text, named once because
+// both ingests and the plan must say the same thing.
+func bepinexUndeclaredNotice(game *domain.Game) string {
+	return fmt.Sprintf("BepInEx found in %s; declare it with `lmm game edit %s --loader bepinex`",
+		game.InstallPath, game.ID)
+}
+
 // requireDeclaredLoader is #359's precondition: an archive whose layout this
-// normaliser RECOGNISED is a BepInEx mod, so a game that declares no BepInEx
-// loader cannot usefully take it.
+// normaliser RECOGNISED is a BepInEx mod, so a game with no BepInEx loader
+// cannot usefully take it.
 //
 // It is asked at the earliest point each flow can answer it - plan time for
 // an archive import (whose listing is available before anything touches
@@ -654,8 +718,15 @@ func (l *bepinexLayout) warnings() []string {
 // apply for an undeclared game (bepinexNormalise's gate), so a mod for
 // another game rooted at `plugins/` infers nothing and its owner is never
 // told to install a loader they do not need.
-func requireDeclaredLoader(game *domain.Game, modName string, layout *bepinexLayout) error {
-	if !layout.Applies() || game.DeclaresBepInEx() {
+//
+// #424 widened WHAT satisfies it from the declaration to the gate: a game
+// with BepInEx actually installed has the loader, whatever games.yaml says,
+// and refusing the plugin would be refusing on a paperwork technicality
+// while the thing the paperwork describes is right there on disk. Such a
+// user gets the notice instead (noteUndeclaredBepInEx), which is the same
+// remedy this error's Setup steps end with.
+func requireDeclaredLoader(game *domain.Game, modName string, layout *bepinexLayout, gate bepinexGate) error {
+	if !layout.Applies() || gate.Gated {
 		return nil
 	}
 	return newLoaderRequiredError(game, modName, layout.Shape.String())

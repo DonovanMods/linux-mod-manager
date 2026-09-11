@@ -1355,7 +1355,7 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 		}, nil
 	}
 
-	members, err := s.extractIntoStaging(ctx, game, mod, archivePath, cachePath, stagePath)
+	members, err := s.extractIntoStaging(ctx, game, mod, archivePath, cachePath, stagePath, sink)
 	if err != nil {
 		s.retainRefusedDownload(err, sourceID, mod.ID, file.ID, archivePath, downloadResult)
 		return nil, fmt.Errorf("extracting mod: %w", err)
@@ -1463,7 +1463,7 @@ func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache
 			return nil, fmt.Errorf("hashing local mod file: %w", err)
 		}
 	default:
-		if members, err = s.extractIntoStaging(ctx, game, mod, localPath, cachePath, stagePath); err != nil {
+		if members, err = s.extractIntoStaging(ctx, game, mod, localPath, cachePath, stagePath, nil); err != nil {
 			return nil, fmt.Errorf("extracting mod: %w", err)
 		}
 		if checksum, err = md5File(localPath); err != nil {
@@ -1654,7 +1654,7 @@ func commitStagedCacheWithMarker(cachePath, stagePath, fileID string, members []
 // Returned members are extractDir-relative paths of regular files only,
 // matching cache.ListFiles semantics (directories and symlinks are never
 // listed, deployed, or undeployed).
-func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod *domain.Mod, archivePath, cachePath, stagePath string) ([]string, error) {
+func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod *domain.Mod, archivePath, cachePath, stagePath string, sink EventSink) ([]string, error) {
 	extractPath := cachePath + ".extract"
 	if err := os.RemoveAll(extractPath); err != nil {
 		return nil, fmt.Errorf("clearing extraction dir: %w", err)
@@ -1676,23 +1676,38 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 	// the archive: a source-backed download has a real mod name, and it is
 	// the name the user sees in `lmm list`.
 	//
-	// The game's own loader declaration (#359) widens the rules onto the two
+	// The game's BepInEx gate (#359, widened by #424 to a loader lmm can
+	// SEE as well as one the game declares) widens the rules onto the
 	// ambiguous shapes.
-	layout, err := normalizeBepInExTree(extractPath, mod.Name, game.DeclaresBepInEx())
+	gate := bepinexGateFor(game)
+	layout, err := normalizeBepInExTree(extractPath, mod.Name, gate.Gated)
 	if err != nil {
 		return nil, err
 	}
+	noteUndeclaredBepInEx(layout, game, gate)
 	// #359: a downloaded archive's shape is not knowable until it is
 	// extracted, which is why PlanInstall cannot answer this and this is the
 	// earliest point that can. The refusal lands before the staged entry is
 	// committed, so nothing is deployed and nothing is recorded - a cache
 	// fill is not a mutation of managed state (Ruling 1), the same standing
 	// a declined ConflictError leaves behind.
-	if err := requireDeclaredLoader(game, mod.Name, layout); err != nil {
+	if err := requireDeclaredLoader(game, mod.Name, layout, gate); err != nil {
 		return nil, err
 	}
+	// A download has no plan to carry these: its shape is not knowable
+	// until it is extracted, which is this function. So they ride the
+	// flow's own event sink as ordinary WarningEvents - the wire type every
+	// warning in every flow already uses - and the log keeps the record for
+	// a caller that passed no sink.
 	for _, w := range layout.warnings() {
 		s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
+		if sink != nil {
+			sink(WarningEvent{
+				Scope:   Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}},
+				Phase:   InstallWarning,
+				Message: w,
+			})
+		}
 	}
 
 	// #353: the game's adapter gets its say on the archive's layout HERE,

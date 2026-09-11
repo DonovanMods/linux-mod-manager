@@ -357,3 +357,67 @@ func TestDownloadIngest_BepInEx_PluginFolderReachesTheCacheNormalised(t *testing
 		"BepInEx/plugins/Jotunn/README.md",
 	}, slashed, "the cache entry IS the game directory's layout")
 }
+
+// TestDownloadIngest_BepInEx_DetectedInstallWidensTheGateAndSaysSo is #424's
+// gate widening through the DOWNLOAD ingest, which is the path the owner
+// actually took (a NexusMods install, not a local archive).
+//
+// A download's shape is not knowable until the archive is extracted, so
+// there is no plan to carry the notice - it rides the flow's own event sink
+// as an ordinary WarningEvent, which is the wire type every warning in
+// every flow already uses.
+func TestDownloadIngest_BepInEx_DetectedInstallWidensTheGateAndSaysSo(t *testing.T) {
+	fixture := newBepInExDownloadFixture(t, map[string]string{
+		"Jotunn/Jotunn.dll": "assembly",
+		"Jotunn/Jotunn.xml": "<doc/>",
+	}, false)
+	bepinexInstall(t, fixture.game.InstallPath, "5.4.23.5", domain.LoaderBootstrapProton, time.Time{})
+
+	sink, events := core.RecordEvents()
+	_, err := fixture.svc.DownloadModForTest(context.Background(), "bepinex-repo",
+		fixture.game, &fixture.mod, &fixture.file, sink)
+	require.NoError(t, err, "a detected install must not be refused as an undeclared game")
+
+	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(
+		fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version)
+	require.NoError(t, err)
+	slashed := make([]string, 0, len(cached))
+	for _, c := range cached {
+		slashed = append(slashed, filepath.ToSlash(c))
+	}
+	sort.Strings(slashed)
+	assert.Equal(t, []string{
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+	}, slashed)
+
+	want := "BepInEx found in " + fixture.game.InstallPath +
+		"; declare it with `lmm game edit " + fixture.game.ID + " --loader bepinex`"
+	var got []string
+	for _, e := range *events {
+		if w, ok := e.(core.WarningEvent); ok {
+			got = append(got, w.Message)
+		}
+	}
+	assert.Contains(t, got, want, "the gate fired on detection alone, so the user is told how to declare it")
+}
+
+// A game that declares the loader is told nothing: the configuration is
+// already right, and a notice on every download would be noise.
+func TestDownloadIngest_BepInEx_ADeclaredGameGetsNoNotice(t *testing.T) {
+	fixture := newBepInExDownloadFixture(t, map[string]string{
+		"Jotunn/Jotunn.dll": "assembly",
+	}, true)
+	bepinexInstall(t, fixture.game.InstallPath, "5.4.23.5", domain.LoaderBootstrapProton, time.Time{})
+
+	sink, events := core.RecordEvents()
+	_, err := fixture.svc.DownloadModForTest(context.Background(), "bepinex-repo",
+		fixture.game, &fixture.mod, &fixture.file, sink)
+	require.NoError(t, err)
+
+	for _, e := range *events {
+		if w, ok := e.(core.WarningEvent); ok {
+			assert.NotContains(t, w.Message, "declare it with")
+		}
+	}
+}
