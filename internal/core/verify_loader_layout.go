@@ -550,21 +550,45 @@ func (r *verifyRun) relayoutReservedEntries(src, dst string, layout *bepinexLayo
 		if rerr != nil {
 			return rerr
 		}
-		// Top level only: what a reserved DIRECTORY holds is that
-		// directory's own business, whatever its files are called.
-		if !d.IsDir() && rel == d.Name() && cache.FileMarkerName(d.Name()) {
-			return nil // re-stamped below, not copied
+		if d.IsDir() {
+			// A reserved DIRECTORY comes across WHOLE, children and all,
+			// because what it holds is its own business and its children's
+			// names say nothing about it. SkipDir so this walk does not then
+			// re-examine them one by one under a rule that is about names.
+			if cerr := r.copyRelayoutTree(p, filepath.Join(dst, rel)); cerr != nil {
+				return cerr
+			}
+			return fs.SkipDir
 		}
-		target := filepath.Join(dst, rel)
-		if !d.IsDir() {
-			return r.placeRelayoutFile(p, target)
+		// A top-level completion marker is re-stamped below, not copied.
+		if rel == d.Name() && cache.FileMarkerName(d.Name()) {
+			return nil
 		}
-		return os.MkdirAll(target, 0o755)
+		return r.placeRelayoutFile(p, filepath.Join(dst, rel))
 	})
 	if err != nil {
 		return err
 	}
 	return restampFileManifests(src, dst, layout)
+}
+
+// copyRelayoutTree materialises the whole of src at dst, directories
+// included, through the same placement the members go through.
+func (r *verifyRun) copyRelayoutTree(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(src, p)
+		if rerr != nil {
+			return rerr
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		return r.placeRelayoutFile(p, target)
+	})
 }
 
 // restampFileManifests writes src's completion markers into dst with each

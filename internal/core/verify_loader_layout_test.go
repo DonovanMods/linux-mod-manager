@@ -591,3 +591,23 @@ func TestVerify_LoaderTier_FixLeavesADisabledProfileAlone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, stillEmpty, "`lmm mod files` must not list paths for a disabled mod")
 }
+
+// ...and a reserved DIRECTORY comes across whole. relativeFileMembers skips
+// a reserved directory's entire subtree, so nothing in it is a member and
+// nothing in it would be placed by the member loop; carrying only the
+// entries whose OWN name is reserved would rebuild the directory empty.
+func TestVerify_LoaderTier_FixCarriesAReservedSubtreeWhole(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t)
+	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	reserved := filepath.Join(entry, ".lmm-source-1", "nested")
+	require.NoError(t, os.MkdirAll(reserved, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(reserved, "Jotunn-2.30.0.zip"), []byte("archive"), 0o644))
+
+	_, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	body, err := os.ReadFile(filepath.Join(entry, ".lmm-source-1", "nested", "Jotunn-2.30.0.zip"))
+	require.NoError(t, err, "the retained source must survive the rebuild")
+	assert.Equal(t, "archive", string(body))
+}
