@@ -62,6 +62,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **An empty per-source game identifier is refused rather than guessed
+  (#408, #409).** `sources: {<source>: ""}` in `games.yaml` used to fall back
+  to lmm's own game id. That is a guess, and for a source that keeps a local
+  search index it is an expensive one: a game called `valheim` mapped to
+  `thunderstore: ""` downloaded and searched the real Valheim community
+  nobody had named. `lmm game add`, `lmm game edit`, `lmm game detect`,
+  `lmm init`, `POST /api/v1/games` and `PUT /api/v1/games/{id}` now all
+  refuse an empty identifier for any source that needs one — including when
+  the map was **prefilled** from a known-games entry rather than typed — and
+  a search, or an index read, against a game already in that state says
+  which command fixes it. Sources whose mapped value addresses nothing — a
+  directory source, `icarus` — are unaffected, and keep writing and reading
+  an empty mapping exactly as before.
+
 - **Breaking: `lmm mod edit`'s re-link flags are renamed to
   `--to-source`/`--to-source-id`, and `-s` works again (#396).** `lmm mod`'s
   persistent `-s/--source` means "which source this mod is in"; `mod edit`
