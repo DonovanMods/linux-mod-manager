@@ -443,12 +443,19 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   the install proceeds. Every other dependency resolves through the ordinary
   resolver.
 
-  **`lmm game detect` knows five communities (#409):** Lethal Company, Valheim,
-  Risk of Rain 2, R.E.P.O. and Content Warning prefill
+  **`lmm game detect` knows six communities (#409):** Lethal Company, Valheim,
+  Risk of Rain 2, R.E.P.O., Content Warning and For The King prefill
   `sources: {thunderstore: <community>}`, so a detected game needs no
   configuration. The slug is not derivable from a Steam app id, so it is
   curated data rather than a guess; add your own in
-  `~/.config/lmm/steam-games.yaml`.
+  `~/.config/lmm/steam-games.yaml`. All six are BepInEx games, so each also
+  declares `loader: {kind: bepinex}` like the rest of the curated BepInEx
+  set (#416) — which is a claim about the GAME, not about your copy of it:
+  `lmm game show` still reports whether the loader is actually installed,
+  and `lmm verify` still flags a declared loader that is missing. Valheim
+  and For The King have a NexusMods page as well and keep it: a `sources:`
+  map is a game's complete source set, so an entry with both spells
+  `nexusmods:` out inside the map.
 
   The index as a _surface_ — `lmm source index`, `lmm search --refresh`, and
   the web UI's index row — is still to come. Until then the index keeps itself
