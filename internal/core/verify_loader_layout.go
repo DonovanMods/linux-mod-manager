@@ -125,9 +125,11 @@ func loaderRelayoutRefusal(repairable, fixing bool) string {
 // 1). <Game>_Data/Managed/Assembly-CSharp.dll is an assembly outside
 // BepInEx/ and is exactly where it belongs: the game's own engine reads
 // that directory and BepInEx never will. It is bepinexGameOwnedRoot that
-// decides, the same rule and the same disk test shape F is gated on, so
-// this check and the re-layout it offers cannot disagree about what the
-// game owns.
+// decides - the same rule and the same disk test shape F is gated on. The
+// INPUTS differ, though: this check asks it with the profile's
+// deployed_files rows, the re-layout with the cache entry's members, so
+// for one run after an update drops a member the two can disagree; the
+// next verify is clean (the repair self-heals).
 //
 // A row-lookup failure yields nothing: verify does not turn a DB read error
 // into a layout accusation.

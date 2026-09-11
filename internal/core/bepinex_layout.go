@@ -156,6 +156,11 @@ type bepinexLayout struct {
 	// with applies set is DROPPED (the metadata above).
 	rewrites map[string]string
 	applies  bool
+	// loaderRoot records that the archive root held BepInEx/ even though the
+	// layout ended up unrecognised (a mixed root, step 4b): the loader
+	// requirement is still inferable, so requireDeclaredLoader reads it
+	// (#424 re-review, finding A).
+	loaderRoot bool
 }
 
 // Applies reports whether this layout rewrites anything. False means the
@@ -328,7 +333,7 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool, gam
 	// before the gate - `BepInEx` is a name no other game's mod plausibly
 	// uses, so this refusal is not one the declaration could make safe.
 	if mixedLoaderRoot {
-		layout.Shape = bepinexShapeNone
+		layout.Shape, layout.loaderRoot = bepinexShapeNone, true
 		layout.Warnings = append(layout.Warnings, bepinexUnrecognisedWarning(modName, payload))
 		return layout, nil
 	}
@@ -895,8 +900,12 @@ func bepinexUndeclaredNotice(game *domain.Game) string {
 // user gets the notice instead (noteUndeclaredBepInEx), which is the same
 // remedy this error's Setup steps end with.
 func requireDeclaredLoader(game *domain.Game, modName string, layout *bepinexLayout, gate bepinexGate) error {
-	if !layout.Applies() || gate.Gated {
+	if layout == nil || (!layout.Applies() && !layout.loaderRoot) || gate.Gated {
 		return nil
 	}
-	return newLoaderRequiredError(game, modName, layout.Shape.String())
+	shape := layout.Shape
+	if layout.loaderRoot && shape == bepinexShapeNone {
+		shape = bepinexShapeRooted
+	}
+	return newLoaderRequiredError(game, modName, shape.String())
 }

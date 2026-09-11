@@ -1222,7 +1222,7 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   nothing. `--fix` re-lays that mod's cache entry out through the layout
   rules and re-deploys it, in every profile that has it DEPLOYED - a profile
   where the mod is disabled is left exactly as it was rather than gaining
-  deployed files for a mod its owner turned off; when the
+  deployed files for a mod its owner turned off. The
   entry is re-laid out atomically - the live entry is moved aside intact,
   the new one is built beside it, and one rename swaps them - so a failure
   partway through leaves the cache byte for byte as it was rather than a
