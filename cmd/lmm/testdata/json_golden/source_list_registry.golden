@@ -54,6 +54,7 @@
     "capabilities": [
       "search",
       "deps",
+      "updates",
       "versions"
     ]
   }

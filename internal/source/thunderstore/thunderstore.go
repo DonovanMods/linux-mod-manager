@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
@@ -125,15 +124,17 @@ func (s *Source) TypeLabel() string { return "built-in" }
 // source implements no EnvKeyProvider and `lmm auth status` has nothing to
 // report for it.
 //
-// Search is true from T1 (#408): the local index answers it. Versions and
-// Dependencies are true from T2 (#409): a package version IS a file here,
-// so GetModFiles returns one file per version and core.ResolveVersionFiles
-// resolves an exact version against it, and a package's dependency strings
-// map straight onto domain.ModReference. Updates follows in the same unit,
-// in the commit that implements it - declaring a capability before the
-// method exists is a false claim to every frontend that branches on one.
+// Search is true from T1 (#408): the local index answers it. Versions,
+// Dependencies and Updates are true from T2 (#409) - a package version IS a
+// file here, so GetModFiles returns one file per version and
+// core.ResolveVersionFiles resolves an exact version against it; a
+// package's dependency strings map straight onto domain.ModReference; and
+// every package's newest version is in the index, so an update check is a
+// map lookup. Each became true in the commit that implemented it: declaring
+// a capability before the method exists is a false claim to every frontend
+// that branches on one.
 func (s *Source) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: true, Updates: false, Auth: false, Versions: true}
+	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: false, Versions: true}
 }
 
 // AuthURL: unsupported - there is no credential to obtain.
@@ -142,9 +143,4 @@ func (s *Source) AuthURL() string { return "" }
 // ExchangeToken: unsupported - there is no credential to exchange.
 func (s *Source) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
 	return nil, fmt.Errorf("source %q: authentication: %w", sourceID, source.ErrNotSupported)
-}
-
-// CheckUpdates: T2 (#360) - an entirely local comparison against the index.
-func (s *Source) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
-	return nil, fmt.Errorf("source %q: update check: %w", sourceID, source.ErrNotSupported)
 }

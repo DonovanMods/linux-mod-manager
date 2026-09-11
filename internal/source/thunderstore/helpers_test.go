@@ -168,6 +168,33 @@ func (s *indexServer) serveGzip() {
 	s.gzip = true
 }
 
+// withNewShipLootVersion is the fixture document with one extra version
+// published on top of tinyhoot-ShipLoot, for the tests whose subject is
+// what a refresh FINDS rather than how it is fetched.
+func withNewShipLootVersion(t *testing.T) []byte {
+	t.Helper()
+	var packages []map[string]any
+	require.NoError(t, json.Unmarshal(fixtureDocument(t), &packages))
+	for _, pkg := range packages {
+		if pkg["full_name"] != "tinyhoot-ShipLoot" {
+			continue
+		}
+		versions, _ := pkg["versions"].([]any)
+		newest := map[string]any{
+			"name": "ShipLoot", "full_name": "tinyhoot-ShipLoot-1.2.0",
+			"description":    "Shows the total value of scrap aboard the ship.",
+			"version_number": "1.2.0", "dependencies": []any{"BepInEx-BepInExPack-5.4.2100"},
+			"date_created": "2026-09-11T10:00:00.000000Z", "website_url": "",
+			"file_size": float64(41000),
+		}
+		pkg["versions"] = append([]any{newest}, versions...)
+		pkg["date_updated"] = "2026-09-11T10:00:00.000000Z"
+	}
+	out, err := json.Marshal(packages)
+	require.NoError(t, err)
+	return out
+}
+
 // testClock is the injectable clock every TTL assertion runs on, so a test
 // asserts the POLICY without spending six hours.
 type testClock struct {
