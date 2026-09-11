@@ -76,6 +76,12 @@ func newGamesServer(t *testing.T) *Server {
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.RegisterSource(&namedFixtureSource{id: "nexusmods", name: "NexusMods"})
 	svc.RegisterSource(&namedFixtureSource{id: "curseforge", name: "CurseForge"})
+	// The curated Valheim entry maps thunderstore as well as nexusmods
+	// (#409), and AddGame refuses a map naming a source nothing registers -
+	// the check doing its job, since the real binary registers all five
+	// built-ins. This package cannot import the concrete source (its own
+	// boundary ratchet), and does not need to: only the id is consulted.
+	svc.RegisterSource(&namedFixtureSource{id: "thunderstore", name: "Thunderstore"})
 	return New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: internalTestAddr})
 }
 
