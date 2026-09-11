@@ -2453,7 +2453,8 @@ reporting seven statuses:
   is not misplaced.)
   This is what an install made before lmm recognised that archive's layout
   looks like. `--fix` re-lays the mod's cache entry out through the layout
-  rules and re-deploys it — in every profile that shares the entry. When
+  rules and re-deploys it — in every profile that has it **deployed**; a
+  profile where the mod is disabled is left exactly as it was. When
   the entry is a layout lmm cannot place on its own, the row says so and
   names the remedy (re-import the archive) instead of claiming a repair it
   cannot make.

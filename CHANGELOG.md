@@ -1220,7 +1220,9 @@ bepinex` when the installation is what answered, and stops refusing an
   nothing else could see it, because the cache, the deployed-file rows and
   the game directory all agree with each other and the plugin still loads
   nothing. `--fix` re-lays that mod's cache entry out through the layout
-  rules and re-deploys it, in every profile that shares the entry; when the
+  rules and re-deploys it, in every profile that has it DEPLOYED - a profile
+  where the mod is disabled is left exactly as it was rather than gaining
+  deployed files for a mod its owner turned off; when the
   entry is re-laid out atomically - the live entry is moved aside intact,
   the new one is built beside it, and one rename swaps them - so a failure
   partway through leaves the cache byte for byte as it was rather than a

@@ -539,3 +539,55 @@ func TestVerify_LoaderTier_FixRewritesTheEntrysRecordedMemberManifest(t *testing
 		"BepInEx/plugins/Jotunn/Jotunn.xml",
 	}, reported, "`lmm mod files` is the surface the owner reads")
 }
+
+// TestVerify_LoaderTier_FixLeavesADisabledProfileAlone is #424 review
+// finding 5. profilesDeploying took every profile holding the mod at that
+// version, filtering on neither Enabled nor Deployed - while
+// repairSiblingProfiles, the precedent this repair's own doc comment cites,
+// re-links a sibling only `if sibling.Deployed`.
+//
+// A profile with nothing deployed has nothing for the re-layout to
+// invalidate, so there is nothing to put back. Re-deploying it writes that
+// profile's copy of the mod into the shared game directory and creates
+// deployed_files rows beside a Deployed=false record - exactly the
+// record-vs-reality drift DisableMod's own #183 self-heal exists to clear,
+// and `lmm mod files` then lists paths for a mod the user disabled.
+func TestVerify_LoaderTier_FixLeavesADisabledProfileAlone(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t, "default", "second")
+	_, err := svc.DisableMod(context.Background(), game, "second", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+
+	disabled, err := svc.GetInstalledMod(context.Background(), mod.SourceID, mod.ID, game.ID, "second")
+	require.NoError(t, err)
+	require.False(t, disabled.Deployed, "the fixture's premise: nothing of this mod is deployed there")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "second", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+
+	_, err = svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	// The verifying profile is repaired...
+	fixedRows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "default",
+		mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	slashed := make([]string, 0, len(fixedRows))
+	for _, p := range fixedRows {
+		slashed = append(slashed, filepath.ToSlash(p))
+	}
+	assert.ElementsMatch(t, []string{
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+	}, slashed)
+
+	// ...and the disabled one is exactly as it was.
+	after, err := svc.GetInstalledMod(context.Background(), mod.SourceID, mod.ID, game.ID, "second")
+	require.NoError(t, err)
+	assert.False(t, after.Enabled, "--fix must not re-enable a mod the user disabled")
+	assert.False(t, after.Deployed, "nor record it as deployed")
+	stillEmpty, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "second",
+		mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	assert.Empty(t, stillEmpty, "`lmm mod files` must not list paths for a disabled mod")
+}

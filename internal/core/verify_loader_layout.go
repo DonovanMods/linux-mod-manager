@@ -336,6 +336,20 @@ type relayoutHolder struct {
 // The verifying profile is always first, so the row this run reported is
 // repaired before any sibling.
 //
+// A sibling with nothing DEPLOYED is not one of them, which is
+// repairSiblingProfiles' own gate (verify_repair.go: it re-links a sibling
+// only `if sibling.Deployed`). A profile where the mod is disabled, or
+// simply has never been deployed, has nothing the re-layout invalidates -
+// so there is nothing to put back, and putting it back anyway would write
+// that profile's copy of the mod into the shared game directory and leave
+// deployed_files rows beside a Deployed=false record, which is exactly the
+// drift DisableMod's #183 self-heal exists to clear (#424 review, finding
+// 5).
+//
+// The verifying profile is not asked: its rows are what raised the finding,
+// so it is deployed by construction, and skipping it would leave the
+// reported misplacement in place with nothing else to repair it.
+//
 // The link method is resolved HERE rather than at deploy time, for
 // relinkDeployedRow's reason: a method that cannot be resolved (#189 - an
 // invalid profile link_method) must refuse the whole repair before the
@@ -375,6 +389,9 @@ func (r *verifyRun) profilesDeploying(mod *domain.InstalledMod) ([]relayoutHolde
 		}
 		if sibling.Version != mod.Version {
 			continue // a different cache entry entirely
+		}
+		if !sibling.Deployed {
+			continue // nothing deployed there for the re-layout to invalidate
 		}
 		h, err := holder(p.Name, sibling)
 		if err != nil {
