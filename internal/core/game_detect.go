@@ -52,6 +52,7 @@ func GameFromDetected(g domain.DetectedGame) (*domain.Game, error) {
 		SourceIDs:   sources,
 		LinkMethod:  domain.LinkSymlink,
 		DeployMode:  deployMode,
+		Adapter:     g.Adapter,
 		Loader:      cloneDetectedLoader(g.Loader),
 	}, nil
 }
@@ -77,10 +78,10 @@ func cloneDetectedLoader(loader *domain.GameLoader) *domain.GameLoader {
 //
 // The rules, in the order a caller will care about them:
 //
-//   - Name, InstallPath, ID (from the candidate's slug) and DeployMode come
-//     from the candidate unless the caller supplied them. A candidate whose
-//     install path games.yaml ALREADY configures keeps that game's id
-//     instead - but only through Service.PrefillGameSpecFromDetected, which
+//   - Name, InstallPath, ID (from the candidate's slug), DeployMode and
+//     Adapter come from the candidate unless the caller supplied them.
+//     A candidate whose install path games.yaml ALREADY configures keeps
+//     that game's id instead - but only through Service.PrefillGameSpecFromDetected, which
 //     is the seam both frontends call; this function stays pure.
 //   - ModPath comes from the candidate when detection knew one (a curated
 //     entry's mod_path, already joined onto the install path). An UNKNOWN
@@ -122,6 +123,9 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 	}
 	if spec.DeployMode == "" {
 		spec.DeployMode = d.DeployMode
+	}
+	if spec.Adapter == "" {
+		spec.Adapter = d.Adapter
 	}
 	if len(spec.Sources) == 0 {
 		switch {

@@ -67,6 +67,11 @@ func TestLoadKnownGames_IcarusEntry(t *testing.T) {
 	assert.Equal(t, "", info.NexusID)
 	assert.Equal(t, "Icarus/Content/Paks/mods", info.ModPath)
 	assert.Equal(t, "compile", info.DeployMode)
+	// #412: the entry states the adapter rather than leaning on the
+	// `deploy_mode: compile` migration, which is deprecated for a future
+	// MAJOR - so a game added from detection today is already spelled the
+	// durable way.
+	assert.Equal(t, "icarus", info.Adapter)
 	assert.Equal(t, map[string]string{"icarus": "icarus"}, info.Sources)
 }
 

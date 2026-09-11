@@ -427,6 +427,7 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					ModPath:     modPath,
 					NexusID:     info.NexusID,
 					DeployMode:  info.DeployMode,
+					Adapter:     info.Adapter,
 					Sources:     info.Sources,
 					Loader:      detectedLoader(info.Loader),
 					Known:       true,

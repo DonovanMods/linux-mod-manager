@@ -171,14 +171,24 @@ func (m *DeployMode) UnmarshalText(b []byte) error {
 // GameFromDetected) without importing a concrete source. steam keeps
 // DetectedGame as a type alias for this.
 type DetectedGame struct {
-	SteamAppID  string            `json:"steam_app_id"`          // Steam App ID
-	Slug        string            `json:"slug"`                  // lmm game ID (from known games list)
-	Name        string            `json:"name"`                  // Display name
-	InstallPath string            `json:"install_path"`          // Absolute path to game install (e.g. .../common/Skyrim Special Edition)
-	ModPath     string            `json:"mod_path"`              // Absolute path to mod directory (InstallPath + ModPath relative)
-	NexusID     string            `json:"nexus_id,omitempty"`    // NexusMods game domain ID. Optional: "" for games with no NexusMods presence (#177).
-	DeployMode  string            `json:"deploy_mode,omitempty"` // games.yaml's deploy_mode string, passed through from GameInfo.DeployMode. Optional: "" means the default (extract).
-	Sources     map[string]string `json:"sources,omitempty"`     // games.yaml's sources map, passed through from GameInfo.Sources. Optional: nil means "derive {nexusmods: NexusID}".
+	SteamAppID  string `json:"steam_app_id"`          // Steam App ID
+	Slug        string `json:"slug"`                  // lmm game ID (from known games list)
+	Name        string `json:"name"`                  // Display name
+	InstallPath string `json:"install_path"`          // Absolute path to game install (e.g. .../common/Skyrim Special Edition)
+	ModPath     string `json:"mod_path"`              // Absolute path to mod directory (InstallPath + ModPath relative)
+	NexusID     string `json:"nexus_id,omitempty"`    // NexusMods game domain ID. Optional: "" for games with no NexusMods presence (#177).
+	DeployMode  string `json:"deploy_mode,omitempty"` // games.yaml's deploy_mode string, passed through from GameInfo.DeployMode. Optional: "" means the default (extract).
+	// Adapter is games.yaml's `adapter:` value (#353), passed through from
+	// the curated known-games entry. Only a CURATED entry can carry one -
+	// nothing on disk says what a game does with mod content - so an
+	// unknown candidate carries none, which reads as `generic-files`, the
+	// same conservative default its empty ModPath is.
+	//
+	// omitempty: a game whose entry names no adapter carries no member at
+	// all, so every detect document recorded before this field existed is
+	// byte-identical.
+	Adapter string            `json:"adapter,omitempty"`
+	Sources map[string]string `json:"sources,omitempty"` // games.yaml's sources map, passed through from GameInfo.Sources. Optional: nil means "derive {nexusmods: NexusID}".
 	// Known reports whether the Steam app id matched lmm's known-games
 	// list (the embedded steam-games.yaml plus the user's override). A
 	// known candidate carries that entry's curated slug, mod path, deploy

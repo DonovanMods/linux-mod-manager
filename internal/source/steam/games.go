@@ -32,6 +32,12 @@ type GameInfo struct {
 	// Optional: nil means "derive {nexusmods: NexusID}", exactly as every
 	// entry behaved before this field existed.
 	Sources map[string]string
+	// Adapter is games.yaml's `adapter:` value (#353), passed through
+	// as-is for core to resolve against its registry. Optional: "" means
+	// the entry says nothing and the game gets `generic-files`, the
+	// identity - the same conservative default an UNKNOWN detected game
+	// gets, and exactly how every entry behaved before this field existed.
+	Adapter string
 	// Loader is the entry's mod-loader declaration (#416), mirroring
 	// games.yaml's own `loader:` block (#359) but carrying only the two
 	// members a CATALOG can honestly answer. Optional: nil - which is every
@@ -71,6 +77,7 @@ type steamGameYAML struct {
 	NexusID    string            `yaml:"nexus_id,omitempty"`
 	ModPath    string            `yaml:"mod_path"`
 	DeployMode string            `yaml:"deploy_mode,omitempty"`
+	Adapter    string            `yaml:"adapter,omitempty"`
 	Sources    map[string]string `yaml:"sources,omitempty"`
 	Loader     *loaderYAML       `yaml:"loader,omitempty"`
 }
@@ -87,7 +94,7 @@ type loaderYAML struct {
 func (e steamGameYAML) gameInfo(origin string) (GameInfo, error) {
 	info := GameInfo{
 		Slug: e.Slug, Name: e.Name, NexusID: e.NexusID, ModPath: e.ModPath,
-		DeployMode: e.DeployMode, Sources: e.Sources,
+		DeployMode: e.DeployMode, Adapter: e.Adapter, Sources: e.Sources,
 	}
 	if e.Loader == nil {
 		return info, nil
