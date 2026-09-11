@@ -591,25 +591,40 @@ lmm game edit lethal-company --loader ""   # remove the declaration
 #### What lmm does
 
 - **Normalises plugin archive layouts at install.** A BepInEx plugin
-  archive comes in three real shapes, and lmm places all of them
+  archive comes in a handful of real shapes, and lmm places all of them
   correctly: game-root-relative (`BepInEx/plugins/Foo.dll`, the common
   case), wrapped in a single directory (`BepInExPack/BepInEx/…`, whose
   wrapper is stripped), and BepInEx-relative (a bare `plugins/`,
   `patchers/`, `monomod/` or `config/` root, which gains its `BepInEx/`
   prefix). A loose `.dll` at the archive root becomes
-  `BepInEx/plugins/<ModName>/`. The package metadata every Thunderstore
-  archive carries — a `manifest`, an `icon`, a `readme`, a `changelog` or a
-  `license`, whatever extension it is spelled with — is dropped, not
-  scattered into your game directory. That drop runs both before and after
-  the wrapper strip, so a package that keeps its metadata _inside_ the
-  wrapper — which is how Thunderstore builds one — does not deliver four
-  files into your Steam install directory. A layout lmm does not recognise
-  is reported, never guessed at.
+  `BepInEx/plugins/<ModName>/`. A **plugin folder** — the standard
+  NexusMods shape, one or more directories that each hold an assembly, as
+  in `Jotunn/Jotunn.dll` — moves under `BepInEx/plugins/` whole and keeps
+  its own name, so the `.pdb`, `.xml` and README beside the assembly stay
+  beside it. The package metadata every Thunderstore archive carries — a
+  `manifest`, an `icon`, a `readme`, a `changelog` or a `license`, whatever
+  extension it is spelled with — is dropped, not scattered into your game
+  directory. That drop runs both before and after the wrapper strip, so a
+  package that keeps its metadata _inside_ the wrapper — which is how
+  Thunderstore builds one — does not deliver four files into your Steam
+  install directory. A layout lmm does not recognise is reported, never
+  guessed at: a root that mixes a plugin folder with loose files, or with a
+  directory holding no assembly, is one lmm cannot place and says so.
 
   The `BepInEx/`-rooted and wrapped shapes are recognised for any game. The
-  two ambiguous ones — a bare `plugins/` root and a bare `.dll` — need the
-  `loader:` declaration above, so a mod for a different game that happens
-  to be rooted at `plugins/` keeps deploying exactly where it always did.
+  ambiguous ones — a bare `plugins/` root, a plugin folder and a bare
+  `.dll` — need lmm to believe this is a BepInEx game, so a mod for a
+  different game that happens to be rooted at `plugins/` (or at
+  `Mods/<Mod>/<Mod>.dll`) keeps deploying exactly where it always did.
+
+  Two things satisfy that: the `loader:` declaration above, or **BepInEx
+  actually being installed** in the game directory. The declaration is
+  what lmm asks you for; an installed loader is a fact lmm can read, and
+  refusing to place a plugin because of missing paperwork while the thing
+  the paperwork describes is sitting on disk helps nobody. When the
+  installation is what answered, lmm places the files and prints one line —
+  `BepInEx found in <path>; declare it with lmm game edit <id> --loader
+bepinex` — so the answer becomes permanent.
 
 - **Seeds plugin configuration instead of linking it.** BepInEx writes its
   `BepInEx/config/*.cfg` files on first run and you hand-edit them
@@ -620,10 +635,11 @@ lmm game edit lethal-company --loader ""   # remove the declaration
   cache, and never removed by an uninstall.
 
 - **Refuses to deploy a plugin into a game with no loader.** A
-  BepInEx-shaped archive installed into a game that declares no loader
-  fails at plan time with the setup instructions, rather than putting a DLL
-  somewhere nothing will ever load it from — which fails silently and is
-  the hardest kind of failure to diagnose.
+  BepInEx-shaped archive installed into a game that neither declares a
+  loader nor has one installed fails at plan time with the setup
+  instructions, rather than putting a DLL somewhere nothing will ever load
+  it from — which fails silently and is the hardest kind of failure to
+  diagnose.
 
 - **Refuses to install BepInEx itself as a mod.** An archive carrying
   `BepInEx/core/` is the loader, not a plugin: it belongs to the game
@@ -2401,8 +2417,8 @@ With `--fix`, verify also REMOVES stale lmm-deployed files and dangling lmm-cach
 - **? ModName - VERSION UNVERIFIABLE** - None of the recorded file ID(s) are listed by the source anymore; not repaired by `--fix` (reinstall the mod instead).
 
 For a game with a `loader:` block (see [BepInEx (Unity
-games)](#bepinex-unity-games)), verify adds a loader tier — five checks,
-reporting six statuses:
+games)](#bepinex-unity-games)), verify adds a loader tier — six checks,
+reporting seven statuses:
 
 - **LOADER MISSING** — the game declares a loader and its preloader
   (`BepInEx/core/BepInEx.Preloader.dll`) is not in the install directory.
@@ -2419,10 +2435,23 @@ reporting six statuses:
   disk were deployed, so nothing proves the current set ever loaded.
 - **LOADER PLUGIN UNLINKED** — an enabled mod's plugin files are not in the
   game directory; `--fix` re-deploys the mod.
+- **LOADER DEPLOYED OUTSIDE LOADER** — a mod's files are deployed somewhere
+  other than `BepInEx/`, which on a BepInEx game means nothing loads them.
+  This is what an install made before lmm recognised that archive's layout
+  looks like. `--fix` re-lays the mod's cache entry out through the layout
+  rules and re-deploys it — in every profile that shares the entry. When
+  the entry is a layout lmm cannot place on its own, the row says so and
+  names the remedy (re-import the archive) instead of claiming a repair it
+  cannot make.
 
-Only the last is `--fix`-able: lmm does not install the loader or write
-Steam launch options, so the remedy for the others is the setup `lmm game
-show` prints.
+  This check also runs for a game that has BepInEx installed without
+  declaring it, since that is exactly where misplaced deployments came
+  from. Every other check above is about the DECLARATION, so they run only
+  for a game that made one.
+
+Only the last two are `--fix`-able: lmm does not install the loader or
+write Steam launch options, so the remedy for the others is the setup `lmm
+game show` prints.
 
 A locked mod's VERSION MISMATCH is still reported, but `--fix` refuses to
 rewrite a locked mod's record (other, unlocked mods in the same run are

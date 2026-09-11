@@ -1180,6 +1180,45 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A NexusMods plugin folder installs into `BepInEx/plugins/`, not into the
+  game root (#424).** Jotunn 2.30.0 from NexusMods extracts to a single
+  top-level directory — `Jotunn/Jotunn.dll` plus its `.pdb`, `.xml` and the
+  package's docs — which was none of the archive shapes lmm recognised, so
+  on a Valheim install that declares BepInEx it deployed verbatim into the
+  Steam install directory and reported success. That layout is the standard
+  NexusMods Unity shape, and its own install instructions name it: drop the
+  folder into `BepInEx/plugins/`. lmm now does exactly that — a root whose
+  entries are all directories, each holding an assembly somewhere inside,
+  none of them a name BepInEx owns, moves whole and keeps its own name, so
+  the `.pdb`, `.xml` and README stay beside the assembly. A root that mixes
+  a plugin folder with loose files, with a directory holding no assembly,
+  or with a BepInEx-owned name is reported as a layout lmm cannot place,
+  never guessed at, and 7 Days to Die's `Mods/<Mod>/<Mod>.dll` is untouched
+  on a game that has no BepInEx.
+
+  Two things come with it. **BepInEx that lmm can SEE now counts as much as
+  BepInEx you declared.** A game entry added before lmm's catalog declared
+  the loader has the preloader sitting in its install directory and no
+  `loader:` block, and every ambiguous archive shape used to fall through
+  that gap — which is how the plugin reached the game root in the first
+  place. lmm now reads the installation as well as the declaration, prints
+  `BepInEx found in <path>; declare it with lmm game edit <id> --loader
+bepinex` when the installation is what answered, and stops refusing an
+  unmistakable BepInEx archive over missing paperwork while the loader is
+  on disk. A game with neither is unchanged in both directions.
+
+  And **`lmm verify` finds the installs this already broke.** A mod whose
+  deployed files sit outside `BepInEx/` on a BepInEx game is reported —
+  nothing else could see it, because the cache, the deployed-file rows and
+  the game directory all agree with each other and the plugin still loads
+  nothing. `--fix` re-lays that mod's cache entry out through the layout
+  rules and re-deploys it, in every profile that shares the entry; when the
+  entry is a layout lmm cannot place on its own, the row says so and points
+  at re-importing the archive rather than claiming a repair it cannot make.
+  The loader tier's findings are also printed by `lmm verify` at last —
+  they were counted in the summary and never shown, so a text-mode run said
+  "1 issue(s)" with nothing to read.
+
 - **`lmm game show` no longer offers BepInEx advice for games that have
   nothing to do with a mod loader (#359).** Every game printed a "Mod
   loader" section — `Declared: none`, `Runtime: unknown`,
