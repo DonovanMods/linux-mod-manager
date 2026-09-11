@@ -218,17 +218,3 @@ func zipBytes(t *testing.T, files map[string]string) []byte {
 	require.NoError(t, w.Close())
 	return buf.Bytes()
 }
-
-// sandboxHome redirects HOME and every XDG variable at a temp directory, so
-// nothing here can read or write a real user's configuration, data or cache
-// even by accident - and nothing can reach a real Steam library.
-func sandboxHome(t *testing.T) {
-	t.Helper()
-	for _, key := range []string{
-		"HOME", "STEAM_ROOT",
-		"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-		"XDG_STATE_HOME", "XDG_RUNTIME_DIR", "XDG_CONFIG_DIRS", "XDG_DATA_DIRS",
-	} {
-		t.Setenv(key, t.TempDir())
-	}
-}
