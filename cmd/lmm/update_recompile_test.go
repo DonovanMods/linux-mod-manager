@@ -38,7 +38,7 @@ func setupDoUpdateRecompileTest(t *testing.T) (*core.Service, *domain.Game, *com
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	game := &domain.Game{
 		ID: "icarus", Name: "Icarus", InstallPath: installDir, ModPath: t.TempDir(),

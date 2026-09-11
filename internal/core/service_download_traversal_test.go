@@ -88,7 +88,7 @@ func TestDownloadMod_DeployCompile_TraversalFileID_SanitizedAgainstEscape(t *tes
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	src := &fakeCompilerSource{downloadURL: dlSrv.URL}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
 	require.NoError(t, svc.SaveGame(context.Background(), game))

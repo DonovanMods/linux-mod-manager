@@ -2231,6 +2231,21 @@ func newE2EFixtureWithAnUnlistedInstall(t *testing.T) e2eFixture {
 // pak, which is internal/source and internal/core's ground to cover.
 type compileE2ESource struct{ *fakeSource }
 
+// compileE2EAdapter presents compileE2ESource's format vocabulary as the
+// game's ADAPTER (#412).
+type compileE2EAdapter struct{ *compileE2ESource }
+
+func (*compileE2EAdapter) ID() string    { return "icarus" }
+func (*compileE2EAdapter) Label() string { return "Compile E2E adapter" }
+func (*compileE2EAdapter) NormalizeArchive(adapter.NormalizeRequest) (adapter.Layout, error) {
+	return adapter.Layout{}, nil
+}
+
+var (
+	_ adapter.GameAdapter   = (*compileE2EAdapter)(nil)
+	_ adapter.MergeCompiler = (*compileE2EAdapter)(nil)
+)
+
 func (*compileE2ESource) ValidateSource(string) error { return nil }
 func (*compileE2ESource) MergeCompile(context.Context, string, []adapter.MergeSource, string) ([]string, []adapter.MergeFailure, error) {
 	return nil, nil, nil
@@ -2268,6 +2283,10 @@ func newE2EFixtureWithAConvertibleMod(t *testing.T) e2eFixture {
 
 	src := &compileE2ESource{fakeSource: newFakeSource("fake")}
 	svc.RegisterSource(src)
+	// #412: since U2 the compile capability is the GAME's adapter, not a
+	// source the game maps. The `deploy_mode: compile` game below derives
+	// the name this registers under.
+	svc.RegisterAdapter(&compileE2EAdapter{compileE2ESource: src})
 
 	ctx := t.Context()
 	game := &domain.Game{

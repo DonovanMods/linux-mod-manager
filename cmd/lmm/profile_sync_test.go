@@ -397,7 +397,7 @@ func TestDoProfileSync_DeployCompile_MergedPakSyncFailureWarnsUnconditionally(t 
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	const modID, version, fileID = "bear-mount", "1.0", "exmodz-file"
 	gameCache := svc.GetGameCache(game)

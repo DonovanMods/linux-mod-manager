@@ -674,7 +674,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 
 	mock := &compilerMockSource{mockSourceWithDownloads: newMockSourceWithDownloads("test-compiler")}
 	defer mock.Close()
-	svc.RegisterSource(mock)
+	registerCompileSource(svc, mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
@@ -736,7 +736,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 
 	mock := &compilerMockSource{mockSourceWithDownloads: newMockSourceWithDownloads("test-compiler")}
 	defer mock.Close()
-	svc.RegisterSource(mock)
+	registerCompileSource(svc, mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true}
 	require.NoError(t, svc.SaveGame(context.Background(), game))

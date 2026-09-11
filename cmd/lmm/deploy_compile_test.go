@@ -33,7 +33,7 @@ func setupDoDeployCompileTest(t *testing.T) (*core.Service, *domain.Game, *compi
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 	return svc, game, compiler
 }
 
@@ -162,7 +162,7 @@ var _ adapter.MergeCompiler = (*pakFailCompilerSource)(nil)
 // correction, and the footer reports the raw fallback.
 func TestDoDeploy_Compile_ConversionFailure_FooterCorrectsOptimisticLabel(t *testing.T) {
 	svc, game, compiler := setupDoDeployCompileTest(t)
-	svc.RegisterSource(&pakFailCompilerSource{
+	registerCompileSource(svc, &pakFailCompilerSource{
 		compilerInstallSource: compiler,
 		failRefs:              map[string]string{"fake-compiler:flaky-pak": "irreconcilable"},
 	})

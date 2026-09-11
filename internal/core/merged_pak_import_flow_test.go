@@ -110,7 +110,7 @@ func TestApplyImport_DeployCompile_SyncsMergedPak(t *testing.T) {
 	mod := &domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", Name: "Bear Mount", Version: "1.0", GameID: "icarus"}
 	src := newImportFlowCompilerSource(mod, "Bear_Mount.exmodz", []byte("bear-exmodz-bytes"))
 	defer src.Close()
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	profile := &domain.Profile{Name: "target", GameID: game.ID, Mods: []domain.ModReference{{SourceID: "fake-compiler", ModID: "bear-mount", Version: "1.0"}}}
 	data, err := config.ExportProfile(profile)

@@ -469,7 +469,7 @@ func newBatchCompileFixture(t *testing.T, mergeErr error) (*core.Service, *domai
 	inner := newBatchInstallSource("test-src")
 	t.Cleanup(inner.Close)
 	src := &batchCompileSource{batchInstallSource: inner, mergeErr: mergeErr}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	return svc, game, src
 }

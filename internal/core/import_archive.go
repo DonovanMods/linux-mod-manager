@@ -289,13 +289,13 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	entryPreExists := !ident.minted &&
 		gameCache.Exists(game.ID, ident.sourceID, ident.modID, ident.version)
 
-	// The compile source answers the format questions for a DeployCompile
-	// game (#256), and a game whose compiler cannot be resolved fails HERE
+	// The game's ADAPTER answers the format questions for a DeployCompile
+	// game (#256/#412), and a game whose adapter cannot compile fails HERE
 	// for the same reason importWithIdentity fails: without it core cannot
 	// tell a native merge archive from anything else.
 	var mc adapter.MergeCompiler
 	if game.DeployMode == domain.DeployCompile {
-		if mc, err = s.mergeCompilerSourceForGame(game.ID); err != nil {
+		if mc, err = s.adapterCompiler(game); err != nil {
 			return nil, err
 		}
 	}

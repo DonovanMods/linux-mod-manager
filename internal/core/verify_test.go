@@ -503,7 +503,7 @@ func TestVerify_CompileGameStatuses(t *testing.T) {
 		fakeCompilerSource: &fakeCompilerSource{},
 		failRefs:           map[string]string{"fake-compiler:badpak": "irreconcilable pak layout"},
 	}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{
 		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
@@ -969,7 +969,7 @@ func newNeedsReingestFixGame(t *testing.T, src source.ModSource, sourceID string
 	writeFakeBasePak(t, basePak)
 
 	svc := newFlowsTestService(t)
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{
 		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
@@ -1668,7 +1668,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 		fakeCompilerSource: &fakeCompilerSource{},
 		failRefs:           map[string]string{"fake-compiler:badpak": "irreconcilable pak layout"},
 	}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{
 		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),

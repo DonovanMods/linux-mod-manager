@@ -272,7 +272,7 @@ func TestPlanDeploy_Compile_LinkAndRemove_MatchWhatApplyDeployThenDid(t *testing
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	svc.RegisterSource(&fakeCompilerSource{})
+	registerCompileSource(svc, &fakeCompilerSource{})
 	game := setupCompileReadoutGame(t, svc)
 
 	seedExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
@@ -535,7 +535,7 @@ func TestPlanDeploy_Compile_MergePlanNamesArtifactSourcesAndRawFallbacks(t *test
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	svc.RegisterSource(&fakeCompilerSource{})
+	registerCompileSource(svc, &fakeCompilerSource{})
 	game := setupCompileReadoutGame(t, svc)
 
 	seedExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")

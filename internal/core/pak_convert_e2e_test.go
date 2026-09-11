@@ -53,7 +53,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	game.ConvertPaks = true
 
 	rec := &recordingMergeCompilerSource{fakeCompilerSource: &fakeCompilerSource{}}
-	svc.RegisterSource(rec)
+	registerCompileSource(svc, rec)
 
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "exmod", "1.0", "exmodz-file", []byte("exmod-bytes"))
 	seedEnabledPakMod(t, svc, game, "fake-compiler", "pakmod", "1.0", "pak", []byte("pak-bytes"))
@@ -194,7 +194,7 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 
 	rec := &recordingMergeCompilerSource{fakeCompilerSource: &fakeCompilerSource{}}
-	svc.RegisterSource(rec)
+	registerCompileSource(svc, rec)
 
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "exmod", "1.0", "exmodz-file", []byte("exmod-bytes"))
 

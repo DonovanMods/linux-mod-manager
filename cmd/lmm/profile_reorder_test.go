@@ -244,7 +244,7 @@ func TestDoProfileReorder_DeployCompile_ResyncsMergedPak(t *testing.T) {
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "bear-mount", "1.0", cache.RetainedSourceName("exmodz-a"), []byte("A")))

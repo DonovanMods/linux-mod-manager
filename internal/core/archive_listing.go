@@ -51,10 +51,10 @@ const (
 )
 
 // classifyImportArchive reports which branch importing filename into game
-// takes. mc is the game's resolved compile source, or nil for a game that
+// takes. mc is the game's resolved compile ADAPTER, or nil for a game that
 // needs none (every non-DeployCompile game): the format questions
 // - is this the game's native merge source, is it a convertible artifact -
-// are the compile source's to answer (#256), and a DeployCompile game with no
+// are the adapter's to answer (#256/#412), and a DeployCompile game with no
 // resolvable compiler never reaches here (importWithIdentity fails loud
 // first).
 func classifyImportArchive(game *domain.Game, mc adapter.MergeCompiler, filename string) importArchiveKind {

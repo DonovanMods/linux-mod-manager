@@ -30,7 +30,7 @@ func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *tes
 	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile,
 		SourceIDs: map[string]string{"fake-compiler": "icarus"}}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
-	svc.RegisterSource(&fakeCompilerSource{})
+	registerCompileSource(svc, &fakeCompilerSource{})
 
 	gameCache := svc.GetGameCache(game)
 
@@ -104,7 +104,7 @@ func TestClassifyCompileDeployMods_UnreadableRetainedPathWarns(t *testing.T) {
 	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile,
 		SourceIDs: map[string]string{"fake-compiler": "icarus"}}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
-	svc.RegisterSource(&fakeCompilerSource{})
+	registerCompileSource(svc, &fakeCompilerSource{})
 
 	gameCache := svc.GetGameCache(game)
 	fileID := "exmodz-file"
@@ -136,12 +136,12 @@ func TestClassifyCompileDeployMods_UnreadableRetainedPathWarns(t *testing.T) {
 }
 
 // TestClassifyCompileDeployMods_CompilerResolutionFailureWarns pins the
-// second silent site (merged_pak.go:744): a mid-walk mergeCompilerForGame
+// second silent site (merged_pak.go:744): a mid-walk adapterCompiler
 // failure, only reachable (per classifyCompileDeployMods's own doc comment)
 // when nothing ENABLED is retained but a mod in the full mods slice still
-// holds a retained file - e.g. a disabled mod under --all with no compile
-// source configured. No source is registered under "fake-compiler" here, so
-// resolution fails for the first (and only) retained fileID
+// holds a retained file - e.g. a disabled mod under --all for a game that
+// cannot compile. No compiling adapter is registered here, so resolution
+// fails for the first (and only) retained fileID
 // classifyCompileDeployMods's own loop encounters.
 func TestClassifyCompileDeployMods_CompilerResolutionFailureWarns(t *testing.T) {
 	var logBuf bytes.Buffer
@@ -153,8 +153,9 @@ func TestClassifyCompileDeployMods_CompilerResolutionFailureWarns(t *testing.T) 
 	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile,
 		SourceIDs: map[string]string{"fake-compiler": "icarus"}}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
-	// Deliberately no svc.RegisterSource: "fake-compiler" resolves to
-	// nothing, so mergeCompilerForGame fails with zero compilers found.
+	// Deliberately no registerCompileSource: nothing registers a compiling
+	// adapter, so the `deploy_mode: compile` derivation finds none and the
+	// game resolves to the identity - which cannot compile (#412).
 
 	gameCache := svc.GetGameCache(game)
 	fileID := "exmodz-file"
@@ -178,7 +179,7 @@ func TestClassifyCompileDeployMods_CompilerResolutionFailureWarns(t *testing.T) 
 	assert.Empty(t, classes, "a mid-walk resolution failure returns the classes computed so far - none, here")
 	assert.Contains(t, logBuf.String(), "level=WARN")
 	assert.Contains(t, logBuf.String(), "game_id=icarus")
-	assert.Contains(t, logBuf.String(), "no merge-compiler-capable source configured")
+	assert.Contains(t, logBuf.String(), "cannot compile")
 }
 
 // newMergedPakTestGame builds a DeployCompile game with a registered merge
@@ -195,7 +196,7 @@ func newMergedPakTestGame(t *testing.T) (*core.Service, *domain.Game, string) {
 
 	svc := newFlowsTestService(t)
 	src := &fakeCompilerSource{}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{
 		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),

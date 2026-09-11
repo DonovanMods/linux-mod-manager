@@ -395,7 +395,7 @@ func deployCompileMergedPakFixture(t *testing.T) installBatchFixture {
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	bearMod := &domain.Mod{ID: "bear-mount", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"}
@@ -425,7 +425,7 @@ func deployCompileMergedPakSyncFailureFixture(t *testing.T) installBatchFixture 
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	bearMod := &domain.Mod{ID: "bear-mount", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"}

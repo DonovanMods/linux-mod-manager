@@ -1335,7 +1335,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		// doc comment), so validating its result immediately after this fold
 		// is equivalent to validating inside it, and plan.Files is the only
 		// value that matters to fillPrimaryCache either way.
-		if err := s.ValidateInstallFileSelection(game, plan.SourceID, plan.Files); err != nil {
+		if err := s.ValidateInstallFileSelection(game, plan.Files); err != nil {
 			return result, err
 		}
 	}
@@ -1373,7 +1373,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		// before any dependency (or the primary itself) is touched -
 		// mirrors the STRICT path's fold-site validation above for the
 		// BATCH path's one place a caller can pin more than one file.
-		if err := s.ValidateInstallFileSelection(game, primary.SourceID, primaryOverrideFiles); err != nil {
+		if err := s.ValidateInstallFileSelection(game, primaryOverrideFiles); err != nil {
 			return result, err
 		}
 	}
@@ -2134,15 +2134,16 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 		downloadCache = txn.staged
 	}
 
-	// Resolve the source to check MergeCompiler capability for .pak gating
-	// (#221). Since #353 the GAME's adapter answers first; the source
-	// type-assertion is compilerForSource's temporary fallback, deleted in
-	// U2 (#412).
+	// Resolve the source the plan names - the download still needs it -
+	// and ask the GAME's adapter about compile capability for .pak gating
+	// (#221). Since U2 (#412) the adapter is the only thing asked: the
+	// source type-assertion that stood beside it is gone, so a .pak served
+	// by any source compiles for a compiling game.
 	src, err := s.GetSource(plan.SourceID)
 	if err != nil {
 		return st, fmt.Errorf("resolving source %q: %w", plan.SourceID, err)
 	}
-	mc, isMergeCompiler := s.compilerForSource(game, src)
+	mc, isMergeCompiler := s.optionalCompiler(game)
 
 	// Cache-first guard (2026-08-29 ruling), the same one ApplyProfileSwitch
 	// and ApplyProfileImport already use (#96/#138): HasFileIDs - the

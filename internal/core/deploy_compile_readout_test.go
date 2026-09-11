@@ -113,7 +113,7 @@ func TestDeployProfile_Compile_ClassifiesModsAndEmitsMergeSynced(t *testing.T) {
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	svc.RegisterSource(&fakeCompilerSource{})
+	registerCompileSource(svc, &fakeCompilerSource{})
 	game := setupCompileReadoutGame(t, svc)
 
 	seedExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
@@ -163,7 +163,7 @@ func TestDeployProfile_Compile_ConversionFailure_ReportsRawFallback(t *testing.T
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	svc.RegisterSource(&pakConversionOutcomeSource{
+	registerCompileSource(svc, &pakConversionOutcomeSource{
 		fakeCompilerSource: &fakeCompilerSource{},
 		failRefs:           map[string]string{"fake-compiler:flaky-pak": "irreconcilable"},
 	})

@@ -94,7 +94,7 @@ func TestDoInstall_DeployCompile_AnnouncesRetaining(t *testing.T) {
 	// Re-register under the same ID so doInstall's resolved source is the
 	// merge-compiler-capable wrapper, not the plain fake registered by
 	// setupDoInstallTest.
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "main", Name: "Bear Mount", FileName: "Bear_Mount.exmodz", IsPrimary: true, Category: "MAIN"}})
@@ -133,7 +133,7 @@ func TestBatchInstallMods_DeployCompile_DeploysMergedPak(t *testing.T) {
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 	// SyncMergedPak resolves the game's configured sources (mergeCompilerSourceForGame
 	// -> SourcesForGame), which requires the game to be registered - the
 	// production CLI always has this via withGameService's svc.GetGame,
@@ -179,7 +179,7 @@ func TestBatchInstallMods_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *tes
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	bearMod := &domain.Mod{ID: "bear-mount", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"}
@@ -226,7 +226,7 @@ func TestDoInstall_DeployCompile_SyncFailure_PrintsLoudly(t *testing.T) {
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "main", Name: "Bear Mount", FileName: "Bear_Mount.exmodz", IsPrimary: true, Category: "MAIN"}})
@@ -270,7 +270,7 @@ func TestDoInstallBatch_DeployCompile_DeploysMergedPak(t *testing.T) {
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Wolf Mount", Version: "1.0", GameID: "g1"}
 	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1",
@@ -312,7 +312,7 @@ func TestDoInstallBatch_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *testi
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Wolf Mount", Version: "1.0", GameID: "g1"}
 	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1",
@@ -359,7 +359,7 @@ func TestDoDeploy_DeployCompile_ConversionFailureSurfaces(t *testing.T) {
 		compilerInstallSource: compiler,
 		failRefs:              map[string]string{"fake-compiler:" + modID: "table X not present in current base"},
 	}
-	svc.RegisterSource(outcome)
+	registerCompileSource(svc, outcome)
 
 	deployProfile = "default"
 	t.Cleanup(func() { deployProfile = "" })

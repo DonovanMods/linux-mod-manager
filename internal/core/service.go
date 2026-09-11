@@ -372,27 +372,25 @@ func (s *Service) GetSource(id string) (source.ModSource, error) {
 }
 
 // ValidateInstallFileSelection rejects an install selection that mixes a
-// merge-compile source's exmodz variant with any other file (#211): the two
+// merge-compiling game's exmodz variant with any other file (#211): the two
 // are alternate forms of the same mod, and installing both double-applies
 // its table edits (the pak deploys standalone while the exmodz joins the
-// merged pak). A game with no compile capability is never restricted,
-// single-file selections are always fine, and an unknown sourceID is not
-// this check's problem - pool resolution errors on it first.
+// merged pak). A game with no compile capability is never restricted, and
+// single-file selections are always fine.
 //
-// #353: the capability is resolved through compilerForSource, like every
-// other compile site - the game's ADAPTER first, the source assertion only
-// as the fallback that is `temporary until U2 (#412)`. Asking the source
-// directly is what would make this guard silently dead the day U2 moves
-// the MergeCompiler methods off *icarus.Icarus.
-func (s *Service) ValidateInstallFileSelection(game *domain.Game, sourceID string, files []domain.DownloadableFile) error {
+// #353/U2: the capability comes from the game's ADAPTER, and the source the
+// files were listed from no longer has a say - which is why this method
+// lost its sourceID parameter. Asking the source is what would have made
+// this guard silently DEAD the moment U2 moved the MergeCompiler methods
+// off *icarus.Icarus: it would have returned nil for every Icarus
+// selection and #211's released fix would have regressed with nothing
+// failing. TestValidateInstallFileSelectionAsksTheAdapter is what stops
+// that from happening quietly.
+func (s *Service) ValidateInstallFileSelection(game *domain.Game, files []domain.DownloadableFile) error {
 	if len(files) < 2 {
 		return nil
 	}
-	src, err := s.registry.Get(sourceID)
-	if err != nil {
-		return nil
-	}
-	mc, ok := s.compilerForSource(game, src)
+	mc, ok := s.optionalCompiler(game)
 	if !ok {
 		return nil
 	}
@@ -468,113 +466,59 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 	return srcs, nil
 }
 
-// mergeCompilerSourceForGame resolves the sole MergeCompiler-capable source
-// registered for gameID (#173). The download path pins its MergeCompiler
-// check to the specific source a file was downloaded from
-// (DownloadModToCache's src.(adapter.MergeCompiler) check); importWithIdentity
-// has no such per-archive source to key off of, so it resolves against
-// every source the game maps in its registry instead — at most one of a
-// game's configured sources implements MergeCompiler today. Zero is the expected
-// failure when the game (or its MergeCompiler source) isn't configured;
-// more than one is treated as ambiguous rather than picking arbitrarily —
-// both fail loud instead of letting an .exmodz import silently skip
-// validation.
-func (s *Service) mergeCompilerSourceForGame(gameID string) (adapter.MergeCompiler, error) {
-	// #353: the ADAPTER answers "can this game compile" first - one game,
-	// one adapter, zero ambiguity - and only when it has no such
-	// capability does the pre-#353 source walk below run.
-	if game, ok := s.game(gameID); ok {
-		if mc, found, err := s.adapterCompiler(game); err != nil || found {
-			return mc, err
-		}
-	}
-	srcs, err := s.SourcesForGame(gameID)
+// adapterCompiler is #353's answer to "can this game compile, and with
+// what": the game's adapter, when it implements adapter.MergeCompiler.
+//
+// It is the ONE resolver, and U2 (#412) is where it became that. Until the
+// Icarus implementation moved behind the seam, three more stood beside it -
+// mergeCompilerSourceForGame walked every source a game mapped,
+// mergeCompilerForGame walked the game struct's own map, and
+// soleMergeCompiler enforced an "exactly one compile-capable source"
+// contract between them. All three asked where the BYTES CAME FROM, which
+// is why an Icarus .pak downloaded from NexusMods could not compile while
+// the identical file from Project Daedalus could, and why two mapped
+// compile sources were "ambiguous" rather than simply two sources. One
+// game has one adapter, so there is nothing left to disambiguate.
+//
+// It FAILS LOUD for a game that cannot compile, which is what every
+// merged-pak and import call site wants: reaching them at all means
+// deploy_mode is compile, and a compile flow that silently skipped would
+// deploy a half-merged artifact. optionalCompiler is the tolerant half.
+func (s *Service) adapterCompiler(game *domain.Game) (adapter.MergeCompiler, error) {
+	a, err := s.AdapterFor(game)
 	if err != nil {
 		return nil, err
 	}
-	var compilers []adapter.MergeCompiler
-	for _, src := range srcs {
-		if c, ok := src.(adapter.MergeCompiler); ok {
-			compilers = append(compilers, c)
-		}
+	mc, ok := adapter.Compiler(a)
+	if !ok {
+		return nil, fmt.Errorf("game %q requires deploy_mode: compile but its adapter %q cannot compile; set `adapter:` to one that can (registered: %s)",
+			game.ID, s.AdapterName(game), strings.Join(s.adapterRegistry().Names(), ", "))
 	}
-	return soleMergeCompiler(gameID, compilers)
+	return mc, nil
 }
 
-// adapterCompiler is #353's answer to "can this game compile, and with
-// what": the game's adapter, if it implements adapter.MergeCompiler. found
-// is false when the adapter has no compile capability, which is every
-// generic-files game.
+// optionalCompiler is adapterCompiler for the two call sites that must
+// TOLERATE a game with no compile capability rather than fail: the download
+// path, where #221 I1 deliberately lets a raw artifact fall through to the
+// legacy extract path, and #211's variant-exclusivity guard, which simply
+// does not apply to a game that cannot compile.
 //
-// It replaces "walk the game's sources looking for one that implements
-// MergeCompiler" - a question that made compilation a property of where the
-// bytes came from, so an Icarus .pak downloaded from NexusMods could not
-// compile. The two resolvers below and soleMergeCompiler are DELETED in U2
-// (#412), when the Icarus implementation moves behind the adapter; until
-// then they are the fallback that keeps U1 byte-identical.
-func (s *Service) adapterCompiler(game *domain.Game) (adapter.MergeCompiler, bool, error) {
+// A resolution failure (a games.yaml naming an adapter this build does not
+// ship) reads as "no compiler" here rather than as an error, exactly as it
+// did before U2: the flow's own AdapterFor call reports that fault, and a
+// second, quieter channel for it would only make the first one skippable.
+//
+// Before U2 (#412) this was compilerForSource, and it took the source the
+// file came from so it could type-assert it for the capability. That
+// argument is gone with the walk: the game answers, whichever source
+// served the bytes - which is the user-visible improvement this unit
+// carries.
+func (s *Service) optionalCompiler(game *domain.Game) (adapter.MergeCompiler, bool) {
 	a, err := s.AdapterFor(game)
 	if err != nil {
-		return nil, false, err
+		return nil, false
 	}
-	mc, ok := adapter.Compiler(a)
-	return mc, ok, nil
-}
-
-// compilerForSource is the DOWNLOAD path's compile-capability question,
-// which is per-archive rather than per-game: a file is served by a specific
-// source, and #221 I1 deliberately lets a raw artifact from a
-// non-compiling source fall through to the legacy extract path instead of
-// hard-erroring.
-//
-// #353 asks the adapter first for the same reason adapterCompiler does; the
-// source type-assertion is the temporary fallback U2 (#412) removes.
-func (s *Service) compilerForSource(game *domain.Game, src source.ModSource) (adapter.MergeCompiler, bool) {
-	if mc, found, err := s.adapterCompiler(game); err == nil && found {
-		return mc, true
-	}
-	mc, ok := src.(adapter.MergeCompiler)
-	return mc, ok
-}
-
-// mergeCompilerForGame is mergeCompilerSourceForGame for callers that
-// already hold the *domain.Game (#256): it resolves against the game
-// struct's own source map instead of re-looking the game up in s.games, so
-// merged-pak paths that always received their game as a parameter keep
-// working for a game value that was never registered with the service (a
-// distinction only tests exercise today). Same 0/1/many contract.
-func (s *Service) mergeCompilerForGame(game *domain.Game) (adapter.MergeCompiler, error) {
-	// #353: the adapter first - see adapterCompiler.
-	if mc, found, err := s.adapterCompiler(game); err != nil || found {
-		return mc, err
-	}
-	var compilers []adapter.MergeCompiler
-	for id := range game.SourceIDs {
-		src, err := s.registry.Get(id)
-		if err != nil {
-			continue // unregistered: silently skipped, matching SourcesForGame
-		}
-		if c, ok := src.(adapter.MergeCompiler); ok {
-			compilers = append(compilers, c)
-		}
-	}
-	return soleMergeCompiler(game.ID, compilers)
-}
-
-// soleMergeCompiler enforces the "exactly one compile-capable source per
-// game" contract shared by both resolvers above: zero is the expected
-// failure when the game's MergeCompiler source isn't configured; more than
-// one is treated as ambiguous rather than picking arbitrarily - both fail
-// loud instead of letting a compile-path operation silently skip.
-func soleMergeCompiler(gameID string, compilers []adapter.MergeCompiler) (adapter.MergeCompiler, error) {
-	switch len(compilers) {
-	case 0:
-		return nil, fmt.Errorf("game %q requires DeployCompile but has no merge-compiler-capable source configured (map a source implementing adapter.MergeCompiler in the game's sources)", gameID)
-	case 1:
-		return compilers[0], nil
-	default:
-		return nil, fmt.Errorf("game %q has multiple merge-compiler-capable sources configured; ambiguous compile source", gameID)
-	}
+	return adapter.Compiler(a)
 }
 
 // SourceWarning reports a per-source failure during an aggregate operation.
@@ -1302,19 +1246,22 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}()
 
 	// convertEligiblePak requires BOTH the game's own eligibility (deploy
-	// mode + ConvertPaks) AND this specific src implementing MergeCompiler
-	// (#221 I1 fix): the game flags alone don't decide, so a raw pak served
-	// by a source that does NOT implement MergeCompiler
-	// (a mixed-source game, or a misconfigured/non-icarus source) must fall
-	// through to the legacy extract/copy path below - exactly as it did
-	// before #221 - rather than hard-erroring the whole download. Unlike a
-	// .exmodz file, which has no other valid interpretation and so still
-	// hard-errors when src lacks MergeCompiler (see the !ok check below).
-	mc, isMergeCompiler := s.compilerForSource(game, src)
+	// mode + ConvertPaks) AND a compile-capable ADAPTER (#221 I1 fix, as
+	// U2/#412 rephrases it): the game flags alone don't decide, so a raw
+	// pak for a game whose adapter cannot compile must fall through to the
+	// legacy extract/copy path below - exactly as it did before #221 -
+	// rather than hard-erroring the whole download. Unlike a .exmodz file,
+	// which has no other valid interpretation and so still hard-errors
+	// (see the !ok check below).
+	//
+	// The question used to be asked of the SOURCE, which is what made an
+	// Icarus .pak from NexusMods un-compilable while the identical file
+	// from Project Daedalus compiled. One game, one adapter, one answer.
+	mc, isMergeCompiler := s.optionalCompiler(game)
 	convertEligiblePak := isMergeCompiler && isConvertEligibleArtifact(game, mc, safeFileName)
 	if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, safeFileName) || convertEligiblePak) {
 		if !isMergeCompiler {
-			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement MergeCompiler", src.ID(), game.ID)
+			return nil, fmt.Errorf("game %q requires DeployCompile but its adapter %q cannot compile (file %q from source %q)", game.ID, s.AdapterName(game), safeFileName, src.ID())
 		}
 		if err := mc.ValidateSource(archivePath); err != nil {
 			return nil, fmt.Errorf("validating %s: %w", safeFileName, err)
@@ -1820,39 +1767,30 @@ func commitStagedCache(cachePath, stagePath string) error {
 	return nil
 }
 
-// isNativeMergeFile reports whether fileName is the game's compile source's
-// NATIVE merge-source format (#256 - the seam-routed successor to the old
-// static isExmodzFile ".exmodz" test). DeployCompile games can also serve
-// plain, already-built raw paks (icarus.GetModFiles enumerates "pak"
-// before "exmodz") - those must NOT be routed through ingest's
-// validate+retain branch as a native archive, since MergeCompile expects a
-// native diff, not a whole pak (#136 review, Task 13 fix round 1); a
-// prebuilt pak gets its OWN eligibility check instead,
-// isConvertEligibleArtifact (#221), a different Kind through the same
-// validate+retain branch.
+// isNativeMergeFile reports whether fileName is the game's NATIVE
+// merge-source format (#256 - the seam-routed successor to the old static
+// isExmodzFile ".exmodz" test). Compiling games can also serve plain,
+// already-built raw paks (icarus.GetModFiles enumerates "pak" before
+// "exmodz") - those must NOT be routed through ingest's validate+retain
+// branch as a native archive, since MergeCompile expects a native diff, not
+// a whole pak (#136 review, Task 13 fix round 1); a prebuilt pak gets its
+// OWN eligibility check instead, isConvertEligibleArtifact (#221), a
+// different Kind through the same validate+retain branch.
 //
-// mc is the file's own source's MergeCompiler view (nil when that source
-// doesn't implement it). When mc is nil, the GAME's sole compile source is
-// consulted instead, so the "native archive served by a non-compile-capable
-// source" hard error in DownloadModToCache stays reachable on mixed-source
-// games. With no compiler resolvable anywhere, nothing can define "native"
-// and this returns false - such files take the legacy extract/copy path,
-// preserving #221 I1's protected download fall-through for the non-compile
-// source's paks and zips. Known residual, accepted deliberately: because
-// the legacy Extractor content-sniffs zip magic, a REAL native archive
-// downloaded in that doubly-broken state (a game whose SourceIDs map no
-// compiler at all - icarus is always registered, so only a hand-edited map
-// gets here - AND a foreign source serving native archives) is ingested as
-// a plain archive without ValidateSource. The import path has no such
-// residual: importWithIdentity hard-errors on an unresolvable compiler, since
-// it has no per-archive source contract forcing a fall-through.
-func (s *Service) isNativeMergeFile(game *domain.Game, mc adapter.MergeCompiler, fileName string) bool {
+// mc is the game's adapter's MergeCompiler, nil when the adapter has none.
+// Nil therefore means nothing can define "native" for this game and the
+// file takes the legacy extract/copy path, which is #221 I1's protected
+// download fall-through.
+//
+// Before U2 (#412) this took the FILE'S OWN SOURCE's MergeCompiler view and
+// fell back to the game's sole compile source when that source did not
+// implement it - the mixed-source dance, with a documented residual where a
+// hand-edited SourceIDs map could let a real native archive be cached
+// without ValidateSource. One game, one adapter: the two views cannot
+// disagree any more, and the residual is gone with them.
+func (s *Service) isNativeMergeFile(_ *domain.Game, mc adapter.MergeCompiler, fileName string) bool {
 	if mc == nil {
-		gmc, err := s.mergeCompilerForGame(game)
-		if err != nil {
-			return false
-		}
-		mc = gmc
+		return false
 	}
 	return mc.IsNativeMergeSource(fileName)
 }

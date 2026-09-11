@@ -556,11 +556,11 @@ func (s *Service) planMerge(game *domain.Game, mods []DeployPlanMod) *MergePlan 
 	if len(merged.Sources) == 0 && len(merged.RawFallbacks) == 0 {
 		return nil
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		// Same best-effort stance as classifyCompileDeployMods: name what
 		// we can, never fail a readout.
-		s.logger().Warn("resolving compile source failed while planning a deploy", "game_id", game.ID, "err", err)
+		s.logger().Warn("resolving the compile adapter failed while planning a deploy", "game_id", game.ID, "err", err)
 		return merged
 	}
 	merged.Artifact = mc.MergedArtifactName()

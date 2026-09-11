@@ -86,7 +86,7 @@ func (s *Service) ModHasPakMergeSource(game *domain.Game, mod *domain.InstalledM
 	if game == nil || mod == nil {
 		return false
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return false
 	}
@@ -206,7 +206,7 @@ func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, pr
 			}
 			if mc == nil {
 				var mcErr error
-				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+				if mc, mcErr = s.adapterCompiler(game); mcErr != nil {
 					return nil, mcErr
 				}
 			}
@@ -282,7 +282,7 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	// already consulted it to classify them), so resolving here - earlier
 	// than pre-#256, which only needed the source on the slow path below -
 	// cannot newly fail a flow that used to succeed.
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return nil, err
 	}
@@ -448,7 +448,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 			}
 			if mc == nil {
 				var mcErr error
-				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+				if mc, mcErr = s.adapterCompiler(game); mcErr != nil {
 					return warnings, mcErr
 				}
 			}
@@ -752,8 +752,8 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 			}
 			if mc == nil {
 				var mcErr error
-				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
-					s.logger().Warn("resolving compile source failed while classifying compile deploy mods", "game_id", game.ID, "file_id", fileID, "err", mcErr)
+				if mc, mcErr = s.adapterCompiler(game); mcErr != nil {
+					s.logger().Warn("resolving the compile adapter failed while classifying compile deploy mods", "game_id", game.ID, "file_id", fileID, "err", mcErr)
 					return classes
 				}
 			}
@@ -787,7 +787,7 @@ func (s *Service) recordMergeOutcome(ctx context.Context, game *domain.Game, pro
 	if !ok {
 		return
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return
 	}
@@ -819,7 +819,7 @@ func (s *Service) mergedPakOutcomes(ctx context.Context, game *domain.Game, prof
 	if !ok {
 		return nil, false
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return nil, false
 	}
@@ -867,7 +867,7 @@ func (s *Service) PakNeedsReingest(ctx context.Context, game *domain.Game, mod *
 	if game.DeployMode != domain.DeployCompile || !game.ConvertPaks || !mod.ConvertPaks {
 		return false, nil
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return false, err
 	}
@@ -924,7 +924,7 @@ func (s *Service) currentMergedFingerprint(ctx context.Context, game *domain.Gam
 
 	// Non-empty sources imply enabledMergeSources already resolved the
 	// compile source, so this cannot newly fail (#256).
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return MergedFingerprint{}, sources, err
 	}
@@ -987,7 +987,7 @@ func (s *Service) CheckMergedPakStaleness(ctx context.Context, game *domain.Game
 
 	// Non-empty sources imply currentMergedFingerprint already resolved the
 	// compile source, so this cannot newly fail (#256).
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return nil, err
 	}
@@ -1052,7 +1052,7 @@ func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 	// only the compile source knows (#256), and a regen request for a game
 	// without one is a misconfiguration worth failing loud on before
 	// touching anything.
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return result, err
 	}
@@ -1152,7 +1152,7 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		s.logger().Warn("resolving merge compiler failed while planning an uninstall",
 			"game_id", game.ID, "err", err)
@@ -1226,7 +1226,7 @@ func (s *Service) mergedArtifactEffectForPurge(game *domain.Game) *MergedArtifac
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		s.logger().Warn("resolving merge compiler failed while planning a purge",
 			"game_id", game.ID, "err", err)
@@ -1269,7 +1269,7 @@ func (s *Service) mergedArtifactEffectForImport(ctx context.Context, game *domai
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		s.logger().Warn("resolving merge compiler failed while planning an import",
 			"game_id", game.ID, "err", err)

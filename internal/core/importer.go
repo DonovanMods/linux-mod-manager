@@ -57,16 +57,20 @@ type Importer struct {
 	// stagingRoot is where archives are extracted before being committed to the
 	// cache. Empty means fall back to $TMPDIR — see newStagingDir.
 	stagingRoot string
-	// resolveMergeCompiler resolves the MergeCompiler-capable source mapped
-	// to a DeployCompile game's registry entry (#197), consulted for every
-	// import into such a game (#256: the compile source now answers the
-	// native/convertible format questions too) — importWithIdentity has no
-	// per-archive source pinned the way DownloadModToCache does, so it must
-	// look up the game's configured sources instead. nil when the Importer
-	// was built via the standalone NewImporter (no Service context): a
-	// DeployCompile import through such an Importer fails loud rather than
-	// silently caching an unvalidated archive.
-	resolveMergeCompiler func(gameID string) (adapter.MergeCompiler, error)
+	// resolveMergeCompiler resolves a DeployCompile game's MergeCompiler
+	// (#197), consulted for every import into such a game (#256: it answers
+	// the native/convertible format questions too). Since U2 (#412) that is
+	// the game's ADAPTER - it used to be a walk over every source the game
+	// mapped, because importWithIdentity has no per-archive source pinned
+	// the way DownloadModToCache does.
+	//
+	// It stays a func field rather than becoming adapter.Compiler(i.adapter)
+	// because nil is a distinct, load-bearing state: an Importer built via
+	// the standalone NewImporter (no Service context) carries the identity
+	// adapter, which is indistinguishable from a generic game's, and a
+	// DeployCompile import through such an Importer must fail loud rather
+	// than silently cache an unvalidated archive.
+	resolveMergeCompiler func(game *domain.Game) (adapter.MergeCompiler, error)
 	// adapter is the game adapter whose NormalizeArchive decides how an
 	// extracted archive is laid out inside the cache entry (#353). Never
 	// nil: NewImporter defaults it to the built-in identity, which is
@@ -95,7 +99,7 @@ func NewImporter(cache *cache.Cache) *Importer {
 func (s *Service) newImporter(game *domain.Game) *Importer {
 	imp := NewImporter(s.GetGameCache(game))
 	imp.stagingRoot = s.stagingRoot()
-	imp.resolveMergeCompiler = s.mergeCompilerSourceForGame
+	imp.resolveMergeCompiler = s.adapterCompiler
 	imp.log = s.logger()
 	// #353: a resolution failure here (a games.yaml naming an adapter this
 	// build does not ship) is reported by the flow's own AdapterFor call,
@@ -185,7 +189,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	// #256: whether filename is the game's NATIVE merge format
 	// (mc.IsNativeMergeSource - the seam-routed successor to core's static
 	// ".exmodz" test) or a convertible artifact (mc.IsConvertibleArtifact)
-	// is the compile source's call, so the compiler is resolved up front
+	// is the compile adapter's call, so the compiler is resolved up front
 	// for EVERY DeployCompile import, and a resolution failure is a hard
 	// error for every one of them - not just the native case the old
 	// static test could single out. Falling through instead would be
@@ -197,11 +201,10 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	// invariant the resolver error protects. This supersedes #221 I1's
 	// import-side pak fall-through: that was safe only while core itself
 	// knew which files were native. (The DOWNLOAD path's I1 fall-through
-	// stands - it pins eligibility to the file's own source, a per-archive
-	// signal Import does not have.) The resolver error names the fix
-	// ("map a source implementing adapter.MergeCompiler"), which is
-	// accurate for any import into a compile game whose compiler is
-	// missing or ambiguous.
+	// stands - a raw pak for a game that cannot compile is still a legal
+	// download.) The resolver error names the fix - set `adapter:` to one
+	// that compiles - which is accurate for any import into a compile game
+	// whose adapter cannot.
 	//
 	// A NIL RESOLVER fails the same way for the same reason, with its own
 	// message: core.NewImporter (no Service context) cannot answer the
@@ -214,7 +217,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not the service-backed importer) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
 		}
 		var mcErr error
-		if mc, mcErr = i.resolveMergeCompiler(game.ID); mcErr != nil {
+		if mc, mcErr = i.resolveMergeCompiler(game); mcErr != nil {
 			return nil, mcErr
 		}
 	}

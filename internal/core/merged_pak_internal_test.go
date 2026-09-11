@@ -188,10 +188,22 @@ func TestMergedFingerprintsEqual_EmptyModsBothSides(t *testing.T) {
 // #256 (ClassifyMergeSource) - internal/adapter/icarus/format_test.go's
 // TestClassifyMergeSource carries the old TestMergeSourceKind table.
 
+// formatOnlyCompileAdapter presents formatOnlyCompilerSource's format
+// vocabulary as a game ADAPTER (#412): since U2 the classification comes
+// from the game, not from a source the game maps.
+type formatOnlyCompileAdapter struct{ formatOnlyCompilerSource }
+
+func (formatOnlyCompileAdapter) ID() string    { return icarusAdapterID }
+func (formatOnlyCompileAdapter) Label() string { return "Fake Compiler" }
+func (formatOnlyCompileAdapter) NormalizeArchive(adapter.NormalizeRequest) (adapter.Layout, error) {
+	return adapter.Layout{}, nil
+}
+
 func TestModHasPakMergeSource(t *testing.T) {
 	reg := source.NewRegistry()
 	reg.Register(formatOnlyCompilerSource{})
 	svc := &Service{registry: reg}
+	svc.RegisterAdapter(formatOnlyCompileAdapter{})
 	game := &domain.Game{ID: "g", DeployMode: domain.DeployCompile, SourceIDs: map[string]string{"fake-compiler": "g"}}
 
 	tests := []struct {
@@ -214,19 +226,21 @@ func TestModHasPakMergeSource(t *testing.T) {
 		})
 	}
 
-	// #256: with no merge-compiler-capable source mapped, there is nothing
-	// to classify against - never true, regardless of FileIDs. DeployCompile
-	// is set so this exercises the resolution-failure path, not the
-	// deploy-mode short-circuit.
-	bare := &domain.Game{ID: "bare", DeployMode: domain.DeployCompile}
+	// #256/#412: with an adapter that cannot compile there is nothing to
+	// classify against - never true, regardless of FileIDs. The game names
+	// the identity adapter explicitly, so this exercises the
+	// no-compile-capability path rather than the `deploy_mode: compile`
+	// derivation (which, now that the fake registers under "icarus", would
+	// otherwise hand it a compiler).
+	bare := &domain.Game{ID: "bare", DeployMode: domain.DeployCompile, Adapter: adapter.GenericID}
 	if svc.ModHasPakMergeSource(bare, &domain.InstalledMod{FileIDs: []string{"pak"}}) {
-		t.Error("ModHasPakMergeSource must be false for a game with no MergeCompiler source")
+		t.Error("ModHasPakMergeSource must be false for a game whose adapter cannot compile")
 	}
 
 	// NOT gated on DeployMode: `lmm mod convert` persists the flag on
 	// non-compile games (advisory-only there), so a resolvable compiler
 	// still classifies - pre-#256 static behavior.
-	nonCompile := &domain.Game{ID: "g3", SourceIDs: map[string]string{"fake-compiler": "g3"}}
+	nonCompile := &domain.Game{ID: "g3", Adapter: icarusAdapterID, SourceIDs: map[string]string{"fake-compiler": "g3"}}
 	if !svc.ModHasPakMergeSource(nonCompile, &domain.InstalledMod{FileIDs: []string{"pak"}}) {
 		t.Error("ModHasPakMergeSource must classify for a non-DeployCompile game with a resolvable compiler")
 	}
