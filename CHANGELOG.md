@@ -420,9 +420,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as "none" rather than as a login you have not done yet. Map a game to it by
   community slug (`lmm game edit --source thunderstore=lethal-company`).
 
-  Installing from Thunderstore is not wired up yet — this adds the source, its
-  index and search; package, version and dependency reads follow in the same
-  issue.
+  **Installing works too (#409):** `lmm install <Namespace-Name> --source
+thunderstore`, with the package's `full_name` as its id. A Thunderstore
+  version IS a file — there is no file list to pick from — so `lmm mod files`
+  lists one entry per published version (newest first, none dropped),
+  `--version` resolves an exact one and `lmm update rollback` reaches any of
+  them. Downloads are plain public URLs with no token and no expiry, checked
+  against the exact byte count Thunderstore publishes. Update checks cost
+  nothing upstream at all: every package's newest version is already in the
+  local index, so `lmm update` for a Thunderstore game is a lookup rather than
+  a request per mod, and a package that has left the community is reported as
+  unavailable rather than as an update you cannot apply.
+
+  **The `BepInExPack` dependency most packages declare is routed to the loader
+  precondition, not installed as a mod (#409).** It is the BepInEx loader: it
+  lives in the game root and has to survive a profile switch, so installing it
+  into a profile would tear it out from under every plugin at the next
+  uninstall. Installing a package that needs it into a game with no `loader:`
+  block is now refused **before the download**, with the same three setup steps
+  #359 prints for an archive, plus the loader version the package asked for.
+  On a game that declares the loader the dependency is already satisfied and
+  the install proceeds. Every other dependency resolves through the ordinary
+  resolver.
+
+  **`lmm game detect` knows five communities (#409):** Lethal Company, Valheim,
+  Risk of Rain 2, R.E.P.O. and Content Warning prefill
+  `sources: {thunderstore: <community>}`, so a detected game needs no
+  configuration. The slug is not derivable from a Steam app id, so it is
+  curated data rather than a guess; add your own in
+  `~/.config/lmm/steam-games.yaml`.
+
+  The index as a _surface_ — `lmm source index`, `lmm search --refresh`, and
+  the web UI's index row — is still to come. Until then the index keeps itself
+  current on its own six-hour TTL, and `lmm update --refresh` forces it past
+  that.
 
 - **The known-games list is documented and checked (#406).**
   [docs/configuration.md](docs/configuration.md#steam-gamesyaml-optional)

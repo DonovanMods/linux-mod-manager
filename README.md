@@ -2134,9 +2134,9 @@ The third mode, `lmm import --workshop`, is described under [Steam Workshop](#st
 
 ### Thunderstore
 
-lmm can **search Thunderstore** — the mod host behind Lethal Company, Valheim, Risk of Rain 2 and most BepInEx-era Unity games — with no credential of any kind. Thunderstore needs no key for anything, so there is nothing to sign in to and `lmm source list` shows its auth as `n/a`.
+lmm can **search and install from Thunderstore** — the mod host behind Lethal Company, Valheim, Risk of Rain 2, R.E.P.O., Content Warning and most BepInEx-era Unity games — with no credential of any kind. Thunderstore needs no key for anything, so there is nothing to sign in to and `lmm source list` shows its auth as `n/a`.
 
-Map a game to it by community slug, which is the per-source game id:
+`lmm game detect` already knows the community slug for the five games above, so a detected one needs no configuration at all. Otherwise, map a game to it by community slug, which is the per-source game id:
 
 ```yaml
 games:
@@ -2160,7 +2160,15 @@ The slug is **required**. lmm will not guess a community from the game's own id 
 
 The index directory is safe to delete at any time; the next search rebuilds it.
 
-> **Installing** from Thunderstore is not wired up yet — this release line adds the source, its index and search over it ([#360](https://github.com/DonovanMods/linux-mod-manager/issues/360)); package, version and dependency reads land with the next unit of the same issue.
+**Installing.** `lmm install <Namespace-Name> --source thunderstore` — the package's `full_name`, exactly the string in its URL and in every dependency that names it. A Thunderstore **version is a file**: there is no file list to choose from, so `lmm mod files` lists one entry per published version (newest first, none of them dropped), `--version` resolves an exact one, and `lmm update rollback` goes back to any of them. Downloads are plain public URLs with no token and no expiry, and lmm checks the finished file against the exact byte count Thunderstore publishes.
+
+**Updates cost nothing upstream.** Every package's newest version is already in the local index, so `lmm update` for a Thunderstore game is a lookup rather than one request per mod. A version that differs from the installed one is offered — including a re-published older build, which Thunderstore's own ordering says is the current one — and a package that has left the community is reported as unavailable rather than as an update you cannot apply.
+
+**Dependencies** resolve like any other source's, with one exception: the `BepInExPack` entry that most packages declare is **not** a mod. It is the BepInEx loader, it lives in the game root, and it has to survive a profile switch, so lmm never installs it as a profile member. Instead, installing a package that needs it into a game with no `loader:` block is refused **before the download**, naming the version the package asked for and the three steps that fix it — see [BepInEx (Unity games)](#bepinex-unity-games). On a game that declares the loader, the dependency is already satisfied and the install proceeds. Every other dependency, including one published in a different community, is handled by the ordinary resolver; one lmm cannot find in this community's index is a plan warning, not a failure.
+
+Mods deploy through the same BepInEx rules every other source's do: an archive rooted at `BepInEx/`, wrapped in a single directory, or rooted at `plugins/` all land under `<game root>/BepInEx/`, and the `manifest.json`/`icon.png`/README every Thunderstore package carries at its root are never deployed into your game directory.
+
+> **Not here yet:** the index as a _surface_. There is no `lmm source index` to show or rebuild what is cached, no `lmm search --refresh`, and no index row in the web UI's Setup page — those land with the last unit of [#360](https://github.com/DonovanMods/linux-mod-manager/issues/360). Until then the index keeps itself current on its own six-hour TTL, `lmm update --refresh` forces it past that, and deleting `<data>/cache/_thunderstore/<community>/` makes the next search rebuild it.
 
 ### Steam Workshop
 
@@ -2454,7 +2462,7 @@ internal/
 │   ├── nexusmods/        # NexusMods GraphQL client
 │   ├── curseforge/       # CurseForge API client
 │   ├── steamworkshop/    # Steam Workshop: track subscribed items, search, collections, anonymous steamcmd download
-│   ├── thunderstore/     # Thunderstore: the locally cached community index and the search over it
+│   ├── thunderstore/     # Thunderstore: the locally cached community index, and search/packages/versions/dependencies/updates over it
 │   ├── icarus/           # Icarus: its mod catalog, plus the .pak/.exmodz merge compiler
 │   ├── custom/           # User-defined sources (directory, manifest, api)
 │   ├── steam/            # Steam library scanning (for `lmm game detect`)
