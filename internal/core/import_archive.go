@@ -367,7 +367,9 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 		if lerr != nil {
 			return nil, lerr
 		}
-		files = rewritePlannedPaths(adapterLayout, files)
+		if files, lerr = rewritePlannedPaths(adapterLayout, files); lerr != nil {
+			return nil, lerr
+		}
 	}
 
 	plan := &ImportArchivePlan{

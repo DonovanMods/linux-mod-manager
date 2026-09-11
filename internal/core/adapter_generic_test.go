@@ -179,7 +179,9 @@ func TestGenericSeamsTakeTheIdentityBranch(t *testing.T) {
 		layout, err := svc.archiveLayout(game, "MyMod", members)
 		require.NoError(t, err)
 		assert.False(t, layout.Applies())
-		assert.Equal(t, members, rewritePlannedPaths(layout, members))
+		planned, err := rewritePlannedPaths(layout, members)
+		require.NoError(t, err)
+		assert.Equal(t, members, planned)
 	})
 
 	t.Run("the tree rewriter is a no-op on disk", func(t *testing.T) {
