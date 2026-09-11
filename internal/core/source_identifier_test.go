@@ -142,3 +142,138 @@ func TestSourceIndexStatus_EmptyMappingIsRefused(t *testing.T) {
 	assert.ErrorIs(t, err, source.ErrGameIdentifierInvalid)
 	assert.Zero(t, indexed.refresh, "nothing may be fetched for a community the user never named")
 }
+
+// The WRITE half (T1 re-review Minor 1). Everything above refuses an empty
+// mapping when it is READ; these refuse WRITING one. The read-path refusal
+// makes the state survivable - a game configured that way fails at first
+// use with the fixing command - but the point of the rule is that the state
+// should not exist, and the README says it cannot ("`lmm game add` and `lmm
+// game edit` both refuse an empty mapping for a source that needs one").
+// Three entry points reach the write with a PREFILLED source map, none of
+// which passes through the explicit SourceID/Identifier pair the original
+// check guarded: `lmm game add --from-detected` and POST /api/v1/games with
+// from_steam_app_id (both via GameSpec.Sources), and `lmm init` (via
+// GameFromDetected, which never sees a GameSpec at all).
+
+// newDetectableGameService is newEmptyMappingService's sibling for the
+// write paths: the same two sources, and NO game - the point is what
+// AddGame and ApplyGameDetect will accept.
+func newDetectableGameService(t *testing.T) *core.Service {
+	t.Helper()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(&identifierSpySource{mockSource: newMockSource("needs-id")})
+	svc.RegisterSource(&identifierIgnoringMockSource{mockSource: newMockSource("ignores-id")})
+	return svc
+}
+
+// TestAddGame_APrefilledSourcesMapWithAnEmptyIdentifierIsRefused is the
+// `game add --from-detected` / POST /api/v1/games path: the pair the switch
+// guards is empty, so nothing was ever asked about the map cloned in
+// beside it.
+func TestAddGame_APrefilledSourcesMapWithAnEmptyIdentifierIsRefused(t *testing.T) {
+	svc := newDetectableGameService(t)
+
+	_, err := svc.AddGame(t.Context(), core.GameSpec{
+		Name: "Valheim", ID: "valheim", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		Sources: map[string]string{"needs-id": ""},
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, source.ErrGameIdentifierInvalid)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "sources", specErr.Field, "a form marks the offending row")
+	assert.Equal(t, "needs-id", specErr.Value)
+
+	_, err = svc.GetGame("valheim")
+	assert.Error(t, err, "the game must not be written at all")
+}
+
+// TestAddGame_APrefilledSourcesMapForAnIdentifierIgnoringSourceIsAccepted
+// is the other half, and the reason the question is asked of the SOURCE: a
+// directory source's mapped value addresses nothing, so blank is its
+// ordinary configuration.
+func TestAddGame_APrefilledSourcesMapForAnIdentifierIgnoringSourceIsAccepted(t *testing.T) {
+	svc := newDetectableGameService(t)
+
+	entry, err := svc.AddGame(t.Context(), core.GameSpec{
+		Name: "Valheim", ID: "valheim", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		Sources: map[string]string{"ignores-id": ""},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"ignores-id": ""}, entry.SourceIDs)
+}
+
+// TestApplyGameDetect_AKnownGamesEntryWithAnEmptyIdentifierIsRefused is
+// `lmm init`'s path: GameFromDetected writes g.Sources verbatim, and its
+// one guard (#203's "no sources AND no nexus_id") cannot see an empty
+// VALUE inside a non-empty map.
+func TestApplyGameDetect_AKnownGamesEntryWithAnEmptyIdentifierIsRefused(t *testing.T) {
+	svc := newDetectableGameService(t)
+
+	_, err := svc.ApplyGameDetect(t.Context(), []domain.DetectedGame{{
+		Slug: "valheim", Name: "Valheim", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		Sources: map[string]string{"needs-id": ""},
+	}})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, source.ErrGameIdentifierInvalid)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "sources", specErr.Field)
+	assert.Equal(t, "needs-id", specErr.Value)
+
+	_, err = svc.GetGame("valheim")
+	assert.Error(t, err, "the game must not be written at all")
+}
+
+// TestAddGame_APrefilledSourcesMapIsTrimmed (#409 review F8). The explicit
+// SourceID/Identifier pair has always been trimmed and `lmm game edit`'s
+// own map is trimmed by validatedSourceMap; a PREFILLED map was copied
+// verbatim. A padded slug is then written, and every later read fails the
+// source's own well-formedness gate - which is precisely the state the
+// empty-identifier refusal exists to keep off disk.
+func TestAddGame_APrefilledSourcesMapIsTrimmed(t *testing.T) {
+	svc := newDetectableGameService(t)
+
+	entry, err := svc.AddGame(t.Context(), core.GameSpec{
+		Name: "Valheim", ID: "valheim", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		Sources: map[string]string{"needs-id": "  lethal-company	"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"needs-id": "lethal-company"}, entry.SourceIDs)
+}
+
+// TestApplyGameDetect_AKnownGamesEntrysIdentifierIsTrimmed is the same rule
+// on the curated path: a user's own ~/.config/lmm/steam-games.yaml is
+// hand-written, so a trailing space in a mapped value is an ordinary typo
+// rather than an exotic one.
+func TestApplyGameDetect_AKnownGamesEntrysIdentifierIsTrimmed(t *testing.T) {
+	svc := newDetectableGameService(t)
+
+	_, err := svc.ApplyGameDetect(t.Context(), []domain.DetectedGame{{
+		Slug: "valheim", Name: "Valheim", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		Sources: map[string]string{"needs-id": " valheim "},
+	}})
+	require.NoError(t, err)
+
+	game, err := svc.GetGame("valheim")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"needs-id": "valheim"}, game.SourceIDs)
+}
+
+// TestApplyGameDetect_AKnownGamesEntryForAnIdentifierIgnoringSourceIsSaved
+// keeps the curated half honest: the refusal is about sources that need the
+// value, not about every blank one.
+func TestApplyGameDetect_AKnownGamesEntryForAnIdentifierIgnoringSourceIsSaved(t *testing.T) {
+	svc := newDetectableGameService(t)
+
+	result, err := svc.ApplyGameDetect(t.Context(), []domain.DetectedGame{{
+		Slug: "valheim", Name: "Valheim", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		Sources: map[string]string{"ignores-id": ""},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"valheim"}, result.Saved)
+}

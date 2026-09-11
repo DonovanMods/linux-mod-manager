@@ -285,12 +285,21 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 | `mod_path`    | yes      | The mod folder, **relative to the game's install directory** — `""` means the install root. Detection joins it to the install path it found.                    |
 | `nexus_id`    | no       | The game's NexusMods domain: the path segment in `nexusmods.com/<domain>`. Omit it for a game with no NexusMods page.                                           |
 | `deploy_mode` | no       | `extract` (the default), `copy` or `compile`.                                                                                                                    |
-| `sources`     | no       | A full source id → per-source game id map, for a game whose sources are not just NexusMods. Omitting it means `{nexusmods: <nexus_id>}`.                        |
+| `sources`     | no       | A full source id → per-source game id map, for a game whose sources are not just NexusMods. Omitting it means `{nexusmods: <nexus_id>}`; **giving it replaces that derivation**, so an entry with both must list `nexusmods:` inside the map. |
 | `loader`      | no       | `{kind: …}`, and optionally `version`, for a game whose mods need a mod loader — today `kind: bepinex`. Omitting it means the game needs none.                   |
 
 An entry must name at least one source — `nexus_id`, a `sources` map, or
 both. One that names neither produces a game lmm can add and then cannot
 install anything for.
+
+A `sources` map is the game's **complete** source set: it replaces the
+`{nexusmods: <nexus_id>}` derivation rather than adding to it. An entry
+that has a `nexus_id` **and** a `sources` map must therefore spell
+`nexusmods:` out inside the map with the same value, or the game silently
+loses NexusMods — which is why the shipped Valheim and For The King entries
+list both `nexusmods:` and `thunderstore:`. (Leaving it out is a legitimate
+way to say "this game has a NexusMods page and lmm should not use it", so
+the rule is stated rather than guessed at.)
 
 #### The `loader` block
 

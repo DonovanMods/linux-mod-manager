@@ -44,6 +44,34 @@ func TestReportError_JSON_LoaderRequiredError(t *testing.T) {
 		"}\n", out)
 }
 
+// TestReportError_JSON_LoaderRequiredError_CarriesTheVersion is the same
+// document as reported by a source that reads the requirement off a
+// package's own metadata (#409) rather than off an archive's shape: one
+// extra member, "version", which the archive half can never know and which
+// the first setup step needs in order to say WHICH BepInEx build to
+// install. It is additive - the golden above, whose Version is empty, is
+// byte-identical to what it always was.
+//
+// The envelope is what this file pins; the SENTENCES that constructor
+// produces are pinned by internal/core's own
+// loader_required_error_from_source.golden, built through the shipping
+// constructor rather than by hand.
+func TestReportError_JSON_LoaderRequiredError_CarriesTheVersion(t *testing.T) {
+	withJSONOutput(t)
+
+	err := &core.LoaderRequiredError{
+		GameID: "lethal-company", Kind: domain.LoaderKindBepInEx, Version: "5.4.2100",
+		ModName: "Skinwalkers",
+		Layout:  "the package declares a dependency on the BepInEx framework",
+		Setup:   []string{"Install BepInEx 5.4.2100 into the game directory."},
+	}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Contains(t, out, "\"kind\": \"bepinex\"")
+	assert.Contains(t, out, "\"version\": \"5.4.2100\"")
+	assert.Contains(t, out, "\"layout\": \"the package declares a dependency on the BepInEx framework\"")
+}
+
 // TestReportError_Human_LoaderRequiredError_PrintsTheSetupSteps is the
 // terminal half: the steps are the whole value of the refusal, so the human
 // path must not be the one place they are thrown away.

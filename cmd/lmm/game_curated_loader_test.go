@@ -13,6 +13,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/thunderstore"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
@@ -20,8 +21,10 @@ import (
 )
 
 // bepinexCuratedApps is #416's data half as the CLI sees it: the five
-// curated entries that declare `loader: {kind: bepinex}`, each with the
-// install root as its mod root (#358). The catalog-side pin on the same set
+// curated entries this fake library holds that declare
+// `loader: {kind: bepinex}`, each with the install root as its mod root
+// (#358). The catalog declares nine (#409 added four Thunderstore-first
+// games); these are the five with a Steam install fabricated below. The catalog-side pin on the same set
 // is internal/source/steam's TestKnownGames_OnlyTheBepInExEntriesDeclareALoader.
 var bepinexCuratedApps = []struct {
 	appID, name, installDir, slug string
@@ -159,6 +162,13 @@ func TestGameDetectJSON_EveryBepInExAppDeclaresTheLoader(t *testing.T) {
 func TestDoGameAdd_FromDetected_CuratedBepInExGameWritesTheLoader(t *testing.T) {
 	svc := setupGameAddTest(t)
 	svc.RegisterSource(nexusmods.New(nil, ""))
+	// Valheim's curated entry maps thunderstore as well as nexusmods
+	// (#409), and AddGame refuses a map naming a source nothing registers -
+	// which is the check doing its job: the real binary registers both.
+	// Never contacted: BaseURL is a dead port, and nothing here searches.
+	svc.RegisterSource(thunderstore.New(thunderstore.Options{
+		CacheDir: t.TempDir(), BaseURL: "http://127.0.0.1:1",
+	}))
 	install := fakeSteamGame(t, "892970", "Valheim", "Valheim")
 	gameAddFromDetected = "892970"
 

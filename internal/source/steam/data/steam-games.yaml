@@ -5,6 +5,12 @@
 # deploy_mode and sources are optional passthroughs to the generated
 # games.yaml entry's own deploy_mode/sources (see docs/configuration.md);
 # omit both to get today's default shape ({nexusmods: <nexus_id>}, deploy_mode extract).
+# A sources: map REPLACES the {nexusmods: <nexus_id>} derivation rather than
+# adding to it - it is the game's COMPLETE source set - so an entry that has
+# both nexus_id and a sources map must spell nexusmods: out inside the map,
+# with the same value. Omitting it there would silently drop NexusMods from a
+# game that has one (#409 review F3); the well-formedness ratchet
+# (internal/app/known_games_test.go) refuses that shape.
 # loader is optional too: {kind: bepinex} for a game whose mods need a mod
 # loader, which detection writes into the generated entry's own loader block
 # (#416). Only kind and version belong here - runtime and bootstrap are facts
@@ -123,6 +129,9 @@
 # writes it into games.yaml and the first plugin install is not refused
 # (#359). lmm does not INSTALL BepInEx - that is still yours to do; `lmm game
 # show` says whether it is there and which launch option to paste.
+# Its Thunderstore community is `valheim`, which is also lmm's own game id
+# here - a coincidence, not a rule (#409). NexusMods is spelled out in the
+# map because a sources: map replaces the nexus_id derivation.
 # https://valheim.thunderstore.io/package/denikson/BepInExPack_Valheim/
 # https://nodecraft.com/support/games/valheim/adding-plugins-to-your-valheim-server-using-bepinex
 "892970":
@@ -132,6 +141,9 @@
   mod_path: ""
   loader:
     kind: bepinex
+  sources:
+    nexusmods: valheim
+    thunderstore: valheim
 # 7 Days to Die - each mod is a folder under <install>/Mods.
 # https://www.nexusmods.com/7daystodie/articles/1507
 "251570":
@@ -272,6 +284,8 @@
 # writes it into games.yaml and the first plugin install is not refused
 # (#359). lmm does not INSTALL BepInEx - that is still yours to do; `lmm game
 # show` says whether it is there and which launch option to paste.
+# Its Thunderstore community is `for-the-king` - the slug in the package URL
+# this entry already cited before #409 seeded it.
 # https://thunderstore.io/c/for-the-king/p/BepInEx/BepInExPack_ForTheKing/
 # https://www.nexusmods.com/fortheking/mods/3
 "527230":
@@ -281,6 +295,9 @@
   mod_path: ""
   loader:
     kind: bepinex
+  sources:
+    nexusmods: fortheking
+    thunderstore: for-the-king
 # LEGO Batman: Legacy of the Dark Knight - Unreal Engine 5, project
 # directory LEGOBatmanLotDK; pak mods go in
 # <install>/LEGOBatmanLotDK/Content/Paks/~mods.
@@ -291,3 +308,61 @@
   name: "LEGO Batman: Legacy of the Dark Knight"
   nexus_id: legobatmanlegacyofthedarkknight
   mod_path: LEGOBatmanLotDK/Content/Paks/~mods
+
+# --- #409: Thunderstore-first communities -----------------------------------
+# The mapped value is the community slug in a thunderstore.io/c/<slug>/ URL.
+# It is NOT derivable from the Steam app id and is not always lmm's own game
+# id either (Risk of Rain 2 is `risk-of-rain-2` here and `riskofrain2`
+# there), so it is curated rather than guessed - a wrong guess would
+# silently index another game's catalogue. Add your own in
+# ~/.config/lmm/steam-games.yaml; that file is merged over this one.
+# Valheim (892970) and For The King (527230) are Thunderstore communities
+# too; they sit with the NexusMods-centred entries above because they have a
+# NexusMods page as well.
+#
+# Every entry below is a BepInEx game whose mods install into the GAME ROOT,
+# which is what mod_path: "" means, and each declares the loader (#416) for
+# the same reason the entries above do: detection writes the block into
+# games.yaml so the first plugin install is not refused by #359's
+# precondition. Declaring it does not claim BepInEx is INSTALLED - `lmm game
+# show` reports that, and verify flags a declared-but-absent loader - so the
+# user without it is told rather than silently deployed to.
+# None carries a nexus_id: these games' catalogues are on Thunderstore, and
+# an unverified NexusMods domain would be the same class of guess the
+# community slug refuses.
+# https://thunderstore.io/c/lethal-company/
+# https://thunderstore.io/c/riskofrain2/
+# https://thunderstore.io/c/repo/
+# https://thunderstore.io/c/content-warning/
+"1966720":
+  slug: lethal-company
+  name: Lethal Company
+  mod_path: ""
+  loader:
+    kind: bepinex
+  sources:
+    thunderstore: lethal-company
+"632360":
+  slug: risk-of-rain-2
+  name: Risk of Rain 2
+  mod_path: ""
+  loader:
+    kind: bepinex
+  sources:
+    thunderstore: riskofrain2
+"3241660":
+  slug: repo
+  name: R.E.P.O.
+  mod_path: ""
+  loader:
+    kind: bepinex
+  sources:
+    thunderstore: repo
+"2881650":
+  slug: content-warning
+  name: Content Warning
+  mod_path: ""
+  loader:
+    kind: bepinex
+  sources:
+    thunderstore: content-warning

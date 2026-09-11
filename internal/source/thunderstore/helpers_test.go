@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -60,6 +61,11 @@ type indexServer struct {
 	conditionals int
 	served200    int
 	served304    int
+	downloads    int
+
+	// archives is the zip served for each /package/download/... path, keyed
+	// by the exact path GetDownloadURL builds.
+	archives map[string][]byte
 }
 
 // newIndexServer starts a server for body. Every test MUST use one: no test
@@ -77,6 +83,10 @@ func (s *indexServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests++
+	if strings.HasPrefix(r.URL.Path, "/package/download/") {
+		s.serveDownload(w, r)
+		return
+	}
 	if want := "/c/" + testCommunity + "/api/v1/package/"; r.URL.Path != want {
 		http.Error(w, "no such community", http.StatusNotFound)
 		return
@@ -102,6 +112,38 @@ func (s *indexServer) serve(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(s.body)
 }
 
+// serveDownload answers /package/download/<namespace>/<name>/<version>/ -
+// the one other path this source builds a URL for, and the only way an
+// end-to-end install test can exist without touching the real site. The
+// zip it serves is whatever publishArchive last stored for that path, so a
+// test decides what shape of archive comes back.
+func (s *indexServer) serveDownload(w http.ResponseWriter, r *http.Request) {
+	s.downloads++
+	zip, ok := s.archives[r.URL.Path]
+	if !ok {
+		http.Error(w, "no such version", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Length", strconv.Itoa(len(zip)))
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(zip)
+}
+
+// publishArchive makes the download URL for one package version answer with
+// zip. namespace/name/version are the three fields GetDownloadURL builds
+// the path from.
+func (s *indexServer) publishArchive(namespace, name, version string, zip []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.archives == nil {
+		s.archives = map[string][]byte{}
+	}
+	s.archives[fmt.Sprintf("/package/download/%s/%s/%s/", namespace, name, version)] = zip
+}
+
 // publish replaces the served document and moves its Last-Modified, which
 // is what makes the next conditional GET answer 200 instead of 304.
 func (s *indexServer) publish(body []byte, lastModified string) {
@@ -124,6 +166,33 @@ func (s *indexServer) serveGzip() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gzip = true
+}
+
+// withNewShipLootVersion is the fixture document with one extra version
+// published on top of tinyhoot-ShipLoot, for the tests whose subject is
+// what a refresh FINDS rather than how it is fetched.
+func withNewShipLootVersion(t *testing.T) []byte {
+	t.Helper()
+	var packages []map[string]any
+	require.NoError(t, json.Unmarshal(fixtureDocument(t), &packages))
+	for _, pkg := range packages {
+		if pkg["full_name"] != "tinyhoot-ShipLoot" {
+			continue
+		}
+		versions, _ := pkg["versions"].([]any)
+		newest := map[string]any{
+			"name": "ShipLoot", "full_name": "tinyhoot-ShipLoot-1.2.0",
+			"description":    "Shows the total value of scrap aboard the ship.",
+			"version_number": "1.2.0", "dependencies": []any{"BepInEx-BepInExPack-5.4.2100"},
+			"date_created": "2026-09-11T10:00:00.000000Z", "website_url": "",
+			"file_size": float64(41000),
+		}
+		pkg["versions"] = append([]any{newest}, versions...)
+		pkg["date_updated"] = "2026-09-11T10:00:00.000000Z"
+	}
+	out, err := json.Marshal(packages)
+	require.NoError(t, err)
+	return out
 }
 
 // testClock is the injectable clock every TTL assertion runs on, so a test

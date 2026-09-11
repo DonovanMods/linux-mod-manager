@@ -183,7 +183,7 @@ func (s *Service) validatedSourceMap(sources map[string]string) (map[string]stri
 		// source that keeps a local index, one that quietly indexes a
 		// community the user never named.
 		if identifier == "" && !s.sourceIgnoresGameIdentifier(trimmed) {
-			return nil, newGameSpecError("sources", trimmed, "this source needs an identifier for the game")
+			return nil, emptyIdentifierRefusal(trimmed)
 		}
 		cleaned[trimmed] = identifier
 	}

@@ -556,6 +556,44 @@ type LocalIndexSource interface {
 	RefreshIndex(ctx context.Context, sourceGameID string, force bool, progress IndexProgressFunc) (IndexStatus, error)
 }
 
+// LoaderRequirer is implemented by sources whose package metadata SAYS a
+// mod needs a mod LOADER in the game root - today, a Thunderstore package
+// declaring a dependency on a BepInExPack (#360 §3.4).
+//
+// A loader is not a dependency, however a source spells it. It installs
+// into the game root rather than the mod path, its presence is a property
+// of the game INSTALLATION (you do not want it torn out because you
+// switched to a vanilla-ish profile), and the correct BUILD depends on
+// facts about the game rather than about the mod. So a source that
+// recognises one in its own metadata routes it OUT of GetDependencies and
+// reports it here instead, and core turns it into the same plan-time
+// precondition #359 infers from an archive's shape - one refusal, one set
+// of setup steps, whichever half saw it first.
+//
+// kind is domain.LoaderKindBepInEx or another open loader name; version is
+// what the metadata asks for ("5.4.2100"), empty when it says nothing.
+// required false means this mod needs no loader, which is the answer for
+// most mods and for every source that has nothing to read it off.
+//
+// dependency is the metadata the requirement was READ OFF, in the source's
+// own spelling ("BepInEx-BepInExPack-5.4.2100"), so the refusal can show a
+// user why lmm decided this is a loader mod - the package they would go and
+// look at. Empty when the source has nothing quotable to point at, which is
+// what the archive-shape half of the same refusal is in.
+//
+// Same optional-capability pattern as WorkshopScanner: core type-asserts
+// for it, so internal/core never imports a concrete source package.
+//
+// It takes a context and can fail because a source may have to READ
+// something to answer (Thunderstore consults its local index), which the
+// design's bare LoaderRequirement(mod) (kind, version, ok) could not
+// express. An error means "could not tell", and core treats that as no
+// requirement rather than refusing an install over a question it could not
+// ask - the archive-shape rule downstream is the second line of defence.
+type LoaderRequirer interface {
+	LoaderRequirement(ctx context.Context, mod *domain.Mod) (kind, version, dependency string, required bool, err error)
+}
+
 // ErrIndexUnavailable reports that a LocalIndexSource has no usable index on
 // disk and could not build one - the fetch failed, or what is cached is
 // unreadable. Distinct from a search that found nothing: lmm could not ask.

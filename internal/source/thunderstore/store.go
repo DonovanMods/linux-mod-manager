@@ -341,6 +341,47 @@ func (st *store) loadIndex(community string) (indexFile, error) {
 	return idx, nil
 }
 
+// readRecord reads the ONE record an index row addresses, with a single
+// positioned read: the row carries [Offset, Offset+Length), so nothing
+// scans, nothing parses a neighbouring package, and the size of the
+// community does not enter into the cost.
+//
+// The file is opened per call rather than held open. A long-lived handle on
+// a file that a refresh RENAMES out from under it would keep reading the
+// previous build's bytes for the life of the process, which is the one
+// thing the generation stamp exists to make impossible.
+func (st *store) readRecord(community string, row indexRow) (packageRecord, error) {
+	dir := st.dir(community)
+	if dir == "" {
+		return packageRecord{}, fmt.Errorf("no cache directory configured")
+	}
+	if row.Offset < 0 || row.Length <= 0 {
+		return packageRecord{}, fmt.Errorf("index row for %s addresses nothing", row.FullName)
+	}
+	file, err := os.Open(filepath.Join(dir, packagesFileName))
+	if err != nil {
+		return packageRecord{}, err
+	}
+	defer func() { _ = file.Close() }()
+
+	buf := make([]byte, row.Length)
+	if _, err := file.ReadAt(buf, row.Offset); err != nil {
+		return packageRecord{}, fmt.Errorf("reading the record for %s: %w", row.FullName, err)
+	}
+	var rec packageRecord
+	if err := json.Unmarshal(buf, &rec); err != nil {
+		return packageRecord{}, fmt.Errorf("decoding the record for %s: %w", row.FullName, err)
+	}
+	if rec.FullName != row.FullName {
+		// The generation stamp makes a mismatched pair unreachable, so this
+		// is a belt to that's braces - and the one check that would catch a
+		// row table and a detail store that agreed about their generation
+		// and disagreed about their contents.
+		return packageRecord{}, fmt.Errorf("the record at offset %d is %q, not %q", row.Offset, rec.FullName, row.FullName)
+	}
+	return rec, nil
+}
+
 // footprint is the index's on-disk size, for the frontends that show what a
 // community costs. Best-effort: an unreadable file contributes nothing
 // rather than failing a status read.

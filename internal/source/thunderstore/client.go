@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
@@ -47,6 +48,12 @@ const maxIndexBytes = 512 << 20
 // retrying transport.
 type client struct {
 	http *apiClient
+	// baseURL is the host every request is built against, kept here because
+	// ONE url this source produces is handed back to a caller to fetch
+	// rather than issued here: a version's download URL (#409 §3.3). It has
+	// to come from the same place the index did, or a test would have no
+	// way to serve it.
+	baseURL string
 }
 
 func newClient(opts Options, now func() time.Time) *client {
@@ -67,7 +74,7 @@ func newClient(opts Options, now func() time.Time) *client {
 	if limit <= 0 {
 		limit = maxIndexBytes
 	}
-	return &client{http: newAPIClient(&retrying, baseURL, limit)}
+	return &client{http: newAPIClient(&retrying, baseURL, limit), baseURL: strings.TrimSuffix(baseURL, "/")}
 }
 
 // fetchCommunity issues the conditional GET. ifModifiedSince is the

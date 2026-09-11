@@ -25,6 +25,13 @@ import (
 // the only package that has both: the list, and the catalogue of source ids
 // the process actually registers (builtinSourceIDs, kept honest by
 // TestBuiltinSourceIDsMatchTheFactories).
+//
+// One rule it CANNOT enforce is the duplicate app id: a duplicate key never
+// survives into the parsed map, because yaml.v3 refuses the whole document
+// instead (#409 review F4 - one duplicated key took `lmm game detect` and
+// `lmm init` down for EVERY game). Catching that means reading the raw
+// file, which only the package that embeds it can do, so it is
+// steam.TestKnownGamesFileDeclaresEachAppIDOnce.
 
 // slugPattern is the shape deriveSlug produces and the shape a curated slug
 // must match: lowercase alphanumerics in dash-separated runs, no leading,
@@ -91,6 +98,27 @@ func checkKnownGame(appID string, info steam.GameInfo, knownSourceIDs map[string
 			report("app id %s maps source %q to an empty game id", appID, id)
 		}
 	}
+
+	// #409 review F3: a sources map REPLACES the {nexusmods: nexus_id}
+	// derivation rather than adding to it - core.GameFromDetected and
+	// core.GameSpecFromDetected both derive only when the map is empty, and
+	// Service.SourcesForGame then fans out over the map alone. So an entry
+	// that has both and omits nexusmods from the map silently drops
+	// NexusMods from a game that has a page there, which is invisible until
+	// somebody notices `lmm search` returning nothing from it.
+	//
+	// The rule is "spell both out", not "merge them at read time": the map
+	// stays the complete source set, which is what lets an entry say "this
+	// game has a nexus_id, and NexusMods is deliberately not one of its
+	// sources" by listing others without it. That is the cost of the rule
+	// and the reason it is checked here rather than papered over in the
+	// derivation.
+	if info.NexusID != "" && len(info.Sources) > 0 && info.Sources["nexusmods"] != info.NexusID {
+		report("app id %s has nexus_id %q and a sources map whose nexusmods entry is %q; "+
+			"a sources map replaces the nexus_id derivation, so an entry with both must spell "+
+			"nexusmods out inside the map with the same value",
+			appID, info.NexusID, info.Sources["nexusmods"])
+	}
 	return problems
 }
 
@@ -140,6 +168,18 @@ func TestCheckKnownGame(t *testing.T) {
 		{"a source mapped to nothing", "123456",
 			steam.GameInfo{Slug: "g", Name: "G", ModPath: "Data", Sources: map[string]string{"nexusmods": ""}},
 			"empty game id"},
+
+		{"a nexus id spelled out alongside another source", "123456",
+			steam.GameInfo{Slug: "g", Name: "G", ModPath: "Data", NexusID: "g",
+				Sources: map[string]string{"nexusmods": "g", "steamworkshop": "123456"}}, ""},
+		{"a sources map that drops the nexus id", "123456",
+			steam.GameInfo{Slug: "g", Name: "G", ModPath: "Data", NexusID: "g",
+				Sources: map[string]string{"steamworkshop": "123456"}},
+			"must spell nexusmods out inside the map"},
+		{"a sources map that contradicts the nexus id", "123456",
+			steam.GameInfo{Slug: "g", Name: "G", ModPath: "Data", NexusID: "g",
+				Sources: map[string]string{"nexusmods": "other"}},
+			"with the same value"},
 	}
 
 	for _, tt := range tests {
@@ -188,13 +228,19 @@ func TestKnownGamesListIsWellFormed(t *testing.T) {
 // sandboxHome points HOME and every XDG variable this project reads at a
 // throwaway directory, so nothing here can reach the developer's real
 // config, data or Steam library.
+//
+// The list covers the SEARCH-PATH variables (XDG_CONFIG_DIRS,
+// XDG_DATA_DIRS) as well as the single-directory ones, because a library
+// that consults them would otherwise read /etc from a sandboxed test.
+// It is one helper for the whole package, which is why it lives beside the
+// catalog ratchet rather than in whichever file needed it first.
 func sandboxHome(t *testing.T) {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", home+"/config")
-	t.Setenv("XDG_DATA_HOME", home+"/data")
-	t.Setenv("XDG_CACHE_HOME", home+"/cache")
-	t.Setenv("XDG_STATE_HOME", home+"/state")
-	t.Setenv("STEAM_ROOT", home+"/steam")
+	for _, key := range []string{
+		"HOME", "STEAM_ROOT",
+		"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+		"XDG_STATE_HOME", "XDG_RUNTIME_DIR", "XDG_CONFIG_DIRS", "XDG_DATA_DIRS",
+	} {
+		t.Setenv(key, t.TempDir())
+	}
 }

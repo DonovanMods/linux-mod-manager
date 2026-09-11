@@ -143,6 +143,34 @@ func TestDoStream_RefusesABodyPastTheCap(t *testing.T) {
 		assert.Len(t, read, len(body))
 	})
 
+	// A body of EXACTLY cap+1 used to be indistinguishable from one at the
+	// cap for a consumer that stops as soon as its document is complete -
+	// a json.Decoder reading a JSON array stops at the closing "]", so the
+	// read that reported the overrun was the read it never made (#409,
+	// T1 re-review nit 3). The rule that makes the cap exact whoever the
+	// consumer is: the byte past the cap is never HANDED OVER, so a
+	// document that needs it is incomplete and the decode fails.
+	t.Run("the byte past the cap is never delivered", func(t *testing.T) {
+		c := httpclient.New(httpclient.Options{
+			BaseURL: srv.URL, AuthHeader: "unused", AuthLabel: "Test",
+			MaxResponseBytes: int64(len(body)) - 1,
+		})
+		resp, err := c.DoStream(t.Context(), http.MethodGet, "/", nil)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		delivered, readErr := 0, error(nil)
+		buf := make([]byte, 97) // a size that does not divide the body
+		for readErr == nil {
+			var n int
+			n, readErr = resp.Body.Read(buf)
+			delivered += n
+		}
+		assert.ErrorIs(t, readErr, httpclient.ErrResponseTooLarge)
+		assert.LessOrEqual(t, delivered, len(body)-1,
+			"a body one byte over the cap must not hand the caller a whole document")
+	})
+
 	t.Run("no cap configured", func(t *testing.T) {
 		c := newStreamClient(t, srv.URL)
 		resp, err := c.DoStream(t.Context(), http.MethodGet, "/", nil)

@@ -326,6 +326,14 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 		return nil, fmt.Errorf("failed to fetch mod: %w", err)
 	}
 
+	// #409 §3.4, as early as the metadata allows: a source that says this
+	// mod needs a loader the game does not declare refuses the plan here,
+	// in front of the download rather than behind it. #359's archive-shape
+	// rule still fires at ingest for every source that cannot say.
+	if err := s.requireSourceDeclaredLoader(ctx, sourceID, game, mod); err != nil {
+		return nil, err
+	}
+
 	// Ruling 5: record the installed set this plan is being computed
 	// against, so ApplyInstall can refuse it once that set has moved on.
 	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
@@ -498,6 +506,17 @@ func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profil
 		// entry's refusal never fails the plan, so it is recorded the way
 		// every other plan-time refusal for this batch is.
 		if err := s.CheckExternalInstallExclusivity(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+			entry.FetchError = err.Error()
+			continue
+		}
+
+		// #409 §3.4, the batch path's own copy of PlanInstall's gate. Like
+		// every other refusal here it is recorded against the ENTRY rather
+		// than failing the batch: one package needing a loader must not
+		// stop the other nine being planned. The typed error's setup steps
+		// still reach the user, from the single-mod path or from the
+		// archive-shape refusal at ingest.
+		if err := s.requireSourceDeclaredLoader(ctx, mod.SourceID, game, mod); err != nil {
 			entry.FetchError = err.Error()
 			continue
 		}

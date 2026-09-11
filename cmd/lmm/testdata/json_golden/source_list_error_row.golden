@@ -52,7 +52,10 @@
     "type": "built-in",
     "auth": "none",
     "capabilities": [
-      "search"
+      "search",
+      "deps",
+      "updates",
+      "versions"
     ]
   },
   {

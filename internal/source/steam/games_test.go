@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadKnownGames_EmbeddedDefault(t *testing.T) {
@@ -171,4 +172,87 @@ func TestLoadKnownGames_Loader_EmptyKindIsRefused(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "loader.kind")
 	assert.Contains(t, err.Error(), "broken-game")
+}
+
+// TestKnownGamesFileDeclaresEachAppIDOnce reads the RAW embedded catalog,
+// which is the only way this particular mistake can be caught before it
+// ships (#409 review F4).
+//
+// yaml.v3 refuses a document with a duplicated mapping key by failing the
+// WHOLE parse, so one app id written twice does not shadow one game - it
+// takes LoadKnownGames down, and with it `lmm game detect` and `lmm init`
+// for every game in the file. That failure mode is exactly what a curation
+// wave invites: two branches each append an entry for a game the other one
+// also researched, in different regions of the file, and git merges both
+// without a conflict. It happened here - #406 landed Valheim while #409
+// was appending its own "892970".
+//
+// internal/app's TestKnownGamesListIsWellFormed cannot see it: it reads the
+// PARSED map, where a duplicate has already become a load error with no
+// app id in the message. So the check reads the file, and names the two
+// lines.
+func TestKnownGamesFileDeclaresEachAppIDOnce(t *testing.T) {
+	data, err := defaultSteamGamesFS.ReadFile(defaultSteamGamesPath)
+	require.NoError(t, err)
+
+	var doc yaml.Node
+	require.NoError(t, yaml.Unmarshal(data, &doc))
+	require.Len(t, doc.Content, 1, "the catalog is one YAML document")
+	root := doc.Content[0]
+	require.Equal(t, yaml.MappingNode, root.Kind, "the catalog is one mapping, app id -> entry")
+
+	firstLine := make(map[string]int, len(root.Content)/2)
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		key := root.Content[i]
+		if line, seen := firstLine[key.Value]; seen {
+			t.Errorf("app id %q is defined twice, at line %d and line %d: yaml.v3 refuses a "+
+				"duplicate key by failing the whole file, so this would stop `lmm game detect` "+
+				"for EVERY game - merge the two entries instead of appending a second one",
+				key.Value, line, key.Line)
+			continue
+		}
+		firstLine[key.Value] = key.Line
+	}
+	require.NotEmpty(t, firstLine, "the catalog must not be empty")
+}
+
+// TestLoadKnownGames_ThunderstoreEntries pins #409's seeded communities:
+// the design's "T2 seeds the Linux-relevant communities as DATA, not code",
+// so `lmm game detect` prefills the community slug and the user never has
+// to find it themselves.
+//
+// Two properties matter more than the list. First, the mapped value is the
+// Thunderstore COMMUNITY slug, which is not derivable from the Steam app id
+// and is not the lmm game id either (Risk of Rain 2 is `risk-of-rain-2`
+// locally and `riskofrain2` there) - which is exactly why it is curated
+// rather than guessed. Second, every one of these is a BepInEx game that
+// deploys into the GAME ROOT, so mod_path is empty: steam.DetectGames reads
+// that as "the install path itself", which is the shape #358's normaliser
+// produces paths for.
+//
+// Valheim and For The King carry a NexusMods page as well, and a sources:
+// map REPLACES the {nexusmods: <nexus_id>} derivation - so both spell
+// nexusmods: out inside the map, and this pins that they kept it.
+func TestLoadKnownGames_ThunderstoreEntries(t *testing.T) {
+	games, err := LoadKnownGames(t.TempDir())
+	require.NoError(t, err)
+
+	for appID, want := range map[string]struct{ slug, community, nexus string }{
+		"1966720": {"lethal-company", "lethal-company", ""},
+		"892970":  {"valheim", "valheim", "valheim"},
+		"632360":  {"risk-of-rain-2", "riskofrain2", ""},
+		"3241660": {"repo", "repo", ""},
+		"2881650": {"content-warning", "content-warning", ""},
+		"527230":  {"for-the-king", "for-the-king", "fortheking"},
+	} {
+		info, ok := games[appID]
+		require.Truef(t, ok, "app %s must be in the shipped catalog", appID)
+		assert.Equal(t, want.slug, info.Slug)
+		assert.Equal(t, want.community, info.Sources["thunderstore"],
+			"app %s maps to the Thunderstore community, not to lmm's own game id", appID)
+		assert.Equal(t, want.nexus, info.Sources["nexusmods"],
+			"app %s: a sources map replaces the nexus_id derivation, so a game with "+
+				"both has to spell nexusmods out inside it", appID)
+		assert.Emptyf(t, info.ModPath, "app %s is a game-root (BepInEx) game", appID)
+	}
 }

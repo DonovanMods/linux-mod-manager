@@ -109,6 +109,10 @@ func TestKnownGames_NexusHeavy(t *testing.T) {
 			gameName: "Valheim",
 			nexusID:  "valheim",
 			modPath:  "", // the game root: #358 normalises a plugin archive to a BepInEx/-rooted layout
+			// A sources map replaces the nexus_id derivation, so the
+			// Thunderstore community (#409) arrives alongside an explicit
+			// nexusmods entry rather than in place of one.
+			sources: map[string]string{"nexusmods": "valheim", "thunderstore": "valheim"},
 		},
 		{
 			name:     "7 days to die",
@@ -174,18 +178,28 @@ func TestKnownGames_NexusHeavy(t *testing.T) {
 // mod_path is the install root (#358's normaliser rewrites a plugin archive
 // to a BepInEx/-rooted layout under it) and each one declares the loader
 // (#416) so the FIRST plugin install is not refused by #359's precondition.
+//
+// The last four arrived with #409's Thunderstore communities and follow the
+// same rule rather than a second one: a curated BepInEx game declares the
+// loader. Declaring it is not a claim that BepInEx is INSTALLED in this copy
+// - `lmm game show` reports that, and verify flags a declared-but-absent
+// loader - so the user without it is told rather than silently deployed to.
 var bepinexApps = map[string]string{
 	"892970":  "valheim",
 	"1284190": "planet-crafter",
 	"1466060": "tainted-grail-fall-of-avalon",
 	"527230":  "for-the-king",
 	"2393970": "human-host",
+	"1966720": "lethal-company",
+	"632360":  "risk-of-rain-2",
+	"3241660": "repo",
+	"2881650": "content-warning",
 }
 
 // TestKnownGames_OnlyTheBepInExEntriesDeclareALoader pins #416's data half
-// over the WHOLE shipped catalog, in both directions: exactly these five
-// entries declare `loader: {kind: bepinex}`, and every other entry declares
-// nothing at all.
+// over the WHOLE shipped catalog, in both directions: exactly the entries in
+// bepinexApps declare `loader: {kind: bepinex}`, and every other entry
+// declares nothing at all.
 //
 // It replaces two deliberate gap markers, one from each branch that merged
 // here - TestKnownGames_ValheimCarriesNoLoaderBlock (#406: "no field exists
@@ -298,6 +312,7 @@ func TestKnownGames_LongTail(t *testing.T) {
 			gameName: "For The King",
 			nexusID:  "fortheking",
 			modPath:  "", // the game root: #358 normalises a plugin archive to a BepInEx/-rooted layout
+			sources:  map[string]string{"nexusmods": "fortheking", "thunderstore": "for-the-king"},
 		},
 		{
 			name:     "lego batman: legacy of the dark knight",
@@ -359,7 +374,10 @@ func TestKnownGames_EmptyModPathMeansTheInstallRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	// One install directory per app, as Steam really lays them out.
-	gameRootApps := []string{"892970", "1284190", "1466060", "527230", "2393970", "1091500"}
+	gameRootApps := []string{
+		"892970", "1284190", "1466060", "527230", "2393970", "1091500",
+		"1966720", "632360", "3241660", "2881650", // #409's Thunderstore communities
+	}
 	installs := make(map[string]string, len(gameRootApps))
 	for _, appID := range gameRootApps {
 		info, ok := games[appID]
