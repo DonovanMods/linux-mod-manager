@@ -275,6 +275,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compile-time, not plugins: a contributor adds one without touching
   `internal/core`, and a boundary ratchet keeps it that way.
 
+- **Icarus is the first real adapter — and an Icarus mod now compiles
+  whichever source served it (#353, #412).** Compiling used to be a
+  property of the SOURCE a file came from, so a `.pak` or `.exmodz` for
+  Icarus downloaded from NexusMods (or imported from disk through a
+  differently-mapped source) could not join the merged artifact, while the
+  identical file from Project Daedalus could. Icarus's compile, `.EXMODZ`
+  and merge rules now live behind the adapter seam (`adapter: icarus`), so
+  the GAME answers and the source has no say. Nothing to migrate: a game
+  already carrying `deploy_mode: compile` resolves to the Icarus adapter on
+  its own, in memory, and `games.yaml` is not rewritten. Detection prefills
+  it too — `lmm game detect` reports `adapter: icarus` for an Icarus
+  install, and `lmm game add --from-detected` writes it. The merged
+  artifact, the `.EXMODZ` wrapper handling (#237) and the pak-conversion
+  pipeline (#221) are unchanged: this is where the rules live, not what
+  they are.
+
 - **BepInEx plugin archives deploy correctly (#358).** BepInEx installs into
   the game root, which lmm already expresses by pointing a game's
   `mod_path` at its own `install_path` (the same absolute path twice — not
