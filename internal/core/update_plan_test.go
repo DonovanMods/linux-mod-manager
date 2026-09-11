@@ -52,7 +52,7 @@ func newPlanUpdateRecompileTestGame(t *testing.T) (*core.Service, *domain.Game) 
 
 	svc := newFlowsTestService(t)
 	src := &planUpdateCheckableCompilerSource{fakeCompilerSource: &fakeCompilerSource{}}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{
 		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),

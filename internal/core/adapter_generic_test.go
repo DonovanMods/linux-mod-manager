@@ -179,7 +179,9 @@ func TestGenericSeamsTakeTheIdentityBranch(t *testing.T) {
 		layout, err := svc.archiveLayout(game, "MyMod", members)
 		require.NoError(t, err)
 		assert.False(t, layout.Applies())
-		assert.Equal(t, members, rewritePlannedPaths(layout, members))
+		planned, err := rewritePlannedPaths(layout, members)
+		require.NoError(t, err)
+		assert.Equal(t, members, planned)
 	})
 
 	t.Run("the tree rewriter is a no-op on disk", func(t *testing.T) {
@@ -301,15 +303,15 @@ func TestRewriteExtractedTreeRefusesAnEscapingPath(t *testing.T) {
 }
 
 // TestValidateInstallFileSelectionAsksTheAdapter is I5's regression test
-// (#411). Every other compile-capability site asks adapterCompiler first
-// and carries a `temporary until U2 (#412)` marker;
-// ValidateInstallFileSelection kept a direct src.(source.MergeCompiler)
-// assertion that was neither marked nor inventoried. When U2 moves the
-// MergeCompiler methods off *icarus.Icarus, the assertion becomes false for
-// the Icarus SOURCE and #211's guard against mixing a merge-compile
-// source's .exmodz variant with any other file in one selection would
-// silently become dead code that always returns nil - a released fix
-// regressing in a deletion pass.
+// (#411), and U2 (#412) is the pass it was written for. Every other
+// compile-capability site asked adapterCompiler first;
+// ValidateInstallFileSelection kept a direct src.(MergeCompiler) assertion
+// that was neither marked nor inventoried. U2 moved the MergeCompiler
+// methods off the Icarus SOURCE, so that assertion would now be false for
+// every Icarus selection and #211's guard against mixing the .exmodz
+// variant with any other file in one selection would have become dead code
+// returning nil - a released fix regressing in a deletion pass, with
+// nothing else failing. Keep this test.
 // exmodzCompiler is compileStub with the one format question the
 // variant-exclusivity rule asks.
 type exmodzCompiler struct{ compileStub }
@@ -319,7 +321,7 @@ func (exmodzCompiler) IsNativeMergeSource(name string) bool {
 }
 
 // plainTestSource is the smallest source.ModSource that implements NO
-// optional capability - in particular no source.MergeCompiler.
+// optional capability - in particular no adapter.MergeCompiler.
 type plainTestSource struct{}
 
 func (plainTestSource) ID() string      { return "plain" }
@@ -359,8 +361,9 @@ func TestValidateInstallFileSelectionAsksTheAdapter(t *testing.T) {
 		{ID: "exmodz", FileName: "Mod.exmodz"},
 	}
 
-	// The SOURCE implements no MergeCompiler; the game's ADAPTER does.
-	err := svc.ValidateInstallFileSelection(game, "plain", files)
+	// No source anywhere implements MergeCompiler; the game's ADAPTER does,
+	// and since U2 that is the only thing asked.
+	err := svc.ValidateInstallFileSelection(game, files)
 	require.Error(t, err, "the variant-exclusivity rule must follow the adapter, not only the source")
 	assert.Contains(t, err.Error(), "alternate forms of the same mod")
 }

@@ -503,7 +503,7 @@ func TestVerify_CompileGameStatuses(t *testing.T) {
 		fakeCompilerSource: &fakeCompilerSource{},
 		failRefs:           map[string]string{"fake-compiler:badpak": "irreconcilable pak layout"},
 	}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{
 		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
@@ -935,7 +935,7 @@ func newByteServer(t *testing.T, content []byte) string {
 // always fails with ErrNotSupported (fine for those read-side tests, which
 // never call it), but --fix's redownload repair calls GetModFiles first to
 // resolve the "pak" file ID. Embeds *fakeCompilerSource so ValidateSource/
-// MergeCompile (source.MergeCompiler) are still promoted - the pak-ingest
+// MergeCompile (adapter.MergeCompiler) are still promoted - the pak-ingest
 // path itself runs for real, genuinely retaining the source on success.
 type reingestFixSource struct {
 	*fakeCompilerSource
@@ -969,7 +969,7 @@ func newNeedsReingestFixGame(t *testing.T, src source.ModSource, sourceID string
 	writeFakeBasePak(t, basePak)
 
 	svc := newFlowsTestService(t)
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{
 		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
@@ -1668,7 +1668,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 		fakeCompilerSource: &fakeCompilerSource{},
 		failRefs:           map[string]string{"fake-compiler:badpak": "irreconcilable pak layout"},
 	}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{
 		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),

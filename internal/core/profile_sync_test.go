@@ -320,7 +320,7 @@ func TestApplyProfileSync_MergedPakSyncFailure_IsAWarning(t *testing.T) {
 	game.SourceIDs = map[string]string{"fake-compiler": "external-icarus-id"}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
-	svc.RegisterSource(&fakeCompilerSource{})
+	registerCompileSource(svc, &fakeCompilerSource{})
 
 	const modID, version, fileID = "bear-mount", "1.0", "exmodz-file"
 	gameCache := svc.GetGameCache(game)

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/go-unrealpak"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -32,12 +33,12 @@ func writeFakeBasePak(t *testing.T, path string) {
 }
 
 // fakeCompilerSource is a minimal ModSource that also implements
-// source.MergeCompiler, standing in for internal/source/icarus.Icarus
+// adapter.MergeCompiler, standing in for internal/adapter/icarus.Icarus
 // without pulling that package into internal/core's tests — this test only
 // needs to prove Service validates and retains (never compiles a per-mod
 // pak) when DeployMode is DeployCompile (#197: merged-only).
 type fakeCompilerSource struct {
-	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+	fakeMergeFormat // #256: the format-vocabulary half of adapter.MergeCompiler
 
 	downloadURL   string
 	compileCalls  int
@@ -70,7 +71,7 @@ func (s *fakeCompilerSource) CheckUpdates(ctx context.Context, installed []domai
 	return nil, source.ErrNotSupported
 }
 
-// ValidateSource implements source.MergeCompiler by confirming the archive
+// ValidateSource implements adapter.MergeCompiler by confirming the archive
 // exists — this test only asserts Service invoked it, not that it performs
 // real .exmodz parsing (Task 1 covers that in the icarus package itself).
 func (s *fakeCompilerSource) ValidateSource(sourceFilePath string) error {
@@ -81,10 +82,10 @@ func (s *fakeCompilerSource) ValidateSource(sourceFilePath string) error {
 	return nil
 }
 
-// MergeCompile implements source.MergeCompiler by concatenating every
+// MergeCompile implements adapter.MergeCompiler by concatenating every
 // source's bytes - enough for tests to distinguish "which sources were
 // actually merged" without needing a real base pak table to patch.
-func (s *fakeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *fakeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	s.compileCalls++
 	var out []byte
 	for _, src := range sources {
@@ -98,8 +99,8 @@ func (s *fakeCompilerSource) MergeCompile(ctx context.Context, basePakPath strin
 }
 
 var (
-	_ source.ModSource     = (*fakeCompilerSource)(nil)
-	_ source.MergeCompiler = (*fakeCompilerSource)(nil)
+	_ source.ModSource      = (*fakeCompilerSource)(nil)
+	_ adapter.MergeCompiler = (*fakeCompilerSource)(nil)
 )
 
 // writeFakeBasePakWithTable is writeFakeBasePak's table-content-controlling
@@ -147,7 +148,7 @@ func TestDownloadMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) 
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	src := &fakeCompilerSource{downloadURL: dlSrv.URL}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
@@ -191,7 +192,7 @@ func TestDownloadMod_DeployCompile_MalformedExmodz_FailsLoudAtIngest(t *testing.
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	src := &failingValidateCompilerSource{fakeCompilerSource: &fakeCompilerSource{downloadURL: dlSrv.URL}}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
@@ -210,21 +211,21 @@ func TestDownloadMod_DeployCompile_MalformedExmodz_FailsLoudAtIngest(t *testing.
 // per-ref pak-conversion failures (#221 Task 8). Any source whose ModRef is
 // in failRefs is treated as an irreconcilable pak: skipped from the merged
 // output and reported via the returned failed slice, mirroring
-// internal/source/icarus/merge.go's real pak-dispatch failure path (which
+// internal/adapter/icarus/merge.go's real pak-dispatch failure path (which
 // also surfaces a "... - deploying raw" warning for each skipped ref).
 type pakConversionOutcomeSource struct {
 	*fakeCompilerSource
 	failRefs map[string]string
 }
 
-func (s *pakConversionOutcomeSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *pakConversionOutcomeSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	s.compileCalls++
 	var out []byte
 	var warnings []string
-	var failed []source.MergeFailure
+	var failed []adapter.MergeFailure
 	for _, src := range sources {
 		if reason, bad := s.failRefs[src.ModRef]; bad {
-			failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: reason})
+			failed = append(failed, adapter.MergeFailure{ModRef: src.ModRef, Reason: reason})
 			warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %s - deploying raw", src.ModRef, reason))
 			continue
 		}
@@ -237,7 +238,7 @@ func (s *pakConversionOutcomeSource) MergeCompile(ctx context.Context, basePakPa
 	return warnings, failed, os.WriteFile(outputPath, out, 0o644)
 }
 
-var _ source.MergeCompiler = (*pakConversionOutcomeSource)(nil)
+var _ adapter.MergeCompiler = (*pakConversionOutcomeSource)(nil)
 
 // seedEnabledPakMod installs an ENABLED pak-kind mod carrying BOTH a
 // retained pak (cache.RetainedSourceName(fileID)) and a deployable pak copy
@@ -289,7 +290,7 @@ func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
 		t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 		src := &fakeCompilerSource{downloadURL: dlSrv.URL}
-		svc.RegisterSource(src)
+		registerCompileSource(svc, src)
 
 		game := &domain.Game{
 			ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
@@ -349,20 +350,22 @@ func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
 	})
 }
 
-// TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath is the I1
-// fix (final whole-branch review of #221): isConvertEligiblePakFile only
-// checks GAME flags (DeployMode + ConvertPaks), not whether the file's own
-// source implements source.MergeCompiler. Pre-#221, a .pak file never hit
-// the validate+retain branch at all, so a source without MergeCompiler was
-// never even asked. Post-#221, ConvertPaks=true widened that branch's entry
-// condition to also include convert-eligible paks - so a mixed-source
-// DeployCompile game (one MergeCompiler-capable source, one that isn't)
-// would hard-error the WHOLE download for any pak from the non-capable
-// source, where pre-#221 it simply fell through to extract/copy like any
-// other file. This proves the fall-through is restored: no error, no
-// retained source, plain-copy member - byte-identical to the
+// TestDownloadPak_NonCompilingAdapter_FallsThroughToLegacyPath is the I1
+// fix (final whole-branch review of #221), restated in U2's vocabulary
+// (#412). ConvertPaks=true widens the validate+retain branch's entry
+// condition to include convert-eligible paks, so a .pak downloaded for a
+// game that cannot actually compile must NOT hard-error the whole
+// download - it falls through to extract/copy like any other file, exactly
+// as it did pre-#221. Here `deploy_mode: compile` is set but no compiling
+// adapter is registered, so the game resolves to the identity: no error,
+// no retained source, plain-copy member - byte-identical to the
 // ConvertPaksDisabled_LegacyPath shape above.
-func TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath(t *testing.T) {
+//
+// Before U2 this case was spelled "a pak from a source that does not
+// implement MergeCompiler, on a MIXED-SOURCE game". That shape no longer
+// exists, and its disappearance is the point: see
+// TestDownloadPak_CompilingGame_ConvertsWhicheverSourceServedIt.
+func TestDownloadPak_NonCompilingAdapter_FallsThroughToLegacyPath(t *testing.T) {
 	dlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("fake-pak-bytes"))
 	}))
@@ -373,7 +376,7 @@ func TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath(t *testing.
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	// A plain source that does NOT implement source.MergeCompiler.
+	// A plain source, and - crucially - no compiling adapter registered.
 	src := &mockSourceWithFileURL{mockSource: newMockSource("plain-source"), fileURL: dlSrv.URL}
 	svc.RegisterSource(src)
 
@@ -387,7 +390,7 @@ func TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath(t *testing.
 	file := &domain.DownloadableFile{ID: "pak", FileName: "CoolMod.pak"}
 
 	result, err := svc.DownloadModForTest(context.Background(), "plain-source", game, mod, file, nil)
-	require.NoError(t, err, "a pak from a non-MergeCompiler source must fall through to the legacy path, not hard-error")
+	require.NoError(t, err, "a pak for a game whose adapter cannot compile must fall through to the legacy path, not hard-error")
 	require.Equal(t, 1, result.FilesExtracted)
 
 	gameCache := svc.GetGameCache(game)
@@ -426,7 +429,7 @@ func TestPakInstallThenSyncNeverDoubleApplies(t *testing.T) {
 
 	svc := newFlowsTestService(t)
 	src := &fakeCompilerSource{downloadURL: dlSrv.URL}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{
 		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
@@ -504,7 +507,7 @@ func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
 		fakeCompilerSource: &fakeCompilerSource{},
 		failRefs:           map[string]string{"fake-compiler:badmod": "boom"},
 	}
-	svc.RegisterSource(pakSrc)
+	registerCompileSource(svc, pakSrc)
 
 	seedEnabledPakMod(t, svc, game, "fake-compiler", "goodmod", "1.0", "pak", []byte("good-pak-bytes"))
 	seedEnabledPakMod(t, svc, game, "fake-compiler", "badmod", "1.0", "pak", []byte("bad-pak-bytes"))
@@ -565,4 +568,51 @@ func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
 	for _, o := range outcomes {
 		require.NotEqual(t, "goodmod", o.ModID, "an opted-out mod must not appear in the merge fingerprint")
 	}
+}
+
+// TestDownloadPak_CompilingGame_ConvertsWhicheverSourceServedIt is U2's
+// user-visible improvement (#412), and the reason #353 exists.
+//
+// Compiling used to be a property of the SOURCE a file came from: core
+// walked the game's sources looking for one implementing MergeCompiler and
+// pinned the download's own check to the source that served the file. So an
+// Icarus .pak downloaded from NexusMods - or from any source other than the
+// one that happened to carry the compile code - could not enter the
+// convert pipeline, while the byte-identical file from Project Daedalus
+// could. Compilation is a property of the GAME, and since U2 the game's
+// adapter answers: this plain source implements nothing at all, and its
+// .pak is still validated and retained as a merge source.
+func TestDownloadPak_CompilingGame_ConvertsWhicheverSourceServedIt(t *testing.T) {
+	dlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("fake-pak-bytes"))
+	}))
+	defer dlSrv.Close()
+
+	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	// The source serving the file implements NO compile capability; a
+	// separate, unmapped fake supplies the game's adapter.
+	src := &mockSourceWithFileURL{mockSource: newMockSource("foreign-source"), fileURL: dlSrv.URL}
+	svc.RegisterSource(src)
+	registerCompileAdapterOnly(svc, &fakeCompilerSource{})
+
+	game := &domain.Game{
+		ID: "icarus", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		DeployMode: domain.DeployCompile, ConvertPaks: true,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	mod := &domain.Mod{ID: "cool-mod", SourceID: "foreign-source", GameID: "icarus", Version: "1.0"}
+	file := &domain.DownloadableFile{ID: "pak", FileName: "CoolMod.pak"}
+
+	_, err = svc.DownloadModForTest(context.Background(), "foreign-source", game, mod, file, nil)
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+	retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+	require.FileExists(t, retainedPath,
+		"a compiling game retains a .pak as a merge source whichever source served it")
 }

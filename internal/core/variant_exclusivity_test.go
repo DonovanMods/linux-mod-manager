@@ -17,13 +17,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/require"
 )
 
-// variantExclusivitySource is a minimal ModSource + source.MergeCompiler
+// variantExclusivitySource is a minimal ModSource + adapter.MergeCompiler
 // fake (mirrors fakeCompilerSource in service_icarus_compile_test.go and
 // importFlowCompilerSource in merged_pak_import_flow_test.go) that also
 // serves a caller-supplied per-mod file list, the way perModMultiFileSource
@@ -31,7 +32,7 @@ import (
 // because a single mod must offer BOTH a pak and an exmodz file so
 // PlanInstall/ApplyInstall can drive a real mixed selection end to end.
 type variantExclusivitySource struct {
-	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+	fakeMergeFormat // #256: the format-vocabulary half of adapter.MergeCompiler
 	*mockSourceWithDownloads
 	files map[string][]domain.DownloadableFile // mod.ID -> served files, verbatim
 }
@@ -47,52 +48,57 @@ func (s *variantExclusivitySource) GetModFiles(ctx context.Context, mod *domain.
 	return s.files[mod.ID], nil
 }
 
-// ValidateSource implements source.MergeCompiler - never exercised by these
+// ValidateSource implements adapter.MergeCompiler - never exercised by these
 // tests since a rejected selection must fail before ingest ever calls it.
 func (s *variantExclusivitySource) ValidateSource(sourceFilePath string) error { return nil }
 
-// MergeCompile implements source.MergeCompiler - never exercised by these
+// MergeCompile implements adapter.MergeCompiler - never exercised by these
 // tests for the same reason.
-func (s *variantExclusivitySource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *variantExclusivitySource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	return nil, nil, nil
 }
 
 var (
-	_ source.ModSource     = (*variantExclusivitySource)(nil)
-	_ source.MergeCompiler = (*variantExclusivitySource)(nil)
+	_ source.ModSource      = (*variantExclusivitySource)(nil)
+	_ adapter.MergeCompiler = (*variantExclusivitySource)(nil)
 )
 
 // TestValidateInstallFileSelection is the unit table test: the rule itself,
 // independent of any install flow.
+//
+// Since U2 (#412) the rule is keyed on the GAME rather than on the source
+// the files were listed from - so the table varies the game's adapter, not
+// a sourceID. The two rows that used to say "mixed on a plain source" and
+// "unknown source" now say the same thing in the vocabulary that decides:
+// a game whose adapter cannot compile is never restricted.
 func TestValidateInstallFileSelection(t *testing.T) {
 	svc := newFlowsTestService(t)
 
 	mc := newVariantExclusivitySource("mc")
-	svc.RegisterSource(mc)
 	t.Cleanup(mc.Close)
+	registerCompileSource(svc, mc)
 
-	plain := newMockSource("plain")
-	svc.RegisterSource(plain)
+	compiling := &domain.Game{ID: "g1", Adapter: testCompileAdapterID}
+	plain := &domain.Game{ID: "g2"}
 
 	pakFile := domain.DownloadableFile{ID: "pak", FileName: "Mod_P.pak"}
 	exmodzFile := domain.DownloadableFile{ID: "exmodz", FileName: "Mod.exmodz"}
 
 	cases := []struct {
-		name     string
-		sourceID string
-		files    []domain.DownloadableFile
-		wantErr  bool
+		name    string
+		game    *domain.Game
+		files   []domain.DownloadableFile
+		wantErr bool
 	}{
-		{"mixed on merge-compiler source rejected", "mc", []domain.DownloadableFile{pakFile, exmodzFile}, true},
-		{"exmodz alone allowed", "mc", []domain.DownloadableFile{exmodzFile}, false},
-		{"pak alone allowed (escape hatch)", "mc", []domain.DownloadableFile{pakFile}, false},
-		{"two non-exmodz files allowed", "mc", []domain.DownloadableFile{pakFile, {ID: "extra", FileName: "readme.pak"}}, false},
-		{"mixed on plain source allowed", "plain", []domain.DownloadableFile{pakFile, exmodzFile}, false},
-		{"unknown source is not this check's problem", "ghost", []domain.DownloadableFile{pakFile, exmodzFile}, false},
+		{"mixed on a compiling game rejected", compiling, []domain.DownloadableFile{pakFile, exmodzFile}, true},
+		{"exmodz alone allowed", compiling, []domain.DownloadableFile{exmodzFile}, false},
+		{"pak alone allowed (escape hatch)", compiling, []domain.DownloadableFile{pakFile}, false},
+		{"two non-exmodz files allowed", compiling, []domain.DownloadableFile{pakFile, {ID: "extra", FileName: "readme.pak"}}, false},
+		{"mixed on a non-compiling game allowed", plain, []domain.DownloadableFile{pakFile, exmodzFile}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := svc.ValidateInstallFileSelection(&domain.Game{ID: "g1"}, tc.sourceID, tc.files)
+			err := svc.ValidateInstallFileSelection(tc.game, tc.files)
 			if tc.wantErr {
 				require.ErrorContains(t, err, "alternate forms of the same mod")
 			} else {
@@ -111,11 +117,15 @@ func TestValidateInstallFileSelection(t *testing.T) {
 func setupVariantExclusivityService(t *testing.T) (*core.Service, *domain.Game, *variantExclusivitySource) {
 	t.Helper()
 	svc := newFlowsTestService(t)
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	// #412: the game names the compile adapter explicitly. It carries no
+	// DeployCompile mode on purpose (these tests exercise the selection
+	// rule, not the merge path), and since U2 the rule follows the adapter
+	// rather than the source the files came from.
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink, Adapter: testCompileAdapterID}
 
 	mc := newVariantExclusivitySource("mc")
 	t.Cleanup(mc.Close)
-	svc.RegisterSource(mc)
+	registerCompileSource(svc, mc)
 
 	mc.files["mod1"] = []domain.DownloadableFile{
 		{ID: "pak", Name: "Main", FileName: "Mod_P.pak", IsPrimary: true, Category: "MAIN"},

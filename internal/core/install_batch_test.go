@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,7 +70,7 @@ func (s *batchInstallSource) addRawMod(mod *domain.Mod, file domain.Downloadable
 	s.AddMod(mod.GameID, mod)
 }
 
-// batchCompileSource is batchInstallSource plus source.MergeCompiler, so a
+// batchCompileSource is batchInstallSource plus adapter.MergeCompiler, so a
 // DeployCompile game's ".exmodz" mods take the validate+retain ingest path
 // and reach the end-of-batch merged-pak sync. mergeErr, when set, fails the
 // merge itself.
@@ -85,7 +85,7 @@ func (s *batchCompileSource) ValidateSource(sourceFilePath string) error {
 	return err
 }
 
-func (s *batchCompileSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *batchCompileSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	if s.mergeErr != nil {
 		return nil, nil, s.mergeErr
 	}
@@ -100,7 +100,7 @@ func (s *batchCompileSource) MergeCompile(ctx context.Context, basePakPath strin
 	return nil, nil, os.WriteFile(outputPath, out, 0o644)
 }
 
-var _ source.MergeCompiler = (*batchCompileSource)(nil)
+var _ adapter.MergeCompiler = (*batchCompileSource)(nil)
 
 // batchStateRow/batchStateRef mirror the golden's "## state" section field
 // for field, so a core assertion and the cmd golden describe the same end
@@ -469,7 +469,7 @@ func newBatchCompileFixture(t *testing.T, mergeErr error) (*core.Service, *domai
 	inner := newBatchInstallSource("test-src")
 	t.Cleanup(inner.Close)
 	src := &batchCompileSource{batchInstallSource: inner, mergeErr: mergeErr}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	return svc, game, src
 }

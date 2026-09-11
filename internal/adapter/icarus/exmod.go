@@ -32,6 +32,11 @@ type ExmodFileItem struct {
 	Fields map[string]any
 }
 
+// ParseExmod parses one .EXMOD document - the JSON diff a mod ships for a
+// single data table - into the ExmodDiff the merge applies. The doc comment
+// is U2's (#412) only addition to this file: internal/source had no
+// doc-comment ratchet, internal/adapter does, and an exported parser with
+// no comment was the one thing the move surfaced.
 func ParseExmod(data []byte) (*ExmodDiff, error) {
 	var raw struct {
 		Name        string `json:"name"`

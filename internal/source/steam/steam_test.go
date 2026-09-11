@@ -339,6 +339,9 @@ func TestDetectGames_IcarusEntry_IncludesDeployModeAndSources(t *testing.T) {
 	assert.Equal(t, filepath.Join(installDir, "Icarus", "Content", "Paks", "mods"), g.ModPath)
 	assert.Equal(t, "", g.NexusID)
 	assert.Equal(t, "compile", g.DeployMode)
+	// #412: the curated adapter reaches the candidate, so `game detect`
+	// reports it and `game add --from-detected` writes it.
+	assert.Equal(t, "icarus", g.Adapter)
 	assert.Equal(t, map[string]string{"icarus": "icarus"}, g.Sources)
 }
 

@@ -12,14 +12,14 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// compileFixtureSource is fixtureSource plus source.MergeCompiler, so the
+// compileFixtureSource is fixtureSource plus adapter.MergeCompiler, so the
 // fixture game can be DeployCompile - core resolves the game's ONE
 // compile-capable source to classify a mod's retained files, and a game
 // that maps none has no convertible format at all (which is the 400 this
@@ -31,7 +31,7 @@ import (
 type compileFixtureSource struct{ fixtureSource }
 
 func (*compileFixtureSource) ValidateSource(string) error { return nil }
-func (*compileFixtureSource) MergeCompile(context.Context, string, []source.MergeSource, string) ([]string, []source.MergeFailure, error) {
+func (*compileFixtureSource) MergeCompile(context.Context, string, []adapter.MergeSource, string) ([]string, []adapter.MergeFailure, error) {
 	return nil, nil, nil
 }
 func (*compileFixtureSource) ResolveBaseArtifact(*domain.Game) (string, error) { return "", nil }
@@ -48,7 +48,29 @@ func (*compileFixtureSource) MergedArtifactName() string            { return "zz
 func (*compileFixtureSource) MergedArtifactLabel() string           { return "Merged Pak" }
 func (*compileFixtureSource) RestoredArtifactName(id string) string { return id + "_P.pak" }
 
-var _ source.MergeCompiler = (*compileFixtureSource)(nil)
+var _ adapter.MergeCompiler = (*compileFixtureSource)(nil)
+
+// convertFixtureAdapter presents compileFixtureSource's format vocabulary as
+// the GAME's adapter (#412). Since U2 that is where core looks: a
+// `deploy_mode: compile` game with no explicit `adapter:` key derives the
+// name "icarus", so registering under it keeps the fixture game below
+// exactly as it was written.
+type convertFixtureAdapter struct{ compileFixtureSource }
+
+func (convertFixtureAdapter) ID() string    { return "icarus" }
+func (convertFixtureAdapter) Label() string { return "Convert fixture" }
+func (convertFixtureAdapter) NormalizeArchive(adapter.NormalizeRequest) (adapter.Layout, error) {
+	return adapter.Layout{}, nil
+}
+
+// compileFixtureSource's methods have POINTER receivers, so only
+// *convertFixtureAdapter carries the compile capability - asserted here
+// rather than discovered as a 400 from a route that quietly decided the
+// game has no convertible format.
+var (
+	_ adapter.GameAdapter   = (*convertFixtureAdapter)(nil)
+	_ adapter.MergeCompiler = (*convertFixtureAdapter)(nil)
+)
 
 // newConvertServer builds a DeployCompile game whose one installed mod has
 // a pak-kind retained file - the only state in which pak conversion means
@@ -64,6 +86,10 @@ func newConvertServer(t *testing.T, fileIDs []string) (*Server, *core.Service, *
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.RegisterSource(&compileFixtureSource{})
+	// #412: compilation is a property of the GAME since U2, so the fixture's
+	// format vocabulary has to be registered as the game's adapter - the
+	// `deploy_mode: compile` game below derives exactly this id.
+	svc.RegisterAdapter(&convertFixtureAdapter{})
 
 	ctx := t.Context()
 	game := &domain.Game{

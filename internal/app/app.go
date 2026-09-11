@@ -51,6 +51,7 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	registerAdapters(svc)
 	registerSources(ctx, svc, p, warnWriter(opts))
 	return svc, nil
 }

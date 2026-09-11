@@ -82,6 +82,10 @@
   name: Icarus
   mod_path: Icarus/Content/Paks/mods
   deploy_mode: compile
+  # Stated explicitly rather than left to the deploy_mode: compile migration
+  # (#412): the adapter is the durable spelling, and deploy_mode: compile is
+  # deprecated for a future MAJOR.
+  adapter: icarus
   sources:
     icarus: icarus
 

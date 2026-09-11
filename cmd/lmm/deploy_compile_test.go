@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +33,7 @@ func setupDoDeployCompileTest(t *testing.T) (*core.Service, *domain.Game, *compi
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 	return svc, game, compiler
 }
 
@@ -127,20 +127,20 @@ func TestDoDeploy_Compile_LabelsMergedRawAndLooseAndPrintsFooter(t *testing.T) {
 }
 
 // pakFailCompilerSource wraps compilerInstallSource so a CLI test can script
-// per-ref pak-conversion failures, mirroring internal/source/icarus/merge.go's
+// per-ref pak-conversion failures, mirroring internal/adapter/icarus/merge.go's
 // real failure path (a "... - deploying raw" warning per skipped ref).
 type pakFailCompilerSource struct {
 	*compilerInstallSource
 	failRefs map[string]string
 }
 
-func (s *pakFailCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *pakFailCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	var out []byte
 	var warnings []string
-	var failed []source.MergeFailure
+	var failed []adapter.MergeFailure
 	for _, src := range sources {
 		if reason, bad := s.failRefs[src.ModRef]; bad {
-			failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: reason})
+			failed = append(failed, adapter.MergeFailure{ModRef: src.ModRef, Reason: reason})
 			warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %s - deploying raw", src.ModName, reason))
 			continue
 		}
@@ -153,7 +153,7 @@ func (s *pakFailCompilerSource) MergeCompile(ctx context.Context, basePakPath st
 	return warnings, failed, os.WriteFile(outputPath, out, 0o644)
 }
 
-var _ source.MergeCompiler = (*pakFailCompilerSource)(nil)
+var _ adapter.MergeCompiler = (*pakFailCompilerSource)(nil)
 
 // TestDoDeploy_Compile_ConversionFailure_FooterCorrectsOptimisticLabel covers
 // #255's accepted optimistic case end to end: an opted-in pak is labeled
@@ -162,7 +162,7 @@ var _ source.MergeCompiler = (*pakFailCompilerSource)(nil)
 // correction, and the footer reports the raw fallback.
 func TestDoDeploy_Compile_ConversionFailure_FooterCorrectsOptimisticLabel(t *testing.T) {
 	svc, game, compiler := setupDoDeployCompileTest(t)
-	svc.RegisterSource(&pakFailCompilerSource{
+	registerCompileSource(svc, &pakFailCompilerSource{
 		compilerInstallSource: compiler,
 		failRefs:              map[string]string{"fake-compiler:flaky-pak": "irreconcilable"},
 	})

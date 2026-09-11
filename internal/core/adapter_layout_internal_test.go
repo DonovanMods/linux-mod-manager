@@ -236,7 +236,9 @@ func TestRewriteExtractedTreeCanonicalisesDestinations(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, []string{tc.want}, got,
 				"the returned member list must carry the canonical destination")
-			assert.Equal(t, []string{tc.want}, rewritePlannedPaths(layout, []string{"a.txt"}),
+			planned, perr := rewritePlannedPaths(layout, []string{"a.txt"})
+			require.NoError(t, perr)
+			assert.Equal(t, []string{tc.want}, planned,
 				"the plan rewriter must promise the same canonical destination")
 			assert.FileExists(t, filepath.Join(root, filepath.FromSlash(tc.want)))
 		})
@@ -440,4 +442,59 @@ func TestCopyOnceCarriesTheSourceMode(t *testing.T) {
 	info, err := os.Stat(dst)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+}
+
+// TestRewriteExtractedTreeRefusesAReservedDestination is #422 item 1's
+// regression test. containedIn checked only containment, so an adapter
+// could name a destination inside lmm's reserved ".lmm-" namespace - the
+// exact forgery the extractor already refuses for an archive member
+// (sanitizePath/hasReservedSegment). A member rewritten to
+// ".lmm-file-<fileID>" plants that file's cache completion marker: the plan
+// promises the path, ListFiles never reports it, the file never deploys,
+// and the import reports success. Refused by SEGMENT, so a member hidden
+// under a reserved DIRECTORY is refused too.
+func TestRewriteExtractedTreeRefusesAReservedDestination(t *testing.T) {
+	for name, dest := range map[string]string{
+		"a forged completion marker": ".lmm-file-deadbeef",
+		"a reserved directory":       ".lmm-hidden/b.txt",
+		"a reserved leaf":            "sub/.lmm-marker",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, before := layoutTestTree(t, map[string]string{"a.txt": "A", "b.txt": "B"})
+
+			layout := adapter.NewLayout("hostile", map[string]string{"a.txt": dest})
+			_, err := rewriteExtractedTree(root, layout, []string{"a.txt", "b.txt"})
+
+			require.Error(t, err, "a destination in lmm's reserved namespace must be refused")
+			var typed *AdapterLayoutError
+			require.ErrorAs(t, err, &typed)
+			assert.Equal(t, []string{"a.txt"}, typed.Members, "the refusal must name the member that asked for it")
+			assert.Equal(t, before, layoutTreeSnapshot(t, root), "a refused table leaves the staging tree untouched")
+		})
+	}
+}
+
+// TestRewriteExtractedTreeRefusesAnExistingSymlinkDestination is #422 item
+// 2's regression test. R2's guarantee - a failed rewrite leaves the staging
+// tree byte-identical - is keyed on MEMBERS, and relativeFileMembers lists
+// regular files only, so a symlink sitting at a destination is invisible to
+// the whole-table validation. os.Rename then replaces it and undo cannot
+// put it back. Anything at a destination that is not an absent path or a
+// regular file is refused before the first rename.
+func TestRewriteExtractedTreeRefusesAnExistingSymlinkDestination(t *testing.T) {
+	root, _ := layoutTestTree(t, map[string]string{"a.txt": "A", "real.txt": "R"})
+	require.NoError(t, os.Symlink(filepath.Join(root, "real.txt"), filepath.Join(root, "link.txt")))
+	before := layoutTreeSnapshot(t, root)
+
+	layout := adapter.NewLayout("hostile", map[string]string{"a.txt": "link.txt"})
+	_, err := rewriteExtractedTree(root, layout, []string{"a.txt", "real.txt"})
+
+	require.Error(t, err, "a destination naming an existing symlink must be refused")
+	var typed *AdapterLayoutError
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, []string{"a.txt"}, typed.Members)
+	assert.Equal(t, before, layoutTreeSnapshot(t, root), "the symlink and its target are both still there")
+	target, err := os.Readlink(filepath.Join(root, "link.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "real.txt"), target, "the symlink still points where it did")
 }

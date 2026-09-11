@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -673,7 +674,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 
 	mock := &compilerMockSource{mockSourceWithDownloads: newMockSourceWithDownloads("test-compiler")}
 	defer mock.Close()
-	svc.RegisterSource(mock)
+	registerCompileSource(svc, mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
@@ -735,7 +736,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 
 	mock := &compilerMockSource{mockSourceWithDownloads: newMockSourceWithDownloads("test-compiler")}
 	defer mock.Close()
-	svc.RegisterSource(mock)
+	registerCompileSource(svc, mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
@@ -1063,33 +1064,33 @@ func (m *mockSourceWithDownloads) Close() {
 	m.server.Close()
 }
 
-// compilerMockSource extends mockSourceWithDownloads with source.MergeCompiler
+// compilerMockSource extends mockSourceWithDownloads with adapter.MergeCompiler
 // so a single source instance can serve both of
 // TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzRetain's
 // real generations for the SAME file ID: a plain (non-.exmodz) download that
 // takes DownloadModToCache's ordinary copy path, and a later .exmodz
 // re-download that takes its validate+retain (#197) path.
 type compilerMockSource struct {
-	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+	fakeMergeFormat // #256: the format-vocabulary half of adapter.MergeCompiler
 	*mockSourceWithDownloads
 }
 
-// ValidateSource implements source.MergeCompiler minimally - confirms the
+// ValidateSource implements adapter.MergeCompiler minimally - confirms the
 // staged archive exists, mirroring service_icarus_compile_test.go's
 // fakeCompilerSource. Real .exmodz parsing is covered elsewhere
-// (internal/source/icarus).
+// (internal/adapter/icarus).
 func (s *compilerMockSource) ValidateSource(sourceFilePath string) error {
 	_, err := os.Stat(sourceFilePath)
 	return err
 }
 
 // MergeCompile is never exercised by this file's tests (they only drive
-// ingest, not a merge), but is required to satisfy source.MergeCompiler.
-func (s *compilerMockSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+// ingest, not a merge), but is required to satisfy adapter.MergeCompiler.
+func (s *compilerMockSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	return nil, nil, os.WriteFile(outputPath, []byte("merged"), 0o644)
 }
 
-var _ source.MergeCompiler = (*compilerMockSource)(nil)
+var _ adapter.MergeCompiler = (*compilerMockSource)(nil)
 
 // TestService_ModLifecycleFacade pins the Phase 3 Service boundary: callers
 // drive the full mod lifecycle via Service methods without ever reaching into

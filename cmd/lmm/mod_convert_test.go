@@ -35,7 +35,7 @@ func setupDoModConvertTest(t *testing.T) (*core.Service, *domain.Game, *fakeInst
 	// pak-kind fileIDs via the game's MergeCompiler source, so the
 	// registered "src" must implement it - wrapping the plain fake keeps
 	// callers stubbing through the returned inner fake (shared pointer).
-	svc.RegisterSource(&compilerInstallSource{fakeInstallSource: src})
+	registerCompileSource(svc, &compilerInstallSource{fakeInstallSource: src})
 
 	game := &domain.Game{
 		ID:          "g1",
@@ -124,7 +124,11 @@ func TestModConvertCommand(t *testing.T) {
 // the flag (for later when the game is reconfigured).
 func TestModConvertCommand_NonCompileGame(t *testing.T) {
 	svc, game, _ := setupDoModConvertTest(t)
-	game.DeployMode = domain.DeployCopy // Non-compile
+	// Non-compile DEPLOY MODE, with the compiling adapter still in place:
+	// since U2 (#412) those are two separate facts, and this test is about
+	// the first one. `mod convert` persists the flag either way and says so.
+	game.DeployMode = domain.DeployCopy
+	game.Adapter = testCompileAdapterID
 	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
 
 	out := captureStdout(t, func() error {

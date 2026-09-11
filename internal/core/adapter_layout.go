@@ -28,6 +28,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // archiveLayout asks game's adapter how members should be laid out inside
@@ -82,9 +83,8 @@ func slashMembers(members []string) []string {
 // tree byte-identical.
 //
 // Validation cannot predict EVERY reason a rename fails, though - a
-// destination that is an existing directory, or one nested under another
-// destination, are both refused by the kernel rather than by a rule - so
-// every move this executor performs is recorded and UNDONE when a later one
+// destination nested under another destination, an I/O error - so every
+// move this executor performs is recorded and UNDONE when a later one
 // fails (#411, R2). "A failed rewrite leaves the staging tree exactly as the
 // extractor left it" is therefore a property of the whole function, not only
 // of its typed refusals. Dropped members are moved into a scratch directory
@@ -272,9 +272,24 @@ func (x *layoutRewrite) discardScratch() {
 // applied to a path listing, for the plan half of an import. Plan and ingest
 // share the Layout, so a plan can never promise a path the ingest will
 // place somewhere else.
-func rewritePlannedPaths(layout adapter.Layout, paths []string) []string {
+//
+// It runs the SAME whole-table validation (#422 item 3), against the same
+// rules, so the two halves refuse identically: a plan must never promise
+// what Apply refuses. Before it did, a table mapping two members onto one
+// destination silently SHORTENED the rendered file list (the compaction
+// below), and a table naming "../escaped.txt", ".", "/abs/x.txt" or lmm's
+// reserved namespace rendered as if it were fine and blew up at Apply.
+//
+// The root is empty because there is no extracted tree yet, so the two
+// disk-dependent rules - symlinked ancestry, and what already sits at a
+// destination - are Apply's alone; so is a case-only collision, which is a
+// property of the staging filesystem rather than of the table.
+func rewritePlannedPaths(layout adapter.Layout, paths []string) ([]string, error) {
 	if !layout.Applies() {
-		return paths
+		return paths, nil
+	}
+	if err := validateLayoutTable("", layout, paths, false); err != nil {
+		return nil, err
 	}
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
@@ -285,11 +300,12 @@ func rewritePlannedPaths(layout adapter.Layout, paths []string) []string {
 		out = append(out, dest)
 	}
 	slices.Sort(out)
-	return slices.Compact(out)
+	return slices.Compact(out), nil
 }
 
-// containedIn refuses a rewritten member that would land outside root,
-// naming the member that asked for it.
+// containedIn refuses a rewritten member that would land outside root, or
+// on something the rewrite must not overwrite, naming the member that asked
+// for it.
 //
 // The lexical half (an absolute path, a leading "..") is not enough:
 // os.MkdirAll and os.Rename both FOLLOW symlinks, so a destination routed
@@ -298,6 +314,13 @@ func rewritePlannedPaths(layout adapter.Layout, paths []string) []string {
 // without a single ".." in its path. So the destination's existing ancestry
 // is resolved with filepath.EvalSymlinks and re-checked, which is the
 // stronger guarantee the extractor's own sanitizePath already gives.
+//
+// An EMPTY root selects the lexical rules only, which is the plan half of
+// #422 item 3: PlanImportArchive validates the same table against the same
+// rules before it renders it, but there is no extracted tree yet to resolve
+// ancestry against. Everything a plan can be refused for, it is refused for;
+// the two disk-dependent rules below are re-run at ingest, where the tree
+// exists.
 func containedIn(root, kind, member, rel string) error {
 	refuse := func(reason string) error {
 		return &AdapterLayoutError{Kind: kind, Reason: reason, Dest: rel, Members: []string{member}}
@@ -312,6 +335,31 @@ func containedIn(root, kind, member, rel string) error {
 	cleaned := filepath.Clean(filepath.FromSlash(rel))
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return refuse("destination escaping the cache entry")
+	}
+	// #422 item 1: lmm's own bookkeeping namespace is refused for an
+	// adapter destination exactly as the extractor refuses it for an
+	// archive member. A member rewritten to ".lmm-file-<fileID>" forges
+	// that file's cache completion marker, and a ".lmm-"-prefixed path
+	// hides itself from ListFiles - so the plan promises a path, the file
+	// never deploys, and the import reports success. Checked by SEGMENT,
+	// so a destination nested under a reserved DIRECTORY is refused too.
+	if hasReservedSegment(cleaned) {
+		return refuse("destination in lmm's reserved " + cache.ReservedPrefix + " namespace")
+	}
+	if root == "" {
+		return nil
+	}
+	// #422 item 2: R2's whole-function guarantee - a failed rewrite leaves
+	// the staging tree byte-identical - is keyed on MEMBERS, and the one
+	// listing both callers use returns regular files only. So a symlink
+	// sitting at a destination is invisible to the rest of this validation,
+	// os.Rename replaces it, and undo cannot restore it. Anything at a
+	// destination that is neither absent nor a regular file is refused
+	// before the first rename; an existing regular file is either another
+	// member (the chain rule catches it) or a leftover the rename may
+	// legitimately replace.
+	if info, lerr := os.Lstat(filepath.Join(root, cleaned)); lerr == nil && !info.Mode().IsRegular() {
+		return refuse("destination is an existing " + destKind(info))
 	}
 	ok, err := resolvesWithin(root, filepath.Dir(cleaned))
 	if errors.Is(err, errUnresolvableAncestor) {
@@ -328,6 +376,19 @@ func containedIn(root, kind, member, rel string) error {
 		return refuse("destination escaping the cache entry through a symlink")
 	}
 	return nil
+}
+
+// destKind names what is already sitting at a destination, for a refusal
+// that tells the adapter's author which rule it broke.
+func destKind(info os.FileInfo) string {
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		return "symlink"
+	case info.IsDir():
+		return "directory"
+	default:
+		return "irregular file"
+	}
 }
 
 // errUnresolvableAncestor reports that a component of a destination's
@@ -523,6 +584,10 @@ func (e *AdapterLayoutError) Error() string {
 // Containment is checked here as well, for the same reason: an escaping
 // destination discovered halfway down the table would otherwise leave the
 // members before it already moved.
+//
+// An EMPTY root is the PLAN caller (#422 item 3): every rule that is a
+// property of the table alone still runs, and containedIn skips the two
+// that need the extracted tree. See rewritePlannedPaths.
 func validateLayoutTable(root string, layout adapter.Layout, members []string, caseInsensitive bool) error {
 	sources := make(map[string]bool, len(members))
 	for _, m := range members {

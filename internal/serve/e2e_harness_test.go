@@ -57,6 +57,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/serve"
@@ -2218,7 +2219,7 @@ func newE2EFixtureWithAnUnlistedInstall(t *testing.T) e2eFixture {
 }
 
 // compileE2ESource is the browser harness's fakeSource plus
-// source.MergeCompiler, so a fixture game can be DeployCompile.
+// adapter.MergeCompiler, so a fixture game can be DeployCompile.
 //
 // Pak conversion is only meaningful for a game whose deploy mode compiles a
 // merged artifact AND whose mod has a retained file the compiler classifies
@@ -2230,8 +2231,23 @@ func newE2EFixtureWithAnUnlistedInstall(t *testing.T) e2eFixture {
 // pak, which is internal/source and internal/core's ground to cover.
 type compileE2ESource struct{ *fakeSource }
 
+// compileE2EAdapter presents compileE2ESource's format vocabulary as the
+// game's ADAPTER (#412).
+type compileE2EAdapter struct{ *compileE2ESource }
+
+func (*compileE2EAdapter) ID() string    { return "icarus" }
+func (*compileE2EAdapter) Label() string { return "Compile E2E adapter" }
+func (*compileE2EAdapter) NormalizeArchive(adapter.NormalizeRequest) (adapter.Layout, error) {
+	return adapter.Layout{}, nil
+}
+
+var (
+	_ adapter.GameAdapter   = (*compileE2EAdapter)(nil)
+	_ adapter.MergeCompiler = (*compileE2EAdapter)(nil)
+)
+
 func (*compileE2ESource) ValidateSource(string) error { return nil }
-func (*compileE2ESource) MergeCompile(context.Context, string, []source.MergeSource, string) ([]string, []source.MergeFailure, error) {
+func (*compileE2ESource) MergeCompile(context.Context, string, []adapter.MergeSource, string) ([]string, []adapter.MergeFailure, error) {
 	return nil, nil, nil
 }
 func (*compileE2ESource) ResolveBaseArtifact(*domain.Game) (string, error) { return "", nil }
@@ -2248,7 +2264,7 @@ func (*compileE2ESource) MergedArtifactName() string            { return "zzz_LM
 func (*compileE2ESource) MergedArtifactLabel() string           { return "Merged Pak" }
 func (*compileE2ESource) RestoredArtifactName(id string) string { return id + "_P.pak" }
 
-var _ source.MergeCompiler = (*compileE2ESource)(nil)
+var _ adapter.MergeCompiler = (*compileE2ESource)(nil)
 
 // newE2EFixtureWithAConvertibleMod is the world `lmm mod convert` acts on: a
 // DeployCompile game whose one installed mod carries a pak-kind retained
@@ -2267,6 +2283,10 @@ func newE2EFixtureWithAConvertibleMod(t *testing.T) e2eFixture {
 
 	src := &compileE2ESource{fakeSource: newFakeSource("fake")}
 	svc.RegisterSource(src)
+	// #412: since U2 the compile capability is the GAME's adapter, not a
+	// source the game maps. The `deploy_mode: compile` game below derives
+	// the name this registers under.
+	svc.RegisterAdapter(&compileE2EAdapter{compileE2ESource: src})
 
 	ctx := t.Context()
 	game := &domain.Game{

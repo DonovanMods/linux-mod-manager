@@ -3,7 +3,7 @@
 // "where the bytes came from".
 //
 // The seam already existed before this package - spelled three different
-// ways and hung off the wrong noun. source.MergeCompiler made compilation a
+// ways and hung off the wrong noun. adapter.MergeCompiler made compilation a
 // property of a source, so an Icarus .pak downloaded from NexusMods could
 // not compile; archive layout was a bool parameter threaded through core;
 // .EXMODZ's wrapper strip lived inside a format parser. Each is really a
@@ -35,7 +35,6 @@ import (
 	"path"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // GenericID is the adapter every game gets when games.yaml says nothing:
@@ -278,28 +277,125 @@ type Guide interface {
 	Guidance(g *domain.Game) []GuidanceNote
 }
 
-// MergeCompiler is the optional capability for a game whose compile-eligible
-// files must be merged across every enabled mod into ONE profile-level
-// artifact (#197).
+// MergeCompiler is the optional capability of an adapter whose
+// compile-eligible files must be merged across every enabled mod into ONE
+// profile-level artifact rather than compiled per-mod (#197: Icarus's
+// cross-mod table merge - a whole-pak last-wins deploy would silently drop
+// one mod's table rows whenever two mods patch the same table).
 //
-// It is source.MergeCompiler, unchanged and unmoved: U1 wires the seam
-// without moving any implementation, so the alias lets internal/core
-// type-assert the ADAPTER for the capability while internal/source/icarus
-// keeps satisfying it untouched. U2 moves the declaration (and
-// MergeSource/MergeFailure with it) into this package when the Icarus
-// implementation moves, per design §4 - at which point the alias becomes
-// the definition and internal/source loses the type.
-type MergeCompiler = source.MergeCompiler
+// It was adapter.MergeCompiler until U2 (#412), which is the mistake #353
+// exists to correct: compilation was a property of WHERE THE BYTES CAME
+// FROM, so an Icarus .pak downloaded from NexusMods could not compile while
+// the same file from Project Daedalus could. It is a property of the GAME,
+// and this is the noun that says so. The declaration moved here unchanged
+// but for that framing; internal/source no longer has it.
+//
+// This interface is the complete contract a DeployCompile game must
+// implement (#256): the merge operations (ValidateSource, MergeCompile)
+// plus the format vocabulary core needs to orchestrate them without knowing
+// the game's artifact format itself - where the base artifact lives
+// (ResolveBaseArtifact), how to fingerprint it (FingerprintBase), which
+// files are the adapter's native merge format (IsNativeMergeSource), which
+// are convertible raw artifacts (IsConvertibleArtifact,
+// ClassifyMergeSource), what the merged output is called
+// (MergedArtifactName, MergedArtifactLabel), and what a healed raw-fallback
+// copy is called (RestoredArtifactName). A second compile-mode game is
+// a new package under internal/adapter implementing these methods plus one
+// registration line; internal/core never changes.
+type MergeCompiler interface {
+	// ValidateSource parses/validates sourceFilePath (the retained,
+	// not-yet-merged source archive) without compiling anything - called at
+	// ingest time (download/import) so a malformed archive fails loud
+	// immediately rather than at the next merge.
+	ValidateSource(sourceFilePath string) error
+
+	// MergeCompile applies every entry in sources, in order (profile load
+	// order), against the base artifact's tables, and writes the merged
+	// result to outputPath. Returns non-fatal warnings (e.g. same-path
+	// asset collisions - last-applied wins) alongside a nil error; a nil
+	// error with warnings is still a fully-written, deployable artifact.
+	// Convertible-kind sources that cannot be converted are skipped per-mod
+	// and reported in failed (#221) - only native-source errors and I/O
+	// failures are fatal.
+	MergeCompile(ctx context.Context, baseArtifactPath string, sources []MergeSource, outputPath string) (warnings []string, failed []MergeFailure, err error)
+
+	// ResolveBaseArtifact locates the installed game's base artifact - the
+	// input every merge applies against (Icarus: the game's own
+	// Content/Data/data.pak). Errors when the artifact cannot be found
+	// under the game's install path.
+	ResolveBaseArtifact(game *domain.Game) (string, error)
+
+	// FingerprintBase returns an opaque fingerprint of the base artifact at
+	// baseArtifactPath: cheap to compute, changing exactly when the base
+	// content changes. Core stores it in merge fingerprints to detect a
+	// game-update-invalidated merge; it never interprets the value.
+	FingerprintBase(baseArtifactPath string) (string, error)
+
+	// IsNativeMergeSource reports whether fileName names this adapter's
+	// NATIVE merge-source format (Icarus: a ".exmodz" archive) - the diff
+	// format MergeCompile consumes directly, with no other valid
+	// interpretation at ingest. Pure format test, the mirror of
+	// IsConvertibleArtifact - core owns the DeployCompile policy gates and
+	// routes native files into validate+retain instead of extract/copy.
+	IsNativeMergeSource(fileName string) bool
+
+	// IsConvertibleArtifact reports whether fileName names a raw, prebuilt
+	// game artifact this adapter can convert into a merge source (#221;
+	// Icarus: a ".pak" file). Pure format test - core owns the
+	// DeployCompile/ConvertPaks policy gates that decide whether such a
+	// file actually enters the merge-convert pipeline.
+	IsConvertibleArtifact(fileName string) bool
+
+	// ClassifyMergeSource maps a retained-source identity - a fileID, an
+	// imported archive's filename, or a Kind string previously recorded on
+	// a merge fingerprint - to the adapter-defined kind string core
+	// round-trips (MergeSource.Kind, fingerprint entries) and whether that
+	// kind is a convertible raw artifact (subject to the ConvertPaks
+	// opt-out and per-mod conversion outcomes) as opposed to the adapter's
+	// native mergeable format. Must accept the empty string (legacy
+	// fingerprints recorded no Kind) and classify it as the native kind.
+	ClassifyMergeSource(id string) (kind string, convertible bool)
+
+	// MergedArtifactName names the single merged output artifact core
+	// deploys into the game's mod directory. The name is a deploy contract:
+	// it must stay stable across merges (core stats/replaces it by name),
+	// and any load-order significance it carries (Icarus: sorts last so it
+	// wins) is entirely the adapter's concern.
+	MergedArtifactName() string
+
+	// MergedArtifactLabel is the user-facing display name for the merged
+	// artifact's synthetic mod row (verify/update output).
+	MergedArtifactLabel() string
+
+	// RestoredArtifactName names the deployable raw-fallback copy core
+	// synthesizes when healing a prune-damaged cache entry whose original
+	// artifact name is unrecoverable (#250; Icarus: "<modID>_P.pak").
+	// Deterministic per mod - the same mod must always restore to the same
+	// name, since the name is on-disk state existing installs depend on.
+	// Core passes a path-safe (Base'd) modID and uses the result as a
+	// filename within the mod's own cache entry.
+	RestoredArtifactName(modID string) string
+}
 
 // MergeSource identifies one mod's contribution to a merge, in the order it
-// must be applied. Aliased from internal/source for the reason MergeCompiler
-// is; it moves here in U2.
-type MergeSource = source.MergeSource
+// must be applied (profile load order). Moved here from internal/source in
+// U2 (#412) with MergeCompiler.
+type MergeSource struct {
+	ModRef     string // "sourceID:modID" - machine identity (MergeFailure, ownership tracking)
+	ModName    string // display name preferred over ModRef in user-facing warnings; may be empty
+	SourcePath string // the retained source archive to read (native diff, or a convertible raw artifact - #221)
+	Kind       string // adapter-defined kind from ClassifyMergeSource; empty means the adapter's native kind (#256)
+}
 
-// MergeFailure records one source that could not participate in a merge.
-// Aliased from internal/source for the reason MergeCompiler is; it moves
-// here in U2.
-type MergeFailure = source.MergeFailure
+// MergeFailure records one mod's source archive that could not participate in a merge
+// (#221: an irreconcilable pak). Moved here from internal/source in U2
+// (#412) with MergeCompiler. The merge itself still succeeds - the
+// failed mod is skipped and falls back to raw deploy; core uses this list
+// to reconcile cache manifests and record outcomes in the fingerprint.
+type MergeFailure struct {
+	ModRef string
+	Reason string
+}
 
 // ErrNotAMod is the refusal an adapter makes for an archive that is the
 // loader or the base game rather than a mod for it (#358's framework-pack

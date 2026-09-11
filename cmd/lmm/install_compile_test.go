@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/go-unrealpak"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,13 +26,13 @@ func writeFakeBasePak(t *testing.T, path string) {
 	require.NoError(t, w.Close())
 }
 
-// compilerInstallSource wraps fakeInstallSource with a source.MergeCompiler
+// compilerInstallSource wraps fakeInstallSource with a adapter.MergeCompiler
 // implementation, so `lmm install` can drive a real DeployCompile game
 // end-to-end through the CLI's exact console-output path (mirrors
 // internal/core/service_icarus_compile_test.go's fakeCompilerSource, at the
 // CLI layer instead of core's).
 type compilerInstallSource struct {
-	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+	fakeMergeFormat // #256: the format-vocabulary half of adapter.MergeCompiler
 	*fakeInstallSource
 	validateCalls int
 	compileCalls  int
@@ -42,7 +42,7 @@ type compilerInstallSource struct {
 
 // ValidateSource confirms the archive exists - this test only asserts the
 // CLI announces the retain step, not that real .exmodz parsing happens
-// (internal/source/icarus's own tests cover that).
+// (internal/adapter/icarus's own tests cover that).
 func (s *compilerInstallSource) ValidateSource(sourceFilePath string) error {
 	s.validateCalls++
 	_, err := os.Stat(sourceFilePath)
@@ -53,7 +53,7 @@ func (s *compilerInstallSource) ValidateSource(sourceFilePath string) error {
 // prove a merge/regen actually happened and used the retained content,
 // without needing a real base pak table to patch (mirrors
 // internal/core/service_icarus_compile_test.go's fakeCompilerSource).
-func (s *compilerInstallSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *compilerInstallSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	s.compileCalls++
 	if s.mergeErr != nil {
 		return nil, nil, s.mergeErr
@@ -94,7 +94,7 @@ func TestDoInstall_DeployCompile_AnnouncesRetaining(t *testing.T) {
 	// Re-register under the same ID so doInstall's resolved source is the
 	// merge-compiler-capable wrapper, not the plain fake registered by
 	// setupDoInstallTest.
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "main", Name: "Bear Mount", FileName: "Bear_Mount.exmodz", IsPrimary: true, Category: "MAIN"}})
@@ -133,7 +133,7 @@ func TestBatchInstallMods_DeployCompile_DeploysMergedPak(t *testing.T) {
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 	// SyncMergedPak resolves the game's configured sources (mergeCompilerSourceForGame
 	// -> SourcesForGame), which requires the game to be registered - the
 	// production CLI always has this via withGameService's svc.GetGame,
@@ -179,7 +179,7 @@ func TestBatchInstallMods_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *tes
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	bearMod := &domain.Mod{ID: "bear-mount", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"}
@@ -226,7 +226,7 @@ func TestDoInstall_DeployCompile_SyncFailure_PrintsLoudly(t *testing.T) {
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "main", Name: "Bear Mount", FileName: "Bear_Mount.exmodz", IsPrimary: true, Category: "MAIN"}})
@@ -270,7 +270,7 @@ func TestDoInstallBatch_DeployCompile_DeploysMergedPak(t *testing.T) {
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Wolf Mount", Version: "1.0", GameID: "g1"}
 	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1",
@@ -312,7 +312,7 @@ func TestDoInstallBatch_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *testi
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Wolf Mount", Version: "1.0", GameID: "g1"}
 	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1",
@@ -341,12 +341,12 @@ func TestDoInstallBatch_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *testi
 }
 
 // TestDoDeploy_DeployCompile_ConversionFailureSurfaces is the #221 deploy-
-// flow pin: a pak-conversion failure (source.MergeFailure) discovered by
+// flow pin: a pak-conversion failure (adapter.MergeFailure) discovered by
 // DeployProfile's own end-of-loop SyncMergedPak call (internal/core/deploy.go)
 // must reach the user, not get swallowed by any phase in between. Drives the
 // REAL doDeploy CLI seam with a MergeCompiler that fails one enabled pak
 // mod's conversion, and proves the resulting "... pak conversion failed:
-// ... - deploying raw" warning (the same text internal/source/icarus/merge.go
+// ... - deploying raw" warning (the same text internal/adapter/icarus/merge.go
 // emits for a real failure) lands on stderr via core.DeployWarning.
 func TestDoDeploy_DeployCompile_ConversionFailureSurfaces(t *testing.T) {
 	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
@@ -359,7 +359,7 @@ func TestDoDeploy_DeployCompile_ConversionFailureSurfaces(t *testing.T) {
 		compilerInstallSource: compiler,
 		failRefs:              map[string]string{"fake-compiler:" + modID: "table X not present in current base"},
 	}
-	svc.RegisterSource(outcome)
+	registerCompileSource(svc, outcome)
 
 	deployProfile = "default"
 	t.Cleanup(func() { deployProfile = "" })

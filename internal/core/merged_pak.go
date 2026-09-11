@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
@@ -58,7 +58,7 @@ type MergedFingerprintEntry struct {
 	FailReason string `json:",omitempty"`
 }
 
-// mergeSourceClassifier is the one sliver of source.MergeCompiler the
+// mergeSourceClassifier is the one sliver of adapter.MergeCompiler the
 // package-level fingerprint helpers need: ClassifyMergeSource as a function
 // value (a method value like mc.ClassifyMergeSource assigns directly).
 // Kept narrow so the helpers stay pure and tests can exercise fingerprint
@@ -86,7 +86,7 @@ func (s *Service) ModHasPakMergeSource(game *domain.Game, mod *domain.InstalledM
 	if game == nil || mod == nil {
 		return false
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return false
 	}
@@ -180,7 +180,7 @@ func mergedFingerprintsEqual(a, b MergedFingerprint, classify mergeSourceClassif
 // while an import-compiled entry's is keyed by its own archive filename
 // (see Task 2/3's ingest branches) - FileIDs is the one list that already
 // carries whichever identity applies, for either origin.
-func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, profileName string) ([]source.MergeSource, error) {
+func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, profileName string) ([]adapter.MergeSource, error) {
 	mods, err := s.GetInstalledModsInProfileOrder(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile mods: %w", err)
@@ -193,8 +193,8 @@ func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, pr
 	// exactly as it did pre-#256 - even for a game whose MergeCompiler
 	// source isn't configured (syncMergedPak's uninstall-to-zero path runs
 	// unconditionally from every mutation flow).
-	var mc source.MergeCompiler
-	var sources []source.MergeSource
+	var mc adapter.MergeCompiler
+	var sources []adapter.MergeSource
 	for _, mod := range mods {
 		if !mod.Enabled {
 			continue
@@ -206,7 +206,7 @@ func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, pr
 			}
 			if mc == nil {
 				var mcErr error
-				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+				if mc, mcErr = s.adapterCompiler(game); mcErr != nil {
 					return nil, mcErr
 				}
 			}
@@ -214,7 +214,7 @@ func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, pr
 			if convertible && (!game.ConvertPaks || !mod.ConvertPaks) {
 				continue // opted out (game- or mod-level): stays raw-deployed (#221)
 			}
-			sources = append(sources, source.MergeSource{
+			sources = append(sources, adapter.MergeSource{
 				ModRef:     mod.SourceID + ":" + mod.ID,
 				ModName:    mod.Name,
 				SourcePath: retainedPath,
@@ -282,7 +282,7 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	// already consulted it to classify them), so resolving here - earlier
 	// than pre-#256, which only needed the source on the slow path below -
 	// cannot newly fail a flow that used to succeed.
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +434,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 	// source - the retained-stat therefore runs BEFORE classification,
 	// flipping the pre-#256 order of two independent, side-effect-free
 	// filters.
-	var mc source.MergeCompiler
+	var mc adapter.MergeCompiler
 	for i := range mods {
 		mod := &mods[i]
 		if !mod.Enabled {
@@ -448,7 +448,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 			}
 			if mc == nil {
 				var mcErr error
-				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+				if mc, mcErr = s.adapterCompiler(game); mcErr != nil {
 					return warnings, mcErr
 				}
 			}
@@ -650,7 +650,7 @@ func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]stri
 // ingest keys fileIDs, which is uniform across games - while both format
 // questions inside it are the source's. Both inputs are
 // source-controlled, so both are Base'd before use as a path component.
-func rawPakRestoreName(mc source.MergeCompiler, fileID, modID string) string {
+func rawPakRestoreName(mc adapter.MergeCompiler, fileID, modID string) string {
 	base := filepath.Base(fileID)
 	if mc.IsConvertibleArtifact(base) {
 		return base
@@ -667,7 +667,7 @@ func rawPakRestoreName(mc source.MergeCompiler, fileID, modID string) string {
 // (rawPakMembers just matched nothing), and it could be a sibling fileID's
 // claimed member - failing loudly beats corrupting it, and the next
 // reconcile pass retries.
-func restoreRawPakCopy(mc source.MergeCompiler, versionDir, retainedPath, fileID, modID string) (string, error) {
+func restoreRawPakCopy(mc adapter.MergeCompiler, versionDir, retainedPath, fileID, modID string) (string, error) {
 	name := rawPakRestoreName(mc, fileID, modID)
 	target := filepath.Join(versionDir, name)
 	if _, err := os.Stat(target); err == nil {
@@ -734,7 +734,7 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 	gameCache := s.GetGameCache(game)
 	// Lazily resolved on the first retained file found, exactly like
 	// enabledMergeSources/reconcilePakManifests (#256).
-	var mc source.MergeCompiler
+	var mc adapter.MergeCompiler
 	classes := make(map[string]DeployModClass, len(mods))
 	for _, mod := range mods {
 		ref := domain.ModKey(mod.SourceID, mod.ID)
@@ -752,8 +752,8 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 			}
 			if mc == nil {
 				var mcErr error
-				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
-					s.logger().Warn("resolving compile source failed while classifying compile deploy mods", "game_id", game.ID, "file_id", fileID, "err", mcErr)
+				if mc, mcErr = s.adapterCompiler(game); mcErr != nil {
+					s.logger().Warn("resolving the compile adapter failed while classifying compile deploy mods", "game_id", game.ID, "file_id", fileID, "err", mcErr)
 					return classes
 				}
 			}
@@ -787,7 +787,7 @@ func (s *Service) recordMergeOutcome(ctx context.Context, game *domain.Game, pro
 	if !ok {
 		return
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return
 	}
@@ -819,7 +819,7 @@ func (s *Service) mergedPakOutcomes(ctx context.Context, game *domain.Game, prof
 	if !ok {
 		return nil, false
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return nil, false
 	}
@@ -867,7 +867,7 @@ func (s *Service) PakNeedsReingest(ctx context.Context, game *domain.Game, mod *
 	if game.DeployMode != domain.DeployCompile || !game.ConvertPaks || !mod.ConvertPaks {
 		return false, nil
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return false, err
 	}
@@ -913,7 +913,7 @@ func readMergedFingerprint(cachePath string) (fp MergedFingerprint, ok bool) {
 // error) when there is nothing to merge - callers distinguish "nothing to
 // do" from "failed to compute" via the returned slice's length, exactly
 // like syncMergedPak's own zero-sources branch does.
-func (s *Service) currentMergedFingerprint(ctx context.Context, game *domain.Game, profileName string) (MergedFingerprint, []source.MergeSource, error) {
+func (s *Service) currentMergedFingerprint(ctx context.Context, game *domain.Game, profileName string) (MergedFingerprint, []adapter.MergeSource, error) {
 	sources, err := s.enabledMergeSources(ctx, game, profileName)
 	if err != nil {
 		return MergedFingerprint{}, nil, fmt.Errorf("listing enabled merge sources: %w", err)
@@ -924,7 +924,7 @@ func (s *Service) currentMergedFingerprint(ctx context.Context, game *domain.Gam
 
 	// Non-empty sources imply enabledMergeSources already resolved the
 	// compile source, so this cannot newly fail (#256).
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return MergedFingerprint{}, sources, err
 	}
@@ -987,7 +987,7 @@ func (s *Service) CheckMergedPakStaleness(ctx context.Context, game *domain.Game
 
 	// Non-empty sources imply currentMergedFingerprint already resolved the
 	// compile source, so this cannot newly fail (#256).
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return nil, err
 	}
@@ -1052,7 +1052,7 @@ func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 	// only the compile source knows (#256), and a regen request for a game
 	// without one is a misconfiguration worth failing loud on before
 	// touching anything.
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return result, err
 	}
@@ -1152,7 +1152,7 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		s.logger().Warn("resolving merge compiler failed while planning an uninstall",
 			"game_id", game.ID, "err", err)
@@ -1226,7 +1226,7 @@ func (s *Service) mergedArtifactEffectForPurge(game *domain.Game) *MergedArtifac
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		s.logger().Warn("resolving merge compiler failed while planning a purge",
 			"game_id", game.ID, "err", err)
@@ -1269,7 +1269,7 @@ func (s *Service) mergedArtifactEffectForImport(ctx context.Context, game *domai
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		s.logger().Warn("resolving merge compiler failed while planning an import",
 			"game_id", game.ID, "err", err)

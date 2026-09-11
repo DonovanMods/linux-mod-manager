@@ -28,7 +28,7 @@ func newModDetailTestService(t *testing.T) (*core.Service, *domain.Game, *mockSo
 		SourceIDs: map[string]string{"fake-compiler": "testgame"}}
 	src := newMockSource("src")
 	svc.RegisterSource(src)
-	svc.RegisterSource(&fakeCompilerSource{})
+	registerCompileSource(svc, &fakeCompilerSource{})
 	return svc, game, src
 }
 

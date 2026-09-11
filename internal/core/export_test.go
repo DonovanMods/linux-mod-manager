@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"path/filepath"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // Test-only accessors for package core_test. This file is compiled only into
@@ -36,7 +36,7 @@ func (s *Service) GetInstallerForTest(game *domain.Game) *Installer {
 }
 
 // EnabledMergeSourcesForTest exposes enabledMergeSources.
-func (s *Service) EnabledMergeSourcesForTest(ctx context.Context, game *domain.Game, profileName string) ([]source.MergeSource, error) {
+func (s *Service) EnabledMergeSourcesForTest(ctx context.Context, game *domain.Game, profileName string) ([]adapter.MergeSource, error) {
 	return s.enabledMergeSources(ctx, game, profileName)
 }
 

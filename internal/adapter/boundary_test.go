@@ -19,6 +19,7 @@ const modulePrefix = "github.com/DonovanMods/linux-mod-manager/v2/"
 // line here is caught by TestEveryAdapterPackageIsChecked below.
 var adapterPackages = []string{
 	"internal/adapter",
+	"internal/adapter/icarus",
 }
 
 // allowedImports are the intra-module packages an adapter package may
@@ -26,12 +27,13 @@ var adapterPackages = []string{
 //
 // internal/domain is the vocabulary; internal/adapter is the seam itself
 // (a concrete adapter subpackage imports it; the identity adapter IS it).
-// internal/source is on the list ONLY for the merge primitives U1 aliases
-// rather than moves (adapter.MergeCompiler/MergeSource/MergeFailure are
-// still source's declarations, so that internal/source/icarus keeps
-// satisfying the interface untouched until U2 moves it); a concrete adapter
+// That is the whole list. internal/source was on it for U1 only, while
+// adapter.MergeCompiler/MergeSource/MergeFailure were still aliases of
+// source's declarations; U2 (#412) moved those declarations here with the
+// Icarus implementation, and the entry went with them. A concrete adapter
 // must not reach for a source of its own - a source is where bytes come
-// from, an adapter is what a game does with them.
+// from, an adapter is what a game does with them, and the Icarus split is
+// the proof they are different questions.
 //
 // internal/core is the violation this whole design exists to prevent, and
 // TestAdapterPackagesNeverImportCore asserts its absence by name so the
@@ -39,7 +41,6 @@ var adapterPackages = []string{
 var allowedImports = []string{
 	"internal/adapter",
 	"internal/domain",
-	"internal/source",
 }
 
 // checkBoundary returns one message per intra-module import of pkg that is
@@ -172,8 +173,9 @@ func TestEveryAdapterPackageIsChecked(t *testing.T) {
 //
 // It lives here, beside the rule's other half, rather than in a
 // core-side boundary test of its own: the two halves are one rule, and a
-// reader who finds one should find the other. U2 introduces the first
-// subpackage, so this ratchets before there is anything to catch.
+// reader who finds one should find the other. Since U2 (#412) there IS a
+// subpackage to catch: internal/app registers internal/adapter/icarus, and
+// core resolves it through the registry without naming it.
 func TestCoreImportsTheSeamNeverAnAdapter(t *testing.T) {
 	const seam = modulePrefix + "internal/adapter"
 

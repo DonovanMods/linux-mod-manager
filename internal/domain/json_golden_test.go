@@ -304,6 +304,28 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #412: a curated entry that names the game's ADAPTER. Only a
+			// curated entry can - nothing on disk says what a game does
+			// with mod content - so `adapter` is absent from every other
+			// detect document (omitempty), which is what keeps the goldens
+			// above byte-identical. Icarus carries `deploy_mode: compile`
+			// beside it: the two coexist for 2.0 (design OQ1), and the
+			// catalog states the adapter rather than relying on the
+			// migration.
+			"detected_game_adapter",
+			domain.DetectedGame{
+				SteamAppID:  "1149460",
+				Slug:        "icarus",
+				Name:        "Icarus",
+				InstallPath: "/home/user/.steam/steam/steamapps/common/Icarus",
+				ModPath:     "/home/user/.steam/steam/steamapps/common/Icarus/Icarus/Content/Paks/mods",
+				DeployMode:  "compile",
+				Adapter:     "icarus",
+				Sources:     map[string]string{"icarus": "icarus"},
+				Known:       true,
+			},
+		},
+		{
 			// #269's detection prefill: an app whose appworkshop manifest
 			// declares installed items gets `steamworkshop: <appid>` added
 			// to its sources map, and the item count that justified it.

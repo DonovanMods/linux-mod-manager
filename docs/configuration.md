@@ -89,7 +89,7 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 | `cache_path`   | string | no       | Per-game cache directory override                                     |
 | `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                   |
 | `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile` |
-| `adapter`      | string | no       | Game adapter: `generic-files` (default) — see below                   |
+| `adapter`      | string | no       | Game adapter: `generic-files` (default) or `icarus` — see below        |
 
 #### `mod_path` and relative values
 
@@ -145,9 +145,23 @@ whether the game's mods have to be compiled into one artifact, and what
   deployed by the linker, and nothing extra is checked. This is what every
   game lmm managed before adapters existed, and leaving the key out keeps
   that behaviour byte-for-byte.
+- **`icarus`**: Icarus's compile path. It merges every enabled mod's
+  `.EXMODZ` table diffs (and, with `convert_paks`, its prebuilt `.pak`
+  artifacts) against the installed game's own `data.pak` into ONE merged
+  artifact, so two mods patching the same table both take effect instead of
+  one silently winning. It is what `deploy_mode: compile` has always done;
+  naming the adapter is the durable way to ask for it.
 
-lmm ships one adapter today; the ones that follow are added in the same
-tree, so `lmm game list` always names what this build actually has:
+  > `icarus` names both a mod SOURCE (`sources:`) and this adapter
+  > (`adapter:`). They are different keys and different jobs — the source
+  > is where a mod's bytes come from (Project Daedalus), the adapter is
+  > what the game does with them — and a game can use either without the
+  > other. Since lmm 2.0 an Icarus `.pak` downloaded from NexusMods
+  > compiles exactly like one from Project Daedalus, because the adapter
+  > decides, not the source.
+
+The adapters that follow are added in the same tree, so `lmm game list`
+always names what this build actually has:
 
 ```bash
 lmm game list                           # the ADAPTER column names each game's
@@ -172,7 +186,8 @@ adapter composes with either.
 property of the *game*, which is what an adapter is for. So:
 
 - A game with `deploy_mode: compile` and no `adapter:` key keeps working
-  with no change on your part; lmm derives the compiling adapter for it.
+  with no change on your part; lmm derives `adapter: icarus` for it, in
+  memory only.
 - An explicit `adapter:` always wins over that derivation.
 - An EXPLICIT `adapter:` that cannot compile, together with `deploy_mode:
   compile`, is refused when lmm resolves the game, naming both keys. The

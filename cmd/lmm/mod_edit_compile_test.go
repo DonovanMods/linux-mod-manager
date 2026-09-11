@@ -34,7 +34,7 @@ func TestDoModEdit_DeployCompile_VersionEditSyncsMergedPak(t *testing.T) {
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	game := &domain.Game{
 		ID: "icarus", Name: "Icarus", InstallPath: installDir, ModPath: t.TempDir(),

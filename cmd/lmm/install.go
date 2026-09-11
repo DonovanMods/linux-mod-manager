@@ -640,7 +640,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// backstop core.ApplyInstall applies to plan.Files right before this
 	// override (internal/core/install.go).
 	validateFileSelection := func(sel []domain.DownloadableFile) error {
-		return service.ValidateInstallFileSelection(game, plan.SourceID, sel)
+		return service.ValidateInstallFileSelection(game, sel)
 	}
 	selectedFiles, err := selectInstallFiles(files, validateFileSelection)
 	if err != nil {
