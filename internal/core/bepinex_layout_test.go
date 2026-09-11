@@ -518,3 +518,51 @@ func TestBepInExLayout_APluginFolderIsStillShapeFOnARealGameRoot(t *testing.T) {
 		assert.True(t, layout.Applies(), "the rules still work with nothing to compare against")
 	})
 }
+
+// TestBepInExLayout_ABepInExRootWithSiblingsIsReported is #424 review
+// finding 2. `BepInEx` is the one name BepInEx owns that shape F's
+// owned-name refusal never reached: bepinexRootHas short-circuits the whole
+// switch, so `BepInEx/patchers/Pre.dll` beside `Jotunn/Jotunn.dll`
+// classified as shape A and the plugin folder deployed into the game root -
+// #424's own bug, on a game that DOES declare the loader, with no warning
+// anywhere.
+//
+// A root carrying BepInEx/ AND something else is the same half-recognised
+// archive the other three mixed roots already refuse, so it gets the same
+// answer: reported, deployed exactly as listed, never guessed at.
+func TestBepInExLayout_ABepInExRootWithSiblingsIsReported(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		members []string
+	}{
+		{"a plugin folder beside BepInEx/", []string{
+			"BepInEx/patchers/Pre.dll", "Jotunn/Jotunn.dll",
+		}},
+		{"a BepInEx-relative root beside BepInEx/", []string{
+			"BepInEx/plugins/A.dll", "plugins/B.dll",
+		}},
+		{"a loose file beside BepInEx/", []string{
+			"BepInEx/plugins/A.dll", "install-by-hand.txt",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			layout, err := bepinexNormalise(tc.members, "Mod", true, "")
+			require.NoError(t, err)
+			assert.False(t, layout.Applies(),
+				"BepInEx/ beside another root entry is a layout lmm cannot read")
+			assert.Equal(t, bepinexShapeNone, layout.Shape)
+			require.Len(t, layout.Warnings, 1)
+			assert.Contains(t, layout.Warnings[0], "did not recognise")
+		})
+	}
+}
+
+// ...and the framework refusal still wins over it: an archive that IS the
+// loader must be refused whatever else rides along at its root, or the
+// safety check could be walked past by adding one file.
+func TestBepInExLayout_AFrameworkPackWithSiblingsIsStillRefused(t *testing.T) {
+	_, err := bepinexNormalise([]string{
+		"BepInEx/core/BepInEx.Preloader.dll", "Jotunn/Jotunn.dll",
+	}, "Pack", true, "")
+	assert.ErrorIs(t, err, ErrBepInExFrameworkPack)
+}

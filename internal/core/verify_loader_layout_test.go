@@ -304,3 +304,55 @@ func TestVerify_LoaderTier_AGameOwnedDirectoryIsNeverMisplaced(t *testing.T) {
 	assert.Equal(t, before, gameTreeForTest(t, game.InstallPath),
 		"--fix must not move the game's own assembly under BepInEx/plugins/")
 }
+
+// TestVerify_LoaderTier_TheRemedyDoesNotReproduceTheProblem is #424 review
+// finding 2's second half. An archive whose root carries `BepInEx/` beside
+// a plugin folder deploys that folder into the game root; the finding
+// reports it as not fixable and used to name "re-import the archive (or
+// reinstall the mod) so the layout rules run over a fresh copy of it" - a
+// remedy that re-runs the identical ingest and reproduces the identical
+// deployment. A permanent dead end for the user.
+//
+// The re-import is performed here rather than argued about, so the remedy
+// this row names can never drift back to one that does nothing.
+func TestVerify_LoaderTier_TheRemedyDoesNotReproduceTheProblem(t *testing.T) {
+	svc, game := newBepInExDeclaredService(t)
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapProton, time.Now())
+
+	archivePath := filepath.Join(t.TempDir(), "Sibling-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"BepInEx/patchers/Pre.dll": "patcher",
+		"Jotunn/Jotunn.dll":        "assembly",
+	})
+
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Warnings, "a root lmm cannot read is never placed silently")
+	assert.Contains(t, plan.Warnings[0], "did not recognise")
+
+	_, err = svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{SourceID: domain.SourceLocal, ModID: "77", Force: true}, nil)
+	require.NoError(t, err)
+	deployed := gameTreeForTest(t, game.InstallPath)
+	require.Contains(t, deployed, "Jotunn/Jotunn.dll")
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	f := findingWithStatus(res.Result, "loader_deployed_outside_loader")
+	require.NotNil(t, f, "statuses were %v", findingStatuses(res.Result))
+	require.False(t, f.Fixable, "lmm cannot place this layout on its own")
+
+	// The same archive, imported again, lands in exactly the same place...
+	_, err = svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{SourceID: domain.SourceLocal, ModID: "77", Force: true}, nil)
+	require.NoError(t, err)
+	require.Equal(t, deployed, gameTreeForTest(t, game.InstallPath),
+		"re-importing the same archive reproduces the deployment")
+
+	// ...so the remedy must not be "re-import it and the rules will run".
+	assert.NotContains(t, f.FixableReason, "so the layout rules run over a fresh copy")
+	assert.Contains(t, f.FixableReason, "BepInEx/plugins/",
+		"the remedy has to name where the files actually have to go")
+}

@@ -1192,7 +1192,8 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   none of them a name BepInEx owns, moves whole and keeps its own name, so
   the `.pdb`, `.xml` and README stay beside the assembly. A root that mixes
   a plugin folder with loose files, with a directory holding no assembly,
-  or with a BepInEx-owned name is reported as a layout lmm cannot place,
+  with a BepInEx-owned name, or with `BepInEx/` itself is reported as a
+  layout lmm cannot place,
   never guessed at, and 7 Days to Die's `Mods/<Mod>/<Mod>.dll` is untouched
   on a game that has no BepInEx. Nor is one of the game's own directories
   ever mistaken for a plugin folder: for a BepInEx game the archive root
@@ -1220,8 +1221,11 @@ bepinex` when the installation is what answered, and stops refusing an
   the game directory all agree with each other and the plugin still loads
   nothing. `--fix` re-lays that mod's cache entry out through the layout
   rules and re-deploys it, in every profile that shares the entry; when the
-  entry is a layout lmm cannot place on its own, the row says so and points
-  at re-importing the archive rather than claiming a repair it cannot make.
+  entry is a layout lmm cannot place on its own, the row says so and names
+  what has to change - move the files under `BepInEx/plugins/` inside the
+  archive and re-import it - rather than claiming a repair it cannot make,
+  or pointing at a re-import of the same archive that would lay it out the
+  same way again.
   The loader tier's findings are also printed by `lmm verify` at last —
   they were counted in the summary and never shown, so a text-mode run said
   "1 issue(s)" with nothing to read.

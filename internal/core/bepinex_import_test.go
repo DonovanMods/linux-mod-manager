@@ -542,6 +542,31 @@ func TestPlanImportArchive_BepInEx_AMixedRootIsReportedNotGuessed(t *testing.T) 
 	}), plan.Files, "an unrecognised layout is previewed exactly as the archive lists it")
 }
 
+// ...including the mixed root that used to be the exception (#424 review,
+// finding 2): `BepInEx` is a name BepInEx owns, but bepinexRootHas
+// short-circuited the classification before the owned-name refusal was ever
+// asked, so a plugin folder beside `BepInEx/` read as shape A and deployed
+// into the game root with nothing said about it.
+func TestPlanImportArchive_BepInEx_ABepInExRootWithSiblingsIsReportedToo(t *testing.T) {
+	svc, game := newBepInExDeclaredService(t)
+	archivePath := filepath.Join(t.TempDir(), "Sibling-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"BepInEx/patchers/Pre.dll": "patcher",
+		"Jotunn/Jotunn.dll":        "assembly",
+	})
+
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Warnings)
+	assert.Contains(t, plan.Warnings[0], "did not recognise")
+	assert.Contains(t, plan.Warnings[0], "BepInEx")
+	assert.Contains(t, plan.Warnings[0], "Jotunn")
+	assert.Equal(t, fromSlashAll([]string{
+		"BepInEx/patchers/Pre.dll", "Jotunn/Jotunn.dll",
+	}), plan.Files, "both roots are previewed exactly where the archive puts them")
+}
+
 // TestImportArchive_BepInEx_SevenDaysToDieModsFolderIsUntouched pins the
 // shape shape F is most likely to steal: 7 Days to Die ships
 // Mods/<Mod>/ModInfo.xml beside the mod's own assembly, and that game has

@@ -35,7 +35,14 @@ import (
 // loaderRelayoutRemedy is the reason a row carries when --fix cannot help:
 // the cache entry is not a layout the normaliser rewrites, so re-deploying
 // it would reproduce exactly the deployment being complained about.
-const loaderRelayoutRemedy = "lmm cannot place this mod's files under BepInEx/ on its own - re-import the archive (or reinstall the mod) so the layout rules run over a fresh copy of it"
+//
+// It names what the USER has to change, not what lmm could run again
+// (#424 review, finding 2). An archive whose root mixes BepInEx/ with a
+// plugin folder is placed this way BY the layout rules, so "re-import the
+// archive so the rules run over a fresh copy" re-runs the identical ingest,
+// reproduces the identical deployment and leaves the row exactly where it
+// was - a remedy that is a dead end reads as worse than none at all.
+const loaderRelayoutRemedy = "lmm cannot place this mod's files under BepInEx/ on its own, and re-importing the same archive lays it out the same way - move its files under BepInEx/plugins/ inside the archive (or put them there by hand) and re-import it"
 
 // loaderMisplacedDeployCheck reports an installed mod whose recorded deploy
 // paths do not sit under BepInEx/ on a game that has BepInEx.

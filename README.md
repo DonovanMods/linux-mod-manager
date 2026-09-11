@@ -608,8 +608,9 @@ lmm game edit lethal-company --loader ""   # remove the declaration
   package that keeps its metadata _inside_ the wrapper — which is how
   Thunderstore builds one — does not deliver four files into your Steam
   install directory. A layout lmm does not recognise is reported, never
-  guessed at: a root that mixes a plugin folder with loose files, or with a
-  directory holding no assembly, is one lmm cannot place and says so.
+  guessed at: a root that mixes a plugin folder with loose files, with a
+  directory holding no assembly, with a BepInEx-owned name, or with
+  `BepInEx/` itself, is one lmm cannot place and says so.
 
   A plugin folder is also never one of the game's **own** directories. For
   a BepInEx game the archive root and the game root are the same namespace,

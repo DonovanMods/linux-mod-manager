@@ -287,9 +287,17 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool, gam
 	// Step 3: classify what the (possibly stripped, always canonically
 	// spelled) root now holds.
 	prefix := ""
+	mixedLoaderRoot := false
 	switch {
 	case bepinexRootHas(stripped, bepinexDirName):
-		// shape A, or shape C after the strip: deploys as-is.
+		// shape A, or shape C after the strip: deploys as-is - unless the
+		// root carries something BESIDE BepInEx/, which is the same
+		// half-recognised archive the three sibling refusals below already
+		// report rather than guess at (#424 review, finding 2). Noted
+		// rather than returned, so step 4's framework refusal still runs:
+		// a safety check that can be walked past by adding one file to the
+		// archive is not a safety check.
+		mixedLoaderRoot = bepinexHasNonLoaderRoot(stripped)
 	case bepinexRelativeRoot(stripped):
 		shape, prefix = bepinexShapeRelative, "BepInEx/"
 	case bepinexLoosePluginRoot(stripped):
@@ -299,9 +307,7 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool, gam
 	default:
 		layout.Shape = bepinexShapeNone
 		if loaderDeclared && len(payload) > 0 {
-			layout.Warnings = append(layout.Warnings, fmt.Sprintf(
-				"lmm did not recognise %s as a BepInEx layout (its root holds %s), so its files deploy exactly as the archive lists them; move them under BepInEx/plugins/ inside the archive if that is wrong",
-				modName, strings.Join(bepinexRootNames(payload), ", ")))
+			layout.Warnings = append(layout.Warnings, bepinexUnrecognisedWarning(modName, payload))
 		}
 		return layout, nil
 	}
@@ -316,6 +322,15 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool, gam
 		if strings.HasPrefix(bepinexCanonicalRoot(prefix+m), bepinexDirName+"/core/") {
 			return nil, fmt.Errorf("%w: it installs BepInEx/core/, which lmm configures per game as a loader rather than tracking as a profile member - install BepInEx into the game directory yourself and declare it with `lmm game edit <game> --loader bepinex` (`lmm game show <game>` then prints the launch option to paste)", ErrBepInExFrameworkPack)
 		}
+	}
+
+	// Step 4b: the mixed loader root, refused after the framework check and
+	// before the gate - `BepInEx` is a name no other game's mod plausibly
+	// uses, so this refusal is not one the declaration could make safe.
+	if mixedLoaderRoot {
+		layout.Shape = bepinexShapeNone
+		layout.Warnings = append(layout.Warnings, bepinexUnrecognisedWarning(modName, payload))
+		return layout, nil
 	}
 
 	// Step 5: the gate. An ambiguous shape needs the game's declaration.
@@ -464,6 +479,42 @@ func bepinexRelativeRoot(members []string) bool {
 		}
 	}
 	return true
+}
+
+// bepinexHasNonLoaderRoot reports whether the root carries an entry other
+// than `BepInEx` itself - the test behind step 3's mixed-loader-root
+// refusal (#424 review, finding 2).
+//
+// `BepInEx` is the one name BepInEx owns that the shape refusals never
+// reached, because bepinexRootHas short-circuits the classification switch
+// before any of them is asked. A root of `BepInEx/patchers/Pre.dll` beside
+// `Jotunn/Jotunn.dll` therefore read as shape A, and the plugin folder
+// deployed verbatim into the game root - #424's own bug, on a game that
+// DOES declare the loader, and with no warning on the plan.
+//
+// Every sibling, not only the ambiguous ones: a `plugins/` root beside
+// `BepInEx/` deploys to the game root just as wrongly as a plugin folder
+// does, and a loose file beside `BepInEx/` is the author saying something
+// about that file this normaliser cannot read. Package metadata has
+// already been dropped by the time this is asked, so a Thunderstore
+// package's manifest and icon are not siblings.
+func bepinexHasNonLoaderRoot(members []string) bool {
+	for _, m := range members {
+		name, _, _ := strings.Cut(m, "/")
+		if !strings.EqualFold(name, bepinexDirName) {
+			return true
+		}
+	}
+	return false
+}
+
+// bepinexUnrecognisedWarning is the one sentence every refusal to guess
+// shares: what lmm saw, what it did instead, and what to change. Named once
+// because the two refusal sites must say the same thing.
+func bepinexUnrecognisedWarning(modName string, payload []string) string {
+	return fmt.Sprintf(
+		"lmm did not recognise %s as a BepInEx layout (its root holds %s), so its files deploy exactly as the archive lists them; move them under BepInEx/plugins/ inside the archive if that is wrong",
+		modName, strings.Join(bepinexRootNames(payload), ", "))
 }
 
 // bepinexLoosePluginRoot reports the loose-plugin shape: every remaining
