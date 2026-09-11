@@ -125,7 +125,7 @@ func TestNormalizeBepInExTree_RewritesEachShapeInPlace(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := writeArchiveTree(t, tt.members...)
-			layout, err := normalizeBepInExTree(root, "CoolMod", tt.loaderDeclared)
+			layout, err := normalizeBepInExTree(root, "CoolMod", tt.loaderDeclared, "")
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, treeFiles(t, root))
 			if tt.wantWarn {
@@ -150,7 +150,7 @@ func TestNormalizeBepInExTree_RewritesEachShapeInPlace(t *testing.T) {
 // the game never sees.
 func TestNormalizeBepInExTree_LeavesNoEmptyWrapperBehind(t *testing.T) {
 	root := writeArchiveTree(t, "BepInExPack/BepInEx/plugins/A.dll", "manifest.json")
-	_, err := normalizeBepInExTree(root, "Pack", false)
+	_, err := normalizeBepInExTree(root, "Pack", false, "")
 	require.NoError(t, err)
 
 	_, err = os.Stat(filepath.Join(root, "BepInExPack"))
@@ -162,7 +162,7 @@ func TestNormalizeBepInExTree_LeavesNoEmptyWrapperBehind(t *testing.T) {
 // the loader instead of having the preloader tracked as profile content.
 func TestNormalizeBepInExTree_RefusesAFrameworkPack(t *testing.T) {
 	root := writeArchiveTree(t, "BepInExPack/BepInEx/core/BepInEx.Preloader.dll", "BepInExPack/winhttp.dll", "manifest.json")
-	_, err := normalizeBepInExTree(root, "BepInExPack", false)
+	_, err := normalizeBepInExTree(root, "BepInExPack", false, "")
 	require.ErrorIs(t, err, ErrBepInExFrameworkPack)
 
 	// And it refused BEFORE touching anything: the tree is intact, so the
@@ -172,4 +172,29 @@ func TestNormalizeBepInExTree_RefusesAFrameworkPack(t *testing.T) {
 		"BepInExPack/winhttp.dll",
 		"manifest.json",
 	}, treeFiles(t, root))
+}
+
+// TestNormalizeBepInExTree_PluginFolderMovesWhole is #424 on a real
+// extracted tree: the directory the author shipped becomes a directory
+// under BepInEx/plugins/, with everything inside it carried along and the
+// vacated root cleaned up.
+func TestNormalizeBepInExTree_PluginFolderMovesWhole(t *testing.T) {
+	root := writeArchiveTree(t,
+		"Jotunn/Jotunn.dll", "Jotunn/Jotunn.pdb", "Jotunn/Jotunn.xml",
+		"Jotunn/README.md", "Jotunn/CHANGELOG.md")
+
+	layout, err := normalizeBepInExTree(root, "Jotunn", true, "")
+	require.NoError(t, err)
+	require.True(t, layout.Applies())
+	assert.Equal(t, bepinexShapePluginFolder, layout.Shape)
+	assert.Equal(t, []string{
+		"BepInEx/plugins/Jotunn/CHANGELOG.md",
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.pdb",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+		"BepInEx/plugins/Jotunn/README.md",
+	}, treeFiles(t, root))
+
+	_, err = os.Stat(filepath.Join(root, "Jotunn"))
+	assert.True(t, os.IsNotExist(err), "the vacated root directory is swept")
 }

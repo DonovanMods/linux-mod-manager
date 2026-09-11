@@ -1,6 +1,13 @@
 // Package core: this file holds the BepInEx archive-root NORMALISER (#358) -
-// the pure rules that turn a BepInEx plugin archive's member list into the
+// the rules that turn a BepInEx plugin archive's member list into the
 // game-directory-relative paths it should deploy to.
+//
+// Almost all of them are pure rules over that member list. The one
+// exception is bepinexGameOwnedRoot, which reads the game's own install
+// directory, because one question genuinely cannot be answered from the
+// archive alone: for a BepInEx game mod_path IS the game root, so an
+// archive root directory and a directory the GAME owns are the same kind of
+// name, and only the game directory itself can say which this is (#424).
 //
 // It sits beside archive_listing.go's member normalisation on purpose, and
 // for the same reason that file exists: the plan (PlanImportArchive) and
@@ -18,8 +25,10 @@
 // and deploys relative to the working directory). With that, the common
 // archive shape - BepInEx/plugins/Foo.dll - deploys correctly through the
 // existing linker with no new deploy-rule type. What does NOT work
-// unassisted is the other two real shapes, and the metadata every
-// Thunderstore package carries at its root.
+// unassisted is the other real shapes - a BepInEx-relative root, a loose
+// assembly, and the NexusMods plugin FOLDER meant to be dropped into
+// BepInEx/plugins/ whole (#424) - and the metadata every Thunderstore
+// package carries at its root.
 //
 // See docs/plans/2026-09-09-bepinex-spike.md §1.3 (the observed shapes) and
 // §3 (the deploy mapping) for the evidence behind each rule.
@@ -28,6 +37,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -68,6 +78,12 @@ const (
 	// bepinexShapePlugin is a loose root .dll (with no directory at all),
 	// which becomes BepInEx/plugins/<ModName>/<file>.
 	bepinexShapePlugin
+	// bepinexShapePluginFolder is shape F (#424): a root of one or more
+	// DIRECTORIES that each hold an assembly somewhere inside, which is
+	// what a NexusMods Unity mod page ships - a folder meant to be dropped
+	// into BepInEx/plugins/ whole. Each root directory is prefixed with
+	// BepInEx/plugins/ and otherwise kept verbatim.
+	bepinexShapePluginFolder
 )
 
 // String returns the shape's diagnostic name. Not a wire value: no document
@@ -82,6 +98,8 @@ func (s bepinexShape) String() string {
 		return "BepInEx-relative"
 	case bepinexShapePlugin:
 		return "a loose plugin assembly"
+	case bepinexShapePluginFolder:
+		return "a plugin folder"
 	default:
 		return "unrecognised"
 	}
@@ -138,6 +156,11 @@ type bepinexLayout struct {
 	// with applies set is DROPPED (the metadata above).
 	rewrites map[string]string
 	applies  bool
+	// loaderRoot records that the archive root held BepInEx/ even though the
+	// layout ended up unrecognised (a mixed root, step 4b): the loader
+	// requirement is still inferable, so requireDeclaredLoader reads it
+	// (#424 re-review, finding A).
+	loaderRoot bool
 }
 
 // Applies reports whether this layout rewrites anything. False means the
@@ -172,23 +195,30 @@ func (l *bepinexLayout) Rewrite(member string) (dest string, kept bool) {
 //	an archive that names the directory `BepInEx` is not plausibly anything
 //	else;
 //
-//	shape B (a bare plugins/ patchers/ monomod/ config/ root) and a loose
-//	root .dll are recognised ONLY for a game that declares the loader,
-//	because `plugins/` and `*.dll` are ordinary names that other games'
-//	mods use - a 7 Days to Die archive rooted at `plugins/` must keep
-//	deploying to <mod_path>/plugins, and silently moving it under a
-//	BepInEx/ directory the game has never heard of would break a working
-//	install with no error to read.
+//	shape B (a bare plugins/ patchers/ monomod/ config/ root), shape F (a
+//	root of plugin FOLDERS, #424) and a loose root .dll are recognised
+//	ONLY for a game that declares the loader, because `plugins/`, `*.dll`
+//	and "a directory with an assembly in it" are ordinary shapes that
+//	other games' mods use - a 7 Days to Die archive rooted at `plugins/`
+//	or at `Mods/<Mod>/<Mod>.dll` must keep deploying to <mod_path>, and
+//	silently moving it under a BepInEx/ directory the game has never heard
+//	of would break a working install with no error to read.
 //
 // That is the "OR" form of the requirement, split per shape rather than
 // applied wholesale: "unmistakably BepInEx-shaped" is a property of the
 // individual shape, not of the archive as a category.
 //
+// gameRoot is the game's install directory, which for a BepInEx game is
+// also where these paths deploy. It is consulted by exactly one rule -
+// shape F's game-owned refusal (bepinexGameOwnedRoot) - and "" means "no
+// game directory to consult", which every pure-rule unit test passes and
+// which leaves the member list as the only evidence.
+//
 // The error is ErrBepInExFrameworkPack, and only that: an unrecognised
 // archive is a warning on the returned layout, never a failure. A layout is
 // always returned alongside a nil error, so a caller may hold it
 // unconditionally.
-func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*bepinexLayout, error) {
+func bepinexNormalise(members []string, modName string, loaderDeclared bool, gameRoot string) (*bepinexLayout, error) {
 	// Every rule below is asked of the CLEANED path - forward slashes, no
 	// "./" noise - while origins[i] keeps the archive's own spelling,
 	// because that is the key Rewrite(member) is called with. Judging the
@@ -262,19 +292,27 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 	// Step 3: classify what the (possibly stripped, always canonically
 	// spelled) root now holds.
 	prefix := ""
+	mixedLoaderRoot := false
 	switch {
 	case bepinexRootHas(stripped, bepinexDirName):
-		// shape A, or shape C after the strip: deploys as-is.
+		// shape A, or shape C after the strip: deploys as-is - unless the
+		// root carries something BESIDE BepInEx/, which is the same
+		// half-recognised archive the three sibling refusals below already
+		// report rather than guess at (#424 review, finding 2). Noted
+		// rather than returned, so step 4's framework refusal still runs:
+		// a safety check that can be walked past by adding one file to the
+		// archive is not a safety check.
+		mixedLoaderRoot = bepinexHasNonLoaderRoot(stripped)
 	case bepinexRelativeRoot(stripped):
 		shape, prefix = bepinexShapeRelative, "BepInEx/"
 	case bepinexLoosePluginRoot(stripped):
 		shape, prefix = bepinexShapePlugin, "BepInEx/plugins/"+modName+"/"
+	case bepinexPluginFolderRoot(stripped, gameRoot):
+		shape, prefix = bepinexShapePluginFolder, "BepInEx/plugins/"
 	default:
 		layout.Shape = bepinexShapeNone
 		if loaderDeclared && len(payload) > 0 {
-			layout.Warnings = append(layout.Warnings, fmt.Sprintf(
-				"lmm did not recognise %s as a BepInEx layout (its root holds %s), so its files deploy exactly as the archive lists them; move them under BepInEx/plugins/ inside the archive if that is wrong",
-				modName, strings.Join(bepinexRootNames(payload), ", ")))
+			layout.Warnings = append(layout.Warnings, bepinexUnrecognisedWarning(modName, payload))
 		}
 		return layout, nil
 	}
@@ -289,6 +327,15 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 		if strings.HasPrefix(bepinexCanonicalRoot(prefix+m), bepinexDirName+"/core/") {
 			return nil, fmt.Errorf("%w: it installs BepInEx/core/, which lmm configures per game as a loader rather than tracking as a profile member - install BepInEx into the game directory yourself and declare it with `lmm game edit <game> --loader bepinex` (`lmm game show <game>` then prints the launch option to paste)", ErrBepInExFrameworkPack)
 		}
+	}
+
+	// Step 4b: the mixed loader root, refused after the framework check and
+	// before the gate - `BepInEx` is a name no other game's mod plausibly
+	// uses, so this refusal is not one the declaration could make safe.
+	if mixedLoaderRoot {
+		layout.Shape, layout.loaderRoot = bepinexShapeNone, true
+		layout.Warnings = append(layout.Warnings, bepinexUnrecognisedWarning(modName, payload))
+		return layout, nil
 	}
 
 	// Step 5: the gate. An ambiguous shape needs the game's declaration.
@@ -439,6 +486,42 @@ func bepinexRelativeRoot(members []string) bool {
 	return true
 }
 
+// bepinexHasNonLoaderRoot reports whether the root carries an entry other
+// than `BepInEx` itself - the test behind step 3's mixed-loader-root
+// refusal (#424 review, finding 2).
+//
+// `BepInEx` is the one name BepInEx owns that the shape refusals never
+// reached, because bepinexRootHas short-circuits the classification switch
+// before any of them is asked. A root of `BepInEx/patchers/Pre.dll` beside
+// `Jotunn/Jotunn.dll` therefore read as shape A, and the plugin folder
+// deployed verbatim into the game root - #424's own bug, on a game that
+// DOES declare the loader, and with no warning on the plan.
+//
+// Every sibling, not only the ambiguous ones: a `plugins/` root beside
+// `BepInEx/` deploys to the game root just as wrongly as a plugin folder
+// does, and a loose file beside `BepInEx/` is the author saying something
+// about that file this normaliser cannot read. Package metadata has
+// already been dropped by the time this is asked, so a Thunderstore
+// package's manifest and icon are not siblings.
+func bepinexHasNonLoaderRoot(members []string) bool {
+	for _, m := range members {
+		name, _, _ := strings.Cut(m, "/")
+		if !strings.EqualFold(name, bepinexDirName) {
+			return true
+		}
+	}
+	return false
+}
+
+// bepinexUnrecognisedWarning is the one sentence every refusal to guess
+// shares: what lmm saw, what it did instead, and what to change. Named once
+// because the two refusal sites must say the same thing.
+func bepinexUnrecognisedWarning(modName string, payload []string) string {
+	return fmt.Sprintf(
+		"lmm did not recognise %s as a BepInEx layout (its root holds %s), so its files deploy exactly as the archive lists them; move them under BepInEx/plugins/ inside the archive if that is wrong",
+		modName, strings.Join(bepinexRootNames(payload), ", "))
+}
+
 // bepinexLoosePluginRoot reports the loose-plugin shape: every remaining
 // member is a root FILE, and at least one of them is an assembly. The
 // non-.dll files come along (a plugin shipping a .dll beside its own
@@ -457,6 +540,162 @@ func bepinexLoosePluginRoot(members []string) bool {
 		}
 	}
 	return dll
+}
+
+// bepinexPluginFolderRoot reports shape F (#424): every root entry is a
+// DIRECTORY that holds at least one assembly somewhere inside it, none of
+// them is a name BepInEx owns, and none of them is a directory the GAME
+// owns.
+//
+// This is what a NexusMods Unity mod page ships and what its install
+// instructions describe - "drop the folder into BepInEx/plugins/" - so the
+// whole directory moves under that prefix and keeps its own name, which is
+// also how the .pdb, .xml and README beside the assembly stay beside it.
+//
+// Three conditions, and each of them is a refusal to guess:
+//
+//	EVERY root entry is a directory. A root that also carries loose files
+//	is an author saying something about those files that this normaliser
+//	cannot read, and moving the directories while leaving the files where
+//	they are would deploy half a mod to each of two places.
+//
+//	EVERY root directory contains an assembly. One that does not is not a
+//	plugin folder - it is an asset directory, a patcher payload, or
+//	something else entirely - and BepInEx/plugins/ is not where it goes.
+//
+//	NO root directory is a name BepInEx owns. bepinexRelativeRoot (shape
+//	B) has first refusal on those, and it only answers when they are the
+//	WHOLE root; a root mixing `plugins/` with `Jotunn/` is the same
+//	half-recognised archive shape B already refuses, so it is reported
+//	rather than prefixed.
+//
+//	NO root directory is one the GAME owns. That is the one condition the
+//	member list cannot answer, so bepinexGameOwnedRoot asks the game
+//	directory - see its own doc comment for why a name list will not do.
+func bepinexPluginFolderRoot(members []string, gameRoot string) bool {
+	if len(members) == 0 {
+		return false
+	}
+	hasDLL := map[string]bool{}
+	order := make([]string, 0, len(members))
+	for _, m := range members {
+		name, rest, nested := strings.Cut(m, "/")
+		if !nested || rest == "" {
+			return false // a root FILE: not a plugin folder
+		}
+		for _, dir := range append([]string{bepinexDirName}, bepinexOwnedDirs...) {
+			if strings.EqualFold(name, dir) {
+				return false
+			}
+		}
+		if _, seen := hasDLL[name]; !seen {
+			order = append(order, name)
+		}
+		if !hasDLL[name] {
+			hasDLL[name] = strings.EqualFold(path.Ext(m), ".dll")
+		}
+	}
+	for _, name := range order {
+		if !hasDLL[name] {
+			return false
+		}
+		// Asked last, because it is the only rule that touches disk.
+		if bepinexGameOwnedRoot(gameRoot, name, members) {
+			return false
+		}
+	}
+	return true
+}
+
+// bepinexGameOwnedRoot reports whether the archive-root directory name is
+// one the GAME itself owns - the fourth of shape F's refusals, and the only
+// one that cannot be decided from the member list alone (#424 review,
+// finding 1).
+//
+// For a BepInEx game mod_path IS the game root, so the archive root and the
+// game root are ONE namespace: <Game>_Data/ is a root entry whose Managed/
+// holds assemblies, and so, in their own way, are MonoBleedingEdge/,
+// unstripped_corlib/, doorstop_libs/ and whatever else the engine or a
+// second loader keeps beside the executable. Every one of them satisfies
+// shape F's other three conditions exactly, and prefixing one with
+// BepInEx/plugins/ takes a working game-data patch out of the tree the
+// ENGINE reads and buries it where nothing looks.
+//
+// The test is what the game directory actually CONTAINS rather than a list
+// of names, which would have to grow with every engine, launcher and loader
+// lmm meets. Two halves, and the second is what keeps the rule from
+// swallowing the case shape F exists for:
+//
+//	the game root has a directory of this name (matched case-insensitively,
+//	because the archive was very likely authored on Windows); AND
+//
+//	that directory holds at least one file this member list does not
+//	account for.
+//
+// The second half is the difference between "the game owns this" and "lmm
+// put this here". A plugin folder lmm misdeployed into the game root (the
+// #424 state `verify --fix` exists to repair, and the state a re-import
+// walks into) holds EXACTLY the members being classified, so it is not the
+// game's; <Game>_Data/ holds the whole engine besides, so it is. It also
+// answers the question the repair actually needs - would this directory
+// survive an undeploy - without consulting deployed_files, which the plan
+// and the download ingest cannot read for a profile they were never given.
+//
+// Unreadable in any way - a walk error, a permission refusal, a symlink
+// where a directory was expected - counts as the game's. A refusal to
+// classify deploys the archive verbatim with a warning, which is the safe
+// direction for an archive lmm genuinely cannot read.
+func bepinexGameOwnedRoot(gameRoot, name string, members []string) bool {
+	if gameRoot == "" || name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return false
+	}
+	entries, err := os.ReadDir(gameRoot)
+	if err != nil {
+		return false // no game root to consult: the member list is all there is
+	}
+	actual := ""
+	for _, e := range entries {
+		if strings.EqualFold(e.Name(), name) {
+			actual = e.Name()
+			break
+		}
+	}
+	if actual == "" {
+		return false
+	}
+	dir := filepath.Join(gameRoot, actual)
+	// Stat, not the DirEntry's own type: a game whose <Game>_Data is a
+	// symlink (a split install, a case-folding overlay) still owns it.
+	if info, serr := os.Stat(dir); serr != nil || !info.IsDir() {
+		return serr != nil
+	}
+
+	accounted := make(map[string]bool, len(members))
+	for _, m := range members {
+		root, rest, nested := strings.Cut(m, "/")
+		if !nested || !strings.EqualFold(root, name) {
+			continue
+		}
+		accounted[strings.ToLower(rest)] = true
+	}
+
+	owned := false
+	werr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			owned = true
+			return filepath.SkipAll
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(dir, p)
+		if rerr != nil || !accounted[strings.ToLower(filepath.ToSlash(rel))] {
+			owned = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return owned || werr != nil
 }
 
 // bepinexConfigPrefix is the one directory under BepInEx/ whose contents
@@ -507,7 +746,7 @@ func isBepInExConfigMember(deployPath string) bool {
 // not apply, and nothing is touched when it errors - a framework pack is
 // refused with the tree exactly as it arrived, so the caller's own cleanup
 // has a coherent directory to remove.
-func normalizeBepInExTree(root, modName string, loaderDeclared bool) (*bepinexLayout, error) {
+func normalizeBepInExTree(root, modName string, loaderDeclared bool, gameRoot string) (*bepinexLayout, error) {
 	members, err := relativeFileMembers(root)
 	if err != nil {
 		return nil, fmt.Errorf("listing extracted members: %w", err)
@@ -517,7 +756,7 @@ func normalizeBepInExTree(root, modName string, loaderDeclared bool) (*bepinexLa
 		slash[i] = filepath.ToSlash(m)
 	}
 
-	layout, err := bepinexNormalise(slash, modName, loaderDeclared)
+	layout, err := bepinexNormalise(slash, modName, loaderDeclared, gameRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -573,9 +812,73 @@ func (l *bepinexLayout) warnings() []string {
 	return l.Warnings
 }
 
+// bepinexGate answers the one question every rule in this file is gated on:
+// is this a BepInEx game? And, when it is, did the DECLARATION say so or did
+// the disk?
+//
+// Two sources, because they answer different halves of the same fact and a
+// user has only ever supplied one of them (#424). The `loader:` block is a
+// statement of intent lmm asks for; BepInEx/core/BepInEx.Preloader.dll in
+// the install directory is a fact lmm can read, and nothing else plausibly
+// puts that file there. A Valheim entry added before the catalog declared
+// the loader (#416) has the second and not the first, and treating that as
+// "not a BepInEx game" is what let a plugin extract verbatim into a Steam
+// install directory and report success.
+//
+// DetectedOnly is what the caller owes the user for acting on the disk
+// rather than on their configuration: one notice naming the command that
+// makes the answer permanent (bepinexUndeclaredNotice). It is never set for
+// a declaring game, because there is nothing for that user to do.
+type bepinexGate struct {
+	// Gated reports that the BepInEx layout rules apply to this game.
+	Gated bool
+	// DetectedOnly reports that Gated is true because of the install
+	// directory alone - the game declares no loader.
+	DetectedOnly bool
+}
+
+// bepinexGateFor resolves the gate for game. A nil game is not a BepInEx
+// game, so every caller can ask without a guard.
+func bepinexGateFor(game *domain.Game) bepinexGate {
+	if game.DeclaresBepInEx() {
+		return bepinexGate{Gated: true}
+	}
+	if game != nil && regularFileAt(game.InstallPath, bepinexPreloaderPath) {
+		return bepinexGate{Gated: true, DetectedOnly: true}
+	}
+	return bepinexGate{}
+}
+
+// noteUndeclaredBepInEx appends the one notice a detected-but-undeclared
+// game gets, to a layout that actually DID something on the strength of that
+// detection.
+//
+// On the layout's own Warnings rather than through a channel of its own, so
+// it rides every route #358's "layout lmm cannot place" warning already
+// takes: the import PLAN both frontends render before committing, and each
+// ingest's log. Nothing on the wire grows a field for it.
+//
+// Only when the layout applies: a game whose BepInEx install lmm noticed
+// while importing a mod that is not a BepInEx mod at all has been told
+// nothing useful, and saying it anyway would put the notice on every import
+// into that game forever.
+func noteUndeclaredBepInEx(layout *bepinexLayout, game *domain.Game, gate bepinexGate) {
+	if !gate.DetectedOnly || !layout.Applies() {
+		return
+	}
+	layout.Warnings = append(layout.Warnings, bepinexUndeclaredNotice(game))
+}
+
+// bepinexUndeclaredNotice is that notice's exact text, named once because
+// both ingests and the plan must say the same thing.
+func bepinexUndeclaredNotice(game *domain.Game) string {
+	return fmt.Sprintf("BepInEx found in %s; declare it with `lmm game edit %s --loader bepinex`",
+		game.InstallPath, game.ID)
+}
+
 // requireDeclaredLoader is #359's precondition: an archive whose layout this
-// normaliser RECOGNISED is a BepInEx mod, so a game that declares no BepInEx
-// loader cannot usefully take it.
+// normaliser RECOGNISED is a BepInEx mod, so a game with no BepInEx loader
+// cannot usefully take it.
 //
 // It is asked at the earliest point each flow can answer it - plan time for
 // an archive import (whose listing is available before anything touches
@@ -589,9 +892,20 @@ func (l *bepinexLayout) warnings() []string {
 // apply for an undeclared game (bepinexNormalise's gate), so a mod for
 // another game rooted at `plugins/` infers nothing and its owner is never
 // told to install a loader they do not need.
-func requireDeclaredLoader(game *domain.Game, modName string, layout *bepinexLayout) error {
-	if !layout.Applies() || game.DeclaresBepInEx() {
+//
+// #424 widened WHAT satisfies it from the declaration to the gate: a game
+// with BepInEx actually installed has the loader, whatever games.yaml says,
+// and refusing the plugin would be refusing on a paperwork technicality
+// while the thing the paperwork describes is right there on disk. Such a
+// user gets the notice instead (noteUndeclaredBepInEx), which is the same
+// remedy this error's Setup steps end with.
+func requireDeclaredLoader(game *domain.Game, modName string, layout *bepinexLayout, gate bepinexGate) error {
+	if layout == nil || (!layout.Applies() && !layout.loaderRoot) || gate.Gated {
 		return nil
 	}
-	return newLoaderRequiredError(game, modName, layout.Shape.String())
+	shape := layout.Shape
+	if layout.loaderRoot && shape == bepinexShapeNone {
+		shape = bepinexShapeRooted
+	}
+	return newLoaderRequiredError(game, modName, shape.String())
 }

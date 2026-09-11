@@ -116,6 +116,14 @@ type VerifyFinding struct {
 	//	version_mismatch      a non-local source AND an UNLOCKED ref - a
 	//	                      locked ref's Version is the lock's target, and
 	//	                      --fix refuses to rewrite it (#97)
+	//	loader_plugin_unlinked
+	//	                      always, on a plain run: --fix re-deploys the
+	//	                      mod through the ordinary installer (#359)
+	//	loader_deployed_outside_loader
+	//	                      only when the mod's CACHE entry is a layout
+	//	                      the BepInEx normaliser rewrites under
+	//	                      BepInEx/ - otherwise a re-deploy would put
+	//	                      the files straight back (#424)
 	//	everything else       never - ok, skipped, file_count_mismatch,
 	//	                      version_unverifiable (nothing to repair it
 	//	                      with) and conversion_failed (a conversion is

@@ -57,6 +57,21 @@ func (s *Service) SetBeforeSaveInstalledForTest(fn func()) {
 	s.beforeSaveInstalled = fn
 }
 
+// SetRelayoutPlaceFileForTest arms the verify re-layout's per-file
+// placement seam, so a test can make the rewrite fail PARTWAY and prove the
+// live cache entry is byte-identical afterwards (#424 review, finding 3).
+// The I/O failure the atomicity contract is about has no other deterministic
+// trigger: the destination tree is one the re-layout creates itself.
+func (s *Service) SetRelayoutPlaceFileForTest(fn func(src, dst string) error) {
+	s.relayoutPlaceFile = fn
+}
+
+// LinkOrCopyFileForTest is the real placement, exported so an injected seam
+// can fall through to it for the members it does not mean to fail.
+func LinkOrCopyFileForTest(src, dst string) error {
+	return linkOrCopyFile(src, dst)
+}
+
 // SetAfterInstallSaveForTest arms the BATCH install engine's
 // post-SaveInstalledMod hook so a test can cancel the ctx after the DB row
 // lands but before ensureProfileExists's own read (the NEW-6 race).

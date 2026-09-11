@@ -325,20 +325,23 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// normalising: a normalised shape-A tree has BepInEx as its sole
 	// top-level directory, and naming the mod after that would be absurd.
 	//
-	// The game's own loader declaration (#359) widens the normaliser onto
-	// the two ambiguous shapes (a bare plugins/ root, a loose .dll) - see
-	// bepinexNormalise's doc comment.
+	// The game's BepInEx gate (#359, widened by #424 from "declares the
+	// loader" to "declares it OR has it installed") widens the normaliser
+	// onto the ambiguous shapes - a bare plugins/ root, a plugin folder, a
+	// loose .dll. See bepinexNormalise's doc comment.
 	modName := importedModName(kind, filename, ident.version, members)
-	layout, err := bepinexLayoutForListing(kind, members, modName, game.DeclaresBepInEx())
+	gate := bepinexGateFor(game)
+	layout, err := bepinexLayoutForListing(kind, members, modName, gate.Gated, game.InstallPath)
 	if err != nil {
 		return nil, err
 	}
+	noteUndeclaredBepInEx(layout, game, gate)
 
 	// #359: refuse before computing a plan that would promise a plugin the
 	// game has nothing to load it with. Plan time is the earliest an archive
 	// import can answer this, and the answer costs nothing beyond the
 	// listing already read.
-	if err := requireDeclaredLoader(game, modName, layout); err != nil {
+	if err := requireDeclaredLoader(game, modName, layout, gate); err != nil {
 		return nil, err
 	}
 

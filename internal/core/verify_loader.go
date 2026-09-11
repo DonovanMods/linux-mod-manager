@@ -54,12 +54,26 @@ const notFixableLoader = "lmm does not install the mod loader or write Steam lau
 // the game. A user who pasted the launch option wrong otherwise finds out
 // from a mod that mysteriously does nothing.
 //
-// A game with no loader declaration runs none of this, so every other game's
-// verify output is exactly what it was.
+// A game that neither declares BepInEx nor has it installed runs none of
+// this, so every other game's verify output is exactly what it was.
 func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
+	gate := bepinexGateFor(r.game)
+	if !gate.Gated {
+		return
+	}
+
+	// #424: the misplaced-deployment check asks about the archive LAYOUT
+	// rules, which the gate turns on for a game whose BepInEx lmm can see
+	// as well as one that declares it - and the undeclared game is exactly
+	// where the misplaced deployments came from. Everything below it is
+	// about the DECLARATION (is the installation the version, bootstrap and
+	// runtime you said?), which a game that declares nothing has not made,
+	// so those checks still run only for a declaring game.
+	r.loaderMisplacedDeployCheck(installedMods)
 	if !r.game.DeclaresBepInEx() {
 		return
 	}
+
 	root := r.game.InstallPath
 	name := loaderDisplayName(r.game.Loader.Kind)
 

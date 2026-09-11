@@ -163,7 +163,7 @@ func importDeployablePaths(kind importArchiveKind, filename string, members []ar
 // escape) fails the whole listing here, the same refusal at the same
 // granularity importDeployablePaths makes - a plan must not preview an
 // import the ingest will reject.
-func bepinexLayoutForListing(kind importArchiveKind, members []archiveMember, modName string, loaderDeclared bool) (*bepinexLayout, error) {
+func bepinexLayoutForListing(kind importArchiveKind, members []archiveMember, modName string, loaderDeclared bool, gameRoot string) (*bepinexLayout, error) {
 	if kind != importKindExtract {
 		return nil, nil
 	}
@@ -178,7 +178,7 @@ func bepinexLayoutForListing(kind importArchiveKind, members []archiveMember, mo
 		}
 		paths = append(paths, filepath.ToSlash(rel))
 	}
-	return bepinexNormalise(paths, modName, loaderDeclared)
+	return bepinexNormalise(paths, modName, loaderDeclared, gameRoot)
 }
 
 // importedModName is the mod name an import records for archivePath's

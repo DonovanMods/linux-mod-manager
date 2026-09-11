@@ -1,0 +1,613 @@
+package core_test
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"sort"
+	"testing"
+	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// stalePreFixJotunn reproduces the owner's actual state (#424), by the route
+// that actually produced it: Jotunn is installed while the game declares no
+// loader and lmm has no plugin-folder shape, so the archive extracts
+// verbatim - the cache entry holds Jotunn/Jotunn.dll, the deployed file sits
+// in the game ROOT, and the deployed_files row records Jotunn/Jotunn.dll.
+// THEN the loader is declared, which is what #416 did to every curated
+// BepInEx game.
+//
+// It is built through the real flows rather than by seeding the DB, so the
+// cache, the disk and the row agree the way they would on a user's machine.
+func stalePreFixJotunn(t *testing.T, profiles ...string) (*core.Service, *domain.Game, *domain.Mod) {
+	t.Helper()
+	if len(profiles) == 0 {
+		profiles = []string{"default"}
+	}
+	svc, game := newBepInExGameRootService(t)
+	pm := svc.NewProfileManager()
+
+	archivePath := filepath.Join(t.TempDir(), "Jotunn-2.30.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"Jotunn/Jotunn.dll": "assembly",
+		"Jotunn/Jotunn.xml": "<doc/>",
+	})
+
+	var mod *domain.Mod
+	for _, profile := range profiles {
+		if profile != "default" {
+			_, err := pm.Create(context.Background(), game.ID, profile)
+			require.NoError(t, err)
+		}
+		// An explicit identity, so every profile shares ONE cache entry -
+		// which is the whole point of the sibling-profile case.
+		result, err := svc.ImportArchive(context.Background(), game, profile, archivePath,
+			core.ImportArchiveOptions{SourceID: domain.SourceLocal, ModID: "1138", Force: true}, nil)
+		require.NoError(t, err)
+		mod = result.Mod
+	}
+
+	// The pre-fix reality, asserted so this fixture cannot silently start
+	// building a state that is already correct.
+	require.Equal(t, []string{"Jotunn/Jotunn.dll", "Jotunn/Jotunn.xml"},
+		gameTreeForTest(t, game.InstallPath))
+	for _, profile := range profiles {
+		recorded, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, profile,
+			mod.SourceID, mod.ID)
+		require.NoError(t, err)
+		require.Contains(t, recorded, filepath.FromSlash("Jotunn/Jotunn.dll"),
+			"profile %s must record the pre-fix path", profile)
+	}
+
+	// ...and then the game learns it is a BepInEx game.
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapProton, time.Now())
+	game.Loader = &domain.GameLoader{
+		Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5",
+		Bootstrap: domain.LoaderBootstrapProton,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	return svc, game, mod
+}
+
+// TestVerify_LoaderTier_ReportsADeploymentOutsideBepInEx is #424's third
+// half: the fix stops the bug happening again, but it does nothing for the
+// installs that already happened. A plugin deployed into the game root is
+// not missing, not stale by any existing test, and loads nothing - only the
+// loader tier can see it, because only it knows where a plugin belongs.
+func TestVerify_LoaderTier_ReportsADeploymentOutsideBepInEx(t *testing.T) {
+	svc, game, _ := stalePreFixJotunn(t)
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	f := findingWithStatus(res.Result, "loader_deployed_outside_loader")
+	require.NotNil(t, f, "statuses were %v", findingStatuses(res.Result))
+	assert.Contains(t, f.Note, "Jotunn/Jotunn.dll")
+	assert.True(t, f.Fixable, "--fix can re-lay this out and re-deploy it")
+}
+
+// ...and --fix repairs it end to end: the cache entry is re-laid out under
+// BepInEx/plugins/, the deployed_files rows are rewritten, the plugin is
+// linked where the loader reads it, nothing is left in the game root, and a
+// second run is clean.
+func TestVerify_LoaderTier_FixRelaysOutAndRedeploysADeploymentOutsideBepInEx(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t)
+
+	fixed, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+	assert.NotNil(t, findingWithStatus(fixed.Result, "fixed_loader_deployed_outside_loader"),
+		"statuses were %v", findingStatuses(fixed.Result))
+
+	cached, err := svc.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	slashed := make([]string, 0, len(cached))
+	for _, c := range cached {
+		slashed = append(slashed, filepath.ToSlash(c))
+	}
+	assert.ElementsMatch(t, []string{
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+	}, slashed, "the cache entry IS the game directory's layout, so it is what has to change")
+
+	recorded, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "default",
+		mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	slashedRows := make([]string, 0, len(recorded))
+	for _, p := range recorded {
+		slashedRows = append(slashedRows, filepath.ToSlash(p))
+	}
+	assert.ElementsMatch(t, []string{
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+	}, slashedRows, "`lmm mod files` reads these rows")
+
+	_, statErr := os.Lstat(filepath.Join(game.InstallPath, "BepInEx", "plugins", "Jotunn", "Jotunn.dll"))
+	assert.NoError(t, statErr, "and the plugin is where the loader reads it")
+	_, statErr = os.Lstat(filepath.Join(game.InstallPath, "Jotunn"))
+	assert.True(t, os.IsNotExist(statErr), "with nothing left in the game root")
+
+	again, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(again.Result, "loader_deployed_outside_loader"),
+		"the second run is clean; statuses were %v", findingStatuses(again.Result))
+}
+
+// A cache entry whose layout the normaliser would NOT rewrite cannot be
+// repaired by re-deploying it: the deploy would put the files straight back
+// where they are. Such a row reports with the remedy that does work rather
+// than claiming a repair it cannot make.
+func TestVerify_LoaderTier_ARepairItCannotMakeIsNotClaimed(t *testing.T) {
+	svc, game := newBepInExGameRootService(t)
+
+	// A root that mixes a DLL folder with loose files: shape F refuses to
+	// guess at it, so there is nothing for a re-layout to do.
+	archivePath := filepath.Join(t.TempDir(), "Mixed-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"Thing/Thing.dll":     "assembly",
+		"install-by-hand.txt": "copy me",
+	})
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapProton, time.Now())
+	game.Loader = &domain.GameLoader{Kind: domain.LoaderKindBepInEx, Bootstrap: domain.LoaderBootstrapProton}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	f := findingWithStatus(res.Result, "loader_deployed_outside_loader")
+	require.NotNil(t, f, "statuses were %v", findingStatuses(res.Result))
+	assert.False(t, f.Fixable, "a re-deploy would put the files straight back")
+	assert.Contains(t, f.FixableReason, "re-import")
+}
+
+// A correctly deployed BepInEx mod reports nothing, like every other check
+// in this engine.
+func TestVerify_LoaderTier_ACorrectlyPlacedPluginIsNotAFinding(t *testing.T) {
+	svc, game := newVerifyLoaderService(t, &domain.GameLoader{
+		Kind: domain.LoaderKindBepInEx, Bootstrap: domain.LoaderBootstrapNative,
+	})
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapNative, time.Now())
+
+	archivePath := filepath.Join(t.TempDir(), "Jotunn-2.30.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"Jotunn/Jotunn.dll": "assembly",
+		"manifest.json":     "{}",
+	})
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(res.Result, "loader_deployed_outside_loader"),
+		"statuses were %v", findingStatuses(res.Result))
+}
+
+// TestVerify_LoaderTier_FixRelaysOutEveryProfileSharingTheCacheEntry is the
+// guard the repair needs to be allowed to touch the cache at all: the entry
+// is shared by every profile of the game holding that version, so moving
+// its files out from under a sibling's deployment would leave that profile
+// linked to paths nothing provides any more.
+func TestVerify_LoaderTier_FixRelaysOutEveryProfileSharingTheCacheEntry(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t, "default", "second")
+
+	_, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	for _, profile := range []string{"default", "second"} {
+		rows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, profile,
+			mod.SourceID, mod.ID)
+		require.NoError(t, err)
+		slashed := make([]string, 0, len(rows))
+		for _, p := range rows {
+			slashed = append(slashed, filepath.ToSlash(p))
+		}
+		assert.ElementsMatch(t, []string{
+			"BepInEx/plugins/Jotunn/Jotunn.dll",
+			"BepInEx/plugins/Jotunn/Jotunn.xml",
+		}, slashed, "profile %s must be re-linked, not left pointing at the old layout", profile)
+	}
+}
+
+// TestVerify_LoaderTier_ContentThatIsNotAPluginIsNotAFinding: for a BepInEx
+// game mod_path IS the game root, so a mod that legitimately writes into the
+// game's own directories has every one of its files "outside BepInEx/". The
+// check is about an ASSEMBLY nothing will load, not about a path - a mod
+// with no assembly outside BepInEx/ is not a misplaced plugin, and telling
+// its owner otherwise would put a permanent finding on a working install
+// whose "remedy" would do nothing.
+func TestVerify_LoaderTier_ContentThatIsNotAPluginIsNotAFinding(t *testing.T) {
+	svc, game := newVerifyLoaderService(t, &domain.GameLoader{
+		Kind: domain.LoaderKindBepInEx, Bootstrap: domain.LoaderBootstrapNative,
+	})
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapNative, time.Now())
+
+	archivePath := filepath.Join(t.TempDir(), "Textures-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"valheim_Data/textures/rock.bundle": "bytes",
+		"valheim_Data/textures/tree.bundle": "bytes",
+	})
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(res.Result, "loader_deployed_outside_loader"),
+		"statuses were %v", findingStatuses(res.Result))
+}
+
+// TestVerify_LoaderTier_AGameOwnedDirectoryIsNeverMisplaced is #424 review
+// finding 1's other direction, by the route that actually produces it
+// (#416): a patch replacing one of the game's OWN managed assemblies is
+// installed before the loader is declared, so it deploys verbatim; then the
+// loader is declared.
+//
+// "An assembly outside BepInEx/" is true of it, and it is exactly where it
+// belongs - the game's engine reads <Game>_Data/Managed/, and BepInEx never
+// will. A finding here would be permanent, and a --fix acting on it would
+// silently revert the game to stock behaviour while reporting a repair.
+func TestVerify_LoaderTier_AGameOwnedDirectoryIsNeverMisplaced(t *testing.T) {
+	svc, game := newBepInExGameRootService(t)
+	seedGameOwnedTree(t, game.InstallPath,
+		"valheim_Data/Managed/UnityEngine.dll",
+		"valheim_Data/Managed/Assembly-CSharp.dll",
+		"valheim_Data/resources.assets",
+	)
+
+	archivePath := filepath.Join(t.TempDir(), "Patch-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"valheim_Data/Managed/Assembly-CSharp.dll": "patched assembly",
+	})
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	// ...and then the game learns it is a BepInEx game.
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapProton, time.Now())
+	game.Loader = &domain.GameLoader{
+		Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5",
+		Bootstrap: domain.LoaderBootstrapProton,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	before := gameTreeForTest(t, game.InstallPath)
+	require.Contains(t, before, "valheim_Data/Managed/Assembly-CSharp.dll")
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(res.Result, "loader_deployed_outside_loader"),
+		"a game-data assembly patch is where it belongs; statuses were %v", findingStatuses(res.Result))
+
+	fixed, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(fixed.Result, "fixed_loader_deployed_outside_loader"),
+		"and --fix has nothing to repair; statuses were %v", findingStatuses(fixed.Result))
+	assert.Equal(t, before, gameTreeForTest(t, game.InstallPath),
+		"--fix must not move the game's own assembly under BepInEx/plugins/")
+}
+
+// TestVerify_LoaderTier_TheRemedyDoesNotReproduceTheProblem is #424 review
+// finding 2's second half. An archive whose root carries `BepInEx/` beside
+// a plugin folder deploys that folder into the game root; the finding
+// reports it as not fixable and used to name "re-import the archive (or
+// reinstall the mod) so the layout rules run over a fresh copy of it" - a
+// remedy that re-runs the identical ingest and reproduces the identical
+// deployment. A permanent dead end for the user.
+//
+// The re-import is performed here rather than argued about, so the remedy
+// this row names can never drift back to one that does nothing.
+func TestVerify_LoaderTier_TheRemedyDoesNotReproduceTheProblem(t *testing.T) {
+	svc, game := newBepInExDeclaredService(t)
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapProton, time.Now())
+
+	archivePath := filepath.Join(t.TempDir(), "Sibling-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"BepInEx/patchers/Pre.dll": "patcher",
+		"Jotunn/Jotunn.dll":        "assembly",
+	})
+
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Warnings, "a root lmm cannot read is never placed silently")
+	assert.Contains(t, plan.Warnings[0], "did not recognise")
+
+	_, err = svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{SourceID: domain.SourceLocal, ModID: "77", Force: true}, nil)
+	require.NoError(t, err)
+	deployed := gameTreeForTest(t, game.InstallPath)
+	require.Contains(t, deployed, "Jotunn/Jotunn.dll")
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	f := findingWithStatus(res.Result, "loader_deployed_outside_loader")
+	require.NotNil(t, f, "statuses were %v", findingStatuses(res.Result))
+	require.False(t, f.Fixable, "lmm cannot place this layout on its own")
+
+	// The same archive, imported again, lands in exactly the same place...
+	_, err = svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{SourceID: domain.SourceLocal, ModID: "77", Force: true}, nil)
+	require.NoError(t, err)
+	require.Equal(t, deployed, gameTreeForTest(t, game.InstallPath),
+		"re-importing the same archive reproduces the deployment")
+
+	// ...so the remedy must not be "re-import it and the rules will run".
+	assert.NotContains(t, f.FixableReason, "so the layout rules run over a fresh copy")
+	assert.Contains(t, f.FixableReason, "BepInEx/plugins/",
+		"the remedy has to name where the files actually have to go")
+}
+
+// cacheEntrySnapshot reads every file in a cache entry - reserved
+// bookkeeping markers included - as relative path to exact bytes. The
+// atomicity contract is about CONTENT, not about a member list, so the
+// assertion has to compare content.
+func cacheEntrySnapshot(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	require.NoError(t, filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(dir, p)
+		if rerr != nil {
+			return rerr
+		}
+		body, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		out[filepath.ToSlash(rel)] = string(body)
+		return nil
+	}))
+	return out
+}
+
+// siblingsOfCacheEntry lists the entry's neighbours in the cache, so a test
+// can assert the re-layout left no scratch directory behind.
+func siblingsOfCacheEntry(t *testing.T, entry string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(entry))
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TestVerify_LoaderTier_AFailedRelayoutLeavesTheCacheEntryByteIdentical is
+// #424 review finding 3. The re-layout's whole reason for moving the entry
+// aside is to promise that "a later run sees the old layout or the new one,
+// never a mixture" - and it did not keep that promise: it normalised the
+// moved-aside tree IN PLACE, member by member, so a failure partway left a
+// half-moved tree and the undo renamed that half-moved tree back under the
+// entry's own name. Worse, a mixture has BepInEx/ at its root, so the next
+// run classifies it shape A, the re-layout no longer applies, and the
+// finding becomes unfixable - on an entry --fix itself corrupted.
+//
+// The failure is injected on the SECOND member, because a failure on the
+// first proves nothing about a mixture.
+func TestVerify_LoaderTier_AFailedRelayoutLeavesTheCacheEntryByteIdentical(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t)
+	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	before := cacheEntrySnapshot(t, entry)
+	require.Len(t, before, 2, "the fixture's entry is Jotunn.dll + Jotunn.xml")
+
+	placed := 0
+	svc.SetRelayoutPlaceFileForTest(func(src, dst string) error {
+		placed++
+		if placed > 1 {
+			return errors.New("injected: no space left on device")
+		}
+		return core.LinkOrCopyFileForTest(src, dst)
+	})
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+	require.Greater(t, placed, 1, "the injection has to fire mid-rewrite to prove anything")
+
+	assert.Nil(t, findingWithStatus(res.Result, "fixed_loader_deployed_outside_loader"),
+		"a failed repair is not a repair; statuses were %v", findingStatuses(res.Result))
+	f := findingWithStatus(res.Result, "loader_deployed_outside_loader")
+	require.NotNil(t, f)
+	assert.Contains(t, f.FixableReason, "could not re-lay out")
+
+	assert.Equal(t, before, cacheEntrySnapshot(t, entry),
+		"the live entry must be byte-identical after a failed re-layout")
+	for _, name := range siblingsOfCacheEntry(t, entry) {
+		assert.NotContains(t, name, ".relayout", "no scratch directory may survive")
+	}
+
+	// ...and the next run still sees a repairable entry, not one --fix
+	// corrupted into an unrepairable shape.
+	again, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	next := findingWithStatus(again.Result, "loader_deployed_outside_loader")
+	require.NotNil(t, next, "statuses were %v", findingStatuses(again.Result))
+	assert.True(t, next.Fixable, "a failed --fix must not cost the user their remedy")
+}
+
+// TestVerify_LoaderTier_FixCarriesTheEntrysBookkeepingAcross: the re-layout
+// builds a NEW entry rather than moving the old one about, so everything
+// relativeFileMembers deliberately hides from the normaliser - the
+// .lmm-file-<id> completion markers, a retained source archive, a merge
+// fingerprint - has to be carried across explicitly. Dropping a completion
+// marker would make the entry read as incomplete and cost a re-download of
+// a mod that is sitting right there.
+func TestVerify_LoaderTier_FixCarriesTheEntrysBookkeepingAcross(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t)
+	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, cache.MarkFileCompleteWithMembers(entry, "1",
+		[]string{filepath.FromSlash("Jotunn/Jotunn.dll"), filepath.FromSlash("Jotunn/Jotunn.xml")}))
+
+	_, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	manifests, err := svc.GetGameCache(game).FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	require.Contains(t, manifests, "1", "the completion marker must survive the re-layout")
+	assert.True(t, manifests["1"].Recorded)
+}
+
+// TestVerify_LoaderTier_FixRewritesTheEntrysRecordedMemberManifest is #424
+// review finding 4. A downloaded entry's .lmm-file-<id> markers record WHICH
+// members each source file contributed
+// (cache.MarkFileCompleteWithMembers). The re-layout moves those members and
+// used to leave the markers naming paths that no longer exist.
+//
+// The visible cost is checksumFromCache, which folds digestDirectoryMembers
+// over exactly this list: with every recorded member missing it always
+// errors, so the install flow's `csErr == nil` guard silently stores no
+// checksum on any later cache-warm reinstall of a repaired mod. The owner's
+// Jotunn is a NexusMods download, which is the case that HAS markers.
+func TestVerify_LoaderTier_FixRewritesTheEntrysRecordedMemberManifest(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t)
+	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, cache.MarkFileCompleteWithMembers(entry, "1",
+		[]string{filepath.FromSlash("Jotunn/Jotunn.dll"), filepath.FromSlash("Jotunn/Jotunn.xml")}))
+
+	_, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	manifests, err := svc.GetGameCache(game).FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	require.Contains(t, manifests, "1")
+	require.True(t, manifests["1"].Recorded)
+
+	recorded := make([]string, 0, len(manifests["1"].Members))
+	for _, m := range manifests["1"].Members {
+		recorded = append(recorded, filepath.ToSlash(m))
+		_, statErr := os.Lstat(filepath.Join(entry, m))
+		assert.NoError(t, statErr, "recorded member %s must exist in the entry", m)
+	}
+	assert.ElementsMatch(t, []string{
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+	}, recorded, "the manifest has to name where the members actually are now")
+
+	// ...and the two enumerators the user reads agree with the disk.
+	listed, err := svc.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	slashedList := make([]string, 0, len(listed))
+	for _, l := range listed {
+		slashedList = append(slashedList, filepath.ToSlash(l))
+	}
+	assert.ElementsMatch(t, recorded, slashedList,
+		"ListFiles and the recorded manifest describe the same entry")
+
+	files, err := svc.ModFiles(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	reported := make([]string, 0, len(files.Files))
+	for _, f := range files.Files {
+		reported = append(reported, filepath.ToSlash(f.Path))
+		assert.True(t, f.Deployed, "%s must be on disk", f.Path)
+	}
+	sort.Strings(reported)
+	assert.Equal(t, []string{
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+	}, reported, "`lmm mod files` is the surface the owner reads")
+}
+
+// TestVerify_LoaderTier_FixLeavesADisabledProfileAlone is #424 review
+// finding 5. profilesDeploying took every profile holding the mod at that
+// version, filtering on neither Enabled nor Deployed - while
+// repairSiblingProfiles, the precedent this repair's own doc comment cites,
+// re-links a sibling only `if sibling.Deployed`.
+//
+// A profile with nothing deployed has nothing for the re-layout to
+// invalidate, so there is nothing to put back. Re-deploying it writes that
+// profile's copy of the mod into the shared game directory and creates
+// deployed_files rows beside a Deployed=false record - exactly the
+// record-vs-reality drift DisableMod's own #183 self-heal exists to clear,
+// and `lmm mod files` then lists paths for a mod the user disabled.
+func TestVerify_LoaderTier_FixLeavesADisabledProfileAlone(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t, "default", "second")
+	_, err := svc.DisableMod(context.Background(), game, "second", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+
+	disabled, err := svc.GetInstalledMod(context.Background(), mod.SourceID, mod.ID, game.ID, "second")
+	require.NoError(t, err)
+	require.False(t, disabled.Deployed, "the fixture's premise: nothing of this mod is deployed there")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "second", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+
+	_, err = svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	// The verifying profile is repaired...
+	fixedRows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "default",
+		mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	slashed := make([]string, 0, len(fixedRows))
+	for _, p := range fixedRows {
+		slashed = append(slashed, filepath.ToSlash(p))
+	}
+	assert.ElementsMatch(t, []string{
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+	}, slashed)
+
+	// ...and the disabled one is exactly as it was.
+	after, err := svc.GetInstalledMod(context.Background(), mod.SourceID, mod.ID, game.ID, "second")
+	require.NoError(t, err)
+	assert.False(t, after.Enabled, "--fix must not re-enable a mod the user disabled")
+	assert.False(t, after.Deployed, "nor record it as deployed")
+	stillEmpty, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "second",
+		mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	assert.Empty(t, stillEmpty, "`lmm mod files` must not list paths for a disabled mod")
+}
+
+// ...and a reserved DIRECTORY comes across whole. relativeFileMembers skips
+// a reserved directory's entire subtree, so nothing in it is a member and
+// nothing in it would be placed by the member loop; carrying only the
+// entries whose OWN name is reserved would rebuild the directory empty.
+func TestVerify_LoaderTier_FixCarriesAReservedSubtreeWhole(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t)
+	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	reserved := filepath.Join(entry, ".lmm-source-1", "nested")
+	require.NoError(t, os.MkdirAll(reserved, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(reserved, "Jotunn-2.30.0.zip"), []byte("archive"), 0o644))
+
+	_, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	body, err := os.ReadFile(filepath.Join(entry, ".lmm-source-1", "nested", "Jotunn-2.30.0.zip"))
+	require.NoError(t, err, "the retained source must survive the rebuild")
+	assert.Equal(t, "archive", string(body))
+}

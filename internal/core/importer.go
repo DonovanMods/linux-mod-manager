@@ -332,17 +332,20 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// cache, so the cache entry - whose layout IS the game directory's
 		// layout - is already correct for every later deploy.
 		//
-		// The game's own loader declaration (#359) widens the rules onto
-		// the two ambiguous shapes - a bare plugins/ root and a loose .dll.
-		layout, err := normalizeBepInExTree(extractedPath, modName, game.DeclaresBepInEx())
+		// The game's BepInEx gate (#359, widened by #424) widens the rules
+		// onto the ambiguous shapes - a bare plugins/ root, a plugin
+		// folder, a loose .dll.
+		gate := bepinexGateFor(game)
+		layout, err := normalizeBepInExTree(extractedPath, modName, gate.Gated, game.InstallPath)
 		if err != nil {
 			return nil, err
 		}
+		noteUndeclaredBepInEx(layout, game, gate)
 		// #359: the same refusal PlanImportArchive makes, repeated here
 		// because a caller can reach the ingest without planning first. It
 		// lands before the cache commit, so nothing is deployed and nothing
 		// is recorded.
-		if err := requireDeclaredLoader(game, modName, layout); err != nil {
+		if err := requireDeclaredLoader(game, modName, layout, gate); err != nil {
 			return nil, err
 		}
 		for _, w := range layout.warnings() {

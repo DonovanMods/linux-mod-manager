@@ -178,6 +178,26 @@ type FileManifest struct {
 	Recorded bool
 }
 
+// FileMarkerName reports whether a cache-directory entry name is a
+// per-source-file completion marker (the write side of MarkFileComplete).
+//
+// Exported for internal/core's BepInEx re-layout (#424), which rebuilds a
+// cache entry into a fresh directory and must tell a marker - whose recorded
+// member list has to be REWRITTEN to the new paths - apart from the other
+// reserved bookkeeping, which is carried across untouched. The marker's
+// naming scheme stays in this package, where the rest of the format lives.
+func FileMarkerName(name string) bool {
+	return strings.HasPrefix(name, fileMarkerPrefix)
+}
+
+// FileManifestsAt reads the completion markers in a raw version directory,
+// for a caller holding a path rather than a cache key - a staging directory,
+// or the moved-aside original the BepInEx re-layout rebuilds from (#424).
+// Same contract as FileManifests, which is this function on a key.
+func FileManifestsAt(versionDir string) (map[string]FileManifest, error) {
+	return fileManifestsAt(versionDir)
+}
+
 // FileManifests reads every completion marker in the version directory and
 // returns each file ID's manifest. A directory (or entry) with no markers
 // returns an empty map, never an error. A marker whose body is empty or
