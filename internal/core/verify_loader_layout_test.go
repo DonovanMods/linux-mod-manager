@@ -252,3 +252,55 @@ func TestVerify_LoaderTier_ContentThatIsNotAPluginIsNotAFinding(t *testing.T) {
 	assert.Nil(t, findingWithStatus(res.Result, "loader_deployed_outside_loader"),
 		"statuses were %v", findingStatuses(res.Result))
 }
+
+// TestVerify_LoaderTier_AGameOwnedDirectoryIsNeverMisplaced is #424 review
+// finding 1's other direction, by the route that actually produces it
+// (#416): a patch replacing one of the game's OWN managed assemblies is
+// installed before the loader is declared, so it deploys verbatim; then the
+// loader is declared.
+//
+// "An assembly outside BepInEx/" is true of it, and it is exactly where it
+// belongs - the game's engine reads <Game>_Data/Managed/, and BepInEx never
+// will. A finding here would be permanent, and a --fix acting on it would
+// silently revert the game to stock behaviour while reporting a repair.
+func TestVerify_LoaderTier_AGameOwnedDirectoryIsNeverMisplaced(t *testing.T) {
+	svc, game := newBepInExGameRootService(t)
+	seedGameOwnedTree(t, game.InstallPath,
+		"valheim_Data/Managed/UnityEngine.dll",
+		"valheim_Data/Managed/Assembly-CSharp.dll",
+		"valheim_Data/resources.assets",
+	)
+
+	archivePath := filepath.Join(t.TempDir(), "Patch-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"valheim_Data/Managed/Assembly-CSharp.dll": "patched assembly",
+	})
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	// ...and then the game learns it is a BepInEx game.
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapProton, time.Now())
+	game.Loader = &domain.GameLoader{
+		Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5",
+		Bootstrap: domain.LoaderBootstrapProton,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	before := gameTreeForTest(t, game.InstallPath)
+	require.Contains(t, before, "valheim_Data/Managed/Assembly-CSharp.dll")
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(res.Result, "loader_deployed_outside_loader"),
+		"a game-data assembly patch is where it belongs; statuses were %v", findingStatuses(res.Result))
+
+	fixed, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(fixed.Result, "fixed_loader_deployed_outside_loader"),
+		"and --fix has nothing to repair; statuses were %v", findingStatuses(fixed.Result))
+	assert.Equal(t, before, gameTreeForTest(t, game.InstallPath),
+		"--fix must not move the game's own assembly under BepInEx/plugins/")
+}

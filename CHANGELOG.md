@@ -1194,7 +1194,14 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   a plugin folder with loose files, with a directory holding no assembly,
   or with a BepInEx-owned name is reported as a layout lmm cannot place,
   never guessed at, and 7 Days to Die's `Mods/<Mod>/<Mod>.dll` is untouched
-  on a game that has no BepInEx.
+  on a game that has no BepInEx. Nor is one of the game's own directories
+  ever mistaken for a plugin folder: for a BepInEx game the archive root
+  and the game root are one namespace, so a mod overlaying `<Game>_Data/`,
+  `MonoBleedingEdge/` or `unstripped_corlib/` has exactly a plugin folder's
+  signature. lmm asks the game directory instead of carrying a list of
+  names — a root directory the game already has, holding anything the
+  archive does not account for, is a game-root overlay and deploys where
+  the archive puts it.
 
   Two things come with it. **BepInEx that lmm can SEE now counts as much as
   BepInEx you declared.** A game entry added before lmm's catalog declared

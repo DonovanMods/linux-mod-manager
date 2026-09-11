@@ -611,6 +611,16 @@ lmm game edit lethal-company --loader ""   # remove the declaration
   guessed at: a root that mixes a plugin folder with loose files, or with a
   directory holding no assembly, is one lmm cannot place and says so.
 
+  A plugin folder is also never one of the game's **own** directories. For
+  a BepInEx game the archive root and the game root are the same namespace,
+  so a mod that overlays `<Game>_Data/`, `MonoBleedingEdge/` or
+  `unstripped_corlib/` looks exactly like a plugin folder — a directory
+  with an assembly inside it. lmm decides that from what your game
+  directory actually holds rather than from a list of names: a root
+  directory the game already has, holding anything the archive does not
+  account for, is a game-root overlay and deploys exactly where the archive
+  puts it.
+
   The `BepInEx/`-rooted and wrapped shapes are recognised for any game. The
   ambiguous ones — a bare `plugins/` root, a plugin folder and a bare
   `.dll` — need lmm to believe this is a BepInEx game, so a mod for a

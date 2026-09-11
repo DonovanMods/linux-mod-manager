@@ -572,3 +572,52 @@ func fromSlashAll(paths []string) []string {
 	}
 	return out
 }
+
+// seedGameOwnedTree writes files the GAME owns into its install directory -
+// the Unity tree every real BepInEx game has and a bare t.TempDir() does
+// not. Shape F's game-root rule is decided from what is actually there, so
+// a fixture asking about it needs the game to actually be there.
+func seedGameOwnedTree(t *testing.T, root string, members ...string) {
+	t.Helper()
+	for _, m := range members {
+		p := filepath.Join(root, filepath.FromSlash(m))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte("the game's own "+m), 0o644))
+	}
+}
+
+// TestImportArchive_BepInEx_AGameOwnedDirectoryIsDeployedVerbatim is #424
+// review finding 1 end to end: a patch that replaces one of the game's own
+// managed assemblies has exactly shape F's signature - one root directory,
+// an assembly inside it, no name BepInEx owns - and must NOT be moved under
+// BepInEx/plugins/, where the engine would never read it.
+func TestImportArchive_BepInEx_AGameOwnedDirectoryIsDeployedVerbatim(t *testing.T) {
+	svc, game := newBepInExDeclaredService(t)
+	seedGameOwnedTree(t, game.InstallPath,
+		"valheim_Data/Managed/UnityEngine.dll",
+		"valheim_Data/Managed/Assembly-CSharp.dll",
+		"valheim_Data/resources.assets",
+	)
+
+	archivePath := filepath.Join(t.TempDir(), "Patch-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"valheim_Data/Managed/Assembly-CSharp.dll": "patched assembly",
+	})
+
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, fromSlashAll([]string{"valheim_Data/Managed/Assembly-CSharp.dll"}), plan.Files,
+		"a game-root overlay is previewed exactly where it goes")
+
+	_, err = svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{
+		"valheim_Data/Managed/Assembly-CSharp.dll",
+		"valheim_Data/Managed/UnityEngine.dll",
+		"valheim_Data/resources.assets",
+	}, gameTreeForTest(t, game.InstallPath),
+		"the patch replaces the game's assembly in place; nothing moves under BepInEx/")
+}

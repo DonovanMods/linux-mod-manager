@@ -331,7 +331,7 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// loose .dll. See bepinexNormalise's doc comment.
 	modName := importedModName(kind, filename, ident.version, members)
 	gate := bepinexGateFor(game)
-	layout, err := bepinexLayoutForListing(kind, members, modName, gate.Gated)
+	layout, err := bepinexLayoutForListing(kind, members, modName, gate.Gated, game.InstallPath)
 	if err != nil {
 		return nil, err
 	}

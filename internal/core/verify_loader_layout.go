@@ -111,6 +111,15 @@ func loaderRelayoutRefusal(repairable, fixing bool) string {
 // and asset bundle are as misplaced as the .dll beside them and move with
 // it, so the count the finding reports is the count the repair moves.
 //
+// A row under a directory the GAME itself owns is not misplaced at all and
+// never counts - not even towards the assembly test (#424 review, finding
+// 1). <Game>_Data/Managed/Assembly-CSharp.dll is an assembly outside
+// BepInEx/ and is exactly where it belongs: the game's own engine reads
+// that directory and BepInEx never will. It is bepinexGameOwnedRoot that
+// decides, the same rule and the same disk test shape F is gated on, so
+// this check and the re-layout it offers cannot disagree about what the
+// game owns.
+//
 // A row-lookup failure yields nothing: verify does not turn a DB read error
 // into a layout accusation.
 func (r *verifyRun) misplacedLoaderRows(mod *domain.InstalledMod) []string {
@@ -118,12 +127,29 @@ func (r *verifyRun) misplacedLoaderRows(mod *domain.InstalledMod) []string {
 	if err != nil {
 		return nil
 	}
+	slashed := make([]string, 0, len(rows))
+	for _, p := range rows {
+		slashed = append(slashed, filepath.ToSlash(p))
+	}
+	// Memoised per root: the rule walks the game's directory, and a mod
+	// with many rows under one root would otherwise walk it once per row.
+	gameOwned := make(map[string]bool)
 	var misplaced []string
 	assembly := false
-	for _, p := range rows {
-		slash := filepath.ToSlash(p)
+	for _, slash := range slashed {
 		if strings.HasPrefix(slash, bepinexDirName+"/") {
 			continue
+		}
+		root, _, nested := strings.Cut(slash, "/")
+		if nested {
+			owned, asked := gameOwned[root]
+			if !asked {
+				owned = bepinexGameOwnedRoot(r.game.InstallPath, root, slashed)
+				gameOwned[root] = owned
+			}
+			if owned {
+				continue
+			}
 		}
 		if strings.EqualFold(path.Ext(slash), ".dll") {
 			assembly = true
@@ -157,7 +183,7 @@ func (r *verifyRun) cacheRelayoutApplies(mod *domain.InstalledMod) bool {
 	for i, m := range members {
 		slash[i] = filepath.ToSlash(m)
 	}
-	layout, err := bepinexNormalise(slash, mod.Name, true)
+	layout, err := bepinexNormalise(slash, mod.Name, true, r.game.InstallPath)
 	if err != nil || !layout.Applies() {
 		return false
 	}
@@ -373,7 +399,7 @@ func (r *verifyRun) relayoutCacheEntry(mod *domain.InstalledMod) error {
 	if err := os.Rename(entry, staging); err != nil {
 		return fmt.Errorf("moving the cache entry aside: %w", err)
 	}
-	if _, err := normalizeBepInExTree(staging, mod.Name, true); err != nil {
+	if _, err := normalizeBepInExTree(staging, mod.Name, true, r.game.InstallPath); err != nil {
 		if undo := os.Rename(staging, entry); undo != nil {
 			return fmt.Errorf("re-laying out the cache entry: %w (and putting it back failed: %v)", err, undo)
 		}

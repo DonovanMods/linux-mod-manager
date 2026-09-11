@@ -336,7 +336,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// onto the ambiguous shapes - a bare plugins/ root, a plugin
 		// folder, a loose .dll.
 		gate := bepinexGateFor(game)
-		layout, err := normalizeBepInExTree(extractedPath, modName, gate.Gated)
+		layout, err := normalizeBepInExTree(extractedPath, modName, gate.Gated, game.InstallPath)
 		if err != nil {
 			return nil, err
 		}

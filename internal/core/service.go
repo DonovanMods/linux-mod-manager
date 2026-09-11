@@ -1680,7 +1680,7 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 	// SEE as well as one the game declares) widens the rules onto the
 	// ambiguous shapes.
 	gate := bepinexGateFor(game)
-	layout, err := normalizeBepInExTree(extractPath, mod.Name, gate.Gated)
+	layout, err := normalizeBepInExTree(extractPath, mod.Name, gate.Gated, game.InstallPath)
 	if err != nil {
 		return nil, err
 	}
