@@ -87,6 +87,8 @@ type Source struct {
 
 var (
 	_ source.ModSource          = (*Source)(nil)
+	_ source.ExactFileSizer     = (*Source)(nil)
+	_ source.LoaderRequirer     = (*Source)(nil)
 	_ source.CapabilityReporter = (*Source)(nil)
 	_ source.TypeLabeler        = (*Source)(nil)
 	_ source.LocalIndexSource   = (*Source)(nil)
@@ -123,15 +125,15 @@ func (s *Source) TypeLabel() string { return "built-in" }
 // source implements no EnvKeyProvider and `lmm auth status` has nothing to
 // report for it.
 //
-// Search is true from T1 (#408): the local index answers it. Versions is
-// true from T2 (#409): a package version IS a file here, so GetModFiles
-// returns one file per version and core.ResolveVersionFiles resolves an
-// exact version against it. Dependencies and Updates follow in the same
-// unit, each in the commit that implements it - declaring a capability
-// before the method exists is a false claim to every frontend that branches
-// on one.
+// Search is true from T1 (#408): the local index answers it. Versions and
+// Dependencies are true from T2 (#409): a package version IS a file here,
+// so GetModFiles returns one file per version and core.ResolveVersionFiles
+// resolves an exact version against it, and a package's dependency strings
+// map straight onto domain.ModReference. Updates follows in the same unit,
+// in the commit that implements it - declaring a capability before the
+// method exists is a false claim to every frontend that branches on one.
 func (s *Source) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: false, Updates: false, Auth: false, Versions: true}
+	return source.Capabilities{Search: true, Dependencies: true, Updates: false, Auth: false, Versions: true}
 }
 
 // AuthURL: unsupported - there is no credential to obtain.
@@ -140,12 +142,6 @@ func (s *Source) AuthURL() string { return "" }
 // ExchangeToken: unsupported - there is no credential to exchange.
 func (s *Source) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
 	return nil, fmt.Errorf("source %q: authentication: %w", sourceID, source.ErrNotSupported)
-}
-
-// GetDependencies: T2 (#360) - parses the installed version's dependencies
-// and routes the BepInEx loader entry out.
-func (s *Source) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
-	return nil, fmt.Errorf("source %q: dependencies: %w", sourceID, source.ErrNotSupported)
 }
 
 // CheckUpdates: T2 (#360) - an entirely local comparison against the index.

@@ -199,4 +199,22 @@ func (l *GameLoader) IsBepInEx() bool {
 // its config say the loader is set up here? It gates the archive-root
 // normaliser's two ambiguous shapes (#358), the plan-time precondition and
 // the verify tier, so it lives on Game rather than being re-derived at each.
-func (g *Game) DeclaresBepInEx() bool { return g != nil && g.Loader.IsBepInEx() }
+func (g *Game) DeclaresBepInEx() bool { return g.DeclaresLoader(LoaderKindBepInEx) }
+
+// DeclaresLoader is the same question for a loader named at RUNTIME rather
+// than at compile time (#409): a source can report that a mod needs a
+// loader (source.LoaderRequirer), and Kind is an open string, so the
+// precondition has to be able to ask about a kind lmm has no constant for.
+//
+// Compared case-insensitively and after trimming, because both sides are
+// values a human types - games.yaml's `loader: kind:`, and whatever a
+// package's own metadata spells its framework. An empty kind declares
+// nothing, and a nil receiver or a nil declaration answers false, so every
+// caller can ask without a guard.
+func (g *Game) DeclaresLoader(kind string) bool {
+	kind = strings.TrimSpace(kind)
+	if g == nil || g.Loader == nil || kind == "" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(g.Loader.Kind), kind)
+}

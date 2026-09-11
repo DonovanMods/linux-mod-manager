@@ -351,12 +351,23 @@ type LoaderRequiredError struct {
 	// Kind is the loader the mod needs - today always
 	// domain.LoaderKindBepInEx.
 	Kind string `json:"kind"`
+	// Version is the loader version the requirement names, when whatever
+	// reported it knew one: a Thunderstore package pins its BepInExPack
+	// dependency ("5.4.2100"), while an archive's SHAPE says nothing about
+	// a version. Omitted when unknown. It is here because the first setup
+	// step tells the user to go and choose a BepInEx build themselves, and
+	// which version the mod actually asked for is the one fact those
+	// sentences cannot derive.
+	Version string `json:"version,omitempty"`
 	// ModName is the mod that needs it, as the flow named it. Empty when the
 	// refusal is about an archive whose identity is not resolved yet.
 	ModName string `json:"mod_name,omitempty"`
-	// Layout names the archive shape the requirement was inferred from, in
+	// Layout names the EVIDENCE the requirement was inferred from, so a user
+	// can see WHY lmm decided this is a BepInEx mod: the archive shape in
 	// the normaliser's own words ("game-root-relative", "wrapped in a single
-	// directory"), so a user can see WHY lmm decided this is a BepInEx mod.
+	// directory"), or - when the source said so itself (#409) - the
+	// dependency it declared ("the package depends on
+	// BepInEx-BepInExPack-5.4.2100").
 	Layout string `json:"layout,omitempty"`
 	// Setup is the ordered steps that resolve it, as complete sentences a
 	// frontend renders verbatim. Data rather than prose because both
@@ -392,11 +403,27 @@ func loaderDisplayName(kind string) string {
 // archive shape the requirement was read off. The setup steps are written
 // once, here, so the CLI, the web UI and `--json` cannot drift about them.
 func newLoaderRequiredError(game *domain.Game, modName, layout string) *LoaderRequiredError {
+	return newLoaderRequirement(game, modName, domain.LoaderKindBepInEx, "", layout)
+}
+
+// newLoaderRequirement is newLoaderRequiredError with the two facts only a
+// SOURCE can supply (#409): which loader, and at which version.
+//
+// ONE constructor for both halves, deliberately. #359 infers the
+// requirement from an archive's shape and #409's Thunderstore source reads
+// it off a package's own dependency string, but the user is in the same
+// position either way and must be told the same three things - so the
+// sentences live here and nowhere else.
+func newLoaderRequirement(game *domain.Game, modName, kind, version, evidence string) *LoaderRequiredError {
+	install := "Install BepInEx into the game directory yourself: a native Linux build needs the BepInEx_linux_x64 archive from BepInEx's own GitHub releases, while a Proton/Wine game needs the Windows pack (winhttp.dll plus doorstop_config.ini). lmm does not choose or download it - the wrong build leaves a game that silently loads nothing."
+	if version != "" {
+		install += fmt.Sprintf(" This mod asks for %s %s.", loaderDisplayName(kind), version)
+	}
 	return &LoaderRequiredError{
-		GameID: game.ID, Kind: domain.LoaderKindBepInEx, ModName: modName, Layout: layout,
+		GameID: game.ID, Kind: kind, Version: version, ModName: modName, Layout: evidence,
 		Setup: []string{
-			"Install BepInEx into the game directory yourself: a native Linux build needs the BepInEx_linux_x64 archive from BepInEx's own GitHub releases, while a Proton/Wine game needs the Windows pack (winhttp.dll plus doorstop_config.ini). lmm does not choose or download it - the wrong build leaves a game that silently loads nothing.",
-			fmt.Sprintf("Record it: `lmm game edit %s --loader bepinex --loader-version <version> --loader-runtime mono|il2cpp --loader-bootstrap native|proton`.", game.ID),
+			install,
+			fmt.Sprintf("Record it: `lmm game edit %s --loader %s --loader-version <version> --loader-runtime mono|il2cpp --loader-bootstrap native|proton`.", game.ID, kind),
 			fmt.Sprintf("Then `lmm game show %s` prints the exact Steam launch option to paste, and `lmm verify --game %s` checks that the loader actually ran.", game.ID, game.ID),
 		},
 	}

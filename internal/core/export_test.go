@@ -250,3 +250,11 @@ func (i *Importer) ImportForTest(ctx context.Context, archivePath string, game *
 func NewLoaderRequiredErrorForTest(game *domain.Game, modName, layout string) *LoaderRequiredError {
 	return newLoaderRequiredError(game, modName, layout)
 }
+
+// NewLoaderRequirementForTest is the same for the half a SOURCE reports
+// (#409): the kind and the version come from the package's own metadata
+// rather than from an archive's shape, and the golden built through this
+// is what pins the extra wire member and the version-aware first sentence.
+func NewLoaderRequirementForTest(game *domain.Game, modName, kind, version, evidence string) *LoaderRequiredError {
+	return newLoaderRequirement(game, modName, kind, version, evidence)
+}

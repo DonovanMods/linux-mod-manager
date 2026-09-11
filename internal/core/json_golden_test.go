@@ -1967,6 +1967,19 @@ func TestJSONGoldens(t *testing.T) {
 			core.NewLoaderRequiredErrorForTest(
 				&domain.Game{ID: "lethal-company"}, "Skinwalkers", "game-root-relative"),
 		},
+		{
+			// #409: the same refusal, reported by the SOURCE instead of
+			// inferred from an archive. Two members differ and both are
+			// additive - "version", which an archive's shape can never
+			// know, and a "layout" that names the dependency rather than a
+			// directory layout - so this golden exists to prove the shape
+			// is one shape and the sentences are one set of sentences.
+			"loader_required_error_from_source",
+			core.NewLoaderRequirementForTest(
+				&domain.Game{ID: "lethal-company"}, "Skinwalkers",
+				domain.LoaderKindBepInEx, "5.4.2100",
+				"the package declares a dependency on the BepInEx framework"),
+		},
 	}
 
 	seen := make(map[string]bool, len(tests))
