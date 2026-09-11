@@ -1221,7 +1221,11 @@ bepinex` when the installation is what answered, and stops refusing an
   the game directory all agree with each other and the plugin still loads
   nothing. `--fix` re-lays that mod's cache entry out through the layout
   rules and re-deploys it, in every profile that shares the entry; when the
-  entry is a layout lmm cannot place on its own, the row says so and names
+  entry is re-laid out atomically - the live entry is moved aside intact,
+  the new one is built beside it, and one rename swaps them - so a failure
+  partway through leaves the cache byte for byte as it was rather than a
+  half-moved mixture that the next run would classify as unrepairable. When
+  the entry is a layout lmm cannot place on its own, the row says so and names
   what has to change - move the files under `BepInEx/plugins/` inside the
   archive and re-import it - rather than claiming a repair it cannot make,
   or pointing at a re-import of the same archive that would lay it out the

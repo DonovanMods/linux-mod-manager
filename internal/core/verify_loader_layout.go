@@ -24,12 +24,14 @@ package core
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // loaderRelayoutRemedy is the reason a row carries when --fix cannot help:
@@ -387,33 +389,174 @@ func (r *verifyRun) profilesDeploying(mod *domain.InstalledMod) ([]relayoutHolde
 // entry, atomically.
 //
 // Atomically because a half-moved cache entry is worse than the misplaced
-// one it replaces: the work happens in a SIBLING directory reached by one
-// rename, and only a second rename makes it the entry. A failure anywhere
-// in between renames the original back, so the entry a later run sees is
-// either the old layout or the new one and never a mixture.
+// one it replaces: a mixture has BepInEx/ at its root, so the NEXT run
+// classifies it shape A, the re-layout no longer applies, and the finding
+// turns unfixable - on an entry --fix itself corrupted. The user loses the
+// remedy to the repair that was meant to deliver it.
 //
-// A sibling rather than a copy: rename within the cache directory is atomic
-// and costs nothing, where a copy of a multi-gigabyte entry is neither. The
-// entry's reserved bookkeeping files ride along untouched -
-// relativeFileMembers excludes them from the member list, so the normaliser
-// never sees them.
+// So the live entry is never mutated. Three steps, each of which is either
+// a single rename or throwaway work on a scratch directory:
+//
+//	rename(entry, entry.relayout) - one atomic move, and what is now under
+//	.relayout is the ORIGINAL, untouched and complete;
+//
+//	build entry.relayout-new by placing each member at its new path, read
+//	FROM .relayout and never moved out of it;
+//
+//	rename(entry.relayout-new, entry) - the one moment the entry changes -
+//	then discard .relayout.
+//
+// Any failure removes the half-built scratch tree and renames the original
+// back, byte for byte. Hard links make the build free on the same
+// filesystem (which a sibling of the entry always is), with a streaming
+// copy for the filesystem that will not link - the reviewer's "a copy of a
+// multi-gigabyte entry is not free" objection answered without giving up
+// the guarantee the sibling dance exists to buy.
+//
+// The entry's reserved bookkeeping files ride along explicitly rather than
+// implicitly (relayoutReservedEntries): relativeFileMembers excludes them
+// from the member list, so a build that only placed members would silently
+// drop every completion marker and retained source archive.
 func (r *verifyRun) relayoutCacheEntry(mod *domain.InstalledMod) error {
 	entry := r.cacheEntryPath(mod)
-	staging := entry + ".relayout"
-	if err := os.RemoveAll(staging); err != nil {
-		return fmt.Errorf("preparing %s: %w", staging, err)
+	original := entry + relayoutOriginalSuffix
+	built := entry + relayoutBuiltSuffix
+	for _, scratch := range []string{original, built} {
+		if err := os.RemoveAll(scratch); err != nil {
+			return fmt.Errorf("preparing %s: %w", scratch, err)
+		}
 	}
-	if err := os.Rename(entry, staging); err != nil {
+	if err := os.Rename(entry, original); err != nil {
 		return fmt.Errorf("moving the cache entry aside: %w", err)
 	}
-	if _, err := normalizeBepInExTree(staging, mod.Name, true, r.game.InstallPath); err != nil {
-		if undo := os.Rename(staging, entry); undo != nil {
-			return fmt.Errorf("re-laying out the cache entry: %w (and putting it back failed: %v)", err, undo)
+	undo := func(what string, cause error) error {
+		_ = os.RemoveAll(built)
+		if uerr := os.Rename(original, entry); uerr != nil {
+			return fmt.Errorf("%s: %w (and putting the cache entry back failed: %v)", what, cause, uerr)
 		}
-		return fmt.Errorf("re-laying out the cache entry: %w", err)
+		return fmt.Errorf("%s: %w", what, cause)
 	}
-	if err := os.Rename(staging, entry); err != nil {
-		return fmt.Errorf("putting the re-laid-out cache entry back: %w", err)
+	if err := r.buildRelaidOutEntry(original, built, mod); err != nil {
+		return undo("re-laying out the cache entry", err)
+	}
+	if err := os.Rename(built, entry); err != nil {
+		return undo("putting the re-laid-out cache entry back", err)
+	}
+	// The original is now redundant. A failure to remove it costs disk, not
+	// correctness - the entry is already the new one - so it is reported
+	// rather than treated as a failed repair.
+	if err := os.RemoveAll(original); err != nil {
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail,
+			Detail: fmt.Sprintf("removing %s after re-laying out %s: %v", original, mod.Name, err)})
 	}
 	return nil
+}
+
+// relayoutOriginalSuffix names the scratch directory holding the entry
+// exactly as it was, and relayoutBuiltSuffix the one holding its
+// replacement. Both are siblings of the entry so every move is a rename
+// within one directory, and both are removed on every path out of
+// relayoutCacheEntry.
+const (
+	relayoutOriginalSuffix = ".relayout"
+	relayoutBuiltSuffix    = ".relayout-new"
+)
+
+// buildRelaidOutEntry materialises src's normalised form at dst, reading src
+// and never writing to it.
+//
+// The layout is re-derived here rather than passed in from
+// cacheRelayoutApplies' dry run: the two must agree, and the way to
+// guarantee that is for both to ask bepinexNormalise over the same member
+// list rather than for one to trust a decision the other made earlier.
+//
+// A member the layout drops (package metadata) is simply not placed, which
+// is the same outcome the in-place rewrite reached by deleting it, without
+// touching the original. Nothing is ever left empty, because nothing but a
+// destination directory is ever created.
+func (r *verifyRun) buildRelaidOutEntry(src, dst string, mod *domain.InstalledMod) error {
+	members, err := relativeFileMembers(src)
+	if err != nil {
+		return fmt.Errorf("listing the cache entry: %w", err)
+	}
+	slash := make([]string, len(members))
+	for i, m := range members {
+		slash[i] = filepath.ToSlash(m)
+	}
+	layout, err := bepinexNormalise(slash, mod.Name, true, r.game.InstallPath)
+	if err != nil {
+		return err
+	}
+	if !layout.Applies() {
+		return errors.New("the cache entry is not a layout lmm can place")
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return fmt.Errorf("preparing %s: %w", dst, err)
+	}
+	for i, member := range slash {
+		dest, kept := layout.Rewrite(member)
+		if !kept {
+			continue
+		}
+		if err := r.placeRelayoutFile(filepath.Join(src, members[i]),
+			filepath.Join(dst, filepath.FromSlash(dest))); err != nil {
+			return fmt.Errorf("placing %s at %s: %w", member, dest, err)
+		}
+	}
+	return r.relayoutReservedEntries(src, dst)
+}
+
+// relayoutReservedEntries carries the entry's own bookkeeping across the
+// rebuild: the .lmm-file-<id> completion markers, a retained source archive,
+// a merge fingerprint - everything relativeFileMembers deliberately hides
+// from the normaliser, and everything the in-place rewrite kept for free by
+// never moving it.
+//
+// Whole subtrees, at whatever depth they appear, and at the same relative
+// path: a reserved entry's meaning is its name, and nothing about this
+// re-layout changes what it vouches for.
+func (r *verifyRun) relayoutReservedEntries(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p == src || !strings.HasPrefix(d.Name(), cache.ReservedPrefix) {
+			return nil
+		}
+		rel, rerr := filepath.Rel(src, p)
+		if rerr != nil {
+			return rerr
+		}
+		target := filepath.Join(dst, rel)
+		if !d.IsDir() {
+			return r.placeRelayoutFile(p, target)
+		}
+		if merr := os.MkdirAll(target, 0o755); merr != nil {
+			return merr
+		}
+		return nil
+	})
+}
+
+// placeRelayoutFile puts one member at its new path, through the test-only
+// seam when one is armed.
+func (r *verifyRun) placeRelayoutFile(src, dst string) error {
+	if r.svc.relayoutPlaceFile != nil {
+		return r.svc.relayoutPlaceFile(src, dst)
+	}
+	return linkOrCopyFile(src, dst)
+}
+
+// linkOrCopyFile materialises src at dst without disturbing src: a hard link
+// when the filesystem allows one (free, and the cache entry and its sibling
+// scratch directory are always on the same filesystem), a streaming copy
+// when it does not.
+func linkOrCopyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("preparing %s: %w", filepath.Dir(dst), err)
+	}
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	return copyFileStreaming(src, dst)
 }

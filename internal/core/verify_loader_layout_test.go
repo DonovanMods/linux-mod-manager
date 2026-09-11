@@ -2,13 +2,16 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -355,4 +358,123 @@ func TestVerify_LoaderTier_TheRemedyDoesNotReproduceTheProblem(t *testing.T) {
 	assert.NotContains(t, f.FixableReason, "so the layout rules run over a fresh copy")
 	assert.Contains(t, f.FixableReason, "BepInEx/plugins/",
 		"the remedy has to name where the files actually have to go")
+}
+
+// cacheEntrySnapshot reads every file in a cache entry - reserved
+// bookkeeping markers included - as relative path to exact bytes. The
+// atomicity contract is about CONTENT, not about a member list, so the
+// assertion has to compare content.
+func cacheEntrySnapshot(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	require.NoError(t, filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(dir, p)
+		if rerr != nil {
+			return rerr
+		}
+		body, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		out[filepath.ToSlash(rel)] = string(body)
+		return nil
+	}))
+	return out
+}
+
+// siblingsOfCacheEntry lists the entry's neighbours in the cache, so a test
+// can assert the re-layout left no scratch directory behind.
+func siblingsOfCacheEntry(t *testing.T, entry string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(entry))
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TestVerify_LoaderTier_AFailedRelayoutLeavesTheCacheEntryByteIdentical is
+// #424 review finding 3. The re-layout's whole reason for moving the entry
+// aside is to promise that "a later run sees the old layout or the new one,
+// never a mixture" - and it did not keep that promise: it normalised the
+// moved-aside tree IN PLACE, member by member, so a failure partway left a
+// half-moved tree and the undo renamed that half-moved tree back under the
+// entry's own name. Worse, a mixture has BepInEx/ at its root, so the next
+// run classifies it shape A, the re-layout no longer applies, and the
+// finding becomes unfixable - on an entry --fix itself corrupted.
+//
+// The failure is injected on the SECOND member, because a failure on the
+// first proves nothing about a mixture.
+func TestVerify_LoaderTier_AFailedRelayoutLeavesTheCacheEntryByteIdentical(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t)
+	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	before := cacheEntrySnapshot(t, entry)
+	require.Len(t, before, 2, "the fixture's entry is Jotunn.dll + Jotunn.xml")
+
+	placed := 0
+	svc.SetRelayoutPlaceFileForTest(func(src, dst string) error {
+		placed++
+		if placed > 1 {
+			return errors.New("injected: no space left on device")
+		}
+		return core.LinkOrCopyFileForTest(src, dst)
+	})
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+	require.Greater(t, placed, 1, "the injection has to fire mid-rewrite to prove anything")
+
+	assert.Nil(t, findingWithStatus(res.Result, "fixed_loader_deployed_outside_loader"),
+		"a failed repair is not a repair; statuses were %v", findingStatuses(res.Result))
+	f := findingWithStatus(res.Result, "loader_deployed_outside_loader")
+	require.NotNil(t, f)
+	assert.Contains(t, f.FixableReason, "could not re-lay out")
+
+	assert.Equal(t, before, cacheEntrySnapshot(t, entry),
+		"the live entry must be byte-identical after a failed re-layout")
+	for _, name := range siblingsOfCacheEntry(t, entry) {
+		assert.NotContains(t, name, ".relayout", "no scratch directory may survive")
+	}
+
+	// ...and the next run still sees a repairable entry, not one --fix
+	// corrupted into an unrepairable shape.
+	again, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	next := findingWithStatus(again.Result, "loader_deployed_outside_loader")
+	require.NotNil(t, next, "statuses were %v", findingStatuses(again.Result))
+	assert.True(t, next.Fixable, "a failed --fix must not cost the user their remedy")
+}
+
+// TestVerify_LoaderTier_FixCarriesTheEntrysBookkeepingAcross: the re-layout
+// builds a NEW entry rather than moving the old one about, so everything
+// relativeFileMembers deliberately hides from the normaliser - the
+// .lmm-file-<id> completion markers, a retained source archive, a merge
+// fingerprint - has to be carried across explicitly. Dropping a completion
+// marker would make the entry read as incomplete and cost a re-download of
+// a mod that is sitting right there.
+func TestVerify_LoaderTier_FixCarriesTheEntrysBookkeepingAcross(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t)
+	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, cache.MarkFileCompleteWithMembers(entry, "1",
+		[]string{filepath.FromSlash("Jotunn/Jotunn.dll"), filepath.FromSlash("Jotunn/Jotunn.xml")}))
+
+	_, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	manifests, err := svc.GetGameCache(game).FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	require.Contains(t, manifests, "1", "the completion marker must survive the re-layout")
+	assert.True(t, manifests["1"].Recorded)
 }

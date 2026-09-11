@@ -139,6 +139,15 @@ type Service struct {
 	// beginOp takes around every mutation, or "" for no cross-process lock.
 	opLockPath string
 
+	// relayoutPlaceFile, when non-nil, replaces the per-file placement
+	// verify's BepInEx re-layout uses to build the new cache entry. Test-only
+	// seam (export_test.go's SetRelayoutPlaceFileForTest): the rewrite's
+	// atomicity contract is about an I/O failure PARTWAY through, and the
+	// destination tree is one the re-layout creates itself, so there is
+	// nothing on disk a test could arrange to make one member fail. Always
+	// nil in production.
+	relayoutPlaceFile func(src, dst string) error
+
 	// beforeSaveInstalled, when non-nil, runs immediately before the install
 	// flow's SaveInstalledMod call - the only point between a successful
 	// deploy and the DB write, and therefore the only place a test can arm
