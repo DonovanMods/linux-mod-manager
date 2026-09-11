@@ -7,19 +7,19 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/go-unrealpak"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 )
 
-// MergeSource is a type alias (not a distinct type) for source.MergeSource
+// MergeSource is a type alias (not a distinct type) for adapter.MergeSource
 // (Step 3 above). internal/core must NOT import this icarus package
 // directly (established #136/#196 precedent - see
 // service_icarus_compile_test.go's fakeCompilerSource doc comment), so it
-// can only ever construct/consume source.MergeSource values - aliasing it
+// can only ever construct/consume adapter.MergeSource values - aliasing it
 // here, rather than defining a second, structurally-similar type, is what
-// lets *Icarus's MergeCompile method (Step 6) satisfy source.MergeCompiler
+// lets *Icarus's MergeCompile method (Step 6) satisfy adapter.MergeCompiler
 // at all: Go interface satisfaction requires identical types, and a type
 // alias IS the same type, not a look-alike.
-type MergeSource = source.MergeSource
+type MergeSource = adapter.MergeSource
 
 // ValidateSource parses sourceFilePath without compiling anything - the
 // ingest-time check. .exmodz archives fully parse (#197); .pak files (#221)
@@ -60,14 +60,14 @@ func ValidateSource(sourceFilePath string) error {
 // ASSET files cannot compose this way - a same-path asset collision is
 // necessarily last-wins, so it is reported as a warning instead.
 //
-// ctx is accepted only to satisfy source.MergeCompiler and is never read -
+// ctx is accepted only to satisfy adapter.MergeCompiler and is never read -
 // every step here is local file I/O over small files (mirrors Compile's own
-// doc comment, internal/source/icarus/compile.go:23-25).
+// doc comment, internal/adapter/icarus/compile.go:23-25).
 //
 // A non-nil error always means outputPakPath does not exist (or does not
 // contain a fully-written pak) - see the removal defer below, mirroring
 // Compile's own fail-clean contract.
-func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) (warnings []string, failed []source.MergeFailure, err error) {
+func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) (warnings []string, failed []adapter.MergeFailure, err error) {
 	base, err := unrealpak.Open(basePakPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("icarus: opening base pak %s: %w", basePakPath, err)
@@ -92,7 +92,7 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 		if src.Kind == MergeSourcePak {
 			bundle, convWarnings, cerr := convertPakToBundle(src.SourcePath, base, baseFold)
 			if cerr != nil {
-				failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: cerr.Error()})
+				failed = append(failed, adapter.MergeFailure{ModRef: src.ModRef, Reason: cerr.Error()})
 				warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %v - deploying raw", label, cerr))
 				continue
 			}
@@ -119,7 +119,7 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 			}
 			applyWarnings, aerr := applyBundle(base, scratchTables, scratchAssets, scratchOwner, bundle, src.ModRef, label)
 			if aerr != nil {
-				failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: aerr.Error()})
+				failed = append(failed, adapter.MergeFailure{ModRef: src.ModRef, Reason: aerr.Error()})
 				warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %v - deploying raw", label, aerr))
 				continue
 			}

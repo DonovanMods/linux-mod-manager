@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/go-unrealpak"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 )
 
 // TestMergeCompile_FieldLevelMergeAcrossMods is the crux of #197: two mods
@@ -26,7 +26,7 @@ func TestMergeCompile_FieldLevelMergeAcrossMods(t *testing.T) {
 	modB := writeTestExmodzFile(t, `{"name":"Health Mod","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseHealth":800}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	warnings, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+	warnings, failed, err := MergeCompile(context.Background(), basePak, []adapter.MergeSource{
 		{ModRef: "icarus:speed-mod", SourcePath: modA},
 		{ModRef: "icarus:health-mod", SourcePath: modB},
 	}, outputPath)
@@ -73,7 +73,7 @@ func TestMergeCompile_DifferentTablesFromDifferentMods(t *testing.T) {
 	modB := writeTestExmodzFile(t, `{"name":"Item Mod","Rows":[{"CurrentFile":"Items-D_ItemsStatic.json","File_Items":[{"Name":"Item_Saddle","Weight":1}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+	_, failed, err := MergeCompile(context.Background(), basePak, []adapter.MergeSource{
 		{ModRef: "icarus:mount-mod", SourcePath: modA},
 		{ModRef: "icarus:item-mod", SourcePath: modB},
 	}, outputPath)
@@ -120,7 +120,7 @@ func TestMergeCompile_SameRowSameField_LastWins(t *testing.T) {
 	modB := writeTestExmodzFile(t, `{"name":"B","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseMovementSpeed":400}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+	_, failed, err := MergeCompile(context.Background(), basePak, []adapter.MergeSource{
 		{ModRef: "icarus:a", SourcePath: modA},
 		{ModRef: "icarus:b", SourcePath: modB},
 	}, outputPath)
@@ -162,7 +162,7 @@ func TestMergeCompile_AssetCollision_LastWinsWithWarning(t *testing.T) {
 	})
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	warnings, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+	warnings, failed, err := MergeCompile(context.Background(), basePak, []adapter.MergeSource{
 		{ModRef: "icarus:a", SourcePath: modA},
 		{ModRef: "icarus:b", SourcePath: modB},
 	}, outputPath)
@@ -209,7 +209,7 @@ func TestMergeCompile_ContentAddingModComposesWithPatchMod(t *testing.T) {
 	addMod := writeTestExmodzFile(t, `{"name":"NewSpecies","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Wolf","BaseMovementSpeed":320}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+	_, failed, err := MergeCompile(context.Background(), basePak, []adapter.MergeSource{
 		{ModRef: "icarus:patch", SourcePath: patchMod},
 		{ModRef: "icarus:add", SourcePath: addMod},
 	}, outputPath)
@@ -256,7 +256,7 @@ func TestMergeCompile_SingleSource_MatchesCompile(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 	mergeOut := filepath.Join(t.TempDir(), "merge_P.pak")
-	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{{ModRef: "icarus:bear-mount", SourcePath: exmodzPath}}, mergeOut)
+	_, failed, err := MergeCompile(context.Background(), basePak, []adapter.MergeSource{{ModRef: "icarus:bear-mount", SourcePath: exmodzPath}}, mergeOut)
 	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
 	}

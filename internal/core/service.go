@@ -471,7 +471,7 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 // mergeCompilerSourceForGame resolves the sole MergeCompiler-capable source
 // registered for gameID (#173). The download path pins its MergeCompiler
 // check to the specific source a file was downloaded from
-// (DownloadModToCache's src.(source.MergeCompiler) check); importWithIdentity
+// (DownloadModToCache's src.(adapter.MergeCompiler) check); importWithIdentity
 // has no such per-archive source to key off of, so it resolves against
 // every source the game maps in its registry instead — at most one of a
 // game's configured sources implements MergeCompiler today. Zero is the expected
@@ -479,7 +479,7 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 // more than one is treated as ambiguous rather than picking arbitrarily —
 // both fail loud instead of letting an .exmodz import silently skip
 // validation.
-func (s *Service) mergeCompilerSourceForGame(gameID string) (source.MergeCompiler, error) {
+func (s *Service) mergeCompilerSourceForGame(gameID string) (adapter.MergeCompiler, error) {
 	// #353: the ADAPTER answers "can this game compile" first - one game,
 	// one adapter, zero ambiguity - and only when it has no such
 	// capability does the pre-#353 source walk below run.
@@ -492,9 +492,9 @@ func (s *Service) mergeCompilerSourceForGame(gameID string) (source.MergeCompile
 	if err != nil {
 		return nil, err
 	}
-	var compilers []source.MergeCompiler
+	var compilers []adapter.MergeCompiler
 	for _, src := range srcs {
-		if c, ok := src.(source.MergeCompiler); ok {
+		if c, ok := src.(adapter.MergeCompiler); ok {
 			compilers = append(compilers, c)
 		}
 	}
@@ -529,11 +529,11 @@ func (s *Service) adapterCompiler(game *domain.Game) (adapter.MergeCompiler, boo
 //
 // #353 asks the adapter first for the same reason adapterCompiler does; the
 // source type-assertion is the temporary fallback U2 (#412) removes.
-func (s *Service) compilerForSource(game *domain.Game, src source.ModSource) (source.MergeCompiler, bool) {
+func (s *Service) compilerForSource(game *domain.Game, src source.ModSource) (adapter.MergeCompiler, bool) {
 	if mc, found, err := s.adapterCompiler(game); err == nil && found {
 		return mc, true
 	}
-	mc, ok := src.(source.MergeCompiler)
+	mc, ok := src.(adapter.MergeCompiler)
 	return mc, ok
 }
 
@@ -543,18 +543,18 @@ func (s *Service) compilerForSource(game *domain.Game, src source.ModSource) (so
 // merged-pak paths that always received their game as a parameter keep
 // working for a game value that was never registered with the service (a
 // distinction only tests exercise today). Same 0/1/many contract.
-func (s *Service) mergeCompilerForGame(game *domain.Game) (source.MergeCompiler, error) {
+func (s *Service) mergeCompilerForGame(game *domain.Game) (adapter.MergeCompiler, error) {
 	// #353: the adapter first - see adapterCompiler.
 	if mc, found, err := s.adapterCompiler(game); err != nil || found {
 		return mc, err
 	}
-	var compilers []source.MergeCompiler
+	var compilers []adapter.MergeCompiler
 	for id := range game.SourceIDs {
 		src, err := s.registry.Get(id)
 		if err != nil {
 			continue // unregistered: silently skipped, matching SourcesForGame
 		}
-		if c, ok := src.(source.MergeCompiler); ok {
+		if c, ok := src.(adapter.MergeCompiler); ok {
 			compilers = append(compilers, c)
 		}
 	}
@@ -566,10 +566,10 @@ func (s *Service) mergeCompilerForGame(game *domain.Game) (source.MergeCompiler,
 // failure when the game's MergeCompiler source isn't configured; more than
 // one is treated as ambiguous rather than picking arbitrarily - both fail
 // loud instead of letting a compile-path operation silently skip.
-func soleMergeCompiler(gameID string, compilers []source.MergeCompiler) (source.MergeCompiler, error) {
+func soleMergeCompiler(gameID string, compilers []adapter.MergeCompiler) (adapter.MergeCompiler, error) {
 	switch len(compilers) {
 	case 0:
-		return nil, fmt.Errorf("game %q requires DeployCompile but has no merge-compiler-capable source configured (map a source implementing source.MergeCompiler in the game's sources)", gameID)
+		return nil, fmt.Errorf("game %q requires DeployCompile but has no merge-compiler-capable source configured (map a source implementing adapter.MergeCompiler in the game's sources)", gameID)
 	case 1:
 		return compilers[0], nil
 	default:
@@ -1846,7 +1846,7 @@ func commitStagedCache(cachePath, stagePath string) error {
 // a plain archive without ValidateSource. The import path has no such
 // residual: importWithIdentity hard-errors on an unresolvable compiler, since
 // it has no per-archive source contract forcing a fall-through.
-func (s *Service) isNativeMergeFile(game *domain.Game, mc source.MergeCompiler, fileName string) bool {
+func (s *Service) isNativeMergeFile(game *domain.Game, mc adapter.MergeCompiler, fileName string) bool {
 	if mc == nil {
 		gmc, err := s.mergeCompilerForGame(game)
 		if err != nil {
@@ -1866,10 +1866,10 @@ func (s *Service) isNativeMergeFile(game *domain.Game, mc source.MergeCompiler, 
 // merge-membership time (enabledMergeSources), not here - ingest state is
 // identical either way (retained + raw-deployable), only participation
 // differs. mc must be the source/resolver actually serving the file: a
-// source that does not implement source.MergeCompiler falls through to the
+// source that does not implement adapter.MergeCompiler falls through to the
 // legacy extract/copy path instead (#221 I1 fix), which callers express by
 // never reaching this check without one.
-func isConvertEligibleArtifact(game *domain.Game, mc source.MergeCompiler, fileName string) bool {
+func isConvertEligibleArtifact(game *domain.Game, mc adapter.MergeCompiler, fileName string) bool {
 	return game.DeployMode == domain.DeployCompile && game.ConvertPaks &&
 		mc.IsConvertibleArtifact(fileName)
 }

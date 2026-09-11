@@ -17,13 +17,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/require"
 )
 
-// variantExclusivitySource is a minimal ModSource + source.MergeCompiler
+// variantExclusivitySource is a minimal ModSource + adapter.MergeCompiler
 // fake (mirrors fakeCompilerSource in service_icarus_compile_test.go and
 // importFlowCompilerSource in merged_pak_import_flow_test.go) that also
 // serves a caller-supplied per-mod file list, the way perModMultiFileSource
@@ -31,7 +32,7 @@ import (
 // because a single mod must offer BOTH a pak and an exmodz file so
 // PlanInstall/ApplyInstall can drive a real mixed selection end to end.
 type variantExclusivitySource struct {
-	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+	fakeMergeFormat // #256: the format-vocabulary half of adapter.MergeCompiler
 	*mockSourceWithDownloads
 	files map[string][]domain.DownloadableFile // mod.ID -> served files, verbatim
 }
@@ -47,19 +48,19 @@ func (s *variantExclusivitySource) GetModFiles(ctx context.Context, mod *domain.
 	return s.files[mod.ID], nil
 }
 
-// ValidateSource implements source.MergeCompiler - never exercised by these
+// ValidateSource implements adapter.MergeCompiler - never exercised by these
 // tests since a rejected selection must fail before ingest ever calls it.
 func (s *variantExclusivitySource) ValidateSource(sourceFilePath string) error { return nil }
 
-// MergeCompile implements source.MergeCompiler - never exercised by these
+// MergeCompile implements adapter.MergeCompiler - never exercised by these
 // tests for the same reason.
-func (s *variantExclusivitySource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *variantExclusivitySource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	return nil, nil, nil
 }
 
 var (
-	_ source.ModSource     = (*variantExclusivitySource)(nil)
-	_ source.MergeCompiler = (*variantExclusivitySource)(nil)
+	_ source.ModSource      = (*variantExclusivitySource)(nil)
+	_ adapter.MergeCompiler = (*variantExclusivitySource)(nil)
 )
 
 // TestValidateInstallFileSelection is the unit table test: the rule itself,

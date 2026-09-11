@@ -21,8 +21,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // importArchiveKind is which of importWithIdentity's four branches an archive
@@ -57,7 +57,7 @@ const (
 // are the compile source's to answer (#256), and a DeployCompile game with no
 // resolvable compiler never reaches here (importWithIdentity fails loud
 // first).
-func classifyImportArchive(game *domain.Game, mc source.MergeCompiler, filename string) importArchiveKind {
+func classifyImportArchive(game *domain.Game, mc adapter.MergeCompiler, filename string) importArchiveKind {
 	if game.DeployMode == domain.DeployCompile {
 		switch {
 		case mc != nil && mc.IsNativeMergeSource(filename):

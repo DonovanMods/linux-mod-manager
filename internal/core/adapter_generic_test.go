@@ -305,7 +305,7 @@ func TestRewriteExtractedTreeRefusesAnEscapingPath(t *testing.T) {
 // TestValidateInstallFileSelectionAsksTheAdapter is I5's regression test
 // (#411). Every other compile-capability site asks adapterCompiler first
 // and carries a `temporary until U2 (#412)` marker;
-// ValidateInstallFileSelection kept a direct src.(source.MergeCompiler)
+// ValidateInstallFileSelection kept a direct src.(adapter.MergeCompiler)
 // assertion that was neither marked nor inventoried. When U2 moves the
 // MergeCompiler methods off *icarus.Icarus, the assertion becomes false for
 // the Icarus SOURCE and #211's guard against mixing a merge-compile
@@ -321,7 +321,7 @@ func (exmodzCompiler) IsNativeMergeSource(name string) bool {
 }
 
 // plainTestSource is the smallest source.ModSource that implements NO
-// optional capability - in particular no source.MergeCompiler.
+// optional capability - in particular no adapter.MergeCompiler.
 type plainTestSource struct{}
 
 func (plainTestSource) ID() string      { return "plain" }

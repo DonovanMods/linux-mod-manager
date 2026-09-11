@@ -15,7 +15,7 @@
 // of rules, or a preview promises a layout the deploy does not produce.
 // It is its own file rather than more of archive_listing.go because the
 // rules are a closed, self-contained table with no dependency on the
-// listing machinery - the same separation internal/source/icarus/exmodz.go
+// listing machinery - the same separation internal/adapter/icarus/exmodz.go
 // gives #237's `.EXMODZ` wrapper strip, which is this normaliser's direct
 // precedent (an archive whose payload sits one directory too deep).
 //

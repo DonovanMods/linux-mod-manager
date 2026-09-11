@@ -10,13 +10,13 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// fakeMergeFormat supplies source.MergeCompiler's format-vocabulary methods
+// fakeMergeFormat supplies adapter.MergeCompiler's format-vocabulary methods
 // (#256) for this package's compile-source fakes, mirroring the icarus
 // conventions the fixtures already encode (writeFakeBasePak's
 // Icarus/Content/Data/data.pak path, "pak"/"exmodz" fileIDs, the
 // zzz_LMM_Merged_P.pak artifact name) without pulling the icarus package
 // into internal/core's tests (fakeCompilerSource's own precedent). Embed it
-// in any fake that needs to satisfy source.MergeCompiler.
+// in any fake that needs to satisfy adapter.MergeCompiler.
 type fakeMergeFormat struct{}
 
 func (fakeMergeFormat) ResolveBaseArtifact(game *domain.Game) (string, error) {

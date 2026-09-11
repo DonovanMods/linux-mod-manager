@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/spf13/cobra"
@@ -24,20 +24,20 @@ import (
 // pakConversionOutcomeSource at the CLI-seam level: any source whose ModRef
 // is in failRefs is skipped from the merged output and reported via the
 // returned failed slice, with a "... - deploying raw" warning, matching
-// internal/source/icarus/merge.go's real pak-dispatch failure path.
+// internal/adapter/icarus/merge.go's real pak-dispatch failure path.
 type pakOutcomeCompilerSource struct {
 	*compilerInstallSource
 	failRefs map[string]string
 }
 
-func (s *pakOutcomeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *pakOutcomeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	s.compileCalls++
 	var out []byte
 	var warnings []string
-	var failed []source.MergeFailure
+	var failed []adapter.MergeFailure
 	for _, src := range sources {
 		if reason, bad := s.failRefs[src.ModRef]; bad {
-			failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: reason})
+			failed = append(failed, adapter.MergeFailure{ModRef: src.ModRef, Reason: reason})
 			warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %s - deploying raw", src.ModRef, reason))
 			continue
 		}
@@ -50,7 +50,7 @@ func (s *pakOutcomeCompilerSource) MergeCompile(ctx context.Context, basePakPath
 	return warnings, failed, os.WriteFile(outputPath, out, 0o644)
 }
 
-var _ source.MergeCompiler = (*pakOutcomeCompilerSource)(nil)
+var _ adapter.MergeCompiler = (*pakOutcomeCompilerSource)(nil)
 
 // seedEnabledPakModCLI installs an ENABLED pak-kind mod carrying both a
 // retained pak (cache.RetainedSourceName) and a deployable pak copy recorded

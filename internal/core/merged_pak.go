@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
@@ -58,7 +58,7 @@ type MergedFingerprintEntry struct {
 	FailReason string `json:",omitempty"`
 }
 
-// mergeSourceClassifier is the one sliver of source.MergeCompiler the
+// mergeSourceClassifier is the one sliver of adapter.MergeCompiler the
 // package-level fingerprint helpers need: ClassifyMergeSource as a function
 // value (a method value like mc.ClassifyMergeSource assigns directly).
 // Kept narrow so the helpers stay pure and tests can exercise fingerprint
@@ -180,7 +180,7 @@ func mergedFingerprintsEqual(a, b MergedFingerprint, classify mergeSourceClassif
 // while an import-compiled entry's is keyed by its own archive filename
 // (see Task 2/3's ingest branches) - FileIDs is the one list that already
 // carries whichever identity applies, for either origin.
-func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, profileName string) ([]source.MergeSource, error) {
+func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, profileName string) ([]adapter.MergeSource, error) {
 	mods, err := s.GetInstalledModsInProfileOrder(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile mods: %w", err)
@@ -193,8 +193,8 @@ func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, pr
 	// exactly as it did pre-#256 - even for a game whose MergeCompiler
 	// source isn't configured (syncMergedPak's uninstall-to-zero path runs
 	// unconditionally from every mutation flow).
-	var mc source.MergeCompiler
-	var sources []source.MergeSource
+	var mc adapter.MergeCompiler
+	var sources []adapter.MergeSource
 	for _, mod := range mods {
 		if !mod.Enabled {
 			continue
@@ -214,7 +214,7 @@ func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, pr
 			if convertible && (!game.ConvertPaks || !mod.ConvertPaks) {
 				continue // opted out (game- or mod-level): stays raw-deployed (#221)
 			}
-			sources = append(sources, source.MergeSource{
+			sources = append(sources, adapter.MergeSource{
 				ModRef:     mod.SourceID + ":" + mod.ID,
 				ModName:    mod.Name,
 				SourcePath: retainedPath,
@@ -434,7 +434,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 	// source - the retained-stat therefore runs BEFORE classification,
 	// flipping the pre-#256 order of two independent, side-effect-free
 	// filters.
-	var mc source.MergeCompiler
+	var mc adapter.MergeCompiler
 	for i := range mods {
 		mod := &mods[i]
 		if !mod.Enabled {
@@ -650,7 +650,7 @@ func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]stri
 // ingest keys fileIDs, which is uniform across games - while both format
 // questions inside it are the source's. Both inputs are
 // source-controlled, so both are Base'd before use as a path component.
-func rawPakRestoreName(mc source.MergeCompiler, fileID, modID string) string {
+func rawPakRestoreName(mc adapter.MergeCompiler, fileID, modID string) string {
 	base := filepath.Base(fileID)
 	if mc.IsConvertibleArtifact(base) {
 		return base
@@ -667,7 +667,7 @@ func rawPakRestoreName(mc source.MergeCompiler, fileID, modID string) string {
 // (rawPakMembers just matched nothing), and it could be a sibling fileID's
 // claimed member - failing loudly beats corrupting it, and the next
 // reconcile pass retries.
-func restoreRawPakCopy(mc source.MergeCompiler, versionDir, retainedPath, fileID, modID string) (string, error) {
+func restoreRawPakCopy(mc adapter.MergeCompiler, versionDir, retainedPath, fileID, modID string) (string, error) {
 	name := rawPakRestoreName(mc, fileID, modID)
 	target := filepath.Join(versionDir, name)
 	if _, err := os.Stat(target); err == nil {
@@ -734,7 +734,7 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 	gameCache := s.GetGameCache(game)
 	// Lazily resolved on the first retained file found, exactly like
 	// enabledMergeSources/reconcilePakManifests (#256).
-	var mc source.MergeCompiler
+	var mc adapter.MergeCompiler
 	classes := make(map[string]DeployModClass, len(mods))
 	for _, mod := range mods {
 		ref := domain.ModKey(mod.SourceID, mod.ID)
@@ -913,7 +913,7 @@ func readMergedFingerprint(cachePath string) (fp MergedFingerprint, ok bool) {
 // error) when there is nothing to merge - callers distinguish "nothing to
 // do" from "failed to compute" via the returned slice's length, exactly
 // like syncMergedPak's own zero-sources branch does.
-func (s *Service) currentMergedFingerprint(ctx context.Context, game *domain.Game, profileName string) (MergedFingerprint, []source.MergeSource, error) {
+func (s *Service) currentMergedFingerprint(ctx context.Context, game *domain.Game, profileName string) (MergedFingerprint, []adapter.MergeSource, error) {
 	sources, err := s.enabledMergeSources(ctx, game, profileName)
 	if err != nil {
 		return MergedFingerprint{}, nil, fmt.Errorf("listing enabled merge sources: %w", err)

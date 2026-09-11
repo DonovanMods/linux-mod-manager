@@ -32,8 +32,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // ImportArchiveOptions configures ImportArchive.
@@ -293,7 +293,7 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// game (#256), and a game whose compiler cannot be resolved fails HERE
 	// for the same reason importWithIdentity fails: without it core cannot
 	// tell a native merge archive from anything else.
-	var mc source.MergeCompiler
+	var mc adapter.MergeCompiler
 	if game.DeployMode == domain.DeployCompile {
 		if mc, err = s.mergeCompilerSourceForGame(game.ID); err != nil {
 			return nil, err

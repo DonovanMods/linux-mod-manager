@@ -10,10 +10,12 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// newFormatTestSource returns an *Icarus suitable for exercising the format
-// methods (#256) - none of them touch Firestore, so a nil HTTP client and a
-// dummy project ID are fine.
-func newFormatTestSource() *Icarus { return New(nil, "test-project") }
+// newFormatTestAdapter returns an *Icarus suitable for exercising the format
+// methods (#256). The adapter is stateless, so one value serves every test
+// here; before U2 (#412) this was the Firestore SOURCE, constructed with a
+// nil HTTP client because none of these methods ever touched it - which is
+// the split #353 turned into a package boundary.
+func newFormatTestAdapter() *Icarus { return New() }
 
 func testGame(id, installPath string) *domain.Game {
 	return &domain.Game{ID: id, InstallPath: installPath}
@@ -30,7 +32,7 @@ func TestResolveBaseArtifact_FindsIcarusDataPak(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := newFormatTestSource().ResolveBaseArtifact(testGame("icarus", installDir))
+	got, err := newFormatTestAdapter().ResolveBaseArtifact(testGame("icarus", installDir))
 	if err != nil {
 		t.Fatalf("ResolveBaseArtifact: %v", err)
 	}
@@ -40,7 +42,7 @@ func TestResolveBaseArtifact_FindsIcarusDataPak(t *testing.T) {
 }
 
 func TestResolveBaseArtifact_MissingPakErrors(t *testing.T) {
-	_, err := newFormatTestSource().ResolveBaseArtifact(testGame("icarus", t.TempDir()))
+	_, err := newFormatTestAdapter().ResolveBaseArtifact(testGame("icarus", t.TempDir()))
 	if err == nil {
 		t.Fatal("ResolveBaseArtifact must error when the base pak is absent")
 	}
@@ -55,7 +57,7 @@ func TestResolveBaseArtifact_MissingPakErrors(t *testing.T) {
 func TestFingerprintBase_MatchesPakIndexHash(t *testing.T) {
 	pakPath := writeTestBasePak(t, map[string][]byte{"Data/D_Fixture.json": []byte(`{"fixture":true}`)})
 
-	got, err := newFormatTestSource().FingerprintBase(pakPath)
+	got, err := newFormatTestAdapter().FingerprintBase(pakPath)
 	if err != nil {
 		t.Fatalf("FingerprintBase: %v", err)
 	}
@@ -78,7 +80,7 @@ func TestFingerprintBase_InvalidPakErrors(t *testing.T) {
 	if err := os.WriteFile(notAPak, []byte("not a pak"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newFormatTestSource().FingerprintBase(notAPak); err == nil {
+	if _, err := newFormatTestAdapter().FingerprintBase(notAPak); err == nil {
 		t.Fatal("FingerprintBase must error on an unparseable pak")
 	}
 }
@@ -94,7 +96,7 @@ func TestIsConvertibleArtifact(t *testing.T) {
 		// was suffix-only, and stays that way.
 		"pak": false,
 	}
-	s := newFormatTestSource()
+	s := newFormatTestAdapter()
 	for fileName, want := range tests {
 		if got := s.IsConvertibleArtifact(fileName); got != want {
 			t.Errorf("IsConvertibleArtifact(%q) = %v, want %v", fileName, got, want)
@@ -113,7 +115,7 @@ func TestIsNativeMergeSource(t *testing.T) {
 		// isExmodzFile), which was suffix-only, and stays that way.
 		"exmodz": false,
 	}
-	s := newFormatTestSource()
+	s := newFormatTestAdapter()
 	for fileName, want := range tests {
 		if got := s.IsNativeMergeSource(fileName); got != want {
 			t.Errorf("IsNativeMergeSource(%q) = %v, want %v", fileName, got, want)
@@ -133,7 +135,7 @@ func TestClassifyMergeSource(t *testing.T) {
 		"weird.zip":    {MergeSourceExmodz, false}, // unknown: exmodz, the only pre-#221 kind
 		"":             {MergeSourceExmodz, false}, // legacy fingerprint entries carry no Kind
 	}
-	s := newFormatTestSource()
+	s := newFormatTestAdapter()
 	for id, want := range tests {
 		kind, convertible := s.ClassifyMergeSource(id)
 		if kind != want.kind || convertible != want.convertible {
@@ -148,7 +150,7 @@ func TestRestoredArtifactName(t *testing.T) {
 	// copy for existing installs is published under <mod-id>_P.pak, "_P"
 	// being UE's override-pak suffix convention - byte-identical names must
 	// come out of the seam or already-healed caches would orphan.
-	if got := newFormatTestSource().RestoredArtifactName("cool-mod"); got != "cool-mod_P.pak" {
+	if got := newFormatTestAdapter().RestoredArtifactName("cool-mod"); got != "cool-mod_P.pak" {
 		t.Errorf("RestoredArtifactName = %q, want %q", got, "cool-mod_P.pak")
 	}
 }
@@ -157,7 +159,7 @@ func TestMergedArtifactName(t *testing.T) {
 	// The exact name is a deploy contract (#197): it must sort last among
 	// mounted paks ("zzz"), be greppable as lmm-owned, and keep the "_P"
 	// override suffix - changing it would orphan already-deployed files.
-	if got := newFormatTestSource().MergedArtifactName(); got != "zzz_LMM_Merged_P.pak" {
+	if got := newFormatTestAdapter().MergedArtifactName(); got != "zzz_LMM_Merged_P.pak" {
 		t.Errorf("MergedArtifactName = %q, want %q", got, "zzz_LMM_Merged_P.pak")
 	}
 }
@@ -165,7 +167,7 @@ func TestMergedArtifactName(t *testing.T) {
 func TestMergedArtifactLabel(t *testing.T) {
 	// User-facing display name for the merged artifact's synthetic mod row
 	// (verify/update output) - pre-#256 core hardcoded this string.
-	if got := newFormatTestSource().MergedArtifactLabel(); got != "Icarus Merged Pak" {
+	if got := newFormatTestAdapter().MergedArtifactLabel(); got != "Icarus Merged Pak" {
 		t.Errorf("MergedArtifactLabel = %q, want %q", got, "Icarus Merged Pak")
 	}
 }

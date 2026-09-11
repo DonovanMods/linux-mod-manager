@@ -227,7 +227,7 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 // would let the legacy path's zip-content-sniffing extractor silently
 // ingest a real native archive unvalidated. Failing every import of a
 // compiler-less compile game with the actionable resolver message ("map a
-// source implementing source.MergeCompiler") is now both the safe and the
+// source implementing adapter.MergeCompiler") is now both the safe and the
 // accurate behavior. The download path's I1 fall-through is unchanged -
 // it keys on the file's own source, a per-archive signal Import lacks
 // (TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath).

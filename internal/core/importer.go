@@ -12,7 +12,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/google/uuid"
 )
@@ -67,7 +66,7 @@ type Importer struct {
 	// was built via the standalone NewImporter (no Service context): a
 	// DeployCompile import through such an Importer fails loud rather than
 	// silently caching an unvalidated archive.
-	resolveMergeCompiler func(gameID string) (source.MergeCompiler, error)
+	resolveMergeCompiler func(gameID string) (adapter.MergeCompiler, error)
 	// adapter is the game adapter whose NormalizeArchive decides how an
 	// extracted archive is laid out inside the cache entry (#353). Never
 	// nil: NewImporter defaults it to the built-in identity, which is
@@ -200,7 +199,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	// knew which files were native. (The DOWNLOAD path's I1 fall-through
 	// stands - it pins eligibility to the file's own source, a per-archive
 	// signal Import does not have.) The resolver error names the fix
-	// ("map a source implementing source.MergeCompiler"), which is
+	// ("map a source implementing adapter.MergeCompiler"), which is
 	// accurate for any import into a compile game whose compiler is
 	// missing or ambiguous.
 	//
@@ -209,7 +208,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	// format question for ANY file, and there is a correct importer to use
 	// instead. Production only ever constructs the service-backed importer;
 	// this path is reachable only by direct core.NewImporter use.
-	var mc source.MergeCompiler
+	var mc adapter.MergeCompiler
 	if game.DeployMode == domain.DeployCompile {
 		if i.resolveMergeCompiler == nil {
 			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not the service-backed importer) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)

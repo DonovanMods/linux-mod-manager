@@ -30,7 +30,7 @@ const defaultIcarusBasePak = "/data/SteamLibrary/steamapps/common/Icarus/Icarus/
 // ICARUS_GOLDEN_MOD_DIR to a directory holding ONE dual-form mod — its
 // .EXMODZ plus the author's own published .pak — e.g.
 //
-//	ICARUS_GOLDEN_MOD_DIR=/path/to/dual-form-mod go test ./internal/source/icarus/ -run Golden -v
+//	ICARUS_GOLDEN_MOD_DIR=/path/to/dual-form-mod go test ./internal/adapter/icarus/ -run Golden -v
 //
 // The mod must carry bundled assets: a table-only mod would pass without
 // exercising asset placement at all — exactly the passes-for-the-wrong-reason

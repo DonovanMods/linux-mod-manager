@@ -168,7 +168,7 @@ type DeployResult struct {
 	// MergedArtifact/MergedMods/RawFallbacks mirror the DeployMergeSynced
 	// event for callers with no event sink (#255 - a caller may pass
 	// nil): the merged artifact's file name
-	// (source.MergeCompiler.MergedArtifactName), how many mods' content it
+	// (adapter.MergeCompiler.MergedArtifactName), how many mods' content it
 	// carries, and how many participants fell back to an individual raw
 	// deploy (failed conversion). All zero when the deploy produced/kept
 	// no merged artifact: non-compile games, or a compile profile with no

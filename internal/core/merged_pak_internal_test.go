@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
@@ -25,7 +26,7 @@ func testClassify(id string) (kind string, convertible bool) {
 }
 
 // formatOnlyCompilerSource is the minimal source.ModSource +
-// source.MergeCompiler TestModHasPakMergeSource needs (#256):
+// adapter.MergeCompiler TestModHasPakMergeSource needs (#256):
 // classification moved behind the MergeCompiler seam, so even the cheap
 // FileIDs check resolves the game's compile source now. Only ID and the
 // format methods matter; everything else is inert.
@@ -56,7 +57,7 @@ func (formatOnlyCompilerSource) CheckUpdates(context.Context, []domain.Installed
 	return nil, source.ErrNotSupported
 }
 func (formatOnlyCompilerSource) ValidateSource(string) error { return nil }
-func (formatOnlyCompilerSource) MergeCompile(context.Context, string, []source.MergeSource, string) ([]string, []source.MergeFailure, error) {
+func (formatOnlyCompilerSource) MergeCompile(context.Context, string, []adapter.MergeSource, string) ([]string, []adapter.MergeFailure, error) {
 	return nil, nil, nil
 }
 func (formatOnlyCompilerSource) ResolveBaseArtifact(*domain.Game) (string, error) {
@@ -184,7 +185,7 @@ func TestMergedFingerprintsEqual_EmptyModsBothSides(t *testing.T) {
 }
 
 // The fileID->kind classification itself moved to the icarus package in
-// #256 (ClassifyMergeSource) - internal/source/icarus/format_test.go's
+// #256 (ClassifyMergeSource) - internal/adapter/icarus/format_test.go's
 // TestClassifyMergeSource carries the old TestMergeSourceKind table.
 
 func TestModHasPakMergeSource(t *testing.T) {

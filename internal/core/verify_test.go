@@ -935,7 +935,7 @@ func newByteServer(t *testing.T, content []byte) string {
 // always fails with ErrNotSupported (fine for those read-side tests, which
 // never call it), but --fix's redownload repair calls GetModFiles first to
 // resolve the "pak" file ID. Embeds *fakeCompilerSource so ValidateSource/
-// MergeCompile (source.MergeCompiler) are still promoted - the pak-ingest
+// MergeCompile (adapter.MergeCompiler) are still promoted - the pak-ingest
 // path itself runs for real, genuinely retaining the source on success.
 type reingestFixSource struct {
 	*fakeCompilerSource

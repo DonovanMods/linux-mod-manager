@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/go-unrealpak"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -32,12 +33,12 @@ func writeFakeBasePak(t *testing.T, path string) {
 }
 
 // fakeCompilerSource is a minimal ModSource that also implements
-// source.MergeCompiler, standing in for internal/source/icarus.Icarus
+// adapter.MergeCompiler, standing in for internal/adapter/icarus.Icarus
 // without pulling that package into internal/core's tests — this test only
 // needs to prove Service validates and retains (never compiles a per-mod
 // pak) when DeployMode is DeployCompile (#197: merged-only).
 type fakeCompilerSource struct {
-	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+	fakeMergeFormat // #256: the format-vocabulary half of adapter.MergeCompiler
 
 	downloadURL   string
 	compileCalls  int
@@ -70,7 +71,7 @@ func (s *fakeCompilerSource) CheckUpdates(ctx context.Context, installed []domai
 	return nil, source.ErrNotSupported
 }
 
-// ValidateSource implements source.MergeCompiler by confirming the archive
+// ValidateSource implements adapter.MergeCompiler by confirming the archive
 // exists — this test only asserts Service invoked it, not that it performs
 // real .exmodz parsing (Task 1 covers that in the icarus package itself).
 func (s *fakeCompilerSource) ValidateSource(sourceFilePath string) error {
@@ -81,10 +82,10 @@ func (s *fakeCompilerSource) ValidateSource(sourceFilePath string) error {
 	return nil
 }
 
-// MergeCompile implements source.MergeCompiler by concatenating every
+// MergeCompile implements adapter.MergeCompiler by concatenating every
 // source's bytes - enough for tests to distinguish "which sources were
 // actually merged" without needing a real base pak table to patch.
-func (s *fakeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *fakeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	s.compileCalls++
 	var out []byte
 	for _, src := range sources {
@@ -98,8 +99,8 @@ func (s *fakeCompilerSource) MergeCompile(ctx context.Context, basePakPath strin
 }
 
 var (
-	_ source.ModSource     = (*fakeCompilerSource)(nil)
-	_ source.MergeCompiler = (*fakeCompilerSource)(nil)
+	_ source.ModSource      = (*fakeCompilerSource)(nil)
+	_ adapter.MergeCompiler = (*fakeCompilerSource)(nil)
 )
 
 // writeFakeBasePakWithTable is writeFakeBasePak's table-content-controlling
@@ -210,21 +211,21 @@ func TestDownloadMod_DeployCompile_MalformedExmodz_FailsLoudAtIngest(t *testing.
 // per-ref pak-conversion failures (#221 Task 8). Any source whose ModRef is
 // in failRefs is treated as an irreconcilable pak: skipped from the merged
 // output and reported via the returned failed slice, mirroring
-// internal/source/icarus/merge.go's real pak-dispatch failure path (which
+// internal/adapter/icarus/merge.go's real pak-dispatch failure path (which
 // also surfaces a "... - deploying raw" warning for each skipped ref).
 type pakConversionOutcomeSource struct {
 	*fakeCompilerSource
 	failRefs map[string]string
 }
 
-func (s *pakConversionOutcomeSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *pakConversionOutcomeSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	s.compileCalls++
 	var out []byte
 	var warnings []string
-	var failed []source.MergeFailure
+	var failed []adapter.MergeFailure
 	for _, src := range sources {
 		if reason, bad := s.failRefs[src.ModRef]; bad {
-			failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: reason})
+			failed = append(failed, adapter.MergeFailure{ModRef: src.ModRef, Reason: reason})
 			warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %s - deploying raw", src.ModRef, reason))
 			continue
 		}
@@ -237,7 +238,7 @@ func (s *pakConversionOutcomeSource) MergeCompile(ctx context.Context, basePakPa
 	return warnings, failed, os.WriteFile(outputPath, out, 0o644)
 }
 
-var _ source.MergeCompiler = (*pakConversionOutcomeSource)(nil)
+var _ adapter.MergeCompiler = (*pakConversionOutcomeSource)(nil)
 
 // seedEnabledPakMod installs an ENABLED pak-kind mod carrying BOTH a
 // retained pak (cache.RetainedSourceName(fileID)) and a deployable pak copy
@@ -352,7 +353,7 @@ func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
 // TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath is the I1
 // fix (final whole-branch review of #221): isConvertEligiblePakFile only
 // checks GAME flags (DeployMode + ConvertPaks), not whether the file's own
-// source implements source.MergeCompiler. Pre-#221, a .pak file never hit
+// source implements adapter.MergeCompiler. Pre-#221, a .pak file never hit
 // the validate+retain branch at all, so a source without MergeCompiler was
 // never even asked. Post-#221, ConvertPaks=true widened that branch's entry
 // condition to also include convert-eligible paks - so a mixed-source
@@ -373,7 +374,7 @@ func TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath(t *testing.
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	// A plain source that does NOT implement source.MergeCompiler.
+	// A plain source that does NOT implement adapter.MergeCompiler.
 	src := &mockSourceWithFileURL{mockSource: newMockSource("plain-source"), fileURL: dlSrv.URL}
 	svc.RegisterSource(src)
 

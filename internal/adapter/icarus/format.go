@@ -10,7 +10,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// This file implements source.MergeCompiler's format-vocabulary methods
+// This file implements adapter.MergeCompiler's format-vocabulary methods
 // (#256): everything lmm needs to know about Unreal paks and Icarus's disk
 // layout to orchestrate merges, moved here from internal/core so that core
 // asks the source instead of knowing the format itself. A second

@@ -19,6 +19,12 @@ const gameID = "icarus"
 
 // Icarus is a ModSource backed by the public, unauthenticated Firestore REST
 // API described in docs/plans/2026-07-29-icarus-exmod-pak-research.md.
+//
+// It is ONLY where the bytes come from. What Icarus does with them - the
+// compile, .EXMODZ and merge rules - moved to internal/adapter/icarus in
+// U2 (#412), because compilation is a property of the GAME rather than of
+// the source that served the file: an Icarus .pak downloaded from
+// NexusMods could not compile while the identical file from here could.
 type Icarus struct {
 	firestore *firestoreClient
 }
@@ -34,22 +40,7 @@ func New(httpClient *http.Client, projectID string) *Icarus {
 var (
 	_ source.ModSource          = (*Icarus)(nil)
 	_ source.CapabilityReporter = (*Icarus)(nil)
-	_ source.MergeCompiler      = (*Icarus)(nil)
 )
-
-// ValidateSource implements source.MergeCompiler by delegating to the
-// package-level ValidateSource function.
-func (s *Icarus) ValidateSource(sourceFilePath string) error {
-	return ValidateSource(sourceFilePath)
-}
-
-// MergeCompile implements source.MergeCompiler by delegating to the
-// package-level MergeCompile function. ctx is unused: merging is pure local
-// file I/O against the installed game's own pak (#175/#197), with nothing
-// to cancel.
-func (s *Icarus) MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) ([]string, []source.MergeFailure, error) {
-	return MergeCompile(ctx, basePakPath, sources, outputPakPath)
-}
 
 func (s *Icarus) ID() string   { return "icarus" }
 func (s *Icarus) Name() string { return "Icarus (Project Daedalus)" }

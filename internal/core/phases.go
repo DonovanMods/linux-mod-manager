@@ -591,7 +591,7 @@ const (
 	// sync itself fails (that path emits a DeployWarning instead). Total
 	// carries the number of mods whose content the merged artifact
 	// carries; Detail names the artifact file
-	// (source.MergeCompiler.MergedArtifactName - the format is the
+	// (adapter.MergeCompiler.MergedArtifactName - the format is the
 	// source's business, never core's, #256); RawFallbacks counts
 	// participant mods that fell back to an individual raw deploy (failed
 	// conversion). No single mod is in scope (Index/ModName/ModID are
