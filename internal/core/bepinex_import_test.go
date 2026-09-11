@@ -424,3 +424,151 @@ func gameTreeForTest(t *testing.T, root string) []string {
 	sort.Strings(found)
 	return found
 }
+
+// jotunnMembers is the exact member list the owner confirmed for Jotunn
+// 2.30.0 from NexusMods (mod id 1138, #424): a single top-level directory
+// holding the assembly plus its debug symbols, its XML documentation and
+// the package's own docs. It is the standard NexusMods Valheim layout - a
+// PLUGIN FOLDER - and #358's five shapes did not cover it, so it deployed
+// verbatim into the Steam install directory.
+var jotunnMembers = map[string]string{
+	"Jotunn/Jotunn.dll":   "assembly",
+	"Jotunn/Jotunn.pdb":   "symbols",
+	"Jotunn/Jotunn.xml":   "<doc/>",
+	"Jotunn/README.md":    "# Jotunn",
+	"Jotunn/CHANGELOG.md": "## 2.30.0",
+}
+
+// jotunnDeployed is where every one of those members must land: the folder
+// moves under BepInEx/plugins/ whole, so the .pdb, .xml and the docs stay
+// beside the assembly exactly as the author shipped them.
+var jotunnDeployed = []string{
+	"BepInEx/plugins/Jotunn/CHANGELOG.md",
+	"BepInEx/plugins/Jotunn/Jotunn.dll",
+	"BepInEx/plugins/Jotunn/Jotunn.pdb",
+	"BepInEx/plugins/Jotunn/Jotunn.xml",
+	"BepInEx/plugins/Jotunn/README.md",
+}
+
+// TestImportArchive_BepInEx_PluginFolderDeploysUnderBepInExPlugins is #424's
+// headline claim, asserted where it broke: the plan PREVIEWS the normalised
+// paths, the ingest DEPLOYS them, and `lmm mod files` RECORDS them - the
+// three surfaces the owner read when they found Jotunn in the game root.
+func TestImportArchive_BepInEx_PluginFolderDeploysUnderBepInExPlugins(t *testing.T) {
+	t.Run("the plan previews the plugin folder under BepInEx/plugins/", func(t *testing.T) {
+		svc, game := newBepInExDeclaredService(t)
+		archivePath := filepath.Join(t.TempDir(), "Jotunn-2.30.0.zip")
+		createImportTestZip(t, archivePath, jotunnMembers)
+
+		plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath,
+			core.ImportArchiveOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, fromSlashAll(jotunnDeployed), plan.Files)
+		assert.Empty(t, plan.Warnings, "a recognised layout is not a layout lmm could not place")
+	})
+
+	t.Run("the archive ingest deploys exactly what the plan promised", func(t *testing.T) {
+		svc, game := newBepInExDeclaredService(t)
+		archivePath := filepath.Join(t.TempDir(), "Jotunn-2.30.0.zip")
+		createImportTestZip(t, archivePath, jotunnMembers)
+
+		result, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+			core.ImportArchiveOptions{Force: true}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, len(jotunnDeployed), result.Deployed)
+		assert.Equal(t, jotunnDeployed, gameTreeForTest(t, game.InstallPath),
+			"nothing may reach the game root: the folder goes under BepInEx/plugins/ whole")
+
+		files, err := svc.ModFiles(context.Background(), game, "default",
+			result.Mod.SourceID, result.Mod.ID)
+		require.NoError(t, err)
+		recorded := make([]string, 0, len(files.Files))
+		for _, f := range files.Files {
+			recorded = append(recorded, filepath.ToSlash(f.Path))
+			assert.True(t, f.Deployed, "%s must be on disk", f.Path)
+		}
+		sort.Strings(recorded)
+		assert.Equal(t, jotunnDeployed, recorded,
+			"`lmm mod files` records the deploy paths, which is where the owner read the bug")
+	})
+}
+
+// TestImportArchive_BepInEx_TwoPluginFoldersEachKeepTheirOwnDirectory: an
+// archive shipping two plugins side by side is still a plugin-folder root,
+// and each folder keeps its own name under BepInEx/plugins/.
+func TestImportArchive_BepInEx_TwoPluginFoldersEachKeepTheirOwnDirectory(t *testing.T) {
+	svc, game := newBepInExDeclaredService(t)
+	archivePath := filepath.Join(t.TempDir(), "TwoPlugins-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"ModA/ModA.dll":      "a",
+		"ModA/data/a.bundle": "bytes",
+		"ModB/ModB.dll":      "b",
+		"manifest.json":      "{}",
+	})
+
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{
+		"BepInEx/plugins/ModA/ModA.dll",
+		"BepInEx/plugins/ModA/data/a.bundle",
+		"BepInEx/plugins/ModB/ModB.dll",
+	}, gameTreeForTest(t, game.InstallPath))
+}
+
+// TestPlanImportArchive_BepInEx_AMixedRootIsReportedNotGuessed: "warns,
+// never guesses" is the whole reason shape F can be safe. A root that
+// carries a plugin folder AND something else says something about that
+// something else which lmm cannot read, so it is reported on the plan and
+// deployed exactly as the archive lists it.
+func TestPlanImportArchive_BepInEx_AMixedRootIsReportedNotGuessed(t *testing.T) {
+	svc, game := newBepInExDeclaredService(t)
+	archivePath := filepath.Join(t.TempDir(), "Mixed-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"Jotunn/Jotunn.dll":   "assembly",
+		"install-by-hand.txt": "copy me somewhere",
+		"Assets/thing.bundle": "bytes",
+	})
+
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Warnings)
+	assert.Contains(t, plan.Warnings[0], "did not recognise")
+	assert.Contains(t, plan.Warnings[0], "Jotunn")
+	assert.Equal(t, fromSlashAll([]string{
+		"Assets/thing.bundle", "Jotunn/Jotunn.dll", "install-by-hand.txt",
+	}), plan.Files, "an unrecognised layout is previewed exactly as the archive lists it")
+}
+
+// TestImportArchive_BepInEx_SevenDaysToDieModsFolderIsUntouched pins the
+// shape shape F is most likely to steal: 7 Days to Die ships
+// Mods/<Mod>/ModInfo.xml beside the mod's own assembly, and that game has
+// no BepInEx anywhere near it. The gate is what keeps it where it belongs.
+func TestImportArchive_BepInEx_SevenDaysToDieModsFolderIsUntouched(t *testing.T) {
+	svc, game := newBepInExGameRootService(t)
+	archivePath := filepath.Join(t.TempDir(), "MyMod-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"Mods/MyMod/ModInfo.xml": "<xml/>",
+		"Mods/MyMod/MyMod.dll":   "assembly",
+	})
+
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"Mods/MyMod/ModInfo.xml", "Mods/MyMod/MyMod.dll"},
+		gameTreeForTest(t, game.InstallPath),
+		"a game with no BepInEx keeps the archive's own layout")
+}
+
+// fromSlashAll converts slash-separated paths to the host separator, for
+// comparing against a plan's Files (which are filepath-native).
+func fromSlashAll(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, filepath.FromSlash(p))
+	}
+	return out
+}

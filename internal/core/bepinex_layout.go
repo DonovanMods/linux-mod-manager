@@ -18,8 +18,10 @@
 // and deploys relative to the working directory). With that, the common
 // archive shape - BepInEx/plugins/Foo.dll - deploys correctly through the
 // existing linker with no new deploy-rule type. What does NOT work
-// unassisted is the other two real shapes, and the metadata every
-// Thunderstore package carries at its root.
+// unassisted is the other real shapes - a BepInEx-relative root, a loose
+// assembly, and the NexusMods plugin FOLDER meant to be dropped into
+// BepInEx/plugins/ whole (#424) - and the metadata every Thunderstore
+// package carries at its root.
 //
 // See docs/plans/2026-09-09-bepinex-spike.md §1.3 (the observed shapes) and
 // §3 (the deploy mapping) for the evidence behind each rule.
@@ -68,6 +70,12 @@ const (
 	// bepinexShapePlugin is a loose root .dll (with no directory at all),
 	// which becomes BepInEx/plugins/<ModName>/<file>.
 	bepinexShapePlugin
+	// bepinexShapePluginFolder is shape F (#424): a root of one or more
+	// DIRECTORIES that each hold an assembly somewhere inside, which is
+	// what a NexusMods Unity mod page ships - a folder meant to be dropped
+	// into BepInEx/plugins/ whole. Each root directory is prefixed with
+	// BepInEx/plugins/ and otherwise kept verbatim.
+	bepinexShapePluginFolder
 )
 
 // String returns the shape's diagnostic name. Not a wire value: no document
@@ -82,6 +90,8 @@ func (s bepinexShape) String() string {
 		return "BepInEx-relative"
 	case bepinexShapePlugin:
 		return "a loose plugin assembly"
+	case bepinexShapePluginFolder:
+		return "a plugin folder"
 	default:
 		return "unrecognised"
 	}
@@ -172,13 +182,14 @@ func (l *bepinexLayout) Rewrite(member string) (dest string, kept bool) {
 //	an archive that names the directory `BepInEx` is not plausibly anything
 //	else;
 //
-//	shape B (a bare plugins/ patchers/ monomod/ config/ root) and a loose
-//	root .dll are recognised ONLY for a game that declares the loader,
-//	because `plugins/` and `*.dll` are ordinary names that other games'
-//	mods use - a 7 Days to Die archive rooted at `plugins/` must keep
-//	deploying to <mod_path>/plugins, and silently moving it under a
-//	BepInEx/ directory the game has never heard of would break a working
-//	install with no error to read.
+//	shape B (a bare plugins/ patchers/ monomod/ config/ root), shape F (a
+//	root of plugin FOLDERS, #424) and a loose root .dll are recognised
+//	ONLY for a game that declares the loader, because `plugins/`, `*.dll`
+//	and "a directory with an assembly in it" are ordinary shapes that
+//	other games' mods use - a 7 Days to Die archive rooted at `plugins/`
+//	or at `Mods/<Mod>/<Mod>.dll` must keep deploying to <mod_path>, and
+//	silently moving it under a BepInEx/ directory the game has never heard
+//	of would break a working install with no error to read.
 //
 // That is the "OR" form of the requirement, split per shape rather than
 // applied wholesale: "unmistakably BepInEx-shaped" is a property of the
@@ -269,6 +280,8 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 		shape, prefix = bepinexShapeRelative, "BepInEx/"
 	case bepinexLoosePluginRoot(stripped):
 		shape, prefix = bepinexShapePlugin, "BepInEx/plugins/"+modName+"/"
+	case bepinexPluginFolderRoot(stripped):
+		shape, prefix = bepinexShapePluginFolder, "BepInEx/plugins/"
 	default:
 		layout.Shape = bepinexShapeNone
 		if loaderDeclared && len(payload) > 0 {
@@ -457,6 +470,58 @@ func bepinexLoosePluginRoot(members []string) bool {
 		}
 	}
 	return dll
+}
+
+// bepinexPluginFolderRoot reports shape F (#424): every root entry is a
+// DIRECTORY that holds at least one assembly somewhere inside it, and none
+// of them is a name BepInEx owns.
+//
+// This is what a NexusMods Unity mod page ships and what its install
+// instructions describe - "drop the folder into BepInEx/plugins/" - so the
+// whole directory moves under that prefix and keeps its own name, which is
+// also how the .pdb, .xml and README beside the assembly stay beside it.
+//
+// Three conditions, and each of them is a refusal to guess:
+//
+//	EVERY root entry is a directory. A root that also carries loose files
+//	is an author saying something about those files that this normaliser
+//	cannot read, and moving the directories while leaving the files where
+//	they are would deploy half a mod to each of two places.
+//
+//	EVERY root directory contains an assembly. One that does not is not a
+//	plugin folder - it is an asset directory, a patcher payload, or
+//	something else entirely - and BepInEx/plugins/ is not where it goes.
+//
+//	NO root directory is a name BepInEx owns. bepinexRelativeRoot (shape
+//	B) has first refusal on those, and it only answers when they are the
+//	WHOLE root; a root mixing `plugins/` with `Jotunn/` is the same
+//	half-recognised archive shape B already refuses, so it is reported
+//	rather than prefixed.
+func bepinexPluginFolderRoot(members []string) bool {
+	if len(members) == 0 {
+		return false
+	}
+	hasDLL := map[string]bool{}
+	for _, m := range members {
+		name, rest, nested := strings.Cut(m, "/")
+		if !nested || rest == "" {
+			return false // a root FILE: not a plugin folder
+		}
+		for _, dir := range append([]string{bepinexDirName}, bepinexOwnedDirs...) {
+			if strings.EqualFold(name, dir) {
+				return false
+			}
+		}
+		if !hasDLL[name] {
+			hasDLL[name] = strings.EqualFold(path.Ext(m), ".dll")
+		}
+	}
+	for _, found := range hasDLL {
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // bepinexConfigPrefix is the one directory under BepInEx/ whose contents

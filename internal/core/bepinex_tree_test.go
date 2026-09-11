@@ -173,3 +173,28 @@ func TestNormalizeBepInExTree_RefusesAFrameworkPack(t *testing.T) {
 		"manifest.json",
 	}, treeFiles(t, root))
 }
+
+// TestNormalizeBepInExTree_PluginFolderMovesWhole is #424 on a real
+// extracted tree: the directory the author shipped becomes a directory
+// under BepInEx/plugins/, with everything inside it carried along and the
+// vacated root cleaned up.
+func TestNormalizeBepInExTree_PluginFolderMovesWhole(t *testing.T) {
+	root := writeArchiveTree(t,
+		"Jotunn/Jotunn.dll", "Jotunn/Jotunn.pdb", "Jotunn/Jotunn.xml",
+		"Jotunn/README.md", "Jotunn/CHANGELOG.md")
+
+	layout, err := normalizeBepInExTree(root, "Jotunn", true)
+	require.NoError(t, err)
+	require.True(t, layout.Applies())
+	assert.Equal(t, bepinexShapePluginFolder, layout.Shape)
+	assert.Equal(t, []string{
+		"BepInEx/plugins/Jotunn/CHANGELOG.md",
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.pdb",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+		"BepInEx/plugins/Jotunn/README.md",
+	}, treeFiles(t, root))
+
+	_, err = os.Stat(filepath.Join(root, "Jotunn"))
+	assert.True(t, os.IsNotExist(err), "the vacated root directory is swept")
+}

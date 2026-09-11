@@ -325,3 +325,35 @@ func TestDownloadIngest_BepInEx_ACopyModeSuccessDropsTheRetainedArchive(t *testi
 	require.NoError(t, err)
 	assert.Empty(t, entries, "the bytes are in the cache now, so the retained copy is dead weight")
 }
+
+// TestDownloadIngest_BepInEx_PluginFolderReachesTheCacheNormalised is #424
+// through the OTHER ingest. The archive-import path and the download path
+// are different code, and the whole contract is that a plugin reaches the
+// cache in the same layout either way - so the shape the owner actually hit
+// (a NexusMods download, not a local archive) gets its own assertion.
+func TestDownloadIngest_BepInEx_PluginFolderReachesTheCacheNormalised(t *testing.T) {
+	fixture := newBepInExDownloadFixture(t, map[string]string{
+		"Jotunn/Jotunn.dll":   "assembly",
+		"Jotunn/Jotunn.pdb":   "symbols",
+		"Jotunn/Jotunn.xml":   "<doc/>",
+		"Jotunn/README.md":    "# Jotunn",
+		"Jotunn/CHANGELOG.md": "## 2.30.0",
+	}, true)
+	require.NoError(t, fixture.download(t))
+
+	cached, err := fixture.svc.GetGameCache(fixture.game).ListFiles(
+		fixture.game.ID, fixture.mod.SourceID, fixture.mod.ID, fixture.mod.Version)
+	require.NoError(t, err)
+	slashed := make([]string, 0, len(cached))
+	for _, c := range cached {
+		slashed = append(slashed, filepath.ToSlash(c))
+	}
+	sort.Strings(slashed)
+	assert.Equal(t, []string{
+		"BepInEx/plugins/Jotunn/CHANGELOG.md",
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.pdb",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+		"BepInEx/plugins/Jotunn/README.md",
+	}, slashed, "the cache entry IS the game directory's layout")
+}

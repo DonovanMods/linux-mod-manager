@@ -179,6 +179,88 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			wantShape: bepinexShapeNone,
 		},
 		{
+			// #424: the standard NexusMods Valheim layout - a PLUGIN
+			// FOLDER, meant to be dropped into BepInEx/plugins/ whole.
+			// The exact member list the owner confirmed for Jotunn
+			// 2.30.0 (mod id 1138), which #358's five shapes did not
+			// cover, so it deployed verbatim into the game root.
+			name: "shape F: Jotunn 2.30.0 from NexusMods - a plugin folder",
+			members: []string{
+				"Jotunn/Jotunn.dll", "Jotunn/Jotunn.pdb", "Jotunn/Jotunn.xml",
+				"Jotunn/README.md", "Jotunn/CHANGELOG.md",
+			},
+			loaderDeclared: true,
+			wantShape:      bepinexShapePluginFolder,
+			wantPaths: map[string]string{
+				"Jotunn/Jotunn.dll":   "BepInEx/plugins/Jotunn/Jotunn.dll",
+				"Jotunn/Jotunn.pdb":   "BepInEx/plugins/Jotunn/Jotunn.pdb",
+				"Jotunn/Jotunn.xml":   "BepInEx/plugins/Jotunn/Jotunn.xml",
+				"Jotunn/README.md":    "BepInEx/plugins/Jotunn/README.md",
+				"Jotunn/CHANGELOG.md": "BepInEx/plugins/Jotunn/CHANGELOG.md",
+			},
+		},
+		{
+			name: "shape F: two plugin folders in one archive each keep their own directory",
+			members: []string{
+				"ModA/ModA.dll", "ModA/data/a.bundle",
+				"ModB/ModB.dll",
+				"manifest.json", "README.md",
+			},
+			loaderDeclared: true,
+			wantShape:      bepinexShapePluginFolder,
+			wantPaths: map[string]string{
+				"ModA/ModA.dll":      "BepInEx/plugins/ModA/ModA.dll",
+				"ModA/data/a.bundle": "BepInEx/plugins/ModA/data/a.bundle",
+				"ModB/ModB.dll":      "BepInEx/plugins/ModB/ModB.dll",
+			},
+		},
+		{
+			name:      "shape F needs the gate: a plugin folder on a game with no BepInEx is left alone",
+			members:   []string{"Jotunn/Jotunn.dll", "Jotunn/Jotunn.xml"},
+			wantShape: bepinexShapeNone,
+		},
+		{
+			// The 7 Days to Die shape: Mods/<Mod>/ModInfo.xml beside the
+			// mod's own assembly, on a game that has no BepInEx anywhere
+			// near it. Shape F must not touch it.
+			name: "7DTD: a Mods/<Mod>/ DLL folder on a game with no BepInEx gate is untouched",
+			members: []string{
+				"Mods/MyMod/ModInfo.xml", "Mods/MyMod/MyMod.dll",
+			},
+			wantShape: bepinexShapeNone,
+		},
+		{
+			name: "shape F refuses to guess: a root mixing a DLL folder with loose files is reported",
+			members: []string{
+				"Jotunn/Jotunn.dll", "install-me-by-hand.txt",
+			},
+			loaderDeclared: true,
+			wantShape:      bepinexShapeNone,
+			wantWarn:       true,
+		},
+		{
+			name: "shape F refuses to guess: a root mixing a DLL folder with a non-DLL directory is reported",
+			members: []string{
+				"Jotunn/Jotunn.dll", "Assets/thing.bundle",
+			},
+			loaderDeclared: true,
+			wantShape:      bepinexShapeNone,
+			wantWarn:       true,
+		},
+		{
+			// A root name BepInEx owns is never a plugin folder: half of
+			// this archive is shape B and half is not, which is exactly
+			// the "author meant something this normaliser cannot see"
+			// case bepinexRelativeRoot already refuses.
+			name: "shape F refuses a root that mixes a DLL folder with a BepInEx-owned name",
+			members: []string{
+				"Jotunn/Jotunn.dll", "plugins/Other.dll",
+			},
+			loaderDeclared: true,
+			wantShape:      bepinexShapeNone,
+			wantWarn:       true,
+		},
+		{
 			name: "an unrecognised root warns and rewrites nothing",
 			members: []string{
 				"Data/StreamingAssets/thing.bundle", "notes.txt",
