@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -60,6 +61,11 @@ type indexServer struct {
 	conditionals int
 	served200    int
 	served304    int
+	downloads    int
+
+	// archives is the zip served for each /package/download/... path, keyed
+	// by the exact path GetDownloadURL builds.
+	archives map[string][]byte
 }
 
 // newIndexServer starts a server for body. Every test MUST use one: no test
@@ -77,6 +83,10 @@ func (s *indexServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests++
+	if strings.HasPrefix(r.URL.Path, "/package/download/") {
+		s.serveDownload(w, r)
+		return
+	}
 	if want := "/c/" + testCommunity + "/api/v1/package/"; r.URL.Path != want {
 		http.Error(w, "no such community", http.StatusNotFound)
 		return
@@ -100,6 +110,38 @@ func (s *indexServer) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write(s.body)
+}
+
+// serveDownload answers /package/download/<namespace>/<name>/<version>/ -
+// the one other path this source builds a URL for, and the only way an
+// end-to-end install test can exist without touching the real site. The
+// zip it serves is whatever publishArchive last stored for that path, so a
+// test decides what shape of archive comes back.
+func (s *indexServer) serveDownload(w http.ResponseWriter, r *http.Request) {
+	s.downloads++
+	zip, ok := s.archives[r.URL.Path]
+	if !ok {
+		http.Error(w, "no such version", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Length", strconv.Itoa(len(zip)))
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(zip)
+}
+
+// publishArchive makes the download URL for one package version answer with
+// zip. namespace/name/version are the three fields GetDownloadURL builds
+// the path from.
+func (s *indexServer) publishArchive(namespace, name, version string, zip []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.archives == nil {
+		s.archives = map[string][]byte{}
+	}
+	s.archives[fmt.Sprintf("/package/download/%s/%s/%s/", namespace, name, version)] = zip
 }
 
 // publish replaces the served document and moves its Last-Modified, which

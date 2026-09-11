@@ -123,13 +123,15 @@ func (s *Source) TypeLabel() string { return "built-in" }
 // source implements no EnvKeyProvider and `lmm auth status` has nothing to
 // report for it.
 //
-// Search is true from T1 (#408): the local index answers it. Dependencies,
-// Updates and Versions are the design's final values and flip to true with
-// T2 (#360 §6), which adds the package/version/dependency reads over the
-// same index; declaring them before the methods exist would be a false
-// capability claim to every frontend that branches on one.
+// Search is true from T1 (#408): the local index answers it. Versions is
+// true from T2 (#409): a package version IS a file here, so GetModFiles
+// returns one file per version and core.ResolveVersionFiles resolves an
+// exact version against it. Dependencies and Updates follow in the same
+// unit, each in the commit that implements it - declaring a capability
+// before the method exists is a false claim to every frontend that branches
+// on one.
 func (s *Source) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: false, Updates: false, Auth: false, Versions: false}
+	return source.Capabilities{Search: true, Dependencies: false, Updates: false, Auth: false, Versions: true}
 }
 
 // AuthURL: unsupported - there is no credential to obtain.
@@ -140,26 +142,10 @@ func (s *Source) ExchangeToken(ctx context.Context, code string) (*source.Token,
 	return nil, fmt.Errorf("source %q: authentication: %w", sourceID, source.ErrNotSupported)
 }
 
-// GetMod: T2 (#360) - reads the package record out of packages.jsonl.
-func (s *Source) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
-	return nil, fmt.Errorf("source %q: mod metadata: %w", sourceID, source.ErrNotSupported)
-}
-
 // GetDependencies: T2 (#360) - parses the installed version's dependencies
 // and routes the BepInEx loader entry out.
 func (s *Source) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
 	return nil, fmt.Errorf("source %q: dependencies: %w", sourceID, source.ErrNotSupported)
-}
-
-// GetModFiles: T2 (#360) - one DownloadableFile per version, newest first.
-func (s *Source) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
-	return nil, fmt.Errorf("source %q: file listing: %w", sourceID, source.ErrNotSupported)
-}
-
-// GetDownloadURL: T2 (#360) - pure string construction over a validated
-// version.
-func (s *Source) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
-	return "", fmt.Errorf("source %q: download URL: %w", sourceID, source.ErrNotSupported)
 }
 
 // CheckUpdates: T2 (#360) - an entirely local comparison against the index.

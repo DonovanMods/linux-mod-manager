@@ -56,6 +56,21 @@ type residentIndex struct {
 	fetchedAt int64
 	rows      []indexRow
 	terms     []rowTerms
+	// byName addresses a row by its full_name, which is the mod id every
+	// package read arrives with (#409 §3.2). Built with the rest of the
+	// resident copy rather than scanned per call: an update check asks
+	// about every installed mod in turn, and thirty linear scans of the
+	// largest community on the site is a cost with no reason to exist.
+	byName map[string]int
+}
+
+// row returns the index row for a package's full_name.
+func (idx *residentIndex) row(fullName string) (indexRow, bool) {
+	i, ok := idx.byName[fullName]
+	if !ok {
+		return indexRow{}, false
+	}
+	return idx.rows[i], true
 }
 
 // rowTerms is one row's precomputed lowercase form. haystack is the
@@ -331,7 +346,14 @@ func (s *Source) dropResident(community string) {
 // the site - paid once per process per index generation.
 func newResidentIndex(fetchedAt int64, rows []indexRow) *residentIndex {
 	terms := make([]rowTerms, len(rows))
+	byName := make(map[string]int, len(rows))
 	for i, row := range rows {
+		// First wins, so two rows claiming one full_name (which the site
+		// cannot serve, but a corrupt index could) resolve to the row a
+		// search would rank first rather than to whichever came last.
+		if _, dup := byName[row.FullName]; !dup {
+			byName[row.FullName] = i
+		}
 		_, name, _ := SplitPackage(row.FullName)
 		owner := strings.TrimSuffix(row.FullName, "-"+name)
 		cats := make([]string, len(row.Categories))
@@ -360,7 +382,7 @@ func newResidentIndex(fetchedAt int64, rows []indexRow) *residentIndex {
 			deprecated:  row.Deprecated,
 		}
 	}
-	return &residentIndex{fetchedAt: fetchedAt, rows: rows, terms: terms}
+	return &residentIndex{fetchedAt: fetchedAt, rows: rows, terms: terms, byName: byName}
 }
 
 // parseTimestamp reads one of Thunderstore's RFC 3339 timestamps. An
