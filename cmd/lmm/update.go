@@ -151,7 +151,7 @@ func init() {
 	updateCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile to check (default: active profile)")
 	updateCmd.Flags().BoolVar(&updateAll, "all", false, "apply all available updates")
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "show what would update without applying")
-	updateCmd.Flags().BoolVar(&updateRefresh, "refresh", false, "bypass cached source metadata (Steam Workshop caches for hours)")
+	updateCmd.Flags().BoolVar(&updateRefresh, "refresh", false, "bypass cached source metadata and locally cached source indexes (Steam Workshop caches for hours; the Thunderstore index for six)")
 	updateCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
 
 	updateRollbackCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured)")
