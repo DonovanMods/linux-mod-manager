@@ -478,3 +478,64 @@ func TestVerify_LoaderTier_FixCarriesTheEntrysBookkeepingAcross(t *testing.T) {
 	require.Contains(t, manifests, "1", "the completion marker must survive the re-layout")
 	assert.True(t, manifests["1"].Recorded)
 }
+
+// TestVerify_LoaderTier_FixRewritesTheEntrysRecordedMemberManifest is #424
+// review finding 4. A downloaded entry's .lmm-file-<id> markers record WHICH
+// members each source file contributed
+// (cache.MarkFileCompleteWithMembers). The re-layout moves those members and
+// used to leave the markers naming paths that no longer exist.
+//
+// The visible cost is checksumFromCache, which folds digestDirectoryMembers
+// over exactly this list: with every recorded member missing it always
+// errors, so the install flow's `csErr == nil` guard silently stores no
+// checksum on any later cache-warm reinstall of a repaired mod. The owner's
+// Jotunn is a NexusMods download, which is the case that HAS markers.
+func TestVerify_LoaderTier_FixRewritesTheEntrysRecordedMemberManifest(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t)
+	entry := svc.GetGameCache(game).ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, cache.MarkFileCompleteWithMembers(entry, "1",
+		[]string{filepath.FromSlash("Jotunn/Jotunn.dll"), filepath.FromSlash("Jotunn/Jotunn.xml")}))
+
+	_, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	manifests, err := svc.GetGameCache(game).FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	require.Contains(t, manifests, "1")
+	require.True(t, manifests["1"].Recorded)
+
+	recorded := make([]string, 0, len(manifests["1"].Members))
+	for _, m := range manifests["1"].Members {
+		recorded = append(recorded, filepath.ToSlash(m))
+		_, statErr := os.Lstat(filepath.Join(entry, m))
+		assert.NoError(t, statErr, "recorded member %s must exist in the entry", m)
+	}
+	assert.ElementsMatch(t, []string{
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+	}, recorded, "the manifest has to name where the members actually are now")
+
+	// ...and the two enumerators the user reads agree with the disk.
+	listed, err := svc.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	slashedList := make([]string, 0, len(listed))
+	for _, l := range listed {
+		slashedList = append(slashedList, filepath.ToSlash(l))
+	}
+	assert.ElementsMatch(t, recorded, slashedList,
+		"ListFiles and the recorded manifest describe the same entry")
+
+	files, err := svc.ModFiles(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	reported := make([]string, 0, len(files.Files))
+	for _, f := range files.Files {
+		reported = append(reported, filepath.ToSlash(f.Path))
+		assert.True(t, f.Deployed, "%s must be on disk", f.Path)
+	}
+	sort.Strings(reported)
+	assert.Equal(t, []string{
+		"BepInEx/plugins/Jotunn/Jotunn.dll",
+		"BepInEx/plugins/Jotunn/Jotunn.xml",
+	}, reported, "`lmm mod files` is the surface the owner reads")
+}

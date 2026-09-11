@@ -503,7 +503,7 @@ func (r *verifyRun) buildRelaidOutEntry(src, dst string, mod *domain.InstalledMo
 			return fmt.Errorf("placing %s at %s: %w", member, dest, err)
 		}
 	}
-	return r.relayoutReservedEntries(src, dst)
+	return r.relayoutReservedEntries(src, dst, layout)
 }
 
 // relayoutReservedEntries carries the entry's own bookkeeping across the
@@ -515,8 +515,14 @@ func (r *verifyRun) buildRelaidOutEntry(src, dst string, mod *domain.InstalledMo
 // Whole subtrees, at whatever depth they appear, and at the same relative
 // path: a reserved entry's meaning is its name, and nothing about this
 // re-layout changes what it vouches for.
-func (r *verifyRun) relayoutReservedEntries(src, dst string) error {
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+//
+// With one exception, which is the point of taking the layout: a top-level
+// completion marker's BODY is a list of the members that file contributed,
+// and those members have just moved (#424 review, finding 4). Copying it
+// verbatim would leave a manifest naming paths that no longer exist, so
+// each is re-stamped through the same layout the members went through.
+func (r *verifyRun) relayoutReservedEntries(src, dst string, layout *bepinexLayout) error {
+	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -527,15 +533,56 @@ func (r *verifyRun) relayoutReservedEntries(src, dst string) error {
 		if rerr != nil {
 			return rerr
 		}
+		// Top level only: what a reserved DIRECTORY holds is that
+		// directory's own business, whatever its files are called.
+		if !d.IsDir() && rel == d.Name() && cache.FileMarkerName(d.Name()) {
+			return nil // re-stamped below, not copied
+		}
 		target := filepath.Join(dst, rel)
 		if !d.IsDir() {
 			return r.placeRelayoutFile(p, target)
 		}
-		if merr := os.MkdirAll(target, 0o755); merr != nil {
+		return os.MkdirAll(target, 0o755)
+	})
+	if err != nil {
+		return err
+	}
+	return restampFileManifests(src, dst, layout)
+}
+
+// restampFileManifests writes src's completion markers into dst with each
+// recorded member mapped through layout.
+//
+// A member the layout drops is dropped from the manifest too - it is not in
+// the rebuilt entry, so recording it would recreate the very drift this
+// fixes. A legacy BARE marker stays bare: it never recorded a member list,
+// and inventing one here would turn "unknown provenance", which every
+// consumer handles by falling back to the union, into a claim.
+func restampFileManifests(src, dst string, layout *bepinexLayout) error {
+	manifests, err := cache.FileManifestsAt(src)
+	if err != nil {
+		return fmt.Errorf("reading the cache entry's completion markers: %w", err)
+	}
+	for fileID, manifest := range manifests {
+		if !manifest.Recorded {
+			if merr := cache.MarkFileComplete(dst, fileID); merr != nil {
+				return merr
+			}
+			continue
+		}
+		moved := make([]string, 0, len(manifest.Members))
+		for _, member := range manifest.Members {
+			dest, kept := layout.Rewrite(filepath.ToSlash(member))
+			if !kept {
+				continue
+			}
+			moved = append(moved, filepath.FromSlash(dest))
+		}
+		if merr := cache.MarkFileCompleteWithMembers(dst, fileID, moved); merr != nil {
 			return merr
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // placeRelayoutFile puts one member at its new path, through the test-only

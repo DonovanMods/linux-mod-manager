@@ -1224,7 +1224,10 @@ bepinex` when the installation is what answered, and stops refusing an
   entry is re-laid out atomically - the live entry is moved aside intact,
   the new one is built beside it, and one rename swaps them - so a failure
   partway through leaves the cache byte for byte as it was rather than a
-  half-moved mixture that the next run would classify as unrepairable. When
+  half-moved mixture that the next run would classify as unrepairable, and
+  the entry's own bookkeeping - the per-file completion markers recording
+  which members each downloaded file contributed - is re-stamped to the new
+  paths rather than left naming files that have moved. When
   the entry is a layout lmm cannot place on its own, the row says so and names
   what has to change - move the files under `BepInEx/plugins/` inside the
   archive and re-import it - rather than claiming a repair it cannot make,
