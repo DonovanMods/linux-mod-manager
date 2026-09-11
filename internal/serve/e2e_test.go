@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -6831,8 +6832,10 @@ func TestE2E_SearchTagFilterAppearsOnlyForASourceThatHonoursIt(t *testing.T) {
 	// no test anywhere in the module, so dropping it again would have gone
 	// unnoticed - and the README's "--category and --tag both filter
 	// Thunderstore's own categories" would have quietly become false of the
-	// web UI.
-	for _, sourceID := range []string{"nexusmods", "thunderstore"} {
+	// web UI. The list is READ OUT of the component rather than mirrored
+	// here (#409 review F6): a hand-kept copy is the same failure one level
+	// up, silent the day a third id joins the set.
+	for _, sourceID := range tagCapableSourceIDs(t) {
 		t.Run(sourceID, func(t *testing.T) {
 			g := newE2EFixtureWithATagCapableSource(t, sourceID)
 			var tagged string
@@ -6859,6 +6862,28 @@ func TestE2E_SearchTagFilterAppearsOnlyForASourceThatHonoursIt(t *testing.T) {
 			assert.Empty(t, g.BrowserErrors())
 		})
 	}
+}
+
+// tagCapableSourceIDs reads searchpage.js's own TAG_CAPABLE_SOURCES set,
+// so the subtests above cover whatever is in it rather than a copy of it.
+// There is no bundler in this project by design, so the module source IS
+// the artifact the browser loads - parsing it is reading the real thing.
+func tagCapableSourceIDs(t *testing.T) []string {
+	t.Helper()
+	const path = "spa/app/components/searchpage.js"
+	src, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	m := regexp.MustCompile(`TAG_CAPABLE_SOURCES = new Set\(\[([^\]]*)\]\)`).FindSubmatch(src)
+	require.NotNil(t, m, "%s no longer declares TAG_CAPABLE_SOURCES as a literal Set; "+
+		"this test reads it out of the component so the two cannot drift", path)
+
+	var ids []string
+	for _, quoted := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(string(m[1]), -1) {
+		ids = append(ids, quoted[1])
+	}
+	require.NotEmpty(t, ids, "TAG_CAPABLE_SOURCES is empty; nothing would be exercised")
+	return ids
 }
 
 // TestE2E_DeployPreviewMarksWhichContenderWins is M-9 of the epic live
