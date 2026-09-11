@@ -172,3 +172,44 @@ func TestLoadKnownGames_Loader_EmptyKindIsRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "loader.kind")
 	assert.Contains(t, err.Error(), "broken-game")
 }
+
+// TestLoadKnownGames_ThunderstoreEntries pins #409's seeded communities:
+// the design's "T2 seeds the Linux-relevant communities as DATA, not code",
+// so `lmm game detect` prefills the community slug and the user never has
+// to find it themselves.
+//
+// Two properties matter more than the list. First, the mapped value is the
+// Thunderstore COMMUNITY slug, which is not derivable from the Steam app id
+// and is not the lmm game id either (Risk of Rain 2 is `risk-of-rain-2`
+// locally and `riskofrain2` there) - which is exactly why it is curated
+// rather than guessed. Second, every one of these is a BepInEx game that
+// deploys into the GAME ROOT, so mod_path is empty: steam.DetectGames reads
+// that as "the install path itself", which is the shape #358's normaliser
+// produces paths for.
+//
+// Valheim and For The King carry a NexusMods page as well, and a sources:
+// map REPLACES the {nexusmods: <nexus_id>} derivation - so both spell
+// nexusmods: out inside the map, and this pins that they kept it.
+func TestLoadKnownGames_ThunderstoreEntries(t *testing.T) {
+	games, err := LoadKnownGames(t.TempDir())
+	require.NoError(t, err)
+
+	for appID, want := range map[string]struct{ slug, community, nexus string }{
+		"1966720": {"lethal-company", "lethal-company", ""},
+		"892970":  {"valheim", "valheim", "valheim"},
+		"632360":  {"risk-of-rain-2", "riskofrain2", ""},
+		"3241660": {"repo", "repo", ""},
+		"2881650": {"content-warning", "content-warning", ""},
+		"527230":  {"for-the-king", "for-the-king", "fortheking"},
+	} {
+		info, ok := games[appID]
+		require.Truef(t, ok, "app %s must be in the shipped catalog", appID)
+		assert.Equal(t, want.slug, info.Slug)
+		assert.Equal(t, want.community, info.Sources["thunderstore"],
+			"app %s maps to the Thunderstore community, not to lmm's own game id", appID)
+		assert.Equal(t, want.nexus, info.Sources["nexusmods"],
+			"app %s: a sources map replaces the nexus_id derivation, so a game with "+
+				"both has to spell nexusmods out inside it", appID)
+		assert.Emptyf(t, info.ModPath, "app %s is a game-root (BepInEx) game", appID)
+	}
+}
