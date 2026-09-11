@@ -1316,7 +1316,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		// doc comment), so validating its result immediately after this fold
 		// is equivalent to validating inside it, and plan.Files is the only
 		// value that matters to fillPrimaryCache either way.
-		if err := s.ValidateInstallFileSelection(plan.SourceID, plan.Files); err != nil {
+		if err := s.ValidateInstallFileSelection(game, plan.SourceID, plan.Files); err != nil {
 			return result, err
 		}
 	}
@@ -1354,7 +1354,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		// before any dependency (or the primary itself) is touched -
 		// mirrors the STRICT path's fold-site validation above for the
 		// BATCH path's one place a caller can pin more than one file.
-		if err := s.ValidateInstallFileSelection(primary.SourceID, primaryOverrideFiles); err != nil {
+		if err := s.ValidateInstallFileSelection(game, primary.SourceID, primaryOverrideFiles); err != nil {
 			return result, err
 		}
 	}
@@ -2115,12 +2115,15 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 		downloadCache = txn.staged
 	}
 
-	// Resolve the source to check MergeCompiler capability for .pak gating (#221)
+	// Resolve the source to check MergeCompiler capability for .pak gating
+	// (#221). Since #353 the GAME's adapter answers first; the source
+	// type-assertion is compilerForSource's temporary fallback, deleted in
+	// U2 (#412).
 	src, err := s.GetSource(plan.SourceID)
 	if err != nil {
 		return st, fmt.Errorf("resolving source %q: %w", plan.SourceID, err)
 	}
-	mc, isMergeCompiler := src.(source.MergeCompiler)
+	mc, isMergeCompiler := s.compilerForSource(game, src)
 
 	// Cache-first guard (2026-08-29 ruling), the same one ApplyProfileSwitch
 	// and ApplyProfileImport already use (#96/#138): HasFileIDs - the

@@ -345,12 +345,16 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 	// external row appearing or vanishing absolutely is a move.
 	toPurge, external := partitionExternal(installed)
 
+	snapshot, err := s.snapshotOf(game.ID, installed)
+	if err != nil {
+		return nil, err
+	}
 	plan := &SnapshotRestorePlan{
 		GameID: game.ID, Profile: profileName,
 		Snapshot: doc.Name, CreatedAt: doc.CreatedAt,
 		ToPurge:  toPurge,
 		External: external,
-		snapshot: snapshotOf(installed),
+		snapshot: snapshot,
 		doc:      doc,
 	}
 
@@ -368,7 +372,9 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 		// The freshness precondition for the active profile too, over the
 		// FULL set for the same reason the snapshot profile's is (an
 		// external row appearing or vanishing is a move).
-		plan.activeSnapshot = snapshotOf(activeMods)
+		if plan.activeSnapshot, err = s.snapshotOf(game.ID, activeMods); err != nil {
+			return nil, err
+		}
 	}
 
 	// The store's CURRENT manifest, not the snapshot's recorded list - see

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
@@ -29,19 +30,91 @@ func (s *Service) currentInstalledSnapshot(ctx context.Context, gameID, profileN
 	if err != nil {
 		return nil, fmt.Errorf("loading installed mods: %w", err)
 	}
-	return snapshotOf(mods), nil
+	return s.snapshotOf(gameID, mods)
+}
+
+// AdapterPreconditionError is the typed error a frontend branches on when a
+// game's adapter refuses a flow before it starts (#353) - a loader that has
+// to be installed first, a game directory that is not what the adapter
+// expects.
+//
+// The translation lives in core, not in internal/adapter, for the reason
+// design §1 gives: Details() is the `--json` envelope's extension point,
+// and keeping its implementation here keeps the wire contract and
+// cmd/lmm/details_coverage_test.go's ledger in the packages that already
+// own them - and keeps internal/adapter importing nothing it does not need.
+type AdapterPreconditionError struct {
+	// GameID is the game whose adapter refused.
+	GameID string
+	// Adapter is the adapter's ID.
+	Adapter string
+	// Reason is the adapter's own message, which names the remedy.
+	Reason string
+}
+
+// Error implements error.
+func (e *AdapterPreconditionError) Error() string {
+	return fmt.Sprintf("game %q: adapter %q refused: %s", e.GameID, e.Adapter, e.Reason)
+}
+
+// Unwrap reports the sentinel every adapter refusal carries, so a caller can
+// errors.Is it without knowing this type.
+func (e *AdapterPreconditionError) Unwrap() error { return adapter.ErrPreconditionUnmet }
+
+// Details implements the --json error envelope's extension point, naming
+// the game, the adapter and the remedy the adapter gave.
+func (e *AdapterPreconditionError) Details() any {
+	return struct {
+		GameID  string `json:"game_id"`
+		Adapter string `json:"adapter"`
+		Reason  string `json:"reason"`
+	}{GameID: e.GameID, Adapter: e.Adapter, Reason: e.Reason}
+}
+
+// checkAdapterPreconditions asks gameID's adapter whether the flow about to
+// run on mods may proceed, wrapping a refusal into AdapterPreconditionError.
+func (s *Service) checkAdapterPreconditions(gameID string, mods []domain.InstalledMod) error {
+	game, ok := s.game(gameID)
+	if !ok {
+		// Not this check's problem: every flow resolves its game, and the
+		// one that did not would report a better error than this could.
+		return nil
+	}
+	a, err := s.AdapterFor(game)
+	if err != nil {
+		return err
+	}
+	if err := adapter.CheckPreconditions(a, game, mods); err != nil {
+		return &AdapterPreconditionError{GameID: gameID, Adapter: a.ID(), Reason: err.Error()}
+	}
+	return nil
 }
 
 // snapshotOf builds the precondition from an ALREADY-READ installed-mod set,
 // for a Plan that had to load one anyway (PlanAdopt) - so the plan's own
 // views and its staleness precondition come from a single read rather than
 // several that could disagree.
-func snapshotOf(mods []domain.InstalledMod) installedSnapshot {
+//
+// #353: it is ALSO where the game adapter's precondition is checked, which
+// is why it is a method taking a gameID rather than a free function. Every
+// installedSnapshot in core is built here - by currentInstalledSnapshot for
+// the Plans that re-read the set, and directly by the eight that already
+// hold it - so a Plan cannot acquire its freshness precondition without the
+// adapter having had its say. Checking in only one of the two constructors
+// is exactly the bug this shape closes (I4): `lmm deploy` used to render a
+// clean plan that its own Apply then refused.
+//
+// An adapter with no Preconditioner - every adapter U1 ships - makes the
+// check a nil return.
+func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (installedSnapshot, error) {
+	if err := s.checkAdapterPreconditions(gameID, mods); err != nil {
+		return nil, err
+	}
 	snap := make(installedSnapshot, len(mods))
 	for _, m := range mods {
 		snap[domain.ModKey(m.SourceID, m.ID)] = fmt.Sprintf("%s|%t", m.Version, m.Enabled)
 	}
-	return snap
+	return snap, nil
 }
 
 // checkPlanFresh re-derives gameID/profileName's CURRENT installed-mod

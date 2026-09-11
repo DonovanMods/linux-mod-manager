@@ -122,6 +122,10 @@ type gameAddRequest struct {
 	InstallPath    string `json:"install_path"`
 	ModPath        string `json:"mod_path,omitempty"`
 	FromSteamAppID string `json:"from_steam_app_id,omitempty"`
+	// Adapter is games.yaml's `adapter:` key (#353). Absent or empty means
+	// the generic-files identity, which is what every game added before
+	// the seam existed carries.
+	Adapter string `json:"adapter,omitempty"`
 	// Loader is #359's mod-loader declaration, additive and optional: the
 	// same four values `lmm game add --loader ...` collects, unparsed, so a
 	// core.GameSpecError's "field" member points at "loader.runtime" and the
@@ -142,6 +146,7 @@ func (r *gameAddRequest) spec() core.GameSpec {
 		ID:          r.GameID,
 		InstallPath: r.InstallPath,
 		ModPath:     r.ModPath,
+		Adapter:     r.Adapter,
 		Loader:      r.Loader,
 	}
 }
@@ -226,8 +231,13 @@ func gameAddErrorStatus(err error) int {
 // seam.
 type gameSourcesRequest struct {
 	Sources map[string]string `json:"sources"`
+	// Adapter, when PRESENT, sets the game's `adapter:` key (#353); the
+	// empty string clears it back to generic-files. A pointer rather than
+	// a string so an SPA that only edits the source map - every caller
+	// before #353 - cannot clear an adapter it never sent.
+	Adapter *string `json:"adapter,omitempty"`
 	// Loader is #359's declaration, additive: a body carrying it edits the
-	// LOADER instead of the source map.
+	// LOADER instead of the source map or the adapter.
 	//
 	// One request, one edit. Each is a complete statement on its own and
 	// each is its own gated write, so handling both in one request would
@@ -266,19 +276,38 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	editsLoader := req.Loader != nil || req.LoaderSet
-	if editsLoader && len(req.Sources) > 0 {
+	if editsLoader && (len(req.Sources) > 0 || req.Adapter != nil) {
 		s.writeAPIError(w, http.StatusBadRequest,
-			errors.New("edit the sources and the loader in separate requests: send \"sources\", or \"loader\", not both"))
+			errors.New("edit the sources, the adapter and the loader in separate requests: send \"sources\", \"adapter\", or \"loader\", not more than one"))
 		return
 	}
 
-	update := func() (*core.GameListEntry, error) {
-		if editsLoader {
-			return s.svc.UpdateGameLoader(r.Context(), r.PathValue("id"), req.Loader)
+	if editsLoader {
+		entry, err := s.svc.UpdateGameLoader(r.Context(), r.PathValue("id"), req.Loader)
+		if err != nil {
+			s.writeAPIError(w, gameSourcesErrorStatus(err), err)
+			return
 		}
-		return s.svc.UpdateGameSources(r.Context(), r.PathValue("id"), req.Sources)
+		s.writeJSON(w, http.StatusOK, entry)
+		return
 	}
-	entry, err := update()
+
+	// #353: the adapter is its own gated core write, taken FIRST so a
+	// request carrying both leaves both applied or fails before the source
+	// map moves - the same order `lmm game edit` uses.
+	if req.Adapter != nil {
+		entry, err := s.svc.SetGameAdapter(r.Context(), r.PathValue("id"), *req.Adapter)
+		if err != nil {
+			s.writeAPIError(w, gameSourcesErrorStatus(err), err)
+			return
+		}
+		if req.Sources == nil {
+			s.writeJSON(w, http.StatusOK, entry)
+			return
+		}
+	}
+
+	entry, err := s.svc.UpdateGameSources(r.Context(), r.PathValue("id"), req.Sources)
 	if err != nil {
 		s.writeAPIError(w, gameSourcesErrorStatus(err), err)
 		return

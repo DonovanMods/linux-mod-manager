@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
@@ -67,6 +68,12 @@ type Importer struct {
 	// DeployCompile import through such an Importer fails loud rather than
 	// silently caching an unvalidated archive.
 	resolveMergeCompiler func(gameID string) (source.MergeCompiler, error)
+	// adapter is the game adapter whose NormalizeArchive decides how an
+	// extracted archive is laid out inside the cache entry (#353). Never
+	// nil: NewImporter defaults it to the built-in identity, which is
+	// exactly what every import did before the seam existed, and
+	// Service.newImporter replaces it with the game's resolved adapter.
+	adapter adapter.GameAdapter
 }
 
 // NewImporter creates a new Importer that stages extraction in the OS temp
@@ -77,6 +84,7 @@ func NewImporter(cache *cache.Cache) *Importer {
 		cache:     cache,
 		extractor: NewExtractor(),
 		log:       slog.New(slog.DiscardHandler),
+		adapter:   adapter.Generic{},
 	}
 }
 
@@ -90,6 +98,14 @@ func (s *Service) newImporter(game *domain.Game) *Importer {
 	imp.stagingRoot = s.stagingRoot()
 	imp.resolveMergeCompiler = s.mergeCompilerSourceForGame
 	imp.log = s.logger()
+	// #353: a resolution failure here (a games.yaml naming an adapter this
+	// build does not ship) is reported by the flow's own AdapterFor call,
+	// which every import path makes before it reaches an Importer; falling
+	// back to the identity keeps this constructor error-free rather than
+	// inventing a second, quieter failure channel for the same fault.
+	if a, err := s.AdapterFor(game); err == nil {
+		imp.adapter = a
+	}
 	return imp
 }
 
@@ -295,10 +311,18 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			return nil, fmt.Errorf("extracting archive: %w", err)
 		}
 
-		// Detect mod name from extracted content, BEFORE the BepInEx
-		// normalisation below: a normalised shape-A tree has BepInEx as its
-		// sole top-level directory, and DetectModName's "one top-level
-		// directory names the mod" rule would name every plugin "BepInEx".
+		// #314/#353: the mod name is derived ONCE, off the archive's own
+		// shape, BEFORE the BepInEx normalisation and BEFORE the adapter is
+		// allowed to move anything - the same rule (modNameFromMembers) and
+		// the same pre-rewrite content PlanImportArchive derives from, so
+		// the plan and this ingest name the mod identically and hand
+		// NormalizeArchive the same ModName. Deriving it after either
+		// rewrite would make the name a function of that rewrite's own
+		// output, which is both circular for an adapter that consults
+		// ModName and a plan/ingest disagreement (I1). A normalised shape-A
+		// tree has BepInEx as its sole top-level directory, and
+		// DetectModName's "one top-level directory names the mod" rule
+		// would otherwise name every plugin "BepInEx".
 		modName = DetectModName(extractedPath, filename)
 
 		// #358: the archive-root normaliser. It runs against the PRISTINE
@@ -323,6 +347,16 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		}
 		for _, w := range layout.warnings() {
 			i.log.Warn(w, "archive", filename, "game", game.ID)
+		}
+
+		// #353: the game's adapter lays the extracted tree out - AFTER
+		// #358's BepInEx normalisation has put a loader archive into its
+		// canonical shape. That order is the same one PlanImportArchive
+		// uses, which is what keeps plan and ingest agreeing: the adapter
+		// always sees the member list the plan showed it. A generic-files
+		// game gets the identity Layout and nothing moves.
+		if err := i.rewriteExtracted(game, modName, extractedPath); err != nil {
+			return nil, err
 		}
 
 		// Move extracted files to cache

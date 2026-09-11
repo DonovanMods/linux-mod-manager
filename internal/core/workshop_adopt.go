@@ -258,11 +258,15 @@ func (s *Service) PlanWorkshopAdopt(ctx context.Context, game *domain.Game, prof
 		}
 	}
 
+	snapshot, err := s.snapshotOf(game.ID, installed)
+	if err != nil {
+		return nil, err
+	}
 	plan := &WorkshopAdoptPlan{
 		GameID:   game.ID,
 		Profile:  profileName,
 		Scan:     scan,
-		snapshot: snapshotOf(installed),
+		snapshot: snapshot,
 	}
 	var untracked []domain.WorkshopItem
 	for _, it := range scan.Items {

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
@@ -31,16 +32,24 @@ type Installer struct {
 	// install, the archive import and a compile game's merged artifact
 	// alike - see internal/core/originals.go's package comment.
 	originals *originalsStore
+
+	// adapter is the game adapter whose FileRouter decides which of a mod's
+	// cached files the linker deploys (#353). Never nil: NewInstaller
+	// defaults it to the built-in identity - which routes every file to the
+	// linker, exactly as lmm always did - and Service.newInstallerWithLinker
+	// replaces it with the game's resolved adapter.
+	adapter adapter.GameAdapter
 }
 
 // NewInstaller creates a new installer
 // The db parameter is optional - if nil, file tracking is disabled
 func NewInstaller(cache *cache.Cache, linker linker.Linker, database *db.DB) *Installer {
 	return &Installer{
-		cache:  cache,
-		linker: linker,
-		db:     database,
-		log:    slog.New(slog.DiscardHandler),
+		cache:   cache,
+		linker:  linker,
+		db:      database,
+		log:     slog.New(slog.DiscardHandler),
+		adapter: adapter.Generic{},
 	}
 }
 
@@ -57,6 +66,11 @@ func (i *Installer) SetLogger(l *slog.Logger) {
 // (#350). Unexported: an Installer is a core primitive, and the store is
 // resolved from the Service's data directory, never by a caller.
 func (i *Installer) setOriginals(store *originalsStore) { i.originals = store }
+
+// setAdapter wires the game's resolved adapter into this Installer (#353).
+// Unexported for setOriginals' reason: an Installer is a core primitive, and
+// the adapter is resolved from the Service's registry, never by a caller.
+func (i *Installer) setAdapter(a adapter.GameAdapter) { i.adapter = a }
 
 // captureOriginal preserves whatever is at dstPath before a deploy
 // replaces it, when that file is one lmm does not own.
@@ -187,7 +201,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	}
 
 	// Get list of files in the cached mod
-	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, i.adapter, game, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return fmt.Errorf("resolving deployable files: %w", err)
 	}
@@ -306,7 +320,7 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	if err != nil {
 		return fmt.Errorf("listing old cached files: %w", err)
 	}
-	newFiles, err := deployableFiles(newCache, game.ID, newMod.SourceID, newMod.ID, newMod.Version)
+	newFiles, err := deployableFiles(newCache, i.adapter, game, newMod.SourceID, newMod.ID, newMod.Version)
 	if err != nil {
 		return fmt.Errorf("resolving deployable new-side files: %w", err)
 	}
@@ -331,7 +345,7 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	// fresh either - using oldFiles here would resurrect it through this
 	// error path even though the #210 narrowing kept it off disk on every
 	// success path.
-	oldRestorable, err := deployableFiles(oldCache, game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version)
+	oldRestorable, err := deployableFiles(oldCache, i.adapter, game, oldMod.SourceID, oldMod.ID, oldMod.Version)
 	if err != nil {
 		return fmt.Errorf("resolving deployable old-side files: %w", err)
 	}
@@ -783,7 +797,7 @@ func (i *Installer) IsInstalled(ctx context.Context, game *domain.Game, mod *dom
 	}
 
 	// Get list of files in the cached mod
-	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, i.adapter, game, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return false, fmt.Errorf("resolving deployable files: %w", err)
 	}
@@ -835,7 +849,7 @@ func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *do
 	}
 
 	// Get list of files in the cached mod
-	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, i.adapter, game, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return nil, fmt.Errorf("resolving deployable files: %w", err)
 	}
@@ -902,7 +916,7 @@ func (i *Installer) GetDeployedFiles(ctx context.Context, game *domain.Game, mod
 		return nil, nil
 	}
 
-	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, i.adapter, game, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return nil, fmt.Errorf("resolving deployable files: %w", err)
 	}

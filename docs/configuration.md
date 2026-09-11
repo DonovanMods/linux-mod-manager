@@ -89,6 +89,7 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 | `cache_path`   | string | no       | Per-game cache directory override                                     |
 | `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                   |
 | `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile` |
+| `adapter`      | string | no       | Game adapter: `generic-files` (default) — see below                   |
 
 #### `mod_path` and relative values
 
@@ -130,6 +131,62 @@ hooks:
 ```
 
 Scripts receive environment variables: `LMM_GAME_ID`, `LMM_GAME_PATH`, `LMM_MOD_PATH`, `LMM_MOD_ID`, `LMM_MOD_NAME`, `LMM_MOD_VERSION`, `LMM_HOOK`. Use `--no-hooks` to disable all hooks at runtime; `--force` to continue when a hook fails.
+
+### Adapter (games.yaml)
+
+The `adapter` option selects the **game adapter**: the in-tree code that
+knows what a particular game does with mod content — how an archive's files
+are laid out, which of them are configuration rather than mod content,
+whether the game's mods have to be compiled into one artifact, and what
+`lmm verify` can honestly check about it.
+
+- **`generic-files`** (default, and what an omitted key means): the
+  identity. An archive lands exactly where it was extracted, every file is
+  deployed by the linker, and nothing extra is checked. This is what every
+  game lmm managed before adapters existed, and leaving the key out keeps
+  that behaviour byte-for-byte.
+
+lmm ships one adapter today; the ones that follow are added in the same
+tree, so `lmm game list` always names what this build actually has:
+
+```bash
+lmm game list                           # the ADAPTER column names each game's
+lmm game add --adapter <name> ...
+lmm game edit <game> --adapter <name>   # "" clears it back to generic-files
+```
+
+An adapter name this build does not ship is refused, naming the ones it
+does, rather than silently downgraded to the default: `game add` and `game
+edit` refuse it as you type it, and a name already in `games.yaml` is
+refused when lmm resolves that game. Only the NAME's syntax is checked when
+`games.yaml` loads, so an unknown-but-well-formed name still lets every
+other game work.
+
+#### `adapter` and `deploy_mode: compile`
+
+The two keys are orthogonal for `deploy_mode`'s two ordinary values:
+`extract` and `copy` describe how a *downloaded file* is handled, and any
+adapter composes with either.
+
+`compile` is different — whether a game's mods merge into one artifact is a
+property of the *game*, which is what an adapter is for. So:
+
+- A game with `deploy_mode: compile` and no `adapter:` key keeps working
+  with no change on your part; lmm derives the compiling adapter for it.
+- An explicit `adapter:` always wins over that derivation.
+- An EXPLICIT `adapter:` that cannot compile, together with `deploy_mode:
+  compile`, is refused when lmm resolves the game, naming both keys. The
+  derivation above is never refused this way - it only ever picks an
+  adapter that can compile.
+- Nothing is rewritten when lmm saves `games.yaml`: a file you did not edit
+  is written back as it was read.
+
+> **Deprecated:** `deploy_mode: compile` is retained for 2.0 so that every
+> existing configuration keeps working untouched. The adapter is the
+> durable way to say it, and `compile` will be removed in a future MAJOR
+> release — at which point `adapter:` is the only spelling. New
+> configurations should set the adapter and leave `deploy_mode` at its
+> default.
 
 ### Deploy Mode (games.yaml)
 

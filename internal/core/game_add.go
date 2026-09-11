@@ -228,6 +228,8 @@ func ExactGameCatalogMatch(report *GameCatalogReport, name string) *GameCatalogM
 //     layered on top of it, so an explicit source ADDS to a prefilled map
 //     rather than replacing it, and a spec carrying only this map is
 //     complete on its own.
+//   - Adapter is games.yaml's adapter string (#353). Optional: "" means
+//     the generic-files identity.
 //   - DeployMode is games.yaml's deploy_mode string, passed through to
 //     domain.ParseDeployMode. Optional: "" means the default (extract),
 //     exactly what every add wrote before this field existed. #206's
@@ -244,6 +246,12 @@ type GameSpec struct {
 	LinkMethod  domain.LinkMethod
 	Sources     map[string]string
 	DeployMode  string
+	// Adapter is games.yaml's `adapter:` value (#353). Optional: ""
+	// means the generic-files identity, which is every game lmm managed
+	// before the seam existed. Validated for SYNTAX here; whether the
+	// named adapter is registered is checked by the caller against
+	// Service.ListAdapters(), and again when core resolves the game.
+	Adapter string
 	// Loader is #359's optional mod-loader declaration, unparsed
 	// (LoaderSpec, game_loader.go). nil - which is nearly every game -
 	// writes no `loader:` block at all. Carried on the SPEC rather than
@@ -343,6 +351,21 @@ func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEn
 			}
 		}
 	}
+	// #353/#411 (I6): the adapter's EXISTENCE, checked in the same place
+	// and for the same reason as a source's - spec.game() validates only
+	// its syntax, so without this a serve caller could park a game naming
+	// an adapter this build does not ship, and every flow on it would then
+	// fail at resolve time with nothing the form could mark. The CLI's own
+	// pre-check (cmd/lmm/adapter_flag.go) stays for its friendlier
+	// message, but it is no longer the only thing enforcing this.
+	if game.Adapter != "" {
+		if _, err := s.adapterRegistry().Resolve(game.Adapter); err != nil {
+			return nil, &GameSpecError{
+				Field: "adapter", Value: game.Adapter,
+				Reason: err.Error(), Err: err,
+			}
+		}
+	}
 	if _, exists := s.game(game.ID); exists {
 		return nil, fmt.Errorf("%w: %s", ErrGameExists, game.ID)
 	}
@@ -427,6 +450,15 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 			Field: "deploy_mode", Value: spec.DeployMode,
 			Reason: "unrecognised deploy mode (valid: " + domain.ValidDeployModes + ")",
 			Err:    domain.ErrInvalidDeployMode,
+		}
+	}
+
+	adapterName := strings.TrimSpace(spec.Adapter)
+	if adapterName != "" && !domain.ValidAdapterName(adapterName) {
+		return nil, &GameSpecError{
+			Field: "adapter", Value: spec.Adapter,
+			Reason: "not a valid adapter name (lowercase letters, digits and single interior hyphens)",
+			Err:    domain.ErrInvalidAdapter,
 		}
 	}
 
@@ -522,6 +554,7 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 		SourceIDs:   sources,
 		LinkMethod:  spec.LinkMethod,
 		DeployMode:  deployMode,
+		Adapter:     adapterName,
 		Loader:      loader,
 	}, nil
 }

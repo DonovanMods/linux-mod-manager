@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
@@ -552,11 +553,14 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		// only ever reacts to a --fix repair that just ran, and nothing
 		// ran here to react to).
 		//
-		// #359's loader tier runs here too, for externalPresencePass's
-		// reason: a loader is a property of the GAME, not of its mods, so
-		// an empty profile's loader can still be missing, the wrong
-		// version, or never have run - and finding that out before
-		// installing anything is exactly when it helps most.
+		// #353's adapter tier and #359's loader tier both run here too,
+		// for externalPresencePass's reason: an adapter's checks and a
+		// loader are properties of the GAME, not of its mods, so an empty
+		// profile's loader can still be missing, the wrong version, or
+		// never have run - and finding that out before installing anything
+		// is exactly when it helps most. Same order as the file-bearing
+		// path below.
+		r.adapterPass(installedMods)
 		r.loaderPass(installedMods)
 		r.convergencePass()
 		return result, nil
@@ -613,6 +617,13 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	// version-mismatch repair or a redownload can change a merge's inputs);
 	// convergence then reconciles the game dir against the resulting
 	// reality, so it always runs AFTER the sync, in both modes.
+	// #353: the adapter's own checks close out the pass list - the set core
+	// cannot see (a loader's preloader present, declared-version drift).
+	// Adapters report; core repairs, and no adapter finding is fixable in
+	// 2.0. An adapter with no Verifier - every adapter U1 ships - appends
+	// nothing.
+	r.adapterPass(installedMods)
+
 	if r.opts.Fix {
 		r.syncMergedPakPass()
 	}
@@ -622,6 +633,33 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	r.convergencePass()
 
 	return result, nil
+}
+
+// adapterPass appends the game adapter's read-only findings to the result.
+//
+// A failure to resolve or run the adapter is reported as a "skipped" row
+// rather than failing the whole verify, matching every other pass's
+// tolerance: a verify that reports nothing because one tier could not run
+// is worse than one that says which tier did not.
+func (r *verifyRun) adapterPass(installedMods []domain.InstalledMod) {
+	a, err := r.svc.AdapterFor(r.game)
+	if err != nil {
+		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("adapter: %v", err)}, VerifyEvent{})
+		return
+	}
+	findings, err := adapter.Verify(r.ctx, a, adapter.VerifyRequest{Game: r.game, Mods: installedMods})
+	if err != nil {
+		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("adapter %s: %v", a.ID(), err)}, VerifyEvent{})
+		return
+	}
+	for _, f := range findings {
+		r.finding(VerifyFinding{
+			Status:        f.Status,
+			Note:          f.Note,
+			Fixable:       f.Fixable,
+			FixableReason: f.FixableReason,
+		}, VerifyEvent{})
+	}
 }
 
 // externalPresencePass is #269's verify tier for EXTERNAL mods: the only

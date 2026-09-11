@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +29,7 @@ func TestDeployableFiles_AllRecorded_ExcludesUnclaimed(t *testing.T) {
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", []string{"claimed.pak"}))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 
-	files, err := deployableFiles(c, "g", "src", "mod", "1.0")
+	files, err := deployableFiles(c, adapter.Generic{}, &domain.Game{ID: "g"}, "src", "mod", "1.0")
 	require.NoError(t, err)
 	require.Equal(t, []string{"claimed.pak"}, files)
 }
@@ -39,7 +41,7 @@ func TestDeployableFiles_RecordedZeroMembers_DeploysNothing(t *testing.T) {
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", nil))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 
-	files, err := deployableFiles(c, "g", "src", "mod", "1.0")
+	files, err := deployableFiles(c, adapter.Generic{}, &domain.Game{ID: "g"}, "src", "mod", "1.0")
 	require.NoError(t, err)
 	require.Empty(t, files)
 }
@@ -58,7 +60,7 @@ func TestDeployableFiles_AllRecordedNoRetainedSource_FallsBackToUnion(t *testing
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", []string{"claimed.pak"}))
 	// Deliberately no retained source written.
 
-	files, err := deployableFiles(c, "g", "src", "mod", "1.0")
+	files, err := deployableFiles(c, adapter.Generic{}, &domain.Game{ID: "g"}, "src", "mod", "1.0")
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"claimed.pak", "stale.pak"}, files)
 }
@@ -71,7 +73,7 @@ func TestDeployableFiles_BareMarker_FallsBackToUnion(t *testing.T) {
 	// Legacy bare marker: completion vouched, provenance unknown.
 	require.NoError(t, cache.MarkFileComplete(dir, "pak"))
 
-	files, err := deployableFiles(c, "g", "src", "mod", "1.0")
+	files, err := deployableFiles(c, adapter.Generic{}, &domain.Game{ID: "g"}, "src", "mod", "1.0")
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"a.pak", "b.pak"}, files)
 }
@@ -84,7 +86,7 @@ func TestDeployableFiles_MixedRecordedAndBare_FallsBackToUnion(t *testing.T) {
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "f1", []string{"a.pak"}))
 	require.NoError(t, cache.MarkFileComplete(dir, "f2")) // bare
 
-	files, err := deployableFiles(c, "g", "src", "mod", "1.0")
+	files, err := deployableFiles(c, adapter.Generic{}, &domain.Game{ID: "g"}, "src", "mod", "1.0")
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"a.pak", "b.pak"}, files)
 }
@@ -92,7 +94,7 @@ func TestDeployableFiles_MixedRecordedAndBare_FallsBackToUnion(t *testing.T) {
 func TestDeployableFiles_NoMarkers_FallsBackToUnion(t *testing.T) {
 	c, _ := seedEntry(t, map[string][]byte{"a.pak": []byte("a")})
 
-	files, err := deployableFiles(c, "g", "src", "mod", "1.0")
+	files, err := deployableFiles(c, adapter.Generic{}, &domain.Game{ID: "g"}, "src", "mod", "1.0")
 	require.NoError(t, err)
 	require.Equal(t, []string{"a.pak"}, files)
 }
@@ -104,7 +106,7 @@ func TestDeployableFiles_ClaimedButMissingOnDisk_Dropped(t *testing.T) {
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "f1", []string{"present.pak", "gone.pak"}))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("f1")), []byte("zip"), 0o644))
 
-	files, err := deployableFiles(c, "g", "src", "mod", "1.0")
+	files, err := deployableFiles(c, adapter.Generic{}, &domain.Game{ID: "g"}, "src", "mod", "1.0")
 	require.NoError(t, err)
 	require.Equal(t, []string{"present.pak"}, files)
 }

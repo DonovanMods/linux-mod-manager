@@ -141,12 +141,19 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 	// Collect every path each enabled mod PROVIDES (its cache manifest) and
 	// which mods provide it. A mod with no cache entry contributes nothing.
 	gameCache := s.GetGameCache(game)
+	// #353: one adapter resolution for the whole sweep - a games.yaml
+	// naming an adapter this build does not ship is a config error worth
+	// surfacing here rather than per mod.
+	gameAdapter, err := s.AdapterFor(game)
+	if err != nil {
+		return nil, err
+	}
 	fileToKeys := make(map[string][]string)
 	for _, m := range enabled {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		files, err := deployableFiles(gameCache, game.ID, m.SourceID, m.ID, m.Version)
+		files, err := deployableFiles(gameCache, gameAdapter, game, m.SourceID, m.ID, m.Version)
 		if err != nil {
 			// A missing cache entry (e.g. manually deleted) just means the mod
 			// provides nothing; any OTHER read failure (permissions, corruption)

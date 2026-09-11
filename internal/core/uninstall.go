@@ -112,13 +112,17 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
+	snapshot, err := s.snapshotOf(game.ID, installed)
+	if err != nil {
+		return nil, err
+	}
 	plan := &UninstallPlan{
 		Mod:            *mod,
 		External:       mod.External,
 		KeepCache:      opts.KeepCache,
 		Hooks:          uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks),
 		MergedArtifact: s.mergedArtifactEffectForUninstall(ctx, game, profileName, mod),
-		snapshot:       snapshotOf(installed),
+		snapshot:       snapshot,
 	}
 	for _, f := range s.deployedPathsFor(ctx, game, profileName, mod) {
 		if isDeployedNow(game, f) {

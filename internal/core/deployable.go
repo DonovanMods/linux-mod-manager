@@ -8,6 +8,8 @@
 package core
 
 import (
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
@@ -41,17 +43,23 @@ import (
 // result equals the union anyway, so this gate only changes behavior for the
 // contested "recorded manifests plus unattributed content" shape.
 //
+// After the narrowing, the game's ADAPTER gets the last word per file
+// (#353): a member it routes RouteCopyOnce or RouteSkip is not the linker's
+// to deploy. Every adapter U1 ships implements no FileRouter, so every file
+// routes RouteLink and this stage is the identity - which is why the
+// existing deploy goldens do not move.
+//
 // Errors from ListFiles, FileManifests, and HasRetainedSource are returned
 // unwrapped; each caller adds a single contextual wrapper of its own choosing
 // (e.g. Installer.Install's "resolving deployable files", conflicts.go's
 // pre-existing "listing cache files for %s") - this resolver does not
 // prescribe the wording.
-func deployableFiles(gameCache *cache.Cache, gameID, sourceID, modID, version string) ([]string, error) {
-	files, err := gameCache.ListFiles(gameID, sourceID, modID, version)
+func deployableFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, sourceID, modID, version string) ([]string, error) {
+	files, err := gameCache.ListFiles(game.ID, sourceID, modID, version)
 	if err != nil {
 		return nil, err
 	}
-	return deployableFilesFromListing(gameCache, gameID, sourceID, modID, version, files)
+	return deployableFilesFromListing(gameCache, a, game, sourceID, modID, version, files)
 }
 
 // deployableFilesFromListing is deployableFiles' narrowing logic for a
@@ -59,18 +67,19 @@ func deployableFiles(gameCache *cache.Cache, gameID, sourceID, modID, version st
 // #5): planDeploy needs both the deploy-direction (this) and the
 // removal-direction (the raw listing itself) result for the same mod, and
 // ListFiles-ing one cache entry twice to build one plan row is wasteful.
-func deployableFilesFromListing(gameCache *cache.Cache, gameID, sourceID, modID, version string, files []string) ([]string, error) {
+func deployableFilesFromListing(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, sourceID, modID, version string, files []string) ([]string, error) {
+	gameID := game.ID
 	manifests, err := gameCache.FileManifests(gameID, sourceID, modID, version)
 	if err != nil {
 		return nil, err
 	}
 	if len(manifests) == 0 {
-		return files, nil
+		return routeDeployables(a, game, files), nil
 	}
 	claimed := make(map[string]bool)
 	for _, m := range manifests {
 		if !m.Recorded {
-			return files, nil
+			return routeDeployables(a, game, files), nil
 		}
 		for _, member := range m.Members {
 			claimed[member] = true
@@ -82,7 +91,7 @@ func deployableFilesFromListing(gameCache *cache.Cache, gameID, sourceID, modID,
 		return nil, err
 	}
 	if !hasRetainedSource {
-		return files, nil
+		return routeDeployables(a, game, files), nil
 	}
 	deployable := make([]string, 0, len(files))
 	for _, f := range files {
@@ -90,5 +99,5 @@ func deployableFilesFromListing(gameCache *cache.Cache, gameID, sourceID, modID,
 			deployable = append(deployable, f)
 		}
 	}
-	return deployable, nil
+	return routeDeployables(a, game, deployable), nil
 }

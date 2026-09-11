@@ -91,6 +91,57 @@ func (s *Service) UpdateGameSources(ctx context.Context, gameID string, sources 
 	return &entry, nil
 }
 
+// SetGameAdapter rewrites gameID's `adapter:` key and returns the game's
+// own `lmm game list --json` row, re-read after the write (#353).
+//
+// It is UpdateGameSources' sibling in every respect - a settings-class
+// single-step write, gated for the same reason, with every check inside
+// the gate - and it is the ONLY way a frontend changes the key, so the
+// rules below cannot be bypassed by one of them.
+//
+// An EMPTY name clears the key, which is how a user returns a game to the
+// generic-files identity. Any other name must be registered: an
+// unregistered one is a GameSpecError on field "adapter", so an SPA marks
+// the input rather than parsing a sentence, and the message names what IS
+// registered. A `deploy_mode: compile` game may only be given an adapter
+// that can compile - the one composition rule the two keys have (design
+// §2) - refused by name for the same reason.
+func (s *Service) SetGameAdapter(ctx context.Context, gameID, name string) (*GameListEntry, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	game, ok := s.game(gameID)
+	if !ok {
+		return nil, domain.ErrGameNotFound
+	}
+
+	// A COPY, for the reason UpdateGameSources documents: s.game returns
+	// the pointer concurrent readers are walking right now.
+	updated := *game
+	updated.Adapter = strings.TrimSpace(name)
+
+	if _, err := s.AdapterFor(&updated); err != nil {
+		return nil, &GameSpecError{
+			Field: "adapter", Value: updated.Adapter,
+			Reason: err.Error(), Err: err,
+		}
+	}
+
+	if err := s.saveGame(ctx, &updated); err != nil {
+		return nil, err
+	}
+
+	defaultGame, err := s.DefaultGame(ctx)
+	if err != nil {
+		return nil, err
+	}
+	entry := newGameListEntry(&updated, defaultGame)
+	return &entry, nil
+}
+
 // validatedSourceMap trims and checks every entry of a proposed source
 // map, returning the map to persist. Each id must be non-empty and must
 // name a source registered with this Service - the same check AddGame

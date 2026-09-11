@@ -346,6 +346,26 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	if err != nil {
 		return nil, err
 	}
+	// #353: the plan and the ingest share ONE Layout AND one derivation of
+	// its inputs - the same member list and the same mod name, read off the
+	// archive before either side rewrites anything - so a plan can never
+	// promise a path the ingest places somewhere else. An extract-mode
+	// import is the only kind whose members an adapter has a say over - a
+	// retained merge source and a copied artifact are single files under
+	// their own names.
+	//
+	// It runs AFTER #358's BepInEx normalisation, on the paths that
+	// normalisation produced, which is the same order the ingest uses -
+	// that shared order is what keeps plan and ingest agreeing when both a
+	// loader and an adapter are in play. Named apart from the BepInEx
+	// `layout` above deliberately: that one still owns the plan's warnings.
+	if kind == importKindExtract {
+		adapterLayout, lerr := s.archiveLayout(game, modName, files)
+		if lerr != nil {
+			return nil, lerr
+		}
+		files = rewritePlannedPaths(adapterLayout, files)
+	}
 
 	plan := &ImportArchivePlan{
 		Archive:        archivePath,

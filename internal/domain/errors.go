@@ -50,7 +50,13 @@ var (
 	// (core.LoaderSpec, `lmm game edit --loader`, POST /api/v1/games)
 	// already refuses it.
 	ErrInvalidLoaderKind = errors.New("invalid loader kind")
-	ErrDependencyLoop    = errors.New("circular dependency detected")
+	// ErrInvalidAdapter is ErrInvalidLinkMethod's counterpart for the
+	// games.yaml `adapter:` key (#353). The config layer raises it for a
+	// SYNTACTICALLY invalid name only - whether the named adapter exists
+	// is core's question, asked when it resolves the game, because the
+	// adapter registry lives there.
+	ErrInvalidAdapter = errors.New("invalid adapter")
+	ErrDependencyLoop = errors.New("circular dependency detected")
 	// ErrExternalMod marks an operation refused because the mod is
 	// EXTERNAL: lmm tracks it, but another agent (today, the Steam client
 	// for a Workshop item) owns its files where they sit (#269). Deploy,

@@ -3,10 +3,12 @@ package core
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
@@ -63,6 +65,149 @@ func applyProfileOverrides(game *domain.Game, profile *domain.Profile, originals
 		captureOverriddenOriginal(originals, profile.Name, rel, dest)
 		if err := os.WriteFile(dest, content, 0644); err != nil {
 			return fmt.Errorf("writing override %s: %w", relPath, err)
+		}
+	}
+	return nil
+}
+
+// applyAdapterCopyOnce writes the RouteCopyOnce files of the mods just
+// deployed into the game directory (#353).
+//
+// It is applyProfileOverrides' semantics reused rather than reinvented,
+// which is the design's decision 4: a real file, copied on FIRST deploy,
+// never overwritten, and never entered into deployed_files. The reason is
+// identical - the user hand-edits the file after the game's first run, and
+// a symlink would push that edit back into the shared cache entry, where it
+// would leak into every profile using the same mod version.
+//
+// Nothing routes RouteCopyOnce in U1 (no adapter shipped here implements
+// FileRouter), so this returns immediately for every game today. It is
+// wired now, with the seam, because the rule "core owns every side effect"
+// is only true if the side effect exists in core before an adapter asks for
+// it (design §3 U1's call-site table).
+func (s *Service) applyAdapterCopyOnce(game *domain.Game, mods []*domain.InstalledMod) error {
+	a, err := s.AdapterFor(game)
+	if err != nil {
+		return err
+	}
+	if _, routes := a.(adapter.FileRouter); !routes {
+		return nil
+	}
+	gameCache := s.GetGameCache(game)
+	for _, mod := range mods {
+		if mod.External {
+			continue // lmm never owns an external mod's bytes
+		}
+		files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("listing cache files for %s: %w", domain.ModKey(mod.SourceID, mod.ID), err)
+		}
+		versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+		for _, rel := range adapterCopyOnceFiles(a, game, files) {
+			// M2: the containment guard belongs BESIDE the write, the way
+			// applyProfileOverrides has one for an override path. Cache
+			// members are sanitised at extraction, so this is not
+			// reachable today - but the adapter tree rewriter can now put
+			// a path into a cache entry the extractor never saw.
+			dest, err := copyOnceDest(game.ModPath, rel)
+			if err != nil {
+				return fmt.Errorf("writing %s for %s: %w", rel, domain.ModKey(mod.SourceID, mod.ID), err)
+			}
+			if err := copyOnce(filepath.Join(versionDir, filepath.FromSlash(rel)), dest); err != nil {
+				return fmt.Errorf("writing %s for %s: %w", rel, domain.ModKey(mod.SourceID, mod.ID), err)
+			}
+		}
+	}
+	return nil
+}
+
+// copyOnceDest resolves a cache-entry-relative member against root and
+// refuses one that escapes it, returning the absolute destination path.
+// Same rule, same wording, as applyProfileOverrides' own check.
+func copyOnceDest(root, rel string) (string, error) {
+	base, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolving game path: %w", err)
+	}
+	base = filepath.Clean(base)
+	cleaned := filepath.Clean(filepath.FromSlash(rel))
+	if cleaned == "" || cleaned == "." || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("invalid copy-once path: %q", rel)
+	}
+	dest := filepath.Clean(filepath.Join(base, cleaned))
+	within, err := filepath.Rel(base, dest)
+	if err != nil {
+		return "", fmt.Errorf("copy-once path %q: %w", rel, err)
+	}
+	if within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("copy-once path escapes game directory: %q", rel)
+	}
+	return dest, nil
+}
+
+// copyOnce copies src to dst unless dst already exists. An existing
+// destination is left EXACTLY as it is - that is the whole point of the
+// route - and is not an error.
+//
+// M1: the copy goes into a sibling TEMPORARY file and only becomes dst
+// once it is complete, so a kill, a full disk or an I/O error mid-copy can
+// never leave a truncated file that copy-once's own never-overwrite
+// contract would then refuse to repair on every subsequent deploy. The
+// link is what publishes it: unlike a rename it FAILS on an existing
+// destination, which makes the existence check and the create one
+// operation rather than a TOCTOU pair - and losing that race to another
+// writer means the file is there, which is exactly the outcome copy-once
+// wants.
+func copyOnce(src, dst string) error {
+	if _, err := os.Lstat(dst); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	dir := filepath.Dir(dst)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(dst)+".lmm-*")
+	if err != nil {
+		return fmt.Errorf("staging %s: %w", dst, err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) //nolint:errcheck // best effort; the link below is what matters
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("staging %s: %w", dst, err)
+	}
+	if err := copyFileStreaming(src, tmpName); err != nil {
+		return err
+	}
+	// CreateTemp made the file 0600 and copyFileStreaming's O_CREATE mode
+	// applies only to a file it creates, so the source's mode is carried
+	// across explicitly - the pre-M1 write took it from the source too.
+	if info, serr := os.Stat(src); serr == nil {
+		if cerr := os.Chmod(tmpName, info.Mode().Perm()); cerr != nil {
+			return fmt.Errorf("writing %s: %w", dst, cerr)
+		}
+	}
+	if err := os.Link(tmpName, dst); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			// Someone wrote it between the Lstat and here. The existing
+			// file wins, which is the route's whole contract.
+			return nil
+		}
+		if !errors.Is(err, errors.ErrUnsupported) {
+			return fmt.Errorf("writing %s: %w", dst, err)
+		}
+		// A filesystem with no hard links (rare, but FUSE mounts exist):
+		// fall back to a rename, which is still atomic but cannot refuse
+		// an existing destination - so re-check first.
+		if _, serr := os.Lstat(dst); serr == nil {
+			return nil
+		}
+		if err := os.Rename(tmpName, dst); err != nil {
+			return fmt.Errorf("writing %s: %w", dst, err)
 		}
 	}
 	return nil

@@ -71,6 +71,10 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 	}
 	fmt.Printf("  Link method:  %s\n", detail.LinkMethod)
 	fmt.Printf("  Deploy mode:  %s\n", detail.DeployMode)
+	// #353: the same cell `lmm game list` prints, spelled the same way -
+	// an absent key IS the generic-files identity, so it is named rather
+	// than left blank.
+	fmt.Printf("  Adapter:      %s\n", formatGameAdapter(detail.Adapter))
 	fmt.Printf("  Sources:      %s\n", formatGameSources(detail.SourceIDs))
 
 	printLoaderStatus(detail.Loader)
