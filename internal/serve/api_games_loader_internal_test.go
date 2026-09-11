@@ -136,3 +136,21 @@ func TestAPIGameSources_PUTRefusesACombinedEdit(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "separate requests")
 }
+
+// The adapter is the third edit this route can express (#353), and it is
+// separate from the loader on the same grounds - so a body carrying both is
+// refused too, and neither write happens.
+func TestAPIGameSources_PUTRefusesACombinedAdapterAndLoaderEdit(t *testing.T) {
+	s := newGamesServer(t)
+	addLoaderGame(t, s, "valheim", "")
+
+	rec := doAPI(s, http.MethodPut, "/api/v1/games/valheim",
+		`{"adapter":"generic-files","loader":{"kind":"bepinex"}}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "separate requests")
+
+	game, err := s.svc.GetGame("valheim")
+	require.NoError(t, err)
+	assert.Nil(t, game.Loader, "nothing is written when the request is refused")
+	assert.Empty(t, game.Adapter)
+}

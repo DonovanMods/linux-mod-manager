@@ -252,9 +252,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `deploy_mode: compile` game keeps working untouched (lmm derives the
   compiling adapter for it), and `deploy_mode: compile` is now documented as
   deprecated in favour of the adapter. `lmm game list` gains an **ADAPTER**
-  column, `lmm game add`/`lmm game edit` gain `--adapter`, the web UI's
-  Games table shows each game's, and `POST`/`PUT /api/v1/games` read and
-  write the key. Adapters live in the tree (`internal/adapter`) and are
+  column, `lmm game show` names each game's, `lmm game add`/`lmm game edit`
+  gain `--adapter`, the web UI's Games table shows each game's, and
+  `POST`/`PUT /api/v1/games` read and write the key. The adapter, the source
+  map and the loader (#359) are each their own edit: `lmm game edit` and
+  `PUT /api/v1/games/{id}` refuse a run asking for more than one rather than
+  silently picking an order, because each is its own gated write. Adapters live in the tree (`internal/adapter`) and are
   compile-time, not plugins: a contributor adds one without touching
   `internal/core`, and a boundary ratchet keeps it that way.
 

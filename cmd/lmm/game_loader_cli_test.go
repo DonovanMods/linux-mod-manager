@@ -97,6 +97,23 @@ func TestDoGameEditLoader_RefusesACombinedEdit(t *testing.T) {
 	assert.Contains(t, err.Error(), "separately")
 }
 
+// The adapter is a third separate edit, on the same grounds (#353 x #359):
+// each is its own gated core write, so a run asking for two of them is
+// refused rather than silently ordered.
+func TestDoGameEditLoader_RefusesACombinedAdapterEdit(t *testing.T) {
+	svc := setupGameEditTest(t)
+	resetGameLoaderFlags(t)
+	gameEditLoader = "bepinex"
+
+	err := doGameEditLoader(context.Background(), svc, "skyrim-se", true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "separately")
+
+	game, err := svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Nil(t, game.Loader, "nothing is written when the run is refused")
+}
+
 // TestDoGameEditLoader_JSONEmitsTheGameRow: Ruling 15 - the GameListEntry
 // document and nothing else on stdout.
 func TestDoGameEditLoader_JSONEmitsTheGameRow(t *testing.T) {

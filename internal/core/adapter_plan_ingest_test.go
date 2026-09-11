@@ -26,11 +26,18 @@ import (
 // minus the shapes an extract-mode import cannot carry: an empty archive
 // has nothing to plan, and the single-file compile shapes are a compile
 // game's business, not this seam's.
+//
+// It carries no BepInEx-ROOTED shape any more: #358's archive normaliser
+// refuses a `BepInEx/core/` archive outright (it is the loader itself, not a
+// mod) and #359 refuses any BepInEx-shaped archive imported into a game that
+// declares no loader - so the shape cannot reach this seam through a plain
+// game at all. adapter_loader_layout_test.go covers it where it now belongs:
+// a game that DOES declare the loader, with the normaliser and the adapter
+// both in play.
 var planIngestCorpus = map[string][]string{
 	"sole top-level directory": {"MyMod/a.esp", "MyMod/b.esp", "MyMod/sub/b.txt"},
 	"flat root":                {"a.esp", "readme.txt"},
 	"bethesda data root":       {"Data/mod.esp", "Data/meshes/test.nif", "Data/game.ini"},
-	"loader rooted":            {"BepInEx/core/plugin.dll", "BepInEx/config/plugin.cfg"},
 	"bare plugins root":        {"plugins/mod.dll"},
 	"nested only":              {"aaa/b.txt", "aaa/d.txt"},
 	"single compile artifact":  {"MyMod_P.pak"},
