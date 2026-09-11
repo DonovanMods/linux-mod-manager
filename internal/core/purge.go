@@ -78,6 +78,13 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 	// so emission is deferred to right after the loop, mirroring that.
 	var deferredWarnings []Event
 
+	// The paths this purge actually removed, accumulated across the loop:
+	// #415's bounded prune runs ONCE at the end over the whole set, which
+	// is what the single trailing CleanupEmptyDirs has always been. Doing
+	// it per mod would be equivalent but would re-read the same directories
+	// once per mod.
+	var removed []string
+
 	total := len(mods)
 	for idx, mod := range mods {
 		if err := ctx.Err(); err != nil {
@@ -112,7 +119,9 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 			continue
 		}
 
-		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
+		modRemoved, err := installer.uninstall(ctx, game, &mod.Mod, profileName)
+		removed = append(removed, modRemoved...)
+		if err != nil {
 			// Best-effort: files may have been manually removed.
 			msg := fmt.Sprintf("⚠ %s - %v", mod.Name, err)
 			*spec.notes = append(*spec.notes, msg)
@@ -187,7 +196,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		spec.emit(w)
 	}
 
-	linker.CleanupEmptyDirs(game.ModPath)
+	linker.CleanupEmptyDirs(game.ModPath, removed)
 	spec.emit(StepEvent{Scope: Scope{Op: spec.op}, Phase: PurgeComplete})
 	return nil
 }

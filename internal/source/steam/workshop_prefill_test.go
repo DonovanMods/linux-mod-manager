@@ -107,7 +107,7 @@ func TestDetectGames_EmptyStubACFDoesNotPrefill(t *testing.T) {
 }
 
 func TestDetectGames_NoWorkshopManifestDoesNotPrefill(t *testing.T) {
-	steamFixture(t, "526870", "Satisfactory", "Satisfactory")
+	steamFixture(t, "9999990", "Uncurated Example Game", "UncuratedExampleGame")
 
 	got := detectOne(t, steam.DetectOptions{IncludeUnknown: true})
 	assert.Empty(t, got.Sources)

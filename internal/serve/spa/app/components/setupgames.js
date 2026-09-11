@@ -313,6 +313,7 @@ export function SetupGames({ actions, game, profile }) {
       ${
         showDetect &&
         html`<${GameDetectSection}
+          actions=${actions}
           onAdded=${afterAdd}
           onAddWithDetails=${(row) => {
             setDetected(row);

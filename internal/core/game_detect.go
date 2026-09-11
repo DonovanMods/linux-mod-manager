@@ -75,7 +75,10 @@ func cloneDetectedLoader(loader *domain.GameLoader) *domain.GameLoader {
 // The rules, in the order a caller will care about them:
 //
 //   - Name, InstallPath, ID (from the candidate's slug) and DeployMode come
-//     from the candidate unless the caller supplied them.
+//     from the candidate unless the caller supplied them. A candidate whose
+//     install path games.yaml ALREADY configures keeps that game's id
+//     instead - but only through Service.PrefillGameSpecFromDetected, which
+//     is the seam both frontends call; this function stays pure.
 //   - ModPath comes from the candidate when detection knew one (a curated
 //     entry's mod_path, already joined onto the install path). An UNKNOWN
 //     candidate has none - detection deliberately refuses to guess - so
@@ -134,6 +137,95 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 		}
 	}
 	return spec
+}
+
+// ConfiguredGameFor resolves one detected candidate against the games.yaml
+// set (LoadGamesFromDisk's map, keyed by game id), returning the game that
+// ALREADY configures it, or nil.
+//
+// The id match is the obvious half: a candidate whose slug is a games.yaml
+// key is that game. The INSTALL-PATH match is what keeps a curation wave
+// from orphaning a game the user already has (#406 review F1). A curated
+// entry's slug is hand-written and need not equal the one
+// steam.deriveSlug produces from the Steam title - six of #406's entries
+// do not - so the game a user added from an UNCURATED row before the entry
+// existed sits in games.yaml under the derived id ("cyberpunk-2077") while
+// detection now offers the curated one ("cyberpunk2077"). Keyed on the slug
+// alone that reads as "not configured", and configuring it writes a SECOND
+// game at the same install path, with the first one's profiles, mods and
+// deployed links still on the old id. One installed directory is one game,
+// whatever it is called, so the path is what decides.
+//
+// Paths are compared RESOLVED (filepath.EvalSymlinks), because a Steam
+// library on a second drive is routinely reached through a symlink in
+// $HOME: games.yaml then holds the path the user typed while detection
+// reports the one Steam's scan walked to, and a lexical comparison misses
+// exactly the setups most likely to have one. A path that cannot be
+// resolved - the drive is unplugged, the game was deleted - falls back to
+// its cleaned spelling, so a configured game whose directory is gone is
+// still recognised rather than offered again as a fresh add.
+//
+// Ties (two games.yaml entries at one install path - only reachable by
+// hand-editing) resolve to the lowest id, so the answer never depends on
+// map iteration order.
+func ConfiguredGameFor(existing map[string]*domain.Game, detected domain.DetectedGame) *domain.Game {
+	if game, ok := existing[detected.Slug]; ok {
+		return game
+	}
+	if detected.InstallPath == "" {
+		return nil
+	}
+	want := resolvedPath(detected.InstallPath)
+	var match *domain.Game
+	for id, game := range existing {
+		if game == nil || game.InstallPath == "" || resolvedPath(game.InstallPath) != want {
+			continue
+		}
+		if match == nil || id < match.ID {
+			match = game
+		}
+	}
+	return match
+}
+
+// resolvedPath is filepath.EvalSymlinks with filepath.Clean as the answer
+// whenever it cannot resolve - a path that does not exist (yet, or any
+// more), or one no permission reaches. Both spellings of an existing path
+// resolve to the same string; two spellings of a MISSING path only compare
+// equal if they were written the same way, which is the conservative half
+// of the trade and the reason the fallback is Clean rather than "no match".
+func resolvedPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
+}
+
+// PrefillGameSpecFromDetected is GameSpecFromDetected against the games the
+// user actually has - the seam `lmm game add --from-detected` and POST
+// /api/v1/games' from_steam_app_id both call, so neither frontend derives
+// an identity of its own.
+//
+// The only thing it adds to the pure prefill is F1's rule: when games.yaml
+// already configures this candidate's install path, the spec takes THAT
+// game's id rather than the candidate's slug. AddGame then refuses the
+// duplicate by name (ErrGameExists, naming the id the user has) instead of
+// writing a second game over the same directory. An id the CALLER supplied
+// (--game-id, the web form's game_id) always wins - a manual add naming its
+// own id is left exactly as it was.
+func (s *Service) PrefillGameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) (GameSpec, error) {
+	spec := GameSpecFromDetected(d, overrides)
+	if overrides.ID != "" {
+		return spec, nil
+	}
+	existing, err := s.LoadGamesFromDisk()
+	if err != nil {
+		return spec, fmt.Errorf("loading games: %w", err)
+	}
+	if prior := ConfiguredGameFor(existing, d); prior != nil {
+		spec.ID = prior.ID
+	}
+	return spec, nil
 }
 
 // FindDetectedGame resolves a Steam app id against a scan - the value
@@ -214,16 +306,39 @@ func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGa
 // result as it goes, which is what lets a caller report exactly how far a
 // partial failure got.
 func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.DetectedGame, result *GameDetectResult) error {
+	existing, err := s.LoadGamesFromDisk()
+	if err != nil {
+		return fmt.Errorf("loading games: %w", err)
+	}
 	pm := s.NewProfileManager()
 	for _, g := range games {
 		game, err := GameFromDetected(g)
 		if err != nil {
 			return fmt.Errorf("converting detected game %s: %w", g.Slug, err)
 		}
+		// #406 review F1: this install path may already be a game under a
+		// different id - the one detection derived before the known-games
+		// entry named a nicer slug. Selecting the row is then the REPAIR of
+		// that game, applying the curated paths and sources to the id its
+		// profiles, mods and deployed links already hang off, rather than a
+		// second game over the same directory.
+		if prior := ConfiguredGameFor(existing, g); prior != nil {
+			var notice string
+			game, notice = repairedGame(prior, game)
+			if notice != "" {
+				result.Warnings = append(result.Warnings, notice)
+			}
+		}
 
 		if err := s.saveGame(ctx, game); err != nil {
 			return fmt.Errorf("saving game %s: %w", game.ID, err)
 		}
+		// The set was loaded once, before the loop; keep it current so a
+		// LATER row resolving to this same game repairs what was just
+		// written rather than a stale copy of it. Steam cannot hand over
+		// two rows at one install path, but a repair is an edit now, and
+		// editing a stale copy loses whatever the earlier row added.
+		existing[game.ID] = game
 		result.Saved = append(result.Saved, game.ID)
 
 		if _, err := pm.CreateOrResetDefaultAfterGameSave(ctx, game.ID); err != nil {
@@ -232,6 +347,61 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		result.Profiles = append(result.Profiles, game.ID+"/default")
 	}
 	return nil
+}
+
+// repairedGame applies a detected candidate to the games.yaml entry that
+// already configures its install path, instead of replacing that entry.
+//
+// config.SaveGame writes the whole entry (games[game.ID] = game) and
+// GameFromDetected builds a fresh domain.Game carrying only the curated
+// fields, so saving the converted game directly dropped the user's
+// link_method, cache_path, hooks, deploy_mode/convert_paks and any source
+// mapping they had added by hand - none of which detection knows, or could
+// know (re-review M1). A repair is an edit of the game they have, not a
+// re-add of it.
+//
+// It therefore starts from the game on disk and overwrites only what
+// detection genuinely owns: the display name, where the game is installed,
+// where its mods go, and the source ids the curated entry names (added to
+// the user's map, not swapped for it). Anything domain.Game grows later -
+// a loader or adapter block (#353/#358) - is preserved by construction
+// rather than by remembering to list it here.
+//
+// The NAME is detection's on purpose, and pinned as such: refreshing a
+// stale title from the curated entry is a documented part of the repair
+// (cmd/lmm's TestDoGameDetect_ExplicitSelectionRepairsConfiguredGame and
+// _SelectFlagSelectsExplicitIndices both start from a "Stale Name" entry,
+// and _ExplicitRowFormResolvesACollision from a hand-edited one). A title
+// is a label; the fields above it in this comment change what lmm DOES
+// with the game's files, which is why those are the user's.
+// It returns a notice - empty when there is nothing to say - when the kept
+// `deploy_mode` is not the one the catalog names. deploy_mode is the only
+// field compared, because it is the only behavioural field a curated entry
+// carries an opinion about: `convert_paks` is the other behavioural field
+// kept, and no curated entry sets it, so there is nothing to disagree with.
+// Keeping the user's choice and telling them nothing would trade one silent
+// surprise for another: a game curated as `compile` that they added by hand
+// at `extract` goes on deploying the way they set it, and now they can see
+// that the catalog says otherwise.
+func repairedGame(prior, detected *domain.Game) (*domain.Game, string) {
+	repaired := *prior
+	repaired.Name = detected.Name
+	repaired.InstallPath = detected.InstallPath
+	repaired.ModPath = detected.ModPath
+
+	repaired.SourceIDs = maps.Clone(prior.SourceIDs)
+	if repaired.SourceIDs == nil {
+		repaired.SourceIDs = make(map[string]string, len(detected.SourceIDs))
+	}
+	maps.Copy(repaired.SourceIDs, detected.SourceIDs)
+
+	var notice string
+	if prior.DeployMode != detected.DeployMode {
+		notice = fmt.Sprintf(
+			"kept deploy_mode: %s for %s; the catalog says %s - set deploy_mode in games.yaml to change it",
+			prior.DeployMode, repaired.ID, detected.DeployMode)
+	}
+	return &repaired, notice
 }
 
 // ApplyDetectSelection persists one detect-prompt selection - the seam BOTH
@@ -243,8 +413,10 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 //
 //   - A CURATED row is configured from its known-games entry, exactly as
 //     ApplyGameDetect always has: stop at the first failure, and naming an
-//     already-configured one is the documented REPAIR, which rewrites its
-//     games.yaml entry and resets its default profile's mod list.
+//     already-configured one is the documented REPAIR, which rewrites the
+//     paths and sources of its games.yaml entry (see repairedGame - the
+//     rest of the entry is the user's) and resets its default profile's mod
+//     list.
 //   - An UNCURATED row - listed because detection prefilled a source map for
 //     it, today #269's `steamworkshop: <appid>` - has no curated entry to
 //     configure from, so it takes the path `lmm game add --from-detected
@@ -277,7 +449,11 @@ func (s *Service) ApplyDetectSelection(ctx context.Context, selected []domain.De
 		return applied, result, err
 	}
 	for _, g := range uncurated {
-		entry, err := s.addGameLocked(ctx, GameSpecFromDetected(g, GameSpec{}))
+		spec, err := s.PrefillGameSpecFromDetected(g, GameSpec{})
+		if err != nil {
+			return applied, result, fmt.Errorf("adding detected game %s: %w", g.Slug, err)
+		}
+		entry, err := s.addGameLocked(ctx, spec)
 		if err != nil {
 			return applied, result, fmt.Errorf("adding detected game %s: %w", g.Slug, err)
 		}
@@ -362,7 +538,8 @@ type GameDetectListing struct {
 // GameDetectListing builds the pre-selection listing for an
 // already-detected set of games (app.DetectGames' output - core cannot
 // scan Steam itself without importing a concrete source, Ruling 8), marking
-// every row that games.yaml already holds.
+// every row that games.yaml already holds - by id OR by install path, see
+// ConfiguredGameFor.
 //
 // The configured check reads games.yaml FROM DISK (LoadGamesFromDisk)
 // rather than the Service's in-memory set, matching what `lmm game detect`
@@ -387,8 +564,7 @@ func (s *Service) GameDetectListing(ctx context.Context, games []domain.Detected
 		if g.Known {
 			index++
 		}
-		_, configured := existing[g.Slug]
-		entry := GameDetectEntry{DetectedGame: g, AlreadyConfigured: configured}
+		entry := GameDetectEntry{DetectedGame: g, AlreadyConfigured: ConfiguredGameFor(existing, g) != nil}
 		if g.Known {
 			entry.Index = index
 		}

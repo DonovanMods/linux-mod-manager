@@ -182,9 +182,14 @@ func doGameAdd(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, se
 	spec.Loader = loader
 
 	// --from-detected prefills the spec from an installed Steam game
-	// before any flag is consulted (#206). core.GameSpecFromDetected is
-	// the whole rule - the CLI derives no slug, no mod path and no source
-	// map of its own - and every flag above already won, field by field.
+	// before any flag is consulted (#206). core.PrefillGameSpecFromDetected
+	// is the whole rule - the CLI derives no slug, no mod path and no
+	// source map of its own - and every flag above already won, field by
+	// field. It is the Service method rather than the pure
+	// GameSpecFromDetected because a candidate whose install path is
+	// already a configured game keeps THAT game's id (#406 review F1), so
+	// this refuses the duplicate by name instead of writing a second game
+	// over the same directory.
 	var candidate *domain.DetectedGame
 	if gameAddFromDetected != "" {
 		c, err := detectedGameCandidate(ctx, cmd, service)
@@ -192,7 +197,9 @@ func doGameAdd(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, se
 			return err
 		}
 		candidate = &c
-		spec = core.GameSpecFromDetected(c, spec)
+		if spec, err = service.PrefillGameSpecFromDetected(c, spec); err != nil {
+			return err
+		}
 	}
 
 	// A prefilled candidate that already carries a source map needs no

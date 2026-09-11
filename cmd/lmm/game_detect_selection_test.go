@@ -619,3 +619,69 @@ func TestDoGameDetect_PromptRangeMatchesKnownCount(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "Add games to config? [1-1/#row/app:<id>/all/none]: ")
 }
+
+// addedLine returns the single "Added: …" line doGameDetect printed, so an
+// assertion about the id it names cannot be satisfied (or broken) by the
+// listing above it, which names the same game under its curated slug.
+func addedLine(t *testing.T, out string) string {
+	t.Helper()
+	var found []string
+	for _, line := range strings.Split(out, "\n") {
+		if i := strings.Index(line, "Added: "); i >= 0 {
+			found = append(found, strings.TrimSpace(line[i:]))
+		}
+	}
+	require.Len(t, found, 1, "expected exactly one Added: line in %q", out)
+	return found[0]
+}
+
+// TestDoGameDetect_RepairPrintsTheKeptDeployModeNotice: core keeps the
+// user's deploy_mode on a repair and reports the disagreement in
+// result.Warnings. Under --json that document carries it (Ruling 15); the
+// plain run has to print it, or the whole point of not diverging silently
+// is lost. The scan's own warnings are printed at scan time, so only the
+// APPLY's warnings are printed here - printing the merged list would
+// repeat them.
+func TestDoGameDetect_RepairPrintsTheKeptDeployModeNotice(t *testing.T) {
+	configDir = t.TempDir()
+	install := t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{
+		ID: "icarus-game", Name: "Icarus", InstallPath: install,
+		ModPath:   filepath.Join(install, "mods"),
+		SourceIDs: map[string]string{"icarus": "icarus"},
+	}))
+
+	games := []steam.DetectedGame{{
+		SteamAppID: "1149460", Slug: "icarus", Name: "Icarus", InstallPath: install,
+		ModPath:    filepath.Join(install, "Icarus", "Content", "Paks", "mods"),
+		DeployMode: "compile", Sources: map[string]string{"icarus": "icarus"}, Known: true,
+	}}
+
+	svc := newGameDetectTestService(t)
+	// newDetectCmd, not a bare cobra.Command: the four detect globals
+	// (gameDetectAll/Select/IncludeUnknown, jsonOutput) are package-level
+	// and leak between tests, and this test is only meaningful on the
+	// plain, interactive path.
+	cmd, out := newDetectCmd(t)
+	var errOut strings.Builder
+	cmd.SetErr(&errOut)
+
+	err := doGameDetect(context.Background(), cmd,
+		bufio.NewReader(strings.NewReader("1\n")), svc, games, []string{"a scan warning"})
+	require.NoError(t, err)
+
+	// The id the user can USE, which after a repair is the prior entry's -
+	// not the curated slug the row was detected under. This line sits one
+	// line below the notice, which names icarus-game, so naming a different
+	// id here would send the user to `lmm mod list --game icarus`, and
+	// games.yaml has no such game. The LISTING above still shows the
+	// candidate under its curated slug, marked [configured] - that is what a
+	// candidate is, and the selection has not happened yet when it prints.
+	added := addedLine(t, out.String())
+	assert.Equal(t, "Added: Icarus (icarus-game)", added)
+	notice := errOut.String()
+	assert.Contains(t, notice, "kept deploy_mode: extract for icarus-game")
+	assert.Contains(t, notice, "the catalog says compile")
+	assert.NotContains(t, notice, "a scan warning",
+		"the scan's warnings were already printed before the prompt")
+}

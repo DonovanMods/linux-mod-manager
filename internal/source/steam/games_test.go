@@ -172,18 +172,3 @@ func TestLoadKnownGames_Loader_EmptyKindIsRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "loader.kind")
 	assert.Contains(t, err.Error(), "broken-game")
 }
-
-// TestKnownGames_NoShippedEntryDeclaresALoaderYet is the deliberate half of
-// #416 that this branch does NOT do: the SCHEMA lands here, the five curated
-// BepInEx entries land on #406's branch (whose
-// TestKnownGames_ValheimCarriesNoLoaderBlock fails the moment GameInfo gains
-// this field, which is the signal for whoever merges second to write the five
-// lines). Until then no shipped entry declares one, which is also why every
-// pre-existing detect golden stays byte-identical.
-func TestKnownGames_NoShippedEntryDeclaresALoaderYet(t *testing.T) {
-	games, err := LoadKnownGames(t.TempDir())
-	require.NoError(t, err)
-	for appID, info := range games {
-		assert.Nil(t, info.Loader, "app %s (%s) declares a loader in the shipped catalog", appID, info.Slug)
-	}
-}

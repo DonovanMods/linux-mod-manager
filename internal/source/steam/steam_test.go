@@ -440,6 +440,19 @@ func TestDetectGames_KnownGame_CarriesKnownFlag(t *testing.T) {
 	assert.True(t, games[0].Known)
 }
 
+// The unknown-game stand-in for every test below that needs an app lmm has
+// no known-games entry for. It is a fictional app id and title on purpose:
+// these tests used to borrow a real uncurated game (Satisfactory), which
+// meant that curating it (#406) silently turned "an app lmm has never heard
+// of" into "an app it has", and three tests failed for a reason that had
+// nothing to do with what they were asserting. Nothing will ever curate
+// this one.
+const (
+	uncuratedAppID = "9999990"
+	uncuratedName  = "Uncurated Example Game"
+	uncuratedDir   = "UncuratedExampleGame"
+)
+
 // TestDetectGames_IncludeUnknown_ReturnsEveryInstalledApp is #206's core
 // claim: with the option set, an app id lmm has never heard of comes back
 // as a candidate carrying the manifest's own name, its install path and a
@@ -449,8 +462,8 @@ func TestDetectGames_IncludeUnknown_ReturnsEveryInstalledApp(t *testing.T) {
 	steamapps := fakeSteamLibrary(t)
 	knownInstall := installApp(t, steamapps, "Skyrim Special Edition")
 	writeAppManifest(t, steamapps, "489830", "Skyrim Special Edition")
-	unknownInstall := installApp(t, steamapps, "Satisfactory")
-	writeAppManifestNamed(t, steamapps, "526870", "Satisfactory", "Satisfactory")
+	unknownInstall := installApp(t, steamapps, uncuratedDir)
+	writeAppManifestNamed(t, steamapps, uncuratedAppID, uncuratedName, uncuratedDir)
 
 	games, warnings, err := DetectGames(t.TempDir(), DetectOptions{IncludeUnknown: true})
 	require.NoError(t, err)
@@ -467,10 +480,10 @@ func TestDetectGames_IncludeUnknown_ReturnsEveryInstalledApp(t *testing.T) {
 	assert.Equal(t, "skyrim-se", known.Slug)
 	assert.Equal(t, filepath.Join(knownInstall, "Data"), known.ModPath)
 
-	unknown := byID["526870"]
+	unknown := byID[uncuratedAppID]
 	assert.False(t, unknown.Known)
-	assert.Equal(t, "satisfactory", unknown.Slug)
-	assert.Equal(t, "Satisfactory", unknown.Name)
+	assert.Equal(t, "uncurated-example-game", unknown.Slug)
+	assert.Equal(t, uncuratedName, unknown.Name)
 	assert.Equal(t, unknownInstall, unknown.InstallPath)
 	assert.Empty(t, unknown.ModPath, "an unknown game's mod path is a frontend's guess, not a detection claim")
 	assert.Empty(t, unknown.Sources)
@@ -481,8 +494,8 @@ func TestDetectGames_IncludeUnknown_ReturnsEveryInstalledApp(t *testing.T) {
 // without it, nothing about today's listing changes.
 func TestDetectGames_DefaultStaysKnownOnly(t *testing.T) {
 	steamapps := fakeSteamLibrary(t)
-	installApp(t, steamapps, "Satisfactory")
-	writeAppManifestNamed(t, steamapps, "526870", "Satisfactory", "Satisfactory")
+	installApp(t, steamapps, uncuratedDir)
+	writeAppManifestNamed(t, steamapps, uncuratedAppID, uncuratedName, uncuratedDir)
 
 	games, warnings, err := DetectGames(t.TempDir(), DetectOptions{})
 	require.NoError(t, err)
@@ -503,13 +516,13 @@ func TestDetectGames_IncludeUnknown_SkipsSteamTools(t *testing.T) {
 		installApp(t, steamapps, tool.dir)
 		writeAppManifestNamed(t, steamapps, tool.appID, tool.name, tool.dir)
 	}
-	installApp(t, steamapps, "Satisfactory")
-	writeAppManifestNamed(t, steamapps, "526870", "Satisfactory", "Satisfactory")
+	installApp(t, steamapps, uncuratedDir)
+	writeAppManifestNamed(t, steamapps, uncuratedAppID, uncuratedName, uncuratedDir)
 
 	games, _, err := DetectGames(t.TempDir(), DetectOptions{IncludeUnknown: true})
 	require.NoError(t, err)
 	require.Len(t, games, 1, "only the game should survive the tool deny-list: %+v", games)
-	assert.Equal(t, "526870", games[0].SteamAppID)
+	assert.Equal(t, uncuratedAppID, games[0].SteamAppID)
 }
 
 // TestDetectGames_IncludeUnknown_SlugsAreUnique covers both collisions a
@@ -567,7 +580,7 @@ func TestDetectGames_IncludeUnknown_UnnamedApp_FallsBackToInstallDir(t *testing.
 // carries plenty of those, and none of them is actionable.
 func TestDetectGames_IncludeUnknown_StaleManifest_SkippedSilently(t *testing.T) {
 	steamapps := fakeSteamLibrary(t)
-	writeAppManifestNamed(t, steamapps, "526870", "Satisfactory", "Satisfactory") // no common/ dir
+	writeAppManifestNamed(t, steamapps, uncuratedAppID, uncuratedName, uncuratedDir) // no common/ dir
 
 	games, warnings, err := DetectGames(t.TempDir(), DetectOptions{IncludeUnknown: true})
 	require.NoError(t, err)
@@ -581,14 +594,14 @@ func TestDetectGames_IncludeUnknown_StaleManifest_SkippedSilently(t *testing.T) 
 func TestDetectGames_IncludeUnknown_DedupesAcrossLibraries(t *testing.T) {
 	steamapps := fakeSteamLibrary(t)
 	steamRoot := filepath.Dir(steamapps)
-	installApp(t, steamapps, "Satisfactory")
-	writeAppManifestNamed(t, steamapps, "526870", "Satisfactory", "Satisfactory")
+	installApp(t, steamapps, uncuratedDir)
+	writeAppManifestNamed(t, steamapps, uncuratedAppID, uncuratedName, uncuratedDir)
 
 	extraLib := t.TempDir()
 	extraSteamapps := filepath.Join(extraLib, "steamapps")
 	require.NoError(t, os.MkdirAll(extraSteamapps, 0755))
-	installApp(t, extraSteamapps, "Satisfactory")
-	writeAppManifestNamed(t, extraSteamapps, "526870", "Satisfactory", "Satisfactory")
+	installApp(t, extraSteamapps, uncuratedDir)
+	writeAppManifestNamed(t, extraSteamapps, uncuratedAppID, uncuratedName, uncuratedDir)
 
 	vdf := `
 "libraryfolders"

@@ -5,6 +5,12 @@
 # deploy_mode and sources are optional passthroughs to the generated
 # games.yaml entry's own deploy_mode/sources (see docs/configuration.md);
 # omit both to get today's default shape ({nexusmods: <nexus_id>}, deploy_mode extract).
+# loader is optional too: {kind: bepinex} for a game whose mods need a mod
+# loader, which detection writes into the generated entry's own loader block
+# (#416). Only kind and version belong here - runtime and bootstrap are facts
+# about a particular INSTALL, which `lmm game show` reads off the game
+# directory, and a version pinned here would be compared against the pack the
+# user actually installed, so leave it out.
 "489830":
   slug: skyrim-se
   name: Skyrim Special Edition
@@ -72,3 +78,216 @@
   deploy_mode: compile
   sources:
     icarus: icarus
+
+# --- #406 story S1: Steam Workshop-native games -----------------------------
+# Human Host - Unity/Mono survival game with Steam Workshop support on the
+# store page; the community's mods are BepInEx plugins, and both the in-game
+# mod browser and the community mod manager sync subscribed Workshop items
+# into the loader's plugins folder inside the game install. No NexusMods
+# game page exists for it, so steamworkshop is the only source.
+# BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with
+# plugins/, patchers/ and config/ under it - so mod_path is "" (the install
+# root) and #358's normaliser rewrites a plugin archive to that layout.
+# The loader: block below declares that prerequisite (#416), so detection
+# writes it into games.yaml and the first plugin install is not refused
+# (#359). lmm does not INSTALL BepInEx - that is still yours to do; `lmm game
+# show` says whether it is there and which launch option to paste.
+# https://store.steampowered.com/app/2393970/Human_Host/
+# https://steamcommunity.com/app/2393970/workshop/
+# https://steamcommunity.com/sharedfiles/filedetails/?id=3740140784
+"2393970":
+  slug: human-host
+  name: Human Host
+  mod_path: ""
+  loader:
+    kind: bepinex
+  sources:
+    steamworkshop: "2393970"
+
+# --- #406 story S2: NexusMods-centred games ---------------------------------
+# Cyberpunk 2077 - a mod archive's own archive/, bin/ and r6/ trees merge
+# with the install's, so the mod root IS the game root; .archive files land
+# under archive/pc/mod, REDmods under mods/, plugins under bin/x64/plugins.
+# https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/users-modding-cyberpunk-2077
+"1091500":
+  slug: cyberpunk2077
+  name: Cyberpunk 2077
+  nexus_id: cyberpunk2077
+  mod_path: ""
+# Valheim - Unity/Mono; every mod is a BepInEx plugin, landing in
+# <install>/BepInEx/plugins.
+# BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with
+# plugins/, patchers/ and config/ under it - so mod_path is "" (the install
+# root) and #358's normaliser rewrites a plugin archive to that layout.
+# The loader: block below declares that prerequisite (#416), so detection
+# writes it into games.yaml and the first plugin install is not refused
+# (#359). lmm does not INSTALL BepInEx - that is still yours to do; `lmm game
+# show` says whether it is there and which launch option to paste.
+# https://valheim.thunderstore.io/package/denikson/BepInExPack_Valheim/
+# https://nodecraft.com/support/games/valheim/adding-plugins-to-your-valheim-server-using-bepinex
+"892970":
+  slug: valheim
+  name: Valheim
+  nexus_id: valheim
+  mod_path: ""
+  loader:
+    kind: bepinex
+# 7 Days to Die - each mod is a folder under <install>/Mods.
+# https://www.nexusmods.com/7daystodie/articles/1507
+"251570":
+  slug: 7-days-to-die
+  name: 7 Days to Die
+  nexus_id: 7daystodie
+  mod_path: Mods
+# Grim Dawn - each mod is a folder under <install>/mods holding database/
+# and resources/.
+# https://www.nexusmods.com/grimdawn/articles/27
+"219990":
+  slug: grim-dawn
+  name: Grim Dawn
+  nexus_id: grimdawn
+  mod_path: mods
+# No Man's Sky - since the Worlds Part II update mods live in
+# <install>/GAMEDATA/MODS, not the older GAMEDATA/PCBANKS/MODS. Deleting
+# GAMEDATA/PCBANKS/DISABLEMODS.TXT after each game update is a manual step
+# lmm does not do for you.
+# https://www.nexusmods.com/nomanssky/videos/5
+"275850":
+  slug: no-mans-sky
+  name: No Man's Sky
+  nexus_id: nomanssky
+  mod_path: GAMEDATA/MODS
+# Satisfactory - SML loads mods from <install>/FactoryGame/Mods (NOT the
+# same-named folder in the game root). The larger ecosystem is ficsit.app;
+# NexusMods carries a smaller catalogue for the same folder.
+# https://docs.ficsit.app/satisfactory-modding/latest/ManualInstallDirections.html
+"526870":
+  slug: satisfactory
+  name: Satisfactory
+  nexus_id: satisfactory
+  mod_path: FactoryGame/Mods
+# Subnautica 2 - Unreal Engine 5, so none of the first game's Unity tooling
+# applies. Blueprint/pak mods go in <install>/Subnautica2/Content/Paks/
+# LogicMods; UE4SS script mods live elsewhere and are not managed here.
+# https://github.com/Subnautica2Modding/Subnautica2-UE4SS
+"1962700":
+  slug: subnautica-2
+  name: Subnautica 2
+  nexus_id: subnautica2
+  mod_path: Subnautica2/Content/Paks/LogicMods
+# The Planet Crafter - Unity/Mono; mods are BepInEx plugins, landing in
+# <install>/BepInEx/plugins.
+# BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with
+# plugins/, patchers/ and config/ under it - so mod_path is "" (the install
+# root) and #358's normaliser rewrites a plugin archive to that layout.
+# The loader: block below declares that prerequisite (#416), so detection
+# writes it into games.yaml and the first plugin install is not refused
+# (#359). lmm does not INSTALL BepInEx - that is still yours to do; `lmm game
+# show` says whether it is there and which launch option to paste.
+# https://www.nexusmods.com/planetcrafter/videos/1
+"1284190":
+  slug: planet-crafter
+  name: The Planet Crafter
+  nexus_id: planetcrafter
+  mod_path: ""
+  loader:
+    kind: bepinex
+# Tainted Grail: The Fall of Avalon - Unity; the Nexus page ships both a
+# Mono and an IL2CPP BepInEx pack, and either way plugins go in
+# <install>/BepInEx/plugins.
+# BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with
+# plugins/, patchers/ and config/ under it - so mod_path is "" (the install
+# root) and #358's normaliser rewrites a plugin archive to that layout.
+# The loader: block below declares that prerequisite (#416), so detection
+# writes it into games.yaml and the first plugin install is not refused
+# (#359). lmm does not INSTALL BepInEx - that is still yours to do; `lmm game
+# show` says whether it is there and which launch option to paste.
+# https://www.nexusmods.com/taintedgrailthefallofavalon/mods/50
+"1466060":
+  slug: tainted-grail-fall-of-avalon
+  name: "Tainted Grail: The Fall of Avalon"
+  nexus_id: taintedgrailthefallofavalon
+  mod_path: ""
+  loader:
+    kind: bepinex
+
+# --- #406 story S3: the long tail -------------------------------------------
+# StarRupture - Unreal Engine 5; pak/utoc/ucas bundles go in
+# <install>/StarRupture/Content/Paks/~mods (the tilde is load-order
+# significant to Unreal, not a typo). UE4SS script mods live in
+# StarRupture/Binaries/Win64 and are not managed here.
+# https://www.nexusmods.com/starrupture/mods/89
+# https://www.thegamer.com/starrupture-best-mods-installing/
+"1631270":
+  slug: starrupture
+  name: StarRupture
+  nexus_id: starrupture
+  mod_path: StarRupture/Content/Paks/~mods
+# Windrose - Unreal Engine; the project directory is R5, so single-player
+# mods go in <install>/R5/Content/Paks/~mods. A dedicated server keeps a
+# second copy under R5/Builds/WindowsServer; lmm deploys to the client one.
+# https://www.nexusmods.com/windrose/articles/4
+# https://www.gamehostbros.com/guides/games/windrose/install-mods
+"3041230":
+  slug: windrose
+  name: Windrose
+  nexus_id: windrose
+  mod_path: R5/Content/Paks/~mods
+# Cubic Odyssey - since update 1.0.2 the game reads an additive mod folder,
+# <install>/modded/data, mirroring the layout of its own data/ tree. That
+# is the drop folder here; the older technique of replacing files inside
+# data/configs edits the game's own files and is not something lmm should
+# be pointed at. Unlike ~mods and BepInEx/plugins, which are scanned
+# recursively, this folder is read by path: the archive's inner tree must
+# mirror the game's own data/ layout, so a mod packed inside a wrapper
+# folder extracts cleanly and then silently does nothing.
+# https://www.nexusmods.com/cubicodyssey/mods/16
+"3400000":
+  slug: cubic-odyssey
+  name: Cubic Odyssey
+  nexus_id: cubicodyssey
+  mod_path: modded/data
+# The Blood of Dawnwalker - Unreal Engine 5; pak mods go in
+# <install>/Dawnwalker/Content/Paks/~mods.
+# https://www.nexusmods.com/thebloodofdawnwalker/mods/15
+"3751260":
+  slug: blood-of-dawnwalker
+  name: The Blood of Dawnwalker
+  nexus_id: thebloodofdawnwalker
+  mod_path: Dawnwalker/Content/Paks/~mods
+# Halo: Campaign Evolved - Unreal Engine 5, project directory Meteorite;
+# mods go in <install>/Meteorite/Content/Paks/~mods. No Steam Workshop.
+# https://www.halocampaignevolved.wiki/mods/
+"2806050":
+  slug: halo-campaign-evolved
+  name: "Halo: Campaign Evolved"
+  nexus_id: halocampaignevolved
+  mod_path: Meteorite/Content/Paks/~mods
+# For The King - Unity/Mono; mods are BepInEx plugins, landing in
+# <install>/BepInEx/plugins.
+# BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with
+# plugins/, patchers/ and config/ under it - so mod_path is "" (the install
+# root) and #358's normaliser rewrites a plugin archive to that layout.
+# The loader: block below declares that prerequisite (#416), so detection
+# writes it into games.yaml and the first plugin install is not refused
+# (#359). lmm does not INSTALL BepInEx - that is still yours to do; `lmm game
+# show` says whether it is there and which launch option to paste.
+# https://thunderstore.io/c/for-the-king/p/BepInEx/BepInExPack_ForTheKing/
+# https://www.nexusmods.com/fortheking/mods/3
+"527230":
+  slug: for-the-king
+  name: For The King
+  nexus_id: fortheking
+  mod_path: ""
+  loader:
+    kind: bepinex
+# LEGO Batman: Legacy of the Dark Knight - Unreal Engine 5, project
+# directory LEGOBatmanLotDK; pak mods go in
+# <install>/LEGOBatmanLotDK/Content/Paks/~mods.
+# https://www.nexusmods.com/site/mods/1935
+# https://www.nexusmods.com/legobatmanlegacyofthedarkknight/mods/6
+"2215200":
+  slug: lego-batman-lotdk
+  name: "LEGO Batman: Legacy of the Dark Knight"
+  nexus_id: legobatmanlegacyofthedarkknight
+  mod_path: LEGOBatmanLotDK/Content/Paks/~mods

@@ -187,7 +187,7 @@ Used by `lmm game detect` to know which Steam games are moddable. The app ships 
 
 **`<config>/steam-games.yaml`**
 
-Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative to game install, empty for game root), optional `nexus_id` (omit for a game with no NexusMods presence), and two more optional fields, `deploy_mode` and `sources`, that pass straight through to the generated `games.yaml` entry's own `deploy_mode`/`sources` (omit both for the default `{nexusmods: <nexus_id>}` sources map and `extract` deploy mode every entry got before these existed). Example:
+Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative to game install, empty for game root), optional `nexus_id` (omit for a game with no NexusMods presence), and three more optional fields — `deploy_mode`, `sources` and `loader` — that pass straight through to the generated `games.yaml` entry's own `deploy_mode`/`sources`/`loader` (omit all three for the default `{nexusmods: <nexus_id>}` sources map, `extract` deploy mode and no loader every entry got before these existed). Example:
 
 ```yaml
 "489830":
@@ -207,9 +207,109 @@ Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative 
   deploy_mode: compile
   sources:
     mysource: my-compile-game
+"892970":
+  slug: valheim
+  name: Valheim
+  nexus_id: valheim
+  mod_path: ""
+  loader:
+    kind: bepinex
 ```
 
 Entries here are merged with the built-in list (overrides win). No rebuild needed to support more games.
+
+### Fields
+
+| Field         | Required | Meaning                                                                                                                                                        |
+| ------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(the key)_   | yes      | The Steam App ID, **quoted** so it stays a string. It is on the store page URL (`store.steampowered.com/app/<id>/`).                                            |
+| `slug`        | yes      | The lmm game id the entry creates. Lowercase alphanumerics in dash-separated runs, and unique across the whole list.                                            |
+| `name`        | yes      | Display name. Use the plain-text store title (drop `®`/`™`).                                                                                                   |
+| `mod_path`    | yes      | The mod folder, **relative to the game's install directory** — `""` means the install root. Detection joins it to the install path it found.                    |
+| `nexus_id`    | no       | The game's NexusMods domain: the path segment in `nexusmods.com/<domain>`. Omit it for a game with no NexusMods page.                                           |
+| `deploy_mode` | no       | `extract` (the default), `copy` or `compile`.                                                                                                                    |
+| `sources`     | no       | A full source id → per-source game id map, for a game whose sources are not just NexusMods. Omitting it means `{nexusmods: <nexus_id>}`.                        |
+| `loader`      | no       | `{kind: …}`, and optionally `version`, for a game whose mods need a mod loader — today `kind: bepinex`. Omitting it means the game needs none.                   |
+
+An entry must name at least one source — `nexus_id`, a `sources` map, or
+both. One that names neither produces a game lmm can add and then cannot
+install anything for.
+
+#### The `loader` block
+
+A game whose mods are loader plugins needs that recorded, or the very first
+plugin install is refused (see the `loader:` block in
+[games.yaml](#gamesyaml) and `lmm game show`). Declaring it here means
+`lmm game detect`, `lmm game add --from-detected` and `POST /api/v1/games`
+all write it for you:
+
+```yaml
+loader:
+  kind: bepinex
+```
+
+Two rules:
+
+- **`kind` is required whenever the block is present.** A `loader:` with no
+  kind declares nothing while looking like it should, so it fails the load
+  naming the entry. An _unrecognised_ kind is accepted — it simply fires
+  none of lmm's own rules — so a list can name a loader this version has
+  never heard of.
+- **Only `kind` and `version` belong here.** `games.yaml`'s own block also
+  carries `runtime` and `bootstrap`, but those are facts about _one copy_ of
+  the game — whether it is the native Linux build or a Proton one — which a
+  list shipped inside the binary cannot know; `lmm game show` reads them off
+  the install directory. For the same reason the built-in list declares no
+  `version`: it would be compared against the pack the user actually
+  installed.
+
+Declaring a loader does not install one. That stays yours to do, and
+`lmm verify` is what tells you whether it worked.
+
+A loader game's `mod_path` is almost always `""` (the install root): BepInEx
+lays its own `BepInEx/` tree down there, and lmm normalises a plugin archive
+to match.
+
+### Contributing an entry to the built-in list
+
+The shipped list is `internal/source/steam/data/steam-games.yaml`. It is
+curated from public documentation, one game at a time, and the bar is that
+the facts are **verifiable**, not that the game is popular:
+
+1. **Find the app id** on the game's Steam store page URL.
+2. **Find the mod folder the community documents**, and check it is inside
+   the game's install directory. A game whose mods live in your home
+   directory — `%APPDATA%`, `~/Documents`, a Proton prefix — cannot be
+   curated, because `mod_path` is install-relative. Leave it detect-only
+   rather than inventing a path.
+3. **Find the source ids.** The NexusMods domain is in the URL of the
+   game's Nexus page. `steamworkshop` takes the Steam app id as its game
+   id. Only source ids lmm registers are accepted.
+4. **Say whether the game needs a mod loader.** If its mods are BepInEx
+   plugins — the community's install instructions will say so — add
+   `loader: {kind: bepinex}` and set `mod_path: ""`. Declare one only when
+   the game's own documentation does: a wrong declaration makes lmm refuse
+   an otherwise fine mod for it.
+5. **Write the entry with a comment above it** carrying the URL each fact
+   came from — the game's Nexus page, its modding wiki, the mod loader's
+   own install instructions. Every existing entry has one; it is what makes
+   a wrong path fixable by the next person instead of re-researched.
+6. **Add a row to the story test** in
+   `internal/source/steam/curated_games_test.go`, which pins the entry
+   field by field — and, for a loader entry, to
+   `TestKnownGames_OnlyTheBepInExEntriesDeclareALoader`'s set, which pins
+   the whole list in both directions.
+
+`TestKnownGamesListIsWellFormed` (in `internal/app`) then checks the whole
+list on every build: quoted numeric app id, well-formed unique slug,
+relative `mod_path`, a `deploy_mode` the domain parses, and every source id
+one that lmm actually registers.
+
+A game with no real modding ecosystem — or one whose mods do not live under
+the install directory — stays **detect-only**: `lmm game detect
+--include-unknown` still lists it with its app id, and `lmm game add` can
+still configure it by hand. That is the honest answer, and it is preferred
+over a guessed path.
 
 ## File locations
 

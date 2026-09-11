@@ -446,6 +446,11 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	// precisely the games doGameDetect's old interleaved loop would have
 	// printed before hitting the same error.
 	//
+	// The apply's OWN warnings - today, a repair that kept a field the
+	// catalog disagrees with (core.repairedGame) - held aside before the
+	// merge below, because the scan's were already printed to stderr
+	// before the prompt and printing the merged list would repeat them.
+	applyWarnings := result.Warnings
 	// The scan's warnings lead: they happened before anything this result
 	// reports. Merged in on both the success and the partial-failure path,
 	// so a --json error envelope's details carries them too.
@@ -456,8 +461,27 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		}
 		return emitJSON(result)
 	}
+	for _, w := range applyWarnings {
+		// cmd.PrintErrf, not fmt.Fprintf(cmd.ErrOrStderr(), …): cobra's own
+		// wrapper writes to the same stream and returns nothing, so there is
+		// no error to discard. The unchecked Fprintf this replaces is the
+		// shape the linter flags the moment the file is touched.
+		cmd.PrintErrf("Warning: %s\n", w)
+	}
 	for i := range result.Profiles {
-		cmd.Printf("Added: %s (%s)\n", applied[i].Name, applied[i].Slug)
+		// result.Saved[i], not applied[i].Slug: a REPAIR writes the prior
+		// entry's id, not the curated slug the row was detected under, and
+		// those are exactly the case where the two differ. Printing the slug
+		// named a game games.yaml does not contain - one line below the
+		// notice naming the real one - and `lmm mod list --game <slug>`
+		// would fail.
+		//
+		// The indexes line up for every index this loop reaches: both halves
+		// of ApplyDetectSelection append Saved then Profiles in the same
+		// iteration, so len(Saved) >= len(Profiles) and Saved[i] is the game
+		// Profiles[i] belongs to. The SPA already reads result.saved for the
+		// same reason (gamechooser.js).
+		cmd.Printf("Added: %s (%s)\n", applied[i].Name, result.Saved[i])
 	}
 	return applyErr
 }
@@ -635,7 +659,9 @@ func detectedGamesNoun(listed []domain.DetectedGame) string {
 // list above" was not literally true for every spelling the selector takes.
 func printDetectedGameRow(cmd *cobra.Command, n int, g domain.DetectedGame, existingGames map[string]*domain.Game) {
 	marker := ""
-	if _, ok := existingGames[g.Slug]; ok {
+	// Not existingGames[g.Slug]: the same install path under a DIFFERENT id
+	// is the same game (#406 review F1), and core owns that rule.
+	if core.ConfiguredGameFor(existingGames, g) != nil {
 		marker = " " + colorGreen("[configured]")
 	}
 	appID := ""
@@ -722,7 +748,7 @@ func gameDetectSelectionIndices(line string, games []domain.DetectedGame, existi
 	var indices []int
 	if line == "all" || line == "a" {
 		for i, g := range games {
-			if _, ok := existingGames[g.Slug]; ok {
+			if core.ConfiguredGameFor(existingGames, g) != nil {
 				continue
 			}
 			if !g.Addable() {

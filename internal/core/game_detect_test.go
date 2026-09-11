@@ -448,7 +448,11 @@ func detectSelectionService(t *testing.T) *core.Service {
 // every game and profile in that order.
 func TestApplyDetectSelection_ConfiguresBothKindsOfRowUnderOneSlot(t *testing.T) {
 	svc := detectSelectionService(t)
+	// One directory per app, as Steam itself installs them: since #406
+	// review F1 an install path games.yaml already covers IS that game, so
+	// two rows sharing one path would be one game, not two.
 	install := t.TempDir()
+	se2Install := t.TempDir()
 	curated := domain.DetectedGame{
 		SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
 		InstallPath: install, ModPath: filepath.Join(install, "Data"),
@@ -456,7 +460,7 @@ func TestApplyDetectSelection_ConfiguresBothKindsOfRowUnderOneSlot(t *testing.T)
 	}
 	uncurated := domain.DetectedGame{
 		SteamAppID: "1133870", Slug: "space-engineers-2", Name: "Space Engineers 2",
-		InstallPath: install, Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30,
+		InstallPath: se2Install, Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30,
 	}
 
 	// Typed uncurated-first: the apply reorders to curated-first, and says so
@@ -475,7 +479,7 @@ func TestApplyDetectSelection_ConfiguresBothKindsOfRowUnderOneSlot(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, "Space Engineers 2", saved.Name)
 	assert.Equal(t, map[string]string{"steamworkshop": "1133870"}, saved.SourceIDs)
-	assert.Equal(t, filepath.Join(install, "mods"), saved.ModPath,
+	assert.Equal(t, filepath.Join(se2Install, "mods"), saved.ModPath,
 		"an uncurated candidate has no curated mod path, so GameSpecFromDetected's <install>/mods default applies")
 
 	profile, err := svc.NewProfileManager().Get(context.Background(), "space-engineers-2", "default")
@@ -496,9 +500,10 @@ func TestApplyDetectSelection_CuratedRowRepairsAndUncuratedRowRefuses(t *testing
 		Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: install,
 		ModPath: filepath.Join(install, "Data"), NexusID: "skyrimspecialedition", Known: true,
 	}
+	// Its own directory, as Steam installs it - see the sibling test.
 	uncurated := domain.DetectedGame{
 		SteamAppID: "1133870", Slug: "space-engineers-2", Name: "Space Engineers 2",
-		InstallPath: install, Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30,
+		InstallPath: t.TempDir(), Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30,
 	}
 
 	_, _, err := svc.ApplyDetectSelection(context.Background(), []domain.DetectedGame{curated, uncurated})
@@ -629,4 +634,370 @@ func TestSelectDetectedGames_UnambiguousSelectorsAreUnaffected(t *testing.T) {
 	_, err = core.SelectDetectedGames(scan, []string{"slug:nope"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid selection")
+}
+
+// --- #406 review F1: a curation wave must not orphan the game the user
+// already added under the slug detection used to derive ---
+
+// preCuratedGame writes the games.yaml entry a user got by running `lmm
+// game detect` BEFORE the game was curated: the id steam.deriveSlug
+// produced from the Steam title, pointing at the real install path.
+func preCuratedGame(t *testing.T, svc *core.Service, id, name, install string) {
+	t.Helper()
+	_, err := svc.AddGame(context.Background(), core.GameSpec{
+		ID: id, Name: name, InstallPath: install,
+		SourceID: "nexusmods", Identifier: id,
+	})
+	require.NoError(t, err)
+}
+
+// TestGameDetectListing_ExistingGameAtTheSameInstallPathIsConfigured pins
+// #406 review F1: the curated slug for six of #406's games differs from the
+// one detection derived from the Steam title before they were curated, so a
+// user who had already added one of them was offered it again as a fresh
+// add - and taking it wrote a SECOND games.yaml game at the same install
+// path, with the old game's profiles, mods and deployed links still on the
+// old id. Two of the six stand for the set.
+func TestGameDetectListing_ExistingGameAtTheSameInstallPathIsConfigured(t *testing.T) {
+	tests := []struct {
+		name        string
+		derivedID   string
+		curatedSlug string
+		modPath     string
+	}{
+		{name: "Cyberpunk 2077", derivedID: "cyberpunk-2077", curatedSlug: "cyberpunk2077"},
+		{name: "The Planet Crafter", derivedID: "the-planet-crafter", curatedSlug: "planet-crafter", modPath: "BepInEx/plugins"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.curatedSlug, func(t *testing.T) {
+			svc := newGameAddService(t)
+			install := t.TempDir()
+			preCuratedGame(t, svc, tc.derivedID, tc.name, install)
+
+			listing, err := svc.GameDetectListing(context.Background(), []domain.DetectedGame{{
+				SteamAppID: "1091500", Slug: tc.curatedSlug, Name: tc.name,
+				InstallPath: install, ModPath: filepath.Join(install, tc.modPath),
+				NexusID: tc.curatedSlug, Known: true,
+			}}, nil, core.GameDetectListingOptions{})
+			require.NoError(t, err)
+
+			require.Len(t, listing.Games, 1)
+			assert.True(t, listing.Games[0].AlreadyConfigured,
+				"games.yaml already holds %q for this install path; the curated slug %q is the same game",
+				tc.derivedID, tc.curatedSlug)
+		})
+	}
+}
+
+// TestApplyGameDetect_RepairsTheGameAlreadyConfiguredAtTheSameInstallPath is
+// F1's other half: recognising the row is only useful if selecting it
+// REPAIRS the game the user has (its existing id, its profiles) instead of
+// writing a duplicate beside it.
+func TestApplyGameDetect_RepairsTheGameAlreadyConfiguredAtTheSameInstallPath(t *testing.T) {
+	svc := newGameAddService(t)
+	install := t.TempDir()
+	preCuratedGame(t, svc, "cyberpunk-2077", "Cyberpunk 2077", install)
+
+	result, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{{
+		SteamAppID: "1091500", Slug: "cyberpunk2077", Name: "Cyberpunk 2077",
+		InstallPath: install, ModPath: install, NexusID: "cyberpunk2077", Known: true,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"cyberpunk-2077"}, result.Saved, "the repair keeps the id the user's profiles hang off")
+	assert.Equal(t, []string{"cyberpunk-2077/default"}, result.Profiles)
+
+	saved, err := svc.LoadGamesFromDisk()
+	require.NoError(t, err)
+	assert.NotContains(t, saved, "cyberpunk2077",
+		"a curation wave must never leave two games pointing at one install path")
+	require.Contains(t, saved, "cyberpunk-2077")
+	assert.Equal(t, map[string]string{"nexusmods": "cyberpunk2077"}, saved["cyberpunk-2077"].SourceIDs,
+		"the repair still applies the curated prefill")
+	assert.Equal(t, install, saved["cyberpunk-2077"].ModPath)
+}
+
+// TestPrefillGameSpecFromDetected_KeepsTheConfiguredGamesID is the
+// `lmm game add --from-detected` half of F1: the prefill resolves to the id
+// games.yaml already uses for that install path, so AddGame refuses the
+// duplicate (ErrGameExists) instead of creating one. An explicit --game-id
+// still wins - a manual add naming its own id is left alone.
+func TestPrefillGameSpecFromDetected_KeepsTheConfiguredGamesID(t *testing.T) {
+	svc := newGameAddService(t)
+	install := t.TempDir()
+	preCuratedGame(t, svc, "no-man-s-sky", "No Man's Sky", install)
+	detected := domain.DetectedGame{
+		SteamAppID: "275850", Slug: "no-mans-sky", Name: "No Man's Sky",
+		InstallPath: install, ModPath: filepath.Join(install, "GAMEDATA", "MODS"),
+		NexusID: "nomanssky", Known: true,
+	}
+
+	spec, err := svc.PrefillGameSpecFromDetected(detected, core.GameSpec{})
+	require.NoError(t, err)
+	assert.Equal(t, "no-man-s-sky", spec.ID)
+
+	_, err = svc.AddGame(context.Background(), spec)
+	require.ErrorIs(t, err, core.ErrGameExists)
+	assert.Contains(t, err.Error(), "no-man-s-sky")
+
+	explicit, err := svc.PrefillGameSpecFromDetected(detected, core.GameSpec{ID: "my-nms"})
+	require.NoError(t, err)
+	assert.Equal(t, "my-nms", explicit.ID, "an explicitly named id is the user's, not detection's")
+}
+
+// TestApplyGameDetect_RepairKeepsTheFieldsDetectionDoesNotOwn is the
+// re-review's M1. `config.SaveGame` does `games[game.ID] = game` - a full
+// replacement - and `GameFromDetected` builds a fresh domain.Game carrying
+// only the curated fields, so repairing a game silently dropped its
+// link_method, cache_path, deploy_mode/convert_paks and both hooks blocks.
+// Pre-existing for an id match; F1 widened it to path matches, which is why
+// it is worth pinning here rather than leaving to the day someone notices
+// their hooks stopped running.
+//
+// The repair now edits the game the user has instead of replacing it: it
+// changes the paths detection found and adds the curated sources, and every
+// other field is theirs.
+func TestApplyGameDetect_RepairKeepsTheFieldsDetectionDoesNotOwn(t *testing.T) {
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	install := t.TempDir()
+	customised := &domain.Game{
+		ID:          "cyberpunk-2077",
+		Name:        "Cyberpunk (my copy)",
+		InstallPath: install,
+		ModPath:     filepath.Join(install, "mods"),
+		SourceIDs:   map[string]string{"nexusmods": "cyberpunk2077", "curseforge": "7777"},
+		// Everything below is the user's, and none of it is anything
+		// detection knows or could know.
+		LinkMethod:          domain.LinkHardlink,
+		LinkMethodExplicit:  true,
+		CachePath:           filepath.Join(t.TempDir(), "cyberpunk-cache"),
+		DeployMode:          domain.DeployCopy,
+		ConvertPaks:         false,
+		ConvertPaksExplicit: true,
+		Hooks: domain.GameHooks{
+			Install:   domain.HookConfig{BeforeAll: "/bin/true", BeforeEach: "/bin/true", AfterEach: "/bin/true", AfterAll: "/bin/true"},
+			Uninstall: domain.HookConfig{BeforeAll: "/bin/true", BeforeEach: "/bin/true", AfterEach: "/bin/true", AfterAll: "/bin/true"},
+		},
+	}
+	require.NoError(t, config.SaveGame(configDir, customised))
+
+	result, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{{
+		SteamAppID: "1091500", Slug: "cyberpunk2077", Name: "Cyberpunk 2077",
+		InstallPath: install, ModPath: install, NexusID: "cyberpunk2077", Known: true,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"cyberpunk-2077"}, result.Saved)
+
+	saved, err := svc.LoadGamesFromDisk()
+	require.NoError(t, err)
+	require.Contains(t, saved, "cyberpunk-2077")
+	got := saved["cyberpunk-2077"]
+
+	// What detection owns. The display name is deliberately among them -
+	// refreshing a stale title is part of the repair, and cmd/lmm pins it.
+	assert.Equal(t, "Cyberpunk 2077", got.Name)
+	assert.Equal(t, install, got.InstallPath)
+	assert.Equal(t, install, got.ModPath, "the curated mod path is the point of the repair")
+	assert.Equal(t, "cyberpunk2077", got.SourceIDs["nexusmods"], "the curated source mapping is applied")
+
+	// What it does not.
+	assert.Equal(t, "7777", got.SourceIDs["curseforge"], "a source the user added is not detection's to drop")
+	assert.Equal(t, domain.LinkHardlink, got.LinkMethod)
+	assert.True(t, got.LinkMethodExplicit)
+	assert.Equal(t, customised.CachePath, got.CachePath)
+	assert.Equal(t, domain.DeployCopy, got.DeployMode)
+	assert.False(t, got.ConvertPaks)
+	assert.True(t, got.ConvertPaksExplicit)
+	assert.Equal(t, customised.Hooks, got.Hooks)
+}
+
+// TestGameDetectListing_ExistingGameUnderASymlinkedLibraryIsConfigured is
+// the re-review's M2. F1's path match used filepath.Clean, which is purely
+// lexical, so a games.yaml entry recorded through a symlinked Steam library
+// root (~/Games -> /mnt/ssd/Games, an ordinary second-drive setup) did not
+// match the resolved path detection reports, and the duplicate F1 exists to
+// prevent came straight back for exactly the users most likely to hit it.
+func TestGameDetectListing_ExistingGameUnderASymlinkedLibraryIsConfigured(t *testing.T) {
+	svc := newGameAddService(t)
+
+	realLibrary := t.TempDir()
+	install := filepath.Join(realLibrary, "Cyberpunk 2077")
+	require.NoError(t, os.MkdirAll(install, 0o755))
+	// The user's second drive, reached through a symlink in $HOME.
+	linkedLibrary := filepath.Join(t.TempDir(), "Games")
+	require.NoError(t, os.Symlink(realLibrary, linkedLibrary))
+
+	// games.yaml holds the path as the user typed it, through the symlink.
+	preCuratedGame(t, svc, "cyberpunk-2077", "Cyberpunk 2077", filepath.Join(linkedLibrary, "Cyberpunk 2077"))
+
+	// Detection reports the resolved path Steam's own scan walked to.
+	listing, err := svc.GameDetectListing(context.Background(), []domain.DetectedGame{{
+		SteamAppID: "1091500", Slug: "cyberpunk2077", Name: "Cyberpunk 2077",
+		InstallPath: install, ModPath: install, NexusID: "cyberpunk2077", Known: true,
+	}}, nil, core.GameDetectListingOptions{})
+	require.NoError(t, err)
+	require.Len(t, listing.Games, 1)
+	assert.True(t, listing.Games[0].AlreadyConfigured,
+		"one installed directory is one game however the path spells it")
+}
+
+// TestConfiguredGameFor_FallsBackToCleanWhenAPathIsGone: EvalSymlinks
+// errors on a path that no longer exists, and a game whose install
+// directory the user has since deleted or moved must still be recognised
+// as configured - otherwise a detect run offers a duplicate the moment the
+// drive is unplugged.
+func TestConfiguredGameFor_FallsBackToCleanWhenAPathIsGone(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "unplugged", "Cyberpunk 2077")
+	existing := map[string]*domain.Game{
+		"cyberpunk-2077": {ID: "cyberpunk-2077", InstallPath: gone + string(filepath.Separator)},
+	}
+
+	match := core.ConfiguredGameFor(existing, domain.DetectedGame{
+		Slug: "cyberpunk2077", InstallPath: gone,
+	})
+	require.NotNil(t, match, "a path neither side can resolve still compares lexically")
+	assert.Equal(t, "cyberpunk-2077", match.ID)
+}
+
+// TestConfiguredGameFor_TieBreaksOnTheLowestID pins what the doc comment
+// promises for a shape only hand-editing can produce: two games.yaml
+// entries at one install path. The answer must not depend on map iteration
+// order, so it is the lowest id (re-review nit 1). config.loadGamesLocked
+// sets games[id].ID = id, so comparing the key against the stored id is
+// comparing like with like - which is why a table row can stand for the
+// rule at all.
+func TestConfiguredGameFor_TieBreaksOnTheLowestID(t *testing.T) {
+	install := t.TempDir()
+	existing := map[string]*domain.Game{
+		"zeta-game":     {ID: "zeta-game", InstallPath: install},
+		"alpha-game":    {ID: "alpha-game", InstallPath: install},
+		"midway-game":   {ID: "midway-game", InstallPath: install},
+		"somewhereelse": {ID: "somewhereelse", InstallPath: t.TempDir()},
+	}
+
+	// Run it repeatedly: one pass could agree with map order by luck.
+	for range 20 {
+		match := core.ConfiguredGameFor(existing, domain.DetectedGame{
+			Slug: "curated-slug", InstallPath: install,
+		})
+		require.NotNil(t, match)
+		require.Equal(t, "alpha-game", match.ID)
+	}
+}
+
+// TestApplyGameDetect_TwoRowsAtOneInstallPathBuildOnEachOther is the
+// re-review's nit 3. applyGameDetectLocked loads the games.yaml set ONCE,
+// before the loop, so two rows resolving to the same prior game each
+// repaired the stale copy and the second silently discarded what the first
+// had written. Steam cannot produce that shape - one app id, one
+// steamapps/common directory - but the loop is no longer a sequence of
+// whole-entry replacements (see repairedGame), so "the last one wins" is
+// now a way to lose data rather than merely a redundant write.
+func TestApplyGameDetect_TwoRowsAtOneInstallPathBuildOnEachOther(t *testing.T) {
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	install := t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{
+		ID: "the-game", Name: "The Game", InstallPath: install, ModPath: install,
+		SourceIDs: map[string]string{"nexusmods": "thegame"},
+	}))
+
+	_, err = svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{
+		{SteamAppID: "1", Slug: "the-game-a", Name: "The Game", InstallPath: install,
+			ModPath: install, Sources: map[string]string{"curseforge": "111"}, Known: true},
+		{SteamAppID: "2", Slug: "the-game-b", Name: "The Game", InstallPath: install,
+			ModPath: install, Sources: map[string]string{"steamworkshop": "222"}, Known: true},
+	})
+	require.NoError(t, err)
+
+	saved, err := svc.LoadGamesFromDisk()
+	require.NoError(t, err)
+	require.Contains(t, saved, "the-game")
+	assert.Equal(t, map[string]string{"nexusmods": "thegame", "curseforge": "111", "steamworkshop": "222"},
+		saved["the-game"].SourceIDs, "the second row repairs what the first one wrote, not a stale copy of it")
+}
+
+// TestApplyGameDetect_RepairNoticesAKeptDeployModeMismatch: the repair
+// keeps the user's deploy_mode (see repairedGame - a deliberate `extract`
+// on a compile game is a behaviour choice lmm must not flip on their
+// behalf), but it must not diverge from the catalog SILENTLY. When the two
+// disagree the repair says so, naming the key, the value it kept and the
+// value the catalog holds, so the user can change it if the difference was
+// not deliberate.
+func TestApplyGameDetect_RepairNoticesAKeptDeployModeMismatch(t *testing.T) {
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	install := t.TempDir()
+	// Icarus, added by hand at the default extract mode before it was
+	// curated - and under the id the user chose.
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{
+		ID: "icarus-game", Name: "Icarus", InstallPath: install,
+		ModPath:   filepath.Join(install, "mods"),
+		SourceIDs: map[string]string{"icarus": "icarus"},
+		// DeployExtract is the zero value: this is the "never set it" case.
+	}))
+
+	curatedModPath := filepath.Join(install, "Icarus", "Content", "Paks", "mods")
+	result, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{{
+		SteamAppID: "1149460", Slug: "icarus", Name: "Icarus", InstallPath: install,
+		ModPath: curatedModPath, DeployMode: "compile",
+		Sources: map[string]string{"icarus": "icarus"}, Known: true,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"icarus-game"}, result.Saved, "the repair keeps the user's id")
+
+	saved, err := svc.LoadGamesFromDisk()
+	require.NoError(t, err)
+	require.Contains(t, saved, "icarus-game")
+	assert.Equal(t, curatedModPath, saved["icarus-game"].ModPath, "the curated path is applied")
+	assert.Equal(t, domain.DeployExtract, saved["icarus-game"].DeployMode,
+		"deploy_mode is behaviour, and behaviour is the user's")
+
+	require.Len(t, result.Warnings, 1, "the kept mismatch must not be silent")
+	notice := result.Warnings[0]
+	assert.Contains(t, notice, "icarus-game")
+	assert.Contains(t, notice, "deploy_mode")
+	assert.Contains(t, notice, "extract", "the value that was kept")
+	assert.Contains(t, notice, "compile", "the value the catalog holds")
+	assert.Contains(t, notice, "games.yaml", "and what to do about it")
+}
+
+// TestApplyGameDetect_RepairIsSilentWhenTheDeployModeAgrees: the notice is
+// for a real difference only - a repair that changes nothing behavioural
+// must not add noise to every detect run.
+func TestApplyGameDetect_RepairIsSilentWhenTheDeployModeAgrees(t *testing.T) {
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	install := t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{
+		ID: "cyberpunk-2077", Name: "Cyberpunk 2077", InstallPath: install, ModPath: install,
+		SourceIDs: map[string]string{"nexusmods": "cyberpunk2077"},
+	}))
+
+	result, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{{
+		SteamAppID: "1091500", Slug: "cyberpunk2077", Name: "Cyberpunk 2077",
+		InstallPath: install, ModPath: install, NexusID: "cyberpunk2077", Known: true,
+	}})
+	require.NoError(t, err)
+	assert.Empty(t, result.Warnings)
 }

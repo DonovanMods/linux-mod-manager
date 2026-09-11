@@ -1777,3 +1777,87 @@ func TestE2E_AuthInstructionsGetTheirOwnLineAndAreNotClipped(t *testing.T) {
 		"with the paragraph out of it, the login row's own items fit - the Log in button is no longer squeezed onto two lines")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_SetupGamesDetect_RepairNoticeIsRendered pins the web half of the
+// kept-deploy_mode notice (#406): core's repair emits it, `lmm game detect`
+// prints it to stderr, and the SPA - which read none of the apply's
+// `warnings` before this - must show it too, or the two frontends disagree
+// about whether anything happened.
+//
+// Reaching a repair from the browser takes the one sequence that can
+// produce it, and the sequence is the point rather than a contrivance: a row
+// the listing already marks `already_configured` has its checkbox DISABLED,
+// so the only way the SPA applies a repair is a game that became configured
+// AFTER the scan that offered it - a `lmm game detect` or `lmm game add` in
+// another terminal while this page sat open. Here the Go side plays that
+// other terminal, between the scan and the click, which is exactly what the
+// live server does anyway: it re-scans on every request and never trusts the
+// rows the browser was shown (api_games.go).
+//
+// The notice itself comes from the catalog disagreeing with the entry the
+// other terminal wrote: `deploy_mode: compile` in the known-games override
+// against the `extract` a plain add produces. The repair keeps the user's
+// value - that is the rule - and says so.
+func TestE2E_SetupGamesDetect_RepairNoticeIsRendered(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+
+	const appID = "997777"
+	const installDir = "E2ERepairGame"
+	steamRoot := t.TempDir()
+	writeSteamAppManifest(t, steamRoot, appID, installDir, "E2E Repair Game")
+	t.Setenv("STEAM_ROOT", steamRoot)
+	install := filepath.Join(steamRoot, "steamapps", "common", installDir)
+
+	// deploy_mode: compile is the whole fixture - it is what the catalog
+	// will disagree with below.
+	override := appID + `:
+  slug: e2e-repair-game
+  name: "E2E Repair Game"
+  mod_path: Mods
+  deploy_mode: compile
+  sources:
+    fake: e2e-repair-game
+`
+	require.NoError(t, os.WriteFile(
+		filepath.Join(f.Svc.ConfigDir(), "steam-games.yaml"), []byte(override), 0o644))
+
+	// The scan runs on mount, with the game NOT yet configured - so the row
+	// arrives checkable.
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("games")),
+		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
+		chromedp.Evaluate(
+			`Array.from(document.querySelectorAll('.setup-section__actions button')).find(b => b.textContent.includes('Detect games')).click()`, nil),
+		chromedp.WaitVisible(`.setup-detect__row input[type="checkbox"]:not([disabled])`, chromedp.ByQuery),
+		chromedp.Click(`.setup-detect__row input[type="checkbox"]:not([disabled])`, chromedp.ByQuery),
+	)
+
+	// The other terminal, now: the same install path under a hand-picked id
+	// and the default extract deploy mode.
+	_, err := f.Svc.AddGame(context.Background(), core.GameSpec{
+		SourceID: "fake", Identifier: "e2e-repair-game", Name: "E2E Repair Game",
+		ID: "repair-me-by-hand", InstallPath: install, ModPath: filepath.Join(install, "Mods"),
+	})
+	require.NoError(t, err)
+
+	// A toast, not a line in the detect panel: afterAdd hides that panel
+	// (setupgames.js) the moment the apply returns, so an inline notice
+	// would unmount before it could be read - which is only visible from a
+	// browser, and is why this scenario is E2E rather than an httptest.
+	var notice string
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="add-detected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.toast .toast__detail`, chromedp.ByQuery),
+		chromedp.Text(`.toast .toast__detail`, &notice, chromedp.ByQuery),
+	)
+	assert.Contains(t, notice, "kept deploy_mode: extract for repair-me-by-hand")
+	assert.Contains(t, notice, "the catalog says compile")
+
+	// And it really was a repair, not a second game over one directory.
+	repaired, err := f.Svc.GetGame("repair-me-by-hand")
+	require.NoError(t, err)
+	assert.Equal(t, domain.DeployExtract, repaired.DeployMode, "the user's value is kept")
+	_, err = f.Svc.GetGame("e2e-repair-game")
+	assert.Error(t, err, "the curated slug must not become a second game at the same install path")
+	assert.Empty(t, f.BrowserErrors())
+}

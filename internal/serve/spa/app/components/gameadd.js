@@ -44,8 +44,12 @@ import { GameLoaderEditor, loaderDraft, loaderSpec } from "./gameloader.js";
  * but their control is disabled - `lmm game detect --select` can still
  * repair one from the CLI, but a checklist offering to silently overwrite
  * an existing game's default profile is not this surface's first-run job.
+ *
+ * `actions` is optional and used for one thing: the apply's own warnings,
+ * raised as toasts (see addSelected). A caller that passes none simply
+ * shows them nowhere, which is what every caller did before they existed.
  */
-export function GameDetectSection({ onAdded, onAddWithDetails }) {
+export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
   const [listing, setListing] = useState(null); // {games, warnings} | "error"
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
@@ -79,10 +83,38 @@ export function GameDetectSection({ onAdded, onAddWithDetails }) {
   async function addSelected() {
     setBusy(true);
     setApplyError(null);
+    // The apply's OWN warnings - today a repair that kept a field the
+    // curated entry disagrees with (core.repairedGame). Until then this
+    // array only ever repeated the scan's, which the listing above already
+    // shows, so dropping it was harmless; the CLI has printed them to
+    // stderr all along.
+    //
+    // The wire merges the apply's re-scan warnings in FRONT of the apply's
+    // own (api_games.go: "the scan's warnings lead the result's, the same
+    // order the CLI merges them in"), and the ones this page is showing are
+    // that same scan's - so what is new here is the set difference. The CLI
+    // gets the split structurally, by holding the apply's aside before it
+    // merges; over HTTP there is one array, so this is the same cut.
+    const alreadyShown = new Set(listing?.warnings ?? []);
     try {
       const result = await applyGameDetect([...selected].map(String));
       setSelected(new Set());
       await scan();
+      // A toast rather than a line in this section, because by the time it
+      // exists this section does not: both callers' onAdded tear it down -
+      // setupgames.js hides the detect panel, gamechooser.js navigates to
+      // the new game's Mission Control. A toast is mounted at the
+      // application root for exactly that reason ("the point of a toast is
+      // that it finds you where you went", toasts.js).
+      for (const warning of (result.warnings ?? []).filter(
+        (w) => !alreadyShown.has(w),
+      )) {
+        actions?.pushToast({
+          tone: "success",
+          title: "Game added",
+          detail: warning,
+        });
+      }
       onAdded?.(result);
     } catch (err) {
       setApplyError(err instanceof ApiError ? err.message : String(err));

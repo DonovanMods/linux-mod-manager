@@ -305,7 +305,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lmm game edit --loader bepinex` before its first plugin will install.
   `runtime` and `bootstrap` are deliberately not part of it: they are facts
   about _your_ copy of the game, which `lmm game show` reads off the install
-  directory. No entry in the shipped catalog declares one yet.
+  directory — and nor is `version`, which would be compared against the pack
+  you actually installed.
+
+  **The five curated BepInEx games declare it**: Valheim, The Planet
+  Crafter, Tainted Grail: The Fall of Avalon, For The King and Human Host.
+  `lmm game detect` and `lmm game add --from-detected` write
+  `loader: {kind: bepinex}` for each, next to the install-root `mod_path`
+  BepInEx needs, so a plugin installs on the first try. Every other entry in
+  the shipped list declares nothing — a declaration is a research claim
+  about one game, and a wrong one would make lmm refuse a perfectly good mod
+  for it. lmm still does not **install** BepInEx for you; it records that
+  the game needs it, and `lmm game show` and `lmm verify` tell you whether
+  it is there and whether it ran.
 
 - **A plugin will not be deployed into a game that has no loader (#359).**
   A BepInEx-shaped archive installed into a game declaring no loader now
@@ -374,6 +386,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Installing from Thunderstore is not wired up yet — this adds the source, its
   index and search; package, version and dependency reads follow in the same
   issue.
+
+- **The known-games list is documented and checked (#406).**
+  [docs/configuration.md](docs/configuration.md#steam-gamesyaml-optional)
+  now spells out every field of a `steam-games.yaml` entry and how to
+  contribute one to the built-in list — including the rule that a game
+  whose mods live outside the install directory stays detect-only rather
+  than getting a guessed path. A new build-time check reads the whole
+  shipped list and fails on a malformed app id, a bad or duplicated slug, a
+  `mod_path` that is absolute or climbs out of the install directory, a
+  `deploy_mode` lmm cannot parse, or a source id nothing registers.
+
+- **`lmm game detect` recognises seven more games (#406).** StarRupture,
+  Windrose, Cubic Odyssey, The Blood of Dawnwalker, Halo: Campaign Evolved,
+  For The King and LEGO Batman: Legacy of the Dark Knight complete the
+  curation pass over the games detection already finds installed. Two of
+  their neighbours stay detect-only on purpose and lmm will not pretend
+  otherwise: The Elder Scrolls Online keeps add-ons in your Documents
+  folder rather than under the install, so there is no install-relative mod
+  path to prefill, and Satisfactory Modeler is a factory-planning tool
+  rather than a moddable game.
+
+- **`lmm game detect` recognises nine more NexusMods-modded games
+  (#406).** Cyberpunk 2077, Valheim, 7 Days to Die, Grim Dawn, No Man's Sky,
+  Satisfactory, Subnautica 2, The Planet Crafter and Tainted Grail: The Fall
+  of Avalon are detected with their NexusMods game domain and the mod folder
+  their community documents already filled in — a game-specific mods folder,
+  an Unreal pak drop folder, or the game root, which is where both a
+  Cyberpunk mod (its own `archive/`, `bin/` and `r6/` trees merge with the
+  install's) and a BepInEx plugin (the loader's `BepInEx/` tree —
+  `plugins/`, `patchers/`, `config/` — hangs off the install root) belong.
+  Each entry in the shipped list carries the public source its facts were
+  read from. Installing BepInEx itself is still yours to do; lmm does not
+  manage loaders yet (#359).
+
+- **`lmm game detect` recognises Human Host (#406).** The first of the
+  curated known-games entries this release adds: the game is detected with
+  its mod folder (the game root, where the BepInEx loader's own tree lives)
+  and its Steam Workshop source id already filled in, so adding it is one
+  keystroke instead of answering
+  `lmm game add`'s prompts by hand. Space Engineers and Space Engineers 2
+  stay detect-only — the first loads local mods from `%APPDATA%`, outside
+  the install directory a known-games `mod_path` is relative to, and the
+  second publishes no mod folder at all — but detection still prefills
+  `steamworkshop` for both from their Workshop manifests.
 
 - **`POST /api/v1/jobs` now answers `id`, matching the rest of the job API
   (#400).** Starting a job answered `{"job_id"}` while `GET /api/v1/jobs`
@@ -1059,6 +1115,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /api/v1/games/{id}` gates its warning the same way. A game with
   BepInEx installed but undeclared is told exactly that, with the command to
   declare it.
+
+- **Uninstalling or purging no longer deletes the game's own empty
+  directories (#415).** The post-removal cleanup walked the whole tree under
+  the game's mod folder and removed every empty directory it found, not only
+  the ones lmm's own deploy created. For a game whose mod root IS its
+  install root — Cyberpunk 2077 as of this release, and the existing Hearts
+  of Iron IV, Euro Truck Simulator 2 and Call of Duty: Black Ops 6 entries —
+  every `lmm uninstall` and every `lmm purge` swept the whole game install,
+  taking the folders its loaders expect to exist (for Cyberpunk:
+  `bin/x64/plugins`, `r6/scripts`, `r6/tweaks`, `archive/pc/mod`,
+  `tools/redmod/mods`).
+  Steam's "verify integrity of game files" does not restore an empty
+  directory, so it did not heal on its own. The cleanup is now bounded to
+  the directories lmm's own removals emptied: it walks up from each removed
+  file, stops at the first directory that is not empty, and never reaches
+  the mod root itself. A directory you symlinked elsewhere — a mod folder
+  kept on another drive — stops the walk before anything is removed, so
+  neither the symlink nor anything behind it is touched. Strictly smaller
+  behaviour for every game.
+
+- **`lmm game detect` recognises a game you already added under a different
+  id (#406).** A curated known-games entry names its own game id, which
+  need not match the one detection derived from the Steam title before that
+  entry existed — six of this release's new entries do not (Cyberpunk 2077,
+  No Man's Sky, The Planet Crafter, Tainted Grail, The Blood of Dawnwalker,
+  LEGO Batman). A game you had already added was therefore offered again as
+  a fresh add, and taking it wrote a **second** `games.yaml` game pointing
+  at the same install directory while your profiles, mods and deployed
+  links stayed on the first. lmm now treats one install directory as one
+  game whoever named it: the row is marked `[configured]`, selecting it
+  repairs the game you have rather than duplicating it — updating its paths
+  and adding the curated sources, and leaving your `link_method`,
+  `cache_path`, `hooks`, `deploy_mode` and the rest of the entry as you
+  wrote them — and
+  `lmm game add --from-detected` refuses by naming the id you already have
+  instead of adding a duplicate. `lmm game add` with an explicit id and
+  path is unchanged.
+
+  A repair **says what it kept**: where the curated entry's `deploy_mode`
+  is not the one on your entry, yours stays and lmm tells you the catalog
+  disagrees, so a game you deliberately set to `extract` does not quietly
+  become a game you think is `compile`. `lmm game detect` prints it on
+  stderr and the web UI raises it as a notice, and both name the id that
+  was actually written — the one you already had, not the curated slug the
+  row was listed under, which is the one id a repair does not create.
 
 - **Importing a profile no longer leaves two versions of one mod deployed
   (#404).** When a mod is installed under several profiles, the import picks
