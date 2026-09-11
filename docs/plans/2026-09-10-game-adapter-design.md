@@ -579,3 +579,38 @@ design exists to prevent. §6's identity proof is unchanged; it moved to
 `internal/adapter/identity_test.go`. Finally, the known-games catalog gaining
 `adapter: icarus` (§2, "Prefill from detection") is a **U2** change, not U1, because it
 would move the detect golden.
+
+### Amendment — U2 implementation (2026-09-10)
+
+Two naming decisions inside §3 U2's deletion, plus one observation about §6 that U3 and U4
+should not have to re-derive.
+
+First, **`compilerForSource` did not survive the deletion of its source fallback.** U1's
+hand-off inventory kept the function and removed only the `src.(MergeCompiler)` line, but
+with that line gone its `src` argument is unused and its name (`…ForSource`) states the
+opposite of the rule the unit exists to establish. What survives instead is the pair the
+call sites actually need: **`adapterCompiler(game)`**, the one fail-loud resolver every
+merged-pak and import site calls, and **`optionalCompiler(game)`**, the tolerant half for
+the two sites that must keep working for a game that cannot compile — the download path's
+#221 I1 fall-through and #211's variant-exclusivity guard. Decision 5 ("`soleMergeCompiler`
+and both resolvers are deleted") holds as written; only the surviving accessor's name
+changed.
+
+Second, **`Service.ValidateInstallFileSelection` lost its `sourceID` parameter.** It existed
+solely to resolve the source the deleted type-assertion was made against. Both frontends'
+call sites were updated; `internal/serve` never called it.
+
+Third, on §6's "no golden is re-recorded": the exception §2 anticipated — the known-games
+detect goldens gaining `adapter: icarus` — **did not materialise**. `adapter` is `omitempty`
+and every existing detect golden renders a game the catalog gives no adapter, so the entire
+set stayed byte-identical through U2 as well, and the new key is covered by a golden of its
+own (`internal/domain/testdata/json/detected_game_adapter.golden`). U3 should expect the
+same of `bepinex`: a curated entry gaining an adapter moves a golden only if some golden
+actually renders that entry.
+
+One item from U1's inventory is **deferred, not done**: showing the *effective* (derived)
+adapter on `lmm game list` and the SPA. A `deploy_mode: compile` game with no `adapter:` key
+resolves to `icarus` but renders an empty ADAPTER cell. It is a display gap rather than a
+behaviour one, it belongs with U4's frontend pass, and doing it in U2 would have moved
+`cmd/lmm/testdata/json_golden/game_list_populated.golden` — the one thing U2 is not allowed
+to do.
