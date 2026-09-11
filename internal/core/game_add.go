@@ -409,11 +409,19 @@ func (s *Service) sourceIgnoresGameIdentifier(sourceID string) bool {
 	return source.IgnoresGameIdentifier(src)
 }
 
-// refuseEmptySourceIdentifiers refuses a source map that leaves a value
-// empty for a source that needs one - the WRITE half of Service.sourceGameID's
-// refusal (T1 re-review Minor 1), shared by the two paths that can write a
-// whole map at once: GameSpec.game (`lmm game add`, POST /api/v1/games) and
-// applyGameDetectLocked (`lmm init`, `lmm game detect`).
+// normalizeSourceIdentifiers trims every mapped value IN PLACE and refuses
+// a source map that leaves one empty for a source that needs it - the WRITE
+// half of Service.sourceGameID's refusal (T1 re-review Minor 1), shared by
+// the two paths that can write a whole map at once: GameSpec.game (`lmm game
+// add`, POST /api/v1/games) and applyGameDetectLocked (`lmm init`, `lmm game
+// detect`).
+//
+// The trim is the same one `lmm game edit`'s validatedSourceMap has always
+// applied, and it belongs here for the same reason the refusal does (#409
+// review F8): these two paths write maps NOBODY typed field by field - a
+// curated known-games entry, a prefilled `--from-detected` spec - and a
+// padded slug persisted from one is refused by every later read, which is
+// exactly the state the refusal below exists to keep off disk.
 //
 // identifierOptional is Service.sourceIgnoresGameIdentifier - the source's
 // own answer to "may this be blank". nil means no, which is what a caller
@@ -421,10 +429,12 @@ func (s *Service) sourceIgnoresGameIdentifier(sourceID string) bool {
 //
 // Ids are visited in sorted order so a map with two offending entries names
 // the same one every time; an error a user sees twice must not change.
-func refuseEmptySourceIdentifiers(sources map[string]string, identifierOptional func(sourceID string) bool) error {
+func normalizeSourceIdentifiers(sources map[string]string, identifierOptional func(sourceID string) bool) error {
 	ids := slices.Sorted(maps.Keys(sources))
 	for _, id := range ids {
-		if strings.TrimSpace(sources[id]) != "" {
+		trimmed := strings.TrimSpace(sources[id])
+		sources[id] = trimmed
+		if trimmed != "" {
 			continue
 		}
 		if identifierOptional != nil && identifierOptional(id) {
@@ -486,7 +496,7 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 	// `sources: {<source that needs one>: ""}` unchallenged. The read path
 	// refuses that state with the command that fixes it, which makes it
 	// survivable; this is what stops it existing.
-	if err := refuseEmptySourceIdentifiers(sources, identifierOptional); err != nil {
+	if err := normalizeSourceIdentifiers(sources, identifierOptional); err != nil {
 		return nil, err
 	}
 

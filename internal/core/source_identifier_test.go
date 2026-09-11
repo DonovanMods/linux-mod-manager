@@ -229,6 +229,41 @@ func TestApplyGameDetect_AKnownGamesEntryWithAnEmptyIdentifierIsRefused(t *testi
 	assert.Error(t, err, "the game must not be written at all")
 }
 
+// TestAddGame_APrefilledSourcesMapIsTrimmed (#409 review F8). The explicit
+// SourceID/Identifier pair has always been trimmed and `lmm game edit`'s
+// own map is trimmed by validatedSourceMap; a PREFILLED map was copied
+// verbatim. A padded slug is then written, and every later read fails the
+// source's own well-formedness gate - which is precisely the state the
+// empty-identifier refusal exists to keep off disk.
+func TestAddGame_APrefilledSourcesMapIsTrimmed(t *testing.T) {
+	svc := newDetectableGameService(t)
+
+	entry, err := svc.AddGame(t.Context(), core.GameSpec{
+		Name: "Valheim", ID: "valheim", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		Sources: map[string]string{"needs-id": "  lethal-company	"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"needs-id": "lethal-company"}, entry.SourceIDs)
+}
+
+// TestApplyGameDetect_AKnownGamesEntrysIdentifierIsTrimmed is the same rule
+// on the curated path: a user's own ~/.config/lmm/steam-games.yaml is
+// hand-written, so a trailing space in a mapped value is an ordinary typo
+// rather than an exotic one.
+func TestApplyGameDetect_AKnownGamesEntrysIdentifierIsTrimmed(t *testing.T) {
+	svc := newDetectableGameService(t)
+
+	_, err := svc.ApplyGameDetect(t.Context(), []domain.DetectedGame{{
+		Slug: "valheim", Name: "Valheim", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		Sources: map[string]string{"needs-id": " valheim "},
+	}})
+	require.NoError(t, err)
+
+	game, err := svc.GetGame("valheim")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"needs-id": "valheim"}, game.SourceIDs)
+}
+
 // TestApplyGameDetect_AKnownGamesEntryForAnIdentifierIgnoringSourceIsSaved
 // keeps the curated half honest: the refusal is about sources that need the
 // value, not about every blank one.

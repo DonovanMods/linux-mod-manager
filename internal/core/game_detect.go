@@ -34,7 +34,10 @@ func GameFromDetected(g domain.DetectedGame) (*domain.Game, error) {
 		return nil, fmt.Errorf("%w: steam-games.yaml: game %q: deploy_mode %q (valid: %s)",
 			domain.ErrInvalidDeployMode, g.Slug, g.DeployMode, domain.ValidDeployModes)
 	}
-	sources := g.Sources
+	// A CLONE, for GameSpecFromDetected's reason: the saved game must own
+	// its map rather than alias the scan's, which applyGameDetectLocked
+	// then trims in place.
+	sources := maps.Clone(g.Sources)
 	if len(sources) == 0 {
 		if g.NexusID == "" {
 			return nil, fmt.Errorf("game %q: known-games entry has no sources and no nexus_id - set at least one", g.Slug)
@@ -320,7 +323,7 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 			// entry mapping a source that needs an identifier to "" is
 			// misconfigured, and #203's precedent for a misconfigured entry
 			// is to name it loudly rather than write it.
-			err = refuseEmptySourceIdentifiers(game.SourceIDs, s.sourceIgnoresGameIdentifier)
+			err = normalizeSourceIdentifiers(game.SourceIDs, s.sourceIgnoresGameIdentifier)
 		}
 		if err != nil {
 			return fmt.Errorf("converting detected game %s: %w", g.Slug, err)
