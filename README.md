@@ -2147,6 +2147,8 @@ games:
 
 or `lmm game edit --source thunderstore=lethal-company`.
 
+**Six communities are prefilled for you.** `lmm game detect` (and the web UI's detect list) maps Lethal Company, Valheim, Risk of Rain 2, R.E.P.O., Content Warning and For The King to their communities without being asked, and — since all six are BepInEx games — writes their `loader: {kind: bepinex}` block at the same time, so the first plugin install is not refused. That declaration says the GAME needs BepInEx, not that your copy has it: `lmm game show` tells you whether it is actually installed, and `lmm verify` reports a declared loader that is missing.
+
 The slug is **required**. lmm will not guess a community from the game's own id — a wrong guess silently downloads and searches the wrong 230 MB — so every path that writes a game (`lmm game add`, `lmm game edit`, `lmm game detect`, `lmm init` and their web-UI equivalents) refuses an empty mapping for a source that needs one, whether you typed it or a known-games entry supplied it, and a search against a game whose mapping is already empty says which command fixes it rather than picking a community for you.
 
 **Search runs against a locally cached copy of the community index**, because Thunderstore publishes one unpaginated document per community and no per-query search endpoint at all. The first search for a community downloads that document and turns it into an index under `<data>/cache/_thunderstore/<community>/` — a few seconds and, for the largest community on the site, around 230 MB on disk. `lmm search` says so on stderr while it happens, so `--json` still writes exactly one document on stdout. After that:
