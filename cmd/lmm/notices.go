@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
@@ -29,14 +30,44 @@ func withSourceNotices(ctx context.Context) context.Context {
 	return core.WithSourceNotices(ctx, printSourceNotice)
 }
 
+// lastNotice is the line printSourceNotice last wrote, so a hold repeated
+// back to back - every lookup of an import scan refused by the same held
+// host - is said once. Guarded because notices arrive from whichever
+// goroutine is waiting.
+var (
+	lastNoticeMu sync.Mutex
+	lastNotice   string
+)
+
+// resetSourceNoticeState forgets the last line, for tests.
+func resetSourceNoticeState() {
+	lastNoticeMu.Lock()
+	defer lastNoticeMu.Unlock()
+	lastNotice = ""
+}
+
 // printSourceNotice writes one notice event's sentence. os.Stderr is read
 // at call time, so a test that swaps it captures the line.
 func printSourceNotice(e core.Event) {
-	endProgressLine()
+	var line string
 	switch ev := e.(type) {
 	case core.WarningEvent:
-		fmt.Fprintln(os.Stderr, ev.Message)
+		line = ev.Message
+		lastNoticeMu.Lock()
+		repeated := ev.Phase == core.SourceSuspended && line == lastNotice
+		lastNotice = line
+		lastNoticeMu.Unlock()
+		if repeated {
+			return
+		}
 	case core.StepEvent:
-		fmt.Fprintln(os.Stderr, ev.Detail)
+		line = ev.Detail
+		lastNoticeMu.Lock()
+		lastNotice = line
+		lastNoticeMu.Unlock()
+	default:
+		return
 	}
+	endProgressLine()
+	fmt.Fprintln(os.Stderr, line)
 }

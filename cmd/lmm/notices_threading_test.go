@@ -111,7 +111,7 @@ func TestVerifyFix_SaysWhatTheRedownloadIsWaitingOn(t *testing.T) {
 // printed while a download bar was open landed on the end of the bar's
 // line.
 func TestSourceNotice_EndsAnOpenProgressLine(t *testing.T) {
-	t.Cleanup(func() { progressLineOpen.Store(false) })
+	t.Cleanup(func() { progressLineOpen.Store(false); resetSourceNoticeState() })
 	stdout, stderr, _ := captureStdoutAndStderr(t, func() error {
 		printProgressLine("\r  [%s] %.1f%%", "=====     ", 50.0)
 		printSourceNotice(core.WarningEvent{Message: throttleLine})
@@ -120,4 +120,25 @@ func TestSourceNotice_EndsAnOpenProgressLine(t *testing.T) {
 	})
 	assert.Equal(t, "\r  [=====     ] 50.0%\n", stdout, "the bar's line is ended once, before the first notice")
 	assert.Equal(t, throttleLine+"\n"+throttleLine+"\n", stderr)
+}
+
+// TestSourceNotice_ARepeatedHoldIsSaidOnce: an import scan whose lookups a
+// held host refuses one by one printed the same "Not asking ... until"
+// line for each (the fix round's real-binary run). The same hold, said
+// again with nothing in between, is not news.
+func TestSourceNotice_ARepeatedHoldIsSaidOnce(t *testing.T) {
+	t.Cleanup(resetSourceNoticeState)
+	held := core.WarningEvent{Phase: core.SourceSuspended, Message: "Not asking Thunderstore again until 19:14:39 (in 5m0s)."}
+	retry := core.WarningEvent{Phase: core.SourceRetrying, Message: throttleLine}
+	_, stderr, _ := captureStdoutAndStderr(t, func() error {
+		printSourceNotice(held)
+		printSourceNotice(held)
+		printSourceNotice(held)
+		printSourceNotice(retry)
+		printSourceNotice(retry)
+		printSourceNotice(held)
+		return nil
+	})
+	assert.Equal(t, held.Message+"\n"+throttleLine+"\n"+throttleLine+"\n"+held.Message+"\n", stderr,
+		"a hold repeated back to back is said once; retries, each a wait of its own, are all said")
 }
