@@ -14,6 +14,8 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -292,7 +294,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, hea
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		httpErr := &httpStatusError{
-			code: resp.StatusCode, msg: fmt.Sprintf("HTTP error: %d %s", resp.StatusCode, resp.Status),
+			code: resp.StatusCode, msg: "HTTP error: " + statusText(resp),
 			retryAfter: retryAfterOf(resp.Header.Get("Retry-After"), d.now()),
 		}
 		return nil, httpErr
@@ -381,6 +383,16 @@ func (r *progressReader) Read(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// statusText is a response's status as "404 Not Found". resp.Status
+// already carries the code (T3 review F12: "429 429 Too Many Requests"),
+// and a response built without one gets the standard text.
+func statusText(resp *http.Response) string {
+	if strings.HasPrefix(resp.Status, strconv.Itoa(resp.StatusCode)) {
+		return resp.Status
+	}
+	return fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 }
 
 // retryAfterOf reads a Retry-After value in either RFC 9110 form, capped

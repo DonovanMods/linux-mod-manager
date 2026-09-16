@@ -66,6 +66,17 @@ func TestNoticeText(t *testing.T) {
 			"Building the Thunderstore index for lethal-company (one-time)...",
 		},
 		{
+			// T3 review F12: a build too quick to time said "in 0s".
+			"index built at once",
+			source.Notice{Kind: source.NoticeIndexBuilt, Source: "Thunderstore", GameID: "tiny", Packages: 13},
+			"Indexed 13 packages.",
+		},
+		{
+			"index built in milliseconds",
+			source.Notice{Kind: source.NoticeIndexBuilt, Source: "Thunderstore", GameID: "tiny", Packages: 13, Elapsed: 42 * time.Millisecond},
+			"Indexed 13 packages in 42ms.",
+		},
+		{
 			"index built",
 			source.Notice{Kind: source.NoticeIndexBuilt, Source: "Thunderstore", GameID: "lethal-company", Packages: 50707, Elapsed: 4123 * time.Millisecond},
 			"Indexed 50707 packages in 4.1s.",

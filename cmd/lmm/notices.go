@@ -32,6 +32,7 @@ func withSourceNotices(ctx context.Context) context.Context {
 // printSourceNotice writes one notice event's sentence. os.Stderr is read
 // at call time, so a test that swaps it captures the line.
 func printSourceNotice(e core.Event) {
+	endProgressLine()
 	switch ev := e.(type) {
 	case core.WarningEvent:
 		fmt.Fprintln(os.Stderr, ev.Message)

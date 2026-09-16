@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/assert"
@@ -104,4 +105,19 @@ func TestVerifyFix_SaysWhatTheRedownloadIsWaitingOn(t *testing.T) {
 	})
 	_ = err // the redownload itself fails (the fixture serves no file); the notice is the point
 	assert.Contains(t, stderr, throttleLine, "verify --fix repairs on the command's context")
+}
+
+// TestSourceNotice_EndsAnOpenProgressLine is T3 review F12: a notice
+// printed while a download bar was open landed on the end of the bar's
+// line.
+func TestSourceNotice_EndsAnOpenProgressLine(t *testing.T) {
+	t.Cleanup(func() { progressLineOpen.Store(false) })
+	stdout, stderr, _ := captureStdoutAndStderr(t, func() error {
+		printProgressLine("\r  [%s] %.1f%%", "=====     ", 50.0)
+		printSourceNotice(core.WarningEvent{Message: throttleLine})
+		printSourceNotice(core.WarningEvent{Message: throttleLine})
+		return nil
+	})
+	assert.Equal(t, "\r  [=====     ] 50.0%\n", stdout, "the bar's line is ended once, before the first notice")
+	assert.Equal(t, throttleLine+"\n"+throttleLine+"\n", stderr)
 }

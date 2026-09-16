@@ -213,3 +213,18 @@ func TestDownloader_AStalledBodyIsRetried(t *testing.T) {
 	assert.Equal(t, source.RetryStalled, got[0].Reason, "a stall reached the host: it is not a network failure")
 	assert.ErrorIs(t, got[0].Err, httpclient.ErrStalled)
 }
+
+// TestDownloader_AStatusIsNamedOnce: "HTTP error: 429 429 Too Many
+// Requests" printed the code twice, because resp.Status already carries it
+// (T3 review F12).
+func TestDownloader_AStatusIsNamedOnce(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	d, _, _ := testDownloader(t)
+	_, err := d.Download(t.Context(), srv.URL, filepath.Join(t.TempDir(), "f"), nil)
+	require.Error(t, err)
+	assert.Equal(t, "HTTP error: 404 Not Found", err.Error())
+}

@@ -476,7 +476,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		case core.SwitchInstallError:
 			fmt.Printf("    Error: %s\n", p.Detail)
 		case core.SwitchDownloading:
-			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
+			printProgressLine("\r    Downloading: %.1f%%", p.Percent)
 		case core.SwitchDownloadFailed:
 			fmt.Println()
 			fmt.Printf("    Error: %s\n", p.Detail)
@@ -861,7 +861,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		case core.ImportModInstalling:
 			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
 		case core.ImportDownloading:
-			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
+			printProgressLine("\r    Downloading: %.1f%%", p.Percent)
 		case core.ImportModFailed:
 			if strings.HasPrefix(p.Detail, "download failed:") {
 				fmt.Println()
@@ -1388,7 +1388,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		case core.SwitchInstallError:
 			fmt.Printf("    Error: %s\n", p.Detail)
 		case core.SwitchDownloading:
-			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
+			printProgressLine("\r    Downloading: %.1f%%", p.Percent)
 		case core.SwitchDownloadFailed:
 			fmt.Println()
 			fmt.Printf("    Error: %s\n", p.Detail)

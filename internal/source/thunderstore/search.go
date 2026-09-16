@@ -133,7 +133,10 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 		warnings = []error{staleIndexWarning(community, wm, refreshErr)}
 	}
 
-	matches := idx.match(query)
+	matches, hidden := idx.match(query)
+	if len(matches) == 0 && hidden > 0 {
+		warnings = append(warnings, hiddenNSFWWarning(hidden))
+	}
 	page, pageSize := clampPaging(query.Page, query.PageSize)
 	total := len(matches)
 
@@ -152,7 +155,9 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 // replaced. err keeps its chain, so the warning still classifies as
 // source.ErrIndexUnavailable.
 func staleIndexWarning(community string, wm watermark, err error) error {
-	fetched := time.Unix(wm.FetchedAt, 0).UTC().Format(time.RFC3339)
+	// The reader's local time, as every other time lmm prints (T3 review
+	// F12).
+	fetched := time.Unix(wm.FetchedAt, 0).Local().Format("2006-01-02 15:04")
 	return fmt.Errorf("results come from the %s index fetched %s, because refreshing it failed: %w", community, fetched, err)
 }
 
@@ -213,27 +218,40 @@ type scored struct {
 // ship, and the opt-in is the filter every frontend already has - so a
 // browse of the community cannot put one in front of a user who did not
 // ask, and a user who did ask sees only those.
-func (idx *residentIndex) match(query source.SearchQuery) []scored {
+//
+// hidden counts the rows that matched everything but were left out for
+// being NSFW, which the caller turns into a hint when nothing else matched.
+func (idx *residentIndex) match(query source.SearchQuery) (matches []scored, hidden int) {
 	terms := strings.Fields(strings.ToLower(query.Query))
 	required := requiredCategories(query)
 	wantNSFW := slices.Contains(required, strings.ToLower(categoryNSFW))
 
-	matches := make([]scored, 0, 64)
+	matches = make([]scored, 0, 64)
 	for i := range idx.terms {
 		row := &idx.terms[i]
-		if row.nsfw && !wantNSFW {
-			continue
-		}
 		if !row.hasEvery(required) {
 			continue
 		}
 		if !row.contains(terms) {
 			continue
 		}
+		if row.nsfw && !wantNSFW {
+			hidden++
+			continue
+		}
 		matches = append(matches, scored{row: i, score: row.score(terms)})
 	}
 	idx.rank(matches)
-	return matches
+	return matches, hidden
+}
+
+// hiddenNSFWWarning is the hint a search that found nothing gets when the
+// NSFW filter is why (T3 review F12).
+func hiddenNSFWWarning(hidden int) error {
+	if hidden == 1 {
+		return fmt.Errorf("1 package marked NSFW matches this search and is hidden; ask for the %s category, or name the package by its id, to see it", categoryNSFW)
+	}
+	return fmt.Errorf("%d packages marked NSFW match this search and are hidden; ask for the %s category, or name a package by its id, to see them", hidden, categoryNSFW)
 }
 
 // requiredCategories collects the case-folded categories a row must carry.

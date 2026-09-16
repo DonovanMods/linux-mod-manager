@@ -372,6 +372,16 @@ func TestNSFWPackagesAreHiddenUnlessAskedFor(t *testing.T) {
 		assert.Contains(t, got.Mods[0].Category, "NSFW", "the hit says what it is")
 	}
 
+	// A search that finds NOTHING because of the filter says so (T3 review
+	// F12): `lmm install Umlaut-Cafe_Mod` otherwise read as a package that
+	// does not exist. A search with visible results does not nag.
+	hidden := search(source.SearchQuery{Query: "Umlaut-Cafe_Mod"})
+	assert.Empty(t, hidden.Mods)
+	require.Len(t, hidden.Warnings, 1)
+	assert.Contains(t, hidden.Warnings[0].Error(), "1 package marked NSFW matches this search and is hidden")
+	assert.Empty(t, search(source.SearchQuery{Query: "skinwalker"}).Warnings)
+	assert.Empty(t, search(source.SearchQuery{Query: "no-such-package-anywhere"}).Warnings)
+
 	// Asked for by id, it is never hidden: the user named it.
 	mod, err := src.GetMod(t.Context(), testCommunity, "Umlaut-Cafe_Mod")
 	require.NoError(t, err)
@@ -408,7 +418,11 @@ func TestSearch_AFailedRefreshOverAUsableIndexIsAWarning(t *testing.T) {
 	require.Len(t, res.Warnings, 1)
 	assert.ErrorIs(t, res.Warnings[0], source.ErrIndexUnavailable)
 	assert.Contains(t, res.Warnings[0].Error(), "lethal-company")
-	assert.Contains(t, res.Warnings[0].Error(), "2026-09-10T12:00:00Z", "names how old the copy is")
+	// In the reader's local time, like every other time lmm prints (T3
+	// review F12), not a bare UTC timestamp.
+	fetched := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC).Local().Format("2006-01-02 15:04")
+	assert.Contains(t, res.Warnings[0].Error(), "fetched "+fetched, "names how old the copy is")
+	assert.NotContains(t, res.Warnings[0].Error(), "T12:00:00Z")
 
 	// A fresh index carries no warning.
 	s.srv.failWith(0)

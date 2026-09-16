@@ -109,7 +109,11 @@ func noticeText(n source.Notice, now time.Time) string {
 	case source.NoticeIndexBuilding:
 		return fmt.Sprintf("Building the %s index for %s (one-time)...", n.Source, n.GameID)
 	case source.NoticeIndexBuilt:
-		return fmt.Sprintf("Indexed %d packages in %s.", n.Packages, n.Elapsed.Round(100*time.Millisecond))
+		// A build too quick to time is not "in 0s" (T3 review F12).
+		if n.Elapsed < time.Millisecond {
+			return fmt.Sprintf("Indexed %d packages.", n.Packages)
+		}
+		return fmt.Sprintf("Indexed %d packages in %s.", n.Packages, humanWait(n.Elapsed))
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%s: %s", n.Source, n.Kind))
 	}
