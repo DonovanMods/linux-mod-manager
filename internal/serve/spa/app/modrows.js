@@ -20,7 +20,7 @@ export function modKey(mod) {
 /** healthStateLabels is what each of buildRows' healthState values says
  * (issue 418), as {badge, text}: the badge is what fits in the library's
  * badge column, the text is the sentence the slide-over and the badge's own
- * title use. One table, because the row and the panel saying this
+ * name use. One table, because the row and the panel saying this
  * differently is the drift verify.js#findingLabel already exists to prevent
  * one level down. */
 const healthStateLabels = {

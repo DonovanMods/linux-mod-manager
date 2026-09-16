@@ -291,6 +291,47 @@ func TestE2E_LibrarySelectAll_IsRefusedWithNothingItCouldTake(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_LibrarySelection_IsAnnounced is the other half of issue 418/434's
+// a11y review: pressing "a" changed the selection with nothing announced.
+//
+// The region is asserted to be the SAME element before and after, because
+// that is what makes the announcement happen at all: a live region that is
+// inserted together with its text - the batch bar, which mounts on the first
+// selection - is not reliably read out.
+func TestE2E_LibrarySelection_IsAnnounced(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var before, taken, clearedText string
+	var role string
+	var sameElement bool
+	regionJS := `document.querySelector('[data-testid="selection-status"]').textContent.trim()`
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 3`),
+		settleEffects(),
+		chromedp.Evaluate(`(() => {
+			window.__selectionRegion = document.querySelector('[data-testid="selection-status"]');
+			return window.__selectionRegion.getAttribute("role");
+		})()`, &role),
+		chromedp.Evaluate(regionJS, &before),
+		chromedp.KeyEvent("a"),
+		pollUntil(`document.querySelectorAll(".mod-row--selected").length === 3`),
+		chromedp.Evaluate(regionJS, &taken),
+		chromedp.KeyEvent("a"),
+		pollUntil(`document.querySelectorAll(".mod-row--selected").length === 0`),
+		chromedp.Evaluate(regionJS, &clearedText),
+		chromedp.Evaluate(`window.__selectionRegion === document.querySelector('[data-testid="selection-status"]')`, &sameElement),
+	)
+
+	require.Equal(t, "status", role, "a polite live region")
+	assert.Equal(t, "No mods selected", before)
+	assert.Equal(t, "3 of 3 selected", taken, "taking the selection is announced with its size")
+	assert.Equal(t, "No mods selected", clearedText, "and so is clearing it")
+	assert.True(t, sameElement, "one persistent region, not one mounted with the batch bar")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // updatesCardStateJS reads the Updates card's selection surfaces together:
 // which rows are ticked, and what the batch button says and allows.
 const updatesCardStateJS = `(() => {

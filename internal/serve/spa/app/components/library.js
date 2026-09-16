@@ -705,8 +705,25 @@ export function Library({
       ? `${countOf(skipped, "row")} managed by Steam ${skipped === 1 ? "is" : "are"} not included — lmm cannot enable or disable ${skipped === 1 ? "it" : "them"}`
       : undefined;
 
+  // The selection's size in words, shared by the batch bar and the live
+  // region below.
+  const selectionCount = `${selectedRows().length} of ${visible.length} selected`;
+
   return html`
     <section class="library">
+      ${
+        // issue 434: a selection change is announced - pressing "a" changes
+        // it with nothing else to say so. The region is ALWAYS rendered,
+        // rather than being the batch bar's own count: the bar mounts on the
+        // first selection, and a live region inserted together with its text
+        // is not reliably announced, which would silence exactly that first
+        // press. "No mods selected" is what a clear announces; as the
+        // region's first content it is not read out at all.
+        ""
+      }
+      <p class="visually-hidden" role="status" data-testid="selection-status">
+        ${selected.size > 0 ? selectionCount : "No mods selected"}
+      </p>
       <div class="library__toolbar">
         <h2 class="section-header">${libraryLabel}</h2>
         ${
@@ -981,10 +998,18 @@ export function Library({
                             // otherwise - so "no badge" meant both "checked,
                             // fine" and "never checked", which are opposite
                             // things to tell someone about their install.
+                            //
+                            // role="img" with the sentence as its name: the
+                            // glyph alone means nothing to a screen reader,
+                            // and a role-less span exposes no name at all -
+                            // `title` stays for the pointer, but it is
+                            // neither a keyboard nor a touch affordance.
                             html`<span
                               class="badge ${healthBadgeTone(row)}"
                               data-testid="row-health"
                               data-health=${row.healthState}
+                              role="img"
+                              aria-label=${healthLabel(row)}
                               title=${healthLabel(row)}
                               >${healthBadge(row)}</span
                             >`
@@ -1069,9 +1094,7 @@ export function Library({
         selected.size > 0 &&
         html`
           <div class="batch-bar">
-            <span class="batch-bar__count"
-              >${`${selectedRows().length} of ${visible.length} selected`}</span
-            >
+            <span class="batch-bar__count">${selectionCount}</span>
             <button
               type="button"
               class="button"

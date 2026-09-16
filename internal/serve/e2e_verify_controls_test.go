@@ -11,8 +11,12 @@ package serve_test
 // asking what it was not saying.
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/chromedp/cdproto/accessibility"
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -175,5 +179,75 @@ func TestE2E_SlideOverStatesThisModsHealth(t *testing.T) {
 
 	assert.Contains(t, unhealthy, "health finding")
 	assert.Contains(t, healthy, "no issues")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// e2eAXNode is the part of Chrome's computed accessibility node a scenario
+// asserts on.
+type e2eAXNode struct {
+	Ignored bool
+	Role    string
+	Name    string
+}
+
+// accessibleNodeOf reads the accessibility node the BROWSER computed for the
+// first element sel matches - its role and accessible name as assistive
+// technology receives them, rather than the attributes that were meant to
+// produce them.
+func accessibleNodeOf(sel string, out *e2eAXNode) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		var nodes []*cdp.Node
+		if err := chromedp.Nodes(sel, &nodes, chromedp.ByQuery).Do(ctx); err != nil {
+			return err
+		}
+		ax, err := accessibility.GetPartialAXTree().
+			WithBackendNodeID(nodes[0].BackendNodeID).
+			WithFetchRelatives(false).
+			Do(ctx)
+		if err != nil {
+			return err
+		}
+		*out = e2eAXNode{}
+		for _, node := range ax {
+			if node.BackendDOMNodeID != nodes[0].BackendNodeID {
+				continue
+			}
+			out.Ignored = node.Ignored
+			if node.Role != nil {
+				_ = json.Unmarshal(node.Role.Value, &out.Role)
+			}
+			if node.Name != nil {
+				_ = json.Unmarshal(node.Name.Value, &out.Name)
+			}
+		}
+		return nil
+	})
+}
+
+// TestE2E_RowHealthBadgeHasATextAlternative is issue 418's a11y half. The
+// per-row badge is a bare glyph - ?, ✓ or ⚠ - and it is on every row in
+// every state, so it is the one badge whose meaning cannot live in a
+// tooltip alone: a role-less span with only a title exposes no reliable
+// name, and a title is neither a keyboard nor a touch affordance.
+func TestE2E_RowHealthBadgeHasATextAlternative(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var unhealthy, healthy e2eAXNode
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		pollUntil(`document.querySelector('[data-testid="row-health"][data-health="issues"]') !== null`),
+		accessibleNodeOf(`.mod-row[data-mod="fake:boots"] [data-testid="row-health"]`, &unhealthy),
+		accessibleNodeOf(`.mod-row[data-mod="fake:x"] [data-testid="row-health"]`, &healthy),
+	)
+
+	for label, node := range map[string]e2eAXNode{"issues": unhealthy, "ok": healthy} {
+		assert.False(t, node.Ignored, "%s: the badge is in the accessibility tree", label)
+		// Chrome's own name for the ARIA "img" role.
+		assert.Equal(t, "image", node.Role, "%s: exposed as an image of its state", label)
+	}
+	assert.Regexp(t, `^\d+ health findings?$`, unhealthy.Name,
+		"the name is the sentence, count included - not the glyph")
+	assert.Equal(t, "Verified — no issues found", healthy.Name)
 	assert.Empty(t, f.BrowserErrors())
 }

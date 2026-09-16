@@ -266,8 +266,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at all otherwise — so "checked, fine" and "never checked" looked the same,
   which are opposite things to be told about your install. Each row now
   carries its own health badge in all three states (verified and clean, _N_
-  findings, not verified yet), the slide-over states the same thing in
-  words, and **Verify** sits in the library header — where it is reachable
+  findings, not verified yet) — exposed to a screen reader as that sentence,
+  not as the bare glyph — the slide-over states the same thing in words,
+  and **Verify** sits in the library header — where it is reachable
   on a healthy profile, which is exactly when the Health card is not there
   to ask. A row's ⋯ menu offers **Verify** and, for a mod with findings,
   **Repair…** scoped to that mod.
