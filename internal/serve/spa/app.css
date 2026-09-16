@@ -853,6 +853,7 @@ select {
 .library__toolbar {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: var(--space-4);
   margin-bottom: var(--space-3);
 }
@@ -937,9 +938,18 @@ select {
   width: 10%;
 }
 
+/* The actions column (issue 417). It used to hold only the ⋯ button, at 3%;
+ * a row with an update pending now carries a visible Update beside it, so
+ * the column needs the room for both - and nowrap, so the pair never stacks
+ * and changes the row's height as rows gain and lose their update. */
 .library__table th.col--menu,
 .library__table td.col--menu {
-  width: 3%;
+  width: 9%;
+  white-space: nowrap;
+}
+
+.library__table td.col--menu .button + .button {
+  margin-left: var(--space-1);
 }
 
 .library__table th {

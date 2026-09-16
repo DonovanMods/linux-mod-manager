@@ -1737,6 +1737,14 @@ function originOf(jobID) {
 const actions = {
   reloadMods: () => reload("mods", "/api/v1/mods"),
   reloadUpdates: () => reload("updates", "/api/v1/updates"),
+  // refreshUpdates is the EXPLICIT "check for updates" (issue 417), as
+  // opposed to the hydrate's own passive read: ?refresh=1 bypasses a
+  // source's metadata cache, which is what that parameter was added for
+  // (api.go#handleAPIUpdates - the Steam Workshop source caches Valve's
+  // keyless answers for hours, so a user asking again has to be able to
+  // mean it). The card's error-retry keeps the plain reload: a failed fetch
+  // has nothing cached to get past.
+  refreshUpdates: () => reload("updates", "/api/v1/updates?refresh=1"),
   // Re-verify is the ONE health read that opts out of core's
   // unchanged-installation memo (issue 336): a user pressing it is asking
   // for a fresh look, while the hydrate that runs on every route change and

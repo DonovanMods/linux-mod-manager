@@ -261,6 +261,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than a size per platform, and it is a filled tile so it reads on a
   light and a dark tab strip alike.
 
+- **Updating a mod — or all of them — is something you can see (#417).** The
+  web UI could already do both, and neither read as _the_ update action: the
+  Updates card needed rows ticked first, the batch bar only exists once they
+  are, and the per-mod Update was a click deep in the row's ⋯ menu. The
+  library header now carries **Check for updates** — which asks the source
+  again rather than re-reading what it has cached — and **Update all (3)**,
+  counting what it is about to do; the Updates card carries the same pair;
+  and a row with an update pending carries a visible **Update** button of its
+  own, in the open rather than behind ⋯.
+
 - **Select all, on the library and the Updates card (#434).** Both
   multi-select surfaces made you tick every row by hand. Each now has a
   header checkbox that takes everything **currently in view** — after the

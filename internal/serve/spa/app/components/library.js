@@ -26,6 +26,7 @@ import { mutationLabel, progressText } from "../progress.js";
 import { pendingToggleLabel, usePendingToggles } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { AddModsMenu } from "./addmodsmenu.js";
+import { InlineJob } from "./jobprogress.js";
 
 const FILTER_LABELS = {
   all: "All",
@@ -92,6 +93,13 @@ function modOrigin(row, action) {
   return `mod:${row.source_id}/${row.id}:${action}`;
 }
 
+// UPDATE_ALL_ORIGIN is the library header's own "Update all" (issue 417) -
+// distinct from the batch bar's "library:batch-update", which acts on a
+// selection, and from the Updates card's own control. Three controls that
+// can plan different sets must not share one origin, or one of them morphs
+// into a job it did not start.
+const UPDATE_ALL_ORIGIN = "library:update-all";
+
 // nonTextInputTypes are the <input> types that take no typing: a keystroke
 // aimed at one of these is a command, not a character.
 const nonTextInputTypes = new Set([
@@ -126,6 +134,7 @@ function isTypingTarget(el) {
 export function Library({
   state,
   mods,
+  rows,
   visible,
   filter,
   sort,
@@ -318,6 +327,60 @@ export function Library({
     actions.openReorderModal({ profileName: state.route.profile });
   }
 
+  // issue 417: the library header's own update pair. Everything they drive
+  // already existed - the `updates` plan kind, and GET /api/v1/updates - and
+  // nothing here is a new flow; what was missing is that neither read as THE
+  // update action. The card only appears when there is already something to
+  // report, the batch bar only appears once rows are ticked, and the ⋯ menu
+  // hid the per-mod one behind a click.
+  //
+  // `rows`, not `visible`: "all" means every mod in this profile with an
+  // update, not whatever a filter happens to be showing. The count on the
+  // button says how many that is before the confirm modal does.
+  function updatableRows() {
+    // issue 269: an EXTERNAL row is excluded even when it HAS an update -
+    // ApplyUpdateBatch declines it (core.ReasonExternalNoUpdate) - for the
+    // same reason updatableSelectedRows drops one.
+    return (rows ?? []).filter((r) => r.hasUpdate && !r.isExternal);
+  }
+
+  function updateAll() {
+    const targets = updatableRows();
+    if (targets.length === 0) return;
+    actions.openPlan({
+      kind: "updates",
+      origin: UPDATE_ALL_ORIGIN,
+      title: `Update ${countOf(targets.length, "mod")}`,
+      confirmLabel: "Update",
+      options: { mods: targets.map((r) => r.key) },
+    });
+  }
+
+  // checking is this control's own acknowledgment (the lesson of issue 432,
+  // applied where it is needed next): an update check is a live source read
+  // per mod, so a button that did nothing visible until the whole fan-out
+  // came back would read as a button that did nothing.
+  const [checking, setChecking] = useState(false);
+
+  async function checkForUpdates() {
+    setChecking(true);
+    try {
+      await actions.refreshUpdates();
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  function updateRow(row) {
+    actions.openPlan({
+      kind: "updates",
+      origin: modOrigin(row, "update"),
+      title: `Update ${row.name}`,
+      confirmLabel: "Update",
+      options: { mods: [row.key] },
+    });
+  }
+
   // issue 379: an EXTERNAL row is dropped for the same reason
   // updatableSelectedRows drops one, and the reason the row's own enabled
   // checkbox is disabled - core refuses enable/disable for a Steam
@@ -393,27 +456,13 @@ export function Library({
     return html`
       <div class="row-menu">
         ${
-          // issue 269: not offered for an external row, for the reason
-          // updatableSelectedRows states - and matching the slide-over, which
-          // hides Update for the same mod.
-          row.hasUpdate &&
-          !row.isExternal &&
-          html`<button
-            type="button"
-            class="row-menu__item"
-            onClick=${() => {
-              setMenuKey(null);
-              actions.openPlan({
-                kind: "updates",
-                origin: origin("update"),
-                title: `Update ${row.name}`,
-                confirmLabel: "Update",
-                options: { mods: [row.key] },
-              });
-            }}
-          >
-            Update
-          </button>`
+          // issue 417: Update is no longer in here. A mod with an update
+          // pending now carries a VISIBLE button in its own actions cell -
+          // the owner's note was that nothing in this UI read as "the update
+          // action", and an action a click away behind ⋯ is exactly that.
+          // Keeping a second copy here would be two controls doing one thing
+          // on the same row.
+          ""
         }
         <button
           type="button"
@@ -615,6 +664,36 @@ export function Library({
         <button
           type="button"
           class="button button--small"
+          data-action="check-updates"
+          disabled=${checking}
+          aria-busy=${checking ? "true" : null}
+          onClick=${checkForUpdates}
+        >
+          ${checking ? "Checking…" : "Check for updates"}
+        </button>
+        <${InlineJob}
+          origin=${UPDATE_ALL_ORIGIN}
+          state=${state}
+          actions=${actions}
+        >
+          <button
+            type="button"
+            class="button button--small"
+            data-action="update-all"
+            disabled=${updatableRows().length === 0}
+            title=${
+              updatableRows().length === 0
+                ? "No mod in this profile has an update lmm can apply"
+                : undefined
+            }
+            onClick=${updateAll}
+          >
+            ${`Update all (${updatableRows().length})`}
+          </button>
+        <//>
+        <button
+          type="button"
+          class="button button--small"
           data-action="reorder"
           onClick=${openReorder}
         >
@@ -666,7 +745,9 @@ export function Library({
                     <th class="col--order">Load order</th>
                     <th class="col--method">Method</th>
                     <th class="col--installed">Installed</th>
-                    <th class="col--menu"></th>
+                    <th class="col--menu">
+                      <span class="visually-hidden">Actions</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -841,9 +922,32 @@ export function Library({
                           ${formatDate(row.installed_at)}
                         </td>
                         <td class="col--menu row-menu-cell">
+                          ${
+                            // issue 417: the per-mod Update, in the open.
+                            // Not wrapped in InlineJob like the header's own
+                            // "Update all" - this cell is too narrow for a
+                            // progress bar, and the row already reports its
+                            // own running job on the name column's live line
+                            // (the library's established pattern for a
+                            // row-level job). It is refused while one is
+                            // running so a second cannot be stacked on it.
+                            row.hasUpdate &&
+                            !row.isExternal &&
+                            html`<button
+                              type="button"
+                              class="button button--small button--primary"
+                              data-action="row-update"
+                              disabled=${Boolean(mutation)}
+                              aria-label=${`Update ${row.name} to ${row.updateTarget}`}
+                              onClick=${() => updateRow(row)}
+                            >
+                              Update
+                            </button>`
+                          }
                           <button
                             type="button"
                             class="button button--small"
+                            data-action="row-menu"
                             aria-label=${`Actions for ${row.name}`}
                             aria-expanded=${menuKey === row.key ? "true" : "false"}
                             onClick=${() =>

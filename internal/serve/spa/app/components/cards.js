@@ -23,6 +23,11 @@ import { conflictLabel } from "../conflicts.js";
 // (modpanel.js/fullmodpage.js), which this card's own checkboxes never use.
 const UPDATES_BATCH_ORIGIN = "updates:batch";
 
+// UPDATES_ALL_ORIGIN is the same card's "Update all" (issue 417): a
+// different set from "Update selected", so a different origin - two
+// controls sharing one would both morph into whichever job either started.
+const UPDATES_ALL_ORIGIN = "updates:all";
+
 // HEALTH_REPAIR_ALL_ORIGIN is the Health card's "Repair all" control.
 const HEALTH_REPAIR_ALL_ORIGIN = "health:repair-all";
 
@@ -108,6 +113,7 @@ export function AttentionCards({
           rows=${updateRows}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
+          onRefresh=${actions.refreshUpdates}
           actions=${actions}
         />`
       }
@@ -145,7 +151,7 @@ export function AttentionCards({
   `;
 }
 
-function UpdatesCard({ state, rows, error, onRetry, actions }) {
+function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
   const [selected, setSelected] = useState(() => new Set());
 
   function toggle(key) {
@@ -179,6 +185,21 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
       title: `Update ${countOf(selected.size, "mod")}`,
       confirmLabel: "Update",
       options: { mods: [...selected] },
+    });
+  }
+
+  // issue 417: "Update all" on the card that is already reporting the
+  // updates. Everything this card could do before needed a selection first,
+  // so the commonest intent - update what you just told me about - was the
+  // one thing it had no button for.
+  function updateAll() {
+    if (applicable.length === 0) return;
+    actions.openPlan({
+      kind: "updates",
+      origin: UPDATES_ALL_ORIGIN,
+      title: `Update ${countOf(applicable.length, "mod")}`,
+      confirmLabel: "Update",
+      options: { mods: applicableKeys },
     });
   }
 
@@ -281,6 +302,29 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
                 })}
               </ul>
               <div class="card__actions">
+                <button
+                  type="button"
+                  class="button button--small"
+                  data-action="check-updates"
+                  onClick=${onRefresh}
+                >
+                  Check again
+                </button>
+                <${InlineJob}
+                  origin=${UPDATES_ALL_ORIGIN}
+                  state=${state}
+                  actions=${actions}
+                >
+                  <button
+                    type="button"
+                    class="button button--primary"
+                    data-action="update-all"
+                    disabled=${applicable.length === 0}
+                    onClick=${updateAll}
+                  >
+                    ${`Update all (${applicable.length})`}
+                  </button>
+                <//>
                 <${InlineJob}
                   origin=${UPDATES_BATCH_ORIGIN}
                   state=${state}

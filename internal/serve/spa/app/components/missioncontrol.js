@@ -177,6 +177,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
         <${Library}
           state=${state}
           mods=${mods}
+          rows=${rows}
           visible=${visible}
           filter=${filter}
           sort=${sort}
