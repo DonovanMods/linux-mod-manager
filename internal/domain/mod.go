@@ -120,6 +120,36 @@ type ModReference struct {
 	FileIDs  []string `yaml:"file_ids,omitempty" json:"file_ids,omitempty"` // Source-specific file IDs that were installed
 	Locked   bool     `yaml:"locked,omitempty" json:"locked,omitempty"`     // #97 lock marker: lmm update refuses this mod; Version is the lock's target. Set/cleared only by lock/unlock; survives UpsertMod (in-place update) and export/import.
 
+	// Disabled is the #431 per-profile "listed here, but switched off"
+	// marker: the profile document is the desired state a converge run
+	// restores, so the intent has to live HERE and not only in the
+	// installed_mods row, which every profile switch overwrote and no
+	// export ever carried. Set/cleared only by DisableMod/EnableMod, the
+	// same rule Locked follows; UpsertMod preserves it, so an
+	// install/update/converge write can never silently switch a mod back on.
+	//
+	// ABSENT MEANS ENABLED. That is the invariant every profile file
+	// written before this field existed already satisfies, and it is why
+	// this is a plain bool named for the OFF state rather than the
+	// `Enabled *bool` the field could also have been: a value type keeps
+	// ModReference copyable and comparable (it is passed by value
+	// everywhere, and a *bool shared between two copies is an aliasing bug
+	// waiting to happen), the zero value already means "enabled" with no
+	// nil-check at any read site, and `omitempty` then guarantees that a
+	// profile file or an export produced before this change stays
+	// byte-identical - nothing is written until someone actually disables
+	// a mod, and nothing rewrites a hand-edited file to add the key.
+	//
+	// The two tags are deliberately different words for the same intent.
+	// yaml.v3's `omitempty` drops a false bool; encoding/json/v2's does
+	// NOT (it omits only empty strings, objects, arrays and null - which
+	// is why Locked, tagged omitempty, still marshals as "locked": false
+	// in every recorded golden). `omitzero` is json/v2's spelling of the
+	// rule this field needs, the same one External already uses, and it is
+	// what keeps every `--json` document that carries a ModReference
+	// byte-identical until a mod is actually disabled.
+	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitzero"`
+
 	// External and UpdatedAt are DISPLAY facts a plan document carries so a
 	// renderer never has to print Version raw (#365, part of #269).
 	//

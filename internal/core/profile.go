@@ -432,6 +432,14 @@ func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName str
 			profile.Mods[i].FileIDs = mod.FileIDs
 			// Preserve Locked marker on in-place update (#97: survives UpsertMod).
 			// Do not modify Locked; it is only changed via explicit lock/unlock operations.
+			//
+			// Disabled (#431) follows the identical rule and for the
+			// identical reason: it is the user's per-profile off intent,
+			// set and cleared only by DisableMod/EnableMod. Every
+			// install/update/converge caller builds a fresh ModReference
+			// with Disabled false, so copying mod.Disabled here would let a
+			// reinstall or a version convergence silently switch a mod the
+			// user turned off back on - the very thing #431 exists to stop.
 			found = true
 			break
 		}
@@ -499,6 +507,47 @@ func (pm *ProfileManager) ClearModLock(ctx context.Context, gameID, profileName,
 	}
 
 	return fmt.Errorf("mod %s:%s not found in profile %q", sourceID, modID, profileName)
+}
+
+// SetModDisabled records #431's per-profile off intent on the profile ref
+// for sourceID/modID: disabled true writes the `disabled: true` marker,
+// false clears it (and, because the field is `omitempty`, removes the key
+// entirely, so a profile whose mods are all enabled again is byte-identical
+// to one that never had the marker at all).
+//
+// Mirrors SetModLock/ClearModLock's load -> mutate-in-place -> save shape
+// and, like them, touches nothing else on the ref: the load-order position
+// and the pinned Version are exactly what a disable must NOT throw away.
+//
+// A mod the profile does not list returns domain.ErrModNotFound, so the
+// caller can tell "nothing to record here" apart from a real write failure.
+// That is not an error condition for disable/enable: an installed row whose
+// profile never listed it has no desired-state entry to mark, and no
+// converge pass will consult one.
+func (pm *ProfileManager) SetModDisabled(ctx context.Context, gameID, profileName, sourceID, modID string, disabled bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
+	if err != nil {
+		return err
+	}
+
+	for i := range profile.Mods {
+		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID {
+			if profile.Mods[i].Disabled == disabled {
+				// Already what it should be - don't rewrite the file. A
+				// hand-edited profile stays byte-for-byte as its author
+				// left it whenever the intent already matches.
+				return nil
+			}
+			profile.Mods[i].Disabled = disabled
+			return config.SaveProfile(pm.configDir, profile)
+		}
+	}
+
+	return domain.ErrModNotFound
 }
 
 // RemoveMod removes a mod reference from a profile

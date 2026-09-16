@@ -37,13 +37,20 @@ type ProfileConfig struct {
 	Overrides  map[string]string    `yaml:"overrides,omitempty"` // path (relative to game install) -> file content (INI tweaks, etc.)
 }
 
-// ModReferenceConfig is the YAML representation of a mod reference
+// ModReferenceConfig is the YAML representation of a mod reference.
+//
+// Disabled carries #431's per-mod off marker; like Locked it is
+// `omitempty`, so a profile file written before the marker existed - and
+// every profile whose mods are all enabled - is byte-identical to what
+// SaveProfile wrote before, and an older file simply decodes to false
+// ("absent means enabled") with no migration step.
 type ModReferenceConfig struct {
 	SourceID string   `yaml:"source_id"`
 	ModID    string   `yaml:"mod_id"`
 	Version  string   `yaml:"version,omitempty"`
 	FileIDs  []string `yaml:"file_ids,omitempty"`
 	Locked   bool     `yaml:"locked,omitempty"`
+	Disabled bool     `yaml:"disabled,omitempty"`
 }
 
 // parseProfileHooks converts YAML hooks to domain types, tracking which were explicitly set
@@ -189,6 +196,7 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 			Version:  m.Version,
 			FileIDs:  m.FileIDs,
 			Locked:   m.Locked,
+			Disabled: m.Disabled,
 		}
 	}
 
@@ -230,6 +238,7 @@ func SaveProfile(configDir string, profile *domain.Profile) error {
 			Version:  m.Version,
 			FileIDs:  m.FileIDs,
 			Locked:   m.Locked,
+			Disabled: m.Disabled,
 		}
 	}
 

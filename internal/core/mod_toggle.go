@@ -2,10 +2,43 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
+
+// recordProfileDisabled writes #431's per-profile off marker onto the
+// profile ref for sourceID/modID, completing the installed_mods write the
+// enable/disable flow has ALREADY applied - the class-(A) pair Ruling 16
+// covers, so the profile file is written even under a cancelled ctx rather
+// than left disagreeing with the row.
+//
+// Returns the diagnostic to record as a Note, or "" when there is nothing
+// to say. A profile that does not list the mod (domain.ErrModNotFound) is
+// one of those: there is no desired-state entry to mark, and no converge
+// pass will look for one - see ProfileManager.SetModDisabled.
+func (s *Service) recordProfileDisabled(ctx context.Context, gameID, profileName, sourceID, modID string, disabled bool) string {
+	pm := s.NewProfileManager()
+	err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.SetModDisabled(ctx, gameID, profileName, sourceID, modID, disabled)
+	})
+	switch {
+	case err == nil, errors.Is(err, domain.ErrModNotFound), errors.Is(err, domain.ErrProfileNotFound):
+		return ""
+	default:
+		return fmt.Sprintf("Warning: could not record the profile's %s state: %v", disabledWord(disabled), err)
+	}
+}
+
+// disabledWord names the state recordProfileDisabled was writing, for its
+// one diagnostic.
+func disabledWord(disabled bool) string {
+	if disabled {
+		return "disabled"
+	}
+	return "enabled"
+}
 
 // EnableResult reports the outcome of EnableMod. Changed is true iff the
 // mod was actually deployed and flipped to enabled — false (not an error)
@@ -107,6 +140,13 @@ func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName,
 		return result, fmt.Errorf("failed to update mod status: %w", err)
 	}
 
+	// #431: the row alone is not where this intent belongs - a profile
+	// switch overwrites it and an export never carried it. Clearing the
+	// marker is what makes the profile document say "on" again.
+	if msg := s.recordProfileDisabled(ctx, game.ID, profileName, sourceID, modID, false); msg != "" {
+		result.Notes = append(result.Notes, msg)
+	}
+
 	// #197 postsmoke fix: Warnings, not Notes - Notes is --verbose-gated in
 	// the CLI (printModNotes), so a sync failure here used to be silent by
 	// default.
@@ -182,6 +222,13 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 				result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as not deployed: %v", err))
 			}
 		}
+		// #431, same self-heal reasoning: a mod disabled before the marker
+		// existed has a disabled row and an unmarked ref, so the next
+		// switch or apply would switch it back on. Disabling it again
+		// records the intent where a converge pass reads it.
+		if msg := s.recordProfileDisabled(ctx, game.ID, profileName, sourceID, modID, true); msg != "" {
+			result.Notes = append(result.Notes, msg)
+		}
 		return result, nil
 	}
 
@@ -202,6 +249,14 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 
 	if err := s.setModEnabled(ctx, sourceID, modID, game.ID, profileName, false); err != nil {
 		return result, fmt.Errorf("failed to update mod status: %w", err)
+	}
+
+	// #431: the profile document is the desired state a converge run
+	// restores, so "off" has to be recorded there too - otherwise the next
+	// `profile switch` or `profile apply` reads a document that still says
+	// "on" and deploys the mod again.
+	if msg := s.recordProfileDisabled(ctx, game.ID, profileName, sourceID, modID, true); msg != "" {
+		result.Notes = append(result.Notes, msg)
 	}
 
 	// #197 postsmoke fix: Warnings, not Notes (see EnableMod's identical fix).
