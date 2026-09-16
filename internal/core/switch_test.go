@@ -2294,3 +2294,152 @@ func TestApplyProfileSwitch_StalePlanWhenTheTargetProfilesRowsMoved(t *testing.T
 	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
 	require.ErrorIs(t, err, core.ErrStalePlan)
 }
+
+// TestRR_F6_OutgoingVersionFilesLeftBehind is fix round 2's R7: two
+// profiles list one unpinned mod, and their rows hold different versions (an
+// `lmm update` run under one profile only is enough). F6 made the enable
+// deploy the TARGET row's version, but as a plain Install over the live
+// outgoing version - so files only the old version had stayed behind, and
+// the outgoing row went on claiming a deployment that was gone, which made
+// switching back a false NoChanges with the wrong version on disk. The enable
+// now replaces the live version, and the row it replaced stops claiming it.
+func TestRR_F6_OutgoingVersionFilesLeftBehind(t *testing.T) {
+	for _, lm := range []domain.LinkMethod{domain.LinkSymlink, domain.LinkCopy, domain.LinkHardlink} {
+		t.Run(lm.String(), func(t *testing.T) {
+			svc := newFlowsTestService(t)
+			gameDir := t.TempDir()
+			game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: lm, LinkMethodExplicit: true}
+			ctx := context.Background()
+			pm := svc.NewProfileManager()
+			for _, name := range []string{"a", "b"} {
+				_, err := pm.Create(ctx, game.ID, name)
+				require.NoError(t, err)
+				require.NoError(t, pm.AddMod(ctx, game.ID, name, domain.ModReference{SourceID: "src", ModID: "x"}))
+			}
+			require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+			seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true,
+				map[string][]byte{"x-v1.esp": []byte("v1"), "shared.esp": []byte("s1")})
+			seedInstalledModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "2.0", true,
+				map[string][]byte{"x-v2.esp": []byte("v2"), "shared.esp": []byte("s2")})
+			// a's 1.0 is what is live, as it is for the active profile.
+			require.NoError(t, svc.GetInstallerForTest(game).Install(ctx, game,
+				&domain.Mod{ID: "x", SourceID: "src", Version: "1.0", GameID: game.ID}, "a"))
+			require.NoError(t, svc.SetModDeployed(ctx, "src", "x", game.ID, "a", true))
+
+			assertLive := func(version string) {
+				t.Helper()
+				gone, live, shared := "x-v2.esp", "x-v1.esp", "s1"
+				if version == "2.0" {
+					gone, live, shared = "x-v1.esp", "x-v2.esp", "s2"
+				}
+				assert.NoFileExists(t, filepath.Join(gameDir, gone), "the version switched away from must leave no file behind")
+				assert.FileExists(t, filepath.Join(gameDir, live))
+				data, err := os.ReadFile(filepath.Join(gameDir, "shared.esp"))
+				require.NoError(t, err)
+				assert.Equal(t, shared, string(data), "a file both versions ship must hold the live version's bytes")
+			}
+			row := func(profile string) *domain.InstalledMod {
+				t.Helper()
+				r, err := svc.GetInstalledMod(ctx, "src", "x", game.ID, profile)
+				require.NoError(t, err)
+				return r
+			}
+
+			toB, err := svc.PlanProfileSwitch(ctx, game, "b")
+			require.NoError(t, err)
+			require.Len(t, toB.ToEnable, 1)
+			assert.Equal(t, "1.0", toB.PriorVersions[domain.ModKey("src", "x")].Version,
+				"the plan names the live version the enable replaces")
+			_, err = svc.ApplyProfileSwitch(ctx, game, toB, nil)
+			require.NoError(t, err)
+			assertLive("2.0")
+			assert.True(t, row("b").Deployed)
+			assert.True(t, row("a").Enabled, "a still wants the mod on")
+			assert.False(t, row("a").Deployed, "but its 1.0 files are gone, so its row must stop saying they are live")
+
+			toA, err := svc.PlanProfileSwitch(ctx, game, "a")
+			require.NoError(t, err)
+			require.False(t, toA.NoChanges, "switching back must put 1.0 back, not report nothing to do")
+			require.Len(t, toA.ToEnable, 1)
+			assert.Equal(t, "1.0", toA.ToEnable[0].Version)
+			_, err = svc.ApplyProfileSwitch(ctx, game, toA, nil)
+			require.NoError(t, err)
+			assertLive("1.0")
+			assert.True(t, row("a").Deployed)
+			assert.False(t, row("b").Deployed)
+		})
+	}
+}
+
+// TestPlanProfileSwitch_BothRowsClaimingADeploymentStillConverge: a pair of
+// rows that both say enabled and deployed at different versions - what the
+// switch left behind before R7 - is not "already live" under the target:
+// only one version can be on disk, and it is the outgoing profile's.
+func TestPlanProfileSwitch_BothRowsClaimingADeploymentStillConverge(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+	for _, name := range []string{"a", "b"} {
+		_, err := pm.Create(ctx, game.ID, name)
+		require.NoError(t, err)
+		require.NoError(t, pm.AddMod(ctx, game.ID, name, domain.ModReference{SourceID: "src", ModID: "x"}))
+	}
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x-v1.esp": []byte("v1")})
+	seedInstalledModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "2.0", true, map[string][]byte{"x-v2.esp": []byte("v2")})
+	require.NoError(t, svc.SetModDeployed(ctx, "src", "x", game.ID, "a", true))
+	require.NoError(t, svc.SetModDeployed(ctx, "src", "x", game.ID, "b", true))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	assert.False(t, plan.NoChanges)
+	require.Len(t, plan.ToEnable, 1)
+	assert.Equal(t, "2.0", plan.ToEnable[0].Version)
+	assert.Equal(t, "1.0", plan.PriorVersions[domain.ModKey("src", "x")].Version)
+}
+
+// TestApplyProfileSwitch_PinnedTargetReplacesTheLiveOutgoingVersion is R7's
+// other half, on the pinned path: the target profile pins a version and has
+// a row of its own at yet another, undeployed one. The install must replace
+// what is LIVE - the outgoing profile's 1.5 - not the target row's claim, so
+// 1.5's file does not survive the downgrade.
+func TestApplyProfileSwitch_PinnedTargetReplacesTheLiveOutgoingVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "default"))
+	_, err = pm.Create(ctx, game.ID, "stable")
+	require.NoError(t, err)
+	svc.RegisterSource(newTwoVersionSource(t))
+
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, Deployed: true, FileIDs: []string{"10"},
+	}))
+	require.NoError(t, svc.GetInstallerForTest(game).Install(ctx, game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
+	// stable's own row: another version, not deployed.
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.2", GameID: game.ID},
+		ProfileName: "stable", UpdatePolicy: domain.UpdateNotify, Enabled: false,
+	}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "stable")
+	require.NoError(t, err)
+	require.Len(t, plan.ToInstall, 1)
+	assert.Equal(t, "1.5", plan.PriorVersions[domain.ModKey("src", "mod1")].Version)
+
+	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "mod1.esp"), "the live 1.5 file must be replaced, not left beside 1.0")
+	assert.FileExists(t, filepath.Join(game.ModPath, "mod1-old.esp"))
+	outgoing, err := svc.GetInstalledMod(ctx, "src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, outgoing.Deployed)
+}

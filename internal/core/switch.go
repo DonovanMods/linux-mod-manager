@@ -49,15 +49,23 @@ type SwitchPlan struct {
 	ToDisable []domain.InstalledMod `json:"to_disable"`
 	ToInstall []domain.ModReference `json:"to_install"` // in To but not installed anywhere -> download+install (FileIDs preserved from the installed mod's own record when this is really a cache-miss redeploy - see PlanProfileSwitch)
 
-	// PriorVersions carries, for each ToInstall entry that is really a #96
-	// version-drift convergence (keyed by domain.ModKey(SourceID, ModID)),
-	// the installed row being converged AWAY from - review round 1 finding
-	// 1: ToInstall's own element type (domain.ModReference) has no room for
-	// this, but ApplyProfileSwitch's install loop needs it to know whether
-	// a LIVE older deployment exists that must be replaced (removing files
-	// the new version doesn't serve) rather than merely installed over -
-	// mirroring ApplyUpdate's Installer.Replace semantics. Absent for every
-	// other ToInstall entry (brand-new installs, cache-miss redeploys).
+	// PriorVersions carries, keyed by domain.ModKey(SourceID, ModID), the
+	// installed row a ToInstall or ToEnable entry converges AWAY from -
+	// review round 1 finding 1: neither list's element type has room for
+	// it, but ApplyProfileSwitch needs it to know whether a LIVE deployment
+	// of another version exists that must be replaced (removing files the
+	// new version doesn't serve) rather than merely installed over,
+	// mirroring ApplyUpdate's Installer.Replace semantics.
+	//
+	// Two kinds of entry get one. A #96 version-drift convergence (the
+	// target ref pins a version its row does not hold), and - fix round 2,
+	// R7 - any entry whose OUTGOING profile has the mod live at a different
+	// version than the one this switch deploys: two profiles can hold one
+	// unpinned mod at two versions (an `lmm update` under one of them is
+	// enough), and only one of them is on disk. The prior row is then the
+	// outgoing one, because its version is what is live. Absent for every
+	// other entry (brand-new installs, same-version enables, cache-miss
+	// redeploys of the live version).
 	PriorVersions map[string]domain.InstalledMod `json:"prior_versions,omitempty"`
 
 	// ExternalUnchanged counts the EXTERNAL mods (#269) this switch leaves
@@ -172,6 +180,22 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	// target loop below does not list one a second time under its own
 	// profile (fix-round F5).
 	disableKeys := make(map[string]bool)
+	// liveOutgoing is the outgoing profile's row for key when that row's
+	// files are what is on disk - the version an enable or install for the
+	// same mod has to replace (fix round 2, R7). The outgoing profile is the
+	// active one, so its enabled-and-deployed claim is the one to trust.
+	liveOutgoing := func(key string) *domain.InstalledMod {
+		if im, ok := currentEnabled[key]; ok && im.Deployed && !im.External {
+			return im
+		}
+		return nil
+	}
+	recordPrior := func(key string, prior domain.InstalledMod) {
+		if priorVersions == nil {
+			priorVersions = make(map[string]domain.InstalledMod)
+		}
+		priorVersions[key] = prior
+	}
 
 	// Deterministic order: iterate currentMods in fromProfile's load order
 	// (mods enabled but absent from fromProfile.Mods sort first by key - see
@@ -254,6 +278,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			continue
 		}
 
+		live := liveOutgoing(key)
 		switch {
 		case !installed:
 			toInstall = append(toInstall, ref)
@@ -262,15 +287,20 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			// the installed row - reinstall at the profile's version
 			// (downgrades included). ref is passed as-is: its own FileIDs
 			// (if any) describe the TARGET version; the installed row's
-			// describe the wrong one. The installed row itself is recorded
-			// in priorVersions (review finding 1) so ApplyProfileSwitch's
-			// install loop can Replace a live older deployment instead of
-			// installing over it.
+			// describe the wrong one. The row being converged away from is
+			// recorded in priorVersions (review finding 1) so
+			// ApplyProfileSwitch's install loop can Replace a live
+			// deployment instead of installing over it - the outgoing row
+			// when its files are the live ones (R7), since the target row's
+			// own claim says nothing about what is on disk.
 			toInstall = append(toInstall, ref)
-			if priorVersions == nil {
-				priorVersions = make(map[string]domain.InstalledMod)
+			prior := *row
+			if live != nil {
+				prior = *live
 			}
-			priorVersions[key] = *row
+			if prior.Version != ref.Version {
+				recordPrior(key, prior)
+			}
 		case !s.GetGameCache(game).Exists(game.ID, row.SourceID, row.ID, row.Version):
 			// Cache missing - needs a redownload; preserve the installed
 			// mod's own FileIDs (not the profile YAML's, which may be
@@ -278,6 +308,9 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			refWithFileIDs := ref
 			refWithFileIDs.FileIDs = row.FileIDs
 			toInstall = append(toInstall, refWithFileIDs)
+			if live != nil && live.Version != row.Version {
+				recordPrior(key, *live)
+			}
 		default:
 			// Installed at the right version with its bytes in the cache,
 			// so the only question left is whether it is already live under
@@ -296,9 +329,17 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			// profile being switched AWAY from, which answered "already
 			// done" for every mod the two profiles share and left the
 			// target profile rowless with the files deployed.
+			//
+			// R7: nor is it live when the outgoing profile has a DIFFERENT
+			// version on disk, whatever the target row claims - only one
+			// version can be deployed, and the enable has to replace it.
 			tr, hasTargetRow := targetInstalled[key]
-			if !hasTargetRow || !tr.Enabled || !tr.Deployed {
+			drifted := live != nil && live.Version != row.Version
+			if !hasTargetRow || !tr.Enabled || !tr.Deployed || drifted {
 				toEnable = append(toEnable, *row)
+				if drifted {
+					recordPrior(key, *live)
+				}
 			}
 		}
 	}
@@ -402,6 +443,46 @@ func (s *Service) clearRowUnderProfile(ctx context.Context, gameID, profileName 
 	if err := s.setModDeployed(ctx, mod.SourceID, mod.ID, gameID, profileName, false); err != nil &&
 		!errors.Is(err, domain.ErrModNotFound) {
 		notes = append(notes, fmt.Sprintf("Warning: could not mark %s as not deployed under %s: %v", mod.Name, profileName, err))
+	}
+	return notes
+}
+
+// switchReplacement returns the prior row a switch entry for key replaces,
+// and whether to replace it at all: only when that row's files are live, are
+// another version than the one being deployed, and are still in the cache
+// for Replace to read. Otherwise the entry is a plain Install - with a
+// missing old cache entry the old version's own files cannot be told apart,
+// the caveat doProfileApply shares.
+func (s *Service) switchReplacement(game *domain.Game, plan *SwitchPlan, key, version string) (domain.InstalledMod, bool) {
+	prior, ok := plan.PriorVersions[key]
+	if !ok || !prior.Deployed || prior.Version == version {
+		return prior, false
+	}
+	return prior, s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version)
+}
+
+// releaseReplacedRow records that prior - a row under a profile OTHER than
+// the one being switched to, whose live files a switch entry just replaced -
+// no longer has a deployment: its deployed flag and its deployed-file
+// ownership rows go (#183's pair). Its enabled flag stays; that profile
+// still wants the mod, at its own version, and the next switch back to it
+// is what puts that version back (R7). A prior row of the target profile's
+// own is left to the entry's own row write. Returns the diagnostics to
+// record, none on the common path.
+func (s *Service) releaseReplacedRow(ctx context.Context, gameID string, plan *SwitchPlan, prior *domain.InstalledMod) []string {
+	profile := prior.ProfileName
+	if profile == "" {
+		profile = plan.From
+	}
+	if profile == plan.To {
+		return nil
+	}
+	var notes []string
+	if err := s.setModDeployed(ctx, prior.SourceID, prior.ID, gameID, profile, false); err != nil && !errors.Is(err, domain.ErrModNotFound) {
+		notes = append(notes, fmt.Sprintf("could not mark %s as not deployed under %s: %v", prior.Name, profile, err))
+	}
+	if err := s.db.DeleteDeployedFiles(ctx, gameID, profile, prior.SourceID, prior.ID); err != nil {
+		notes = append(notes, fmt.Sprintf("could not clear %s's deployed files under %s: %v", prior.Name, profile, err))
 	}
 	return notes
 }
@@ -533,7 +614,14 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		im := plan.ToEnable[idx]
 		scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalEnable, ModName: im.Name, Mod: &domain.ModReference{SourceID: im.SourceID, ModID: im.ID}}
 
-		if err := toInstaller.Install(ctx, game, &im.Mod, plan.To); err != nil {
+		// R7: another version of this mod is live, so the enable replaces
+		// it rather than installing beside it.
+		prior, replacing := s.switchReplacement(game, plan, domain.ModKey(im.SourceID, im.ID), im.Version)
+		deploy := func() error { return toInstaller.Install(ctx, game, &im.Mod, plan.To) }
+		if replacing {
+			deploy = func() error { return toInstaller.Replace(ctx, game, &prior.Mod, &im.Mod, plan.To) }
+		}
+		if err := deploy(); err != nil {
 			msg := fmt.Sprintf("Warning: failed to deploy %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
@@ -571,6 +659,13 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			msg := fmt.Sprintf("Warning: could not mark %s as deployed: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
+		}
+		if replacing {
+			for _, msg := range s.releaseReplacedRow(ctx, game.ID, plan, &prior) {
+				msg = "Warning: " + msg
+				result.Notes = append(result.Notes, msg)
+				emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
+			}
 		}
 
 		result.Enabled++
@@ -674,9 +769,8 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			// list, files the new version no longer serves stay behind as
 			// stale deployments (`lmm verify` surfaces them) - strictly
 			// better than failing to converge at all.
-			key := domain.ModKey(ref.SourceID, ref.ModID)
-			if prior, ok := plan.PriorVersions[key]; ok && prior.Deployed &&
-				s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version) {
+			prior, replacing := s.switchReplacement(game, plan, domain.ModKey(ref.SourceID, ref.ModID), mod.Version)
+			if replacing {
 				if err := toInstaller.Replace(ctx, game, &prior.Mod, mod, plan.To); err != nil {
 					fail(fmt.Sprintf("deploy failed: %v", err))
 					continue
@@ -702,6 +796,13 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 				fail(fmt.Sprintf("save failed: %v", err))
 				continue
+			}
+
+			if replacing {
+				for _, msg := range s.releaseReplacedRow(ctx, game.ID, plan, &prior) {
+					result.Warnings = append(result.Warnings, msg)
+					emit(WarningEvent{Scope: scope, Phase: SwitchInstallWarning, Message: msg})
+				}
 			}
 
 			// #372: the row exists now, so what was downloaded above finally
