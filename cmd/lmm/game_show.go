@@ -104,9 +104,11 @@ func printLoaderStatus(status *core.LoaderStatus) {
 	if status.Declared == nil {
 		// An UNDECLARED game with the preloader actually on disk is the
 		// one state where the missing declaration is the whole story
-		// (re-review R3): lmm will refuse to deploy a plugin into it, and
-		// the fix is one command. Saying "none" and moving on left that
-		// user with nothing to act on.
+		// (re-review R3): lmm acts on the BepInEx it found (#424), but
+		// every verify check that compares the installation against a
+		// declaration stays silent until one exists, and the fix is one
+		// command. Saying "none" and moving on left that user with nothing
+		// to act on.
 		if status.Installed {
 			fmt.Printf("  Declared:     %s\n", colorRed("none - BepInEx is in the game directory but this game does not declare it"))
 			fmt.Printf("                %s\n", colorDim(fmt.Sprintf("declare it with `lmm game edit %s --loader bepinex`", status.GameID)))

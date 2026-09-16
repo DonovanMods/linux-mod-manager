@@ -15,8 +15,8 @@ import (
 )
 
 // stubAdapter is a minimal GameAdapter with no optional capabilities - the
-// shape internal/adapter/generic has, restated here so this package's tests
-// never depend on a concrete adapter package.
+// shape the built-in adapter.Generic has, restated here so this package's
+// tests never depend on a concrete adapter.
 type stubAdapter struct {
 	id     string
 	layout adapter.Layout

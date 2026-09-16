@@ -31,7 +31,8 @@
 //	FileRouter        BepInEx/config/** seeding (#358 (b)), route.go
 //	ArchiveClaimer    the loader precondition (#359/#424), claim.go
 //	Verifier          verify's loader REPORTING tier (#359), verify.go
-//	Guide             the launch-option guidance (#359), guide.go
+//	Guide             the setup guidance (#359), guide.go - implemented, but
+//	                  not rendered by any frontend yet (see adapter.GuidanceNote)
 //
 // See docs/plans/2026-09-09-bepinex-spike.md for the evidence behind every
 // rule and docs/adapters.md for how the pieces fit together.

@@ -160,12 +160,14 @@ func (i *Installer) restoreReplacedOriginal(relPath, dstPath string) {
 // is the whole standing adapter.RouteCopyOnce inherits from a profile
 // override.
 //
-// It is asked BEFORE foreignFile rather than left to it. foreignFile can
-// only answer with a database, and it answers false without one, so the
-// guarantee would have held for a Service and not for a bare Installer -
-// and under the symlink linker it held by accident anyway (Undeploy refuses
-// a regular file), which is exactly the kind of protection that disappears
-// the day a user picks copy.
+// It is asked BEFORE foreignFile rather than left to it. In production
+// foreignFile already protects a seeded file - it is a regular file no
+// profile has a deployed_files row for - so this changes nothing a user
+// can see (#413 review F8). What it changes is where the guarantee comes
+// from: foreignFile can only answer with a database and answers false
+// without one, so the promise held for a Service and not for a bare
+// Installer. Asking the adapter first makes it a property of the route
+// rather than of the ownership lookup.
 func (i *Installer) notLinkerOwned(game *domain.Game, file string) bool {
 	return adapter.Route(i.adapter, game, filepath.ToSlash(file)) != adapter.RouteLink
 }

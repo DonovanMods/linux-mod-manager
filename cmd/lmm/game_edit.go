@@ -75,7 +75,7 @@ func init() {
 	gameEditCmd.Flags().StringArrayVar(&gameEditRemove, "remove-source", nil,
 		"drop a source mapping by its source id (repeatable)")
 	gameEditCmd.Flags().StringVar(&gameEditAdapter, "adapter", "",
-		`set the game adapter; the empty string ("") clears it back to generic-files`)
+		`set the game adapter; the empty string ("") clears it, so the game uses its derived adapter (generic-files unless deploy_mode or BepInEx selects one)`)
 	gameEditCmd.Flags().StringVar(&gameEditLoader, "loader", "",
 		`declare a mod loader installed in the game directory (today: bepinex); "" removes the declaration`)
 	gameEditCmd.Flags().StringVar(&gameEditLoaderVersion, "loader-version", "",

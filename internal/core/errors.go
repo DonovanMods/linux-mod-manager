@@ -342,7 +342,8 @@ func AuthRequiredSource(err error) string {
 var ErrNotAMod = adapter.ErrNotAMod
 
 // LoaderRequiredError refuses a mod that needs a mod loader the game does
-// not declare (#359).
+// not have - neither declared nor installed where lmm can see it (#359,
+// #424).
 //
 // It is a PLAN-time precondition, not a dependency: the DependencyResolver
 // orders mods within a profile, and the loader is not in the profile - it
@@ -353,10 +354,11 @@ var ErrNotAMod = adapter.ErrNotAMod
 // which is the hardest kind of failure to diagnose.
 //
 // The requirement is inferred from the archive's SHAPE - an archive that
-// names the directory `BepInEx` is a BepInEx mod (bepinex_layout.go) - which
-// is why it fires only where lmm is certain. A Thunderstore source will
-// later infer it from the package's own dependency strings
-// ("BepInEx-BepInExPack-5.4.2100") as well.
+// names the directory `BepInEx` is a BepInEx mod, which the bepinex
+// adapter's archive claim decides (adapter_claim.go) - which is why it fires
+// only where lmm is certain. A Thunderstore source infers it from the
+// package's own dependency strings ("BepInEx-BepInExPack-5.4.2100") as well
+// (loader_source_requirement.go, #409).
 //
 // It follows this file's convention: Details() any puts the whole thing in
 // the --json error envelope's "details" (Ruling 3), so `lmm serve`'s failed

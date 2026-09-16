@@ -3,7 +3,7 @@
 // "where the bytes came from".
 //
 // The seam already existed before this package - spelled three different
-// ways and hung off the wrong noun. adapter.MergeCompiler made compilation a
+// ways and hung off the wrong noun. source.MergeCompiler made compilation a
 // property of a source, so an Icarus .pak downloaded from NexusMods could
 // not compile; archive layout was a bool parameter threaded through core;
 // .EXMODZ's wrapper strip lived inside a format parser. Each is really a
@@ -78,10 +78,12 @@ type NormalizeRequest struct {
 	// On the archive-import path it is derived from the archive's own
 	// shape BEFORE any rewrite, and the plan and the ingest derive it the
 	// same way, so an adapter that consults it lays the same tree out on
-	// both sides. It is EMPTY on the download path, where the mod's name
-	// comes from its source rather than from the archive - an adapter
-	// that names a directory after the mod must tolerate that and fall
-	// back to a name it can derive from Members.
+	// both sides. On the download path (and verify's re-layout) it is the
+	// name the mod's SOURCE gives it, which is also the name `lmm list`
+	// shows - the archive's shape cannot supply one there (#413). It can
+	// still be empty for a source that names nothing, so an adapter that
+	// names a directory after the mod must tolerate that and fall back to
+	// a name it can derive from Members.
 	ModName string
 	// Members are the archive's members: SLASH-separated, archive-relative,
 	// files only, and SORTED - core normalises once, at the seam. An
@@ -306,8 +308,15 @@ type Verifier interface {
 }
 
 // GuidanceNote is one piece of launch/bootstrap advice an adapter offers
-// for a game - the text `lmm game list`, `lmm verify` and the web game card
-// render after their own output.
+// for a game.
+//
+// No frontend renders one yet: no core flow asks an adapter for its
+// Guidance, so a note an adapter returns reaches nobody today (#413 review
+// F3). The design's frontend pass (§5 of
+// docs/plans/2026-09-10-game-adapter-design.md) puts them on `lmm game list
+// --json`, after `lmm verify`'s summary and on the web game card, and has
+// to land in both frontends at once. BepInEx's own setup advice reaches
+// users through core's LoaderStatus in the meantime.
 type GuidanceNote struct {
 	// Title is the note's one-line heading.
 	Title string
@@ -328,7 +337,7 @@ type Guide interface {
 // cross-mod table merge - a whole-pak last-wins deploy would silently drop
 // one mod's table rows whenever two mods patch the same table).
 //
-// It was adapter.MergeCompiler until U2 (#412), which is the mistake #353
+// It was source.MergeCompiler until U2 (#412), which is the mistake #353
 // exists to correct: compilation was a property of WHERE THE BYTES CAME
 // FROM, so an Icarus .pak downloaded from NexusMods could not compile while
 // the same file from Project Daedalus could. It is a property of the GAME,
