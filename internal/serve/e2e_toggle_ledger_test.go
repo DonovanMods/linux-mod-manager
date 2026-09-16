@@ -519,15 +519,22 @@ func TestE2E_LibraryBatch_ARowTheBatchOwesStaysPendingUntilItsOwnJob(t *testing.
 	assert.EqualValues(t, 1, wire.toggles.Load(), "and its button sends nothing either")
 
 	wire.releaseToggles()
-	awaitJobsOver(t, f, wire, map[string]bool{"a": true, "b": true})
-	assert.EqualValues(t, 2, wire.toggles.Load(), "one job per mod: the batch's two, and nothing else")
-
+	// Every wait below is on an event, never on the server looking idle:
+	// Beta already reads enabled, so "no job running and both enabled" is
+	// true in the gap after Alpha's job ends and before the batch sends
+	// Beta's start - a gap a loaded machine stretches.
+	awaitToggleRequests(t, &wire.toggles, 2)
 	var settled e2eRowToggleState
 	runWithin(t, f, 20*time.Second,
+		// The page has heard Beta's job end...
 		pollUntil(toastSaysJS("Enabled 2/2")),
 		pollUntil(noRowPendingJS),
 		chromedp.Evaluate(libraryRowStateJS("Beta Mod"), &settled),
 	)
+	// ...so the server has finished it, and the batch has nothing left to
+	// send.
+	awaitJobsOver(t, f, wire, map[string]bool{"a": true, "b": true})
+	assert.EqualValues(t, 2, wire.toggles.Load(), "one job per mod: the batch's two, and nothing else")
 	assert.True(t, settled.Checked, "the box agrees with the server")
 	assert.False(t, settled.Disabled, "and is the user's again")
 	assert.Empty(t, f.BrowserErrors())
