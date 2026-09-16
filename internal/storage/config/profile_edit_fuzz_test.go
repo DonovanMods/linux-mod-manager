@@ -195,9 +195,7 @@ func assertMarkerEdit(t *testing.T, data []byte, e textEdit) {
 		old := string(rest[:e.length])
 		assert.NotContains(t, old, "#")
 		assert.False(t, strings.ContainsAny(old, " \t\r\n\u0085\u2028\u2029"), "replaced %q", old)
-		key := bytes.TrimRight(before, " \t")
-		assert.Less(t, len(key), len(before), "a value follows its key's colon after a space")
-		assert.True(t, bytes.HasSuffix(key, []byte(":")), "replaced text after %q", key)
+		assert.True(t, valueFollowsKey(before), "replaced text is not a value right after its key: %q", before)
 
 	case e.text == ", disabled: true" || e.text == " disabled: true":
 		// Inside a flow mapping, right before its closing brace.
@@ -220,6 +218,31 @@ func assertMarkerEdit(t *testing.T, data []byte, e textEdit) {
 			assert.Equal(t, brk, lastBreak(before), "at the end of the file, the way the last line break does")
 		}
 	}
+}
+
+// valueFollowsKey reports whether a value may start right after before: its
+// key's colon, then white space - on the same line, or on later lines with
+// only blank lines and comments in between (third fuzzing run: `{disabled:`
+// with its value on the next line).
+func valueFollowsKey(before []byte) bool {
+	text := string(before)
+	if text != "" && !endsInBreak(before) && !strings.ContainsAny(text[len(text)-1:], " \t") {
+		return false // the value would touch whatever precedes it on its line
+	}
+	lines := strings.FieldsFunc(text, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\u0085' || r == '\u2028' || r == '\u2029'
+	})
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue // blank, or a comment, between the key and its value
+		}
+		if at := strings.Index(line, " #"); at >= 0 {
+			line = strings.TrimSpace(line[:at])
+		}
+		return strings.HasSuffix(line, ":")
+	}
+	return false
 }
 
 func endsInBreak(b []byte) bool {
@@ -252,4 +275,20 @@ func lastBreak(b []byte) string {
 		}
 	}
 	return "\n"
+}
+
+func TestValueFollowsKey(t *testing.T) {
+	for before, want := range map[string]bool{
+		"  - source_id: s\n    disabled: ":          true,
+		"  - {disabled: ":                           true,
+		"mods:\n  - {disabled:\n":                   true,
+		"    disabled:\n      ":                     true,
+		"    disabled: # why\n\n    # more\n      ": true,
+		"    disabled:":                             false,
+		"    source_id: s\n    ":                    false,
+		"    note: x\n":                             false,
+		"":                                          false,
+	} {
+		assert.Equal(t, want, valueFollowsKey([]byte(before)), "%q", before)
+	}
 }
