@@ -227,7 +227,12 @@ which is also the web's answer to `lmm search --refresh`), `--all` is
 `POST /api/v1/indexes/prune` behind the **Prune unused indexes** preview and
 its "also remove indexes a game uses" control; `-y` has no browser meaning,
 since the preview IS the confirmation. The Setup section that holds them is
-now titled "Sources".
+now titled "Sources". One recorded exception: `--source` has no web
+counterpart - the prune and the listing always cover every source that
+keeps an index, and with Thunderstore the only such source there is nothing
+to narrow (the route would gain a `source` field the day a second one
+ships). The holds `lmm source index` prints (when lmm will next ask a held
+host) are the listing's `holds`, shown on the same card.
 
 The epic re-review's own N-7 named two further omissions — `--version` and `lmm game add
 --game-id` — that the polish wave closed rather than left as exceptions (#326): the running

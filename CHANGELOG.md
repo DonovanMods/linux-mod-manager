@@ -702,15 +702,29 @@ game edit`) prints it once.
   these under an `lmm cache` command lmm does not have; they live beside the
   index instead.
 
-  Pruning is fail-closed: nothing is removed if `games.yaml` cannot be read,
-  and only `--all` removes anything when there is no `games.yaml` at all; no
-  unused index is removed while a game maps Thunderstore to an identifier
-  lmm cannot use; an index refreshed after the prune decided to remove it is
-  kept; and a directory is removed only when it holds nothing but the files
-  lmm wrote there, checked and removed through a directory handle, never
-  through a symbolic link - a symlinked `_thunderstore` root refuses the
-  whole prune. The web UI shows any index a prune could not remove, and why. Every index is a copy of a
-  public catalogue, so anything removed is rebuilt by the next search.
+  Pruning is fail-closed. Nothing is removed if `games.yaml` cannot be
+  read, and only `--all` removes anything when `games.yaml` is missing,
+  empty, or holds something lmm cannot read as a game - a mistyped key, a
+  game indented out of its block, or a game whose profiles exist but which
+  the file does not list - and the games lmm loaded when it started count as
+  in use too. No unused index is removed while a game maps Thunderstore to
+  an identifier lmm cannot use, and an index refreshed after the prune
+  decided to remove it is kept. A directory is removed only when every file
+  in it is provably lmm's - the exact name a build gives it and the content
+  that build writes, so a `.index-my-backup.json` of your own is kept - and
+  only through a directory handle, never through a symbolic link (the
+  index lock included), and never when lmm has no permission to remove it,
+  which the dry run already says. Indexes under a symlinked `_thunderstore`
+  directory are listed, with the reason, and never removed. A run that
+  could not remove an index it set out to exits 1; the web UI shows every
+  index a confirmed prune could not remove or kept after all, and why, and
+  its prune request must name the indexes it confirms. Every index is a
+  copy of a public catalogue, so anything removed is rebuilt by the next
+  search.
+
+  While lmm is holding Thunderstore off, `lmm source index`, `--all` and the
+  Setup page say until when and why, without asking it; the search page
+  shows an index failure's reason and when to try again.
 
   The web UI's Setup page (the tab is now "Sources") lists the same indexes
   with a **Refresh index** button per used index and a **Prune unused
@@ -732,8 +746,10 @@ game edit`) prints it once.
   asking for that category or tag (`lmm search --tag NSFW`, or the search
   page's tag filter) is the opt-in - the default Thunderstore's own clients
   ship. The `Deprecated` category is now filterable the same way. Neither
-  word matches as ordinary search text. Existing indexes are rebuilt once,
-  on the next search, to pick the flag up.
+  word matches as ordinary search text. A search that finds nothing only
+  because the filter hid every match says so, and so does `lmm install
+<query>`. Existing indexes are rebuilt once, on the next search, to pick
+  the flag up.
 
 - **A search served from a Thunderstore index that could not be refreshed
   says so (#410).** The results still come from the copy on disk, and a
@@ -1526,22 +1542,37 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 - **A rate-limited or stalled download no longer looks like a hang
   (#436).** Every command now says what it is waiting on, on stderr: "Rate
-  limited by Thunderstore; retrying in 12s (attempt 2 of 3).", "Not asking
+  limited by Thunderstore; retrying in 12s (attempt 2 of 3).", "The transfer
+  from Thunderstore stalled; retrying in 1s (attempt 2 of 3).", "Not asking
   Thunderstore again until 12:04:30 (in 4m30s).", and the one-time "Building
   the Thunderstore index for … (one-time)..." - which `lmm import`'s
-  scan-mode matching and `lmm install` now print too, not only `lmm search`.
-  In the web UI the same sentence is the progress text of the job that is
-  waiting. A server's `Retry-After` is now honoured as the least lmm waits
-  (it was jittered below it, so a throttled request came back early), in
-  either of its two forms, including on the last attempt. For the
-  Thunderstore index, a wait longer than a minute is not slept through but
-  refused at once, naming when lmm will ask again, and nothing is sent to
-  Thunderstore before then; a mod download told to wait that long fails at
-  once, naming the wait. A transfer that stops delivering bytes now fails
-  as stalled - after 30 seconds for the Thunderstore index, a minute for a
-  mod download - instead of holding for the index's ten-minute ceiling, or,
-  for a download, forever: the download client had no timeout at all. A
-  stalled download is retried like any dropped connection. Thunderstore
+  scan-mode matching, `lmm install` and `lmm verify --fix` now print too,
+  not only `lmm search`; a scan whose lookups could not be made says so
+  without `--verbose`. In the web UI the same sentence is the progress text
+  of the job that is waiting. A server's `Retry-After` is now honoured as
+  the least lmm waits (it was jittered below it, so a throttled request came
+  back early), in either of its two forms, including on the last attempt,
+  and read as at most a day however large it is.
+
+  For the Thunderstore index, more than a minute of waiting in one request
+  is not slept through but refused at once, naming when lmm will ask again,
+  and nothing is sent to Thunderstore before then - by that command or any
+  later one, `lmm serve` included: the hold is kept on disk beside the
+  indexes. A throttle or a server error holds every community; a community
+  whose own document is missing or unreadable is held on its own ("Not
+  asking Thunderstore about <community> again until …"), and three failed
+  requests in a row trip either, across processes. A mod download told to
+  wait more than a minute fails at once, naming the wait.
+
+  A transfer that stops delivering bytes now fails as stalled - after 30
+  seconds for the Thunderstore index, a minute for a mod download - instead
+  of holding for the index's ten-minute ceiling, or, for a download,
+  forever: the download client had no timeout at all. A stalled download is
+  retried like any dropped connection, and a stall is reported as the
+  failure it is - exit 1, with a `--json` error document - never as a
+  cancellation, including over HTTP/2, which is what thunderstore.io speaks.
+  The download changes apply to every source's downloads (NexusMods,
+  CurseForge, custom sources), not only Thunderstore's. Thunderstore
   publishes no rate limit for the endpoints lmm uses; what the retry policy
   rests on instead is recorded in `internal/source/thunderstore`'s package
   documentation.
