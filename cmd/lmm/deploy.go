@@ -30,22 +30,23 @@ var deployCmd = &cobra.Command{
 Use this when changing deployment methods (symlink, hardlink, copy)
 or if mod files need to be refreshed.
 
-Without a mod ID, deploys all enabled mods in the current profile. A mod
-the profile marks ` + "`disabled: true`" + ` is not deployed. Deploy is not a converge
-run, so it never takes files down: if such a mod's files are still in the
-game directory, deploy leaves them there and names the mod - 'lmm profile
-apply' is what removes them.
+Without a mod ID, deploys all enabled mods in the current profile.
 With a mod ID, deploys only that specific mod; -s/--source then identifies
 which source that mod ID belongs to - it resolves automatically when the
 game has exactly one configured source, or prompts interactively when it
 has several. -s is ignored when deploying the whole profile.
 
+A mod the profile marks ` + "`disabled: true`" + ` is not deployed. Deploy is not a
+converge run, so it never takes files down: if such a mod's files are still
+in the game directory, deploy leaves them there and names the mod, and
+'lmm profile apply' is what removes them.
+
 Use --purge to remove all deployed mods before deploying. This ensures
 a clean slate, useful when mods have gotten out of sync.
 
 Use --all to deploy all mods including disabled ones (e.g., after a purge).
-It is a one-off: the next converge run ('lmm profile apply' or 'lmm profile
-switch') takes down again any mod the profile marks disabled.
+It is a one-off: the next converge run ('lmm profile apply' or 'lmm
+profile switch') takes down again any mod the profile marks disabled.
 
 Use --dry-run to print what the deploy would do - which mods, which files,
 what a --purge pass would remove first - without changing anything.

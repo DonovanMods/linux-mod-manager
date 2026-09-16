@@ -24,11 +24,19 @@ game has exactly one configured source, or prompts interactively when it
 has several. -s is ignored when deploying the whole profile.
 
 .PP
+A mod the profile marks \fBdisabled: true\fR is not deployed. Deploy is not a
+converge run, so it never takes files down: if such a mod's files are still
+in the game directory, deploy leaves them there and names the mod, and
+\&'lmm profile apply' is what removes them.
+
+.PP
 Use --purge to remove all deployed mods before deploying. This ensures
 a clean slate, useful when mods have gotten out of sync.
 
 .PP
 Use --all to deploy all mods including disabled ones (e.g., after a purge).
+It is a one-off: the next converge run ('lmm profile apply' or 'lmm
+profile switch') takes down again any mod the profile marks disabled.
 
 .PP
 Use --dry-run to print what the deploy would do - which mods, which files,
@@ -48,7 +56,7 @@ Examples:
 
 .SH OPTIONS
 \fB-a\fP, \fB--all\fP[=false]
-	deploy all mods including disabled ones
+	deploy all mods including disabled ones (the next 'lmm profile apply' or 'lmm profile switch' takes down any the profile marks disabled)
 
 .PP
 \fB--dry-run\fP[=false]
