@@ -19,6 +19,14 @@ installed in the target profile (-p/--profile, default: active profile)
 are marked [installed].
 
 .PP
+A source that searches a LOCAL copy of its catalogue (Thunderstore) builds
+that copy on the first search - a one-time wait of a few seconds, announced
+on stderr - and refreshes it every six hours. --refresh rebuilds it before
+searching, for a package published in the last few hours. Thunderstore
+packages flagged NSFW are left out unless you ask for them with
+--tag NSFW (or --category NSFW); --tag Deprecated finds deprecated ones.
+
+.PP
 Use --category and --tag to filter results; support varies by source.
 --category is honored by NexusMods and CurseForge; --tag is currently
 NexusMods only. Custom sources (directory/manifest/API) ignore both.
@@ -56,6 +64,10 @@ Examples:
 .PP
 \fB-p\fP, \fB--profile\fP=""
 	profile to check for installed mods (default: active profile)
+
+.PP
+\fB--refresh\fP[=false]
+	rebuild a locally cached source index (Thunderstore) before searching
 
 .PP
 \fB-s\fP, \fB--source\fP=""

@@ -6,7 +6,11 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/spf13/cobra"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -17,9 +21,12 @@ import (
 // coldIndexSource is a source that answers Search from a local index it
 // builds on the first query - Thunderstore's shape, without importing it.
 type coldIndexSource struct {
-	id       string
-	present  bool
-	packages int
+	id        string
+	present   bool
+	packages  int
+	searches  int
+	refreshes int
+	forced    bool
 }
 
 func (s *coldIndexSource) ID() string      { return s.id }
@@ -29,10 +36,16 @@ func (s *coldIndexSource) ExchangeToken(context.Context, string) (*source.Token,
 	return nil, source.ErrNotSupported
 }
 
-func (s *coldIndexSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
-	// The build happens inside Search, which is the whole reason the notice
-	// has to be printed before it.
+func (s *coldIndexSource) Search(ctx context.Context, q source.SearchQuery) (source.SearchResult, error) {
+	// The build happens inside Search, and the source announces it - as the
+	// real Thunderstore source does (#436) - through whatever observer the
+	// command put on the context.
+	if !s.present {
+		source.Notify(ctx, source.Notice{Kind: source.NoticeIndexBuilding, Source: "Thunderstore", GameID: q.GameID})
+		source.Notify(ctx, source.Notice{Kind: source.NoticeIndexBuilt, Source: "Thunderstore", GameID: q.GameID, Packages: 50707, Elapsed: 4100 * time.Millisecond})
+	}
 	s.present, s.packages = true, 50707
+	s.searches++
 	return source.SearchResult{
 		Mods:       []domain.Mod{{ID: "RugbugRedfern-Skinwalkers", SourceID: s.id, Name: "Skinwalkers"}},
 		TotalCount: 1,
@@ -65,9 +78,16 @@ func (s *coldIndexSource) IndexStatus(_ context.Context, sourceGameID string) (s
 	}, nil
 }
 
-func (s *coldIndexSource) RefreshIndex(_ context.Context, sourceGameID string, _ bool, _ source.IndexProgressFunc) (source.IndexStatus, error) {
+func (s *coldIndexSource) RefreshIndex(_ context.Context, sourceGameID string, force bool, progress source.IndexProgressFunc) (source.IndexStatus, error) {
+	s.refreshes++
+	s.forced = force
+	if progress != nil {
+		progress(source.FetchPhaseStarted, "fetching the Thunderstore index for "+sourceGameID, 0)
+		progress(source.FetchPhaseProgress, "indexed 1000 packages", 1)
+		progress(source.FetchPhaseDone, "indexed 50707 packages for "+sourceGameID, 0)
+	}
 	s.present, s.packages = true, 50707
-	return source.IndexStatus{GameID: sourceGameID, Present: true, Packages: 50707}, nil
+	return source.IndexStatus{GameID: sourceGameID, Present: true, Packages: 50707, Bytes: 239075328}, nil
 }
 
 // newColdIndexService wires a real Service and game around src.
@@ -112,17 +132,82 @@ func captureStderr(t *testing.T, fn func()) string {
 // community index, and a user staring at a blank terminal has nothing to
 // tell them why. The notice names the source and the index being built -
 // and goes to stderr, so `--json` still writes exactly one document.
+//
+// The SOURCE announces the build (#436), and the command's context prints
+// it: withServiceOpts gives every command that context.
 func TestSearchAnnouncesAColdIndexBuildOnStderr(t *testing.T) {
 	src := &coldIndexSource{id: "thunderstore"}
 	svc, game := newColdIndexService(t, src)
 	withSearchFlags(t, "", 10)
 
 	stderr := captureStderr(t, func() {
-		require.NoError(t, doSearch(t.Context(), svc, game, []string{"skinwalkers"}))
+		require.NoError(t, doSearch(withSourceNotices(t.Context()), svc, game, []string{"skinwalkers"}))
 	})
 
-	assert.Contains(t, stderr, "Building the Thunderstore index for lethal-company (one-time)...")
-	assert.Contains(t, stderr, "Indexed 50707 packages in ")
+	assert.Equal(t, "Building the Thunderstore index for lethal-company (one-time)...\nIndexed 50707 packages in 4.1s.\n", stderr,
+		"announced once, not once by the source and again by the command")
+}
+
+// TestSourceNoticesArePrintedForEveryCommand pins the wiring that makes the
+// line above reach `lmm import`'s scan-mode matching, `lmm install` and
+// every other command without a line of their own (T1 review #8): the
+// context withServiceOpts hands a command prints notices to stderr.
+func TestSourceNoticesArePrintedForEveryCommand(t *testing.T) {
+	setupSourceManageTest(t)
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+
+	stderr := captureStderr(t, func() {
+		require.NoError(t, withServiceOpts(cmd, app.Options{}, func(ctx context.Context, _ *core.Service) error {
+			source.Notify(ctx, source.Notice{
+				Kind: source.NoticeRetry, Source: "Thunderstore", Reason: source.RetryRateLimited,
+				Attempt: 2, MaxAttempts: 3, Wait: 12 * time.Second,
+			})
+			return nil
+		}))
+	})
+	assert.Equal(t, "Rate limited by Thunderstore; retrying in 12s (attempt 2 of 3).\n", stderr)
+}
+
+// TestSearchRefreshRebuildsTheIndexFirst is `lmm search --refresh`: the
+// index is rebuilt, forced, before the search asks it anything, and what
+// happened is said on stderr.
+func TestSearchRefreshRebuildsTheIndexFirst(t *testing.T) {
+	src := &coldIndexSource{id: "thunderstore", present: true, packages: 50707}
+	svc, game := newColdIndexService(t, src)
+	withSearchFlags(t, "", 10)
+	origRefresh := searchRefresh
+	searchRefresh = true
+	t.Cleanup(func() { searchRefresh = origRefresh })
+
+	stdout, stderr, err := captureStdoutAndStderr(t, func() error {
+		return doSearch(withSourceNotices(t.Context()), svc, game, []string{"skinwalkers"})
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, src.refreshes)
+	assert.True(t, src.forced, "--refresh skips the TTL")
+	assert.Equal(t, 1, src.searches)
+	assert.Contains(t, stderr, "Fetching the Thunderstore index for lethal-company...")
+	assert.Contains(t, stderr, "Thunderstore index for lethal-company")
+	assert.NotContains(t, stderr, "indexed 1000 packages", "progress ticks are not printed one by one")
+	assert.Contains(t, stdout, "RugbugRedfern-Skinwalkers")
+}
+
+// TestSearchRefreshLeavesOtherSourcesAlone: a source with no index has
+// nothing to refresh, and --refresh must not turn that into an error.
+func TestSearchRefreshLeavesOtherSourcesAlone(t *testing.T) {
+	spy := &pageSizeSpySource{id: "spy-refresh"}
+	svc, game := newPageSizeSpyService(t, spy)
+	withSearchFlags(t, "", 10)
+	origRefresh := searchRefresh
+	searchRefresh = true
+	t.Cleanup(func() { searchRefresh = origRefresh })
+
+	stderr := captureStderr(t, func() {
+		require.NoError(t, doSearch(t.Context(), svc, game, []string{"query"}))
+	})
+	assert.Empty(t, strings.TrimSpace(stderr))
+	assert.Equal(t, 1, spy.calls)
 }
 
 // TestSearchSaysNothingAboutAWarmIndex keeps the notice from becoming
@@ -133,7 +218,7 @@ func TestSearchSaysNothingAboutAWarmIndex(t *testing.T) {
 	withSearchFlags(t, "", 10)
 
 	stderr := captureStderr(t, func() {
-		require.NoError(t, doSearch(t.Context(), svc, game, []string{"skinwalkers"}))
+		require.NoError(t, doSearch(withSourceNotices(t.Context()), svc, game, []string{"skinwalkers"}))
 	})
 	assert.NotContains(t, stderr, "Building")
 	assert.NotContains(t, stderr, "Indexed")
@@ -166,7 +251,7 @@ func TestSearchJSONKeepsOneDocumentOnStdout(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = origJSON })
 
 	stdout, stderr, err := captureStdoutAndStderr(t, func() error {
-		return doSearch(t.Context(), svc, game, []string{"skinwalkers"})
+		return doSearch(withSourceNotices(t.Context()), svc, game, []string{"skinwalkers"})
 	})
 	require.NoError(t, err)
 
