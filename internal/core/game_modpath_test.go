@@ -236,3 +236,26 @@ func TestGameModPathInUseError_Wire(t *testing.T) {
 	err := &core.GameModPathInUseError{GameID: "g1", ModPath: "/games/g1/mods", DeployedFiles: 3}
 	assert.Equal(t, "3 file(s) are deployed under /games/g1/mods, and lmm records each one relative to the mod_path; run `lmm purge --game g1` first, then change the mod_path, then run `lmm deploy --game g1`", err.Error())
 }
+
+// TestVerify_AMissingModPathUnderDeployedModsIsAWarning: a game whose
+// mod_path has gone while lmm has mods to deploy there says so - with the
+// repair - rather than leaving the user to infer it from the rows the
+// missing directory causes. A never-deployed game's absent directory is
+// ordinary (a deploy creates it), so an empty profile says nothing.
+func TestVerify_AMissingModPathUnderDeployedModsIsAWarning(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := seedModPathGame(t, svc, false)
+
+	report, err := svc.VerifyReport(t.Context(), game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(report.Result, "mod_path_missing"), "nothing installed, nothing to say")
+
+	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{"plugin.dll": []byte("x")})
+	report, err = svc.VerifyReport(t.Context(), game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	row := findingWithStatus(report.Result, "mod_path_missing")
+	require.NotNil(t, row, "%v", findingStatuses(report.Result))
+	assert.Equal(t, core.ModPathProblem(game).Error(), row.Note)
+	assert.False(t, row.Fixable)
+	assert.GreaterOrEqual(t, report.Result.Warnings, 1)
+}

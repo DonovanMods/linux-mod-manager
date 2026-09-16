@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -628,6 +629,7 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	result.HasFiles = len(files) > 0
 	result.Mods, result.Unverified = verifyScope(installedMods, files, opts.ModFilter)
 	r.emitEv(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles, Mods: result.Mods})
+	r.modPathPass(installedMods)
 
 	if !result.HasFiles {
 		// #269: an all-external profile has no checksummed files at all, so
@@ -807,6 +809,29 @@ func (r *verifyRun) externalPresencePass(installedMods []domain.InstalledMod) er
 		}, VerifyEvent{})
 	}
 	return nil
+}
+
+// modPathPass reports a mod_path that is not a directory while the profile
+// has enabled mods lmm deploys there (#427): the rows that missing
+// directory causes do not say what is wrong, and ModPathProblem's sentence
+// names the repair. A profile with nothing to deploy says nothing - an
+// absent directory is where a never-deployed game starts, and a deploy
+// creates it - and --fix does not move a mod_path, so the row is never
+// fixable.
+func (r *verifyRun) modPathPass(installedMods []domain.InstalledMod) {
+	if !slices.ContainsFunc(installedMods, func(m domain.InstalledMod) bool { return m.Enabled && !m.External }) {
+		return
+	}
+	problem := ModPathProblem(r.game)
+	if problem == nil {
+		return
+	}
+	r.result.Warnings++
+	r.finding(VerifyFinding{
+		Status:        "mod_path_missing",
+		Note:          problem.Error(),
+		FixableReason: "--fix does not move a mod_path - the note names the command that does",
+	}, VerifyEvent{})
 }
 
 // verifyScope counts the installed mods a run covers (those ModFilter

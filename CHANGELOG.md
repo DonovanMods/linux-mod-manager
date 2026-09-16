@@ -1596,7 +1596,9 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   `{game_id, mod_path, reason, suggested_mod_path}`. On the wire, the game
   documents (`lmm game list/show --json`, `lmm status --json`,
   `GET /api/v1/games`, `/games/{id}`, `/status`) and the detect listing gain
-  an optional `mod_path_error`.
+  an optional `mod_path_error`. `lmm verify` (and the web Health card)
+  reports a `mod_path_missing` warning with the same sentence once the
+  profile has mods to deploy there.
 
 - **lmm processes starting together on a new installation no longer fail
   with "database is locked" (#453).** Switching a brand-new database file

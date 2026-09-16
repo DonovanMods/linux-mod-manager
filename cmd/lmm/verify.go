@@ -181,7 +181,9 @@ status is one of "ok", "missing", "no_checksum",
 "file_count_mismatch", "skipped", "version_mismatch",
 "version_unverifiable", "stale_compile", "stale_deployment",
 "fixed_stale_deployment", "conversion_failed", "needs_reingest",
-"fixed_needs_reingest", "external_missing", or one of the loader tier's own rows -
+"fixed_needs_reingest", "external_missing", "mod_path_missing" (the
+game's mod_path is not a directory while it has mods to deploy - a
+warning whose note names the repair), or one of the loader tier's own rows -
 "loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
 "loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
 "fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",
@@ -509,6 +511,10 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		// #168/#212 - FileID carries the deployed path (convergeDeployedFiles
 		// reports per-path, not per-mod-file).
 		fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("?"), f.FileID, f.Note)
+
+	case "mod_path_missing":
+		// #427: the game's mod_path is gone; the note names the repair.
+		fmt.Printf("%s mod_path - %s\n", colorYellow("?"), f.Note)
 
 	case "external_missing":
 		// #269/#429: counted as an issue, and until this arm printed

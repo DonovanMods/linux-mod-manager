@@ -203,3 +203,22 @@ func TestAdapterWarning_TheLoadTimeLineIsShort(t *testing.T) {
 	assert.Contains(t, stdout, "exactly as packaged", "game show still carries the whole explanation")
 	assert.Contains(t, stdout, "lmm game edit lethal-company --adapter bepinex", "and the remedies")
 }
+
+// TestDoVerify_SaysTheModPathIsMissing: verify names the missing mod_path
+// and its repair, once the game has a mod to deploy there (#427).
+func TestDoVerify_SaysTheModPathIsMissing(t *testing.T) {
+	svc, game := setupMissingModPathGame(t)
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "m1", SourceID: "nexusmods", Name: "Mod One", Version: "1.0", GameID: game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
+	}))
+	oldProfile, oldFix := verifyProfile, verifyFix
+	verifyProfile, verifyFix = "default", false
+	t.Cleanup(func() { verifyProfile, verifyFix = oldProfile, oldFix })
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	assert.Contains(t, lineContaining(out, "? mod_path - "), missingModPathRepair)
+	assert.Contains(t, out, "1 warning(s)")
+}
