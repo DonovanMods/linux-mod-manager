@@ -28,7 +28,13 @@ import (
 //     record" would be false. Neither EnableMod nor DisableMod checks
 //     cancellation anywhere else - they are single-step flows with no
 //     cancel-drain contract - so there is nothing for this to report it to
-//     either.
+//     either. Accepted consequence (fix-round nit): a GENUINE write failure
+//     that happens to coincide with a cancellation is reported as neither,
+//     because completeProfileWrite has already replaced the write's error
+//     with the ctx's. Distinguishing the two would mean threading both
+//     errors back out of completeProfileWrite for a case that needs a
+//     cancellation to land in the same instant as an unwritable profile
+//     file; the next enable/disable of that mod records the intent again.
 func (s *Service) recordProfileDisabled(ctx context.Context, gameID, profileName, sourceID, modID string, disabled bool) string {
 	pm := s.NewProfileManager()
 	err := completeProfileWrite(ctx, func(ctx context.Context) error {
@@ -128,7 +134,20 @@ func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName,
 	}
 
 	if mod.Enabled {
-		return &EnableResult{}, nil
+		// #431 self-heal, the mirror of disableMod's already-disabled path
+		// below, and for the same reason: a document that says off over a
+		// row that says on is the drift `profile import --force`,
+		// `snapshot restore`, a hand-edited profile and an explicit `lmm
+		// install` all produce, and docs/configuration.md prescribes THIS
+		// command as the way back from it. Clearing the marker before the
+		// short-circuit is what makes that true: the early return used to
+		// leave the document still saying off, so the recovery reported
+		// success and the next converge run took the mod away again.
+		result := &EnableResult{}
+		if msg := s.recordProfileDisabled(ctx, game.ID, profileName, sourceID, modID, false); msg != "" {
+			result.Notes = append(result.Notes, msg)
+		}
+		return result, nil
 	}
 
 	if !s.GetGameCache(game).Exists(game.ID, sourceID, modID, mod.Version) {
