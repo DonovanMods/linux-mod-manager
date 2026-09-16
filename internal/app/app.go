@@ -61,11 +61,15 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 	// later open, and on any installation that does not owe it. Core prints
 	// its own notice, on the same WarnWriter this passes it.
 	//
-	// A failure is a warning, never a refusal: the intent it records is
-	// already recorded in the database, so a mutation lock another lmm
-	// process is holding must not stop lmm from starting. Same channel and
-	// same reasoning as the source warnings above; the next open, or this
-	// process's first mutation, finishes the job.
+	// Nothing here may stop lmm from starting. Core only tries the
+	// mutation lock, never waits for it (another lmm mid-mutation leaves
+	// the job to the next mutation or open), and turns every per-file or
+	// per-row problem - an editor panic included - into a skipped profile
+	// in its own notice. What is left (the database itself failing) is a
+	// warning, never a refusal: the intent it records is already recorded
+	// in the database. Same channel and same reasoning as the source
+	// warnings above; the next open, or this process's first mutation,
+	// finishes the job.
 	if _, err := svc.BackfillProfileDisabledMarkers(ctx); err != nil {
 		_, _ = fmt.Fprintf(warnWriter(opts), "warning: could not record mods disabled before this upgrade in their profiles: %v\n", err) //nolint:errcheck // best-effort warning write
 	}

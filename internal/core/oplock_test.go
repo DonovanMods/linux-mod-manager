@@ -133,7 +133,7 @@ func TestAcquireOpLock_ContentionRespectsContextCancellation(t *testing.T) {
 	time.AfterFunc(100*time.Millisecond, cancel)
 
 	started := time.Now()
-	lock, err := acquireOpLock(ctx, lockPath)
+	lock, err := acquireOpLock(ctx, lockPath, opLockWait)
 	waited := time.Since(started)
 
 	require.Error(t, err)

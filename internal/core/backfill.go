@@ -148,6 +148,15 @@ func pendingProfileKey(gameID, profile string) string {
 // kept only when no readable profile is the explicit default, and marked on
 // repair only if it then turns out to be the one.
 //
+// NOTHING HERE MAY STOP LMM (fix round 3). This runs before every command,
+// so every failure that belongs to one file or one row degrades to a
+// skipped profile and a diagnostic naming it: a file the editor cannot or
+// will not edit, a bug in the editor itself (a panic, recovered at
+// markModsDisabled), a row whose game or profile no file can be named after
+// (F3). An open never waits for the lock, either (F5): if another lmm holds
+// it, the next mutation - which discharges an owed backfill inside its own
+// slot before it runs - or the next uncontended open does the work.
+//
 // RESIDUAL (by design). The obligation is discharged by a durable marker,
 // so it is never re-derived: a disable made after that - by an older lmm
 // still running across the upgrade (usually `lmm serve`), or after a
@@ -171,7 +180,15 @@ func (s *Service) BackfillProfileDisabledMarkers(ctx context.Context) (*ProfileB
 		return nil, nil
 	}
 
-	release, err := s.acquireOp(ctx)
+	// Only ever TRY the lock (F5): every command opens through here, and
+	// another lmm mid-mutation must not make a read-only one wait, or warn,
+	// on every run. The next mutation discharges the backfill in its own
+	// slot, before it runs; the next uncontended open does too.
+	release, err := s.tryAcquireOp(ctx)
+	if errors.Is(err, ErrOperationInProgress) {
+		s.logger().Debug("profile backfill: the mutation lock is held; leaving the backfill to the next mutation or open", "error", err)
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

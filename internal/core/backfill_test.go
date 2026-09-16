@@ -912,3 +912,64 @@ func TestBackfillProfileDisabledMarkers_OneGamesFailureDoesNotStopTheOthers(t *t
 	require.NoError(t, err)
 	assert.Equal(t, []string{"profile_disabled_backfill:g0/default"}, slices.Collect(maps.Keys(owed)))
 }
+
+// TestBackfillProfileDisabledMarkers_AnOpenNeverWaitsForTheLock is fix
+// round 3's F5. The backfill at app.Open took the cross-process lock with a
+// mutation's bounded wait, so while another lmm held it, every read-only
+// command stalled two seconds and printed a warning - on every run, for as
+// long as a changed pending profile, or the whole obligation, stayed owed.
+// An open only ever tries the lock; a mutation's own slot, or the next
+// uncontended open, does the work.
+func TestBackfillProfileDisabledMarkers_AnOpenNeverWaitsForTheLock(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("the whole obligation", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		f.owe(t)
+
+		release := holdOpLock(t, f.lockPath)
+		started := time.Now()
+		report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
+		require.NoError(t, err)
+		assert.Nil(t, report)
+		assert.Less(t, time.Since(started), 500*time.Millisecond)
+		assert.Empty(t, f.warnings.String())
+		assert.Empty(t, f.disabledRefs(t, "a"))
+		release()
+
+		report, err = f.svc.BackfillProfileDisabledMarkers(ctx)
+		require.NoError(t, err)
+		require.Len(t, report.Marked, 1)
+	})
+
+	t.Run("a changed pending profile", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		dir := filepath.Dir(f.profilePath("a"))
+		require.NoError(t, os.Chmod(dir, 0o555))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+		f.owe(t)
+		report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
+		require.NoError(t, err)
+		require.Len(t, report.Skipped, 1)
+
+		require.NoError(t, os.Chmod(dir, 0o755)) // repaired...
+		f.warnings.Reset()
+		release := holdOpLock(t, f.lockPath) // ...while another lmm is busy
+		for range 2 {
+			started := time.Now()
+			report, err = f.svc.BackfillProfileDisabledMarkers(ctx)
+			require.NoError(t, err)
+			assert.Nil(t, report)
+			assert.Less(t, time.Since(started), 500*time.Millisecond)
+		}
+		assert.Empty(t, f.warnings.String())
+		release()
+
+		report, err = f.svc.BackfillProfileDisabledMarkers(ctx)
+		require.NoError(t, err)
+		require.Len(t, report.Marked, 1)
+		assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+	})
+}
