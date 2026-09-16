@@ -357,10 +357,30 @@ func (s *Service) AdapterName(game *domain.Game) string {
 // install directory. A nil game says nothing, so every caller can ask
 // without a guard.
 func hasBepInEx(game *domain.Game) bool {
+	return hasLoader(game, domain.LoaderKindBepInEx)
+}
+
+// hasLoader is hasBepInEx for a loader kind named at runtime (a source's
+// requirement, an adapter's claim): the game declares kind, or - for
+// BepInEx, the one loader lmm can recognise on disk - the loader is
+// installed in its directory.
+//
+// It is the ONE "does this game have the loader" test (#413 review F6).
+// Adapter resolution asked declared-or-installed while the two loader
+// requirements asked the declaration alone, so a game whose BepInEx was
+// installed but undeclared was told to go and install it - by the source's
+// precondition before a download the resolved bepinex adapter would have
+// laid out correctly, and by the archive claim under an explicit adapter.
+// Kind is compared the way DeclaresLoader compares it.
+func hasLoader(game *domain.Game, kind string) bool {
 	if game == nil {
 		return false
 	}
-	return game.DeclaresBepInEx() || regularFileAt(game.InstallPath, domain.BepInExPreloaderPath)
+	if game.DeclaresLoader(kind) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(kind), domain.LoaderKindBepInEx) &&
+		regularFileAt(game.InstallPath, domain.BepInExPreloaderPath)
 }
 
 // icarusAdapterID and bepinexAdapterID are the adapters core's two

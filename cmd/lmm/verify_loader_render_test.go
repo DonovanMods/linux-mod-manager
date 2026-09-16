@@ -25,6 +25,8 @@ func TestRenderVerifyFinding_LoaderTierRowsArePrinted(t *testing.T) {
 	}{
 		{status: "loader_missing", want: "loader - no plugin will load"},
 		{status: "loader_stale_log", want: "loader - launch the game once"},
+		// #413 review F5: a game with BepInEx on another adapter.
+		{status: "loader_adapter_ignored", want: "loader - game \"valheim\" declares the BepInEx loader, but its adapter is \"generic-files\""},
 		{status: "loader_deployed_outside_loader", modName: "Jotunn", want: "Jotunn - 2 file(s) sit outside BepInEx/, including an assembly"},
 		{status: "fixed_loader_deployed_outside_loader", modName: "Jotunn", want: "Fixed: Jotunn - re-laid out 2 file(s)"},
 	} {

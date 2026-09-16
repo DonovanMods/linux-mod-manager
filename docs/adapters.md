@@ -87,7 +87,7 @@ temp directory:
 ```go
 type NormalizeRequest struct {
     Game    *domain.Game // never mutated
-    ModName string       // may be EMPTY on the download path (the name comes from the source)
+    ModName string       // the mod's name: from the archive on import, from the source on download
     Members []string     // slash-separated, archive-relative, files only, SORTED
 }
 ```
@@ -141,7 +141,7 @@ adapter.
 | `FileRouter` | `RouteFile(g, rel) FileRoute` | `bepinex` | decides link / copy-once / skip, per deployable file |
 | `ArchiveClaimer` | `ClaimArchive(members) (Claim, error)` | `bepinex` | refuses an archive that is unmistakably ANOTHER kind of game's |
 | `Verifier` | `Verify(ctx, req) ([]Finding, error)` | `bepinex` | appends adapter findings to `lmm verify`'s result |
-| `Guide` | `Guidance(g) []GuidanceNote` | `bepinex` | setup/bootstrap advice |
+| `Guide` | `Guidance(g) []GuidanceNote` | `bepinex` | *(not rendered yet — see below)* |
 | `MergeCompiler` | 11 methods | `icarus` | the whole merged-artifact compile path |
 | `Preconditioner` | `CheckPreconditions(g, mods) error` | *(none yet)* | refuses a flow before it starts |
 
@@ -257,6 +257,15 @@ directory's own Unity markers — and a second copy of a string whose wrong
 value leaves a game that launches perfectly and loads nothing is not worth
 the duplication. The note names `lmm game show <game>` instead.
 
+**No frontend renders `Guidance` yet.** The capability and its `bepinex`
+implementation exist, but no core flow asks for them, so nothing an adapter
+returns here reaches a user today. BepInEx's own setup advice reaches them
+through `LoaderStatus` instead — `lmm game show`'s loader section and the
+web UI's loader panel — which already covers the same three states. Wiring
+`Guidance` into `lmm game list --json`, `lmm verify` and the web game card
+is the design's frontend pass (§5 of the design document) and has to land
+in both frontends at once.
+
 ### MergeCompiler
 
 The 11-method contract a game whose mods must merge into ONE profile-level
@@ -310,6 +319,19 @@ for, while the preloader on disk is a fact lmm can read. An explicit
 `adapter:` always wins over both — so `loader: kind: bepinex` with
 `adapter: generic-files` is a legitimate "record the loader, but treat this
 game's archives as plain files."
+
+Legitimate, but never silent. Such a game gets none of the BepInEx rules —
+a package's `manifest.json` lands in the game directory, and its
+`BepInEx/config` files are linked from the shared mod cache — so lmm says
+so, naming the fix for that configuration: when it loads `games.yaml` (for a
+declared loader), in `lmm game show`'s loader report, as a
+`loader_adapter_ignored` warning in `lmm verify`, and on the plan or
+download of any archive the `bepinex` rules would have laid out. The same
+holds for a `deploy_mode: compile` game that declares the loader, since that
+key selects `icarus`. "Has BepInEx" means the same declared-or-installed
+test in every one of those places, and in the loader requirement a source
+or an archive claim makes: BepInEx installed in the game directory
+satisfies it exactly as a declaration does.
 
 ### `mod_path`
 

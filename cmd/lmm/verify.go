@@ -177,9 +177,10 @@ sweep found appears. status is one of "ok", "missing", "no_checksum",
 "fixed_needs_reingest", or one of the loader tier's own rows -
 "loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
 "loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
-"fixed_loader_plugin_unlinked", "loader_deployed_outside_loader" and
-"fixed_loader_deployed_outside_loader", each of which carries its whole
-sentence in note; note adds detail where there's something extra to
+"fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",
+"fixed_loader_deployed_outside_loader" and "loader_adapter_ignored" (a game
+with BepInEx whose adapter is another one), each of which carries its
+whole sentence in note; note adds detail where there's something extra to
 say - a blocked cache rename, sibling-repair results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
@@ -421,7 +422,7 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 	}
 }
 
-// loaderFindingStatuses are the loader tier's own statuses (#359, #424) -
+// loaderFindingStatuses are the loader tier's own statuses (#359, #424, #413) -
 // the rows renderVerifyLoaderFinding prints, mapped to the marker each one
 // deserves. A row NOT in this table prints nothing, which is the switch's
 // pre-existing behaviour for a status the CLI does not know.
@@ -441,6 +442,7 @@ var loaderFindingStatuses = map[string]string{
 	"loader_plugin_unlinked":               "X",
 	"loader_deployed_outside_loader":       "X",
 	"loader_stale_log":                     "?",
+	"loader_adapter_ignored":               "?",
 	"fixed_loader_plugin_unlinked":         "+",
 	"fixed_loader_deployed_outside_loader": "+",
 }

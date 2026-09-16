@@ -15,6 +15,7 @@ package core_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -191,3 +192,20 @@ func TestPlanInstall_ASourceWithNothingQuotableStillRefuses(t *testing.T) {
 
 // assertAnError is a stand-in failure for "the source could not answer".
 var assertAnError = source.ErrIndexUnavailable
+
+// TestPlanInstall_AnInstalledLoaderSatisfiesTheRequirement is #413 review
+// F6: the loader lmm can SEE in the install directory answers the
+// requirement exactly as a declaration does - the same two-source rule that
+// resolves the bepinex adapter for this game (#424). Refusing it told a
+// user whose BepInEx is already installed to go and install it, before a
+// download the adapter would have laid out correctly (with the notice that
+// names the declaration command).
+func TestPlanInstall_AnInstalledLoaderSatisfiesTheRequirement(t *testing.T) {
+	svc, game, src := newLoaderRequiringService(t, nil)
+	bepinexInstall(t, game.InstallPath, "", domain.LoaderBootstrapUnknown, time.Time{})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "thunderstore", "RugbugRedfern-Skinwalkers", false)
+	require.NoError(t, err)
+	assert.Equal(t, "RugbugRedfern-Skinwalkers", plan.Mod.ID)
+	assert.Positive(t, src.asked, "the source was still asked; its answer is satisfied, not skipped")
+}

@@ -33,13 +33,26 @@ import (
 
 // archiveLayout asks game's adapter how members should be laid out inside
 // the cache entry. modName may be empty when the caller has not derived one
-// yet (the download path names the mod from its source, not its archive).
+// yet.
+//
+// The answer also carries design decision 11's per-archive warning when the
+// game has BepInEx but another adapter (loaderBypassNote), so every caller
+// that surfaces Layout.Warnings - the import plan, the download's event
+// stream - says it without a second channel.
 func (s *Service) archiveLayout(game *domain.Game, modName string, members []string) (adapter.Layout, error) {
 	a, err := s.AdapterFor(game)
 	if err != nil {
 		return adapter.Layout{}, err
 	}
-	return a.NormalizeArchive(adapter.NormalizeRequest{Game: game, ModName: modName, Members: slashMembers(members)})
+	members = slashMembers(members)
+	layout, err := a.NormalizeArchive(adapter.NormalizeRequest{Game: game, ModName: modName, Members: members})
+	if err != nil {
+		return adapter.Layout{}, err
+	}
+	if note := s.loaderBypassNote(game, modName, members); note != "" {
+		layout.Warnings = append(layout.Warnings, note)
+	}
+	return layout, nil
 }
 
 // slashMembers normalises a member list into the form
@@ -551,6 +564,11 @@ func (i *Importer) layoutExtracted(game *domain.Game, modName, root string) (ada
 	layout, err := i.adapter.NormalizeArchive(adapter.NormalizeRequest{Game: game, ModName: modName, Members: members})
 	if err != nil {
 		return adapter.Layout{}, fmt.Errorf("laying out %s: %w", modName, err)
+	}
+	if i.bypassNote != nil {
+		if note := i.bypassNote(game, modName, members); note != "" {
+			layout.Warnings = append(layout.Warnings, note)
+		}
 	}
 	if !layout.Applies() {
 		return layout, nil

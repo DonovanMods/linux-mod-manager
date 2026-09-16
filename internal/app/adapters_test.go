@@ -7,8 +7,10 @@ package app
 // where each switch is thrown, and these are the tests that prove it was.
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -90,4 +92,39 @@ func TestRegisterAdapters_PlainGameStaysGeneric(t *testing.T) {
 	assert.Equal(t, adapter.GenericID, a.ID())
 	_, canCompile := adapter.Compiler(a)
 	assert.False(t, canCompile)
+}
+
+// TestOpen_WarnsAboutALoaderBlockTheAdapterIgnores is design decision 11's
+// load-time warning (#413 review F5), end to end through the composition
+// root: a games.yaml whose loader game names another adapter is reported on
+// the warning channel every time lmm opens it - once per game, and not at
+// all for a game whose adapter is the loader's.
+func TestOpen_WarnsAboutALoaderBlockTheAdapterIgnores(t *testing.T) {
+	cfgDir := t.TempDir()
+	gameDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, "games.yaml"), []byte(`games:
+  valheim:
+    name: Valheim
+    install_path: `+gameDir+`
+    mod_path: `+gameDir+`
+    adapter: generic-files
+    loader:
+      kind: bepinex
+  lethal-company:
+    name: Lethal Company
+    install_path: `+gameDir+`
+    mod_path: `+gameDir+`
+    loader:
+      kind: bepinex
+`), 0o644))
+
+	var warn bytes.Buffer
+	svc, err := Open(t.Context(), Options{ConfigDir: cfgDir, DataDir: t.TempDir(), WarnWriter: &warn})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	out := warn.String()
+	assert.Equal(t, 1, strings.Count(out, "declares the BepInEx loader"), "one warning, for the one bypassing game: %q", out)
+	assert.Contains(t, out, `warning: game "valheim" declares the BepInEx loader, but its adapter is "generic-files"`)
+	assert.NotContains(t, out, `"lethal-company"`, "a game resolving to bepinex is configured correctly")
 }

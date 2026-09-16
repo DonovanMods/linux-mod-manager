@@ -58,14 +58,16 @@ func (s *Service) requireAdapterClaim(game *domain.Game, modName string, members
 	if claimant == nil || claim.Requires == "" {
 		return nil
 	}
-	// A game that already DECLARES the loader the claim asks for has
-	// nothing to be told. That is a real state rather than a contradiction:
-	// the user may have pointed the game at a different adapter on purpose
-	// (design decision 11 - `loader:` describes the installation, the
-	// adapter decides what lmm does about it), and refusing their import
-	// over a requirement their own configuration already states would be
-	// lmm arguing with itself.
-	if game.DeclaresLoader(claim.Requires) {
+	// A game that already HAS the loader the claim asks for - declared, or
+	// installed where lmm can see it (hasLoader, the same test adapter
+	// resolution uses) - is not refused. That is a real state rather than
+	// a contradiction: the user may have pointed the game at a different
+	// adapter on purpose (design decision 11 - `loader:` describes the
+	// installation, the adapter decides what lmm does about it), and
+	// telling them to install a loader that is already there would be
+	// wrong. It is not silent either: archiveLayout carries the decision-11
+	// warning for exactly this archive (loaderBypassNote).
+	if hasLoader(game, claim.Requires) {
 		return nil
 	}
 	return newLoaderRequirement(game, modName, claim.Requires, "", claim.Evidence)

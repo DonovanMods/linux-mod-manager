@@ -22,7 +22,7 @@ import (
 )
 
 // requireSourceDeclaredLoader refuses a mod whose own SOURCE says it needs a
-// mod loader the game does not declare.
+// mod loader the game does not have.
 //
 // Three deliberate non-failures:
 //
@@ -33,9 +33,11 @@ import (
 //     refusing over a question lmm could not ask would make an unreachable
 //     source look like a misconfigured game. The adapter's archive claim at
 //     ingest is the second line of defence, and it sees the real bytes.
-//   - A game that declares the loader installs normally - and the
-//     BepInExPack dependency itself is never resolved as a mod, because the
-//     source drops it from GetDependencies outright (design §3.4).
+//   - A game that HAS the loader installs normally - declared, or installed
+//     where lmm can see it (hasLoader, #413 review F6), which is the same
+//     test that resolves the bepinex adapter for it - and the BepInExPack
+//     dependency itself is never resolved as a mod, because the source
+//     drops it from GetDependencies outright (design §3.4).
 func (s *Service) requireSourceDeclaredLoader(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod) error {
 	src, err := s.GetSource(sourceID)
 	if err != nil {
@@ -49,7 +51,7 @@ func (s *Service) requireSourceDeclaredLoader(ctx context.Context, sourceID stri
 	if err != nil || !required || kind == "" {
 		return nil
 	}
-	if game.DeclaresLoader(kind) {
+	if hasLoader(game, kind) {
 		return nil
 	}
 	return newLoaderRequirement(game, mod.Name, kind, version, sourceLoaderEvidence(kind, dependency))

@@ -72,6 +72,22 @@ func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
 		return
 	}
 
+	// Design decision 11 (#413 review F5): a game with BepInEx whose
+	// adapter is another one gets none of the adapter's rules or checks,
+	// and verify is where a user looks to find out why. A WARNING - the
+	// state is allowed - and not fixable, because the fix is a games.yaml
+	// edit lmm does not make on the user's behalf. The rest of the tier
+	// still runs: the loader is there, so whether it ran is still worth
+	// asking.
+	if b, ok := r.svc.bepinexBypass(r.game); ok {
+		r.result.Warnings++
+		r.finding(VerifyFinding{
+			Status:        "loader_adapter_ignored",
+			Note:          b.configWarning(),
+			FixableReason: "the fix is an edit to this game's configuration, which --fix does not make",
+		}, VerifyEvent{})
+	}
+
 	// #424: the misplaced-deployment check asks about the archive LAYOUT
 	// rules, which the gate turns on for a game whose BepInEx lmm can see
 	// as well as one that declares it - and the undeclared game is exactly

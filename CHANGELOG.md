@@ -319,17 +319,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   statement of intent lmm asks for while the loader's own preloader on disk
   is a fact lmm can read. `games.yaml` is not rewritten either way.
 
-  Two user-visible improvements come out of the move. A BepInEx game's
-  seeded `BepInEx/config/**` files are now safe on **every** path that
-  deploys a mod rather than only on some: they are written once, never
-  overwritten by a later deploy or a version update, and never removed by
-  an uninstall, a profile switch or a purge — which previously held only
-  when lmm had a database row to check and, under `copy`/`hardlink`
-  deploys, could go the other way. And the "this archive needs a mod
-  loader your game does not have" refusal is no longer BepInEx-specific
-  machinery in the core: any adapter can claim an archive as unmistakably
-  its own, so the next loader lmm learns about is refused for the right
-  reason with no change to the engine.
+  Nothing changes for a correctly configured BepInEx game. Its seeded
+  `BepInEx/config/**` files are still written once, never overwritten by a
+  later deploy or a version update, and never removed by an uninstall, a
+  profile switch or a purge; what changed is only how that is guaranteed —
+  the adapter now routes those files away from the linker, where before
+  the database's file-ownership check was what kept the removal loops off
+  them. Likewise, the "this archive needs a mod loader your game does not
+  have" refusal is no longer BepInEx-specific machinery in the core: any
+  adapter can claim an archive as unmistakably its own, so the next loader
+  lmm learns about is refused for the right reason with no change to the
+  engine.
+
+  **A game with BepInEx that names another adapter is told so (#413).**
+  `loader:` describes the installation and `adapter:` decides what lmm does
+  about it, so a game can carry both with the adapter pointing elsewhere —
+  an explicit `adapter: generic-files`, or `deploy_mode: compile`, which
+  selects the Icarus adapter. Such a game gets none of the BepInEx rules: a
+  Thunderstore package's `manifest.json` lands in the game directory, a
+  plugin stays wherever its archive put it, and a `BepInEx/config` file is
+  linked from the shared mod cache instead of copied once. That stays
+  allowed — a half-configured game is a real state — but it is no longer
+  silent. lmm warns when it opens a `games.yaml` whose `loader:` block the
+  adapter ignores, and says the same in `lmm game show`'s loader section
+  (and the web UI's loader panel), in `lmm verify`, and on the import plan
+  or download of any archive the BepInEx rules would have laid out — each
+  time naming the fix that applies to that game's configuration.
+
+  **BepInEx installed in the game directory satisfies a loader requirement,
+  exactly as a declaration does (#413).** It already selected the adapter;
+  the two loader preconditions now agree with it. A Thunderstore package
+  depending on `BepInExPack` installs into such a game (with the notice that
+  names `lmm game edit <game> --loader bepinex`) instead of being refused
+  with advice to install the loader that is already there, and an archive
+  imported into it under another adapter is warned about rather than
+  refused.
 
   `lmm verify`'s loader tier reports exactly what it did — a missing
   preloader, a declared version the installation contradicts, bootstrap
@@ -421,8 +445,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it is there and whether it ran.
 
 - **A plugin will not be deployed into a game that has no loader (#359).**
-  A BepInEx-shaped archive installed into a game declaring no loader now
-  fails at plan time with the setup steps — install the right build, record
+  A BepInEx-shaped archive installed into a game with no loader — none
+  declared, and none installed in its directory (#424) — now fails at plan
+  time with the setup steps — install the right build, record
   it with `lmm game edit --loader`, then check it — instead of putting a DLL
   somewhere nothing will load it from and reporting success. The steps travel
   as data, so `lmm install`, `lmm install --json` and the web UI's failed job
@@ -500,11 +525,11 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   precondition, not installed as a mod (#409).** It is the BepInEx loader: it
   lives in the game root and has to survive a profile switch, so installing it
   into a profile would tear it out from under every plugin at the next
-  uninstall. Installing a package that needs it into a game with no `loader:`
-  block is now refused **before the download**, with the same three setup steps
-  #359 prints for an archive, plus the loader version the package asked for.
-  On a game that declares the loader the dependency is already satisfied and
-  the install proceeds. Every other dependency resolves through the ordinary
+  uninstall. Installing a package that needs it into a game with no BepInEx —
+  no `loader:` block and none installed in its directory — is now refused
+  **before the download**, with the same three setup steps #359 prints for an
+  archive, plus the loader version the package asked for. On a game that has
+  the loader the dependency is already satisfied and the install proceeds. Every other dependency resolves through the ordinary
   resolver.
 
   **`lmm game detect` knows six communities (#409):** Lethal Company, Valheim,

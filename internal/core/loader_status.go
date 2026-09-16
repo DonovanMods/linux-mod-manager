@@ -235,6 +235,12 @@ func (s *Service) LoaderStatus(_ context.Context, gameID string) (*LoaderStatus,
 	}
 
 	status.Warnings = loaderStatusWarnings(status)
+	// Design decision 11 (#413 review F5): a game whose BepInEx its adapter
+	// never acts on is told so here too, on the report a user reads when
+	// inspecting the game rather than only when importing into it.
+	if b, ok := s.bepinexBypass(game); ok {
+		status.Warnings = append(status.Warnings, b.configWarning())
+	}
 	return status, nil
 }
 
