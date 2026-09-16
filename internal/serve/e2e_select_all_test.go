@@ -183,6 +183,22 @@ func TestE2E_LibrarySelectAll_HonoursTheFilterAndTheKeyboard(t *testing.T) {
 	)
 	assert.Equal(t, "a", afterTyping.Query, "the character reaches the field")
 	assert.Zero(t, afterTyping.Selected, "and selects nothing")
+
+	// Nor does it reach past the slide-over. That panel is a route
+	// annotation rather than a modal - it is not in state.modal, so it needs
+	// its own guard - and a selection quietly changing behind a panel you are
+	// reading is a surprise, not a shortcut.
+	var behindPanel int
+	f.runInBrowser(t,
+		chromedp.Blur(`.omnibar`, chromedp.ByQuery),
+		chromedp.Navigate(f.SlideOverPath("fake", "a")),
+		chromedp.WaitVisible(`.slide-over__nav`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.KeyEvent("a"),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelectorAll(".mod-row--selected").length`, &behindPanel),
+	)
+	assert.Zero(t, behindPanel, "the binding is off while the slide-over covers the table")
 	assert.Empty(t, f.BrowserErrors())
 }
 

@@ -11,7 +11,7 @@
 // exact list this table is showing, so this component now renders `visible`
 // rather than computing it.
 
-import { html, useEffect, useState } from "../render.js";
+import { html, useEffect, useRef, useState } from "../render.js";
 import { navigate } from "../router.js";
 import { ApiError } from "../api.js";
 import {
@@ -241,23 +241,33 @@ export function Library({
   // with a selection to take.
   //
   // Ignored while a text field has focus - "a" is a character someone is
-  // entitled to type into the omnibar - and while a modal is open, for the
-  // reason app.js states: modals stack at most one deep, and reaching past
-  // one to change the page underneath is not something a keystroke should
-  // do. Re-attached whenever what it would select changes, so the handler
-  // never closes over a stale `visible`.
-  const modalOpen = Boolean(state.modal);
+  // entitled to type into the omnibar - and while anything is layered over
+  // the table: a modal, for the reason app.js states (modals stack at most
+  // one deep, and reaching past one to change the page underneath is not
+  // something a keystroke should do), and the slide-over, which is a route
+  // annotation rather than a modal but covers the table just the same. A
+  // selection silently changing behind a panel you are reading is not a
+  // shortcut, it is a surprise.
+  //
+  // The listener is attached ONCE and reads the current handler through a
+  // ref: this component re-renders on every activity frame while a job runs,
+  // and a listener swapped on each of those would be churn for nothing -
+  // while a handler captured on the first render would select against a
+  // `visible` that has since changed.
+  const coveredByOverlay = Boolean(state.modal) || Boolean(state.route?.mod);
+  const selectAllRef = useRef(null);
+  selectAllRef.current = coveredByOverlay ? null : toggleSelectAll;
   useEffect(() => {
     function onKeyDown(e) {
       if (e.key !== "a" || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (modalOpen) return;
+      if (!selectAllRef.current) return;
       if (isTypingTarget(e.target)) return;
       e.preventDefault();
-      toggleSelectAll();
+      selectAllRef.current();
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  });
+  }, []);
 
   // A plain (pushed) navigation, not a replace: opening the slide-over is a
   // new place in history on purpose, so Back closes it (router.js's own
