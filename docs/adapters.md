@@ -304,7 +304,13 @@ carries the remedy to both frontends through the `--json` error envelope's
 `Details()`). The two removal flows, `lmm purge` and `lmm uninstall`, are
 never gated — not by a precondition, and not by an adapter that will not
 resolve: they remove what lmm recorded deploying, and they are the first
-step out of every configuration an adapter refuses.
+step out of every configuration an adapter refuses. Where the adapter will
+not resolve, they remove ONLY what a deployment record names — a path the
+cache entry merely lists, such as a seeded config the user has since
+replaced with a link of their own, stays — and a name that still resolves
+(an adapter refused only for `deploy_mode: compile`) still routes the
+removal, so its never-remove rules hold. Their `--dry-run` names exactly
+the files and the merged artifact the real run removes.
 Nothing ships an implementation yet; it is the seam for the day something
 needs to refuse a flow on facts about the mods it is about to act on, rather
 than about one archive.

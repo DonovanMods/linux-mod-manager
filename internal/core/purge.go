@@ -273,7 +273,7 @@ func (s *Service) PlanPurge(ctx context.Context, game *domain.Game, profileName 
 		Mods:           mods,
 		External:       external,
 		Uninstall:      opts.Uninstall,
-		MergedArtifact: s.mergedArtifactEffectForPurge(game),
+		MergedArtifact: s.mergedArtifactEffectForPurge(ctx, game, profileName),
 		// A removal: the adapter has no say (removalSnapshotOf).
 		snapshot: removalSnapshotOf(installed),
 	}
