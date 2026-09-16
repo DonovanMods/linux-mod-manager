@@ -105,6 +105,13 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
     return html`${header}
       <main id="main" class="app-main search-page">
         <p class="app-booting">Searching…</p>
+        ${
+          matches &&
+          searchPage.indexNotice &&
+          html`<p class="index-notice" data-testid="index-notice">
+            ${searchPage.indexNotice}
+          </p>`
+        }
       </main>`;
   }
 

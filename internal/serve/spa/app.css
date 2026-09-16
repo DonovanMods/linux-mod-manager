@@ -1945,6 +1945,50 @@ select {
   overflow-wrap: anywhere;
 }
 
+/* issue 423: a loader refusal's setup steps - an ordered list of the same
+ * sentences the terminal prints, under a line naming the loader. */
+.loader-setup {
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+}
+
+.loader-setup__title {
+  margin: 0 0 var(--space-1);
+  color: var(--text-primary);
+}
+
+.loader-setup__steps {
+  margin: 0;
+  padding-left: 1.5rem;
+}
+
+.loader-setup__step + .loader-setup__step {
+  margin-top: var(--space-1);
+}
+
+/* issue 436: when a refusing source will be asked again. */
+.error-details__retry {
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+}
+
+/* issue 410: the Setup page's local-index rows - the prune preview's own
+ * readout sits under the table like the editor's validation report. */
+.source-indexes__preview {
+  margin-top: var(--space-3);
+}
+
+.source-indexes__preview-list {
+  margin: var(--space-2) 0;
+  padding-left: 1.5rem;
+}
+
+/* The search page's and the omnibar's one-time index build notice. */
+.index-notice {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+}
+
 /* The tool's own output, for a failure lmm could not classify - the same
  * tail the terminal prints under its error line. */
 .job-progress__tool-output {

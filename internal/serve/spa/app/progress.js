@@ -31,6 +31,9 @@ const phasePrefixes = [
   ["sync_", ""],
   ["relink_", ""],
   ["snapshot_", ""],
+  // issue 436: what a source is waiting on - "Retrying" and "Suspended",
+  // with core's own sentence as the detail.
+  ["source_", ""],
 ];
 
 /**

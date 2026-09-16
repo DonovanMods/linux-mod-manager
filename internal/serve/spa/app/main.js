@@ -15,6 +15,7 @@ import {
   documentTitle,
 } from "./router.js";
 import { currentTheme, setTheme } from "./theme.js";
+import { coldIndexNotice } from "./indexnotice.js";
 import {
   get,
   scoped,
@@ -600,6 +601,17 @@ async function searchSources(query) {
   store.set({
     omnibarSearch: { status: "loading", query: q, report: null, error: null },
   });
+  noteColdIndexes(
+    context.game,
+    null,
+    () => {
+      const current = store.get().omnibarSearch;
+      return omnibarSeq === seq && current?.status === "loading"
+        ? current
+        : null;
+    },
+    (next) => store.set({ omnibarSearch: next }),
+  );
   try {
     const report = await apiSearch(q, { limit: OMNIBAR_FANOUT_LIMIT }, context);
     if (omnibarSeq !== seq) return;
@@ -702,6 +714,17 @@ async function runSearchPage({
       facets,
     },
   });
+  noteColdIndexes(
+    context.game,
+    source || null,
+    () => {
+      const current = store.get().searchPage;
+      return searchPageSeq === seq && current?.status === "loading"
+        ? current
+        : null;
+    },
+    (next) => store.set({ searchPage: next }),
+  );
   try {
     const report = await apiSearch(
       q,
@@ -747,6 +770,21 @@ async function runSearchPage({
       },
     });
   }
+}
+
+/**
+ * noteColdIndexes looks up, in the background, whether the search just
+ * started will have to build a local index first (indexnotice.js), and if
+ * so puts the sentence on the still-loading slice. pending returns that
+ * slice while it is still the same loading search (or null once it is not),
+ * and update writes it back - so a notice can never land on a later search
+ * or a finished one. Never awaited: the search does not wait for it.
+ */
+function noteColdIndexes(game, onlySource, pending, update) {
+  coldIndexNotice(game, onlySource).then((notice) => {
+    const current = pending();
+    if (notice && current) update({ ...current, indexNotice: notice });
+  });
 }
 
 /** splitTags turns the tag field's raw text into the repeated ?tag= values

@@ -103,7 +103,10 @@ func (s *Source) inspect(community string) source.CachedIndex {
 			ci.FetchedAt = time.Unix(wm.FetchedAt, 0).UTC()
 		}
 	}
-	if _, _, usable := s.usable(community); usable {
+	// The cheap check, not the full one: a listing reads every index on
+	// disk and must not parse each one's row table to say so. A torn index
+	// that passes it is still refused by the next search's full check.
+	if _, ok := s.store.state(community); ok {
 		ci.Present = true
 	}
 	return ci

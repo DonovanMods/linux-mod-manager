@@ -24,7 +24,8 @@ import {
 } from "../progress.js";
 import { useJobResultTally } from "../jobresult.js";
 import { OverwriteButton } from "./tray.js";
-import { explainerFor } from "../failures.js";
+import { explainerFor, loaderSetupFor } from "../failures.js";
+import { LoaderSetup } from "./errordetails.js";
 
 /**
  * InlineJob renders children when origin has no job, and that job's live
@@ -106,6 +107,10 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   // search result the user clicked. Dismissing it puts the Install action
   // straight back: nothing about this failure hides the button.
   const explainer = failed ? explainerFor(summary) : null;
+  // Issue 423: a loader refusal's setup steps render where the failure is
+  // shown, for the same reason - "Failed: needs BepInEx" alone leaves the
+  // user with the one sentence that says nothing about what to do.
+  const loader = failed ? loaderSetupFor(summary?.error?.details) : null;
   // I3, unit 6 fix wave: a batch job's own `state` is "succeeded" even when
   // every item inside it failed (progress.js#resultTally's own doc
   // comment) - the tone class follows the TALLY, not the bare state, for
@@ -113,7 +118,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   const tone = !failed && tally ? resultTallyTone(tally) : state;
   return html`
     <div
-      class="job-progress job-progress--${tone} ${explainer ? "job-progress--explained" : ""}"
+      class="job-progress job-progress--${tone} ${explainer || loader ? "job-progress--explained" : ""}"
       data-job=${jobID}
       data-state=${state}
       role="status"
@@ -144,6 +149,12 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
       >
         ✕
       </button>
+      ${
+        loader &&
+        html`<div class="job-progress__explainer">
+          <${LoaderSetup} loader=${loader} />
+        </div>`
+      }
       ${
         explainer &&
         html`<p

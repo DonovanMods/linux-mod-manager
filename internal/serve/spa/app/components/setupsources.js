@@ -1,4 +1,6 @@
-// setupsources.js - the Setup page's Custom sources section (issue 333):
+// setupsources.js - the Setup page's Sources section (issue 333): the
+// custom-source editor below, and the local search indexes (issue 410,
+// sourceindexes.js) under it. The editor half:
 // list every source the process knows about (including load errors,
 // task-A2's own wire note), a YAML editor for a new or existing definition
 // (validate -> save), delete with an inline confirm, and a download of the
@@ -10,6 +12,7 @@
 // is still what actually refuses a removal a game maps, naming the games.
 
 import { html, useEffect, useState } from "../render.js";
+import { SourceIndexes } from "./sourceindexes.js";
 import {
   ApiError,
   listSources,
@@ -159,6 +162,7 @@ export function SetupSources({ onChanged } = {}) {
         `
       }
     </div>
+    <${SourceIndexes} />
   `;
 }
 

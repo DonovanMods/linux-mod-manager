@@ -26,7 +26,7 @@ import {
   resultTallyTone,
 } from "../progress.js";
 import { useJobResultTally } from "../jobresult.js";
-import { DocumentView } from "./documentview.js";
+import { ErrorDetails } from "./errordetails.js";
 import { nextStepFor } from "../failures.js";
 
 // maxStreamedEvents caps what one expanded entry keeps. core's downloader
@@ -316,7 +316,7 @@ function FailureNextStep({ job, actions }) {
     <div class="tray__failure">
       <p class="tray__failure-message">${envelope.error ?? "failed"}</p>
       <${OverwriteButton} job=${job} actions=${actions} />
-      ${envelope.details && html`<${DocumentView} value=${envelope.details} />`}
+      <${ErrorDetails} details=${envelope.details} />
     </div>
   `;
 }

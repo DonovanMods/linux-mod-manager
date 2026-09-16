@@ -501,6 +501,19 @@ func TestServeJSONGoldens(t *testing.T) {
 			sourceSaveRequest{YAML: "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: ~/mods\n"},
 		},
 		{
+			// #410: POST /api/v1/sources/{id}/index's body - refresh skips
+			// the index TTL, like `lmm source index --refresh`.
+			"source_index_refresh_request",
+			sourceIndexRefreshRequest{Refresh: true},
+		},
+		{
+			// #410: POST /api/v1/indexes/prune's body. only carries a
+			// preview's "source/community" keys, binding the confirmed run
+			// to exactly what the preview listed.
+			"index_prune_request",
+			indexPruneRequest{All: true, Only: []string{"thunderstore/content-warning", "thunderstore/lethal-company"}},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",
