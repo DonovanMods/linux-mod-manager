@@ -292,7 +292,10 @@ deploy --all`, which exists to deploy switched-off mods, still deploys it,
   it would be false, so profile files, exports and every `--json` document
   that carries a mod reference stay byte-identical until you actually
   disable something. Editing it by hand is supported — see
-  [docs/configuration.md](docs/configuration.md#per-mod-keys).
+  [docs/configuration.md](docs/configuration.md#per-mod-keys). A mod a
+  hand edit lists twice is read by its first entry in every command, and
+  lmm writes the marker onto every entry, so a `lmm profile sync` never
+  deletes a marked entry along with an unmarked copy.
 
   **Some mods you had already disabled are recorded once, at upgrade.**
   Their off state lived only in the database, which no converge run reads.
@@ -320,18 +323,22 @@ disable` records them for good.
   tried again once it changes, while every other profile is still recorded.
   That covers a read-only file, an entry it cannot change in place, and a
   failure of the step itself. A profile file the YAML parser itself fails
-  on now reads as unparseable, for every command, rather than crashing lmm.
-  A database row naming a game or profile that no file can have is named
-  and skipped. Nothing in the step can stop lmm from starting, and a
-  command never waits for it: when another lmm is mid-change, the next
-  command that changes something runs the step first. `profile apply` and
-  `profile sync` run it before they plan, and a plan of theirs made before
-  the step recorded a mod in its profile is refused as out of date, so one
-  confirmed earlier cannot undo what the step just recorded. The step runs
-  once per installation, decided by a database migration, and an
-  installation with nothing to record writes nothing. Mods disabled
-  afterwards by an older lmm still running, or after a downgrade, are not
-  recorded.
+  on now reads as unparseable, for every command, rather than crashing lmm
+  (`games.yaml`, `config.yaml` and custom source definitions are not
+  covered yet: #452). A database row naming a game or profile that no file
+  can have is named and skipped. Nothing in the step can stop lmm from
+  starting, and a command never waits for it: when another lmm is
+  mid-change, the next command that changes something runs the step first.
+  `profile apply`, `profile sync` and `profile switch` decide from the
+  marker, so they run the step before they plan, including the retry of a
+  file that has changed since — a switch away from that profile is enough.
+  A plan of theirs made before the step recorded a mod in its profile is
+  refused as out of date, and the refusal says the profile's disabled
+  markers changed, so one confirmed earlier cannot undo what the step just
+  recorded. The step runs once per installation, decided by a database
+  migration, and an installation with nothing to record writes nothing.
+  Mods disabled afterwards by an older lmm still running, or after a
+  downgrade, are not recorded.
 
 - **The game-adapter seam: one `adapter:` key in `games.yaml` (#353, #411).**
   What a game does with mod content — how an archive's files are laid out,
@@ -1278,11 +1285,17 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 ### Fixed
 
 - **lmm processes starting together on a new installation no longer fail
-  with "database is locked".** Switching a brand-new database file into
-  write-ahead-log mode needs the write lock, and SQLite refuses at once,
-  without its usual five-second wait, when another process holds it. So
-  `lmm serve` started beside a CLI command on a fresh installation could
+  with "database is locked" (#453).** Switching a brand-new database file
+  into write-ahead-log mode needs the write lock, and SQLite refuses at
+  once, without its usual five-second wait, when another process holds it.
+  So `lmm serve` started beside a CLI command on a fresh installation could
   kill one of them at startup. That first switch now waits its turn.
+
+- **A refused `lmm import <archive>` no longer blames installed mods.** When
+  the archive or its file conflicts changed between the plan and the
+  import, the refusal read "plan is stale: installed mods changed since it
+  was computed: … changed since the plan was computed". It now names only
+  what changed. A refusal over installed mods reads as before.
 
 - **A mod two profiles share is no longer disabled by switching between
   them (#430).** `lmm profile switch` (and the web UI's "Switch and

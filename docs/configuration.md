@@ -255,6 +255,8 @@ Each entry under `mods` is a mod reference:
 
 `disabled` is the profile's own record of the off state, not just the database's. **A missing `disabled` key means enabled**, so profile files written by earlier versions of lmm are read exactly as before (see [Upgrading: mods disabled before the marker existed](#upgrading-mods-disabled-before-the-marker-existed) for the one-time step that records some of them). It survives `lmm profile export`/`import`, `lmm profile sync`, `lmm profile switch`, `lmm profile apply` and a rebuilt database; a mod newly added to a profile still defaults to enabled. Setting it by hand is supported, and the next converge run acts on it: `lmm profile apply`, or a switch to the profile, undeploys the mod and clears its enabled flag.
 
+A mod listed twice in one profile (lmm never writes that, but a hand edit can) is read by its **first** entry, by every command. `lmm mod enable`, `lmm mod disable` and the upgrade step below write every entry, and `lmm profile sync` never removes an entry marked `disabled` while the mod is still installed, even when it removes an unmarked copy.
+
 `lmm deploy` is not a converge run, and it never takes files down. It does not deploy a mod the profile marks disabled, and neither does the web UI's Deploy button. If that mod's files are still in the game directory, deploy leaves them there and names the mod, pointing at `lmm profile apply` to remove it (`lmm deploy --dry-run` and the web UI's Deploy confirmation say the same). `lmm deploy --mod <mod-id>` refuses such a mod by name. `lmm deploy --all`, which exists to deploy switched-off mods, still deploys it, but only until the next `lmm profile apply` or `lmm profile switch` takes it down again.
 
 Three things clear the marker, and each is a request for that mod:
@@ -269,7 +271,7 @@ Enabling a mod whose files were never downloaded (an imported profile on a fresh
 
 Before the marker existed, a mod you switched off was recorded only in lmm's database, and the profile file said nothing about it. The first `lmm` command after the upgrade records such mods in their profile files, once. Any command does it, a read-only one included, and so does `lmm serve` when it starts. It prints each mod it recorded (game, profile, mod and file) to stderr, followed by the `lmm mod enable <mod-id> --game <game> --source <source> --profile <profile>` command that undoes each one.
 
-A command never waits for this step. If another lmm is in the middle of a change when a command starts, the command skips the step and runs as usual. The next command that changes something does the step first, before its own work, and so does the next command that starts while no change is running. `lmm profile apply` and `lmm profile sync`, which decide from the markers this step writes, do the step before they plan, waiting briefly for the other lmm if they must. A `lmm profile apply` or `lmm profile sync` plan made before the step recorded a mod in its profile (a confirmation still on screen, or a plan open in the web UI) is refused as out of date, and has to be made again.
+A command never waits for this step. If another lmm is in the middle of a change when a command starts, the command skips the step and runs as usual. The next command that changes something does the step first, before its own work, and so does the next command that starts while no change is running. `lmm profile apply`, `lmm profile sync` and `lmm profile switch` (and their web UI actions) decide from the markers this step writes, so they do the step before they plan, waiting briefly for the other lmm if they must. That includes trying again a file the step could not edit earlier, once the file has changed. A plan of theirs made before the step recorded a mod in its profile (a confirmation still on screen, or a plan open in the web UI) is refused as out of date, with a message saying the profile's disabled markers changed, and has to be made again.
 
 It records only what it can be sure of: a mod that is switched off **and** not deployed (what `lmm mod disable` has written since v1.28.0), under the game's active profile, meaning the one profile file that says `is_default: true`. It deliberately leaves everything else unrecorded, because the database cannot tell those mods apart from ones you want on:
 
@@ -279,11 +281,13 @@ It records only what it can be sure of: a mod that is switched off **and** not d
 
 A mod that is not recorded behaves exactly as it did before the upgrade. The next switch into its profile, or `lmm profile apply`, switches it back on, and `lmm profile sync` drops its entry. Run `lmm mod disable` for it once and the marker is written for good.
 
-The upgrade step edits only the one entry. Comments, key order, flow style, indentation, line endings (LF, CRLF or CR) and `~/` paths stay as you wrote them. It writes to the file the profile was read from, and through a symlink it writes to the link's target. If it cannot edit a file, a warning names that file, every other profile is still recorded, and lmm tries that file again once it changes. That happens when:
+The upgrade step edits only the entries it records. Comments, key order, flow style, indentation, line endings (LF, CRLF or CR) and `~/` paths stay as you wrote them. It writes to the file the profile was read from, and through a symlink it writes to the link's target. If it cannot edit a file, a warning names that file, every other profile is still recorded, and lmm tries that file again once it changes (lmm's own rewrites count, so switching away from that profile is enough). That happens when:
 
 - the file is read-only, or its directory is;
 - the entry is laid out in a way the step cannot change in place (for example, its last line ends in a Unicode line or paragraph separator);
 - the step itself fails on that file.
+
+A mod listed twice in the file is recorded on every entry.
 
 A mod whose database row names a game or profile that no file can have is named in a warning and left unrecorded. When there is nothing to record, no file is touched. None of this ever stops lmm from starting, or stops a command from running.
 
