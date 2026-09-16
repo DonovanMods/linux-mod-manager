@@ -17,8 +17,10 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // ProfileApplyPlan is the pure, displayable diff between a profile and the
@@ -37,9 +39,15 @@ type ProfileApplyPlan struct {
 	ToDisable []domain.InstalledMod `json:"to_disable"`
 	// ToEnable is every listed mod that is installed, disabled, NOT marked
 	// disabled in the document, and still cached at its installed version:
-	// deploy it and set its enabled flag. A disabled mod whose cache entry
-	// is GONE cannot be deployed, so it lands in ToInstall instead
-	// (carrying the DB row's own FileIDs).
+	// deploy it, and set its enabled and deployed flags (#467). A disabled
+	// mod whose cache entry is GONE cannot be deployed, so it lands in
+	// ToInstall instead (carrying the DB row's own FileIDs).
+	//
+	// It also holds a listed mod with no row under Profile that another
+	// profile of the game has, at the listed version and fully cached
+	// (cachedRowElsewhere): that row, whose ProfileName is the other
+	// profile's. The apply deploys it from the cache and gives Profile its
+	// own copy of the row, rather than fetching the mod (#445 audit).
 	ToEnable []domain.InstalledMod `json:"to_enable"`
 
 	// ToInstall is the (re)install list, in the order doProfileApply built
@@ -334,6 +342,7 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 	// #371/#269: resolved once, and only if pass 2 actually finds a ref
 	// with no row here - the common apply has nothing to look up.
 	var externalElsewhere map[string]domain.InstalledMod
+	var elsewhere map[string][]domain.InstalledMod
 	for _, ref := range profile.Mods {
 		key := domain.ModKey(ref.SourceID, ref.ModID)
 		if seen[key] {
@@ -370,6 +379,15 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 			// them, nothing else may).
 			entry.Ref.External = true
 			entry.Ref.UpdatedAt = mod.UpdatedAt
+			plan.ToInstall = append(plan.ToInstall, entry)
+			continue
+		}
+		if elsewhere == nil {
+			elsewhere = s.rowsElsewhere(ctx, pm, game.ID, profileName)
+		}
+		if row, ok := cachedRowElsewhere(gameCache, game.ID, ref, elsewhere[key]); ok {
+			plan.ToEnable = append(plan.ToEnable, row)
+			continue
 		}
 		plan.ToInstall = append(plan.ToInstall, entry)
 	}
@@ -439,6 +457,55 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 	// by file name (an extracted archive's members match no
 	// DownloadableFile, so every archive-based mod would redownload).
 	entry.Cached = s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, profileApplyFileIDs(selected))
+}
+
+// rowsElsewhere collects the installed rows of every saved profile of
+// gameID except exceptProfile, keyed by domain.ModKey - best-effort, as
+// externalRowsElsewhere is.
+func (s *Service) rowsElsewhere(ctx context.Context, pm *ProfileManager, gameID, exceptProfile string) map[string][]domain.InstalledMod {
+	rows := make(map[string][]domain.InstalledMod)
+	profiles, _ := pm.List(ctx, gameID)
+	for _, p := range profiles {
+		if p.Name == exceptProfile {
+			continue
+		}
+		mods, _ := s.GetInstalledMods(ctx, gameID, p.Name)
+		for _, im := range mods {
+			key := domain.ModKey(im.SourceID, im.ID)
+			rows[key] = append(rows[key], im)
+		}
+	}
+	return rows
+}
+
+// cachedRowElsewhere picks, from a listed mod's rows in the game's other
+// profiles, one an apply can deploy from the cache and enable here instead
+// of fetching (#445 audit): at the version ref names (any, for a ref with
+// none) and with every file in the cache (pickImportRow, PlanImport's rule,
+// #371). An external row is left to the copy above, and nothing is picked
+// while another version of the mod is live (liveOtherVersion): an enable
+// cannot replace it, so the fetch path handles that as it always has.
+//
+// A local mod has no source to fetch from, so without this an apply of a
+// profile that lists one another profile installed failed - and that
+// apply is how the active profile comes to record a file a v1.30.1 switch
+// left live under another profile's record only, which the mod_path
+// refusal names it for.
+func cachedRowElsewhere(gameCache *cache.Cache, gameID string, ref domain.ModReference, rows []domain.InstalledMod) (domain.InstalledMod, bool) {
+	if len(rows) == 0 {
+		return domain.InstalledMod{}, false
+	}
+	cached := func(row domain.InstalledMod) bool {
+		return gameCache.HasFileIDs(gameID, row.SourceID, row.ID, row.Version, row.FileIDs)
+	}
+	row := pickImportRow(rows, ref, cached)
+	if row.External || (ref.Version != "" && row.Version != ref.Version) || !cached(row) {
+		return domain.InstalledMod{}, false
+	}
+	if _, drift := liveOtherVersion(rows, ref); drift {
+		return domain.InstalledMod{}, false
+	}
+	return row, true
 }
 
 // externalRowsElsewhere collects the EXTERNAL installed rows (#269) of every
@@ -597,8 +664,22 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			note(scope, SwitchEnableNote, fmt.Sprintf("Warning: failed to deploy %s: %v", im.Name, err))
 			continue
 		}
-		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.Profile, true); err != nil {
+		if im.ProfileName != plan.Profile {
+			// Another profile's row (cachedRowElsewhere): this profile gets
+			// its own copy, enabled and deployed, as a switch mints one
+			// (#60) and an import copies one (#371).
+			for _, msg := range s.copyRowToProfile(ctx, game, im, plan.Profile) {
+				warn(scope, SwitchInstallWarning, msg)
+			}
+		} else if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.Profile, true); err != nil {
 			note(scope, SwitchEnableNote, fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err))
+		}
+		// #467: the files are live now, so the row says so - as a switch's
+		// enable loop does, and as this flow's own install loop always did.
+		// A row left at deployed = 0 made a later switch miss this live
+		// version and install another one beside it.
+		if err := s.setModDeployed(ctx, im.SourceID, im.ID, game.ID, plan.Profile, true); err != nil {
+			note(scope, SwitchEnableNote, fmt.Sprintf("Warning: could not mark %s as deployed: %v", im.Name, err))
 		}
 
 		result.Enabled++
@@ -770,4 +851,25 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 	}
 
 	return result, nil
+}
+
+// copyRowToProfile saves row - another profile's - as profile's own,
+// enabled and deployed, with row's checksums (rowChecksums). What goes
+// wrong comes back as messages without a "Warning: " prefix, the form the
+// flow's Warnings take.
+func (s *Service) copyRowToProfile(ctx context.Context, game *domain.Game, row domain.InstalledMod, profile string) []string {
+	checksums, read := s.rowChecksums(ctx, game, row)
+	msgs := make([]string, 0, len(read))
+	for _, msg := range read {
+		msgs = append(msgs, strings.TrimPrefix(msg, "Warning: "))
+	}
+	copied := row
+	copied.ProfileName = profile
+	copied.GameID = game.ID
+	copied.Enabled = true
+	copied.Deployed = true
+	if err := s.saveInstalledMod(ctx, &copied); err != nil {
+		return append(msgs, fmt.Sprintf("could not record %s under %s: %v", row.Name, profile, err))
+	}
+	return append(msgs, s.recordFileChecksums(ctx, row.SourceID, row.ID, game.ID, profile, checksums)...)
 }

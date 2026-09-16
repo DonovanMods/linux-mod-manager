@@ -320,3 +320,8 @@ func (s *Service) ExecForTest(ctx context.Context, query string, args ...any) er
 	_, err := s.db.ExecContext(ctx, query, args...)
 	return err
 }
+
+// GetFileChecksumForTest reads one file's stored checksum for a row.
+func (s *Service) GetFileChecksumForTest(ctx context.Context, sourceID, modID, gameID, profileName, fileID string) (string, error) {
+	return s.db.GetFileChecksum(ctx, sourceID, modID, gameID, profileName, fileID)
+}

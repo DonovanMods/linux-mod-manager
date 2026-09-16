@@ -1647,6 +1647,24 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   Purge does the same. A plan made before the active profile changed is
   refused when applied.
 
+- **`lmm profile apply` deploys a mod another profile already has, rather
+  than fetching it (#445).** A mod the profile lists with no row of its
+  own was fetched from its source even when another profile of the game
+  had it at the listed version in the cache. A local mod has no source, so
+  the apply failed with "source not found: local" — and that apply is the
+  step `lmm game edit --mod-path` names to record a file a v1.30.1 switch
+  left live under another profile's record. Such a mod is now deployed
+  from the cache and the profile gets its own row, with the other row's
+  checksums, as `lmm profile switch` and `lmm profile import` already do. A
+  mod whose listed version is not in the cache, or with another version
+  live, is still fetched.
+
+- **`lmm profile apply` records the mods it switches on as deployed
+  (#467).** Their rows kept saying "not deployed" while the files were
+  live, so a later `lmm profile switch` that moved one of those mods to
+  another version installed it beside the live one instead of replacing
+  it.
+
 - **A profile you are not using keeps its mods (#444).** Every `lmm profile
 switch` marks the profile you leave as having its mods switched off —
   that is how it takes them out of the game directory — and three flows
