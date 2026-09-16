@@ -169,6 +169,15 @@ tree and are compile-time, not plugins: adding one for Unreal, another Unity
 loader or anything else is a package under `internal/adapter/` plus one
 registration line, with a boundary test making sure it stays that way.
 
+A game whose configuration its adapter refuses — an adapter name this build
+does not have, `adapter: bepinex` with a `mod_path` off the game root or with
+`deploy_mode: compile` — is refused by every command that deploys, each with
+the same message naming the way out: `lmm deploy`, `lmm install`,
+`lmm mod enable` (and the web UI's Enable), `lmm verify --fix`'s re-deploy
+repairs, and the rest. `lmm purge`, `lmm uninstall` and `lmm mod disable`
+still run there, removing only what lmm recorded deploying, so taking lmm's
+files back out is always the first step available.
+
 [docs/adapters.md](docs/adapters.md) is the contributor's guide;
 [docs/configuration.md](docs/configuration.md#adapter-gamesyaml) is how you
 choose one for your game.
@@ -2538,7 +2547,11 @@ reporting nine statuses:
 
 Only UNLINKED, DEPLOYED OUTSIDE LOADER and NESTED TREE are `--fix`-able:
 lmm does not install the loader or write Steam launch options, so the
-remedy for the others is the setup `lmm game show` prints.
+remedy for the others is the setup `lmm game show` prints. On a game whose
+adapter lmm refuses, UNLINKED and DEPLOYED OUTSIDE LOADER are reported but
+not repaired either (so is a VERSION MISMATCH, whose repair re-links the
+mod, and a stale merged artifact): each repair would deploy, and the row
+names the refusal and how to fix it.
 
 A locked mod's VERSION MISMATCH is still reported, but `--fix` refuses to
 rewrite a locked mod's record (other, unlocked mods in the same run are

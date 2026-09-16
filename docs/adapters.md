@@ -298,10 +298,14 @@ compile-mode game is a new package plus one registration line, and
 `CheckPreconditions(g, mods) error` refuses a flow before it starts — a
 loader that has to be installed first, a game directory that is not what the
 adapter expects. Core calls it wherever a Plan acquires its freshness
-precondition, so every Plan that deploys is gated by it and none can be
-forgotten, and wraps a refusal into `core.AdapterPreconditionError` (which
-carries the remedy to both frontends through the `--json` error envelope's
-`Details()`). The two removal flows, `lmm purge` and `lmm uninstall`, are
+precondition, and before every deploy that has no Plan — `lmm mod enable`,
+the `lmm verify --fix` repairs that re-link or re-deploy, and the
+merged-artifact rebuild a mutation ends with — so every flow that deploys
+is gated by it and none can be forgotten: a ratchet fails the build for a
+deploy path without the check, and an Installer built for a game whose
+adapter does not resolve deploys nothing at all. It wraps a refusal into
+`core.AdapterPreconditionError` (which carries the remedy to both frontends
+through the `--json` error envelope's `Details()`). The two removal flows, `lmm purge` and `lmm uninstall`, are
 never gated — not by a precondition, and not by an adapter that will not
 resolve: they remove what lmm recorded deploying, and they are the first
 step out of every configuration an adapter refuses. Where the adapter will
