@@ -244,17 +244,10 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		opLockPath: cfg.OpLockPath,
 	}
 
-	// #431: whether the one-time profile-document backfill is owed. One
-	// query here, so every open and every mutation after it can ask an
-	// atomic.Bool instead.
-	owed, err := database.MetaWithPrefix(context.Background(), db.MetaProfileDisabledBackfill)
-	if err != nil {
-		if closeErr := database.Close(); closeErr != nil {
-			return nil, &domain.DeployError{Op: "reading database state", Primary: err, Cleanup: closeErr}
-		}
-		return nil, err
-	}
-	svc.backfillPending.Store(len(owed) > 0)
+	// #431: whether the one-time profile-document backfill is owed, as the
+	// database found it at open - so every open and every mutation after
+	// this can ask an atomic.Bool instead.
+	svc.backfillPending.Store(database.OwesProfileBackfill())
 
 	// Expire the archives a refused ingest kept (retained_download.go).
 	// Here rather than only on the way in to a NEW retention: an entry

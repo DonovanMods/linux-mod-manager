@@ -33,6 +33,11 @@ type DB struct {
 	// anything diagnostic belongs in log.
 	warn io.Writer
 
+	// profileBackfillOwed is whether, when this handle opened, db_meta held
+	// any record of #431's profile-document backfill (see
+	// OwesProfileBackfill).
+	profileBackfillOwed bool
+
 	// path is the database file this handle opened, absolute, or
 	// ":memory:". Kept so an error can name the file the user has to act
 	// on - the credential scrub's "close the other lmm process and try
@@ -161,6 +166,18 @@ func OpenWithOptions(path string, opts Options) (*DB, error) {
 		}
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
+
+	// #431: whether the profile-document backfill is owed, read once here
+	// on the open's own context so core can answer every later mutation
+	// from memory (OwesProfileBackfill).
+	owed, err := database.MetaWithPrefix(openCtx, MetaProfileDisabledBackfill)
+	if err != nil {
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			return nil, fmt.Errorf("%w (closing database: %v)", err, closeErr)
+		}
+		return nil, err
+	}
+	database.profileBackfillOwed = len(owed) > 0
 
 	// #79: any credential still sitting in the clear from a pre-encryption
 	// lmm is re-encrypted here, before anything can read the table. Runs on

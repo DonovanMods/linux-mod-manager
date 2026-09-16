@@ -680,6 +680,7 @@ func TestNew_OwesTheProfileBackfillOnlyForADisabledUndeployedRow(t *testing.T) {
 			value, err := fresh.GetMeta(ctx, db.MetaProfileDisabledBackfill)
 			require.NoError(t, err)
 			require.Empty(t, value, "a fresh database never owes the backfill")
+			require.False(t, fresh.OwesProfileBackfill())
 
 			// An older lmm's database: the rows exist before v17 runs.
 			for i, r := range tt.rows {
@@ -702,6 +703,7 @@ func TestNew_OwesTheProfileBackfillOnlyForADisabledUndeployedRow(t *testing.T) {
 			value, err = upgraded.GetMeta(ctx, db.MetaProfileDisabledBackfill)
 			require.NoError(t, err)
 			assert.Equal(t, tt.owed, value != "")
+			assert.Equal(t, tt.owed, upgraded.OwesProfileBackfill(), "and the handle says so, read at open")
 		})
 	}
 }

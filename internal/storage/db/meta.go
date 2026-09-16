@@ -82,6 +82,16 @@ func (d *DB) MetaWithPrefix(ctx context.Context, prefix string) (map[string]stri
 // any per-profile remainder under the same prefix.
 const MetaProfileDisabledBackfill = "profile_disabled_backfill"
 
+// OwesProfileBackfill reports whether, when this database was opened, it
+// held any record of #431's profile-document backfill - the whole
+// obligation migrateV17 records, or a per-profile remainder core keeps under
+// the same key prefix. Read once at open, after the migrations: only a
+// migration creates the obligation, and it has run by then, so a false here
+// stays false for the life of the handle.
+func (d *DB) OwesProfileBackfill() bool {
+	return d.profileBackfillOwed
+}
+
 // DisabledModRow identifies one installed row that says its mod is switched
 // off, with the profile it belongs to - the (game, profile, mod) triple a
 // caller needs to find the same mod's reference in a profile document - and
