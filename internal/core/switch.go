@@ -106,8 +106,11 @@ type SwitchPlan struct {
 // default profile and target, without mutating anything (no DB writes, no
 // filesystem changes, no deploys) - callers may call this speculatively (to
 // render a confirmation prompt) and discard the result without consequence.
-// See SwitchPlan's doc comment.
+// See SwitchPlan's doc comment. The one exception is #431's backfill: what
+// it still owes is settled first (settleOwedProfileBackfill), since the
+// plan is decided from the target profile's markers.
 func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, target string) (*SwitchPlan, error) {
+	s.settleOwedProfileBackfill(ctx)
 	pm := s.NewProfileManager()
 
 	targetProfile, err := pm.Get(ctx, game.ID, target)

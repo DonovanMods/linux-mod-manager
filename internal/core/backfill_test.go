@@ -1280,6 +1280,21 @@ func TestBackfillProfileDisabledMarkers_ASwitchIntoAKeptProfile(t *testing.T) {
 	ctx := context.Background()
 	for _, how := range []string{"declined", "layout"} {
 		t.Run(how, func(t *testing.T) {
+			// The plan settles the retry before it reads the document, so
+			// the ordinary case plans the switch right the first time.
+			t.Run("the plan settles it first", func(t *testing.T) {
+				f := pendingSwitchBack(t, how)
+
+				plan, err := f.svc.PlanProfileSwitch(ctx, f.game, "a")
+				require.NoError(t, err)
+				assert.Empty(t, plan.ToEnable)
+				assert.Contains(t, f.warnings.String(), "Mod off", "the plan recorded it and said so")
+
+				_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+				require.NoError(t, err)
+				f.assertOffAndUndeployed(t)
+			})
+
 			// Another lmm holds the lock while the plan is made, so the plan
 			// goes ahead unsettled; its Apply writes the marker and refuses.
 			t.Run("a plan made under another lmm's lock is stale", func(t *testing.T) {
@@ -1329,4 +1344,35 @@ func TestBackfillProfileDisabledMarkers_ASwitchIntoAKeptProfile(t *testing.T) {
 		require.ErrorIs(t, err, core.ErrStalePlan)
 		f.assertOffAndUndeployed(t)
 	})
+}
+
+// TestBackfillProfileDisabledMarkers_AnUnchangedKeptProfileCostsAPlanNothing:
+// a plan settles a kept profile only once its file has changed. Until then
+// the retry would do nothing, so the plan does not wait on another lmm's
+// lock for it.
+func TestBackfillProfileDisabledMarkers_AnUnchangedKeptProfileCostsAPlanNothing(t *testing.T) {
+	ctx := context.Background()
+	f := newBackfillFixture(t)
+	f.row(t, "a", "off", false, false)
+	f.row(t, "b", "x", false, false)
+	f.svc.SetProfileMarkerForTest(func(string, []domain.ModReference) ([]domain.ModReference, error) {
+		return nil, config.ErrProfileLayoutUnsupported
+	})
+	f.owe(t)
+	report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
+	require.NoError(t, err)
+	require.Len(t, report.Skipped, 1)
+	f.svc.SetProfileMarkerForTest(nil)
+
+	release := holdOpLock(t, f.lockPath)
+	defer release()
+	started := time.Now()
+	_, err = f.svc.PlanProfileApply(ctx, f.game, "a")
+	require.NoError(t, err)
+	_, err = f.svc.PlanProfileSync(ctx, f.game, "a")
+	require.NoError(t, err)
+	_, err = f.svc.PlanProfileSwitch(ctx, f.game, "b")
+	require.NoError(t, err)
+	assert.Less(t, time.Since(started), 250*time.Millisecond, "three plans, none of them waiting")
+	assert.Empty(t, f.disabledRefs(t, "a"))
 }

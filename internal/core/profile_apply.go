@@ -200,9 +200,8 @@ type ProfileApplyResult struct {
 // under profileName match the profile itself, without mutating anything (no
 // DB writes, no filesystem changes, no downloads) - callers may call it
 // speculatively, render it, and discard it. The one exception is #431's
-// one-time backfill: while that is still owed it is settled first
-// (settleOwedProfileBackfill), since the plan is decided from the very
-// markers it writes.
+// backfill: what it still owes is settled first (settleOwedProfileBackfill),
+// since the plan is decided from the very markers it writes.
 //
 // The three buckets are built exactly as doProfileApply built them,
 // including their deterministic ordering (orderByProfile for the

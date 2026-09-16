@@ -116,8 +116,8 @@ type ProfileSyncResult struct {
 // ranging those maps directly, so the order was whatever that run's Go map
 // iteration produced.
 //
-// Like PlanProfileApply, it settles #431's one-time backfill first while
-// that is still owed (settleOwedProfileBackfill).
+// Like PlanProfileApply, it first settles what #431's backfill still owes
+// (settleOwedProfileBackfill).
 func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profileName string) (*ProfileSyncPlan, error) {
 	s.settleOwedProfileBackfill(ctx)
 	pm := s.NewProfileManager()

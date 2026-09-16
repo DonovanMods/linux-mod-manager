@@ -208,19 +208,27 @@ func (s *Service) BackfillProfileDisabledMarkers(ctx context.Context) (*ProfileB
 // still refused by its Apply if a marker lands in between.
 const planSettleWait = 500 * time.Millisecond
 
-// settleOwedProfileBackfill discharges the one-time backfill, while it is
-// still owed, before a plan decided by the profile document's markers reads
-// that document: `profile apply` and `profile sync`. An open only ever
+// settleOwedProfileBackfill discharges what the backfill still owes - the
+// one-time pass, or a kept profile whose file has changed since - before a
+// plan decided by the profile document's markers reads that document:
+// `profile apply`, `profile sync` and `profile switch`. An open only ever
 // tries the lock (F5), so a command started beside another lmm can reach
-// its plan with the markers not yet written. Its Apply discharges the
-// backfill under the lock and then refuses the plan as stale (F2); settling
-// here is what keeps that refusal for the rare case. The wait is short, and
-// nothing here fails the plan.
+// its plan with the markers not yet written; and `lmm serve` never opens
+// again, so a kept profile a switch away rewrote (merge gate G1) reaches
+// the next plan unretried. Either way the Apply discharges the backfill
+// under the lock and then refuses the plan as stale (F2); settling here is
+// what keeps that refusal for the rare case. Nothing owed, or a kept file
+// that has not changed, costs a db_meta read and a hash, and no lock. The
+// wait is short, and nothing here fails the plan.
 func (s *Service) settleOwedProfileBackfill(ctx context.Context) {
 	if !s.backfillPending.Load() {
 		return
 	}
-	if owed, err := s.db.GetMeta(ctx, db.MetaProfileDisabledBackfill); err != nil || owed == "" {
+	keys, _, err := s.profileBackfillRecords(ctx)
+	if err != nil {
+		return
+	}
+	if _, owed := keys[db.MetaProfileDisabledBackfill]; !owed && !s.anyPendingProfileChanged(keys) {
 		return
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, planSettleWait)
