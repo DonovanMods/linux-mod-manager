@@ -63,6 +63,18 @@ func (m *manualTimer) fire() {
 	}
 }
 
+// waitReset waits for the transport to re-arm timer, and fails - rather
+// than hanging until the test binary's timeout - if it never does (T3
+// review P4 B12).
+func waitReset(t *testing.T, timer *manualTimer) {
+	t.Helper()
+	select {
+	case <-timer.resetCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stall window was not re-armed: bytes arrived and the guard did not notice")
+	}
+}
+
 // manualTimers hands out one manualTimer per request and remembers each.
 type manualTimers struct {
 	mu     sync.Mutex
@@ -153,7 +165,7 @@ func TestIdleTimeout_AMovingBodyIsNeverCutOff(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	timer := timers.last(t)
-	<-timer.resetCh // the headers arriving re-armed it once already
+	waitReset(t, timer) // the headers arriving re-armed it once already
 
 	done := make(chan []byte, 1)
 	go func() {
@@ -162,7 +174,7 @@ func TestIdleTimeout_AMovingBodyIsNeverCutOff(t *testing.T) {
 	}()
 	for _, c := range []string{"a", "b", "c", "d"} {
 		chunks <- c
-		<-timer.resetCh // the read that delivered c re-armed the window
+		waitReset(t, timer) // the read that delivered c re-armed the window
 	}
 	close(chunks)
 
