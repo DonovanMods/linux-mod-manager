@@ -178,6 +178,67 @@ func TestMarkModsDisabled_Shapes(t *testing.T) {
 			want:     "name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: m, disabled: true}\n  - {source_id: s, mod_id: m}\n",
 			wantMark: 1,
 		},
+		// Fix round 3's F1: yaml.v3 counts a lone CR, NEL (U+0085), LS
+		// (U+2028) and PS (U+2029) as line breaks as well as LF and CRLF.
+		// The editor counted LF alone, so its line numbers fell behind
+		// yaml's and it indexed past its own line table - a panic reached
+		// from app.Open on every command.
+		{
+			name:     "CR-only line endings are kept",
+			content:  "name: p\rgame_id: g\rmods:\r  - source_id: s\r    mod_id: m\r  - source_id: s\r    mod_id: n\r",
+			mods:     []domain.ModReference{ref("s", "m"), ref("s", "n")},
+			want:     "name: p\rgame_id: g\rmods:\r  - source_id: s\r    mod_id: m\r    disabled: true\r  - source_id: s\r    mod_id: n\r    disabled: true\r",
+			wantMark: 2,
+		},
+		{
+			name:     "doubled CRLF endings (a file converted twice) are kept",
+			content:  "name: p\r\r\ngame_id: g\r\r\nmods:\r\r\n  - source_id: s\r\r\n    mod_id: m\r\r\n  - source_id: s\r\r\n    mod_id: n\r\r\n",
+			mods:     []domain.ModReference{ref("s", "m"), ref("s", "n")},
+			want:     "name: p\r\r\ngame_id: g\r\r\nmods:\r\r\n  - source_id: s\r\r\n    mod_id: m\r\r\n    disabled: true\r\r\n  - source_id: s\r\r\n    mod_id: n\r\r\n    disabled: true\r\r\n",
+			wantMark: 2,
+		},
+		{
+			name:     "doubled CRLF endings with no final line break",
+			content:  "name: p\r\r\ngame_id: g\r\r\nmods:\r\r\n  - source_id: s\r\r\n    mod_id: m",
+			mods:     []domain.ModReference{ref("s", "m")},
+			want:     "name: p\r\r\ngame_id: g\r\r\nmods:\r\r\n  - source_id: s\r\r\n    mod_id: m\r\r\n    disabled: true",
+			wantMark: 1,
+		},
+		{
+			name:     "a NEL inside a quoted name, no final line break",
+			content:  "name: \"p\u0085q\"\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m",
+			mods:     []domain.ModReference{ref("s", "m")},
+			want:     "name: \"p\u0085q\"\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n    disabled: true",
+			wantMark: 1,
+		},
+		{
+			name:     "a NEL and an LS inside a quoted name",
+			content:  "name: \"p\u0085q\u2028r\"\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n",
+			mods:     []domain.ModReference{ref("s", "m")},
+			want:     "name: \"p\u0085q\u2028r\"\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n    disabled: true\n",
+			wantMark: 1,
+		},
+		{
+			name:     "a PS inside a quoted name, before a reference that is not the last",
+			content:  "name: \"p\u2029q\"\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n    version: \"1\"\n  - source_id: s\n    mod_id: n\n",
+			mods:     []domain.ModReference{ref("s", "m")},
+			want:     "name: \"p\u2029q\"\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n    version: \"1\"\n    disabled: true\n  - source_id: s\n    mod_id: n\n",
+			wantMark: 1,
+		},
+		{
+			name:     "a flow entry broken by lone CRs",
+			content:  "name: p\rgame_id: g\rmods:\r  - {source_id: s,\r     mod_id: m\r    }\r",
+			mods:     []domain.ModReference{ref("s", "m")},
+			want:     "name: p\rgame_id: g\rmods:\r  - {source_id: s,\r     mod_id: m, disabled: true\r    }\r",
+			wantMark: 1,
+		},
+		{
+			name:     "a byte-order mark before a flow document on line 1",
+			content:  "\ufeff{name: p, game_id: g, mods: [{source_id: s, mod_id: m}]}\n",
+			mods:     []domain.ModReference{ref("s", "m")},
+			want:     "\ufeff{name: p, game_id: g, mods: [{source_id: s, mod_id: m, disabled: true}]}\n",
+			wantMark: 1,
+		},
 		{
 			name:    "an already-marked reference is not rewritten",
 			content: "name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: m, disabled: yes}\n  - {source_id: s, mod_id: n, disabled: true}\n",
@@ -219,6 +280,14 @@ func TestMarkModsDisabled_RefusesWhatItCannotEditInPlace(t *testing.T) {
 		"an alias stands in for the reference": "name: p\ngame_id: g\nbase: &base {source_id: s, mod_id: m}\nmods:\n  - *base\n",
 		"a block scalar ends the reference":    "name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n    version: |\n      1.0\n",
 		"a comment sits before the brace":      "name: p\ngame_id: g\nmods:\n  - {source_id: s,\n     mod_id: m  # note\n    }\n",
+		"an empty disabled value":              "name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n    disabled: \n",
+		// A line break other than LF or CR ending the reference's last line:
+		// yaml.v3 reads NEL, LS and PS as breaks, YAML 1.2 and most editors
+		// do not, so there is no line ending to give a marker line that
+		// every reader of the file agrees on.
+		"the reference's last line ends in a NEL":         "name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\u0085",
+		"the reference's last line ends in an LS":         "name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\u2028  - source_id: s\n    mod_id: n\n",
+		"the line before a last line with no break is PS": "name: p\ngame_id: g\nmods:\n  - source_id: s\u2029    mod_id: m",
 	}
 	for name, content := range tests {
 		t.Run(name, func(t *testing.T) {

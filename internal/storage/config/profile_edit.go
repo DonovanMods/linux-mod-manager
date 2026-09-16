@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"sort"
+	"strings"
 	"syscall"
 	"unicode/utf8"
 
@@ -61,20 +63,43 @@ func MarkModsDisabled(path string, mods []domain.ModReference) ([]domain.ModRefe
 		return nil, fmt.Errorf("reading profile: %w", err)
 	}
 
+	expected, edits, marked, err := planMarkers(path, data, mods)
+	if err != nil || len(edits) == 0 {
+		return nil, err
+	}
+	edited, err := applyEdits(data, edits)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %v", ErrProfileLayoutUnsupported, path, err)
+	}
+	var after ProfileConfig
+	if err := yaml.Unmarshal(edited, &after); err != nil || !reflect.DeepEqual(expected, after) {
+		return nil, fmt.Errorf("%w: %s: the edited text would not read back as the same profile", ErrProfileLayoutUnsupported, path)
+	}
+
+	if err := writeFileAtomic(path, edited); err != nil {
+		return nil, err
+	}
+	return marked, nil
+}
+
+// planMarkers works out, without checking the result, the edits that mark
+// mods in data (the file at path): the document they should decode to, the
+// edits, and the references they mark, in file order.
+func planMarkers(path string, data []byte, mods []domain.ModReference) (ProfileConfig, []textEdit, []domain.ModReference, error) {
 	var before ProfileConfig
 	if err := yaml.Unmarshal(data, &before); err != nil {
-		return nil, fmt.Errorf("parsing profile: %w", err)
+		return ProfileConfig{}, nil, nil, fmt.Errorf("parsing profile: %w", err)
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("parsing profile: %w", err)
+		return ProfileConfig{}, nil, nil, fmt.Errorf("parsing profile: %w", err)
 	}
 	if len(before.Mods) == 0 {
-		return nil, nil
+		return before, nil, nil, nil
 	}
 	seq := modsSequence(&doc)
 	if seq == nil || len(seq.Content) != len(before.Mods) {
-		return nil, fmt.Errorf("%w: %s: its mods list is not a plain sequence", ErrProfileLayoutUnsupported, path)
+		return ProfileConfig{}, nil, nil, fmt.Errorf("%w: %s: its mods list is not a plain sequence", ErrProfileLayoutUnsupported, path)
 	}
 
 	wanted := make(map[string]bool, len(mods))
@@ -101,26 +126,13 @@ func MarkModsDisabled(path string, mods []domain.ModReference) ([]domain.ModRefe
 		}
 		edit, err := markerEdit(src, seq.Content[i])
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s (%s): %v", ErrProfileLayoutUnsupported, path, key, err)
+			return ProfileConfig{}, nil, nil, fmt.Errorf("%w: %s (%s): %v", ErrProfileLayoutUnsupported, path, key, err)
 		}
 		edits = append(edits, edit)
 		expected.Mods[i].Disabled = true
 		marked = append(marked, domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID})
 	}
-	if len(edits) == 0 {
-		return nil, nil
-	}
-
-	edited := applyEdits(data, edits)
-	var after ProfileConfig
-	if err := yaml.Unmarshal(edited, &after); err != nil || !reflect.DeepEqual(expected, after) {
-		return nil, fmt.Errorf("%w: %s: the edited text would not read back as the same profile", ErrProfileLayoutUnsupported, path)
-	}
-
-	if err := writeFileAtomic(path, edited); err != nil {
-		return nil, err
-	}
-	return marked, nil
+	return expected, edits, marked, nil
 }
 
 // modsSequence returns the value node of the document's top-level `mods`
@@ -134,7 +146,8 @@ func modsSequence(doc *yaml.Node) *yaml.Node {
 		return nil
 	}
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == "mods" && root.Content[i+1].Kind == yaml.SequenceNode {
+		key := root.Content[i]
+		if key.Kind == yaml.ScalarNode && key.Value == "mods" && root.Content[i+1].Kind == yaml.SequenceNode {
 			return root.Content[i+1]
 		}
 	}
@@ -148,16 +161,24 @@ type textEdit struct {
 	text   string
 }
 
-// applyEdits applies non-overlapping edits back to front, so an earlier
-// edit's offset is never moved by a later one.
-func applyEdits(data []byte, edits []textEdit) []byte {
+// applyEdits applies edits back to front, so an earlier edit's offset is
+// never moved by a later one. Edits that overlap, or reach outside data,
+// are refused rather than applied.
+func applyEdits(data []byte, edits []textEdit) ([]byte, error) {
 	sorted := slices.Clone(edits)
 	slices.SortFunc(sorted, func(a, b textEdit) int { return b.offset - a.offset })
+	limit := len(data)
+	for _, e := range sorted {
+		if e.offset < 0 || e.length < 0 || e.offset+e.length > limit {
+			return nil, fmt.Errorf("an edit at byte %d overlaps another or runs past the end", e.offset)
+		}
+		limit = e.offset
+	}
 	out := slices.Clone(data)
 	for _, e := range sorted {
 		out = slices.Concat(out[:e.offset], []byte(e.text), out[e.offset+e.length:])
 	}
-	return out
+	return out, nil
 }
 
 // markerEdit is the one edit that sets `disabled: true` on item, a sequence
@@ -168,13 +189,16 @@ func markerEdit(src sourceText, item *yaml.Node) (textEdit, error) {
 	}
 
 	for i := 0; i+1 < len(item.Content); i += 2 {
-		if item.Content[i].Value != "disabled" {
+		if key := item.Content[i]; key.Kind != yaml.ScalarNode || key.Value != "disabled" {
 			continue
 		}
 		// An explicit `disabled: false`: its own text becomes `true`.
 		value := item.Content[i+1]
 		if value.Kind != yaml.ScalarNode || value.Style != 0 {
 			return textEdit{}, fmt.Errorf("its disabled value is not a plain scalar")
+		}
+		if value.Value == "" {
+			return textEdit{}, fmt.Errorf("its disabled value is empty")
 		}
 		offset, ok := src.offset(value.Line, value.Column)
 		if !ok || !bytes.HasPrefix(src.data[offset:], []byte(value.Value)) {
@@ -195,10 +219,7 @@ func markerEdit(src sourceText, item *yaml.Node) (textEdit, error) {
 		// After the last thing written inside the braces, so the marker
 		// sits where the author's own next entry would, and whatever
 		// spacing they left before `}` stays put.
-		last := end - 1
-		for last > start && isFlowSpace(src.data[last]) {
-			last--
-		}
+		last := src.lastNonSpace(start, end)
 		text := ", disabled: true"
 		if src.data[last] == ',' {
 			text = " disabled: true"
@@ -214,60 +235,150 @@ func markerEdit(src sourceText, item *yaml.Node) (textEdit, error) {
 	if !ok {
 		return textEdit{}, fmt.Errorf("the reference's last line could not be located")
 	}
-	offset, eol := src.lineEnd(endLine)
-	return textEdit{offset: offset, text: eol + string(bytes.Repeat([]byte{' '}, indent)) + "disabled: true"}, nil
+	offset, lineBreak, ok := src.lineEnd(endLine)
+	if !ok {
+		return textEdit{}, fmt.Errorf("the reference's last line does not end in a line break a marker line can repeat")
+	}
+	return textEdit{offset: offset, text: lineBreak + strings.Repeat(" ", indent) + "disabled: true"}, nil
 }
 
-func isFlowSpace(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+// utf8BOM is the byte-order mark yaml.v3 drops from the start of a
+// document before it counts a single line or column.
+var utf8BOM = []byte("\xef\xbb\xbf")
+
+// breakLen returns the length of the line break data[i:] starts with, or 0.
+// It counts what yaml.v3 counts (libyaml, YAML 1.1): CRLF as one break, and
+// a lone CR, LF, NEL (U+0085), LS (U+2028) and PS (U+2029) each as one. A
+// line numbering that disagrees with yaml's by even one of these puts every
+// later mark on the wrong line.
+func breakLen(data []byte, i int) int {
+	switch {
+	case i >= len(data):
+		return 0
+	case data[i] == '\r' && i+1 < len(data) && data[i+1] == '\n':
+		return 2
+	case data[i] == '\r' || data[i] == '\n':
+		return 1
+	case data[i] == 0xc2 && i+1 < len(data) && data[i+1] == 0x85:
+		return 2
+	case data[i] == 0xe2 && i+2 < len(data) && data[i+1] == 0x80 && (data[i+2] == 0xa8 || data[i+2] == 0xa9):
+		return 3
+	}
+	return 0
 }
 
-// sourceText is a document's bytes with its line starts indexed, for
-// turning yaml.v3's 1-based (line, column) marks - columns count
-// characters, not bytes - into byte offsets.
+// breakLenBefore returns the length of the line break data[:i] ends with,
+// or 0.
+func breakLenBefore(data []byte, i int) int {
+	for _, n := range []int{3, 2, 1} {
+		if i-n >= 0 && breakLen(data, i-n) == n {
+			return n
+		}
+	}
+	return 0
+}
+
+// sourceLine is one line of a document as yaml.v3 counts them: its text
+// runs from start to end, and eol is the line break after it ("" for a
+// last line that has none).
+type sourceLine struct {
+	start, end int
+	eol        string
+}
+
+// sourceText is a document's bytes with its lines indexed, for turning
+// yaml.v3's 1-based (line, column) marks - columns count characters, not
+// bytes - into byte offsets. Every accessor is bounds-checked: a mark this
+// cannot place is an answer of false, never an index panic.
 type sourceText struct {
-	data       []byte
-	lineStarts []int
+	data  []byte
+	lines []sourceLine
 }
 
 func newSourceText(data []byte) sourceText {
-	starts := []int{0}
-	for i, b := range data {
-		if b == '\n' {
-			starts = append(starts, i+1)
-		}
+	start := 0
+	if bytes.HasPrefix(data, utf8BOM) {
+		start = len(utf8BOM)
 	}
-	return sourceText{data: data, lineStarts: starts}
+	var lines []sourceLine
+	for i := start; i < len(data); {
+		n := breakLen(data, i)
+		if n == 0 {
+			// Byte by byte is safe: in valid UTF-8 (yaml.v3 accepts
+			// nothing else) no continuation byte is a break's first byte.
+			i++
+			continue
+		}
+		lines = append(lines, sourceLine{start: start, end: i, eol: string(data[i : i+n])})
+		i += n
+		start = i
+	}
+	lines = append(lines, sourceLine{start: start, end: len(data)})
+	return sourceText{data: data, lines: lines}
 }
 
 // offset returns the byte offset of 1-based line and column.
 func (s sourceText) offset(line, column int) (int, bool) {
-	if line < 1 || line > len(s.lineStarts) || column < 1 {
+	if line < 1 || line > len(s.lines) || column < 1 {
 		return 0, false
 	}
-	offset := s.lineStarts[line-1]
+	l := s.lines[line-1]
+	offset := l.start
 	for range column - 1 {
-		if offset >= len(s.data) || s.data[offset] == '\n' {
+		if offset >= l.end {
 			return 0, false
 		}
-		_, size := utf8.DecodeRune(s.data[offset:])
+		_, size := utf8.DecodeRune(s.data[offset:l.end])
 		offset += size
 	}
 	return offset, true
 }
 
+// lineOf returns the 1-based line offset falls on, or 0.
+func (s sourceText) lineOf(offset int) int {
+	return sort.Search(len(s.lines), func(i int) bool { return s.lines[i].start > offset })
+}
+
 // lineEnd returns the offset just past line's last character - before its
-// terminator, if it has one - and the terminator the file uses there.
-func (s sourceText) lineEnd(line int) (int, string) {
-	start := s.lineStarts[line-1]
-	end := len(s.data)
-	if line < len(s.lineStarts) {
-		end = s.lineStarts[line] - 1
+// line break, if it has one - and the line break a line added after it
+// should end with: its own, or, for a last line with none, the one before
+// it. ok is false for a line yaml.v3 does not have, and for a NEL, LS or PS
+// there: yaml.v3 reads those as line breaks, YAML 1.2 and most editors do
+// not, so no marker line ending would read the same to every reader.
+func (s sourceText) lineEnd(line int) (offset int, lineBreak string, ok bool) {
+	if line < 1 || line > len(s.lines) {
+		return 0, "", false
 	}
-	if end > start && s.data[end-1] == '\r' {
-		return end - 1, "\r\n"
+	i := line - 1
+	if s.lines[i].eol == "" {
+		if i == 0 {
+			return s.lines[i].end, "\n", true
+		}
+		i--
+		if s.doubled(i - 1) {
+			i--
+		}
 	}
-	return end, "\n"
+	lineBreak = s.lines[i].eol
+	if s.doubled(i) {
+		lineBreak = "\r\r\n"
+	}
+	switch lineBreak {
+	case "\n", "\r\n", "\r", "\r\r\n":
+		return s.lines[line-1].end, lineBreak, true
+	}
+	return 0, "", false
+}
+
+// doubled reports whether line index i ends in a lone CR followed by an
+// empty line ending in CRLF: `\r\r\n`, a CRLF file converted to CRLF a
+// second time, which is how such a file's author sees one line break.
+func (s sourceText) doubled(i int) bool {
+	if i < 0 || i+1 >= len(s.lines) {
+		return false
+	}
+	next := s.lines[i+1]
+	return s.lines[i].eol == "\r" && next.start == next.end && next.eol == "\r\n"
 }
 
 // lastLine is the last line node's text occupies: the deepest, latest
@@ -292,8 +403,8 @@ func (s sourceText) lastLine(node *yaml.Node) (int, bool) {
 		if !ok {
 			return 0, false
 		}
-		line, _ := slices.BinarySearch(s.lineStarts, end+1)
-		return line, true
+		line := s.lineOf(end)
+		return line, line > 0
 	}
 	last := node.Line
 	for _, child := range node.Content {
@@ -311,12 +422,16 @@ func (s sourceText) lastLine(node *yaml.Node) (int, bool) {
 // only opens a quoted scalar where a scalar can begin - right after an
 // indicator - so an apostrophe inside a plain word is just a character.
 func (s sourceText) matchingClose(start int) (int, bool) {
-	if start >= len(s.data) || (s.data[start] != '{' && s.data[start] != '[') {
+	if start < 0 || start >= len(s.data) || (s.data[start] != '{' && s.data[start] != '[') {
 		return 0, false
 	}
 	depth := 0
 	var prev byte // the last significant character before i
-	for i := start; i < len(s.data); i++ {
+	for i := start; i < len(s.data); {
+		if n := breakLen(s.data, i); n > 0 {
+			i += n
+			continue
+		}
 		c := s.data[i]
 		switch {
 		case c == '{' || c == '[':
@@ -332,17 +447,42 @@ func (s sourceText) matchingClose(start int) (int, bool) {
 				return 0, false
 			}
 			i = end
-		case c == '#' && isFlowSpace(s.data[i-1]):
-			for i+1 < len(s.data) && s.data[i+1] != '\n' {
+		case c == '#' && s.spaceBefore(i):
+			for i < len(s.data) && breakLen(s.data, i) == 0 {
 				i++
 			}
 			continue
 		}
-		if !isFlowSpace(c) {
+		if c != ' ' && c != '\t' {
 			prev = c
 		}
+		i++
 	}
 	return 0, false
+}
+
+// spaceBefore reports whether the character before offset i is white space
+// or a line break - what makes a `#` there start a comment.
+func (s sourceText) spaceBefore(i int) bool {
+	return i > 0 && (s.data[i-1] == ' ' || s.data[i-1] == '\t' || breakLenBefore(s.data, i) > 0)
+}
+
+// lastNonSpace returns the offset of the last byte before end, and after
+// start, that is neither white space nor part of a line break; start when
+// there is none.
+func (s sourceText) lastNonSpace(start, end int) int {
+	i := end
+	for i-1 > start {
+		switch {
+		case s.data[i-1] == ' ' || s.data[i-1] == '\t':
+			i--
+		case breakLenBefore(s.data, i) > 0:
+			i -= breakLenBefore(s.data, i)
+		default:
+			return i - 1
+		}
+	}
+	return start
 }
 
 func scalarMayStart(prev byte) bool {
