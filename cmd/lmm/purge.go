@@ -34,10 +34,16 @@ with 'lmm deploy'. Use --uninstall to also remove the database records.
 
 The game directory holds the active profile's mods. A purge of any other
 profile (-p/--profile) only clears what that profile put there: the files it
-recorded as deployed that no other profile records - a file the active
-profile records too is left in place, and listed. It runs no hooks, keeps
-the mod records, and refuses --uninstall ('lmm profile switch' to that
-profile first to remove its records too).
+recorded as deployed that nothing else still claims. A file is left in
+place, and listed with why, when another profile records it, the active
+profile lists its mod, another game sharing the directory records it, or
+the game hands it to you after its first deploy (a BepInEx config file). It
+runs no hooks, keeps the mod records, and refuses --uninstall ('lmm profile
+switch' to that profile first to remove its records too).
+
+A game whose profile files do not say which one is active - one cannot be
+read, or none or several are marked - is not purged or deployed at all;
+'lmm profile list' says why.
 
 Use --dry-run to print what the purge would do - which mods would be
 undeployed and what happens to their records - without changing anything

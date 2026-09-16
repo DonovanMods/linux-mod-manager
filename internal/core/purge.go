@@ -324,7 +324,7 @@ const (
 // A profile that is not the game's active one gets a recorded-only plan
 // (#445, PurgePlan.RecordedOnly): its files are not the ones the game
 // directory is meant to hold, so only what it recorded putting there, and
-// no other profile records, is removed.
+// nothing else still claims (PurgeKeptReason), is removed.
 //
 // The returned plan is a snapshot: pass it to ApplyPurge promptly, and be
 // ready for ErrStalePlan if the installed set moved underneath it.

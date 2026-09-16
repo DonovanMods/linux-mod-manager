@@ -1517,16 +1517,6 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   source's document and `steam-games.yaml` — through one guard that turns
   any decoder panic into an error. The error names the file.
 
-- **A hand-edited config file can no longer crash lmm at startup (#452).**
-  A `games.yaml`, `config.yaml` or source definition holding a construct the
-  YAML decoder panicked on (a merge key over a mapping keyed by a mapping,
-  found by fuzzing) stopped every command — `lmm serve` included — before
-  it did anything. lmm now uses `go.yaml.in/yaml/v3`, the maintained
-  continuation of `gopkg.in/yaml.v3`, which reports that construct as an
-  error, and reads every YAML document — those three, profiles, a manifest
-  source's document and `steam-games.yaml` — through one guard that turns
-  any decoder panic into an error. The error names the file.
-
 - **A mod listed twice in a profile reads the same everywhere (#457).** lmm
   never writes a duplicate, but a hand edit can, and every command already
   decided such a mod by its **first** entry — `lmm update`'s lock check
