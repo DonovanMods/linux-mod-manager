@@ -100,7 +100,8 @@ func (s *Server) writeAPIError(w http.ResponseWriter, status int, err error) {
 // 5 ruling: "unknown game/profile -> the envelope, status 404, details
 // listing the valid choices") - the same choices the page's nav switcher
 // would offer. Profiles is empty whenever the game itself didn't resolve,
-// since resolveSelection never populates it in that case.
+// since resolveSelection never populates it in that case. Games is built
+// by writeSelectionError, the one place a selection needs game rows.
 type selectionErrorDetails struct {
 	Games    []core.GameListEntry `json:"games"`
 	Profiles []string             `json:"profiles,omitempty"`
@@ -113,7 +114,16 @@ type selectionErrorDetails struct {
 // default; it is empty only for the one case resolveSelection itself never
 // messages - zero games configured at all - so that gets a generic
 // fallback instead.
-func (s *Server) writeSelectionError(w http.ResponseWriter, sel selection) {
+//
+// It builds the game rows the details list here, on the 404 path only
+// (resolveSelection's doc comment says why); a failure to build them is the
+// 500 a genuine core failure answers with.
+func (s *Server) writeSelectionError(w http.ResponseWriter, r *http.Request, sel selection) {
+	games, err := s.gameRows(r.Context())
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
 	msg := sel.Warning
 	if msg == "" {
 		msg = "no games configured"
@@ -121,7 +131,7 @@ func (s *Server) writeSelectionError(w http.ResponseWriter, sel selection) {
 	s.log.Debug("api selection unresolved", "msg", msg)
 	s.writeJSON(w, http.StatusNotFound, apiErrorEnvelope{
 		Error:   msg,
-		Details: selectionErrorDetails{Games: sel.Games, Profiles: sel.Profiles},
+		Details: selectionErrorDetails{Games: games, Profiles: sel.Profiles},
 	})
 }
 
@@ -138,7 +148,7 @@ func (s *Server) resolveReadyAPISelection(w http.ResponseWriter, r *http.Request
 		return sel, false
 	}
 	if !sel.ready() {
-		s.writeSelectionError(w, sel)
+		s.writeSelectionError(w, r, sel)
 		return sel, false
 	}
 	return sel, true
@@ -414,7 +424,7 @@ func (s *Server) resolveGameAPISelection(w http.ResponseWriter, r *http.Request)
 		return sel, false
 	}
 	if sel.Game == nil {
-		s.writeSelectionError(w, sel)
+		s.writeSelectionError(w, r, sel)
 		return sel, false
 	}
 	return sel, true
@@ -584,12 +594,7 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 
 	game, err := s.svc.GetGame(gameID)
 	if err != nil {
-		entries, err := s.svc.ListGameEntries(r.Context())
-		if err != nil {
-			s.writeAPIError(w, http.StatusInternalServerError, err)
-			return
-		}
-		s.writeSelectionError(w, selection{Games: entries, Warning: fmt.Sprintf("unknown game %q", gameID)})
+		s.writeSelectionError(w, r, selection{Warning: fmt.Sprintf("unknown game %q", gameID)})
 		return
 	}
 

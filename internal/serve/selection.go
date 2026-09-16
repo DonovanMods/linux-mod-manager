@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
@@ -31,7 +30,6 @@ const (
 type selection struct {
 	Game     *domain.Game
 	Profile  string
-	Games    []core.GameListEntry
 	Profiles []string
 	Warning  string
 }
@@ -55,18 +53,19 @@ func (sel selection) ready() bool {
 //
 // An unresolvable game or profile - an unknown value, no configured
 // default, no games at all - degrades the result rather than failing the
-// request: only a genuine core failure (e.g. ListGameEntries) returns a
-// non-nil error.
+// request: only a genuine core failure (e.g. the profile listing) returns
+// a non-nil error.
+//
+// It builds no game ROWS (#413 re-review L5). Every scoped request resolves
+// through here, and a row resolves its game's adapter, which can stat that
+// game's install directory - so one game on a hung network share hung every
+// request, whatever game it was about. The rows are the 404's list of valid
+// choices, and writeSelectionError builds them there.
 func (s *Server) resolveSelection(r *http.Request) (selection, error) {
 	ctx := r.Context()
 	var sel selection
 
-	entries, err := s.svc.ListGameEntries(ctx)
-	if err != nil {
-		return sel, err
-	}
-	sel.Games = entries
-	if len(entries) == 0 {
+	if len(s.svc.ListGames()) == 0 {
 		return sel, nil
 	}
 
