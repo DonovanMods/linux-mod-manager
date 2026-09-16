@@ -97,12 +97,19 @@ profile (desired state)
       ↓              mods, versions, locks, load order — exportable YAML
 cache
       ↓              one copy per source/mod/version, checksummed
+game adapter
+      ↓              what THIS game does with mod content: archive layout,
+                     which files are configuration, whether its mods compile
+                     into one artifact, what verify can honestly check
 deployment strategy
-      ↓              symlink, hardlink or copy into the game directory
-game-specific adapter
-                     generic file deployment, or a real compile step
-                     (Icarus `.pak`/`.exmodz` merging) where a game needs one
+                     symlink, hardlink or copy into the game directory
 ```
+
+The **game adapter** is a real seam rather than a description of one: one
+`adapter:` key in `games.yaml`, defaulting to `generic-files` — the identity,
+which is what every game lmm managed before adapters existed. `icarus` and
+`bepinex` ship on top of it, and a contributor adds a third without touching
+lmm's core. See [docs/adapters.md](docs/adapters.md).
 
 **What lmm does not have.** There is no FOMOD installer UI, no _automated_
 LOOT-style plugin sorting (masterlists, a generated `plugins.txt`) and no
@@ -144,14 +151,27 @@ These are deliberate omissions, tracked so they are not mistaken for oversights:
 
 ### The adapter seam
 
-The Icarus support is the interesting one: lmm does not merely copy that game's
-archives, it converts prebuilt `.pak` mods, derives their changes against the
-current base game, merges them by profile precedence and regenerates the result
-when load order changes. Making that a **documented adapter seam** — so Unreal,
-Unity and the rest land without contaminating the generic core — is in
-progress for 2.0: [#353](https://github.com/DonovanMods/linux-mod-manager/issues/353)
-(design approved; the seam and a generic adapter land first, then Icarus and
-BepInEx move behind it).
+Two games in lmm need more than "put these files there". Icarus does not
+merely copy its archives: lmm converts prebuilt `.pak` mods, derives their
+changes against the current base game, merges them by profile precedence and
+regenerates the result when load order changes. BepInEx games need their
+plugin archives placed correctly in the game root, their `BepInEx/config/**`
+seeded rather than linked, and their loader installation checked.
+
+Since 2.0 both of those are **game adapters** behind a documented seam, not
+special cases in lmm's core:
+[#353](https://github.com/DonovanMods/linux-mod-manager/issues/353). One
+`adapter:` key in `games.yaml` selects one, the default (`generic-files`) is
+the identity — so every game lmm managed before adapters behaves
+byte-for-byte as it did — and an adapter supplies pure rule tables and
+read-only reports while core keeps every side effect. Adapters live in the
+tree and are compile-time, not plugins: adding one for Unreal, another Unity
+loader or anything else is a package under `internal/adapter/` plus one
+registration line, with a boundary test making sure it stays that way.
+
+[docs/adapters.md](docs/adapters.md) is the contributor's guide;
+[docs/configuration.md](docs/configuration.md#adapter-gamesyaml) is how you
+choose one for your game.
 
 ## Installation
 
@@ -554,6 +574,10 @@ responsibility is deliberate and worth reading before you start: **lmm
 deploys and verifies plugins; you install the loader and set the Steam
 launch option.**
 
+Everything below is the `bepinex` [game adapter](docs/adapters.md), and a
+game gets it without you naming one: declaring the loader selects it, and so
+does simply having BepInEx installed in the game directory.
+
 #### Configure the game
 
 BepInEx-managed content is game-root-relative, so the game's `mod_path` is
@@ -622,8 +646,9 @@ lmm game edit lethal-company --loader ""   # remove the declaration
   account for, is a game-root overlay and deploys exactly where the archive
   puts it.
 
-  The `BepInEx/`-rooted and wrapped shapes are recognised for any game. The
-  ambiguous ones — a bare `plugins/` root, a plugin folder and a bare
+  The `BepInEx/`-rooted and wrapped shapes are unmistakable for any game —
+  which is what lets lmm refuse one imported into a game that has no loader,
+  below, rather than deploy it into nothing. The ambiguous ones — a bare `plugins/` root, a plugin folder and a bare
   `.dll` — need lmm to believe this is a BepInEx game, so a mod for a
   different game that happens to be rooted at `plugins/` (or at
   `Mods/<Mod>/<Mod>.dll`) keeps deploying exactly where it always did.

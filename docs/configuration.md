@@ -89,7 +89,7 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 | `cache_path`   | string | no       | Per-game cache directory override                                     |
 | `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                   |
 | `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile` |
-| `adapter`      | string | no       | Game adapter: `generic-files` (default) or `icarus` — see below        |
+| `adapter`      | string | no       | Game adapter: `generic-files` (default), `icarus` or `bepinex` — below |
 
 #### `mod_path` and relative values
 
@@ -160,6 +160,22 @@ whether the game's mods have to be compiled into one artifact, and what
   > compiles exactly like one from Project Daedalus, because the adapter
   > decides, not the source.
 
+- **`bepinex`**: Unity games modded through
+  [BepInEx](https://github.com/BepInEx/BepInEx). It normalises plugin
+  archives into the game-root layout the loader reads, treats
+  `BepInEx/config/**` as configuration the user owns after its first deploy
+  (copied once, never overwritten, never removed by an uninstall), refuses
+  an archive that is the BepInEx pack itself rather than a mod for it, and
+  gives `lmm verify` its loader tier. See the README's
+  [BepInEx section](../README.md#bepinex-unity-games) for the whole
+  workflow.
+
+  You rarely have to write this one: a game that declares `loader: kind:
+  bepinex` resolves to it on its own, and so does a game that merely HAS
+  BepInEx installed in its directory. Set `adapter:` explicitly when you
+  want to override that — `adapter: generic-files` on a loader-declaring
+  game records the loader while treating its archives as plain files.
+
 The adapters that follow are added in the same tree, so `lmm game list`
 always names what this build actually has:
 
@@ -175,6 +191,10 @@ edit` refuse it as you type it, and a name already in `games.yaml` is
 refused when lmm resolves that game. Only the NAME's syntax is checked when
 `games.yaml` loads, so an unknown-but-well-formed name still lets every
 other game work.
+
+Writing an adapter for a game that needs one is a package under
+`internal/adapter/` plus one registration line, with nothing in lmm's core
+to change: see [adapters.md](adapters.md).
 
 #### `adapter` and `deploy_mode: compile`
 

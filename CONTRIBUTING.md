@@ -24,6 +24,32 @@ Thank you for your interest in contributing to lmm (Linux Mod Manager).
 3. Ensure `go test ./...` and `go build ./cmd/lmm` succeed.
 4. Open a Pull Request with a short description and reference any related issues.
 
+## Adding support for a game that needs more than file deployment
+
+Most games need nothing special: lmm extracts an archive, deploys its files,
+and that is the whole story. A game that needs more — an archive layout to
+normalise, files that are the user's configuration rather than mod content, a
+compile step, a loader to check — gets a **game adapter**, and adding one is
+deliberately a small, self-contained job:
+
+1. A package under `internal/adapter/<name>/`, importing `internal/domain`
+   and `internal/adapter` and nothing else in the module.
+2. Three required methods, plus whichever optional capabilities apply.
+3. One registration line in `internal/app/adapters.go`.
+
+**Nothing in `internal/core` changes**, and a boundary test
+(`internal/adapter/boundary_test.go`) enforces that in both directions: an
+adapter may not import core, and core may not import a concrete adapter.
+Adapters are in-tree and compile-time — there is no plugin system, because
+Go's `-buildmode=plugin` forces CGO and would end lmm's static, CGO-free
+binary.
+
+The full walkthrough, the interface, each capability and what deliberately
+stays in core are in **[docs/adapters.md](docs/adapters.md)**. Read its
+"Division of labour" section first: an adapter supplies pure rule _tables_
+and read-only _reports_, and core keeps every side effect — which is what
+makes an adapter a table test rather than a second copy of the deploy path.
+
 ## Code style
 
 - Follow standard Go conventions and the project’s existing style.

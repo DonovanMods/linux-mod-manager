@@ -291,6 +291,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pipeline (#221) are unchanged: this is where the rules live, not what
   they are.
 
+- **`docs/adapters.md`: how to write a game adapter (#353, #414).** The
+  whole point of the adapter seam is that a contributor can teach lmm about
+  a game without touching its core, which is only true if the contract is
+  written down. The new document is the interface, every optional
+  capability and what each is for, the rule that decides where a line falls
+  (an adapter supplies pure rule tables and read-only reports; lmm's core
+  keeps every side effect, including every `--fix` repair), how `adapter:`
+  composes with `deploy_mode`, `loader:` and `mod_path`, and a step-by-step
+  walkthrough of adding one. The README's pipeline now names the adapter
+  stage for what it is, `CONTRIBUTING.md` points at the walkthrough, and
+  `docs/configuration.md` documents `adapter: bepinex` beside the other two.
+
 - **BepInEx is the second real adapter (#353, #413).** Everything lmm knows
   about BepInEx — how a plugin archive's files are laid out, that
   `BepInEx/config/**` is the user's configuration rather than mod content,
