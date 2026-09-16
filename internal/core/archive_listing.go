@@ -169,21 +169,92 @@ func importedModName(kind importArchiveKind, filename, version string, members [
 // an extracted directory: exactly one top-level entry, and that entry a
 // directory, names the mod; anything else (several entries, a single
 // top-level file, an empty archive) falls back to the archive's base name.
+//
+// A sole top-level directory that is the mod LOADER's structure - BepInEx/,
+// or one of its well-known subdirectories at the root - is not a name
+// (#450): every BepInEx-rooted plugin package would import as "BepInEx".
+// The rule then looks beneath the structure (payloadName), and falls back
+// to the archive's base name when that says nothing.
 func modNameFromMembers(members []archiveMember, archiveFilename string) string {
-	var top []archiveMember
-	seen := map[string]bool{}
-	for _, m := range members {
-		name, rest, nested := strings.Cut(filepath.ToSlash(filepath.Clean(m.Path)), "/")
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		top = append(top, archiveMember{Path: name, Dir: m.Dir || (nested && rest != "")})
+	top := topLevelEntries(members)
+	if len(top) != 1 || !top[0].Dir {
+		return stripExtension(archiveFilename)
 	}
-	if len(top) == 1 && top[0].Dir {
+	if !isLoaderStructure(top[0].Path) {
 		return top[0].Path
 	}
+	if name, ok := payloadName(members); ok {
+		return name
+	}
 	return stripExtension(archiveFilename)
+}
+
+// topLevelEntries is members' distinct first path segments, each marked a
+// directory when any member lies beneath it.
+func topLevelEntries(members []archiveMember) []archiveMember {
+	var top []archiveMember
+	index := map[string]int{}
+	for _, m := range members {
+		name, rest, nested := strings.Cut(filepath.ToSlash(filepath.Clean(m.Path)), "/")
+		dir := m.Dir || (nested && rest != "")
+		if i, ok := index[name]; ok {
+			top[i].Dir = top[i].Dir || dir
+			continue
+		}
+		index[name] = len(top)
+		top = append(top, archiveMember{Path: name, Dir: dir})
+	}
+	return top
+}
+
+// bepinexLoaderDir is BepInEx's own directory at the game root.
+const bepinexLoaderDir = "bepinex"
+
+// bepinexPayloadDirs are the BepInEx subdirectories a package drops its
+// plugins into; bepinexStructureDirs adds the ones that hold anything else.
+// Matched case-insensitively, as a Linux game directory built by hand often
+// differs from the loader's own capitalisation.
+var (
+	bepinexPayloadDirs   = []string{"plugins", "patchers", "monomod"}
+	bepinexStructureDirs = append([]string{"config", "core"}, bepinexPayloadDirs...)
+)
+
+// isLoaderStructure reports whether a sole top-level directory is the
+// loader's structure rather than a mod's own folder.
+func isLoaderStructure(name string) bool {
+	name = strings.ToLower(name)
+	return name == bepinexLoaderDir || slices.Contains(bepinexStructureDirs, name)
+}
+
+// payloadName is the one plugin directory beneath the loader's structure -
+// BepInEx/plugins/<Name>/..., plugins/<Name>/..., and the patchers/ and
+// monomod/ equivalents - or false when there is not exactly one, or when a
+// plugin file sits loose beside it. Settings under config/ and the loader's
+// own core/ are not a payload and never decide the name: a package's
+// BepInEx/config/<guid>.cfg sits beside its plugin folder as a matter of
+// course.
+func payloadName(members []archiveMember) (string, bool) {
+	var names []string
+	for _, m := range members {
+		parts := strings.Split(filepath.ToSlash(filepath.Clean(m.Path)), "/")
+		if len(parts) > 0 && strings.EqualFold(parts[0], bepinexLoaderDir) {
+			parts = parts[1:]
+		}
+		if len(parts) < 2 || !slices.Contains(bepinexPayloadDirs, strings.ToLower(parts[0])) {
+			continue
+		}
+		rest := parts[1:]
+		if len(rest) == 1 && !m.Dir {
+			return "", false // a loose plugin file: nothing beneath names the mod
+		}
+		if !slices.Contains(names, rest[0]) {
+			names = append(names, rest[0])
+		}
+	}
+	if len(names) != 1 {
+		return "", false
+	}
+	return names[0], true
 }
 
 // trimVersionSuffix drops filename's extension and, when version is a real

@@ -1,7 +1,7 @@
 package core
 
 import (
-	"os"
+	"io/fs"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -66,15 +66,25 @@ func DetectModName(extractedPath, archiveFilename string) string {
 		return stripExtension(archiveFilename)
 	}
 
-	// Try to find a single top-level directory
-	entries, err := os.ReadDir(extractedPath)
+	// The whole tree, as the listing would give it: the rule looks beneath
+	// a loader's own top-level directory (#450), not only at the top.
+	var members []archiveMember
+	err := filepath.WalkDir(extractedPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == extractedPath {
+			return nil
+		}
+		rel, err := filepath.Rel(extractedPath, path)
+		if err != nil {
+			return err
+		}
+		members = append(members, archiveMember{Path: rel, Dir: d.IsDir()})
+		return nil
+	})
 	if err != nil {
 		return stripExtension(archiveFilename)
-	}
-
-	members := make([]archiveMember, 0, len(entries))
-	for _, entry := range entries {
-		members = append(members, archiveMember{Path: entry.Name(), Dir: entry.IsDir()})
 	}
 	return modNameFromMembers(members, archiveFilename)
 }

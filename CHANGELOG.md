@@ -1500,6 +1500,18 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **`lmm import` no longer names every BepInEx-rooted plugin package
+  "BepInEx" (#450).** An archive whose only top-level entry is `BepInEx/`
+  took the loader's own directory as the mod's name, so every such plugin
+  imported as `BepInEx` and the imports were indistinguishable in `lmm list`.
+  `BepInEx/` and its well-known subdirectories (`plugins/`, `patchers/`,
+  `monomod/`, `config/`, `core/`, also as the archive's root) are now
+  structure, not a name: the mod is named after the one plugin folder beneath
+  them (`BepInEx/plugins/CoolFolder/…` imports as `CoolFolder`, whatever sits
+  in `BepInEx/config/`), and after the archive itself otherwise
+  (`Rooted-400.zip` holding `BepInEx/plugins/Rooted.dll` imports as
+  `Rooted-400`). The import plan and the import agree on the name, as before.
+
 - **`GET /api/v1/conflicts` no longer answers 500 for a game whose adapter
   is refused (#455).** An unknown `adapter:` name, a compile game's adapter
   that cannot compile, or `adapter: bepinex` off the game root is a known
