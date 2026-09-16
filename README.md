@@ -1292,22 +1292,52 @@ the omnibar, the activity bell, **⚙ Setup** and the theme toggle. Beneath
 it, attention cards render only when they have something to say, and each
 acts in place:
 
-| Card          | What it shows                                                                                                          | What it does                                                                                                                                                             |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Updates**   | every mod with a newer version                                                                                         | tick rows → "Update selected" applies them as one batch                                                                                                                  |
-| **Health**    | `lmm verify`'s findings, and when it last ran (or "Unchanged since …" when the answer came from the verify memo, #336) | per-finding **Repair**, **Repair all**, **Re-verify** (a real re-run, never the memo); a finding that `verify --fix` would not attempt says so in the engine's own words |
-| **Conflicts** | each contested file, its contenders and the winning rule                                                               | **Resolve…** opens the reorder modal scrolled to that file                                                                                                               |
-| **Profile**   | which way the profile and the installed set have drifted                                                               | **Apply profile…** runs `lmm profile apply`; **Sync…** runs `lmm profile sync`                                                                                           |
+| Card          | What it shows                                                                                                          | What it does                                                                                                                                                                                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Updates**   | every mod with a newer version                                                                                         | **Check again** re-asks the sources; **Update all (N)** takes every applicable row; or tick rows — one at a time, or the header box — and **Update N mods**                                                                                                                                 |
+| **Health**    | `lmm verify`'s findings, and when it last ran (or "Unchanged since …" when the answer came from the verify memo, #336) | per-finding **Repair**, **Repair all**, **Re-verify** (a real re-run, never the memo); a finding that `verify --fix` would not attempt says so in the engine's own words. The card renders only when something is wrong — **Verify** in the library toolbar is the one that is always there |
+| **Conflicts** | each contested file, its contenders and the winning rule                                                               | **Resolve…** opens the reorder modal scrolled to that file                                                                                                                                                                                                                                  |
+| **Profile**   | which way the profile and the installed set have drifted                                                               | **Apply profile…** runs `lmm profile apply`; **Sync…** runs `lmm profile sync`                                                                                                                                                                                                              |
 
 The **library** is the spine: an enabled toggle, the name, the installed
-version (with its update target), badges (⬆ update, ⚠ health, ⇄ conflict,
-🔒 lock, update policy), load order, and a ⋯ menu per row
-(Update / Uninstall / Lock / pak conversion / Re-link… / Reorder here).
-Pak conversion appears only where it applies. Filter (all/enabled/updatable/
-unhealthy) and sort (load order/name/recently installed) narrow it, and
-selecting rows raises a batch bar (Enable / Disable / Uninstall / Update
-selected). More columns appear as the display widens: author and install
+version (with its update target), badges (⬆ update, health, ⇄ conflict,
+🔒 lock, update policy), load order, a visible **Update** button on any row
+with one pending, and a ⋯ menu per row (Uninstall / Lock / Verify /
+Repair… / pak conversion / Re-link… / Reorder here). Pak conversion and
+Repair… appear only where they apply.
+
+The health badge states which of three things is true of that mod, rather
+than marking only the bad one: **✓** verified and clean, **⚠** with the
+number of findings in its tooltip, or **?** for not verified yet — so a
+healthy mod and one nothing has checked no longer look the same. The
+slide-over says the same thing in words.
+
+Ticking the enabled toggle moves it **immediately**, to the state you asked
+for, with "Enabling…"/"Disabling…" and a spinner on the row while the deploy
+behind it runs; if the job fails the row goes back to what is actually true.
+A mod has one such change in flight at a time — the row, the slide-over and
+the full mod page all show it, and a batch leaves that mod out. If the
+page's live connection to `lmm serve` drops meanwhile, it catches up when
+the connection returns, and says so if the server no longer knows the job;
+a change the server takes and never answers is given up on after a minute,
+and the row shows whatever the server reports once it answers. The row
+settles only on a fresh read of the library taken after the change; if that
+read fails, or brings nothing back within a minute while you are looking at
+it, a toast says the mod's current state could not be read and the row shows
+the last state the server reported.
+
+Filter (all/enabled/updatable/unhealthy) and sort (load order/name/recently
+installed) narrow it. The header checkbox selects **everything in view**
+— after the filter and whatever the omnibar is narrowing by — skipping rows
+the batch actions cannot apply to, and reads back as checked, empty or
+partial; `a` does the same from the keyboard anywhere on Mission Control
+(outside a text field, and not while a modal or the slide-over is open). A
+selection raises a batch bar that says how much is selected out of what is in
+view, with the applicable count on each action (Enable / Disable / Update /
+Uninstall). More columns appear as the display widens: author and install
 date at 1440px, source and link method at 1920px. Its toolbar also carries
+**Check for updates** (which re-asks the sources rather than re-reading what
+they cached), **Update all (N)**, **Verify**, **Reorder…** and
 **Add mods ▾**: Search sources… (focuses the omnibar), Import an archive…
 and Adopt untracked mods… — the same three flows, and the same component,
 the empty-library state offers before you have installed a first mod.
@@ -1322,9 +1352,9 @@ place on the row, and it says what it keeps: the stored originals). **Snapshot
 now** records one with no name to type — see [Snapshots](#snapshots).
 
 Clicking a row opens the **slide-over**: author, installed → available
-version, an editable lock, update policy and (where it applies) pak
-conversion, that mod's own findings and conflicts, a changelog preview, and
-Update / Enable-or-Disable / Uninstall. **More info →** opens the **full mod
+version, that mod's health in words, an editable lock, update policy and
+(where it applies) pak conversion, that mod's own findings and conflicts, a
+changelog preview, and Update / Enable-or-Disable / Uninstall. **More info →** opens the **full mod
 page** (`/g/{game}/{profile}/mod/{source}/{id}`), which carries all of that
 plus what only it has room for: full description, complete changelog, a
 files table, a versions table with per-version install and rollback,
@@ -1431,15 +1461,16 @@ removes every mod record behind it.
 The whole UI is operable from the keyboard, and every focused control shows
 a visible ring in both themes.
 
-| Key                        | Where                                        | What it does                                                                                                   |
-| -------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `Tab` / `Shift+Tab`        | anywhere                                     | move through the controls; the first stop on every screen is **Skip to content**, which jumps past the top bar |
-| `?`                        | anywhere outside a text field                | open this keyboard-shortcuts help                                                                              |
-| `Enter`                    | omnibar                                      | search the game's sources for what you typed                                                                   |
-| `Esc`                      | omnibar                                      | clear the search and return to your plain library                                                              |
-| `Esc`                      | any modal, the slide-over, any open dropdown | close it and return focus to whatever opened it                                                                |
-| `←` / `→`                  | the slide-over                               | step to the previous/next mod in the library's current order                                                   |
-| `←` / `→` / `Home` / `End` | the Setup page's section tabs                | move between sections                                                                                          |
+| Key                        | Where                                                                   | What it does                                                                                                   |
+| -------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Tab` / `Shift+Tab`        | anywhere                                                                | move through the controls; the first stop on every screen is **Skip to content**, which jumps past the top bar |
+| `?`                        | anywhere outside a text field                                           | open this keyboard-shortcuts help                                                                              |
+| `Enter`                    | omnibar                                                                 | search the game's sources for what you typed                                                                   |
+| `Esc`                      | omnibar                                                                 | clear the search and return to your plain library                                                              |
+| `Esc`                      | any modal, the slide-over, any open dropdown                            | close it and return focus to whatever opened it                                                                |
+| `a`                        | Mission Control, outside a text field, with no modal or slide-over open | select every mod in view, or clear the selection                                                               |
+| `←` / `→`                  | the slide-over                                                          | step to the previous/next mod in the library's current order                                                   |
+| `←` / `→` / `Home` / `End` | the Setup page's section tabs                                           | move between sections                                                                                          |
 
 The same table is in the app itself: press `?` (or the **?** button beside
 **⚙ Setup**) to open it. It is generated from one list, so the two cannot

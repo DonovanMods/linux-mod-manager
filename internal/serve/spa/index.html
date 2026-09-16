@@ -46,6 +46,14 @@
       browser can say what it is running. Read by shortcutsmodal.js.
     -->
     <meta name="lmm-version" content="{{.Version}}" />
+    <!--
+      The tab icon (issue 435), embedded and served from this binary like
+      every other asset - no CDN, no data: URI widening img-src, nothing the
+      Content-Security-Policy's own "everything from this origin only" does
+      not already admit. GET /favicon.ico answers with these same bytes for
+      the request a browser makes without consulting this element (spa.go).
+    -->
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
     <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>

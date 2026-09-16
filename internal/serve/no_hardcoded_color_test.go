@@ -32,11 +32,13 @@ import (
 	"testing"
 )
 
-// colorLiteral matches a CSS hex color or an rgb()/rgba()/hsl()/hsla()/
-// oklch()/color() function call - the shapes a literal (non-token) color
-// takes in this codebase. See the package doc comment above for why named
-// colors are deliberately not included.
-var colorLiteral = regexp.MustCompile(`#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color\(`)
+// colorLiteral matches a CSS hex color or a call to any CSS colour
+// function - rgb()/rgba()/hsl()/hsla()/hwb()/lab()/lch()/oklab()/oklch()/
+// color() - the shapes a literal (non-token) color takes. See the package
+// doc comment above for why named colors are deliberately not included.
+// The four names short enough to end another identifier ("collab(") are
+// matched only as whole words.
+var colorLiteral = regexp.MustCompile(`#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color\(|\bhwb\(|\blab\(|\blch\(|\boklab\(`)
 
 // tokenBlock matches one of the three blocks app.css defines Launcher's
 // tokens in - the ONLY place a literal color may appear. Order matters: the
@@ -93,5 +95,27 @@ func TestNoHardcodedColors(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("walking spa: %v", err)
+	}
+}
+
+// TestColorLiteral_MatchesEveryColourFunction is colorLiteral's own reach:
+// every CSS colour function is a literal colour - a relative one included,
+// since "hwb(from var(--x) h w b / 60%)" paints a token at a strength no
+// token certifies - and a JavaScript call that merely ends in one of their
+// names is not.
+func TestColorLiteral_MatchesEveryColourFunction(t *testing.T) {
+	for _, value := range []string{
+		"#fff", "#12345678", "rgb(0 0 0)", "rgba(0, 0, 0, .5)", "hsl(0 0% 0%)", "hsla(0, 0%, 0%, .5)",
+		"hwb(0 0% 0%)", "lab(50% 0 0)", "lch(50% 0 0)", "oklab(50% 0 0)", "oklch(50% 0 0)",
+		"color(display-p3 1 0 0)", "hwb(from var(--x) h w b / 60%)",
+	} {
+		if !colorLiteral.MatchString(value) {
+			t.Errorf("%q is a colour literal and must match", value)
+		}
+	}
+	for _, value := range []string{"collab(x)", "setLab(x)", "matlch(x)", "label(x)", "var(--lab)"} {
+		if colorLiteral.MatchString(value) {
+			t.Errorf("%q is not a colour and must not match", value)
+		}
 	}
 }

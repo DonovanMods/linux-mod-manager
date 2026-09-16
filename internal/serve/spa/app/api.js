@@ -24,7 +24,45 @@ export class ApiError extends Error {
   }
 }
 
-async function request(method, path, body) {
+/** A request the server did not answer before its deadline. Whatever it
+ * asked for may or may not have happened: the request may never have been
+ * sent, or the server may have acted on it and never said so. */
+export class NoAnswerError extends Error {
+  constructor(method, path, deadlineMillis) {
+    super(
+      `${method} ${path}: no answer within ${Math.round(deadlineMillis / 1000)} seconds`,
+    );
+    this.name = "NoAnswerError";
+    this.deadlineMillis = deadlineMillis;
+  }
+}
+
+/**
+ * jobStartDeadlineMillis bounds how long a job start may go unanswered
+ * before the page stops waiting for it (issue 432).
+ *
+ * A browser puts no deadline on a request of its own, so a start the server
+ * took and never answered - a hung handler, a proxy holding the connection -
+ * left whatever was waiting on it waiting for as long as the connection
+ * stayed open.
+ *
+ * Sixty seconds, because the deadline runs from the moment the request is
+ * made, not from the moment it reaches the server. A healthy lmm serve
+ * answers a start on admission, without waiting for the job
+ * (kind_toggle.go), so a start is milliseconds of server work even on a busy
+ * machine. But lmm serve speaks HTTP/1.1, which gives this page six
+ * connections to it; the activity stream holds one for good, and a hydrate
+ * sends seven reads at once - among them the update check, whose calls out
+ * to a mod source may each run thirty seconds before that source's own
+ * timeout ends them (the custom and Steam Workshop sources). A start queued
+ * behind those can wait tens of seconds with nothing wrong. Twice the
+ * longest of those budgets is long enough that reaching it means the server
+ * is not answering, and short enough that a row does not claim a change for
+ * minutes.
+ */
+export const jobStartDeadlineMillis = 60_000;
+
+async function request(method, path, body, { deadlineMillis } = {}) {
   const init = { method, headers: {} };
   if (method !== "GET") {
     init.headers["X-CSRF-Token"] = csrfToken;
@@ -33,9 +71,21 @@ async function request(method, path, body) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
+  // The deadline covers the answer's body as well as its headers: an
+  // AbortSignal passed to fetch also aborts the read below. A response that
+  // arrives after it is discarded by the browser, never handed back here.
+  if (deadlineMillis) init.signal = AbortSignal.timeout(deadlineMillis);
 
-  const response = await fetch(path, init);
-  const text = await response.text();
+  let response;
+  let text;
+  try {
+    response = await fetch(path, init);
+    text = await response.text();
+  } catch (err) {
+    if (err?.name === "TimeoutError")
+      throw new NoAnswerError(method, path, deadlineMillis);
+    throw err;
+  }
   const payload = text ? JSON.parse(text) : null;
 
   if (!response.ok) {
@@ -79,11 +129,12 @@ export const plan = (kind, options, context) =>
 export const startJob = (planID, options) =>
   post("/api/v1/jobs", { plan_id: planID, ...(options ? { options } : {}) });
 
-/** Reads one job's status document - callerless since Unit 3 landed it,
- * until issue 330's per-mod job history (jobhistory.js) became its first
- * consumer: the tray's own jobsIndex is deliberately Result-less
- * (activity.go), so a caller that needs to know what a FINISHED job's own
- * result document said has to read this. */
+/** Reads one job's status document. Two consumers: issue 330's per-mod
+ * job history (jobhistory.js) - the tray's own jobsIndex is deliberately
+ * Result-less (activity.go), so a caller that needs to know what a FINISHED
+ * job's own result document said has to read this - and the activity
+ * stream's reconnect (activity.js), which asks about a job its fresh
+ * snapshot no longer carries. */
 export const jobStatus = (id) => get(`/api/v1/jobs/${encodeURIComponent(id)}`);
 
 /** modPath builds one mod's /api/v1/mods/{source}/{id} base path - shared
@@ -137,9 +188,17 @@ export function search(query, opts, context) {
 
 /** Starts an enable/disable job directly - the one sanctioned plan-free
  * mutation path (kind_toggle.go); no plan step, so there is nothing to
- * confirm before it runs. Returns the same start document startJob does. */
+ * confirm before it runs. Returns the same start document startJob does, or
+ * throws NoAnswerError once jobStartDeadlineMillis has passed without one:
+ * a toggle's acknowledgment waits on this answer (toggleack.js), and must
+ * not wait forever. */
 export const startToggle = (action, sourceID, modID, context) =>
-  post(scoped(`${modPath(sourceID, modID)}/${action}`, context));
+  request(
+    "POST",
+    scoped(`${modPath(sourceID, modID)}/${action}`, context),
+    undefined,
+    { deadlineMillis: jobStartDeadlineMillis },
+  );
 
 /** Sets sourceID/modID's lock, at version (empty locks at whatever is
  * currently installed). Returns core.ModSettingResult directly - this is a

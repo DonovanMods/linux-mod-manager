@@ -252,6 +252,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lmm serve` has a tab icon (#435).** The shell declared no icon, so the
+  tab showed the browser's generic page glyph and every page load fired a
+  `GET /favicon.ico` the server had no route for. An SVG mark now ships
+  embedded in the binary like every other asset — no CDN, no build step —
+  served both at `/static/favicon.svg`, which the shell names, and at
+  `/favicon.ico`, which browsers ask for on their own. It is one drawing
+  rather than a size per platform, and it is a filled tile so it reads on a
+  light and a dark tab strip alike. Both paths, and every other embedded
+  asset, now carry a content-hash `ETag`: the assets were already sent
+  `Cache-Control: no-cache`, but an embedded file has no modification time,
+  so there was nothing to revalidate against and every page load
+  re-downloaded every module.
+
+- **Every mod says whether it has been verified, and Verify is on screen
+  (#418).** A library row carried a ⚠ when something was wrong and nothing
+  at all otherwise — so "checked, fine" and "never checked" looked the same,
+  which are opposite things to be told about your install. Each row now
+  carries its own health badge in all three states (verified and clean, _N_
+  findings, not verified yet) — exposed to a screen reader as that sentence,
+  not as the bare glyph — the slide-over states the same thing in words,
+  and **Verify** sits in the library header — where it is reachable
+  on a healthy profile, which is exactly when the Health card is not there
+  to ask. A row's ⋯ menu offers **Verify** and, for a mod with findings,
+  **Repair…** scoped to that mod.
+
+- **Updating a mod — or all of them — is something you can see (#417).** The
+  web UI could already do both, and neither read as _the_ update action: the
+  Updates card needed rows ticked first, the batch bar only exists once they
+  are, and the per-mod Update was a click deep in the row's ⋯ menu. The
+  library header now carries **Check for updates** — which asks the source
+  again rather than re-reading what it has cached — and **Update all (3)**,
+  counting what it is about to do; the Updates card carries the same pair;
+  and a row with an update pending carries a visible **Update** button of its
+  own, in the open rather than behind ⋯.
+
+- **Select all, on the library and the Updates card (#434).** Both
+  multi-select surfaces made you tick every row by hand. Each now has a
+  header checkbox that takes everything **currently in view** — after the
+  filter and whatever the omnibar is narrowing by, not the whole library —
+  and reads back as checked, empty, or a partial selection. It skips the
+  rows the actions cannot apply to rather than selecting them and having the
+  buttons refuse: a Steam-managed row has no enable/disable at all, and an
+  update lmm cannot apply has no checkbox of its own. The batch bar says
+  **“3 of 12 selected”** (and a screen reader hears each change to the
+  selection, not each keystroke of a search), every
+  batch button carries the number it is about to act on — **Update (3)** —
+  and the count always describes rows still on screen: updating a ticked mod
+  from anywhere takes it out of the Updates card's count, and a confirmed
+  batch clears that card's selection. With nothing in view it could take,
+  the header checkbox is disabled rather than silently inert. Pressing **a**
+  anywhere on Mission Control — outside a text field, and not while a modal
+  or the slide-over is open — selects everything in view or clears it.
+
 - **The game-adapter seam: one `adapter:` key in `games.yaml` (#353, #411).**
   What a game does with mod content — how an archive's files are laid out,
   which of them are configuration rather than mod content, whether its mods
@@ -1195,6 +1248,42 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **The web UI's enable/disable checkbox acknowledges the click straight
+  away (#432).** Enabling a mod deploys its files, which for a large mod is
+  seconds of real work — and for all of it the library row looked exactly as
+  it had before the click: the box kept its old value, greyed itself out,
+  and only moved once the job had finished and the library had reloaded.
+  Nothing said the click had landed, so people clicked again, and the
+  `disabled` that was the only visible change swallowed those clicks too.
+  The box now moves to what you asked for in the same frame, the row says
+  **Enabling…**/**Disabling…** beside the mod's name with a spinner next to
+  the box, and if the job fails the row goes back to what is actually true.
+  The slide-over's and the full mod page's own Enable/Disable buttons do the
+  same, and so does the batch bar: selecting forty mods and pressing
+  **Disable** now moves all forty at once, rather than one row at a time as
+  the sequenced batch reaches it. Each request is settled only by its own
+  job — a row the batch has not reached yet stays pending even if it
+  already reads the value asked for — so clicking again after a failed
+  toggle is acknowledged like the first click, and a request stays
+  acknowledged when the slide-over steps to another mod and back. A mod has
+  at most one request in flight: the row, the slide-over and the full mod
+  page all show the same one, and a new batch leaves that mod out. A job
+  that ends while the page's live connection is dropped still settles its
+  row once the connection is back, and a batch carries on rather than
+  stalling; a job `lmm serve` no longer knows about (it restarted, say) is
+  reported as **Lost track of a job**, the page re-reads what is true, and
+  the batch's tally lists it as an unknown outcome rather than a failure. A
+  request `lmm serve` takes and never answers is given up on after a minute:
+  the page says the server did not answer and that the change may or may
+  not have been applied, re-reads, and shows what the server reports once
+  it answers. A row settles only once a library read taken after its change
+  has actually landed — not when a newer read merely overtook it, which let a
+  row flick back to its old value — and if that read fails, or brings
+  nothing back within a minute while the row is on screen, a toast says the
+  mod's current state could not be read and the row shows the last state
+  the server reported. The in-flight row is marked with an accent bar rather than dimmed, so its
+  text keeps its contrast in both themes.
 
 - **A NexusMods plugin folder installs into `BepInEx/plugins/`, not into the
   game root (#424).** Jotunn 2.30.0 from NexusMods extracts to a single

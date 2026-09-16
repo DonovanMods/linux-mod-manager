@@ -85,6 +85,11 @@ export const jobEventTypes = [
   "update_check",
 ];
 
+/** activityReopenMillis is how long a closed activity stream waits before
+ * it is opened again - EventSource's own customary reconnection delay, so a
+ * refused stream is retried no more eagerly than a dropped one. */
+const activityReopenMillis = 3000;
+
 /**
  * Follows the multiplexed session stream (GET /api/v1/events).
  *
@@ -107,6 +112,15 @@ export const jobEventTypes = [
  *
  * Returns a function that stops following. The stream never ends of its own
  * accord, so nothing else will close it.
+ *
+ * It is also never given up on. EventSource retries a dropped connection by
+ * itself, but a reconnect answered with anything other than an event stream
+ * (a proxy's 502 while the server restarts, say) closes it for good - and
+ * with it every way a running job's end could still reach this page, so a
+ * row waiting on one would wait forever (toggleack.js). A closed stream is
+ * therefore reported through onError AND reopened after
+ * activityReopenMillis, as often as it takes; the fresh stream's snapshot
+ * is what catches the page up.
  */
 export function followActivity({
   onSnapshot,
@@ -115,25 +129,42 @@ export function followActivity({
   onDone,
   onError,
 } = {}) {
-  const source = new EventSource("/api/v1/events");
+  let source = null;
+  let reopenTimer = null;
+  let stopped = false;
 
-  const on = (name, handler) => {
-    source.addEventListener(name, (frame) => handler?.(JSON.parse(frame.data)));
-  };
-  on("snapshot", onSnapshot);
-  on("job_started", onStarted);
-  on("job_progress", onProgress);
-  on("job_done", onDone);
+  const open = () => {
+    reopenTimer = null;
+    source = new EventSource("/api/v1/events");
+    const on = (name, handler) => {
+      source.addEventListener(name, (frame) =>
+        handler?.(JSON.parse(frame.data)),
+      );
+    };
+    on("snapshot", onSnapshot);
+    on("job_started", onStarted);
+    on("job_progress", onProgress);
+    on("job_done", onDone);
 
-  source.onerror = () => {
-    // CONNECTING means EventSource is retrying on its own and a reconnect
-    // will re-deliver a full snapshot - not something to report as a
-    // failure. CLOSED means it has given up, which the tray must say out
-    // loud rather than quietly showing a frozen list.
-    if (source.readyState === EventSource.CLOSED) {
+    const opened = source;
+    opened.onerror = () => {
+      // CONNECTING means EventSource is retrying on its own and a reconnect
+      // will re-deliver a full snapshot - not something to report as a
+      // failure. CLOSED means it has given up, which the tray must say out
+      // loud rather than quietly showing a frozen list - and which this
+      // module then undoes.
+      if (opened.readyState !== EventSource.CLOSED) return;
       onError?.("lost the activity stream");
-    }
+      if (!stopped && reopenTimer === null && source === opened) {
+        reopenTimer = setTimeout(open, activityReopenMillis);
+      }
+    };
   };
 
-  return () => source.close();
+  open();
+  return () => {
+    stopped = true;
+    clearTimeout(reopenTimer);
+    source.close();
+  };
 }

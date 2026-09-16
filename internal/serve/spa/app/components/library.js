@@ -11,18 +11,23 @@
 // exact list this table is showing, so this component now renders `visible`
 // rather than computing it.
 
-import { html, useEffect, useState } from "../render.js";
+import { html, useEffect, useMemo, useRef, useState } from "../render.js";
 import { navigate } from "../router.js";
 import { ApiError } from "../api.js";
 import {
   formatDate,
   countExternal,
+  countOf,
+  healthBadge,
+  healthLabel,
   FILTER_NAMES,
   SORT_NAMES,
 } from "../modrows.js";
 import { mutationLabel, progressText } from "../progress.js";
+import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { AddModsMenu } from "./addmodsmenu.js";
+import { InlineJob } from "./jobprogress.js";
 
 const FILTER_LABELS = {
   all: "All",
@@ -89,9 +94,58 @@ function modOrigin(row, action) {
   return `mod:${row.source_id}/${row.id}:${action}`;
 }
 
+// UPDATE_ALL_ORIGIN is the library header's own "Update all" (issue 417) -
+// distinct from the batch bar's "library:batch-update", which acts on a
+// selection, and from the Updates card's own control. Three controls that
+// can plan different sets must not share one origin, or one of them morphs
+// into a job it did not start.
+const UPDATE_ALL_ORIGIN = "library:update-all";
+
+// healthBadgeTone maps issue 418's three health states onto the badge
+// classes that already exist. "unknown" takes the plain badge deliberately:
+// not having looked yet is not a warning, and colouring it as one would
+// make a fresh page load read as a problem.
+function healthBadgeTone(row) {
+  if (row.healthState === "issues") return "badge--warn";
+  if (row.healthState === "ok") return "badge--good";
+  return "";
+}
+
+// nonTextInputTypes are the <input> types that take no typing: a keystroke
+// aimed at one of these is a command, not a character.
+const nonTextInputTypes = new Set([
+  "checkbox",
+  "radio",
+  "button",
+  "submit",
+  "reset",
+  "range",
+  "color",
+  "file",
+]);
+
+/** isTypingTarget reports whether a keystroke aimed at el is somebody
+ * TYPING - in which case a single-letter binding must keep its hands off it
+ * (issue 434's "a").
+ *
+ * Finer-grained than app.js's own list for the `?` binding, and it has to
+ * be: the control that most often holds focus when this binding is pressed
+ * is the select-all CHECKBOX the user just clicked, which is an <input> and
+ * takes no text at all. A <select> counts as typing even though it does
+ * not: a letter pressed on a focused one jumps to the option starting with
+ * it, which is a browser behaviour worth more than a shortcut. */
+function isTypingTarget(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
+  if (el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+  if (el.tagName !== "INPUT") return false;
+  return !nonTextInputTypes.has((el.type || "text").toLowerCase());
+}
+
 export function Library({
   state,
   mods,
+  rows,
   visible,
   filter,
   sort,
@@ -106,7 +160,10 @@ export function Library({
 }) {
   const [selected, setSelected] = useState(() => new Set());
   const [menuKey, setMenuKey] = useState(null);
-  const [togglingKey, setTogglingKey] = useState(null);
+
+  // issue 432: the enable/disable a row's user asked for and has not yet
+  // seen settled (toggleack.js), or undefined.
+  const requestedFor = (row) => toggleRequestFor(state, row.key);
 
   // m2, unit 6 fix wave: the ⋯ row menu used to close only by re-clicking
   // ⋯, which left it sitting open over the rest of the page once the user
@@ -139,6 +196,71 @@ export function Library({
     });
   }
 
+  // issue 434: the rows select-all actually takes. "Everything currently
+  // visible" is the filter's and the omnibar's answer, not the library's -
+  // the same `visible` selectedRows() already measures against - minus the
+  // rows no batch action can act on. An EXTERNAL row is the one such case
+  // today: core refuses enable/disable for a Steam Workshop item outright
+  // (issue 379, which is why the row's own enabled checkbox is disabled), so
+  // sweeping it in would hand the batch bar a selection its two main
+  // buttons then have to refuse. Its own checkbox stays live - a user who
+  // means that row can still tick it - it is only never taken in bulk.
+  function selectableRows() {
+    return visible.filter((r) => !r.isExternal);
+  }
+
+  const selectable = selectableRows();
+  const takenCount = selectable.filter((r) => selected.has(r.key)).length;
+  const allTaken = selectable.length > 0 && takenCount === selectable.length;
+
+  function toggleSelectAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allTaken) {
+        // Clears what is IN VIEW, not the whole set: a row selected under a
+        // different filter is not something this press was about.
+        for (const row of visible) next.delete(row.key);
+        return next;
+      }
+      for (const row of selectable) next.add(row.key);
+      return next;
+    });
+  }
+
+  // "a" selects everything in view, or clears it (issue 434, shortcuts.js).
+  // Scoped to this component rather than app.js's own global `?` handler
+  // because it is scoped to this SURFACE: the library is the only screen
+  // with a selection to take.
+  //
+  // Ignored while a text field has focus - "a" is a character someone is
+  // entitled to type into the omnibar - and while anything is layered over
+  // the table: a modal, for the reason app.js states (modals stack at most
+  // one deep, and reaching past one to change the page underneath is not
+  // something a keystroke should do), and the slide-over, which is a route
+  // annotation rather than a modal but covers the table just the same. A
+  // selection silently changing behind a panel you are reading is not a
+  // shortcut, it is a surprise.
+  //
+  // The listener is attached ONCE and reads the current handler through a
+  // ref: this component re-renders on every activity frame while a job runs,
+  // and a listener swapped on each of those would be churn for nothing -
+  // while a handler captured on the first render would select against a
+  // `visible` that has since changed.
+  const coveredByOverlay = Boolean(state.modal) || Boolean(state.route?.mod);
+  const selectAllRef = useRef(null);
+  selectAllRef.current = coveredByOverlay ? null : toggleSelectAll;
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.key !== "a" || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!selectAllRef.current) return;
+      if (isTypingTarget(e.target)) return;
+      e.preventDefault();
+      selectAllRef.current();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   // A plain (pushed) navigation, not a replace: opening the slide-over is a
   // new place in history on purpose, so Back closes it (router.js's own
   // doc comment) rather than leaving Mission Control entirely.
@@ -161,24 +283,27 @@ export function Library({
   // reason the bar cannot know: the selection may hold no Steam row at all,
   // and what is actually true is that nothing it could act on is in view.
   // The button stays refused either way; only the sentence is withheld.
-  function steamRefusalTitle(action) {
+  //
+  // The two reasons a row in view is left out are each named when they are
+  // the whole story, and together when both are.
+  function toggleRefusalTitle(action) {
     if (togglableSelectedRows().length > 0) return undefined;
-    if (selectedRows().length === 0) return undefined;
-    return `Steam manages the selected items — lmm cannot ${action} them`;
+    const rows = selectedRows();
+    if (rows.length === 0) return undefined;
+    if (rows.every((r) => r.isExternal))
+      return `Steam manages the selected items — lmm cannot ${action} them`;
+    if (rows.every((r) => requestedFor(r) !== undefined))
+      return "The selected mods are already being enabled or disabled";
+    return `The selected mods are managed by Steam or already being enabled or disabled — lmm cannot ${action} them now`;
   }
 
-  async function toggleEnabled(row) {
-    setTogglingKey(row.key);
-    try {
-      await actions.startToggle({
-        action: row.enabled ? "disable" : "enable",
-        sourceID: row.source_id,
-        modID: row.id,
-        origin: modOrigin(row, "toggle"),
-      });
-    } finally {
-      setTogglingKey(null);
-    }
+  // issue 432: the click is acknowledged by toggleack.js in the same frame -
+  // the box moves to what was asked for and the row says what it is doing -
+  // rather than sitting on the old value, greyed, until the deploy behind it
+  // finishes. Nothing is awaited here: the pending state IS the feedback,
+  // and the outcome lands through the row's own live line.
+  function toggleEnabled(row) {
+    actions.startToggle(row);
   }
 
   // toggleLock is the ⋯ menu's own Lock/Unlock (I1, unit 6 fix wave): the
@@ -224,23 +349,111 @@ export function Library({
     actions.openReorderModal({ profileName: state.route.profile });
   }
 
+  // issue 417: the library header's own update pair. Everything they drive
+  // already existed - the `updates` plan kind, and GET /api/v1/updates - and
+  // nothing here is a new flow; what was missing is that neither read as THE
+  // update action. The card only appears when there is already something to
+  // report, the batch bar only appears once rows are ticked, and the ⋯ menu
+  // hid the per-mod one behind a click.
+  //
+  // `rows`, not `visible`: "all" means every mod in this profile with an
+  // update, not whatever a filter happens to be showing. The count on the
+  // button says how many that is before the confirm modal does.
+  function updatableRows() {
+    // issue 269: an EXTERNAL row is excluded even when it HAS an update -
+    // ApplyUpdateBatch declines it (core.ReasonExternalNoUpdate) - for the
+    // same reason updatableSelectedRows drops one.
+    return (rows ?? []).filter((r) => r.hasUpdate && !r.isExternal);
+  }
+
+  function updateAll() {
+    const targets = updatableRows();
+    if (targets.length === 0) return;
+    actions.openPlan({
+      kind: "updates",
+      origin: UPDATE_ALL_ORIGIN,
+      title: `Update ${countOf(targets.length, "mod")}`,
+      confirmLabel: "Update",
+      options: { mods: targets.map((r) => r.key) },
+    });
+  }
+
+  // checking/verifying are these controls' own acknowledgment (the lesson of
+  // issue 432, applied where it is needed next): an update check is a live
+  // source read per mod and a full verify walks every deployed file, so a
+  // button that did nothing visible until the whole thing came back would
+  // read as a button that did nothing.
+  const [checking, setChecking] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+
+  async function checkForUpdates() {
+    setChecking(true);
+    try {
+      await actions.refreshUpdates();
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  // issue 418: the library header's Verify. It is the SAME whole-profile
+  // check the Health card's own button runs (actions.reloadHealth sends
+  // ?force=1, opting out of core's unchanged-installation memo) - the
+  // difference is that this one is on screen even when there is nothing
+  // wrong, which is precisely when "is my install OK?" has no other answer:
+  // an attention card renders only when it has something to say, so a
+  // healthy profile had no verify control anywhere.
+  async function verifyAll() {
+    setVerifying(true);
+    try {
+      await actions.reloadHealth();
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  function updateRow(row) {
+    actions.openPlan({
+      kind: "updates",
+      origin: modOrigin(row, "update"),
+      title: `Update ${row.name}`,
+      confirmLabel: "Update",
+      options: { mods: [row.key] },
+    });
+  }
+
   // issue 379: an EXTERNAL row is dropped for the same reason
   // updatableSelectedRows drops one, and the reason the row's own enabled
   // checkbox is disabled - core refuses enable/disable for a Steam
   // Workshop item, and no choice in this UI changes that. The batch bar
   // reached the identical doomed job in two clicks where the checkbox
   // reached it in one.
+  //
+  // issue 432: so is a row with a request already in flight. The ledger
+  // holds one live request per mod; a batch that took the row again would
+  // queue a second job behind the first, and whichever ran last would
+  // silently decide the outcome.
   function togglableSelectedRows() {
-    return selectedRows().filter((r) => !r.isExternal);
+    return selectedRows().filter(
+      (r) => !r.isExternal && requestedFor(r) === undefined,
+    );
   }
 
   function batchEnable(action) {
     const rows = togglableSelectedRows();
     if (rows.length === 0) return;
     setSelected(new Set());
+    // issue 432: every row in the batch acknowledges at once, on the click -
+    // the batch itself runs strictly one job at a time (main.js#
+    // startBatchToggle), so without the ledger the last row of a long
+    // selection sat visually untouched for the whole run.
     actions.startBatchToggle(
       action,
-      rows.map((r) => ({ source_id: r.source_id, id: r.id, name: r.name })),
+      rows.map((r) => ({
+        key: r.key,
+        source_id: r.source_id,
+        id: r.id,
+        name: r.name,
+      })),
     );
   }
 
@@ -290,27 +503,13 @@ export function Library({
     return html`
       <div class="row-menu">
         ${
-          // issue 269: not offered for an external row, for the reason
-          // updatableSelectedRows states - and matching the slide-over, which
-          // hides Update for the same mod.
-          row.hasUpdate &&
-          !row.isExternal &&
-          html`<button
-            type="button"
-            class="row-menu__item"
-            onClick=${() => {
-              setMenuKey(null);
-              actions.openPlan({
-                kind: "updates",
-                origin: origin("update"),
-                title: `Update ${row.name}`,
-                confirmLabel: "Update",
-                options: { mods: [row.key] },
-              });
-            }}
-          >
-            Update
-          </button>`
+          // issue 417: Update is no longer in here. A mod with an update
+          // pending now carries a VISIBLE button in its own actions cell -
+          // the owner's note was that nothing in this UI read as "the update
+          // action", and an action a click away behind ⋯ is exactly that.
+          // Keeping a second copy here would be two controls doing one thing
+          // on the same row.
+          ""
         }
         <button
           type="button"
@@ -335,6 +534,49 @@ export function Library({
         >
           ${row.locked ? "Unlock" : "Lock"}
         </button>
+        ${
+          // issue 418: the per-row half of "is this mod OK?". Verify is the
+          // whole-profile check - lmm has no per-mod verify, and the title
+          // says so rather than letting the menu imply one - but it is
+          // offered from the row because the row is where the question gets
+          // asked, and the row's own badge is what answers it.
+          html`<button
+            type="button"
+            class="row-menu__item"
+            data-action="row-verify"
+            title="Re-checks every mod in this profile — lmm verifies a profile as a whole"
+            onClick=${() => {
+              setMenuKey(null);
+              verifyAll();
+            }}
+          >
+            Verify
+          </button>`
+        }
+        ${
+          // Repair, on the other hand, IS per-mod: verify_fix takes a
+          // mod_filter, which is the same plan the Health card's own
+          // per-finding Repair opens - and the same origin, so whichever
+          // surface is on screen shows the job.
+          row.hasHealthIssue &&
+          html`<button
+            type="button"
+            class="row-menu__item"
+            data-action="row-repair"
+            onClick=${() => {
+              setMenuKey(null);
+              actions.openPlan({
+                kind: "verify_fix",
+                origin: `health:${row.id}:repair`,
+                title: `Repair ${row.name}`,
+                confirmLabel: "Repair",
+                options: { mod_filter: row.id },
+              });
+            }}
+          >
+            Repair…
+          </button>`
+        }
         ${
           row.convert_paks !== null &&
           row.convert_paks !== undefined &&
@@ -389,6 +631,20 @@ export function Library({
       </div>
     `;
   }
+
+  // The selection's size in words, shared by the batch bar and the live
+  // region below.
+  const selectionCount = `${selectedRows().length} of ${visible.length} selected`;
+  // What the live region says is recomputed only when the SELECTION
+  // changes. The count above also moves with `visible`, so a region reading
+  // it directly spoke up on every keystroke of a search - "0 of 1 selected"
+  // while nothing about the selection had changed. The words are the ones
+  // the bar shows at the moment of the change. A hook, so it is called
+  // here, above the returns below: Preact matches hook state by call order.
+  const selectionAnnouncement = useMemo(
+    () => (selected.size > 0 ? selectionCount : "No mods selected"),
+    [selected],
+  );
 
   if (mods === null) {
     if (error) {
@@ -454,8 +710,38 @@ export function Library({
   // reads its own "mods" member.
   const externalCount = countExternal(mods?.mods);
 
+  // issue 434: what the select-all box is about to do, counted. The
+  // accessible name says the NUMBER because that is the surprise the issue
+  // is about - "Update 40 mods" should never be the first time you learn
+  // there were forty - and it names the direction, because the same control
+  // clears the selection once it is full. Both start with the visible word
+  // (WCAG 2.5.3, label in name), as the Updates card's box does.
+  const selectAllLabel = allTaken
+    ? `Select all: all ${countOf(selectable.length, "mod")} in view selected, press to clear`
+    : `Select all ${countOf(selectable.length, "mod")} in view`;
+  // The one thing the count alone cannot explain: rows that are on screen
+  // and deliberately not taken.
+  const skipped = visible.length - selectable.length;
+  const selectAllTitle =
+    skipped > 0
+      ? `${countOf(skipped, "row")} managed by Steam ${skipped === 1 ? "is" : "are"} not included — lmm cannot enable or disable ${skipped === 1 ? "it" : "them"}`
+      : undefined;
+
   return html`
     <section class="library">
+      ${
+        // issue 434: a selection change is announced - pressing "a" changes
+        // it with nothing else to say so. The region is ALWAYS rendered,
+        // rather than being the batch bar's own count: the bar mounts on the
+        // first selection, and a live region inserted together with its text
+        // is not reliably announced, which would silence exactly that first
+        // press. "No mods selected" is what a clear announces; as the
+        // region's first content it is not read out at all.
+        ""
+      }
+      <p class="visually-hidden" role="status" data-testid="selection-status">
+        ${selectionAnnouncement}
+      </p>
       <div class="library__toolbar">
         <h2 class="section-header">${libraryLabel}</h2>
         ${
@@ -496,6 +782,46 @@ export function Library({
         <button
           type="button"
           class="button button--small"
+          data-action="check-updates"
+          disabled=${checking}
+          aria-busy=${checking ? "true" : null}
+          onClick=${checkForUpdates}
+        >
+          ${checking ? "Checking…" : "Check for updates"}
+        </button>
+        <${InlineJob}
+          origin=${UPDATE_ALL_ORIGIN}
+          state=${state}
+          actions=${actions}
+        >
+          <button
+            type="button"
+            class="button button--small"
+            data-action="update-all"
+            disabled=${updatableRows().length === 0}
+            title=${
+              updatableRows().length === 0
+                ? "No mod in this profile has an update lmm can apply"
+                : undefined
+            }
+            onClick=${updateAll}
+          >
+            ${`Update all (${updatableRows().length})`}
+          </button>
+        <//>
+        <button
+          type="button"
+          class="button button--small"
+          data-action="verify"
+          disabled=${verifying}
+          aria-busy=${verifying ? "true" : null}
+          onClick=${verifyAll}
+        >
+          ${verifying ? "Verifying…" : "Verify"}
+        </button>
+        <button
+          type="button"
+          class="button button--small"
           data-action="reorder"
           onClick=${openReorder}
         >
@@ -514,7 +840,31 @@ export function Library({
               <table class="library__table">
                 <thead>
                   <tr>
-                    <th class="col--select">Select</th>
+                    <th class="col--select">
+                      ${
+                        // issue 434: the select-all, wrapped in the column's
+                        // own heading so the word still labels the column
+                        // (owner demo 1 asked for a real heading here) and
+                        // doubles as the box's click target. aria-label
+                        // overrides that word for the accessible name,
+                        // because "Select" says nothing about what this one
+                        // press is about to take.
+                        ""
+                      }
+                      <label class="library__select-all">
+                        <input
+                          type="checkbox"
+                          data-testid="select-all"
+                          checked=${allTaken}
+                          indeterminate=${takenCount > 0 && !allTaken}
+                          disabled=${selectable.length === 0}
+                          aria-label=${selectAllLabel}
+                          title=${selectAllTitle}
+                          onChange=${toggleSelectAll}
+                        />
+                        Select
+                      </label>
+                    </th>
                     <th class="col--enabled">Enabled</th>
                     <th class="col--name">Name</th>
                     <th class="col--version">Version</th>
@@ -524,7 +874,9 @@ export function Library({
                     <th class="col--order">Load order</th>
                     <th class="col--method">Method</th>
                     <th class="col--installed">Installed</th>
-                    <th class="col--menu"></th>
+                    <th class="col--menu">
+                      <span class="visually-hidden">Actions</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -535,11 +887,18 @@ export function Library({
                     // "source:id" way modKey() is) shows its own live text
                     // here instead of the library's shared header line.
                     const mutation = mutations?.get(row.key);
+                    // issue 432: what the user asked this row's toggle for
+                    // and has not got yet (toggleack.js). While it is set the
+                    // box renders the REQUESTED value rather than the
+                    // server's, so the click lands visibly in the frame it
+                    // was made in.
+                    const requested = requestedFor(row);
+                    const togglePending = requested !== undefined;
                     return html`
                       <tr
                         key=${row.key}
                         data-mod=${row.key}
-                        class="mod-row ${selected.has(row.key) ? "mod-row--selected" : ""}"
+                        class="mod-row ${selected.has(row.key) ? "mod-row--selected" : ""} ${togglePending ? "mod-row--pending" : ""}"
                       >
                         <td class="col--select">
                           <input
@@ -562,7 +921,7 @@ export function Library({
                                 ? `${row.name} is managed by Steam`
                                 : `${row.enabled ? "Disable" : "Enable"} ${row.name}`
                             }
-                            checked=${row.enabled}
+                            checked=${togglePending ? requested.want : row.enabled}
                             disabled=${
                               // issue 379: EXTERNAL rows are gated here too,
                               // matching updatableSelectedRows and the row
@@ -573,10 +932,19 @@ export function Library({
                               // fails, which is the same defect the deploy
                               // dry run had. Disabled-with-a-reason is the
                               // full mod page's rollback pattern.
+                              //
+                              // issue 432: the box is still frozen while the
+                              // request is in flight - a second, contrary
+                              // job over the same mod is not a thing to
+                              // offer - but it is now frozen HOLDING THE
+                              // REQUESTED VALUE, with the row saying what is
+                              // happening, instead of frozen on the old one
+                              // saying nothing at all.
                               Boolean(mutation) ||
-                              togglingKey === row.key ||
+                              togglePending ||
                               row.isExternal
                             }
+                            aria-busy=${togglePending ? "true" : null}
                             title=${
                               row.isExternal
                                 ? "Steam manages this item — unsubscribe in Steam, or use the game's own mod menu"
@@ -585,6 +953,13 @@ export function Library({
                             onClick=${(e) => e.stopPropagation()}
                             onChange=${() => toggleEnabled(row)}
                           />
+                          ${
+                            togglePending &&
+                            html`<span
+                              class="toggle-pending"
+                              aria-hidden="true"
+                            ></span>`
+                          }
                         </td>
                         <td class="col--name">
                           <button
@@ -595,15 +970,27 @@ export function Library({
                             ${row.name}
                           </button>
                           ${
-                            mutation &&
-                            html`<span class="mod-row__live" role="status">
-                              ${[
-                                mutationLabel(mutation.summary.kind),
-                                progressText(mutation.frame),
-                              ]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </span>`
+                            // The row's own live line: the running job's
+                            // words once there IS a job, and - issue 432 -
+                            // the requested change's own words for the
+                            // window before that, which is exactly the
+                            // window the user was clicking into.
+                            mutation
+                              ? html`<span class="mod-row__live" role="status">
+                                  ${[
+                                    mutationLabel(mutation.summary.kind),
+                                    progressText(mutation.frame),
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </span>`
+                              : togglePending &&
+                                html`<span
+                                  class="mod-row__live"
+                                  role="status"
+                                  data-testid="toggle-pending"
+                                  >${pendingToggleLabel(requested.want)}</span
+                                >`
                           }
                         </td>
                         <td class="col--version mono">
@@ -623,11 +1010,26 @@ export function Library({
                             >`
                           }
                           ${
-                            row.hasHealthIssue &&
+                            // issue 418: the row says its health state
+                            // WHICHEVER state it is in. It used to carry a
+                            // ⚠ when something was wrong and nothing at all
+                            // otherwise - so "no badge" meant both "checked,
+                            // fine" and "never checked", which are opposite
+                            // things to tell someone about their install.
+                            //
+                            // role="img" with the sentence as its name: the
+                            // glyph alone means nothing to a screen reader,
+                            // and a role-less span exposes no name at all -
+                            // `title` stays for the pointer, but it is
+                            // neither a keyboard nor a touch affordance.
                             html`<span
-                              class="badge badge--warn"
-                              title="Health issue"
-                              >⚠</span
+                              class="badge ${healthBadgeTone(row)}"
+                              data-testid="row-health"
+                              data-health=${row.healthState}
+                              role="img"
+                              aria-label=${healthLabel(row)}
+                              title=${healthLabel(row)}
+                              >${healthBadge(row)}</span
                             >`
                           }
                           ${
@@ -664,9 +1066,32 @@ export function Library({
                           ${formatDate(row.installed_at)}
                         </td>
                         <td class="col--menu row-menu-cell">
+                          ${
+                            // issue 417: the per-mod Update, in the open.
+                            // Not wrapped in InlineJob like the header's own
+                            // "Update all" - this cell is too narrow for a
+                            // progress bar, and the row already reports its
+                            // own running job on the name column's live line
+                            // (the library's established pattern for a
+                            // row-level job). It is refused while one is
+                            // running so a second cannot be stacked on it.
+                            row.hasUpdate &&
+                            !row.isExternal &&
+                            html`<button
+                              type="button"
+                              class="button button--small button--primary"
+                              data-action="row-update"
+                              disabled=${Boolean(mutation)}
+                              aria-label=${`Update ${row.name} to ${row.updateTarget}`}
+                              onClick=${() => updateRow(row)}
+                            >
+                              Update
+                            </button>`
+                          }
                           <button
                             type="button"
                             class="button button--small"
+                            data-action="row-menu"
                             aria-label=${`Actions for ${row.name}`}
                             aria-expanded=${menuKey === row.key ? "true" : "false"}
                             onClick=${() =>
@@ -687,26 +1112,26 @@ export function Library({
         selected.size > 0 &&
         html`
           <div class="batch-bar">
-            <span>${selected.size} selected</span>
+            <span class="batch-bar__count">${selectionCount}</span>
             <button
               type="button"
               class="button"
               data-action="batch-enable"
               disabled=${togglableSelectedRows().length === 0}
-              title=${steamRefusalTitle("enable")}
+              title=${toggleRefusalTitle("enable")}
               onClick=${() => batchEnable("enable")}
             >
-              Enable
+              ${`Enable (${togglableSelectedRows().length})`}
             </button>
             <button
               type="button"
               class="button"
               data-action="batch-disable"
               disabled=${togglableSelectedRows().length === 0}
-              title=${steamRefusalTitle("disable")}
+              title=${toggleRefusalTitle("disable")}
               onClick=${() => batchEnable("disable")}
             >
-              Disable
+              ${`Disable (${togglableSelectedRows().length})`}
             </button>
             <button
               type="button"
@@ -720,7 +1145,7 @@ export function Library({
               }
               onClick=${batchUpdate}
             >
-              Update
+              ${`Update (${updatableSelectedRows().length})`}
             </button>
             <button
               type="button"
@@ -728,7 +1153,7 @@ export function Library({
               data-action="batch-uninstall"
               onClick=${batchUninstall}
             >
-              Uninstall
+              ${`Uninstall (${selectedRows().length})`}
             </button>
           </div>
         `
