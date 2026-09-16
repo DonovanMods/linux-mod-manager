@@ -894,6 +894,12 @@ const (
 	// IndexRefreshDone fires once, after the index is on disk and current -
 	// including the case where the answer was "it already was".
 	IndexRefreshDone
+	// DeployOffStillDeployed: ModName is a mod the profile document marks
+	// disabled (#431) whose files are still deployed. A deploy is not a
+	// converge run and leaves them where they are, so it says so instead
+	// (fix round 2, R9); the mod is also a DeployResult.Skipped entry.
+	// Detail is the reason, naming the command that takes it down.
+	DeployOffStillDeployed
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -946,6 +952,8 @@ var deployPhaseNames = [...]string{
 
 	IndexRefreshStarted: "index_refresh_started", IndexRefreshProgress: "index_refresh_progress",
 	IndexRefreshDone: "index_refresh_done",
+
+	DeployOffStillDeployed: "deploy_off_still_deployed",
 }
 
 // String returns the phase's wire name.

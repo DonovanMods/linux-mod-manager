@@ -813,3 +813,34 @@ func TestDoDeploy_ProfileForm_IgnoresSourceEntirely(t *testing.T) {
 
 	assert.Contains(t, out, "✓ Test Mod")
 }
+
+// TestDoDeploy_ALiveModTheProfileSwitchedOffIsNamedNotFailed is #431 fix
+// round 2's R9 at the CLI: a mod the profile marks off whose files are still
+// live is left in place - deploy is not a converge run - and named, with the
+// command that takes it down, both by the deploy and by its dry run. It is
+// not a failure, so neither summary counts it as one.
+func TestDoDeploy_ALiveModTheProfileSwitchedOffIsNamedNotFailed(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "on", "On Mod", "on.esp")
+	seedDeployableMod(t, svc, game, "off", "Off Mod", "off.esp")
+	captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	require.NoError(t, svc.NewProfileManager().SetModDisabled(context.Background(), game.ID, "default", "src", "off", true))
+
+	want := `  ⊘ Off Mod — switched off in profile "default" but still deployed - ` + "`lmm deploy`" + ` does not take mods down; run ` + "`lmm profile apply`" + ` to remove it`
+
+	deployDryRun = true
+	dry := captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	deployDryRun = false
+	assert.Contains(t, dry, want)
+	assert.Contains(t, dry, "Deploying 1 mod(s)")
+	assert.Contains(t, dry, "Would deploy: 1\n")
+	assert.NotContains(t, dry, "Skipped:")
+
+	live := captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	assert.Contains(t, live, want)
+	assert.Contains(t, live, "Deploying 1 mod(s)")
+	assert.Contains(t, live, "  ✓ On Mod\n")
+	assert.Contains(t, live, "\nDeployed: 1\n")
+	assert.NotContains(t, live, "Failed")
+	assert.FileExists(t, filepath.Join(game.ModPath, "off.esp"), "deploy leaves it in place")
+}

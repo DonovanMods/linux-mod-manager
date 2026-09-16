@@ -1756,3 +1756,85 @@ func TestService_DeployProfile_TargetedDeployOfADocumentDisabledModIsRefused(t *
 	assert.Equal(t, 1, result.Deployed)
 	assert.FileExists(t, filepath.Join(gameDir, "off.esp"))
 }
+
+// TestService_DeployProfile_ALiveModTheDocumentSwitchedOffIsReported is fix
+// round 2's R9, and the product call behind it: `lmm deploy` is not a
+// converge run and does not take files down, so a mod the document marks
+// off while its files are still deployed (the drift `profile import
+// --force`, `snapshot restore` or a hand edit leaves) stays where it is -
+// but the deploy says so, and says how to converge, instead of leaving the
+// web UI's Deploy button silent. A marked mod that is NOT live is simply
+// off: nothing to report.
+func TestService_DeployProfile_ALiveModTheDocumentSwitchedOffIsReported(t *testing.T) {
+	setup := func(t *testing.T) (*core.Service, *domain.Game, string) {
+		t.Helper()
+		svc := newFlowsTestService(t)
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+		ctx := context.Background()
+		seedNamedInstalledMod(t, svc, game, "src", "live", "Mod Live", "1.0", true, map[string][]byte{"live.esp": []byte("l")})
+		seedNamedInstalledMod(t, svc, game, "src", "quiet", "Mod Quiet", "1.0", false, map[string][]byte{"quiet.esp": []byte("q")})
+		seedProfileWithMod(t, svc, "g1", "default", "src", "live", "1.0")
+		seedProfileWithMod(t, svc, "g1", "default", "src", "quiet", "1.0")
+		_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+		require.NoError(t, err)
+		require.FileExists(t, filepath.Join(gameDir, "live.esp"))
+		pm := svc.NewProfileManager()
+		require.NoError(t, pm.SetModDisabled(ctx, "g1", "default", "src", "live", true))
+		require.NoError(t, pm.SetModDisabled(ctx, "g1", "default", "src", "quiet", true))
+		return svc, game, gameDir
+	}
+
+	t.Run("reported, and left in place", func(t *testing.T) {
+		svc, game, gameDir := setup(t)
+		var events []core.ModEvent
+		result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(e core.Event) {
+			if m, ok := e.(core.ModEvent); ok && m.Phase == core.DeployOffStillDeployed {
+				events = append(events, m)
+			}
+		})
+		require.NoError(t, err)
+		assert.Zero(t, result.Deployed)
+		require.Len(t, result.Skipped, 1, "the live one is reported; the one already off is not")
+		assert.Equal(t, "Mod Live", result.Skipped[0].Name)
+		assert.Contains(t, result.Skipped[0].Reason, `switched off in profile "default"`)
+		assert.Contains(t, result.Skipped[0].Reason, "lmm profile apply")
+		require.Len(t, events, 1)
+		assert.Equal(t, result.Skipped[0].Reason, events[0].Detail)
+		assert.FileExists(t, filepath.Join(gameDir, "live.esp"), "deploy does not take files down")
+	})
+
+	t.Run("a purge takes it down, so there is nothing to report", func(t *testing.T) {
+		svc, game, gameDir := setup(t)
+		result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{Purge: true}, nil)
+		require.NoError(t, err)
+		assert.Empty(t, result.Skipped)
+		assert.NoFileExists(t, filepath.Join(gameDir, "live.esp"))
+	})
+
+	t.Run("--all deploys it, as it deploys any switched-off mod", func(t *testing.T) {
+		svc, game, _ := setup(t)
+		result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{All: true}, nil)
+		require.NoError(t, err)
+		assert.Empty(t, result.Skipped)
+		assert.Equal(t, 2, result.Deployed)
+	})
+
+	t.Run("the plan the web UI confirms says the same", func(t *testing.T) {
+		svc, game, _ := setup(t)
+		plan, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{})
+		require.NoError(t, err)
+		require.Len(t, plan.Mods, 1, "the switched-off, undeployed mod is not listed; the live one is, as skipped")
+		assert.Equal(t, "Mod Live", plan.Mods[0].Name)
+		assert.Contains(t, plan.Mods[0].Skipped, "lmm profile apply")
+		assert.Empty(t, plan.Mods[0].Link)
+	})
+
+	t.Run("a targeted plan refuses it, as the targeted deploy does", func(t *testing.T) {
+		svc, game, _ := setup(t)
+		plan, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{SourceID: "src", ModID: "live"})
+		require.NoError(t, err)
+		require.Len(t, plan.Mods, 1)
+		assert.Contains(t, plan.Mods[0].Skipped, "lmm mod enable live")
+	})
+}
