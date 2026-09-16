@@ -434,7 +434,13 @@ const (
 // bepinex is only derived for a game-root mod_path. So a game with no
 // adapter key is accepted exactly as it always was.
 func (s *Service) AdapterFor(game *domain.Game) (adapter.GameAdapter, error) {
-	a, err := s.adapterRegistry().Resolve(s.AdapterName(game))
+	return s.adapterForName(game, s.AdapterName(game))
+}
+
+// adapterForName is AdapterFor for a name the caller has already derived,
+// so a caller that needs both does not pay AdapterName's stat twice.
+func (s *Service) adapterForName(game *domain.Game, name string) (adapter.GameAdapter, error) {
+	a, err := s.adapterRegistry().Resolve(name)
 	if err != nil {
 		return nil, fmt.Errorf("game %q: %w", game.ID, err)
 	}

@@ -642,17 +642,27 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 //
 // EffectiveAdapter is the adapter the game RESOLVES to (#426): the
 // configured `adapter:` when there is one, else the one Service.AdapterName
-// derives (icarus for `deploy_mode: compile`, bepinex for a game with
-// BepInEx). The embedded Adapter stays exactly what games.yaml says, so a
-// frontend can tell a typed key from a derived one. EffectiveAdapter is
-// omitted when it is generic-files - the same "absent means the identity"
-// rule `adapter` follows - which keeps every document for a generic game
-// byte-identical to what it was before the key existed.
+// derives (icarus for `deploy_mode: compile`, bepinex for a game-root game
+// with BepInEx). The embedded Adapter stays exactly what games.yaml says, so
+// a frontend can tell a typed key from a derived one.
+//
+// An ABSENT effective_adapter means generic-files - the same "absent means
+// the identity" rule `adapter` follows, which keeps every document for a
+// generic game byte-identical to what it was before the key existed -
+// unless AdapterError is set.
+//
+// AdapterError is AdapterFor's refusal, verbatim, for a game no flow can
+// run on: an `adapter:` this build does not ship, or one a composition rule
+// refuses (a compile game's non-compiling adapter, bepinex off the game
+// root). Such a game uses no adapter at all, so EffectiveAdapter is absent
+// and this names why (#413 re-review L2); it is absent for every game lmm
+// can act on.
 type GameListEntry struct {
 	domain.Game
 	Default          bool   `json:"default"`
 	ConvertPaks      *bool  `json:"convert_paks,omitzero"`
 	EffectiveAdapter string `json:"effective_adapter,omitempty"`
+	AdapterError     string `json:"adapter_error,omitempty"`
 }
 
 // ListGameEntries returns every configured game, ordered by ID (ListGames'),
@@ -685,7 +695,11 @@ func (s *Service) ListGameEntries(ctx context.Context) ([]GameListEntry, error) 
 // truth about a game with BepInEx installed but not declared.
 func (s *Service) newGameListEntry(game *domain.Game, defaultGameID string) GameListEntry {
 	entry := GameListEntry{Game: *game, Default: game.ID == defaultGameID}
-	if name := s.AdapterName(game); name != adapter.GenericID {
+	name := s.AdapterName(game)
+	switch _, err := s.adapterForName(game, name); {
+	case err != nil:
+		entry.AdapterError = err.Error()
+	case name != adapter.GenericID:
 		entry.EffectiveAdapter = name
 	}
 	if game.DeployMode == domain.DeployCompile {

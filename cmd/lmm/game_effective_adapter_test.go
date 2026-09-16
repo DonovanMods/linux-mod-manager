@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
@@ -98,8 +99,7 @@ func TestDoGameEdit_ClearingTheAdapterNamesTheOneInUse(t *testing.T) {
 
 func TestJSONGolden_GameListEffectiveAdapter(t *testing.T) {
 	svc := setupGameAddTest(t)
-	svc.RegisterAdapter(namedAdapter("icarus"))
-	svc.RegisterAdapter(namedAdapter("bepinex"))
+	app.RegisterAdapters(svc)
 	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID: "icarus", Name: "Icarus", InstallPath: "/games/icarus", ModPath: "/games/icarus/Mods",
 		DeployMode: domain.DeployCompile, ConvertPaks: true,
@@ -112,4 +112,26 @@ func TestJSONGolden_GameListEffectiveAdapter(t *testing.T) {
 
 	out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
 	assertJSONCLIGolden(t, "game_list_effective_adapter", out)
+}
+
+// A game every flow refuses says so in both renderings (#413 re-review L2),
+// rather than a cell reading generic-files for a game nothing deploys to.
+func TestDoGameListAndShow_SayWhenTheAdapterIsRefused(t *testing.T) {
+	svc := setupGameEditTest(t)
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+		ID: "broken", Name: "Broken", InstallPath: "/games/broken", ModPath: "/games/broken",
+		Adapter: "bepinx",
+	}))
+
+	out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
+	_, rows := gameListCells(t, out)
+	byID := map[string]string{}
+	for _, row := range rows {
+		byID[row[0]] = row[4]
+	}
+	assert.Equal(t, "bepinx (refused)", byID["broken"])
+
+	out = captureStdout(t, func() error { return doGameShow(context.Background(), svc, "broken") })
+	assert.Contains(t, out, "Adapter:      bepinx (refused)")
+	assert.Contains(t, out, `unknown adapter "bepinx"`, "the show says why")
 }

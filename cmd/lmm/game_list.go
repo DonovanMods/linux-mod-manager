@@ -79,7 +79,7 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 			}
 		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, g.Name, g.InstallPath, g.ModPath, formatGameAdapter(g.EffectiveAdapter), g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
+			id, g.Name, g.InstallPath, g.ModPath, formatGameAdapter(g), g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}
@@ -90,17 +90,30 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 	return printTable(&buf, 2, nil)
 }
 
-// formatGameAdapter renders an adapter name for a table cell or a detail
-// line (#353). An empty name IS the generic-files identity, so the cell
-// names it rather than leaving a blank - there is no such thing as a game
-// with no adapter.
+// formatGameAdapter renders a game's adapter for a table cell or a detail
+// line (#353).
 //
-// Callers pass core.GameListEntry.EffectiveAdapter, the adapter the game
-// actually resolves to (#426), rather than the configured key: a
-// `deploy_mode: compile` game compiles through icarus and a game with
-// BepInEx lays its archives out through bepinex whether or not games.yaml
-// says so, and this column exists to say which adapter a game uses.
-func formatGameAdapter(name string) string {
+// It reads EffectiveAdapter, the adapter the game actually resolves to
+// (#426), rather than the configured key: a `deploy_mode: compile` game
+// compiles through icarus and a game with BepInEx lays its archives out
+// through bepinex whether or not games.yaml says so, and this column exists
+// to say which adapter a game uses. An absent one IS the generic-files
+// identity, so the cell names it rather than leaving a blank.
+//
+// The exception is a game every flow refuses (AdapterError, #413 re-review
+// L2): it uses no adapter, so the cell names the configured one and says it
+// is refused, rather than reading generic-files for a game nothing deploys
+// to. `lmm game show` prints the refusal itself.
+func formatGameAdapter(entry core.GameListEntry) string {
+	if entry.AdapterError != "" {
+		return formatAdapterName(entry.Adapter) + " (refused)"
+	}
+	return formatAdapterName(entry.EffectiveAdapter)
+}
+
+// formatAdapterName renders one adapter name, the empty one as the
+// identity it means.
+func formatAdapterName(name string) string {
 	if name == "" {
 		return "generic-files"
 	}

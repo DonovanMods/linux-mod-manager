@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/icarus"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/stretchr/testify/assert"
@@ -111,4 +112,45 @@ func TestGameWrites_AnswerWithTheEffectiveAdapter(t *testing.T) {
 	loaderEntry, err := svc.UpdateGameLoader(ctx, game.ID, nil)
 	require.NoError(t, err)
 	assert.Empty(t, loaderEntry.EffectiveAdapter, "no loader and nothing installed: the identity")
+}
+
+// TestListGameEntries_SaysWhenEveryFlowRefusesTheAdapter (#413 re-review
+// L2): a game whose adapter AdapterFor refuses uses no adapter at all -
+// every flow on it fails - so its row carries the refusal rather than an
+// effective_adapter that names an adapter nothing runs, or an absent one
+// that reads as generic-files.
+func TestListGameEntries_SaysWhenEveryFlowRefusesTheAdapter(t *testing.T) {
+	svc := newFlowsTestService(t) // registers bepinex
+	ctx := context.Background()
+	root := t.TempDir()
+	games := []*domain.Game{
+		{ID: "a-unknown", Name: "Unknown", InstallPath: root, Adapter: "bepinx"},
+		{ID: "b-compile-generic", Name: "Compile", InstallPath: root, DeployMode: domain.DeployCompile, Adapter: "generic-files"},
+		{ID: "c-bepinex-off-root", Name: "Off root", InstallPath: root, ModPath: filepath.Join(root, "mods"), Adapter: "bepinex"},
+		{ID: "d-fine", Name: "Fine", InstallPath: root, ModPath: root, Adapter: "bepinex"},
+	}
+	for _, g := range games {
+		require.NoError(t, svc.SaveGame(ctx, g))
+	}
+
+	entries, err := svc.ListGameEntries(ctx)
+	require.NoError(t, err)
+	byID := map[string]core.GameListEntry{}
+	for _, e := range entries {
+		byID[e.ID] = e
+	}
+	for id, want := range map[string]string{
+		"a-unknown":          `unknown adapter "bepinx"`,
+		"b-compile-generic":  "cannot compile",
+		"c-bepinex-off-root": "is not its install path",
+	} {
+		e := byID[id]
+		assert.Empty(t, e.EffectiveAdapter, "%s: no adapter is in use", id)
+		assert.Contains(t, e.AdapterError, want, id)
+		_, resolveErr := svc.AdapterFor(&e.Game)
+		require.Error(t, resolveErr)
+		assert.Equal(t, resolveErr.Error(), e.AdapterError, "%s: the row carries the refusal every flow makes", id)
+	}
+	assert.Empty(t, byID["d-fine"].AdapterError)
+	assert.Equal(t, "bepinex", byID["d-fine"].EffectiveAdapter)
 }

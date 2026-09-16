@@ -14,7 +14,8 @@
     "deploy_mode": "compile",
     "convert_paks_explicit": false,
     "default": false,
-    "convert_paks": true
+    "convert_paks": true,
+    "effective_adapter": "icarus"
   },
   {
     "id": "skyrim-se",

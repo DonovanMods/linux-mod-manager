@@ -22,7 +22,7 @@ import (
 
 func TestRegisterAdapters_RegistersEveryConcreteAdapterBesideTheIdentity(t *testing.T) {
 	svc := newTestService(t)
-	registerAdapters(svc)
+	RegisterAdapters(svc)
 
 	assert.ElementsMatch(t, []string{adapter.GenericID, "icarus", "bepinex"}, svc.ListAdapters(),
 		"internal/app registers every concrete adapter; the identity is the registry's own built-in")
@@ -34,7 +34,7 @@ func TestRegisterAdapters_RegistersEveryConcreteAdapterBesideTheIdentity(t *test
 // games.yaml written for #359 working unchanged.
 func TestRegisterAdapters_LoaderGameMigratesToBepInEx(t *testing.T) {
 	svc := newTestService(t)
-	registerAdapters(svc)
+	RegisterAdapters(svc)
 
 	root := t.TempDir()
 	game := &domain.Game{ID: "valheim", InstallPath: root, ModPath: root, Loader: &domain.GameLoader{Kind: domain.LoaderKindBepInEx}}
@@ -53,7 +53,7 @@ func TestRegisterAdapters_LoaderGameMigratesToBepInEx(t *testing.T) {
 // a game that has one but not the other is still a BepInEx game.
 func TestRegisterAdapters_AnInstalledLoaderMigratesToo(t *testing.T) {
 	svc := newTestService(t)
-	registerAdapters(svc)
+	RegisterAdapters(svc)
 
 	root := t.TempDir()
 	preloader := filepath.Join(root, "BepInEx", "core", "BepInEx.Preloader.dll")
@@ -70,7 +70,7 @@ func TestRegisterAdapters_AnInstalledLoaderMigratesToo(t *testing.T) {
 // nothing written back.
 func TestRegisterAdapters_CompileGameMigratesToIcarus(t *testing.T) {
 	svc := newTestService(t)
-	registerAdapters(svc)
+	RegisterAdapters(svc)
 
 	game := &domain.Game{ID: "icarus", DeployMode: domain.DeployCompile}
 	assert.Equal(t, "icarus", svc.AdapterName(game))
@@ -86,7 +86,7 @@ func TestRegisterAdapters_CompileGameMigratesToIcarus(t *testing.T) {
 // managed before the seam existed.
 func TestRegisterAdapters_PlainGameStaysGeneric(t *testing.T) {
 	svc := newTestService(t)
-	registerAdapters(svc)
+	RegisterAdapters(svc)
 
 	a, err := svc.AdapterFor(&domain.Game{ID: "skyrim-se"})
 	require.NoError(t, err)

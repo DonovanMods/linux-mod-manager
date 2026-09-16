@@ -75,11 +75,14 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 	// game USES - and, when games.yaml does not name it, a note saying lmm
 	// derived it, so a reader comparing this with their file is not left
 	// wondering where it came from.
-	adapterLine := formatGameAdapter(detail.EffectiveAdapter)
+	adapterLine := formatGameAdapter(detail.GameListEntry)
 	if detail.Adapter == "" && detail.EffectiveAdapter != "" {
 		adapterLine += " " + colorDim("(derived - games.yaml sets no adapter)")
 	}
 	fmt.Printf("  Adapter:      %s\n", adapterLine)
+	if detail.AdapterError != "" {
+		fmt.Printf("                %s\n", colorRed(detail.AdapterError))
+	}
 	fmt.Printf("  Sources:      %s\n", formatGameSources(detail.SourceIDs))
 
 	printLoaderStatus(detail.Loader)

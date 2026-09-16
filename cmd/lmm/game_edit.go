@@ -179,10 +179,10 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 			// derives for it, which is not always generic-files - so say
 			// which adapter is now in use.
 			if entry.Adapter == "" {
-				fmt.Printf("%s %s adapter cleared; it now uses %s\n", colorGreen("✓"), entry.Name, formatGameAdapter(entry.EffectiveAdapter))
+				fmt.Printf("%s %s adapter cleared; it now uses %s\n", colorGreen("✓"), entry.Name, formatGameAdapter(*entry))
 				return nil
 			}
-			fmt.Printf("%s %s adapter set to %s\n", colorGreen("✓"), entry.Name, formatGameAdapter(entry.Adapter))
+			fmt.Printf("%s %s adapter set to %s\n", colorGreen("✓"), entry.Name, formatAdapterName(entry.Adapter))
 			return nil
 		}
 	}

@@ -86,7 +86,7 @@ func newThunderstoreFixture(t *testing.T, loader *domain.GameLoader) thunderstor
 	// adapters registered is a build of lmm that does not ship. This test
 	// constructs the Service directly rather than through Open, so it
 	// throws the same switch Open does.
-	registerAdapters(svc)
+	RegisterAdapters(svc)
 
 	// A BepInEx game: mod_path IS the install path, which is how lmm
 	// expresses "this game's mods live in the game root".
