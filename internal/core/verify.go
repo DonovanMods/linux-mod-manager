@@ -138,6 +138,12 @@ type VerifyFinding struct {
 	//	                      retried only when a merge INPUT changes, which
 	//	                      --fix does not itself decide)
 	//
+	// The four whose repair DEPLOYS - stale_compile, version_mismatch (its
+	// re-link), loader_plugin_unlinked and loader_deployed_outside_loader -
+	// are additionally never fixable on a game whose adapter refuses
+	// (deployRefusal, #413): --fix leaves them as they are, and their
+	// FixableReason is the refusal, remedy included.
+	//
 	// A row produced BY a --fix run always reports false: its repair has
 	// already been attempted, refused, or completed, so "a --fix run would
 	// act on this" is no longer true of it. That is what makes the field
@@ -328,6 +334,55 @@ type verifyRun struct {
 	opts    VerifyOptions
 	sink    EventSink
 	result  *VerifyResult
+
+	// refusalAsked and refusal memoise repairRefusal: whether the game's
+	// adapter lets a --fix repair deploy, asked at most once per run.
+	refusalAsked bool
+	refusal      error
+}
+
+// repairRefusal reports why no --fix repair that DEPLOYS may run on this
+// game, or nil when the adapter consents (#413): deployRefusal, the check
+// every Plan makes, asked once per run. A plain run reads it to say, on the
+// rows those repairs would act on, that --fix will not; the repairs
+// themselves ask refuseDeploy.
+func (r *verifyRun) repairRefusal() error {
+	if !r.refusalAsked {
+		r.refusalAsked = true
+		r.refusal = r.svc.deployRefusal(r.ctx, r.game, r.profile)
+	}
+	return r.refusal
+}
+
+// refuseDeploy is the gate a verify repair that deploys passes before it
+// changes anything - repairRefusal, under the name the I4 ratchet
+// (adapter_precondition_ratchet_test.go) accepts as a gate, so a repair
+// that stops asking it fails the build rather than deploying on a refused
+// game. Removals (convergence, the nested-tree repair) do not ask it.
+func (r *verifyRun) refuseDeploy() error { return r.repairRefusal() }
+
+// deployRefusedReason is the FixableReason of a row whose repair would
+// deploy, on a game whose adapter refuses: the refusal itself, which
+// carries its remedy.
+func deployRefusedReason(err error) string {
+	return "lmm deploys nothing for this game while its adapter refuses, so --fix leaves this as it is: " + err.Error()
+}
+
+// deployRowFixability folds the adapter's say into the Fixable and
+// FixableReason of a row a deploying repair acts on. fixable and reason are
+// the row's own answer; attempts says whether this run would attempt the
+// repair (a --fix run, on a row the repair applies to). On a refused game
+// neither a plain run's offer nor a --fix run's attempt holds, so the row is
+// not fixable and its reason is the refusal - never a claim that the
+// repair ran.
+func (r *verifyRun) deployRowFixability(fixable bool, reason string, attempts bool) (bool, string) {
+	if !fixable && !attempts {
+		return fixable, reason
+	}
+	if err := r.repairRefusal(); err != nil {
+		return false, deployRefusedReason(err)
+	}
+	return fixable, reason
 }
 
 // emitEv stamps e's Scope.Op as OpVerify and forwards it to the sink, if
@@ -1091,8 +1146,11 @@ func (r *verifyRun) mergedPakStalenessPass() {
 	r.result.Checked++
 	if staleUpd != nil {
 		r.result.Warnings++
+		// The resync rebuilds and deploys the artifact, so the adapter has
+		// its say (syncMergedPak asks it again before deploying).
+		fixable, reason := r.deployRowFixability(!r.opts.Fix, staleCompileRefusal(r.opts.Fix), r.opts.Fix)
 		r.finding(VerifyFinding{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile",
-			Note: staleUpd.RecompileReason, Fixable: !r.opts.Fix, FixableReason: staleCompileRefusal(r.opts.Fix)}, VerifyEvent{})
+			Note: staleUpd.RecompileReason, Fixable: fixable, FixableReason: reason}, VerifyEvent{})
 	}
 }
 
@@ -1223,11 +1281,15 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		if effective != mod.Version {
 			recorded := mod.Version
 			r.result.Issues++
+			// The repair re-links a symlink deployment into the renamed
+			// cache entry - a deploy, so the adapter has its say.
+			repairs := versionMismatchRepairs(mod, ref)
+			fixable, reason := r.deployRowFixability(repairs, versionMismatchRefusal(mod, ref), r.opts.Fix && repairs)
 			r.finding(VerifyFinding{
 				ModID: mod.ID, ModName: mod.Name, Status: "version_mismatch",
 				Recorded: recorded, Effective: effective,
-				Fixable:       versionMismatchRepairs(mod, ref),
-				FixableReason: versionMismatchRefusal(mod, ref),
+				Fixable:       fixable,
+				FixableReason: reason,
 			}, VerifyEvent{Recorded: recorded, Effective: effective})
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
 				// #97 (Task 8): a locked ref's Version is the lock's
@@ -1266,6 +1328,16 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 					// text-mode surface. Status stays version_mismatch -
 					// the repair was refused, not performed.
 					r.resolveLast("version_mismatch", "locked")
+					continue
+				}
+				// #413: the repair renames the cache entry and then re-links
+				// the deployment into it, so on a refused game none of it
+				// runs - half of it would leave every link dangling. The row
+				// already names the refusal (deployRepairable); resolveLast
+				// keeps that reason, as it does the lock's.
+				if err := r.refuseDeploy(); err != nil {
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "--fix skipped: " + deployRefusedReason(err)})
+					r.resolveLast("version_mismatch", "adapter refused")
 					continue
 				}
 				note, siblingFailures, repairErr := r.repairModVersion(r.ctx, mod, effective)

@@ -257,12 +257,13 @@ func (r *verifyRun) loaderPluginLinkCheck(installedMods []domain.InstalledMod) {
 		}
 		r.result.Issues++
 		fixing := r.opts.Fix
+		fixable, reason := r.deployRowFixability(!fixing, loaderUnlinkedRefusal(fixing), fixing)
 		r.finding(VerifyFinding{
 			ModID: mod.ID, ModName: mod.Name, Status: "loader_plugin_unlinked",
 			Note: fmt.Sprintf("%d loader file(s) this mod provides are not in the game directory, starting with %s - nothing will load them",
 				len(missing), missing[0]),
-			Fixable:       !fixing,
-			FixableReason: loaderUnlinkedRefusal(fixing),
+			Fixable:       fixable,
+			FixableReason: reason,
 		}, VerifyEvent{})
 		if !fixing {
 			continue
@@ -321,6 +322,12 @@ func (r *verifyRun) unlinkedLoaderFiles(mod *domain.InstalledMod) []string {
 // the failure named, which is the convention every other repair in this
 // engine follows.
 func (r *verifyRun) repairUnlinkedLoaderFiles(mod *domain.InstalledMod, count int) {
+	// A re-deploy: on a refused game it does not run, and the row - which
+	// already names the refusal - stays an issue (#413).
+	if err := r.refuseDeploy(); err != nil {
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("--fix did not re-deploy %s: %s", mod.Name, deployRefusedReason(err))})
+		return
+	}
 	installer, err := r.svc.getInstallerForProfile(r.ctx, r.game, r.profile)
 	if err == nil {
 		err = installer.Install(r.ctx, r.game, &domain.Mod{
