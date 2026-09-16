@@ -351,9 +351,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration an adapter refuses. A game that moved its mod path without
   purging first is caught too: `lmm verify` reports a `BepInEx/` directory
   left inside `BepInEx/plugins/` (where BepInEx loads each plugin in it a
-  second time), and `--fix` removes it when every file in it is an
-  unrecorded link into lmm's own mod cache — anything else is a warning it
-  leaves alone.
+  second time), and `--fix` removes it when every file in it is a link
+  into that game's own part of lmm's mod cache that no `games.yaml` entry
+  records — anything else, including the deployment of a second entry for
+  the same install and a directory lmm cannot read, is a warning it leaves
+  alone, and a `--fix` scoped to one mod leaves every such directory for a
+  whole-profile run.
 
   Nothing changes for a correctly configured BepInEx game. Its seeded
   `BepInEx/config/**` files are still written once, never overwritten by a

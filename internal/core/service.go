@@ -165,6 +165,14 @@ type Service struct {
 	// completeProfileWrite. Test-only seam (export_test.go's
 	// SetAfterInstallSaveForTest); always nil in production.
 	afterInstallSave func()
+
+	// nestedTreeHook, when non-nil, runs with "classify" just before
+	// verify classifies the BepInEx/ trees nested in BepInEx/plugins/, and
+	// with "remove" just before --fix removes one tree's leftovers - the
+	// window in which another process can record, replace or re-point what
+	// was classified (#413 fix round 4). Test-only seam (export_test.go's
+	// SetNestedTreeHookForTest); always nil in production.
+	nestedTreeHook func(stage string)
 }
 
 // NewService creates a new core service instance

@@ -2521,10 +2521,18 @@ reporting nine statuses:
   belongs, and BepInEx reads no config in it. It is what a
   `BepInEx/`-rooted archive leaves behind when a game that deployed into
   `BepInEx/plugins` moves its `mod_path` to the game root without a purge
-  first. When every file in it is a link into lmm's own mod cache that no
-  profile records, `--fix` removes it; anything else is reported as
-  **LOADER FOREIGN NESTED TREE**, a warning `--fix` leaves alone, since lmm
-  cannot tell it from an archive you extracted there yourself. Like the
+  first. When every file in it is a link into THIS game's own part of lmm's
+  mod cache that no game records, `--fix` removes it — but not a `--fix`
+  that names a mod (`lmm verify <mod> --fix`, or the web UI's per-finding
+  Repair): the directory belongs to no one mod, so that run reports it and
+  leaves it for a `--fix` over the whole profile. Anything else is reported
+  as **LOADER FOREIGN NESTED TREE**, a warning `--fix` leaves alone, since
+  lmm cannot tell it from an archive you extracted there yourself — a
+  regular file, a link anywhere else, a directory lmm cannot read, and the
+  deployment of another `games.yaml` entry for the same install (an old
+  entry whose `mod_path` is `BepInEx/plugins` deploys a `BepInEx/`-rooted
+  archive exactly there). The removal re-checks every link at the moment it
+  removes it and keeps any it can no longer prove is a leftover. Like the
   check above, it runs for a game that has BepInEx installed without
   declaring it.
 

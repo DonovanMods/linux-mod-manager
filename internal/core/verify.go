@@ -124,9 +124,12 @@ type VerifyFinding struct {
 	//	                      the BepInEx normaliser rewrites under
 	//	                      BepInEx/ - otherwise a re-deploy would put
 	//	                      the files straight back (#424)
-	//	loader_nested_tree    always, on a plain run: --fix removes the
-	//	                      untracked links into lmm's cache that make
-	//	                      up the nested BepInEx/ tree (#413)
+	//	loader_nested_tree    on a plain run not scoped to one mod: --fix
+	//	                      removes the untracked links into the game's
+	//	                      own cache that make up the nested BepInEx/
+	//	                      tree (#413); a ModFilter run leaves every
+	//	                      nested tree alone, since none belongs to one
+	//	                      mod
 	//	everything else       never - ok, skipped, file_count_mismatch,
 	//	                      loader_foreign_nested_tree (lmm cannot prove
 	//	                      the files are its own),

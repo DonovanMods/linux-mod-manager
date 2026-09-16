@@ -267,3 +267,18 @@ func (i *Importer) ImportForTest(ctx context.Context, archivePath string, game *
 func NewLoaderRequirementForTest(game *domain.Game, modName, kind, version, evidence string) *LoaderRequiredError {
 	return newLoaderRequirement(game, modName, kind, version, evidence)
 }
+
+// SetNestedTreeHookForTest arms verify's nested-BepInEx-tree seam: fn runs
+// with "classify" just before the trees are classified and with "remove"
+// just before a tree's leftovers are removed, so a test can change the
+// world in the window a concurrent process would (#413 fix round 4).
+func (s *Service) SetNestedTreeHookForTest(fn func(stage string)) {
+	s.nestedTreeHook = fn
+}
+
+// ExecForTest runs one statement against the Service's own database, for a
+// test that has to make a lookup fail or a row appear mid-run.
+func (s *Service) ExecForTest(ctx context.Context, query string, args ...any) error {
+	_, err := s.db.ExecContext(ctx, query, args...)
+	return err
+}
