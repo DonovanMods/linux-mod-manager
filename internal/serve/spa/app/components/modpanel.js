@@ -21,7 +21,7 @@ import { navigate } from "../router.js";
 import { getModDetail, ApiError } from "../api.js";
 import { findingLabel } from "../verify.js";
 import { healthLabel } from "../modrows.js";
-import { pendingToggleLabel, usePendingToggles } from "../toggleack.js";
+import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { InlineJob } from "./jobprogress.js";
 
@@ -93,22 +93,6 @@ export function ModPanel({
     index >= 0 && index < (visible?.length ?? 0) - 1
       ? visible[index + 1]
       : null;
-
-  // issue 432: this panel's own Enable/Disable acknowledges the click in the
-  // frame it was made in, exactly as the library row's checkbox does - the
-  // InlineJob below only morphs once a job id has come back, and the whole
-  // complaint was about the window before that. Called unconditionally, with
-  // every other hook, since the render below has early returns.
-  //
-  // The answer is looked up by the key asked about, never taken from the
-  // mod on screen: ←/→ re-render this same instance for another mod, so a
-  // request made on one mod is still pending while the panel shows the
-  // next, and must keep being settled against its own mod.
-  const toggles = usePendingToggles(
-    state,
-    actions,
-    (key) => (rows ?? []).find((r) => r.key === key)?.enabled,
-  );
 
   // The exit animation (issue 334, owner demo 1: "mild UI animations for the
   // slide-over"). Preact would unmount this whole subtree the instant the
@@ -341,8 +325,12 @@ export function ModPanel({
   const findings = findingsFor(state.health, row.id);
   const conflicts = conflictsFor(state.conflicts, row.key);
   const origin = (action) => `mod:${row.source_id}/${row.id}:${action}`;
-  // issue 432: what this mod's toggle was asked for and has not got yet.
-  const toggleRequested = toggles.requestedFor(row.key);
+  // issue 432: what this mod's toggle was asked for and has not got yet -
+  // the same ledger entry the library row reads (toggleack.js), so this
+  // panel acknowledges a click in the frame it was made in, and shows a
+  // request the batch bar made too. Looked up by the mod on screen: the
+  // ledger, not this panel, remembers a request across ←/→.
+  const toggleRequested = toggleRequestFor(state, row.key);
 
   return html`
     <div
@@ -463,7 +451,7 @@ export function ModPanel({
                 data-action="toggle"
                 disabled=${toggleRequested !== undefined}
                 aria-busy=${toggleRequested !== undefined ? "true" : null}
-                onClick=${() => toggles.start(row)}
+                onClick=${() => actions.startToggle(row)}
               >
                 ${
                   toggleRequested === undefined

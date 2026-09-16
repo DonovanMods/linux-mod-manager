@@ -1263,10 +1263,19 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   same, and so does the batch bar: selecting forty mods and pressing
   **Disable** now moves all forty at once, rather than one row at a time as
   the sequenced batch reaches it. Each request is settled only by its own
-  job, so clicking again after a failed toggle is acknowledged like the
-  first click, and a request stays acknowledged when the slide-over steps to
-  another mod and back. The in-flight row is marked with an accent bar
-  rather than dimmed, so its text keeps its contrast in both themes.
+  job — a row the batch has not reached yet stays pending even if it
+  already reads the value asked for — so clicking again after a failed
+  toggle is acknowledged like the first click, and a request stays
+  acknowledged when the slide-over steps to another mod and back. A mod has
+  at most one request in flight: the row, the slide-over and the full mod
+  page all show the same one, and a new batch leaves that mod out. A job
+  that ends while the page's live connection is dropped still settles its
+  row once the connection is back, and a batch carries on rather than
+  stalling; a job `lmm serve` no longer knows about (it restarted, say) is
+  reported as **Lost track of a job**, the page re-reads what is true, and
+  the batch's tally lists it as an unknown outcome rather than a failure.
+  The in-flight row is marked with an accent bar rather than dimmed, so its
+  text keeps its contrast in both themes.
 
 - **A NexusMods plugin folder installs into `BepInEx/plugins/`, not into the
   game root (#424).** Jotunn 2.30.0 from NexusMods extracts to a single

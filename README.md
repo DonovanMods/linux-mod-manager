@@ -1315,6 +1315,10 @@ slide-over says the same thing in words.
 Ticking the enabled toggle moves it **immediately**, to the state you asked
 for, with "Enabling…"/"Disabling…" and a spinner on the row while the deploy
 behind it runs; if the job fails the row goes back to what is actually true.
+A mod has one such change in flight at a time — the row, the slide-over and
+the full mod page all show it, and a batch leaves that mod out. If the
+page's live connection to `lmm serve` drops meanwhile, it catches up when
+the connection returns, and says so if the server no longer knows the job.
 
 Filter (all/enabled/updatable/unhealthy) and sort (load order/name/recently
 installed) narrow it. The header checkbox selects **everything in view**

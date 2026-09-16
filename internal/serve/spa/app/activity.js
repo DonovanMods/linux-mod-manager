@@ -14,6 +14,7 @@
 // renders a job's progress registers its origin while it is mounted; a
 // completion for an origin nobody has mounted is the one that toasts.
 
+import { jobStatus } from "./api.js";
 import { followActivity } from "./sse.js";
 
 /**
@@ -80,16 +81,43 @@ export function mountedOriginsSnapshot() {
 
 /**
  * Connects the session stream to store, and calls onJobDone for each job
- * that reaches a terminal state while connected.
+ * that reaches a terminal state - while connected, or while it was not.
  *
  * The store writes are deliberately narrow: this is the only writer of
  * jobsIndex and jobProgress, so no other code path can disagree with the
  * stream about what the machine is doing. Returns the disconnect function.
+ *
+ * RECONCILIATION. The stream is a snapshot followed by live frames, and a
+ * reconnect gets a fresh snapshot rather than a replay - so a job that ended
+ * while the stream was down has no job_done frame coming, only its terminal
+ * row in that snapshot. Replacing the index with it is not enough: a batch
+ * waits for that job's end before starting its next row, and a toggle's
+ * request settles on it (toggleack.js). So every job the client was waiting
+ * on - running in the index being replaced, or named by `watchedJobs()` - is
+ * checked against the new snapshot: a terminal row there IS its job_done,
+ * and a job the snapshot does not carry is asked about directly
+ * (GET /api/v1/jobs/{id}). A job that answers terminal is done; one the
+ * server does not know, or that could not be asked about, goes to
+ * `onJobLost(id, error)` - nothing else could ever end it. onJobDone is
+ * idempotent per job id (main.js), so a job reported here AND by a live
+ * frame on the new connection still ends once.
  */
-export function connectActivity(store, { onJobDone } = {}) {
+export function connectActivity(
+  store,
+  { onJobDone, onJobLost, watchedJobs } = {},
+) {
   return followActivity({
-    onSnapshot: (index) =>
-      store.set({ jobsIndex: index.jobs ?? [], activityError: null }),
+    onSnapshot: (index) => {
+      const jobs = index.jobs ?? [];
+      const waitedOn = new Set([
+        ...(store.get().jobsIndex ?? [])
+          .filter((job) => job.state === "running")
+          .map((job) => job.id),
+        ...(watchedJobs?.() ?? []),
+      ]);
+      store.set({ jobsIndex: jobs, activityError: null });
+      reconcile(waitedOn, jobs, { onJobDone, onJobLost });
+    },
 
     onStarted: (summary) =>
       store.set({
@@ -109,4 +137,33 @@ export function connectActivity(store, { onJobDone } = {}) {
 
     onError: (message) => store.set({ activityError: message }),
   });
+}
+
+/** reconcile ends every job in `ids` that the snapshot `jobs` - or the
+ * server, asked directly - says has ended. A job still running is left
+ * alone: its frames are still to come on this connection, because a job is
+ * either in the snapshot or announced after it (activity.go). */
+function reconcile(ids, jobs, { onJobDone, onJobLost }) {
+  for (const id of ids) {
+    const listed = jobs.find((job) => job.id === id);
+    if (listed) {
+      if (listed.state !== "running") onJobDone?.(listed);
+      continue;
+    }
+    jobStatus(id).then(
+      (status) => {
+        if (status.state !== "running") onJobDone?.(summaryOf(status));
+      },
+      (err) => onJobLost?.(id, err),
+    );
+  }
+}
+
+/** summaryOf projects GET /api/v1/jobs/{id}'s status document onto the
+ * index row the stream would have carried (activity.go's
+ * summarizeJobStatus). */
+function summaryOf(status) {
+  const summary = { ...status };
+  delete summary.result;
+  return summary;
 }

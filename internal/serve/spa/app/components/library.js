@@ -20,12 +20,11 @@ import {
   countOf,
   healthBadge,
   healthLabel,
-  modKey,
   FILTER_NAMES,
   SORT_NAMES,
 } from "../modrows.js";
 import { mutationLabel, progressText } from "../progress.js";
-import { pendingToggleLabel, usePendingToggles } from "../toggleack.js";
+import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { AddModsMenu } from "./addmodsmenu.js";
 import { InlineJob } from "./jobprogress.js";
@@ -162,16 +161,9 @@ export function Library({
   const [selected, setSelected] = useState(() => new Set());
   const [menuKey, setMenuKey] = useState(null);
 
-  // issue 432: the requested enable/disable state of every row whose toggle
-  // is still in flight. Resolved against the WHOLE mods document rather than
-  // the `visible` rows this component renders - a filter (or a search) can
-  // hide the very row that is mid-toggle, and an entry with nothing left on
-  // screen to settle it against would stay pending for the rest of the
-  // session.
-  const toggles = usePendingToggles(state, actions, (key) => {
-    const mod = (mods?.mods ?? []).find((m) => modKey(m) === key);
-    return mod ? Boolean(mod.enabled) : undefined;
-  });
+  // issue 432: the enable/disable a row's user asked for and has not yet
+  // seen settled (toggleack.js), or undefined.
+  const requestedFor = (row) => toggleRequestFor(state, row.key);
 
   // m2, unit 6 fix wave: the ⋯ row menu used to close only by re-clicking
   // ⋯, which left it sitting open over the rest of the page once the user
@@ -291,10 +283,18 @@ export function Library({
   // reason the bar cannot know: the selection may hold no Steam row at all,
   // and what is actually true is that nothing it could act on is in view.
   // The button stays refused either way; only the sentence is withheld.
-  function steamRefusalTitle(action) {
+  //
+  // The two reasons a row in view is left out are each named when they are
+  // the whole story, and together when both are.
+  function toggleRefusalTitle(action) {
     if (togglableSelectedRows().length > 0) return undefined;
-    if (selectedRows().length === 0) return undefined;
-    return `Steam manages the selected items — lmm cannot ${action} them`;
+    const rows = selectedRows();
+    if (rows.length === 0) return undefined;
+    if (rows.every((r) => r.isExternal))
+      return `Steam manages the selected items — lmm cannot ${action} them`;
+    if (rows.every((r) => requestedFor(r) !== undefined))
+      return "The selected mods are already being enabled or disabled";
+    return `The selected mods are managed by Steam or already being enabled or disabled — lmm cannot ${action} them now`;
   }
 
   // issue 432: the click is acknowledged by toggleack.js in the same frame -
@@ -303,7 +303,7 @@ export function Library({
   // finishes. Nothing is awaited here: the pending state IS the feedback,
   // and the outcome lands through the row's own live line.
   function toggleEnabled(row) {
-    toggles.start(row);
+    actions.startToggle(row);
   }
 
   // toggleLock is the ⋯ menu's own Lock/Unlock (I1, unit 6 fix wave): the
@@ -427,8 +427,15 @@ export function Library({
   // Workshop item, and no choice in this UI changes that. The batch bar
   // reached the identical doomed job in two clicks where the checkbox
   // reached it in one.
+  //
+  // issue 432: so is a row with a request already in flight. The ledger
+  // holds one live request per mod; a batch that took the row again would
+  // queue a second job behind the first, and whichever ran last would
+  // silently decide the outcome.
   function togglableSelectedRows() {
-    return selectedRows().filter((r) => !r.isExternal);
+    return selectedRows().filter(
+      (r) => !r.isExternal && requestedFor(r) === undefined,
+    );
   }
 
   function batchEnable(action) {
@@ -437,9 +444,9 @@ export function Library({
     setSelected(new Set());
     // issue 432: every row in the batch acknowledges at once, on the click -
     // the batch itself runs strictly one job at a time (main.js#
-    // startBatchToggle), so without this the last row of a long selection
-    // sat visually untouched for the whole run.
-    toggles.startBatch(
+    // startBatchToggle), so without the ledger the last row of a long
+    // selection sat visually untouched for the whole run.
+    actions.startBatchToggle(
       action,
       rows.map((r) => ({
         key: r.key,
@@ -884,7 +891,7 @@ export function Library({
                     // box renders the REQUESTED value rather than the
                     // server's, so the click lands visibly in the frame it
                     // was made in.
-                    const requested = toggles.requestedFor(row.key);
+                    const requested = requestedFor(row);
                     const togglePending = requested !== undefined;
                     return html`
                       <tr
@@ -1110,7 +1117,7 @@ export function Library({
               class="button"
               data-action="batch-enable"
               disabled=${togglableSelectedRows().length === 0}
-              title=${steamRefusalTitle("enable")}
+              title=${toggleRefusalTitle("enable")}
               onClick=${() => batchEnable("enable")}
             >
               ${`Enable (${togglableSelectedRows().length})`}
@@ -1120,7 +1127,7 @@ export function Library({
               class="button"
               data-action="batch-disable"
               disabled=${togglableSelectedRows().length === 0}
-              title=${steamRefusalTitle("disable")}
+              title=${toggleRefusalTitle("disable")}
               onClick=${() => batchEnable("disable")}
             >
               ${`Disable (${togglableSelectedRows().length})`}

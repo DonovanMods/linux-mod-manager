@@ -79,11 +79,12 @@ export const plan = (kind, options, context) =>
 export const startJob = (planID, options) =>
   post("/api/v1/jobs", { plan_id: planID, ...(options ? { options } : {}) });
 
-/** Reads one job's status document - callerless since Unit 3 landed it,
- * until issue 330's per-mod job history (jobhistory.js) became its first
- * consumer: the tray's own jobsIndex is deliberately Result-less
- * (activity.go), so a caller that needs to know what a FINISHED job's own
- * result document said has to read this. */
+/** Reads one job's status document. Two consumers: issue 330's per-mod
+ * job history (jobhistory.js) - the tray's own jobsIndex is deliberately
+ * Result-less (activity.go), so a caller that needs to know what a FINISHED
+ * job's own result document said has to read this - and the activity
+ * stream's reconnect (activity.js), which asks about a job its fresh
+ * snapshot no longer carries. */
 export const jobStatus = (id) => get(`/api/v1/jobs/${encodeURIComponent(id)}`);
 
 /** modPath builds one mod's /api/v1/mods/{source}/{id} base path - shared

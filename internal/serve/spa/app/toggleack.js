@@ -1,48 +1,73 @@
-// toggleack.js - the click acknowledgment behind every enable/disable
+// toggleack.js - the ledger of enable/disable requests behind every toggle
 // control in this application (issue 432).
 //
 // Enabling a mod genuinely deploys its files (core.Service.EnableMod ->
 // installer.Install), so the wait between the click and the new truth is
 // real work and cannot be optimised away. What was wrong is that the UI
-// spent that whole wait looking exactly as it had before: the library row's
-// checkbox, the slide-over's button and the full mod page's button all
-// rendered straight off server state, greyed themselves out, and only moved
-// once the job's terminal frame had landed AND the re-hydrate behind it had
-// committed. A click that changes nothing on screen reads as a click that
-// was missed - so people clicked again, which the `disabled` attribute then
-// swallowed in silence too.
+// spent that whole wait looking exactly as it had before, so people clicked
+// again. This module is the one place that remembers "you asked for this,
+// it has not happened yet": a control renders the REQUESTED value while its
+// mod has an entry here, and the server's value otherwise.
 //
-// This module is the one place that remembers "you asked for this, it has
-// not happened yet". A REQUESTED state is recorded per mod the instant the
-// control is clicked, rendered in place of the server's value, and dropped
-// again as soon as either half of the truth catches up:
+// ONE LEDGER, IN THE STORE. Entries live in state.toggleRequests, keyed by
+// the context (game, profile) and the mod key, and every surface - the
+// library row, the batch bar, the slide-over, the full mod page - reads the
+// same entry. That is what makes "one live request per mod" true across
+// surfaces rather than per component: a mod the batch still owes a job is
+// pending on its slide-over too, and open() refuses a second request for a
+// mod that already has one.
 //
-//   - the server agrees - the re-hydrate main.js#onJobDone runs has landed
-//     and the mod now reads the way it was asked to. The ordinary ending,
-//     and the one that makes the hand-off seamless: the requested value and
-//     the real value are the same pixel, so nothing flickers.
-//   - the job started FOR THAT REQUEST failed, so what was asked for is not
-//     going to happen. The control goes back to what is actually true.
+// SETTLED BY ITS OWN JOB, NEVER BY AGREEMENT. An entry ends only on the
+// terminal state of the job started FOR IT - failed, or succeeded and then
+// re-read. The server merely agreeing with an entry settles nothing: a
+// batch row that already reads the batch's target value is still owed a
+// job, and a request whose job has not run can be overtaken by one that
+// has. Both of those once left a row pending for the rest of the session.
 //
-// "For that request" is load-bearing. Every entry records the id of its own
-// job once one is bound, and only that job can settle it. The control's
-// origin is no substitute: it is stable across the toggle's direction (see
-// modToggleOrigin) and a failed job's binding is never released, so an
-// origin still names the PREVIOUS job for as long as a new request's own
-// start is in flight - and for a sequenced batch, for as long as the rows
-// ahead of it are running. Settling against the origin meant a retry after
-// a failure was settled by that failure on the frame it was made in, and the
-// click it was supposed to acknowledge showed nothing at all.
+// Transitions are driven by events (main.js), not by polling a render:
 //
-// Neither ending toasts from here, deliberately. A failure already has a
-// surface: a control wrapped in InlineJob (the slide-over, the full mod
-// page) renders "Failed: ..." in place of itself, and a control with no
-// inline surface of its own - the library row's bare checkbox - is by
-// definition not "mounted" as far as activity.js's origin registry is
-// concerned, so main.js#onJobDone toasts it. A third telling from here
-// would only ever repeat something the user is already looking at.
-
-import { useEffect, useState } from "./render.js";
+//   state       what it means                   leaves when                             to
+//   ----------  ------------------------------  --------------------------------------  ----------
+//   requested   the click is recorded; no job   bind: the start answered with a job id  running
+//               id yet - the start's POST is    drop: the start was refused or never    (removed)
+//               in flight, or a batch has not     answered (HTTP error, network); the
+//               reached this row                  start's toast, or the batch's tally,
+//                                                 says so
+//   running     bound to its own job, whose     ended(failed): its job_done - live, or  (removed)
+//               end has not been heard            found by reconciliation; onJobDone
+//                                                 surfaces it (toast, or the inline
+//                                                 "Failed:"), and the control goes
+//                                                 back to the document the job did
+//                                                 not change
+//                                               ended(succeeded): the same, succeeded   confirming
+//                                               ended(lost): reconciliation found the   confirming
+//                                                 server no longer knows the job, or
+//                                                 could not ask; always toasted
+//   confirming  its job succeeded, or was       the re-read that job's ending started   (removed)
+//               lost; holding the asked-for       has finished - committed, failed or
+//               value until a read taken after    superseded; the control then shows
+//               that end lands                    the document, whatever it says
+//
+// bind() on a job that has ALREADY ended applies that ending on the spot,
+// so the order the two arrive in never matters - whether the end came as a
+// job_done frame before the POST that names the job was read, or only as a
+// terminal row in a reconnect's snapshot (main.js#knownEnding).
+//
+// Why each state is left, by construction rather than by luck:
+//
+//   - requested: a start is one fetch, which resolves or rejects. A batch
+//     reaches every row because each row ahead of it resolves its wait on
+//     one of the three endings below.
+//   - running: the job ends while the activity stream is connected
+//     (job_done), or while it is not - and then the reconnect's snapshot
+//     reconciles it (activity.js), asking GET /api/v1/jobs/{id} about any
+//     job the snapshot does not carry. A job the server cannot account for
+//     is lost. The stream comes back: EventSource retries a dropped
+//     connection on its own.
+//   - confirming: the re-read is an ordinary hydrate, which settles.
+//
+// An entry for a context nobody is looking at still settles the same way;
+// it simply is not rendered until that context is on screen again.
 
 /** modToggleOrigin is the stable origin every enable/disable control for one
  * mod shares - "mod:{source}/{id}:toggle" (modrows.js#modOriginPattern).
@@ -65,140 +90,129 @@ export function pendingToggleLabel(want) {
   return want ? "Enabling…" : "Disabling…";
 }
 
-/**
- * usePendingToggles is the hook a component with toggle controls calls
- * once, at the top of its render.
- *
- * `enabledOf(key)` answers with the SERVER's current enabled value for a mod
- * key (domain.ModKey - "sourceID:modID"), or undefined when this component
- * cannot see that mod at all. It is read from the LATEST render on purpose -
- * that is how a pending entry finds out the re-hydrate has landed - so the
- * caller passes a plain closure over whatever document it renders from and
- * never has to memoise it.
- *
- * The returned object is deliberately small:
- *
- *   requestedFor(key)  the state the user asked for and has not got yet, or
- *                      undefined when nothing is pending for that mod
- *   start(mod)         acknowledge and run one toggle
- *   startBatch(a, m)   acknowledge and run a whole batch of them
- */
-export function usePendingToggles(state, actions, enabledOf) {
-  const [pending, setPending] = useState(() => new Map());
+/** toggleRequestFor is the request pending for modKey ("sourceID:modID") in
+ * the context on screen, or undefined when there is none. What a control
+ * renders from: `want` is the value the user asked for. */
+export function toggleRequestFor(state, modKey) {
+  return state.toggleRequests?.[ledgerKey(state.route ?? {}, modKey)];
+}
 
-  // No dependency array, on purpose. What settles an entry is a fact spread
-  // across three separately-updated places - the mods document `enabledOf`
-  // closes over, state.origins and state.jobsIndex - and a dependency list
-  // naming all three would still be wrong for the callers whose document is
-  // not `state.mods` at all (the full mod page hydrates its own). Running
-  // after every render is both simpler and complete: the effect returns on
-  // its first line while nothing is pending, which is almost always, and it
-  // cannot loop, because it only ever calls setPending when it has actually
-  // removed an entry.
-  useEffect(() => {
-    if (pending.size === 0) return;
-    const next = new Map(pending);
-    for (const [key, entry] of pending) {
-      if (hasSettled(state, entry, enabledOf(key))) next.delete(key);
-    }
-    if (next.size !== pending.size) setPending(next);
-  });
-
-  function remember(entries) {
-    setPending((prev) => {
-      const next = new Map(prev);
-      for (const [key, entry] of entries) next.set(key, entry);
-      return next;
-    });
-  }
-
-  // bind and forget both act on one REQUEST, not on whatever is stored
-  // under its key: a later request for the same mod (a batch taking a row
-  // whose own toggle is still in flight) replaces the entry, and news about
-  // the earlier request must not land on the later one.
-  function bind(key, entry, jobID) {
-    setPending((prev) => {
-      if (prev.get(key)?.request !== entry.request) return prev;
-      return new Map(prev).set(key, { ...prev.get(key), jobID });
-    });
-  }
-
-  function forget(key, entry) {
-    setPending((prev) => {
-      if (prev.get(key)?.request !== entry.request) return prev;
-      const next = new Map(prev);
-      next.delete(key);
-      return next;
-    });
-  }
-
-  /** settleBound is what a start reports back per mod: the job it bound, or
-   * null when the start never happened (main.js#startToggle turns a failure
-   * to START - a 409 over the queue-depth cap, a network error - into a
-   * toast and binds no job, so there is nothing hasSettled could ever find
-   * and the entry is dropped here instead). */
-  function settleBound(key, entry, jobID) {
-    if (jobID) bind(key, entry, jobID);
-    else forget(key, entry);
-  }
-
-  return {
-    requestedFor(key) {
-      return pending.get(key);
-    },
-
-    /** start acknowledges one row's click and runs its job. `mod` is
-     * {key, source_id, id, enabled} - the library row, the slide-over's row
-     * and the full mod page's own installed mod all carry those four. */
-    async start(mod) {
-      const want = !mod.enabled;
-      const origin = modToggleOrigin(mod.source_id, mod.id);
-      const entry = newRequest(want);
-      remember([[mod.key, entry]]);
-      const jobID = await actions.startToggle({
-        action: want ? "enable" : "disable",
-        sourceID: mod.source_id,
-        modID: mod.id,
-        origin,
-      });
-      settleBound(mod.key, entry, jobID);
-    },
-
-    /** startBatch acknowledges a whole multi-select at once - every row
-     * moves on the click, not one at a time as the sequenced batch reaches
-     * it (main.js#startBatchToggle runs them strictly one after another, so
-     * without this the last row of a long selection sat untouched for the
-     * whole batch). */
-    async startBatch(action, mods) {
-      const want = action === "enable";
-      const entries = new Map(mods.map((mod) => [mod.key, newRequest(want)]));
-      remember(entries);
-      // Each row's job is bound as the batch reaches it, one at a time, so a
-      // row further down stays pending - on the click, not on its turn -
-      // until its OWN job exists and ends.
-      await actions.startBatchToggle(action, mods, (mod, jobID) =>
-        settleBound(mod.key, entries.get(mod.key), jobID),
-      );
-    },
-  };
+/** ledgerKey is an entry's key: the context and the mod, unambiguously
+ * joined (a profile name may contain any separator a string could use). */
+function ledgerKey(context, modKey) {
+  return JSON.stringify([context.game ?? "", context.profile ?? "", modKey]);
 }
 
 let requestSeq = 0;
 
-/** newRequest is one pending entry: what was asked for, the identity of
- * this particular asking (so a newer request for the same mod is never
- * mistaken for it), and the job bound to it once there is one. */
-function newRequest(want) {
-  return { want, request: ++requestSeq, jobID: null };
-}
+/**
+ * createToggleLedger is the ledger's only writer, over `store`. One per
+ * application. `endingOf(jobID)` answers with the ending main.js recorded
+ * for a job - {summary, reread, lost} - or undefined while it has none.
+ */
+export function createToggleLedger(store, { endingOf }) {
+  const entries = () => store.get().toggleRequests ?? {};
 
-/** hasSettled reports whether a pending request has reached either of its
- * two endings: the server now agrees with it, or the job started for it has
- * failed and it is not going to happen. A request with no job of its own
- * yet cannot have failed. See the module comment. */
-function hasSettled(state, entry, actual) {
-  if (actual === entry.want) return true;
-  if (!entry.jobID) return false;
-  const summary = (state.jobsIndex ?? []).find((job) => job.id === entry.jobID);
-  return summary?.state === "failed";
+  // Every write names the REQUEST it is about, never just the key: an
+  // entry that has since been replaced by a newer request for the same mod
+  // must not receive news about the older one.
+  function current(entry) {
+    const stored = entries()[entry.key];
+    return stored?.request === entry.request ? stored : undefined;
+  }
+
+  function update(entry, patch) {
+    const stored = current(entry);
+    if (!stored) return undefined;
+    const next = { ...stored, ...patch };
+    store.set({ toggleRequests: { ...entries(), [entry.key]: next } });
+    return next;
+  }
+
+  function remove(entry) {
+    if (!current(entry)) return;
+    const next = { ...entries() };
+    delete next[entry.key];
+    store.set({ toggleRequests: next });
+  }
+
+  // A failed job changed nothing the document on screen does not already
+  // say, so its request goes at once. A succeeded job changed the mod, and a
+  // lost one may have: only the read its ending started can say what is
+  // true now, and until it lands the control keeps what was asked rather
+  // than flick back to the document from before the job.
+  function settle(entry, ending) {
+    if (ending.summary.state === "failed" && !ending.lost) {
+      remove(entry);
+      return;
+    }
+    const confirming = update(entry, { phase: "confirming" });
+    if (!confirming) return;
+    const done = () => {
+      if (current(confirming)?.phase === "confirming") remove(confirming);
+    };
+    Promise.resolve(ending.reread).then(done, done);
+  }
+
+  return {
+    /** open records a request for each of `mods` ({key, name}) in
+     * `context`, asking for `want`, and returns the entries it opened. A
+     * mod that already has a live request is skipped: one per mod. */
+    open(context, mods, want) {
+      const next = { ...entries() };
+      const opened = [];
+      for (const mod of mods) {
+        const key = ledgerKey(context, mod.key);
+        if (next[key]) continue;
+        const entry = {
+          key,
+          modKey: mod.key,
+          name: mod.name,
+          want,
+          request: ++requestSeq,
+          phase: "requested",
+          jobID: null,
+        };
+        next[key] = entry;
+        opened.push(entry);
+      }
+      if (opened.length > 0) store.set({ toggleRequests: next });
+      return opened;
+    },
+
+    /** bind moves a requested entry onto its own job - and straight on to
+     * that job's ending, when the ending is already known. */
+    bind(entry, jobID) {
+      if (current(entry)?.phase !== "requested") return;
+      const running = update(entry, { phase: "running", jobID });
+      // endingOf may itself end the job (main.js#knownEnding), which
+      // settles this entry through ended() - hence the second look.
+      const ending = endingOf(jobID);
+      if (ending && current(running)?.phase === "running")
+        settle(running, ending);
+    },
+
+    /** drop removes a requested entry whose start made no job. */
+    drop(entry) {
+      if (current(entry)?.phase === "requested") remove(entry);
+    },
+
+    /** ended applies a job's ending to every entry running on it, and
+     * returns those entries. */
+    ended(jobID, ending) {
+      const running = Object.values(entries()).filter(
+        (entry) => entry.phase === "running" && entry.jobID === jobID,
+      );
+      for (const entry of running) settle(entry, ending);
+      return running;
+    },
+
+    /** runningJobIDs is every job an entry is waiting on - what a
+     * reconnect has to reconcile. */
+    runningJobIDs() {
+      return Object.values(entries())
+        .filter((entry) => entry.phase === "running")
+        .map((entry) => entry.jobID);
+    },
+  };
 }

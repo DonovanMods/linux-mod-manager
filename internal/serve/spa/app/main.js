@@ -38,6 +38,7 @@ import {
   mountedOriginsSnapshot,
   registerOrigin,
 } from "./activity.js";
+import { createToggleLedger, modToggleOrigin } from "./toggleack.js";
 
 const store = createStore();
 const root = document.getElementById("app");
@@ -1086,18 +1087,65 @@ function awaitBindings() {
 // finished" for code that needs to run its own next step only after it has.
 const jobDoneWaiters = new Map();
 
+// jobEndings is every job this page has seen end, by id: {summary, reread,
+// lost}. It is what makes an ending happen ONCE per job, however many ways
+// it arrives (a live job_done frame, a reconnect's snapshot, a direct
+// lookup - activity.js#connectActivity), and what a late binding consults:
+// a job's end can be applied before the start that names it has been read,
+// so waitForJobDone and toggleack.js#bind both look here first. `reread` is
+// the hydrate that ending started - the document read taken AFTER the job
+// ended, which is what a toggle request's success waits for. One small
+// record per job this tab saw end; the page never forgets one mid-session.
+const jobEndings = new Map();
+
+// toggles is the enable/disable request ledger (toggleack.js) - the only
+// writer of state.toggleRequests.
+const toggles = createToggleLedger(store, { endingOf: knownEnding });
+
+/** knownEnding is jobID's ending if this page knows one, or undefined.
+ *
+ * A job this page just learned the id of can have ended already in two
+ * ways: its job_done frame was applied first (jobEndings has it), or it
+ * started AND ended while the activity stream was down, so the only record
+ * is its terminal row in the reconnect's snapshot - which reconciled only
+ * the jobs the page knew of at the time, and this one it did not. The
+ * second is ended here, through onJobDone like any other, the moment the
+ * page learns it is its own. */
+function knownEnding(jobID) {
+  if (!jobEndings.has(jobID)) {
+    const row = (store.get().jobsIndex ?? []).find((j) => j.id === jobID);
+    if (row && row.state !== "running") onJobDone(row);
+  }
+  return jobEndings.get(jobID);
+}
+
 /** waitForJobDone resolves with jobID's own terminal summary. Checks
- * jobsIndex FIRST, synchronously, before ever registering a waiter: the
+ * knownEnding FIRST, synchronously, before ever registering a waiter: the
  * activity stream can deliver a job's job_started AND job_done frames
  * before the POST /api/v1/jobs response that names it has even been read
  * (bindingJobs' own doc comment - "observed, not hypothetical"), so a naive
  * "subscribe, then wait" would miss a job that was already finished by the
  * time this is called. */
 function waitForJobDone(jobID) {
-  const existing = (store.get().jobsIndex ?? []).find((j) => j.id === jobID);
-  if (existing && existing.state !== "running")
-    return Promise.resolve(existing);
+  const ended = knownEnding(jobID);
+  if (ended) return Promise.resolve(ended.summary);
   return new Promise((resolve) => jobDoneWaiters.set(jobID, resolve));
+}
+
+/** watchedJobs is every job something on this page is waiting on - a
+ * sequenced batch's current row, or a toggle request's own job. A
+ * reconnecting activity stream reconciles each (activity.js). */
+function watchedJobs() {
+  return [...jobDoneWaiters.keys(), ...toggles.runningJobIDs()];
+}
+
+/** resolveWaiter hands a job's terminal summary to whatever
+ * startSequencedBatch step is waiting on it, once. */
+function resolveWaiter(summary) {
+  const waiter = jobDoneWaiters.get(summary.id);
+  if (!waiter) return;
+  jobDoneWaiters.delete(summary.id);
+  waiter(summary);
 }
 
 /**
@@ -1118,6 +1166,10 @@ function waitForJobDone(jobID) {
  * jobID)` hears each item's binding the moment it is made - or `null` when
  * that item's start failed - which is how a batch toggle's per-row
  * acknowledgment learns which job is its own (issue 432).
+ *
+ * A job this page lost sight of (onJobLost) ends its wait like any other
+ * ending, so the batch carries on - but it is tallied as an unknown
+ * outcome, not a failure: the server may well have done it.
  */
 async function startSequencedBatch(
   items,
@@ -1125,28 +1177,37 @@ async function startSequencedBatch(
 ) {
   const unregisters = items.map((item) => registerOrigin(itemOrigin(item)));
   const failed = [];
+  const unknown = [];
   try {
     for (const item of items) {
       const origin = itemOrigin(item);
+      let jobID;
       try {
-        const jobID = await run(item);
-        store.set({ origins: { ...store.get().origins, [origin]: jobID } });
-        onBound?.(item, jobID);
-        const summary = await waitForJobDone(jobID);
-        if (summary.state === "failed") failed.push(labelOf(item));
-      } catch (err) {
+        jobID = await run(item);
+      } catch {
         onBound?.(item, null);
         failed.push(labelOf(item));
+        continue;
       }
+      store.set({ origins: { ...store.get().origins, [origin]: jobID } });
+      onBound?.(item, jobID);
+      const summary = await waitForJobDone(jobID);
+      if (summary.lost) unknown.push(labelOf(item));
+      else if (summary.state === "failed") failed.push(labelOf(item));
     }
   } finally {
     unregisters.forEach((unregister) => unregister());
   }
-  const ok = items.length - failed.length;
+  const ok = items.length - failed.length - unknown.length;
   pushToast({
-    tone: failed.length > 0 ? "failure" : "success",
+    tone: failed.length + unknown.length > 0 ? "failure" : "success",
     title: `${verb} ${ok}/${items.length} mod${items.length === 1 ? "" : "s"}`,
-    detail: failed.length > 0 ? `Failed: ${failed.join(", ")}` : "",
+    detail: [
+      failed.length > 0 && `Failed: ${failed.join(", ")}`,
+      unknown.length > 0 && `Outcome unknown: ${unknown.join(", ")}`,
+    ]
+      .filter(Boolean)
+      .join(" · "),
   });
 }
 
@@ -1156,22 +1217,35 @@ async function startSequencedBatch(
  * Enable/Disable button already use (modrows.js#modOriginPattern), so a
  * visible row shows the SAME inline progress whichever control started it.
  *
- * `onBound(mod, jobID)` hears each mod's job as it is bound (null for a
- * start that failed): the batch bar's optimistic acknowledgment settles
- * each row against its own job and no other (issue 432). */
-async function startBatchToggle(action, mods, onBound) {
-  const context = {
+ * `mods` are {key, source_id, id, name}. Every one is entered in the toggle
+ * ledger on the click (issue 432) - pending from that frame until its OWN
+ * job, started when the batch reaches it, has ended. A mod that already has
+ * a request in flight is left out: the ledger holds one per mod. */
+async function startBatchToggle(action, mods) {
+  const context = routeContext();
+  const opened = toggles.open(context, mods, action === "enable");
+  const entryOf = new Map(opened.map((entry) => [entry.modKey, entry]));
+  const items = mods.filter((mod) => entryOf.has(mod.key));
+  if (items.length === 0) return;
+  await startSequencedBatch(items, {
+    run: (mod) =>
+      startToggleJob(action, mod.source_id, mod.id, context).then((r) => r.id),
+    originOf: (mod) => modToggleOrigin(mod.source_id, mod.id),
+    labelOf: (mod) => mod.name ?? mod.key,
+    verb: action === "enable" ? "Enabled" : "Disabled",
+    onBound: (mod, jobID) =>
+      jobID
+        ? toggles.bind(entryOf.get(mod.key), jobID)
+        : toggles.drop(entryOf.get(mod.key)),
+  });
+}
+
+/** routeContext is the game/profile the route on screen is scoped to. */
+function routeContext() {
+  return {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
-  await startSequencedBatch(mods, {
-    run: (mod) =>
-      startToggleJob(action, mod.source_id, mod.id, context).then((r) => r.id),
-    originOf: (mod) => `mod:${mod.source_id}/${mod.id}:toggle`,
-    labelOf: (mod) => mod.name ?? `${mod.source_id}:${mod.id}`,
-    verb: action === "enable" ? "Enabled" : "Disabled",
-    onBound,
-  });
 }
 
 /**
@@ -1358,33 +1432,38 @@ async function retryInstallOverwrite(jobID) {
  * it becomes a toast instead, the same "the origin isn't on screen to say
  * so" surface every other unseen outcome already uses.
  *
- * It answers with the job id it bound, or null when the start failed (issue
- * 432): toggleack.js#usePendingToggles has drawn the requested state on the
- * control already, and a start that bound no job leaves nothing behind that
- * could ever tell it the request is over.
+ * `mod` is {key, source_id, id, enabled, name} - the library row, the
+ * slide-over's row and the full mod page's own installed mod all carry
+ * them - and the request is the opposite of `enabled`. It is entered in the
+ * toggle ledger (issue 432) before the POST goes out, which is what every
+ * control renders from in the same frame; a mod that already has a request
+ * in flight is left alone. The entry is bound to the job the start answers
+ * with, or dropped when the start made none.
  */
-async function startToggle({ action, sourceID, modID, origin }) {
-  const context = {
-    game: store.get().route.game,
-    profile: store.get().route.profile,
-  };
-  return startBinding(origin, async () => {
+async function startToggle(mod) {
+  const context = routeContext();
+  const want = !mod.enabled;
+  const [entry] = toggles.open(context, [mod], want);
+  if (!entry) return;
+  const action = want ? "enable" : "disable";
+  const origin = modToggleOrigin(mod.source_id, mod.id);
+  await startBinding(origin, async () => {
     try {
       const { id: jobID } = await startToggleJob(
         action,
-        sourceID,
-        modID,
+        mod.source_id,
+        mod.id,
         context,
       );
       store.set({ origins: { ...store.get().origins, [origin]: jobID } });
-      return jobID;
+      toggles.bind(entry, jobID);
     } catch (err) {
+      toggles.drop(entry);
       pushToast({
         tone: "failure",
         title: `${action} failed`,
         detail: err instanceof ApiError ? err.message : String(err),
       });
-      return null;
     }
   });
 }
@@ -1641,15 +1720,18 @@ function refreshSearchResults() {
  * user something they are already looking at (design doc §Jobs).
  */
 async function onJobDone(summary) {
+  // Once per job (jobEndings). The one exception is a job this page had
+  // given up on (onJobLost) that turns out to have ended after all: its
+  // real outcome is still worth telling, and nothing is waiting on it any
+  // more to be told twice.
+  const prior = jobEndings.get(summary.id);
+  if (prior && !prior.lost) return;
+
   // Resolve any startSequencedBatch step waiting on THIS job specifically,
   // before anything else - a batch's next item must be able to start the
   // instant this one is known done, not after the (slower) whole-route
   // re-hydrate below.
-  const waiter = jobDoneWaiters.get(summary.id);
-  if (waiter) {
-    jobDoneWaiters.delete(summary.id);
-    waiter(summary);
-  }
+  resolveWaiter(summary);
 
   // The toast rule is a question about the screen AS THE JOB LANDED, and
   // the next two lines change that screen: refreshSearchResults puts the
@@ -1662,7 +1744,15 @@ async function onJobDone(summary) {
   // the origin is actually known.
   const mountedAtCompletion = mountedOriginsSnapshot();
 
-  hydrate(store.get().route);
+  // The re-read is recorded with the ending, and the ending is applied to
+  // the toggle ledger straight away: a request bound to this job settles
+  // now (failed) or once this very read has finished (succeeded), and one
+  // bound LATER finds the ending here (toggleack.js#bind). All of this runs
+  // before this function's first await, which knownEnding relies on.
+  const reread = hydrate(store.get().route);
+  const ending = { summary, reread, lost: false };
+  jobEndings.set(summary.id, ending);
+  toggles.ended(summary.id, ending);
   refreshSearchResults();
 
   // Wait for every currently in-flight start to bind its origin before
@@ -1697,6 +1787,57 @@ async function onJobDone(summary) {
           ...toastAffordance(summary),
         },
   );
+}
+
+/**
+ * onJobLost ends a job this page can no longer account for: a reconnected
+ * activity stream did not carry it and GET /api/v1/jobs/{id} could not
+ * either - a 404 (the server restarted, or has aged the job out) or no
+ * answer at all (activity.js#connectActivity).
+ *
+ * Nothing else could ever end it, so everything waiting on it is ended
+ * here: a batch's wait resolves with an ending marked `lost`, which the
+ * batch tallies as an unknown outcome; a toggle request bound to it settles
+ * as failed; and a control morphed into its progress is handed back, since
+ * that readout would otherwise say "Working…" for good. The route is
+ * re-read, so what is on screen afterwards is the server's current state,
+ * whatever the lost job did. It always toasts: no control can show an
+ * ending that has no summary behind it.
+ */
+function onJobLost(jobID, err) {
+  if (jobEndings.has(jobID)) return;
+  const unknown = err instanceof ApiError && err.status === 404;
+  const reason = unknown
+    ? "the server no longer knows about it (it may have restarted)"
+    : `the server could not be asked about it (${err instanceof Error ? err.message : String(err)})`;
+  const summary = {
+    id: jobID,
+    kind: "",
+    state: "failed",
+    lost: true,
+    error: { error: reason },
+  };
+  resolveWaiter(summary);
+
+  const reread = hydrate(store.get().route);
+  const ending = { summary, reread, lost: true };
+  jobEndings.set(jobID, ending);
+  const requests = toggles.ended(jobID, ending);
+
+  const origin = originOf(jobID);
+  if (origin) clearOrigin(origin);
+
+  const what = requests
+    .map(
+      (entry) =>
+        `${entry.want ? "enable" : "disable"} ${entry.name ?? entry.modKey}`,
+    )
+    .join(", ");
+  pushToast({
+    tone: "failure",
+    title: "Lost track of a job",
+    detail: `Job ${jobID}${what ? ` (${what})` : ""}: ${reason}. What is on screen now is the server's current state.`,
+  });
 }
 
 // jobToastAffordances maps a job KIND to the one place its outcome
@@ -1871,4 +2012,4 @@ go(parseLocation());
 // One session-long connection, opened after the first route is on screen:
 // every job this process runs - started here, in another tab, or before
 // this page loaded - arrives on it (activity.js).
-connectActivity(store, { onJobDone });
+connectActivity(store, { onJobDone, onJobLost, watchedJobs });

@@ -69,6 +69,10 @@ export function initialState() {
     // "install:fake/123") to the job id it started, which is what lets the
     // control that was clicked morph into that job's progress and no other.
     origins: {},
+    // toggleRequests is toggleack.js's ledger: every enable/disable a user
+    // has asked for and not yet seen settled, keyed by context and mod. The
+    // controls render the requested value from here while an entry exists.
+    toggleRequests: {},
     // toasts are the completions whose origin was NOT on screen when they
     // landed (design doc §Jobs: "never for things in view").
     toasts: [],

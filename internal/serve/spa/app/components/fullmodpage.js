@@ -54,8 +54,7 @@ import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
 import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
-import { pendingToggleLabel, usePendingToggles } from "../toggleack.js";
-import { modKey } from "../modrows.js";
+import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import {
   ModSettingsControls,
@@ -70,23 +69,6 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   const home = contextPath(route.game, route.profile);
   const modPage = state.modPage;
   const key = `${route.sourceID}/${route.modID}`;
-
-  // issue 432: this page's Enable/Disable acknowledges the click in the same
-  // frame, the same way the library row and the slide-over now do. Called
-  // FIRST, above every early return below, because it is a hook - and read
-  // straight off the store rather than off the `installedMod` derived a
-  // hundred lines down, which does not exist yet at this point in the render
-  // and (being re-hydrated by main.js#hydrateModPage) is a different
-  // document from the library's own listing anyway.
-  //
-  // Answered for the key asked about, from the mod the loaded document is
-  // actually about: moving from one mod page to another re-renders this same
-  // instance, so a request made on the previous page is still pending here
-  // and must not be settled against the mod now on screen.
-  const toggles = usePendingToggles(state, actions, (pendingKey) => {
-    const mod = state.modPage?.filesReport?.mod;
-    return mod && modKey(mod) === pendingKey ? mod.enabled : undefined;
-  });
 
   const header = html`
     <${AwayBar}
@@ -147,8 +129,9 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   const sourceID = route.sourceID;
   const modID = route.modID;
   const origin = (action) => `mod:${sourceID}/${modID}:${action}`;
-  // issue 432: what this mod's toggle was asked for and has not got yet.
-  const toggleRequested = toggles.requestedFor(`${sourceID}:${modID}`);
+  // issue 432: what this mod's toggle was asked for and has not got yet -
+  // the ledger entry every surface shares (toggleack.js).
+  const toggleRequested = toggleRequestFor(state, `${sourceID}:${modID}`);
 
   // The lock/policy pair reads the LIBRARY listing first and the live
   // ModDetail only as a fallback (I-5): core.ModListing carries locked,
@@ -236,11 +219,12 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
               disabled=${toggleRequested !== undefined}
               aria-busy=${toggleRequested !== undefined ? "true" : null}
               onClick=${() =>
-                toggles.start({
+                actions.startToggle({
                   key: `${sourceID}:${modID}`,
                   source_id: sourceID,
                   id: modID,
                   enabled: installedMod.enabled,
+                  name: installedMod.name,
                 })}
             >
               ${
