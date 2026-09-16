@@ -1563,8 +1563,10 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links and
   profile as active, marked or not. `lmm profile switch <name>` is the way
   out: an unreadable profile file refuses it too, but with none or several
   marked it only marks `<name>` active — nothing is deployed or removed —
-  and says that the game directory may still hold another profile's files,
-  so run `lmm deploy` and then `lmm verify`.
+  and says that the game directory may still hold another profile's files:
+  run `lmm profile apply <name>` to deploy its mods, then `lmm purge -p`
+  for each other profile it names, which clears only the files that
+  profile recorded and keeps what `<name>` uses.
 
 - **`lmm deploy` acts for the active profile only, and `lmm purge` of
   another profile removes only what that profile put there (#445).** A game

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -939,10 +940,28 @@ func flagOnlyPlanNotice(flags profileFlags, target string) string {
 }
 
 // flagOnlyResultNotice is what a FlagOnly switch reports once it has marked
-// target: the game directory is as it was, which is not the same as clean.
-func flagOnlyResultNotice(gameID, target string) string {
-	return fmt.Sprintf("%s is now the active profile of %s, but nothing was deployed or removed: the game directory may still hold files another profile deployed, and `lmm deploy` removes nothing - run `lmm deploy` to deploy %s's mods, then `lmm verify`, which reports what is live but not recorded",
-		target, gameID, target)
+// target: the game directory is as it was, which is not the same as clean,
+// and the two commands that make it target's - naming others, the game's
+// other profiles, and the game, so a copied command cannot reach another
+// game's profile of the same name.
+func flagOnlyResultNotice(gameID, target string, others []string) string {
+	msg := fmt.Sprintf("%s is now the active profile of %s, but nothing was deployed or removed: the game directory may still hold files another profile deployed. Run `lmm profile apply %s --game %s` to deploy its mods",
+		target, gameID, target, gameID)
+	if len(others) == 0 {
+		return msg + "."
+	}
+	purges := make([]string, len(others))
+	for i, name := range others {
+		purges[i] = fmt.Sprintf("`lmm purge -p %s --game %s`", name, gameID)
+	}
+	list := purges[0]
+	whose := others[0]
+	if n := len(purges); n > 1 {
+		list = strings.Join(purges[:n-1], ", ") + " and " + purges[n-1]
+		whose = "each of those profiles"
+	}
+	return fmt.Sprintf("%s, then %s to clear the files %s recorded (a purge of a profile that is not active removes only those, and keeps what %s uses).",
+		msg, list, whose, target)
 }
 
 // applyFlagOnlySwitch carries out a FlagOnly plan: it marks plan.To as the
@@ -967,7 +986,8 @@ func (s *Service) applyFlagOnlySwitch(ctx context.Context, game *domain.Game, pl
 	if err := s.NewProfileManager().SetDefault(ctx, game.ID, plan.To); err != nil {
 		return result, fmt.Errorf("setting default profile: %w", err)
 	}
-	msg := flagOnlyResultNotice(game.ID, plan.To)
+	others := slices.DeleteFunc(slices.Clone(flags.names), func(n string) bool { return n == plan.To })
+	msg := flagOnlyResultNotice(game.ID, plan.To, others)
 	result.Warnings = append(result.Warnings, msg)
 	emit(WarningEvent{Scope: Scope{Op: OpSwitch}, Phase: SwitchFlagOnly, Message: msg})
 	return result, nil

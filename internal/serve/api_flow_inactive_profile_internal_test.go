@@ -143,7 +143,8 @@ func TestFlowSwitch_WithNoSingleActiveProfileOnlyMarksTheTarget(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, result.Warnings, 1)
 	assert.Contains(t, result.Warnings[0], "alt is now the active profile")
-	assert.Contains(t, result.Warnings[0], "`lmm verify`")
+	assert.Contains(t, result.Warnings[0], "Run `lmm profile apply alt --game "+game.ID+"`")
+	assert.Contains(t, result.Warnings[0], "`lmm purge -p default --game "+game.ID+"`")
 	var streamed bool
 	replay, _, cancel := j.subscribe(1)
 	cancel()

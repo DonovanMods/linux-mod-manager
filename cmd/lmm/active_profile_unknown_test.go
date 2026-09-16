@@ -52,8 +52,8 @@ func TestDoProfileSwitch_WithNoSingleActiveProfileOnlyMarksTheTarget(t *testing.
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "✓ Marked alt as the active profile of g1")
 	assert.Contains(t, stderr, "Warning: alt is now the active profile of g1, but nothing was deployed or removed")
-	assert.Contains(t, stderr, "may still hold files another profile deployed")
-	assert.Contains(t, stderr, "run `lmm deploy` to deploy alt's mods, then `lmm verify`")
+	assert.Contains(t, stderr, "may still hold files another profile deployed. Run `lmm profile apply alt --game g1` to deploy its mods, "+
+		"then `lmm purge -p default --game g1` to clear the files default recorded (a purge of a profile that is not active removes only those, and keeps what alt uses).\n")
 
 	alt, err := getProfileManager(svc).Get(ctx, game.ID, "alt")
 	require.NoError(t, err)

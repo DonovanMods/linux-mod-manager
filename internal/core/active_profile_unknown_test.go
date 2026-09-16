@@ -240,15 +240,20 @@ func TestCreate_TheFirstProfileOfAGameIsActive(t *testing.T) {
 	})
 }
 
-// flagOnlyMessage checks msg is ruling C's notice: what happened, and that
-// the directory may still hold another profile's files.
-func flagOnlyMessage(t *testing.T, msg, target string) {
+// flagOnlyMessage checks msg is ruling C's notice: what happened, that the
+// directory may still hold another profile's files, and the two commands -
+// for the game, naming each other profile - that make it target's.
+func flagOnlyMessage(t *testing.T, msg, target string, others ...string) {
 	t.Helper()
-	assert.Contains(t, msg, target+" is now the active profile")
-	assert.Contains(t, msg, "nothing was deployed or removed")
+	assert.Contains(t, msg, target+" is now the active profile of g1, but nothing was deployed or removed")
 	assert.Contains(t, msg, "may still hold files another profile deployed")
-	assert.Contains(t, msg, "`lmm deploy`")
-	assert.Contains(t, msg, "`lmm verify`")
+	assert.Contains(t, msg, "Run `lmm profile apply "+target+" --game g1` to deploy its mods")
+	for _, other := range others {
+		assert.Contains(t, msg, "`lmm purge -p "+other+" --game g1`")
+	}
+	assert.Contains(t, msg, "keeps what "+target+" uses")
+	assert.NotContains(t, msg, "lmm deploy")
+	assert.NotContains(t, msg, "lmm verify")
 }
 
 // TestSwitch_WithNoSingleActiveProfileOnlyMarksTheTarget is ruling C: with
@@ -283,7 +288,8 @@ func TestSwitch_WithNoSingleActiveProfileOnlyMarksTheTarget(t *testing.T) {
 			result, err := f.svc.ApplyProfileSwitch(ctx, f.game, plan, func(e core.Event) { events = append(events, e) })
 			require.NoError(t, err)
 			require.Len(t, result.Warnings, 1)
-			flagOnlyMessage(t, result.Warnings[0], "b")
+			flagOnlyMessage(t, result.Warnings[0], "b", "a")
+			assert.Contains(t, result.Warnings[0], "to clear the files a recorded")
 			assert.Zero(t, result.Disabled+result.Enabled+result.Installed)
 			var warned bool
 			for _, e := range events {
@@ -339,4 +345,75 @@ func TestSwitch_WithNoSingleActiveProfileOnlyMarksTheTarget(t *testing.T) {
 		assert.True(t, plan.AlreadyActive)
 		assert.False(t, plan.FlagOnly)
 	})
+}
+
+// TestSwitch_TheFlagOnlyRecoveryLeavesExactlyTheTargetsFiles pins ruling C's
+// notice as a procedure: from a game with no profile marked, the flag-only
+// switch, then `lmm profile apply <target>`, then a purge of each other
+// profile, leave the game directory holding exactly the target's files - a
+// path the target shares with another profile included.
+func TestSwitch_TheFlagOnlyRecoveryLeavesExactlyTheTargetsFiles(t *testing.T) {
+	ctx := context.Background()
+	f := newBackfillFixture(t)
+	pm := f.svc.NewProfileManager()
+	_, err := pm.Create(ctx, f.game.ID, "c")
+	require.NoError(t, err)
+	// a was active: shared and aonly are live. c was active for a while and
+	// left conly behind. b - the profile the user wants - lists bonly and
+	// shared, both switched away from (enabled 0), as a switch leaves them.
+	f.row(t, "a", "shared", true, false)
+	f.row(t, "a", "aonly", true, false)
+	f.row(t, "c", "conly", true, false)
+	require.NoError(t, pm.SetDefault(ctx, f.game.ID, "c"))
+	_, err = f.svc.DeployProfile(ctx, f.game, "c", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, f.game.ID, "a"))
+	_, err = f.svc.DeployProfile(ctx, f.game, "a", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	f.row(t, "b", "bonly", false, false)
+	f.row(t, "b", "shared", false, false)
+	f.setFlag(t, "a", false)
+	require.ElementsMatch(t, []string{"aonly.esp", "conly.esp", "shared.esp"}, keysOf(treeOf(t, f.gameDir)))
+
+	plan, err := f.svc.PlanProfileSwitch(ctx, f.game, "b")
+	require.NoError(t, err)
+	require.True(t, plan.FlagOnly)
+	result, err := f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Warnings, 1)
+	flagOnlyMessage(t, result.Warnings[0], "b", "a", "c")
+	assert.Contains(t, result.Warnings[0], "`lmm purge -p a --game g1` and `lmm purge -p c --game g1` to clear the files each of those profiles recorded")
+
+	// lmm profile apply b
+	applyPlan, err := f.svc.PlanProfileApply(ctx, f.game, "b")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyProfileApply(ctx, f.game, applyPlan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	// lmm purge -p a, lmm purge -p c
+	for _, other := range []string{"a", "c"} {
+		purge, err := f.svc.PlanPurge(ctx, f.game, other, core.PurgeOptions{})
+		require.NoError(t, err)
+		require.True(t, purge.RecordedOnly, other)
+		_, err = f.svc.ApplyPurge(ctx, f.game, purge, core.PurgeOptions{}, nil)
+		require.NoError(t, err)
+	}
+
+	tree := treeOf(t, f.gameDir)
+	assert.ElementsMatch(t, []string{"bonly.esp", "shared.esp"}, keysOf(tree), "exactly b's files")
+	link, err := os.Readlink(filepath.Join(f.gameDir, "shared.esp"))
+	require.NoError(t, err)
+	assert.FileExists(t, link, "the shared path still resolves")
+	for _, mod := range []string{"bonly", "shared"} {
+		row, err := f.svc.GetInstalledMod(ctx, "src", mod, f.game.ID, "b")
+		require.NoError(t, err)
+		assert.True(t, row.Enabled, "b's %s is on", mod)
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
