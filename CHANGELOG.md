@@ -1276,8 +1276,13 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   the batch's tally lists it as an unknown outcome rather than a failure. A
   request `lmm serve` takes and never answers is given up on after a minute:
   the page says the server did not answer and that the change may or may
-  not have been applied, re-reads, and shows what the server reports.
-  The in-flight row is marked with an accent bar rather than dimmed, so its
+  not have been applied, re-reads, and shows what the server reports once
+  it answers. A row settles only once a library read taken after its change
+  has actually landed — not when a newer read merely overtook it, which let a
+  row flick back to its old value — and if that read fails, or brings
+  nothing back within a minute while the row is on screen, a toast says the
+  mod's current state could not be read and the row shows the last state
+  the server reported. The in-flight row is marked with an accent bar rather than dimmed, so its
   text keeps its contrast in both themes.
 
 - **A NexusMods plugin folder installs into `BepInEx/plugins/`, not into the

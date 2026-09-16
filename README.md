@@ -1320,7 +1320,11 @@ the full mod page all show it, and a batch leaves that mod out. If the
 page's live connection to `lmm serve` drops meanwhile, it catches up when
 the connection returns, and says so if the server no longer knows the job;
 a change the server takes and never answers is given up on after a minute,
-and the row shows whatever the server then reports.
+and the row shows whatever the server reports once it answers. The row
+settles only on a fresh read of the library taken after the change; if that
+read fails, or brings nothing back within a minute while you are looking at
+it, a toast says the mod's current state could not be read and the row shows
+the last state the server reported.
 
 Filter (all/enabled/updatable/unhealthy) and sort (load order/name/recently
 installed) narrow it. The header checkbox selects **everything in view**
