@@ -33,6 +33,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1213,4 +1214,119 @@ func TestBackfillProfileDisabledMarkers_RoundOnesKeyIsNotAnObligation(t *testing
 	require.NoError(t, err)
 	assert.Empty(t, owed, "the stray key is gone")
 	assert.Empty(t, f.disabledRefs(t, "a"))
+}
+
+// pendingSwitchBack leaves profile a's share of the backfill kept for later
+// - declined by the editor, which is what a layout it cannot edit, an
+// unwritable file and an editor panic all come to - with b the active
+// profile. The switch to b rewrote a's file (SetDefault), so the next
+// mutation retries a, whichever profile is active by then. how is
+// "declined", through the editor seam, or "layout", a flow reference with a
+// comment before its closing brace, which the editor really declines and
+// SetDefault's rewrite normalises.
+func pendingSwitchBack(t *testing.T, how string) *backfillFixture {
+	t.Helper()
+	f := newBackfillFixture(t)
+	f.row(t, "a", "off", false, false)
+	f.row(t, "b", "x", true, false)
+	switch how {
+	case "declined":
+		f.svc.SetProfileMarkerForTest(func(string, []domain.ModReference) ([]domain.ModReference, error) {
+			return nil, config.ErrProfileLayoutUnsupported
+		})
+	case "layout":
+		doc := mustRead(t, f.profilePath("a"))
+		start := strings.Index(doc, "- source_id: src")
+		end := strings.Index(doc, "version: \"1.0\"\n")
+		require.True(t, start >= 0 && end > start, "unexpected profile layout:\n%s", doc)
+		end += len("version: \"1.0\"\n")
+		doc = doc[:start] + "- {source_id: src, mod_id: \"off\", version: \"1.0\" # kept by hand\n      }\n" + doc[end:]
+		require.NoError(t, os.WriteFile(f.profilePath("a"), []byte(doc), 0o644))
+	}
+	f.owe(t)
+	report, err := f.svc.BackfillProfileDisabledMarkers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, report.Skipped, 1, "a's share is kept for later")
+	require.Empty(t, report.Marked)
+
+	f.switchTo(t, "b")
+	f.svc.SetProfileMarkerForTest(nil) // the editor takes the rewritten file
+	require.Empty(t, f.disabledRefs(t, "a"))
+	f.warnings.Reset()
+	return f
+}
+
+// assertOffAndUndeployed checks that profile a's mod "off" is still marked,
+// disabled and not in the game directory.
+func (f *backfillFixture) assertOffAndUndeployed(t *testing.T) {
+	t.Helper()
+	assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+	row, err := f.svc.GetInstalledMod(context.Background(), "src", "off", f.game.ID, "a")
+	require.NoError(t, err)
+	assert.False(t, row.Enabled, "switched back on")
+	assert.False(t, row.Deployed, "deployed")
+	assert.NoFileExists(t, filepath.Join(f.gameDir, "off.esp"))
+}
+
+// TestBackfillProfileDisabledMarkers_ASwitchIntoAKeptProfile is the merge
+// gate's G1. A profile whose share of the backfill was kept for later is
+// retried by the first mutation after its file changes, and a switch away
+// from it changes it. The switch back was planned from the unmarked
+// document; its own slot wrote the marker; and the same Apply, whose
+// snapshot of the target left markers out, enabled and deployed the mod the
+// notice had just recorded as disabled - #431's own failure, in `lmm serve`
+// with no contention at all.
+func TestBackfillProfileDisabledMarkers_ASwitchIntoAKeptProfile(t *testing.T) {
+	ctx := context.Background()
+	for _, how := range []string{"declined", "layout"} {
+		t.Run(how, func(t *testing.T) {
+			// Another lmm holds the lock while the plan is made, so the plan
+			// goes ahead unsettled; its Apply writes the marker and refuses.
+			t.Run("a plan made under another lmm's lock is stale", func(t *testing.T) {
+				f := pendingSwitchBack(t, how)
+
+				release := holdOpLock(t, f.lockPath)
+				plan, err := f.svc.PlanProfileSwitch(ctx, f.game, "a")
+				require.NoError(t, err)
+				require.Len(t, plan.ToEnable, 1, "planned before the marker existed")
+				release()
+
+				_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+				require.ErrorIs(t, err, core.ErrStalePlan)
+				assert.Contains(t, f.warnings.String(), "Mod off")
+				f.assertOffAndUndeployed(t)
+
+				plan, err = f.svc.PlanProfileSwitch(ctx, f.game, "a")
+				require.NoError(t, err)
+				assert.Empty(t, plan.ToEnable, "the re-plan reads the marker")
+				_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+				require.NoError(t, err)
+				f.assertOffAndUndeployed(t)
+			})
+		})
+	}
+
+	// Another lmm writes the marker between the document read the switch
+	// decides from and the snapshot it records.
+	t.Run("a marker written while the plan is being made", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		f.switchTo(t, "b")
+		other, _ := f.reopen(t)
+
+		var plan *core.SwitchPlan
+		core.AfterProfileLoadForTest(func(loads int) {
+			if loads == 1 {
+				require.NoError(t, other.NewProfileManager().SetModDisabled(ctx, f.game.ID, "a", "src", "off", true))
+			}
+		}, func() {
+			var err error
+			plan, err = f.svc.PlanProfileSwitch(ctx, f.game, "a")
+			require.NoError(t, err)
+			require.Len(t, plan.ToEnable, 1, "decided from the unmarked read")
+		})
+		_, err := f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+		require.ErrorIs(t, err, core.ErrStalePlan)
+		f.assertOffAndUndeployed(t)
+	})
 }

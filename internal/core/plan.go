@@ -136,10 +136,11 @@ func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (install
 }
 
 // markedSnapshotOf is snapshotOf for a plan the profile document's
-// `disabled:` markers decide on a DISABLED row - `profile apply`, which
-// re-enables an unmarked one, and `profile sync`, which drops its
-// reference. Each of mods' entries also records whether disabled (the
-// document's markers, disabledKeysOf) holds it.
+// `disabled:` markers decide on a DISABLED row - `profile apply` and
+// `profile switch` (for its target profile), which re-enable an unmarked
+// one, and `profile sync`, which drops its reference. Each of mods' entries
+// also records whether disabled (the document's markers, disabledKeysOf)
+// holds it.
 //
 // #431 (fix round 3, F2): the one-time backfill writes exactly that marker,
 // and it can land between such a plan and its Apply - inside the Apply's

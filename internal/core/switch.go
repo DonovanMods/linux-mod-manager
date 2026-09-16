@@ -96,7 +96,9 @@ type SwitchPlan struct {
 	// clears target-profile rows, the enable loop writes them, and
 	// ToDisable can name one outright. A plan applied over a target row
 	// that moved in between would undeploy or enable a stale identity, so
-	// the freshness check covers both profiles.
+	// the freshness check covers both profiles. It is a marked snapshot
+	// (markedSnapshotOf): To's `disabled:` markers decide what this plan
+	// enables.
 	targetSnapshot installedSnapshot `json:"-"`
 }
 
@@ -347,8 +349,13 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	// Fix-round F9: the target profile's own precondition, built from the
 	// set already read above (snapshotOf, not a second query, for the
 	// reason its doc comment gives - and so the game adapter has its say
-	// about this profile's mods too).
-	targetSnapshot, err := s.snapshotOf(game.ID, allMods)
+	// about this profile's mods too). It records the target document's
+	// markers as well (merge gate G1): the loop above enables every
+	// unmarked reference over a disabled row, so a marker written before
+	// the Apply - a kept backfill retried in its own slot, or another lmm -
+	// makes this plan stale. The From snapshot needs none: the outgoing
+	// loop reads only the TARGET's markers.
+	targetSnapshot, err := s.markedSnapshotOf(game.ID, allMods, disabledKeysOf(targetProfile))
 	if err != nil {
 		return nil, err
 	}
