@@ -79,7 +79,7 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 			}
 		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, g.Name, g.InstallPath, g.ModPath, formatGameAdapter(g.Adapter), g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
+			id, g.Name, g.InstallPath, g.ModPath, formatGameAdapter(g.EffectiveAdapter), g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}
@@ -90,14 +90,16 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 	return printTable(&buf, 2, nil)
 }
 
-// formatGameAdapter renders the game's configured adapter for the table
-// (#353). An absent `adapter:` key IS the generic-files identity, so the
-// column names it rather than leaving a blank cell - there is no such thing
-// as a game with no adapter.
+// formatGameAdapter renders an adapter name for a table cell or a detail
+// line (#353). An empty name IS the generic-files identity, so the cell
+// names it rather than leaving a blank - there is no such thing as a game
+// with no adapter.
 //
-// It shows the CONFIGURED value: a `deploy_mode: compile` game's derived
-// adapter is a resolution core performs, and surfacing the resolved name
-// here is U2's change, when the derivation goes live.
+// Callers pass core.GameListEntry.EffectiveAdapter, the adapter the game
+// actually resolves to (#426), rather than the configured key: a
+// `deploy_mode: compile` game compiles through icarus and a game with
+// BepInEx lays its archives out through bepinex whether or not games.yaml
+// says so, and this column exists to say which adapter a game uses.
 func formatGameAdapter(name string) string {
 	if name == "" {
 		return "generic-files"

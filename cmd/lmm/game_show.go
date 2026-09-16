@@ -71,10 +71,15 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 	}
 	fmt.Printf("  Link method:  %s\n", detail.LinkMethod)
 	fmt.Printf("  Deploy mode:  %s\n", detail.DeployMode)
-	// #353: the same cell `lmm game list` prints, spelled the same way -
-	// an absent key IS the generic-files identity, so it is named rather
-	// than left blank.
-	fmt.Printf("  Adapter:      %s\n", formatGameAdapter(detail.Adapter))
+	// #353/#426: the same cell `lmm game list` prints - the adapter the
+	// game USES - and, when games.yaml does not name it, a note saying lmm
+	// derived it, so a reader comparing this with their file is not left
+	// wondering where it came from.
+	adapterLine := formatGameAdapter(detail.EffectiveAdapter)
+	if detail.Adapter == "" && detail.EffectiveAdapter != "" {
+		adapterLine += " " + colorDim("(derived - games.yaml sets no adapter)")
+	}
+	fmt.Printf("  Adapter:      %s\n", adapterLine)
 	fmt.Printf("  Sources:      %s\n", formatGameSources(detail.SourceIDs))
 
 	printLoaderStatus(detail.Loader)

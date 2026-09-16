@@ -87,7 +87,7 @@ func (s *Service) UpdateGameSources(ctx context.Context, gameID string, sources 
 	if err != nil {
 		return nil, err
 	}
-	entry := newGameListEntry(&updated, defaultGame)
+	entry := s.newGameListEntry(&updated, defaultGame)
 	return &entry, nil
 }
 
@@ -138,7 +138,7 @@ func (s *Service) SetGameAdapter(ctx context.Context, gameID, name string) (*Gam
 	if err != nil {
 		return nil, err
 	}
-	entry := newGameListEntry(&updated, defaultGame)
+	entry := s.newGameListEntry(&updated, defaultGame)
 	return &entry, nil
 }
 

@@ -1003,6 +1003,22 @@ func TestJSONGoldens(t *testing.T) {
 			core.GameListEntry{Game: jsonGoldenGame, Default: true},
 		},
 		{
+			// #426: a game whose adapter lmm DERIVED - no `adapter` key,
+			// because games.yaml has none, and `effective_adapter` naming
+			// the one in use. A generic game omits the key, which is why
+			// game_list_entry above is unchanged.
+			"game_list_entry_effective_adapter",
+			core.GameListEntry{
+				Game: domain.Game{
+					ID: "valheim", Name: "Valheim",
+					InstallPath: "/games/valheim", ModPath: "/games/valheim",
+					LinkMethod: domain.LinkSymlink,
+					Loader:     &domain.GameLoader{Kind: domain.LoaderKindBepInEx},
+				},
+				EffectiveAdapter: "bepinex",
+			},
+		},
+		{
 			"verify_report",
 			core.VerifyReport{
 				GameID: "skyrim-se", Profile: "default",

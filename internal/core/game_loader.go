@@ -128,6 +128,6 @@ func (s *Service) UpdateGameLoader(ctx context.Context, gameID string, loader *L
 	if err != nil {
 		return nil, err
 	}
-	entry := newGameListEntry(&updated, defaultGame)
+	entry := s.newGameListEntry(&updated, defaultGame)
 	return &entry, nil
 }

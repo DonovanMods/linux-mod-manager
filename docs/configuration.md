@@ -175,15 +175,31 @@ whether the game's mods have to be compiled into one artifact, and what
   BepInEx installed in its directory. Set `adapter:` explicitly when you
   want to override that — `adapter: generic-files` on a loader-declaring
   game records the loader while treating its archives as plain files.
+  That is allowed but never silent, because such a game gets none of the
+  rules above: a Thunderstore package's `manifest.json` lands in the game
+  directory and its `BepInEx/config` files are linked from the shared mod
+  cache. lmm warns when it loads the file, and again in `lmm game show`,
+  `lmm verify`, and on the import plan or download of any archive the
+  BepInEx rules would have laid out. The same applies to a
+  `deploy_mode: compile` game that declares the loader, since that key
+  selects `icarus`.
 
 The adapters that follow are added in the same tree, so `lmm game list`
 always names what this build actually has:
 
 ```bash
-lmm game list                           # the ADAPTER column names each game's
+lmm game list                           # the ADAPTER column names the adapter each game USES
 lmm game add --adapter <name> ...
-lmm game edit <game> --adapter <name>   # "" clears it back to generic-files
+lmm game edit <game> --adapter <name>   # "" clears the key; the game falls back to its derived adapter
 ```
+
+`lmm game list` and `lmm game show` name the adapter a game actually
+resolves to, including one lmm derived (`icarus` for `deploy_mode:
+compile`, `bepinex` for a game with BepInEx), so a game with no `adapter:`
+key does not read as `generic-files` when it is not. In `--json` (and
+`GET /api/v1/games`) `adapter` stays exactly what `games.yaml` says, and
+`effective_adapter` is the one in use — omitted when that is
+`generic-files`.
 
 An adapter name this build does not ship is refused, naming the ones it
 does, rather than silently downgraded to the default: `game add` and `game

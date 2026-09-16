@@ -1,0 +1,20 @@
+{
+  "id": "valheim",
+  "name": "Valheim",
+  "install_path": "/games/valheim",
+  "mod_path": "/games/valheim",
+  "source_ids": {},
+  "link_method": "symlink",
+  "link_method_explicit": false,
+  "hooks": {
+    "install": {},
+    "uninstall": {}
+  },
+  "deploy_mode": "extract",
+  "convert_paks_explicit": false,
+  "loader": {
+    "kind": "bepinex"
+  },
+  "default": false,
+  "effective_adapter": "bepinex"
+}

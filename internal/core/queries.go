@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
@@ -638,10 +639,20 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 // GameStatus (final review, Important #5 / #302): nil when the game is not
 // DeployCompile, rather than an always-emitted false claiming the setting is
 // "off" for a game it has no effect on.
+//
+// EffectiveAdapter is the adapter the game RESOLVES to (#426): the
+// configured `adapter:` when there is one, else the one Service.AdapterName
+// derives (icarus for `deploy_mode: compile`, bepinex for a game with
+// BepInEx). The embedded Adapter stays exactly what games.yaml says, so a
+// frontend can tell a typed key from a derived one. EffectiveAdapter is
+// omitted when it is generic-files - the same "absent means the identity"
+// rule `adapter` follows - which keeps every document for a generic game
+// byte-identical to what it was before the key existed.
 type GameListEntry struct {
 	domain.Game
-	Default     bool  `json:"default"`
-	ConvertPaks *bool `json:"convert_paks,omitzero"`
+	Default          bool   `json:"default"`
+	ConvertPaks      *bool  `json:"convert_paks,omitzero"`
+	EffectiveAdapter string `json:"effective_adapter,omitempty"`
 }
 
 // ListGameEntries returns every configured game, ordered by ID (ListGames'),
@@ -657,18 +668,26 @@ func (s *Service) ListGameEntries(ctx context.Context) ([]GameListEntry, error) 
 	games := s.ListGames()
 	entries := make([]GameListEntry, len(games))
 	for i, game := range games {
-		entries[i] = newGameListEntry(game, defaultGame)
+		entries[i] = s.newGameListEntry(game, defaultGame)
 	}
 	return entries, nil
 }
 
 // newGameListEntry builds one `lmm game list` row for game, marking it
-// default when it is defaultGameID and attaching the ConvertPaks pointer
-// only for a DeployCompile game (GameListEntry's own doc comment). Shared
-// with AddGame (game_add.go), which answers with the identical row shape
-// so a frontend can splice an add's response straight into its list.
-func newGameListEntry(game *domain.Game, defaultGameID string) GameListEntry {
+// default when it is defaultGameID, attaching the ConvertPaks pointer only
+// for a DeployCompile game and naming the effective adapter (GameListEntry's
+// own doc comment). Shared with every single-step game write, which answer
+// with the identical row shape so a frontend can splice the response
+// straight into its list.
+//
+// Resolving the adapter can cost one stat per game (the BepInEx
+// derivation's preloader test), which is the price of the row telling the
+// truth about a game with BepInEx installed but not declared.
+func (s *Service) newGameListEntry(game *domain.Game, defaultGameID string) GameListEntry {
 	entry := GameListEntry{Game: *game, Default: game.ID == defaultGameID}
+	if name := s.AdapterName(game); name != adapter.GenericID {
+		entry.EffectiveAdapter = name
+	}
 	if game.DeployMode == domain.DeployCompile {
 		v := game.ConvertPaks
 		entry.ConvertPaks = &v

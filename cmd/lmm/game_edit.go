@@ -175,6 +175,13 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 			if jsonOutput {
 				return emitJSON(entry)
 			}
+			// #426: clearing the key hands the game back to whatever lmm
+			// derives for it, which is not always generic-files - so say
+			// which adapter is now in use.
+			if entry.Adapter == "" {
+				fmt.Printf("%s %s adapter cleared; it now uses %s\n", colorGreen("✓"), entry.Name, formatGameAdapter(entry.EffectiveAdapter))
+				return nil
+			}
 			fmt.Printf("%s %s adapter set to %s\n", colorGreen("✓"), entry.Name, formatGameAdapter(entry.Adapter))
 			return nil
 		}
