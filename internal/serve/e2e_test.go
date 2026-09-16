@@ -3304,6 +3304,11 @@ func TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk(t *testing.T) {
 		b, errB := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, "default")
 		return errA == nil && errB == nil && !a.Enabled && !b.Enabled
 	}, 5*time.Second, 20*time.Millisecond, "batch disable must reach both mods")
+	// The server being done is not the page being done: each row settles on
+	// its own job AND a library read after it (toggleack.js), and a row
+	// still pending is left out of the next batch - which then takes
+	// nothing and leaves the selection standing for selectBoth to undo.
+	f.runInBrowser(t, pollUntil(toastSaysJS("Disabled 2/2")), pollUntil(noRowPendingJS))
 	_, err = f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 	assert.NoFileExists(t, alphaPath, "a disabled mod must not stay deployed")
@@ -3318,6 +3323,7 @@ func TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk(t *testing.T) {
 		b, errB := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, "default")
 		return errA == nil && errB == nil && a.Enabled && b.Enabled
 	}, 5*time.Second, 20*time.Millisecond, "batch enable must reach both mods")
+	f.runInBrowser(t, pollUntil(toastSaysJS("Enabled 2/2")), pollUntil(noRowPendingJS))
 
 	// Batch uninstall: ONE confirm modal listing both mods' own uninstall
 	// plans (design doc §Modals: "modals stack at most one deep").

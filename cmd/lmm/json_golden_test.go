@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -409,6 +410,10 @@ func TestJSONGolden_SourceList(t *testing.T) {
 func TestJSONGolden_GameList(t *testing.T) {
 	t.Run("populated", func(t *testing.T) {
 		svc := setupGameAddTest(t)
+		// The adapters app.Open registers, so the compile game's row is the
+		// one production writes - effective_adapter included (#413
+		// re-review L3; the golden pinned a row without it).
+		app.RegisterAdapters(svc)
 		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame("skyrim-se", "Skyrim SE")))
 		require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 			ID: "icarus", Name: "Icarus", InstallPath: "/games/icarus", ModPath: "/games/icarus/Mods",

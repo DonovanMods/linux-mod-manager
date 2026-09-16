@@ -697,6 +697,24 @@ select {
   font-size: 0.85em;
 }
 
+/* The card's own select-all row (issue 434), between the title and the
+ * list it takes. A <label> around the box, so the words are part of the
+ * target rather than a caption beside it. */
+.card__toolbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.card__select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  cursor: pointer;
+}
+
 /* The card's list takes the slack so every card in the row ends its
  * actions at the same height (issue 334's density pass): without it a
  * three-finding Health card and a one-row Updates card put their buttons
@@ -835,6 +853,7 @@ select {
 .library__toolbar {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: var(--space-4);
   margin-bottom: var(--space-3);
 }
@@ -919,9 +938,18 @@ select {
   width: 10%;
 }
 
+/* The actions column (issue 417). It used to hold only the ⋯ button, at 3%;
+ * a row with an update pending now carries a visible Update beside it, so
+ * the column needs the room for both - and nowrap, so the pair never stacks
+ * and changes the row's height as rows gain and lose their update. */
 .library__table th.col--menu,
 .library__table td.col--menu {
-  width: 3%;
+  width: 9%;
+  white-space: nowrap;
+}
+
+.library__table td.col--menu .button + .button {
+  margin-left: var(--space-1);
 }
 
 .library__table th {
@@ -987,6 +1015,21 @@ select {
   white-space: nowrap;
 }
 
+/* The select-all box shares its heading cell with the word that names the
+ * column (issue 434): the heading owner demo 1 asked for is kept, and it
+ * becomes the box's own click target rather than a caption beside it. The
+ * accessible name is set on the input and overrides the word, because
+ * "Select" says nothing about what one press is about to take. */
+.library__select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
 .mod-row:hover {
   background: var(--surface-sunken);
 }
@@ -1014,6 +1057,13 @@ select {
 
 .mod-row__badges {
   white-space: nowrap;
+}
+
+/* The batch bar's own live count (issue 434): what is selected, out of what
+ * is in view. Weighted so the number reads first - it is the size of what
+ * every button beside it is about to do. */
+.batch-bar__count {
+  font-weight: 600;
 }
 
 .batch-bar {
@@ -1251,10 +1301,69 @@ select {
   color: var(--accent);
 }
 
+/* The slide-over's own health line (issue 418). Muted by default - a mod
+ * that is fine, or that nothing has checked yet, is not news - and coloured
+ * only for the state that is. */
+.slide-over__health {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.slide-over__health[data-health="issues"] {
+  color: var(--warn);
+}
+
 .mod-row__live {
   display: block;
   color: var(--accent);
   font-size: 0.8em;
+}
+
+/*
+ * The in-flight toggle (issue 432).
+ *
+ * A row whose enable/disable has been asked for but not yet happened shows
+ * the REQUESTED value in its checkbox, so the only thing left to say is
+ * that it is a request rather than the truth: an accent bar runs down the
+ * row's leading edge and a small spinner sits beside the box. The
+ * .mod-row__live line in the name column carries the words ("Enabling…"),
+ * and it is the one a screen reader gets - the spinner is purely visual and
+ * marked aria-hidden at the markup, so nothing is announced twice.
+ *
+ * Marked, never dimmed. Dimming the row (this rule's first cut was
+ * opacity: 0.75) re-composites every text token on it below WCAG AA in both
+ * themes - "Enabling…" itself went from 5.55:1 to 3.39:1 - and the token
+ * ratchet cannot see that, because it measures pairs, not what a partial
+ * opacity makes of them. The bar is --accent at full strength, a colour the
+ * ratchet already holds to 4.5:1 on every surface, and nothing on the row
+ * changes colour at all. TestE2E_LibraryRow_PendingRowKeepsItsContrast
+ * measures the painted row in both themes.
+ */
+.mod-row--pending td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.toggle-pending {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-left: var(--space-2);
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  vertical-align: middle;
+  animation: toggle-pending-spin 0.9s linear infinite;
+}
+
+/* Reduced motion is honoured by the blanket rule at the top of this file
+ * (animation-duration: 0ms), which leaves the ring drawn and still - a
+ * shape that is visibly different from an ordinary checkbox either way, so
+ * the affordance survives the animation being taken away. */
+@keyframes toggle-pending-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ---------------------------------------------------------------------- */

@@ -3,7 +3,7 @@
 // "where the bytes came from".
 //
 // The seam already existed before this package - spelled three different
-// ways and hung off the wrong noun. adapter.MergeCompiler made compilation a
+// ways and hung off the wrong noun. source.MergeCompiler made compilation a
 // property of a source, so an Icarus .pak downloaded from NexusMods could
 // not compile; archive layout was a bool parameter threaded through core;
 // .EXMODZ's wrapper strip lived inside a format parser. Each is really a
@@ -78,10 +78,12 @@ type NormalizeRequest struct {
 	// On the archive-import path it is derived from the archive's own
 	// shape BEFORE any rewrite, and the plan and the ingest derive it the
 	// same way, so an adapter that consults it lays the same tree out on
-	// both sides. It is EMPTY on the download path, where the mod's name
-	// comes from its source rather than from the archive - an adapter
-	// that names a directory after the mod must tolerate that and fall
-	// back to a name it can derive from Members.
+	// both sides. On the download path (and verify's re-layout) it is the
+	// name the mod's SOURCE gives it, which is also the name `lmm list`
+	// shows - the archive's shape cannot supply one there (#413). It can
+	// still be empty for a source that names nothing, so an adapter that
+	// names a directory after the mod must tolerate that and fall back to
+	// a name it can derive from Members.
 	ModName string
 	// Members are the archive's members: SLASH-separated, archive-relative,
 	// files only, and SORTED - core normalises once, at the seam. An
@@ -223,6 +225,41 @@ type Preconditioner interface {
 	CheckPreconditions(g *domain.Game, mods []domain.InstalledMod) error
 }
 
+// Severity is how a Finding counts towards a verify run's tally. It is the
+// one thing core cannot read off the finding itself: the Issues/Warnings
+// counters are what decide `lmm verify`'s exit code, and only the adapter
+// knows whether "the loader has never run" is a problem or a remark.
+//
+// Its ZERO value is SeverityIssue, because a report an adapter bothered to
+// make is a problem by default - an adapter that means otherwise says so.
+type Severity int
+
+const (
+	// SeverityIssue counts towards VerifyResult.Issues: something is
+	// wrong and the user has to act.
+	SeverityIssue Severity = iota
+	// SeverityWarning counts towards VerifyResult.Warnings: worth saying,
+	// not worth failing over.
+	SeverityWarning
+	// SeverityNote counts towards neither - a row that is purely
+	// informational.
+	SeverityNote
+)
+
+// String returns the severity's diagnostic name.
+func (s Severity) String() string {
+	switch s {
+	case SeverityIssue:
+		return "issue"
+	case SeverityWarning:
+		return "warning"
+	case SeverityNote:
+		return "note"
+	default:
+		return "unknown"
+	}
+}
+
 // Finding is one read-only observation from an adapter's Verify. Its fields
 // map one-for-one onto core.VerifyFinding, so an adapter row renders as an
 // ordinary verify row in every frontend that already exists.
@@ -232,6 +269,16 @@ type Finding struct {
 	Status string
 	// Note is the human-facing explanation.
 	Note string
+	// Recorded and Effective are the two halves of a DRIFT report - what
+	// the configuration says versus what the installation says - and they
+	// land on the same two VerifyFinding fields every other drift row in
+	// the engine uses (a version mismatch, a link-method change). Both
+	// empty for a finding that is not about a disagreement.
+	Recorded  string
+	Effective string
+	// Severity is how this row counts towards the run's tally. The zero
+	// value is SeverityIssue.
+	Severity Severity
 	// Fixable reports whether `verify --fix` would attempt a repair. No
 	// adapter finding is fixable in 2.0 (design §1): the one BepInEx check
 	// that could be repaired is core's own per-file deployment pass, not
@@ -261,8 +308,15 @@ type Verifier interface {
 }
 
 // GuidanceNote is one piece of launch/bootstrap advice an adapter offers
-// for a game - the text `lmm game list`, `lmm verify` and the web game card
-// render after their own output.
+// for a game.
+//
+// No frontend renders one yet: no core flow asks an adapter for its
+// Guidance, so a note an adapter returns reaches nobody today (#413 review
+// F3). The design's frontend pass (§5 of
+// docs/plans/2026-09-10-game-adapter-design.md) puts them on `lmm game list
+// --json`, after `lmm verify`'s summary and on the web game card, and has
+// to land in both frontends at once. BepInEx's own setup advice reaches
+// users through core's LoaderStatus in the meantime.
 type GuidanceNote struct {
 	// Title is the note's one-line heading.
 	Title string
@@ -283,7 +337,7 @@ type Guide interface {
 // cross-mod table merge - a whole-pak last-wins deploy would silently drop
 // one mod's table rows whenever two mods patch the same table).
 //
-// It was adapter.MergeCompiler until U2 (#412), which is the mistake #353
+// It was source.MergeCompiler until U2 (#412), which is the mistake #353
 // exists to correct: compilation was a property of WHERE THE BYTES CAME
 // FROM, so an Icarus .pak downloaded from NexusMods could not compile while
 // the same file from Project Daedalus could. It is a property of the GAME,
@@ -395,6 +449,54 @@ type MergeSource struct {
 type MergeFailure struct {
 	ModRef string
 	Reason string
+}
+
+// Claim is one adapter's answer to "is this archive yours?", asked of an
+// adapter that is NOT the game's own (see ArchiveClaimer). An empty Claim
+// is "not mine".
+type Claim struct {
+	// Evidence names the archive shape that made the claim, in the
+	// adapter's own words ("game-root-relative"), so a user can see WHY
+	// lmm decided this archive belongs to a game kind theirs is not.
+	Evidence string
+	// Requires is the mod-loader kind (domain.LoaderKindBepInEx) a game
+	// must declare before this archive is usable in it, or "" when the
+	// claim implies no loader. It is a domain kind rather than the
+	// adapter's own ID because the two are free to diverge - the loader is
+	// a fact about the game INSTALLATION (domain.Game.Loader), and an
+	// adapter is a choice about how lmm treats it.
+	Requires string
+}
+
+// Claimed reports whether this Claim is an actual claim.
+func (c Claim) Claimed() bool { return c.Evidence != "" }
+
+// ArchiveClaimer is the optional capability that answers "this archive is
+// unmistakably for MY kind of game" from the member list alone - no
+// domain.Game, because the whole point is that core asks it of an adapter
+// the game in hand does NOT use.
+//
+// It exists for one shipped refusal (#359): importing a BepInEx plugin into
+// a game with no BepInEx deploys an assembly nothing will ever load and
+// reports success. The game's own adapter cannot catch that - it is the
+// identity, and the identity has no opinion - so core asks every OTHER
+// registered adapter through Registry.ClaimArchive.
+//
+// UNMISTAKABLE is the whole bar, and it is narrower than NormalizeArchive's.
+// An adapter asked about an archive for someone else's game must only claim
+// a shape that no other game's mod plausibly has: `plugins/` at an archive
+// root is an ordinary directory name, and claiming it would tell a 7 Days
+// to Die user to install a mod loader they do not need. A directory
+// literally named `BepInEx` is the other kind of evidence.
+//
+// A non-nil error is the adapter's own refusal - ErrNotAMod for an archive
+// that is the framework itself rather than a mod for it - which core
+// surfaces ahead of any requirement.
+type ArchiveClaimer interface {
+	// ClaimArchive judges members (slash-separated, archive-relative,
+	// files only, sorted - the same normalisation NormalizeRequest.Members
+	// carries).
+	ClaimArchive(members []string) (Claim, error)
 }
 
 // ErrNotAMod is the refusal an adapter makes for an archive that is the

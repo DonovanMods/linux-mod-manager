@@ -44,6 +44,12 @@ export const shortcutRows = [
     what: "close it and return focus to whatever opened it",
   },
   {
+    keys: "a",
+    where:
+      "Mission Control, outside a text field, with no modal or slide-over open",
+    what: "select every mod in view, or clear the selection",
+  },
+  {
     keys: "← / →",
     where: "the slide-over",
     what: "step to the previous/next mod in the library's current order",

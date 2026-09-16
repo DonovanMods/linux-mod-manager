@@ -79,6 +79,16 @@ func checkKnownGame(appID string, info steam.GameInfo, knownSourceIDs map[string
 		report("app id %s has a mod_path %q with a redundant leading ./", appID, info.ModPath)
 	}
 
+	// #413 re-review P-b: a BepInEx layout is relative to the GAME ROOT,
+	// and core derives the bepinex adapter only for a game whose mod_path
+	// IS its install path. A loader entry with any other mod_path would
+	// detect as a generic-files game whose loader block is ignored - and
+	// before that rule, nested every plugin one BepInEx/plugins too deep.
+	if info.ModPath != "" && (strings.EqualFold(info.Adapter, "bepinex") ||
+		(info.Loader != nil && strings.EqualFold(info.Loader.Kind, domain.LoaderKindBepInEx))) {
+		report("app id %s is a BepInEx game with mod_path %q; a BepInEx layout is relative to the game root, so its mod_path must be \"\"", appID, info.ModPath)
+	}
+
 	if _, ok := domain.ParseDeployMode(info.DeployMode); !ok {
 		report("app id %s has deploy_mode %q, which domain.ParseDeployMode rejects", appID, info.DeployMode)
 	}
@@ -145,7 +155,16 @@ func TestCheckKnownGame(t *testing.T) {
 		{"a non-default deploy mode", "123456",
 			steam.GameInfo{Slug: "g", Name: "G", ModPath: "Mods", DeployMode: "compile", Sources: map[string]string{"icarus": "icarus"}}, ""},
 
+		{"a BepInEx game deploying into its game root", "123456",
+			steam.GameInfo{Slug: "g", Name: "G", NexusID: "g", ModPath: "", Loader: &steam.LoaderInfo{Kind: "bepinex"}}, ""},
+
 		{"a non-numeric app id", "not-an-app", good, "not a decimal Steam app id"},
+		{"a BepInEx loader game with a plugins mod path", "123456",
+			steam.GameInfo{Slug: "g", Name: "G", NexusID: "g", ModPath: "BepInEx/plugins", Loader: &steam.LoaderInfo{Kind: "bepinex"}},
+			"must be \"\""},
+		{"a bepinex adapter game with a mods mod path", "123456",
+			steam.GameInfo{Slug: "g", Name: "G", NexusID: "g", ModPath: "mods", Adapter: "bepinex"},
+			"must be \"\""},
 		{"no name", "123456", steam.GameInfo{Slug: "g", NexusID: "g"}, "has no name"},
 		{"no slug", "123456", steam.GameInfo{Name: "G", NexusID: "g"}, "has no slug"},
 		{"a capitalised slug", "123456",

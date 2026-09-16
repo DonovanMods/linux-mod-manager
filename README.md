@@ -97,12 +97,19 @@ profile (desired state)
       ↓              mods, versions, locks, load order — exportable YAML
 cache
       ↓              one copy per source/mod/version, checksummed
+game adapter
+      ↓              what THIS game does with mod content: archive layout,
+                     which files are configuration, whether its mods compile
+                     into one artifact, what verify can honestly check
 deployment strategy
-      ↓              symlink, hardlink or copy into the game directory
-game-specific adapter
-                     generic file deployment, or a real compile step
-                     (Icarus `.pak`/`.exmodz` merging) where a game needs one
+                     symlink, hardlink or copy into the game directory
 ```
+
+The **game adapter** is a real seam rather than a description of one: one
+`adapter:` key in `games.yaml`, defaulting to `generic-files` — the identity,
+which is what every game lmm managed before adapters existed. `icarus` and
+`bepinex` ship on top of it, and a contributor adds a third without touching
+lmm's core. See [docs/adapters.md](docs/adapters.md).
 
 **What lmm does not have.** There is no FOMOD installer UI, no _automated_
 LOOT-style plugin sorting (masterlists, a generated `plugins.txt`) and no
@@ -144,14 +151,36 @@ These are deliberate omissions, tracked so they are not mistaken for oversights:
 
 ### The adapter seam
 
-The Icarus support is the interesting one: lmm does not merely copy that game's
-archives, it converts prebuilt `.pak` mods, derives their changes against the
-current base game, merges them by profile precedence and regenerates the result
-when load order changes. Making that a **documented adapter seam** — so Unreal,
-Unity and the rest land without contaminating the generic core — is in
-progress for 2.0: [#353](https://github.com/DonovanMods/linux-mod-manager/issues/353)
-(design approved; the seam and a generic adapter land first, then Icarus and
-BepInEx move behind it).
+Two games in lmm need more than "put these files there". Icarus does not
+merely copy its archives: lmm converts prebuilt `.pak` mods, derives their
+changes against the current base game, merges them by profile precedence and
+regenerates the result when load order changes. BepInEx games need their
+plugin archives placed correctly in the game root, their `BepInEx/config/**`
+seeded rather than linked, and their loader installation checked.
+
+Since 2.0 both of those are **game adapters** behind a documented seam, not
+special cases in lmm's core:
+[#353](https://github.com/DonovanMods/linux-mod-manager/issues/353). One
+`adapter:` key in `games.yaml` selects one, the default (`generic-files`) is
+the identity — so every game lmm managed before adapters behaves
+byte-for-byte as it did — and an adapter supplies pure rule tables and
+read-only reports while core keeps every side effect. Adapters live in the
+tree and are compile-time, not plugins: adding one for Unreal, another Unity
+loader or anything else is a package under `internal/adapter/` plus one
+registration line, with a boundary test making sure it stays that way.
+
+A game whose configuration its adapter refuses — an adapter name this build
+does not have, `adapter: bepinex` with a `mod_path` off the game root or with
+`deploy_mode: compile` — is refused by every command that deploys, each with
+the same message naming the way out: `lmm deploy`, `lmm install`,
+`lmm mod enable` (and the web UI's Enable), `lmm verify --fix`'s re-deploy
+repairs, and the rest. `lmm purge`, `lmm uninstall` and `lmm mod disable`
+still run there, removing only what lmm recorded deploying, so taking lmm's
+files back out is always the first step available.
+
+[docs/adapters.md](docs/adapters.md) is the contributor's guide;
+[docs/configuration.md](docs/configuration.md#adapter-gamesyaml) is how you
+choose one for your game.
 
 ## Installation
 
@@ -554,6 +583,10 @@ responsibility is deliberate and worth reading before you start: **lmm
 deploys and verifies plugins; you install the loader and set the Steam
 launch option.**
 
+Everything below is the `bepinex` [game adapter](docs/adapters.md), and a
+game gets it without you naming one: declaring the loader selects it, and so
+does simply having BepInEx installed in the game directory.
+
 #### Configure the game
 
 BepInEx-managed content is game-root-relative, so the game's `mod_path` is
@@ -577,6 +610,24 @@ games:
 Not `mod_path: ""` — an empty value is not "the game root", it is a
 relative path, and lmm would deploy into whatever directory you ran it
 from.
+
+`lmm game add` with `--loader bepinex` uses the install path as the mod path
+when you give none. A game whose `mod_path` is anywhere else — a
+`games.yaml` from before lmm supported BepInEx, pointing it at
+`BepInEx/plugins` — does **not** get the BepInEx rules below: every path
+they produce is relative to the game root, so lmm keeps deploying that
+game's archives exactly as packaged into that directory, as it always did.
+`lmm game show` and `lmm verify` say so and give you both ways out: move
+the game to its root (the warning lists the steps), or run `lmm game edit
+<id> --adapter generic-files` to keep it as it is.
+
+The same goes for any explicit `adapter:` other than `bepinex`. With no
+`loader:` block on a game whose BepInEx is merely installed, that key is
+how you tell lmm to treat the game's archives as plain files, and lmm only
+mentions it on the import of an archive it would otherwise have laid out.
+A `loader:` block the adapter ignores is a contradiction instead, and lmm
+flags it until one side changes. [docs/adapters.md](docs/adapters.md#loader)
+has the whole rule.
 
 The same thing from the command line, or in the web UI's Setup → Games row
 (the **Edit loader…** control):
@@ -622,8 +673,9 @@ lmm game edit lethal-company --loader ""   # remove the declaration
   account for, is a game-root overlay and deploys exactly where the archive
   puts it.
 
-  The `BepInEx/`-rooted and wrapped shapes are recognised for any game. The
-  ambiguous ones — a bare `plugins/` root, a plugin folder and a bare
+  The `BepInEx/`-rooted and wrapped shapes are unmistakable for any game —
+  which is what lets lmm refuse one imported into a game that has no loader,
+  below, rather than deploy it into nothing. The ambiguous ones — a bare `plugins/` root, a plugin folder and a bare
   `.dll` — need lmm to believe this is a BepInEx game, so a mod for a
   different game that happens to be rooted at `plugins/` (or at
   `Mods/<Mod>/<Mod>.dll`) keeps deploying exactly where it always did.
@@ -1292,22 +1344,52 @@ the omnibar, the activity bell, **⚙ Setup** and the theme toggle. Beneath
 it, attention cards render only when they have something to say, and each
 acts in place:
 
-| Card          | What it shows                                                                                                          | What it does                                                                                                                                                             |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Updates**   | every mod with a newer version                                                                                         | tick rows → "Update selected" applies them as one batch                                                                                                                  |
-| **Health**    | `lmm verify`'s findings, and when it last ran (or "Unchanged since …" when the answer came from the verify memo, #336) | per-finding **Repair**, **Repair all**, **Re-verify** (a real re-run, never the memo); a finding that `verify --fix` would not attempt says so in the engine's own words |
-| **Conflicts** | each contested file, its contenders and the winning rule                                                               | **Resolve…** opens the reorder modal scrolled to that file                                                                                                               |
-| **Profile**   | which way the profile and the installed set have drifted                                                               | **Apply profile…** runs `lmm profile apply`; **Sync…** runs `lmm profile sync`                                                                                           |
+| Card          | What it shows                                                                                                          | What it does                                                                                                                                                                                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Updates**   | every mod with a newer version                                                                                         | **Check again** re-asks the sources; **Update all (N)** takes every applicable row; or tick rows — one at a time, or the header box — and **Update N mods**                                                                                                                                 |
+| **Health**    | `lmm verify`'s findings, and when it last ran (or "Unchanged since …" when the answer came from the verify memo, #336) | per-finding **Repair**, **Repair all**, **Re-verify** (a real re-run, never the memo); a finding that `verify --fix` would not attempt says so in the engine's own words. The card renders only when something is wrong — **Verify** in the library toolbar is the one that is always there |
+| **Conflicts** | each contested file, its contenders and the winning rule                                                               | **Resolve…** opens the reorder modal scrolled to that file                                                                                                                                                                                                                                  |
+| **Profile**   | which way the profile and the installed set have drifted                                                               | **Apply profile…** runs `lmm profile apply`; **Sync…** runs `lmm profile sync`                                                                                                                                                                                                              |
 
 The **library** is the spine: an enabled toggle, the name, the installed
-version (with its update target), badges (⬆ update, ⚠ health, ⇄ conflict,
-🔒 lock, update policy), load order, and a ⋯ menu per row
-(Update / Uninstall / Lock / pak conversion / Re-link… / Reorder here).
-Pak conversion appears only where it applies. Filter (all/enabled/updatable/
-unhealthy) and sort (load order/name/recently installed) narrow it, and
-selecting rows raises a batch bar (Enable / Disable / Uninstall / Update
-selected). More columns appear as the display widens: author and install
+version (with its update target), badges (⬆ update, health, ⇄ conflict,
+🔒 lock, update policy), load order, a visible **Update** button on any row
+with one pending, and a ⋯ menu per row (Uninstall / Lock / Verify /
+Repair… / pak conversion / Re-link… / Reorder here). Pak conversion and
+Repair… appear only where they apply.
+
+The health badge states which of three things is true of that mod, rather
+than marking only the bad one: **✓** verified and clean, **⚠** with the
+number of findings in its tooltip, or **?** for not verified yet — so a
+healthy mod and one nothing has checked no longer look the same. The
+slide-over says the same thing in words.
+
+Ticking the enabled toggle moves it **immediately**, to the state you asked
+for, with "Enabling…"/"Disabling…" and a spinner on the row while the deploy
+behind it runs; if the job fails the row goes back to what is actually true.
+A mod has one such change in flight at a time — the row, the slide-over and
+the full mod page all show it, and a batch leaves that mod out. If the
+page's live connection to `lmm serve` drops meanwhile, it catches up when
+the connection returns, and says so if the server no longer knows the job;
+a change the server takes and never answers is given up on after a minute,
+and the row shows whatever the server reports once it answers. The row
+settles only on a fresh read of the library taken after the change; if that
+read fails, or brings nothing back within a minute while you are looking at
+it, a toast says the mod's current state could not be read and the row shows
+the last state the server reported.
+
+Filter (all/enabled/updatable/unhealthy) and sort (load order/name/recently
+installed) narrow it. The header checkbox selects **everything in view**
+— after the filter and whatever the omnibar is narrowing by — skipping rows
+the batch actions cannot apply to, and reads back as checked, empty or
+partial; `a` does the same from the keyboard anywhere on Mission Control
+(outside a text field, and not while a modal or the slide-over is open). A
+selection raises a batch bar that says how much is selected out of what is in
+view, with the applicable count on each action (Enable / Disable / Update /
+Uninstall). More columns appear as the display widens: author and install
 date at 1440px, source and link method at 1920px. Its toolbar also carries
+**Check for updates** (which re-asks the sources rather than re-reading what
+they cached), **Update all (N)**, **Verify**, **Reorder…** and
 **Add mods ▾**: Search sources… (focuses the omnibar), Import an archive…
 and Adopt untracked mods… — the same three flows, and the same component,
 the empty-library state offers before you have installed a first mod.
@@ -1322,9 +1404,9 @@ place on the row, and it says what it keeps: the stored originals). **Snapshot
 now** records one with no name to type — see [Snapshots](#snapshots).
 
 Clicking a row opens the **slide-over**: author, installed → available
-version, an editable lock, update policy and (where it applies) pak
-conversion, that mod's own findings and conflicts, a changelog preview, and
-Update / Enable-or-Disable / Uninstall. **More info →** opens the **full mod
+version, that mod's health in words, an editable lock, update policy and
+(where it applies) pak conversion, that mod's own findings and conflicts, a
+changelog preview, and Update / Enable-or-Disable / Uninstall. **More info →** opens the **full mod
 page** (`/g/{game}/{profile}/mod/{source}/{id}`), which carries all of that
 plus what only it has room for: full description, complete changelog, a
 files table, a versions table with per-version install and rollback,
@@ -1431,15 +1513,16 @@ removes every mod record behind it.
 The whole UI is operable from the keyboard, and every focused control shows
 a visible ring in both themes.
 
-| Key                        | Where                                        | What it does                                                                                                   |
-| -------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `Tab` / `Shift+Tab`        | anywhere                                     | move through the controls; the first stop on every screen is **Skip to content**, which jumps past the top bar |
-| `?`                        | anywhere outside a text field                | open this keyboard-shortcuts help                                                                              |
-| `Enter`                    | omnibar                                      | search the game's sources for what you typed                                                                   |
-| `Esc`                      | omnibar                                      | clear the search and return to your plain library                                                              |
-| `Esc`                      | any modal, the slide-over, any open dropdown | close it and return focus to whatever opened it                                                                |
-| `←` / `→`                  | the slide-over                               | step to the previous/next mod in the library's current order                                                   |
-| `←` / `→` / `Home` / `End` | the Setup page's section tabs                | move between sections                                                                                          |
+| Key                        | Where                                                                   | What it does                                                                                                   |
+| -------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Tab` / `Shift+Tab`        | anywhere                                                                | move through the controls; the first stop on every screen is **Skip to content**, which jumps past the top bar |
+| `?`                        | anywhere outside a text field                                           | open this keyboard-shortcuts help                                                                              |
+| `Enter`                    | omnibar                                                                 | search the game's sources for what you typed                                                                   |
+| `Esc`                      | omnibar                                                                 | clear the search and return to your plain library                                                              |
+| `Esc`                      | any modal, the slide-over, any open dropdown                            | close it and return focus to whatever opened it                                                                |
+| `a`                        | Mission Control, outside a text field, with no modal or slide-over open | select every mod in view, or clear the selection                                                               |
+| `←` / `→`                  | the slide-over                                                          | step to the previous/next mod in the library's current order                                                   |
+| `←` / `→` / `Home` / `End` | the Setup page's section tabs                                           | move between sections                                                                                          |
 
 The same table is in the app itself: press `?` (or the **?** button beside
 **⚙ Setup**) to open it. It is generated from one list, so the two cannot
@@ -1619,12 +1702,14 @@ and is a plan kind (`POST /api/v1/plans/snapshot_restore` with
 
 `GET /api/v1/games` answers with the rows `lmm game list --json` prints —
 an empty array is the first-run signal; each row carries the game's
-`source_ids` map. `PUT /api/v1/games/{id}` rewrites that map (`lmm game
-edit`'s twin) and answers with the same row: the body's `sources` object is
-the FULL map the game ends up with, so an omitted source id is removed. An
-id no registered source claims is a 400 whose `details.field` is
-`"sources"`, an unknown game is a 404, and an empty map is refused — a game
-must keep at least one source. `GET /api/v1/games/catalog` is the
+`source_ids` map, its configured `adapter` (exactly what `games.yaml` says)
+and `effective_adapter`, the adapter it actually uses — including one lmm
+derived — omitted when that is `generic-files`. `PUT /api/v1/games/{id}`
+rewrites that map (`lmm game edit`'s twin) and answers with the same row:
+the body's `sources` object is the FULL map the game ends up with, so an
+omitted source id is removed. An id no registered source claims is a 400
+whose `details.field` is `"sources"`, an unknown game is a 404, and an
+empty map is refused — a game must keep at least one source. `GET /api/v1/games/catalog` is the
 game-add form's search, over any source with a searchable catalog
 (CurseForge today); a source without one answers 400, which is the signal
 to ask for an identifier instead. `POST /api/v1/games` answers 400 with a
@@ -2077,9 +2162,9 @@ under its issue number:
 | `lmm game add`                                            | Add a game — prompts for anything a flag did not supply                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `lmm game add --source <id> --id <identifier>`            | Name the mod source and this game's identifier with it (a NexusMods slug, a CurseForge game id, a custom source's key) instead of being prompted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `lmm game add --query <q> [--pick <n>]`                   | Search a source's game catalog instead of naming an identifier; without `--pick` the matches are printed (`core.GameCatalogReport` under `--json`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `lmm game add --name <n> --path <dir> [--mod-path <dir>]` | Display name, install path (must exist) and mod directory (default `<install>/mods`; absolute, or relative to the install path)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `lmm game add --name <n> --path <dir> [--mod-path <dir>]` | Display name, install path (must exist) and mod directory (default `<install>/mods`, or the install path for a BepInEx game; absolute, or relative to the install path)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `lmm game add --from-detected <steam-app-id>`             | Prefill everything from an installed Steam game — name, install path, game id, mod path, and a known game's source map; every other flag still wins, and `--source` (with `--id`/`--query`/`--pick`) ADDS to a curated source map rather than replacing it — `--id`/`--query`/`--pick` alone need `--source`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `lmm game list`                                           | List configured games (ID, name, paths, deploy mode, sources; marks the default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm game list`                                           | List configured games (ID, name, paths, adapter in use, deploy mode, sources; marks the default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `lmm game edit <game-id> --source <id>=<identifier>`      | Add or replace one of the game's source mappings (repeatable); the identifier may be empty for a source that needs none                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `lmm game edit <game-id> --remove-source <id>`            | Drop one source mapping (repeatable; removals apply before additions, and a game must keep at least one source)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `lmm game detect`                                         | Scan Steam libraries for moddable games — every game in the known-games list (extend it via [`steam-games.yaml`](docs/configuration.md#steam-gamesyaml-optional)), plus any game with Steam Workshop items already downloaded. Rows are numbered continuously, curated first, each printing its Steam app id, and the prompt takes a row number **or** an app id — a bare number that is both a row number and another row's app id is refused rather than guessed at, so spell it `#3` (row 3) or `app:10` (Steam app id 10); if nothing is found but this machine has OTHER installed Steam games lmm has no known-games entry for, says how many and names `--include-unknown` instead of reporting nothing found                                                                                                                                                                                                                                                                                                                                                         |
@@ -2432,8 +2517,8 @@ With `--fix`, verify also REMOVES stale lmm-deployed files and dangling lmm-cach
 - **? ModName - VERSION UNVERIFIABLE** - None of the recorded file ID(s) are listed by the source anymore; not repaired by `--fix` (reinstall the mod instead).
 
 For a game with a `loader:` block (see [BepInEx (Unity
-games)](#bepinex-unity-games)), verify adds a loader tier — six checks,
-reporting seven statuses:
+games)](#bepinex-unity-games)), verify adds a loader tier — seven checks,
+reporting nine statuses:
 
 - **LOADER MISSING** — the game declares a loader and its preloader
   (`BepInEx/core/BepInEx.Preloader.dll`) is not in the install directory.
@@ -2470,9 +2555,34 @@ reporting seven statuses:
   from. Every other check above is about the DECLARATION, so they run only
   for a game that made one.
 
-Only the last two are `--fix`-able: lmm does not install the loader or
-write Steam launch options, so the remedy for the others is the setup `lmm
-game show` prints.
+- **LOADER NESTED TREE** — a `BepInEx/` directory sits inside
+  `BepInEx/plugins/`. BepInEx loads every plugin anywhere under `plugins/`,
+  so a plugin in it loads a second time beside the copy deployed where it
+  belongs, and BepInEx reads no config in it. It is what a
+  `BepInEx/`-rooted archive leaves behind when a game that deployed into
+  `BepInEx/plugins` moves its `mod_path` to the game root without a purge
+  first. When every file in it is a link into THIS game's own part of lmm's
+  mod cache that no game records, `--fix` removes it — but not a `--fix`
+  that names a mod (`lmm verify <mod> --fix`, or the web UI's per-finding
+  Repair): the directory belongs to no one mod, so that run reports it and
+  leaves it for a `--fix` over the whole profile. Anything else is reported
+  as **LOADER FOREIGN NESTED TREE**, a warning `--fix` leaves alone, since
+  lmm cannot tell it from an archive you extracted there yourself — a
+  regular file, a link anywhere else, a directory lmm cannot read, and the
+  deployment of another `games.yaml` entry for the same install (an old
+  entry whose `mod_path` is `BepInEx/plugins` deploys a `BepInEx/`-rooted
+  archive exactly there). The removal re-checks every link at the moment it
+  removes it and keeps any it can no longer prove is a leftover. Like the
+  check above, it runs for a game that has BepInEx installed without
+  declaring it.
+
+Only UNLINKED, DEPLOYED OUTSIDE LOADER and NESTED TREE are `--fix`-able:
+lmm does not install the loader or write Steam launch options, so the
+remedy for the others is the setup `lmm game show` prints. On a game whose
+adapter lmm refuses, UNLINKED and DEPLOYED OUTSIDE LOADER are reported but
+not repaired either (so is a VERSION MISMATCH, whose repair re-links the
+mod, and a stale merged artifact): each repair would deploy, and the row
+names the refusal and how to fix it.
 
 A locked mod's VERSION MISMATCH is still reported, but `--fix` refuses to
 rewrite a locked mod's record (other, unlocked mods in the same run are

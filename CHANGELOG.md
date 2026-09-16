@@ -340,6 +340,59 @@ disable` records them for good.
   Mods disabled afterwards by an older lmm still running, or after a
   downgrade, are not recorded.
 
+- **`lmm serve` has a tab icon (#435).** The shell declared no icon, so the
+  tab showed the browser's generic page glyph and every page load fired a
+  `GET /favicon.ico` the server had no route for. An SVG mark now ships
+  embedded in the binary like every other asset — no CDN, no build step —
+  served both at `/static/favicon.svg`, which the shell names, and at
+  `/favicon.ico`, which browsers ask for on their own. It is one drawing
+  rather than a size per platform, and it is a filled tile so it reads on a
+  light and a dark tab strip alike. Both paths, and every other embedded
+  asset, now carry a content-hash `ETag`: the assets were already sent
+  `Cache-Control: no-cache`, but an embedded file has no modification time,
+  so there was nothing to revalidate against and every page load
+  re-downloaded every module.
+
+- **Every mod says whether it has been verified, and Verify is on screen
+  (#418).** A library row carried a ⚠ when something was wrong and nothing
+  at all otherwise — so "checked, fine" and "never checked" looked the same,
+  which are opposite things to be told about your install. Each row now
+  carries its own health badge in all three states (verified and clean, _N_
+  findings, not verified yet) — exposed to a screen reader as that sentence,
+  not as the bare glyph — the slide-over states the same thing in words,
+  and **Verify** sits in the library header — where it is reachable
+  on a healthy profile, which is exactly when the Health card is not there
+  to ask. A row's ⋯ menu offers **Verify** and, for a mod with findings,
+  **Repair…** scoped to that mod.
+
+- **Updating a mod — or all of them — is something you can see (#417).** The
+  web UI could already do both, and neither read as _the_ update action: the
+  Updates card needed rows ticked first, the batch bar only exists once they
+  are, and the per-mod Update was a click deep in the row's ⋯ menu. The
+  library header now carries **Check for updates** — which asks the source
+  again rather than re-reading what it has cached — and **Update all (3)**,
+  counting what it is about to do; the Updates card carries the same pair;
+  and a row with an update pending carries a visible **Update** button of its
+  own, in the open rather than behind ⋯.
+
+- **Select all, on the library and the Updates card (#434).** Both
+  multi-select surfaces made you tick every row by hand. Each now has a
+  header checkbox that takes everything **currently in view** — after the
+  filter and whatever the omnibar is narrowing by, not the whole library —
+  and reads back as checked, empty, or a partial selection. It skips the
+  rows the actions cannot apply to rather than selecting them and having the
+  buttons refuse: a Steam-managed row has no enable/disable at all, and an
+  update lmm cannot apply has no checkbox of its own. The batch bar says
+  **“3 of 12 selected”** (and a screen reader hears each change to the
+  selection, not each keystroke of a search), every
+  batch button carries the number it is about to act on — **Update (3)** —
+  and the count always describes rows still on screen: updating a ticked mod
+  from anywhere takes it out of the Updates card's count, and a confirmed
+  batch clears that card's selection. With nothing in view it could take,
+  the header checkbox is disabled rather than silently inert. Pressing **a**
+  anywhere on Mission Control — outside a text field, and not while a modal
+  or the slide-over is open — selects everything in view or clears it.
+
 - **The game-adapter seam: one `adapter:` key in `games.yaml` (#353, #411).**
   What a game does with mod content — how an archive's files are laid out,
   which of them are configuration rather than mod content, whether its mods
@@ -356,7 +409,16 @@ disable` records them for good.
   deprecated in favour of the adapter. `lmm game list` gains an **ADAPTER**
   column, `lmm game show` names each game's, `lmm game add`/`lmm game edit`
   gain `--adapter`, the web UI's Games table shows each game's, and
-  `POST`/`PUT /api/v1/games` read and write the key. The adapter, the source
+  `POST`/`PUT /api/v1/games` read and write the key. Each of those names the
+  adapter a game actually **uses**, including one lmm derived — `icarus`
+  for `deploy_mode: compile`, `bepinex` for a game with BepInEx — rather
+  than reading `generic-files` for a game with no key (#426); in `--json`
+  and the API, `adapter` stays what `games.yaml` says and the additive
+  `effective_adapter` names the one in use (omitted for `generic-files`).
+  A game lmm refuses to run any flow on (an adapter this build does not
+  ship, or one a composition rule refuses) uses no adapter, so it has no
+  `effective_adapter`, and the additive `adapter_error` carries the
+  refusal; the CLI shows its adapter as `<name> (refused)` (#413). The adapter, the source
   map and the loader (#359) are each their own edit: `lmm game edit` and
   `PUT /api/v1/games/{id}` refuse a run asking for more than one rather than
   silently picking an order, because each is its own gated write. Adapters live in the tree (`internal/adapter`) and are
@@ -378,6 +440,129 @@ disable` records them for good.
   artifact, the `.EXMODZ` wrapper handling (#237) and the pak-conversion
   pipeline (#221) are unchanged: this is where the rules live, not what
   they are.
+
+- **`docs/adapters.md`: how to write a game adapter (#353, #414).** The
+  whole point of the adapter seam is that a contributor can teach lmm about
+  a game without touching its core, which is only true if the contract is
+  written down. The new document is the interface, every optional
+  capability and what each is for, the rule that decides where a line falls
+  (an adapter supplies pure rule tables and read-only reports; lmm's core
+  keeps every side effect, including every `--fix` repair), how `adapter:`
+  composes with `deploy_mode`, `loader:` and `mod_path`, and a step-by-step
+  walkthrough of adding one. The README's pipeline now names the adapter
+  stage for what it is, `CONTRIBUTING.md` points at the walkthrough, and
+  `docs/configuration.md` documents `adapter: bepinex` beside the other two.
+
+- **BepInEx is the second real adapter (#353, #413).** Everything lmm knows
+  about BepInEx — how a plugin archive's files are laid out, that
+  `BepInEx/config/**` is the user's configuration rather than mod content,
+  that a BepInEx archive going into a game with no BepInEx is a mistake
+  worth refusing, and what `lmm verify` can honestly check about the
+  installation — now lives behind the `adapter:` key (`adapter: bepinex`)
+  instead of being threaded through `internal/core` as a bool parameter, an
+  inline path test and an `if game.Loader != nil` branch.
+
+  **Nothing to migrate, and nothing to type.** A game whose `mod_path` is
+  its install path resolves to the adapter on its own, in memory, when it
+  declares `loader: kind: bepinex` or merely HAS BepInEx installed in its
+  directory — the same two-source rule #424 settled on, because the
+  declaration is a statement of intent lmm asks for while the loader's own
+  preloader on disk is a fact lmm can read. `games.yaml` is not rewritten
+  either way.
+
+  **A 1.x `games.yaml` keeps deploying where it did (#413).** BepInEx's
+  layout is relative to the game root, so the adapter is only derived for
+  a game that deploys there — the same directory as its install path,
+  however `games.yaml` spells the two (a symlinked Steam library path
+  included). A game configured before lmm supported
+  BepInEx — `mod_path` pointing at `<install>/BepInEx/plugins` — keeps
+  deploying its archives into that directory exactly as packaged, as 1.x
+  did; deriving the adapter for it nested every plugin one level too deep,
+  under `BepInEx/plugins/BepInEx/plugins/`, where BepInEx never loads it.
+  lmm tells such a game how to move to the game root, or how to keep it as
+  it is. `lmm game add` with a BepInEx loader or adapter — or on an
+  install directory that already holds BepInEx — now defaults the mod
+  path to the install path (with `--from-detected` and from the web UI
+  too), and `adapter: bepinex` with any other mod
+  path is refused, with both ways out spelled in the order that works:
+  `lmm purge` first, while lmm's records still say where the files are,
+  then the mod path. `lmm purge` and `lmm uninstall` (and their
+  `--dry-run`) are never refused by a game's adapter — they remove what lmm
+  recorded deploying, and they are the first step out of every
+  configuration an adapter refuses. With the adapter refused they — and
+  `lmm mod disable` — remove only what a deployment record names, so a
+  `BepInEx/config` file the user replaced with a link of their own stays;
+  and their `--dry-run` names exactly the files and the merged artifact the
+  real run removes — no longer the seeded `BepInEx/config` files an
+  uninstall never touches. Every flow that DEPLOYS is refused there with
+  the same message and remedy as `lmm deploy`, including the ones with no
+  plan step: `lmm mod enable` (and the web UI's Enable), the `lmm verify
+--fix` repairs that re-link or re-deploy a mod — `lmm verify` still
+  reports what they would fix, and says why `--fix` will not — and the
+  merged-artifact rebuild a disable, reorder or uninstall ends with. A game
+  that moved its mod path without purging first is caught too: `lmm verify` reports a `BepInEx/` directory
+  left inside `BepInEx/plugins/` (where BepInEx loads each plugin in it a
+  second time), and `--fix` removes it when every file in it is a link
+  into that game's own part of lmm's mod cache that no `games.yaml` entry
+  records — anything else, including the deployment of a second entry for
+  the same install and a directory lmm cannot read, is a warning it leaves
+  alone, and a `--fix` scoped to one mod leaves every such directory for a
+  whole-profile run.
+
+  Nothing changes for a correctly configured BepInEx game. Its seeded
+  `BepInEx/config/**` files are still written once, never overwritten by a
+  later deploy or a version update, and never removed by an uninstall, a
+  profile switch or a purge; what changed is only how that is guaranteed —
+  the adapter now routes those files away from the linker, where before
+  the database's file-ownership check was what kept the removal loops off
+  them. Likewise, the "this archive needs a mod loader your game does not
+  have" refusal is no longer BepInEx-specific machinery in the core: any
+  adapter can claim an archive as unmistakably its own, so the next loader
+  lmm learns about is refused for the right reason with no change to the
+  engine.
+
+  **A game with BepInEx on another adapter is told so, where it matters
+  (#413).** `loader:` describes the installation and `adapter:` decides
+  what lmm does about it, so a game can have BepInEx while its adapter
+  points elsewhere — an explicit `adapter: generic-files`, `deploy_mode:
+compile` (which selects the Icarus adapter), or a mod path off the game
+  root. Such a game gets none of the BepInEx rules: a Thunderstore
+  package's `manifest.json` is deployed with the mod, a plugin stays
+  wherever its archive put it, and a `BepInEx/config` file is linked from
+  the shared mod cache instead of copied once. That stays allowed, but it
+  is never silent:
+
+  - the import plan or download of any archive the BepInEx rules would
+    have laid out says so, for every such game;
+  - a **contradiction** — a `loader:` block the adapter ignores, or an
+    installed BepInEx that a derived adapter ignores — is also flagged when
+    lmm opens `games.yaml`, in `lmm game show`'s loader section and the web
+    UI's loader panel, as a `loader_adapter_ignored` warning in `lmm
+verify` (and so in the web Health count), and right after the `lmm
+game edit`/`lmm game add` that creates it;
+  - an explicit `adapter:` with no `loader:` block, on a game whose BepInEx
+    is merely installed, is a stated choice and is flagged nowhere else.
+
+  Each warning names only fixes that, applied, silence it, and a command
+  that shows a game's warning itself (`lmm game show`, `lmm verify`, `lmm
+game edit`) prints it once.
+
+  **BepInEx installed in the game directory satisfies a loader requirement,
+  exactly as a declaration does (#413).** It already selected the adapter;
+  the two loader preconditions now agree with it. A Thunderstore package
+  depending on `BepInExPack` installs into such a game (with the notice that
+  names `lmm game edit <game> --loader bepinex`) instead of being refused
+  with advice to install the loader that is already there, and an archive
+  imported into it under another adapter is warned about rather than
+  refused.
+
+  `lmm verify`'s loader tier reports exactly what it did — a missing
+  preloader, a declared version the installation contradicts, bootstrap
+  files that do not match the declared mode, a loader that has never run,
+  a log older than the newest deployed plugin, an unlinked plugin, a mod
+  deployed outside `BepInEx/` — and repairs exactly the two it could
+  before. The split is now explicit: the adapter reports what only it can
+  see, and lmm's core owns every repair.
 
 - **BepInEx plugin archives deploy correctly (#358).** BepInEx installs into
   the game root, which lmm already expresses by pointing a game's
@@ -461,8 +646,9 @@ disable` records them for good.
   it is there and whether it ran.
 
 - **A plugin will not be deployed into a game that has no loader (#359).**
-  A BepInEx-shaped archive installed into a game declaring no loader now
-  fails at plan time with the setup steps — install the right build, record
+  A BepInEx-shaped archive installed into a game with no loader — none
+  declared, and none installed in its directory (#424) — now fails at plan
+  time with the setup steps — install the right build, record
   it with `lmm game edit --loader`, then check it — instead of putting a DLL
   somewhere nothing will load it from and reporting success. The steps travel
   as data, so `lmm install`, `lmm install --json` and the web UI's failed job
@@ -540,11 +726,11 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   precondition, not installed as a mod (#409).** It is the BepInEx loader: it
   lives in the game root and has to survive a profile switch, so installing it
   into a profile would tear it out from under every plugin at the next
-  uninstall. Installing a package that needs it into a game with no `loader:`
-  block is now refused **before the download**, with the same three setup steps
-  #359 prints for an archive, plus the loader version the package asked for.
-  On a game that declares the loader the dependency is already satisfied and
-  the install proceeds. Every other dependency resolves through the ordinary
+  uninstall. Installing a package that needs it into a game with no BepInEx —
+  no `loader:` block and none installed in its directory — is now refused
+  **before the download**, with the same three setup steps #359 prints for an
+  archive, plus the loader version the package asked for. On a game that has
+  the loader the dependency is already satisfied and the install proceeds. Every other dependency resolves through the ordinary
   resolver.
 
   **`lmm game detect` knows six communities (#409):** Lethal Company, Valheim,
@@ -1332,6 +1518,52 @@ sync` each undid the intent in their own way too, sync by deleting the
   marked reference as intent rather than as a leftover. `lmm profile
 import` brings the marker in with the rest of the document and does not
   download or deploy a mod it marks off.
+
+- **The web UI's enable/disable checkbox acknowledges the click straight
+  away (#432).** Enabling a mod deploys its files, which for a large mod is
+  seconds of real work — and for all of it the library row looked exactly as
+  it had before the click: the box kept its old value, greyed itself out,
+  and only moved once the job had finished and the library had reloaded.
+  Nothing said the click had landed, so people clicked again, and the
+  `disabled` that was the only visible change swallowed those clicks too.
+  The box now moves to what you asked for in the same frame, the row says
+  **Enabling…**/**Disabling…** beside the mod's name with a spinner next to
+  the box, and if the job fails the row goes back to what is actually true.
+  The slide-over's and the full mod page's own Enable/Disable buttons do the
+  same, and so does the batch bar: selecting forty mods and pressing
+  **Disable** now moves all forty at once, rather than one row at a time as
+  the sequenced batch reaches it. Each request is settled only by its own
+  job — a row the batch has not reached yet stays pending even if it
+  already reads the value asked for — so clicking again after a failed
+  toggle is acknowledged like the first click, and a request stays
+  acknowledged when the slide-over steps to another mod and back. A mod has
+  at most one request in flight: the row, the slide-over and the full mod
+  page all show the same one, and a new batch leaves that mod out. A job
+  that ends while the page's live connection is dropped still settles its
+  row once the connection is back, and a batch carries on rather than
+  stalling; a job `lmm serve` no longer knows about (it restarted, say) is
+  reported as **Lost track of a job**, the page re-reads what is true, and
+  the batch's tally lists it as an unknown outcome rather than a failure. A
+  request `lmm serve` takes and never answers is given up on after a minute:
+  the page says the server did not answer and that the change may or may
+  not have been applied, re-reads, and shows what the server reports once
+  it answers. A row settles only once a library read taken after its change
+  has actually landed — not when a newer read merely overtook it, which let a
+  row flick back to its old value — and if that read fails, or brings
+  nothing back within a minute while the row is on screen, a toast says the
+  mod's current state could not be read and the row shows the last state
+  the server reported. The in-flight row is marked with an accent bar rather than dimmed, so its
+  text keeps its contrast in both themes.
+
+- **`lmm verify`'s closing summary counts what it found, and suggests
+  `--fix` only when `--fix` would act (#413).** On a profile with no mods
+  the summary appeared only when there were warnings, always read
+  "0 issue(s)", and ended with "Run with --fix to remove stale lmm-deployed
+  files" — so a loader that had never run got an issue row and no tally,
+  and a finding `--fix` cannot repair was sent to it anyway. Both summaries
+  now print the run's real counts, and the `--fix` hint appears only when
+  at least one finding is one `--fix` repairs (a locked version mismatch,
+  which `--fix` refuses, no longer gets it either).
 
 - **A NexusMods plugin folder installs into `BepInEx/plugins/`, not into the
   game root (#424).** Jotunn 2.30.0 from NexusMods extracts to a single

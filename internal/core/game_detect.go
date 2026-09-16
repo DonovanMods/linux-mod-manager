@@ -86,10 +86,14 @@ func cloneDetectedLoader(loader *domain.GameLoader) *domain.GameLoader {
 //   - ModPath comes from the candidate when detection knew one (a curated
 //     entry's mod_path, already joined onto the install path). An UNKNOWN
 //     candidate has none - detection deliberately refuses to guess - so
-//     this defaults it to <install>/mods, exactly the default a bare `game
-//     add` has always applied. A frontend showing that value should say it
-//     is a guess; core cannot tell the user that, but AddGame will not
-//     create the directory either way.
+//     this defaults it to GameSpec.DefaultModPath, exactly the default a
+//     bare `game add` applies: <install>/mods, or the install path itself
+//     for a BepInEx game (#413 final review F1) - applied AFTER the loader,
+//     adapter and deploy mode are settled, since they decide it. That
+//     default stats the install directory, the only disk this function
+//     reads. A frontend showing the value should say it is a guess; core
+//     cannot tell the user that, but AddGame will not create the directory
+//     either way.
 //   - Sources: the candidate's own map when it has one (#177's Icarus),
 //     else {nexusmods: <nexus_id>} when it has that, else nothing - which
 //     is the unknown case, where the caller's SourceID/Identifier is the
@@ -118,9 +122,6 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 	if spec.ModPath == "" {
 		spec.ModPath = d.ModPath
 	}
-	if spec.ModPath == "" && spec.InstallPath != "" {
-		spec.ModPath = filepath.Join(spec.InstallPath, "mods")
-	}
 	if spec.DeployMode == "" {
 		spec.DeployMode = d.DeployMode
 	}
@@ -142,6 +143,9 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 			Runtime:   d.Loader.Runtime.String(),
 			Bootstrap: d.Loader.Bootstrap.String(),
 		}
+	}
+	if spec.ModPath == "" && spec.InstallPath != "" {
+		spec.ModPath = spec.DefaultModPath()
 	}
 	return spec
 }

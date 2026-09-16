@@ -25,9 +25,19 @@ function entryKey(mod) {
   return `${mod.source_id}/${mod.id}`;
 }
 
+/** UninstallBatchModal renders the modal slot when it holds an
+ * uninstall batch, and nothing otherwise - guarded above a component of its
+ * own for the reason ReorderModal gives (reordermodal.js). */
 export function UninstallBatchModal({ modal, state, actions }) {
   if (modal?.type !== "uninstall-batch") return null;
+  return html`<${UninstallBatchModalBody}
+    modal=${modal}
+    state=${state}
+    actions=${actions}
+  />`;
+}
 
+function UninstallBatchModalBody({ modal, state, actions }) {
   const mods = modal.mods;
   // entries is null while every mod's own plan is still being computed;
   // once settled it is one {mod, planID, plan, error} row per mod - a

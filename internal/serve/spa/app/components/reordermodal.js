@@ -59,9 +59,21 @@ function conflictsByPath(report) {
   return map;
 }
 
+/** ReorderModal renders the modal slot when it holds a reorder, and nothing
+ * otherwise. The guard lives here, above a component of its own, because
+ * Preact matches hook state by call order: a guard placed above the body's
+ * hooks would call them on some renders and not others. app.js only mounts
+ * this for a reorder, so the guard is belt-and-braces. */
 export function ReorderModal({ modal, state, actions }) {
   if (modal?.type !== "reorder") return null;
+  return html`<${ReorderModalBody}
+    modal=${modal}
+    state=${state}
+    actions=${actions}
+  />`;
+}
 
+function ReorderModalBody({ modal, state, actions }) {
   const mods = state.mods?.mods ?? [];
   const modsByKey = useMemo(
     () => new Map(mods.map((m) => [modKey(m), m])),

@@ -79,7 +79,7 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 			}
 		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, g.Name, g.InstallPath, g.ModPath, formatGameAdapter(g.Adapter), g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
+			id, g.Name, g.InstallPath, g.ModPath, formatGameAdapter(g), g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}
@@ -90,15 +90,30 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 	return printTable(&buf, 2, nil)
 }
 
-// formatGameAdapter renders the game's configured adapter for the table
-// (#353). An absent `adapter:` key IS the generic-files identity, so the
-// column names it rather than leaving a blank cell - there is no such thing
-// as a game with no adapter.
+// formatGameAdapter renders a game's adapter for a table cell or a detail
+// line (#353).
 //
-// It shows the CONFIGURED value: a `deploy_mode: compile` game's derived
-// adapter is a resolution core performs, and surfacing the resolved name
-// here is U2's change, when the derivation goes live.
-func formatGameAdapter(name string) string {
+// It reads EffectiveAdapter, the adapter the game actually resolves to
+// (#426), rather than the configured key: a `deploy_mode: compile` game
+// compiles through icarus and a game with BepInEx lays its archives out
+// through bepinex whether or not games.yaml says so, and this column exists
+// to say which adapter a game uses. An absent one IS the generic-files
+// identity, so the cell names it rather than leaving a blank.
+//
+// The exception is a game every flow refuses (AdapterError, #413 re-review
+// L2): it uses no adapter, so the cell names the configured one and says it
+// is refused, rather than reading generic-files for a game nothing deploys
+// to. `lmm game show` prints the refusal itself.
+func formatGameAdapter(entry core.GameListEntry) string {
+	if entry.AdapterError != "" {
+		return formatAdapterName(entry.Adapter) + " (refused)"
+	}
+	return formatAdapterName(entry.EffectiveAdapter)
+}
+
+// formatAdapterName renders one adapter name, the empty one as the
+// identity it means.
+func formatAdapterName(name string) string {
 	if name == "" {
 		return "generic-files"
 	}

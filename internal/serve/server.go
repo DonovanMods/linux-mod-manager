@@ -110,6 +110,13 @@ type Server struct {
 	// never waits a real sseHeartbeatInterval.
 	heartbeat heartbeatTicker
 
+	// gameRows builds every configured game's list row - production is
+	// core.Service.ListGameEntries. A seam so an internal test can count
+	// the calls: a row resolves its game's adapter, which can stat the
+	// install directory, so it is built only where a response carries one
+	// (#413 re-review L5).
+	gameRows func(context.Context) ([]core.GameListEntry, error)
+
 	// draining is closed once the http.Server begins shutting down. It
 	// exists for the SSE streams: an open stream is an ACTIVE request, and
 	// http.Server.Shutdown waits for active requests rather than
@@ -164,6 +171,7 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		maxUploadBytes: maxUpload,
 		jobs:           newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
 		heartbeat:      realHeartbeatTicker,
+		gameRows:       svc.ListGameEntries,
 		draining:       make(chan struct{}),
 		version:        opts.Version,
 	}

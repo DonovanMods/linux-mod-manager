@@ -51,7 +51,8 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	registerAdapters(svc)
+	RegisterAdapters(svc)
+	warnAdapterConfig(svc, warnWriter(opts), opts.OmitAdapterWarnings)
 	registerSources(ctx, svc, p, warnWriter(opts))
 	// #431: the one-time backfill of the profile documents' `disabled:`
 	// markers, owed only by a database an older lmm wrote (migrateV17). It
@@ -74,6 +75,18 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 		_, _ = fmt.Fprintf(warnWriter(opts), "warning: could not record mods disabled before this upgrade in their profiles: %v\n", err) //nolint:errcheck // best-effort warning write
 	}
 	return svc, nil
+}
+
+// warnAdapterConfig prints design decision 11's load-time warning (#353,
+// #413 review F5): a game whose `loader:` block its adapter ignores. It runs
+// after RegisterAdapters because the answer depends on which adapters this
+// build ships, and it writes to the same channel the source warnings use so
+// it is visible at the CLI's default --log-level off. The games in omit are
+// the caller's to report (Options.OmitAdapterWarnings).
+func warnAdapterConfig(svc *core.Service, warn io.Writer, omit []string) {
+	for _, w := range svc.AdapterConfigWarnings(omit...) {
+		_, _ = fmt.Fprintf(warn, "warning: %s\n", w) //nolint:errcheck // best-effort warning write
+	}
 }
 
 func warnWriter(opts Options) io.Writer {

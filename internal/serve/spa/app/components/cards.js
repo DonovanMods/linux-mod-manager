@@ -8,7 +8,12 @@
 import { html, useState } from "../render.js";
 import { findingLabel } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
-import { EXTERNAL_UPDATE_NOTE, lockedNote, modKey } from "../modrows.js";
+import {
+  EXTERNAL_UPDATE_NOTE,
+  countOf,
+  lockedNote,
+  modKey,
+} from "../modrows.js";
 import { displayVersion, displayUpdateTarget } from "../version.js";
 import { relativeTime } from "../relativetime.js";
 import { conflictLabel } from "../conflicts.js";
@@ -17,6 +22,11 @@ import { conflictLabel } from "../conflicts.js";
 // distinct from a single-mod update's own "mod:{source}/{id}:update"
 // (modpanel.js/fullmodpage.js), which this card's own checkboxes never use.
 const UPDATES_BATCH_ORIGIN = "updates:batch";
+
+// UPDATES_ALL_ORIGIN is the same card's "Update all" (issue 417): a
+// different set from "Update selected", so a different origin - two
+// controls sharing one would both morph into whichever job either started.
+const UPDATES_ALL_ORIGIN = "updates:all";
 
 // HEALTH_REPAIR_ALL_ORIGIN is the Health card's "Repair all" control.
 const HEALTH_REPAIR_ALL_ORIGIN = "health:repair-all";
@@ -103,6 +113,7 @@ export function AttentionCards({
           rows=${updateRows}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
+          onRefresh=${actions.refreshUpdates}
           actions=${actions}
         />`
       }
@@ -140,7 +151,7 @@ export function AttentionCards({
   `;
 }
 
-function UpdatesCard({ state, rows, error, onRetry, actions }) {
+function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
   const [selected, setSelected] = useState(() => new Set());
 
   function toggle(key) {
@@ -152,14 +163,52 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
     });
   }
 
+  // issue 434: the rows this card's select-all can take. An EXTERNAL row is
+  // excluded for the same reason it is given no checkbox of its own
+  // (issue 269 - ApplyUpdateBatch declines it outright and nothing in this UI
+  // changes that), which is also what makes the two consistent: select-all
+  // can only ever tick boxes that exist.
+  const applicable = rows.filter((u) => !u.installed_mod.external);
+  const applicableKeys = applicable.map((u) => modKey(u.installed_mod));
+  // `taken` is the selection as it stands against the rows on screen NOW,
+  // and it is the only thing any count or plan below reads. `selected` holds
+  // raw keys and outlives the rows it was made from: an update applied from
+  // anywhere (this card, the library, another client) takes its row off the
+  // card at the next refresh, and a key left behind would otherwise keep
+  // counting on the button and be planned as a mod with nothing to update.
+  const taken = applicableKeys.filter((key) => selected.has(key));
+  const allTaken = applicable.length > 0 && taken.length === applicable.length;
+
+  function toggleSelectAll() {
+    setSelected(() => (allTaken ? new Set() : new Set(applicableKeys)));
+  }
+
   function updateSelected() {
-    if (selected.size === 0) return;
+    if (taken.length === 0) return;
     actions.openPlan({
       kind: "updates",
       origin: UPDATES_BATCH_ORIGIN,
-      title: `Update ${selected.size} mod${selected.size === 1 ? "" : "s"}`,
+      title: `Update ${countOf(taken.length, "mod")}`,
       confirmLabel: "Update",
-      options: { mods: [...selected] },
+      options: { mods: taken },
+      // Cleared once the batch is confirmed, as the library's batch bar is:
+      // a Cancel keeps the selection, a confirmed batch has used it.
+      onConfirmed: () => setSelected(new Set()),
+    });
+  }
+
+  // issue 417: "Update all" on the card that is already reporting the
+  // updates. Everything this card could do before needed a selection first,
+  // so the commonest intent - update what you just told me about - was the
+  // one thing it had no button for.
+  function updateAll() {
+    if (applicable.length === 0) return;
+    actions.openPlan({
+      kind: "updates",
+      origin: UPDATES_ALL_ORIGIN,
+      title: `Update ${countOf(applicable.length, "mod")}`,
+      confirmLabel: "Update",
+      options: { mods: applicableKeys },
     });
   }
 
@@ -174,6 +223,29 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
               onRetry=${onRetry}
             />`
           : html`
+              <div class="card__toolbar">
+                <label class="card__select-all">
+                  <input
+                    type="checkbox"
+                    data-testid="select-all"
+                    checked=${allTaken}
+                    indeterminate=${taken.length > 0 && !allTaken}
+                    disabled=${applicable.length === 0}
+                    aria-label=${
+                      // Both names START with the visible "Select all"
+                      // (WCAG 2.5.3, label in name): someone who says what
+                      // they see must be able to reach the box. The checked
+                      // state already says the selection is full; the rest
+                      // says what a press does from here.
+                      allTaken
+                        ? `Select all: all ${countOf(applicable.length, "mod")} selected, press to clear`
+                        : `Select all ${countOf(applicable.length, "mod")} with an update lmm can apply`
+                    }
+                    onChange=${toggleSelectAll}
+                  />
+                  Select all
+                </label>
+              </div>
               <ul class="card__list">
                 ${rows.map((u) => {
                   const key = modKey(u.installed_mod);
@@ -244,6 +316,29 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
                 })}
               </ul>
               <div class="card__actions">
+                <button
+                  type="button"
+                  class="button button--small"
+                  data-action="check-updates"
+                  onClick=${onRefresh}
+                >
+                  Check again
+                </button>
+                <${InlineJob}
+                  origin=${UPDATES_ALL_ORIGIN}
+                  state=${state}
+                  actions=${actions}
+                >
+                  <button
+                    type="button"
+                    class="button button--primary"
+                    data-action="update-all"
+                    disabled=${applicable.length === 0}
+                    onClick=${updateAll}
+                  >
+                    ${`Update all (${applicable.length})`}
+                  </button>
+                <//>
                 <${InlineJob}
                   origin=${UPDATES_BATCH_ORIGIN}
                   state=${state}
@@ -253,10 +348,16 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
                     type="button"
                     class="button"
                     data-action="update-selected"
-                    disabled=${selected.size === 0}
+                    disabled=${taken.length === 0}
                     onClick=${updateSelected}
                   >
-                    Update selected
+                    ${
+                      // issue 434: the count, so the size of the batch is
+                      // known before the confirm modal states it.
+                      taken.length === 0
+                        ? "Update selected"
+                        : `Update ${countOf(taken.length, "mod")}`
+                    }
                   </button>
                 <//>
               </div>

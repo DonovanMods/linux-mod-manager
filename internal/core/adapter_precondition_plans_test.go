@@ -8,6 +8,14 @@ package core_test
 // snapshot with the free function snapshotOf and skipped it entirely. So
 // `lmm deploy` rendered a clean plan for a game whose loader was missing
 // and its own Apply then refused - the single most-used flow.
+//
+// The two REMOVAL flows are the deliberate exception (#413 final review
+// F4): purge and uninstall take away what lmm recorded deploying, which no
+// adapter fact can make unsafe, and they are the first step out of every
+// state an adapter refuses. TestRemovalPlansIgnoreTheAdapterPrecondition
+// pins that half. adapter_precondition_ratchet_test.go keeps the exemption
+// to those two by reading the source, and keeps gatedPlans complete;
+// adapter_precondition_apply_test.go is the same claim about every Apply.
 
 import (
 	"context"
@@ -37,99 +45,107 @@ func (r refusingAdapter) CheckPreconditions(*domain.Game, []domain.InstalledMod)
 	return r.err
 }
 
+// gatedPlan is one Plan* entry point the adapter precondition gates, and a
+// call that reaches it.
+type gatedPlan struct {
+	name string
+	call func(t *testing.T, svc *core.Service, game *domain.Game, fx planFixture) error
+}
+
+// gatedPlans is every Plan* entry point on the Service that must refuse
+// when the game's adapter does. TestEveryServicePlanIsGatedOrExempt fails
+// the build for a Plan* method listed neither here nor in
+// adapterExemptPlans.
+var gatedPlans = []gatedPlan{
+	{"PlanAdopt", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanAdopt(context.Background(), g, "default", core.AdoptOptions{})
+		return err
+	}},
+	{"PlanDeploy", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanDeploy(context.Background(), g, "default", core.DeployOptions{})
+		return err
+	}},
+	{"PlanRelinkMod", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanRelinkMod(context.Background(), g, "default", "acme", "m1", "acme", "m2")
+		return err
+	}},
+	{"PlanImportArchive", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanImportArchive(context.Background(), g, "default", fx.archive, core.ImportArchiveOptions{})
+		return err
+	}},
+	{"PlanProfileApply", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanProfileApply(context.Background(), g, "default")
+		return err
+	}},
+	{"PlanProfileSync", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanProfileSync(context.Background(), g, "default")
+		return err
+	}},
+	{"PlanSnapshotRestore", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanSnapshotRestore(context.Background(), g, fx.snapshotName)
+		return err
+	}},
+	{"PlanInstall", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanInstall(context.Background(), g, "default", "acme", "m2", false)
+		return err
+	}},
+	{"PlanInstallMany", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanInstallMany(context.Background(), g, "default",
+			[]*domain.Mod{{ID: "m2", SourceID: "acme", Name: "M2", GameID: g.ID}}, false)
+		return err
+	}},
+	{"PlanRollback", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanRollback(context.Background(), g, "default", "acme", "m1")
+		return err
+	}},
+	{"PlanProfileSwitch", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanProfileSwitch(context.Background(), g, "other")
+		return err
+	}},
+	{"PlanImport", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanImport(context.Background(), g, fx.profileDoc)
+		return err
+	}},
+	{"PlanUpdate", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanUpdate(context.Background(), g, "default", "acme", "m1")
+		return err
+	}},
+	{"PlanUpdateFrom", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanUpdateFrom(context.Background(), g, "default", fx.update)
+		return err
+	}},
+	{"PlanUpdateBatch", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanUpdateBatch(context.Background(), g, "default", nil)
+		return err
+	}},
+	{"PlanUpdateBatchFrom", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanUpdateBatchFrom(context.Background(), g, "default", []domain.Update{fx.update}, nil)
+		return err
+	}},
+	{"PlanWorkshopAdopt", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanWorkshopAdopt(context.Background(), g, "default", core.WorkshopAdoptOptions{})
+		return err
+	}},
+	{"PlanWorkshopCollectionImport", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanWorkshopCollectionImport(context.Background(), g, "default", fx.collection)
+		return err
+	}},
+}
+
+// adapterExemptPlans are the Plans that deliberately do NOT refuse for the
+// adapter - the two removals (removalSnapshotOf) - each with the test that
+// pins the exemption's behaviour.
+var adapterExemptPlans = map[string]string{
+	"PlanPurge":     "TestRemovalPlansIgnoreTheAdapterPrecondition/purge",
+	"PlanUninstall": "TestRemovalPlansIgnoreTheAdapterPrecondition/uninstall",
+}
+
 // TestEveryPlanChecksTheAdapterPrecondition walks every Plan* entry point
 // on the Service with a refusing adapter registered for the game, and
 // requires each to refuse at PLAN time rather than leaving the refusal to
 // its Apply.
 func TestEveryPlanChecksTheAdapterPrecondition(t *testing.T) {
-	plans := []struct {
-		name string
-		call func(t *testing.T, svc *core.Service, game *domain.Game, fx planFixture) error
-	}{
-		{"PlanAdopt", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanAdopt(context.Background(), g, "default", core.AdoptOptions{})
-			return err
-		}},
-		{"PlanDeploy", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanDeploy(context.Background(), g, "default", core.DeployOptions{})
-			return err
-		}},
-		{"PlanRelinkMod", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanRelinkMod(context.Background(), g, "default", "acme", "m1", "acme", "m2")
-			return err
-		}},
-		{"PlanImportArchive", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanImportArchive(context.Background(), g, "default", fx.archive, core.ImportArchiveOptions{})
-			return err
-		}},
-		{"PlanProfileApply", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanProfileApply(context.Background(), g, "default")
-			return err
-		}},
-		{"PlanProfileSync", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanProfileSync(context.Background(), g, "default")
-			return err
-		}},
-		{"PlanSnapshotRestore", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanSnapshotRestore(context.Background(), g, fx.snapshotName)
-			return err
-		}},
-		{"PlanPurge", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanPurge(context.Background(), g, "default", core.PurgeOptions{})
-			return err
-		}},
-		{"PlanInstall", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanInstall(context.Background(), g, "default", "acme", "m2", false)
-			return err
-		}},
-		{"PlanInstallMany", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanInstallMany(context.Background(), g, "default",
-				[]*domain.Mod{{ID: "m2", SourceID: "acme", Name: "M2", GameID: g.ID}}, false)
-			return err
-		}},
-		{"PlanRollback", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanRollback(context.Background(), g, "default", "acme", "m1")
-			return err
-		}},
-		{"PlanProfileSwitch", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanProfileSwitch(context.Background(), g, "other")
-			return err
-		}},
-		{"PlanImport", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanImport(context.Background(), g, fx.profileDoc)
-			return err
-		}},
-		{"PlanUninstall", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanUninstall(context.Background(), g, "default", "acme", "m1", core.UninstallOptions{})
-			return err
-		}},
-		{"PlanUpdate", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanUpdate(context.Background(), g, "default", "acme", "m1")
-			return err
-		}},
-		{"PlanUpdateFrom", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanUpdateFrom(context.Background(), g, "default", fx.update)
-			return err
-		}},
-		{"PlanUpdateBatch", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanUpdateBatch(context.Background(), g, "default", nil)
-			return err
-		}},
-		{"PlanUpdateBatchFrom", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanUpdateBatchFrom(context.Background(), g, "default", []domain.Update{fx.update}, nil)
-			return err
-		}},
-		{"PlanWorkshopAdopt", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanWorkshopAdopt(context.Background(), g, "default", core.WorkshopAdoptOptions{})
-			return err
-		}},
-		{"PlanWorkshopCollectionImport", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanWorkshopCollectionImport(context.Background(), g, "default", fx.collection)
-			return err
-		}},
-	}
-
-	for _, tc := range plans {
+	for _, tc := range gatedPlans {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, game, fx := newPreconditionFixture(t)
 			err := tc.call(t, svc, game, fx)
@@ -142,6 +158,34 @@ func TestEveryPlanChecksTheAdapterPrecondition(t *testing.T) {
 			assert.Contains(t, typed.Reason, "install the loader first")
 		})
 	}
+}
+
+// TestRemovalPlansIgnoreTheAdapterPrecondition: a purge or an uninstall
+// under the same refusing adapter plans AND applies, and removes what was
+// deployed. A refusal here would leave the user no lmm command that
+// undoes a deployment before they change the configuration the adapter
+// objects to.
+func TestRemovalPlansIgnoreTheAdapterPrecondition(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("purge", func(t *testing.T) {
+		svc, game, _ := newPreconditionFixture(t)
+		plan, err := svc.PlanPurge(ctx, game, "default", core.PurgeOptions{})
+		require.NoError(t, err)
+		res, err := svc.ApplyPurge(ctx, game, plan, core.PurgeOptions{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.Purged)
+	})
+
+	t.Run("uninstall", func(t *testing.T) {
+		svc, game, _ := newPreconditionFixture(t)
+		plan, err := svc.PlanUninstall(ctx, game, "default", "acme", "m1", core.UninstallOptions{})
+		require.NoError(t, err)
+		_, err = svc.ApplyUninstall(ctx, game, plan, core.UninstallOptions{})
+		require.NoError(t, err)
+		_, err = svc.GetInstalledMod(ctx, "acme", "m1", game.ID, "default")
+		assert.Error(t, err, "the record is gone")
+	})
 }
 
 type planFixture struct {
@@ -186,6 +230,9 @@ func newPlanFixtureWithAdapter(t *testing.T, _ adapter.GameAdapter) (*core.Servi
 	src := newAdoptTestSource("acme")
 	src.mods["m1"] = &domain.Mod{ID: "m1", SourceID: "acme", Name: "M1", GameID: "g1", Version: "1.0"}
 	src.mods["m2"] = &domain.Mod{ID: "m2", SourceID: "acme", Name: "M2", GameID: "g1", Version: "1.0"}
+	// A file to select, so PlanInstall gets past selection when the
+	// adapter consents (TestEveryApplyRechecksTheAdapterPrecondition).
+	src.files = []domain.DownloadableFile{{ID: "f2", Name: "M2", FileName: "M2-1.0.zip", Version: "1.0", IsPrimary: true, Category: "MAIN"}}
 	svc.RegisterSource(src)
 
 	// The real workshop fakes, so PlanWorkshopAdopt and

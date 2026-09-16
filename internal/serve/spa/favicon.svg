@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  lmm's tab icon (issue 435).
+
+  A standalone document, not a themed asset: a favicon is fetched by the
+  browser chrome and painted outside the page, so app.css's tokens are not
+  in scope here and the colours are literal by necessity. It is drawn to
+  read on a LIGHT and a DARK tab strip alike rather than switching between
+  them - the filled amber tile gives the mark a silhouette either way,
+  which a stroke-only glyph would not have.
+
+  The mark is three stacked plates - mod content layered in load order,
+  which is what lmm is for. The short bottom bar is deliberate: three equal
+  bars would read as a menu icon.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="lmm">
+  <rect width="32" height="32" rx="7" fill="#f0a92b"/>
+  <g fill="#0b0f14">
+    <rect x="7" y="7" width="18" height="4.5" rx="2.25"/>
+    <rect x="7" y="13.75" width="18" height="4.5" rx="2.25"/>
+    <rect x="7" y="20.5" width="11" height="4.5" rx="2.25"/>
+  </g>
+</svg>

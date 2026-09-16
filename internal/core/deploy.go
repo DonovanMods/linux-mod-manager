@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"sort"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -369,8 +368,9 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 		mods, _ := partitionExternal(orderByProfile(profile, installedMods))
 		purgeMods = len(mods)
 		seen := make(map[string]bool)
+		installer := s.getInstaller(game)
 		for i := range mods {
-			for _, f := range s.deployedPathsFor(ctx, game, profileName, &mods[i]) {
+			for _, f := range s.deployedPathsFor(ctx, installer, game, profileName, &mods[i]) {
 				if seen[f] {
 					continue
 				}
@@ -511,34 +511,26 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 }
 
 // deployedPathsFor returns the game-dir-relative paths an Installer.Uninstall
-// of mod would remove, by the same two-step rule Uninstall itself uses: the
-// cache entry's full ListFiles union, falling back to the DB's tracked
-// deployed paths when that entry is wholly absent (#260). Best-effort - a
-// listing failure is logged and reported as "nothing known", never an error
-// that fails the plan.
-func (s *Service) deployedPathsFor(ctx context.Context, game *domain.Game, profileName string, mod *domain.InstalledMod) []string {
+// of mod would consider removing: installer's own removalPaths, so the
+// preview and the removal walk one list (#413 fix round 4). installer is
+// the one the plan's Apply would build (getInstaller: the link method does
+// not change which paths are named). Best-effort - a listing failure is
+// logged and reported as "nothing known", never an error that fails the
+// plan.
+func (s *Service) deployedPathsFor(ctx context.Context, installer *Installer, game *domain.Game, profileName string, mod *domain.InstalledMod) []string {
 	// #269: an external mod has no lmm-deployed files at all - nothing to
 	// list, nothing to remove. Answering "nothing known" here is what keeps
 	// it out of every purge preview and every removal set.
 	if mod.External {
 		return nil
 	}
-	files, err := s.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
-	if err == nil {
-		return files
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		s.logger().Warn("listing cached files failed while planning a deploy",
+	files, err := installer.removalPaths(ctx, game, &mod.Mod, profileName)
+	if err != nil {
+		s.logger().Warn("listing the files a removal would take failed while planning",
 			"game_id", game.ID, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
 		return nil
 	}
-	tracked, dbErr := s.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID)
-	if dbErr != nil {
-		s.logger().Warn("listing tracked deployed files failed while planning a deploy",
-			"game_id", game.ID, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", dbErr)
-		return nil
-	}
-	return tracked
+	return files
 }
 
 // resolvedHooksForPlan is resolvedHooks for a read-only caller: hook

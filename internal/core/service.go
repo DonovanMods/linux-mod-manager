@@ -185,6 +185,14 @@ type Service struct {
 	// completeProfileWrite. Test-only seam (export_test.go's
 	// SetAfterInstallSaveForTest); always nil in production.
 	afterInstallSave func()
+
+	// nestedTreeHook, when non-nil, runs with "classify" just before
+	// verify classifies the BepInEx/ trees nested in BepInEx/plugins/, and
+	// with "remove" just before --fix removes one tree's leftovers - the
+	// window in which another process can record, replace or re-point what
+	// was classified (#413 fix round 4). Test-only seam (export_test.go's
+	// SetNestedTreeHookForTest); always nil in production.
+	nestedTreeHook func(stage string)
 }
 
 // NewService creates a new core service instance
@@ -334,18 +342,39 @@ func (s *Service) ListAdapters() []string {
 	return s.adapterRegistry().Names()
 }
 
-// AdapterName is the adapter game SELECTS, after the one derivation #353's
-// migration performs: `deploy_mode: compile` with no `adapter:` key means
-// the icarus adapter (design §2, OQ1 - kept for 2.0 so every existing
-// Icarus games.yaml keeps working with no user action).
+// AdapterName is the adapter game SELECTS, after the two derivations #353's
+// migration performs, in this order:
 //
-// The derivation fires only once an icarus adapter is REGISTERED. U1
-// registers none, so a compile game resolves to the identity and keeps
-// taking the source-based compile path below; U2 (#412) registers the
-// adapter and the derivation goes live with no change here.
+//	`deploy_mode: compile` with no `adapter:` key means the icarus adapter
+//	(design §2, OQ1 - kept for 2.0 so every existing Icarus games.yaml keeps
+//	working with no user action);
+//
+//	a game with BepInEx that deploys into its game root means the bepinex
+//	adapter (#413; the game-root half is modPathIsGameRoot's) - "with BepInEx"
+//	being the same two-source gate #359 and #424 settled on, because the two
+//	answer different halves of one fact and a user has only ever supplied
+//	one of them. The `loader: kind: bepinex` block is a statement of intent
+//	lmm asks for; BepInEx/core/BepInEx.Preloader.dll in the install directory
+//	is a FACT lmm can read, and nothing else plausibly puts that file there.
+//	A Valheim entry added before the catalog declared the loader (#416), on a
+//	machine where the user installed BepInEx by hand, has the second and not
+//	the first - and treating that as "not a BepInEx game" is what let a
+//	plugin extract verbatim into a Steam install directory and report
+//	success.
+//
+// Each derivation fires only once its adapter is REGISTERED, so a build that
+// ships neither resolves every game to the identity and behaves exactly as
+// lmm did before #353.
 //
 // An explicit `adapter:` always wins, and the value is never written back
 // to games.yaml - domain.Game.Adapter stays what the user typed.
+//
+// The BepInEx half is the one derivation that touches DISK, which is a cost
+// worth naming, and only for a game that declares no adapter and is not a
+// compile game: one os.Stat for the preloader unless the game declares the
+// loader, then - only where BepInEx is there and the two paths are SPELLED
+// differently - one each for mod_path and install_path (modPathIsGameRoot).
+// Resolution happens once per flow, never per file.
 func (s *Service) AdapterName(game *domain.Game) string {
 	if game.Adapter != "" {
 		return game.Adapter
@@ -353,27 +382,127 @@ func (s *Service) AdapterName(game *domain.Game) string {
 	if game.DeployMode == domain.DeployCompile && s.adapterRegistry().Has(icarusAdapterID) {
 		return icarusAdapterID
 	}
+	if s.adapterRegistry().Has(bepinexAdapterID) && hasBepInEx(game) && modPathIsGameRoot(game) {
+		return bepinexAdapterID
+	}
 	return adapter.GenericID
 }
 
-// icarusAdapterID is the adapter `deploy_mode: compile` migrates to. It is
-// a NAME, not an import: core must never depend on the concrete adapter
-// package (design §4).
-const icarusAdapterID = "icarus"
+// modPathIsGameRoot reports whether game deploys into its install directory
+// itself - the only place a BepInEx layout can be deployed, because every
+// path the bepinex adapter produces (BepInEx/plugins/..., BepInEx/config/...)
+// is relative to the game root (#413 re-review P-b).
+//
+// It is the bepinex derivation's third condition. A v1 games.yaml predates
+// lmm's loader support and points mod_path at <install>/BepInEx/plugins, so
+// that archives deploy into it exactly as packaged; deriving bepinex for such
+// a game joined the game-root layout onto that mod_path and nested every
+// plugin under BepInEx/plugins/BepInEx/plugins/, where nothing loads it.
+// Such a game keeps the identity, which is exactly what v1 did with it.
+//
+// The question is about DIRECTORIES, not spellings (#413 final review F2).
+// Two paths that are equal after filepath.Clean answer it without touching
+// disk - so a trailing separator is the game root, and games.yaml's `~` and
+// relative mod_path arrive here already expanded. Otherwise the two are
+// compared as the directories they name (os.SameFile, which follows
+// symlinks): Steam's ~/.steam/steam is a symlink to ~/.local/share/Steam on
+// most Linux installs, so one install is routinely written both ways, and a
+// lexical answer made such a game "off root" - generic-files, a loose plugin
+// deployed where BepInEx never loads it, and an explicit bepinex refused
+// for a layout that was right. A path that cannot be stat'd is not the game
+// root, which is the lexical answer it already had.
+//
+// An empty mod_path is never the game root: the installer joins it
+// verbatim, relative to the working directory.
+func modPathIsGameRoot(game *domain.Game) bool {
+	if game == nil || game.ModPath == "" || game.InstallPath == "" {
+		return false
+	}
+	if filepath.Clean(game.ModPath) == filepath.Clean(game.InstallPath) {
+		return true
+	}
+	modInfo, err := os.Stat(game.ModPath)
+	if err != nil {
+		return false
+	}
+	installInfo, err := os.Stat(game.InstallPath)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(modInfo, installInfo)
+}
+
+// hasBepInEx reports whether anything says this game loads mods through
+// BepInEx: its own declaration, or the loader's preloader sitting in its
+// install directory. A nil game says nothing, so every caller can ask
+// without a guard.
+func hasBepInEx(game *domain.Game) bool {
+	return hasLoader(game, domain.LoaderKindBepInEx)
+}
+
+// hasLoader is hasBepInEx for a loader kind named at runtime (a source's
+// requirement, an adapter's claim): the game declares kind, or - for
+// BepInEx, the one loader lmm can recognise on disk - the loader is
+// installed in its directory.
+//
+// It is the ONE "does this game have the loader" test (#413 review F6).
+// Adapter resolution asked declared-or-installed while the two loader
+// requirements asked the declaration alone, so a game whose BepInEx was
+// installed but undeclared was told to go and install it - by the source's
+// precondition before a download the resolved bepinex adapter would have
+// laid out correctly, and by the archive claim under an explicit adapter.
+// Kind is compared the way DeclaresLoader compares it.
+func hasLoader(game *domain.Game, kind string) bool {
+	if game == nil {
+		return false
+	}
+	if game.DeclaresLoader(kind) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(kind), domain.LoaderKindBepInEx) &&
+		regularFileAt(game.InstallPath, domain.BepInExPreloaderPath)
+}
+
+// bepinexOffRoot reports the refusal AdapterFor makes of an explicit
+// `adapter: bepinex` whose mod_path is not the game root.
+func bepinexOffRoot(game *domain.Game) bool {
+	return game.Adapter == bepinexAdapterID && !modPathIsGameRoot(game)
+}
+
+// icarusAdapterID and bepinexAdapterID are the adapters core's two
+// derivations migrate to. They are NAMES, not imports: core must never
+// depend on a concrete adapter package (design §4).
+const (
+	icarusAdapterID  = "icarus"
+	bepinexAdapterID = "bepinex"
+)
 
 // AdapterFor resolves game's adapter, failing loud when the configured name
 // is not registered - the existence check design §2 assigns to this layer,
 // because the registry lives here and internal/storage/config must not
 // learn it.
 //
-// It also enforces the one composition rule `deploy_mode` and `adapter:`
-// have: an EXPLICIT adapter that cannot compile is refused for a compile
-// game, naming both keys and the fix. The derived case cannot hit it (the
-// derivation only fires for an adapter that exists, and the icarus adapter
-// compiles by construction), so a compile game with no adapter key is
-// accepted exactly as it always was.
+// It also enforces the two composition rules an explicit `adapter:` has
+// with the rest of the entry, each refused by name with the fix:
+//
+//	an adapter that cannot compile, for a `deploy_mode: compile` game;
+//
+//	bepinex, for a game whose mod_path is not its install path
+//	(modPathIsGameRoot) - every deploy it made would be nested one
+//	BepInEx/ too deep (#413 re-review P-b).
+//
+// The derived case cannot hit either: the derivations only fire for an
+// adapter that exists, the icarus adapter compiles by construction, and
+// bepinex is only derived for a game-root mod_path. So a game with no
+// adapter key is accepted exactly as it always was.
 func (s *Service) AdapterFor(game *domain.Game) (adapter.GameAdapter, error) {
-	a, err := s.adapterRegistry().Resolve(s.AdapterName(game))
+	return s.adapterForName(game, s.AdapterName(game))
+}
+
+// adapterForName is AdapterFor for a name the caller has already derived,
+// so a caller that needs both does not pay AdapterName's stat twice.
+func (s *Service) adapterForName(game *domain.Game, name string) (adapter.GameAdapter, error) {
+	a, err := s.adapterRegistry().Resolve(name)
 	if err != nil {
 		return nil, fmt.Errorf("game %q: %w", game.ID, err)
 	}
@@ -382,6 +511,13 @@ func (s *Service) AdapterFor(game *domain.Game) (adapter.GameAdapter, error) {
 			return nil, fmt.Errorf("game %q sets deploy_mode: compile but adapter %q cannot compile; set an adapter that can (%s) or drop deploy_mode: compile",
 				game.ID, game.Adapter, strings.Join(s.adapterRegistry().Names(), ", "))
 		}
+	}
+	if bepinexOffRoot(game) {
+		// Both ways out, each in the order that works: the purge that
+		// starts the first one is a removal, which this refusal does not
+		// block (removalSnapshotOf).
+		return nil, fmt.Errorf("game %q sets adapter: bepinex but its mod_path (%s) is not its install path, and a BepInEx layout is relative to the game root. %s%s; or, to deploy archives into %s exactly as packaged, run `lmm game edit %s --adapter generic-files`",
+			game.ID, game.ModPath, bepinexEnableLead, strings.Join(bepinexEnableSteps(game), ", then "), game.ModPath, game.ID)
 	}
 	return a, nil
 }
@@ -1646,41 +1782,31 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 		return nil, err
 	}
 
-	// #358: the BepInEx archive-root normaliser, run on the pristine
-	// intermediate rather than on stagePath - exactly the attribution
-	// property that intermediate exists for. A mod downloaded from
-	// NexusMods and one imported from a local archive therefore reach the
-	// cache in the same layout, which is what lets a BepInEx plugin deploy
-	// correctly with no source work at all (spike §5).
+	// #353: the game's adapter gets its say on the archive's layout HERE,
+	// against the PRISTINE intermediate rather than on stagePath - exactly
+	// the attribution property that intermediate exists for, and the only
+	// point at which "what did this archive contribute" is still an
+	// answerable question. A mod downloaded from NexusMods and one imported
+	// from a local archive therefore reach the cache in the same layout,
+	// which is what lets a BepInEx plugin deploy correctly with no source
+	// work at all (spike §5).
 	//
-	// The plugin directory a loose .dll lands in is named after the MOD, not
-	// the archive: a source-backed download has a real mod name, and it is
-	// the name the user sees in `lmm list`.
-	//
-	// The game's BepInEx gate (#359, widened by #424 to a loader lmm can
-	// SEE as well as one the game declares) widens the rules onto the
-	// ambiguous shapes.
-	gate := bepinexGateFor(game)
-	layout, err := normalizeBepInExTree(extractPath, mod.Name, gate.Gated, game.InstallPath)
+	// The refusal it makes first (#359/#413) is one a downloaded archive
+	// cannot answer any earlier: its shape is not knowable until it is
+	// extracted, which is why PlanInstall cannot ask. It lands before the
+	// staged entry is committed, so nothing is deployed and nothing is
+	// recorded - a cache fill is not a mutation of managed state (Ruling 1),
+	// the same standing a declined ConflictError leaves behind.
+	layout, err := s.layoutStagedExtract(game, mod.Name, extractPath)
 	if err != nil {
 		return nil, err
 	}
-	noteUndeclaredBepInEx(layout, game, gate)
-	// #359: a downloaded archive's shape is not knowable until it is
-	// extracted, which is why PlanInstall cannot answer this and this is the
-	// earliest point that can. The refusal lands before the staged entry is
-	// committed, so nothing is deployed and nothing is recorded - a cache
-	// fill is not a mutation of managed state (Ruling 1), the same standing
-	// a declined ConflictError leaves behind.
-	if err := requireDeclaredLoader(game, mod.Name, layout, gate); err != nil {
-		return nil, err
-	}
-	// A download has no plan to carry these: its shape is not knowable
-	// until it is extracted, which is this function. So they ride the
-	// flow's own event sink as ordinary WarningEvents - the wire type every
-	// warning in every flow already uses - and the log keeps the record for
-	// a caller that passed no sink.
-	for _, w := range layout.warnings() {
+	// A download has no plan to carry the adapter's warnings: its shape is
+	// not knowable until it is extracted, which is this function. So they
+	// ride the flow's own event sink as ordinary WarningEvents - the wire
+	// type every warning in every flow already uses - and the log keeps the
+	// record for a caller that passed no sink.
+	for _, w := range layout.Warnings {
 		s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
 		if sink != nil {
 			sink(WarningEvent{
@@ -1689,16 +1815,6 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 				Message: w,
 			})
 		}
-	}
-
-	// #353: the game's adapter gets its say on the archive's layout HERE,
-	// against the pristine directory that holds exactly this archive's
-	// members - the only point at which "what did this archive contribute"
-	// is still an answerable question. It runs AFTER #358's normalisation,
-	// the same order the import path uses. A generic-files game gets the
-	// identity Layout and nothing is touched.
-	if err := s.rewriteStagedExtract(game, extractPath); err != nil {
-		return nil, err
 	}
 
 	var members []string
@@ -2120,10 +2236,25 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	// #353: and every Installer routes its deployable files through the
 	// game's adapter. A resolution failure is reported by the flow's own
 	// AdapterFor call (every flow that reaches an Installer makes one);
-	// keeping the identity here avoids a second, quieter failure channel
-	// for the same fault.
-	if a, err := s.AdapterFor(game); err == nil {
+	// nothing here is a second, quieter failure channel for the same fault.
+	a, err := s.AdapterFor(game)
+	if err == nil {
 		installer.setAdapter(a)
+		return installer
+	}
+	// The only flows that get this far with a refused adapter are the two
+	// removals (removalSnapshotOf), and a removal must then prove every
+	// path it takes (#413 fix round 4, F2): a row names it, or it stays.
+	// The routing is still the named adapter's where that adapter is what
+	// laid the game out - a refusal of how it composes with the rest of
+	// the entry (deploy_mode: compile) says nothing about where its files
+	// went - so its own never-remove rules (bepinex's BepInEx/config/**)
+	// still hold. A name that resolves nowhere, or bepinex off the game
+	// root, which never laid anything out, keeps the identity.
+	installer.recordedOnly = true
+	installer.refused = err
+	if named, rerr := s.adapterRegistry().Resolve(s.AdapterName(game)); rerr == nil && !bepinexOffRoot(game) {
+		installer.setAdapter(named)
 	}
 	return installer
 }

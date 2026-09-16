@@ -25,6 +25,29 @@ import (
 // generalise over.
 const LoaderKindBepInEx = "bepinex"
 
+// Two files a BepInEx INSTALLATION has, which is what a `loader: kind:
+// bepinex` block describes. Both are game-root-relative and
+// slash-separated, which is the whole reason a BepInEx game's mod_path is
+// its install path.
+//
+// They live here because two packages that may not import each other both
+// have to name them (#413 review F2): internal/core reads them for the
+// questions it owns whatever a game's adapter is - whether the bepinex
+// adapter is selected at all, and LoaderStatus's installed/last-run
+// report - and internal/adapter/bepinex reads them for its verify pass.
+// domain is the one package both may import, so the spelling exists once
+// and the two cannot drift.
+const (
+	// BepInExPreloaderPath is the file whose presence means BepInEx is
+	// installed at all. It is BepInEx's own entry point, so nothing else
+	// plausibly puts it there.
+	BepInExPreloaderPath = "BepInEx/core/BepInEx.Preloader.dll"
+	// BepInExLogPath is written by the loader on every run, which makes it
+	// the only honest "did it actually load?" signal available without
+	// launching the game.
+	BepInExLogPath = "BepInEx/LogOutput.log"
+)
+
 // LoaderRuntime is the Unity scripting backend a game was built with, which
 // decides which BepInEx build is the correct one: Unity Mono has stable
 // BepInEx 5 releases, while IL2CPP needs a BepInEx 6 bleeding-edge build

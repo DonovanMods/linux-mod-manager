@@ -3,6 +3,8 @@ package adapter_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -13,8 +15,8 @@ import (
 )
 
 // stubAdapter is a minimal GameAdapter with no optional capabilities - the
-// shape internal/adapter/generic has, restated here so this package's tests
-// never depend on a concrete adapter package.
+// shape the built-in adapter.Generic has, restated here so this package's
+// tests never depend on a concrete adapter.
 type stubAdapter struct {
 	id     string
 	layout adapter.Layout
@@ -179,4 +181,118 @@ func TestSentinelsAreDistinct(t *testing.T) {
 	assert.False(t, errors.Is(adapter.ErrNotAMod, adapter.ErrPreconditionUnmet))
 	wrapped := errors.Join(adapter.ErrNotAMod)
 	assert.ErrorIs(t, wrapped, adapter.ErrNotAMod)
+}
+
+// claimingAdapter claims an archive whose members include the name it was
+// built with - the shape of a real ArchiveClaimer, without any one
+// adapter's rules.
+type claimingAdapter struct {
+	stubAdapter
+	marker string
+	refuse error
+}
+
+func (c claimingAdapter) ClaimArchive(members []string) (adapter.Claim, error) {
+	if c.refuse != nil {
+		return adapter.Claim{}, c.refuse
+	}
+	for _, m := range members {
+		if strings.HasPrefix(m, c.marker+"/") {
+			return adapter.Claim{Evidence: c.marker + " root", Requires: c.marker}, nil
+		}
+	}
+	return adapter.Claim{}, nil
+}
+
+// TestRegistryClaimArchive is the loader precondition's core-side half
+// (#359 through #413's seam): core asks every registered adapter EXCEPT the
+// game's own whether an archive is unmistakably theirs.
+func TestRegistryClaimArchive(t *testing.T) {
+	newRegistry := func() *adapter.Registry {
+		r := adapter.NewRegistry()
+		r.Register(claimingAdapter{stubAdapter: stubAdapter{id: "alpha"}, marker: "alpha"})
+		r.Register(claimingAdapter{stubAdapter: stubAdapter{id: "beta"}, marker: "beta"})
+		return r
+	}
+
+	t.Run("a foreign archive is claimed, with its evidence", func(t *testing.T) {
+		who, claim, err := newRegistry().ClaimArchive(adapter.GenericID, []string{"alpha/plugin.dll"})
+		require.NoError(t, err)
+		require.NotNil(t, who)
+		assert.Equal(t, "alpha", who.ID())
+		assert.Equal(t, "alpha root", claim.Evidence)
+		assert.Equal(t, "alpha", claim.Requires)
+		assert.True(t, claim.Claimed())
+	})
+
+	t.Run("the game's OWN adapter is never asked", func(t *testing.T) {
+		who, claim, err := newRegistry().ClaimArchive("alpha", []string{"alpha/plugin.dll"})
+		require.NoError(t, err)
+		assert.Nil(t, who, "it has already had its full say through NormalizeArchive")
+		assert.False(t, claim.Claimed())
+	})
+
+	t.Run("an archive nobody claims is nobody's problem", func(t *testing.T) {
+		who, _, err := newRegistry().ClaimArchive(adapter.GenericID, []string{"Mods/MyMod/MyMod.dll"})
+		require.NoError(t, err)
+		assert.Nil(t, who)
+	})
+
+	t.Run("an adapter with no ArchiveClaimer is skipped", func(t *testing.T) {
+		r := adapter.NewRegistry()
+		r.Register(stubAdapter{id: "plain"})
+		who, _, err := r.ClaimArchive(adapter.GenericID, []string{"alpha/plugin.dll"})
+		require.NoError(t, err)
+		assert.Nil(t, who)
+	})
+
+	// A refusal wins over a claim WHEREVER the two sit in registered-name
+	// order (#413 review F1). The original case named its refuser "alpha"
+	// and its claimer "beta", so a scan that returned the first answer it
+	// met passed by alphabetical accident; the refuser is named on both
+	// sides of the claimer here, and only a scan that actually prefers the
+	// refusal passes both.
+	for _, tc := range []struct {
+		name      string
+		refuserID string
+	}{
+		{name: "the refuser sorts before the claimer", refuserID: "aardvark"},
+		{name: "the refuser sorts after the claimer", refuserID: "zebra"},
+	} {
+		t.Run("a refusal is surfaced ahead of any claim: "+tc.name, func(t *testing.T) {
+			r := adapter.NewRegistry()
+			refusal := fmt.Errorf("%w: it is the framework itself", adapter.ErrNotAMod)
+			r.Register(claimingAdapter{stubAdapter: stubAdapter{id: tc.refuserID}, refuse: refusal})
+			r.Register(claimingAdapter{stubAdapter: stubAdapter{id: "beta"}, marker: "beta"})
+
+			who, claim, err := r.ClaimArchive(adapter.GenericID, []string{"beta/plugin.dll"})
+			require.ErrorIs(t, err, adapter.ErrNotAMod)
+			require.NotNil(t, who)
+			assert.Equal(t, tc.refuserID, who.ID(), "the refusing adapter is the one reported")
+			assert.False(t, claim.Claimed(),
+				`"this archive is the framework itself" is a better thing to say than "your game needs that framework"`)
+		})
+	}
+
+	t.Run("of two claims, the first in registered-name order wins", func(t *testing.T) {
+		r := adapter.NewRegistry()
+		r.Register(claimingAdapter{stubAdapter: stubAdapter{id: "zebra"}, marker: "shared"})
+		r.Register(claimingAdapter{stubAdapter: stubAdapter{id: "alpha"}, marker: "shared"})
+
+		who, claim, err := r.ClaimArchive(adapter.GenericID, []string{"shared/plugin.dll"})
+		require.NoError(t, err)
+		require.NotNil(t, who)
+		assert.Equal(t, "alpha", who.ID(), "a build shipping two claimers answers deterministically")
+		assert.True(t, claim.Claimed())
+	})
+}
+
+// TestSeverityIsIssueByDefault pins the zero value, which is what an
+// adapter that says nothing about a finding's weight gets: a report an
+// adapter bothered to make is a problem, and core counts it as one.
+func TestSeverityIsIssueByDefault(t *testing.T) {
+	assert.Equal(t, adapter.SeverityIssue, adapter.Finding{}.Severity)
+	assert.Equal(t, "issue", adapter.SeverityIssue.String())
+	assert.Equal(t, "warning", adapter.SeverityWarning.String())
+	assert.Equal(t, "note", adapter.SeverityNote.String())
 }

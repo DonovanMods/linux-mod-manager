@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // applyProfileOverrides writes a profile's configuration overrides to the game install directory.
@@ -98,27 +99,58 @@ func (s *Service) applyAdapterCopyOnce(game *domain.Game, mods []*domain.Install
 		if mod.External {
 			continue // lmm never owns an external mod's bytes
 		}
-		files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return fmt.Errorf("listing cache files for %s: %w", domain.ModKey(mod.SourceID, mod.ID), err)
+		if err := seedCopyOnceFiles(gameCache, a, game, mod.SourceID, mod.ID, mod.Version); err != nil {
+			return err
 		}
-		versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
-		for _, rel := range adapterCopyOnceFiles(a, game, files) {
-			// M2: the containment guard belongs BESIDE the write, the way
-			// applyProfileOverrides has one for an override path. Cache
-			// members are sanitised at extraction, so this is not
-			// reachable today - but the adapter tree rewriter can now put
-			// a path into a cache entry the extractor never saw.
-			dest, err := copyOnceDest(game.ModPath, rel)
-			if err != nil {
-				return fmt.Errorf("writing %s for %s: %w", rel, domain.ModKey(mod.SourceID, mod.ID), err)
-			}
-			if err := copyOnce(filepath.Join(versionDir, filepath.FromSlash(rel)), dest); err != nil {
-				return fmt.Errorf("writing %s for %s: %w", rel, domain.ModKey(mod.SourceID, mod.ID), err)
-			}
+	}
+	return nil
+}
+
+// seedCopyOnceFiles writes ONE mod's RouteCopyOnce members into the game
+// directory, and is the single implementation of that write.
+//
+// It is called from two places, which between them cover every path that
+// deploys a mod (#413, the #358/#359 review's F14 carry-in):
+//
+//	Installer.Install and Installer.replaceWithCaches, so that `lmm
+//	install`, `lmm import`, `lmm update`, `lmm update rollback`, a profile
+//	switch, a profile apply and `verify --fix`'s re-deploy every seed
+//	without each having to remember to - the same reason the BepInEx
+//	version of this lived inside the installer's own file loop;
+//
+//	Service.applyAdapterCopyOnce, the profile-level sweep `lmm deploy` runs
+//	beside applyProfileOverrides, which also covers a mod the deploy left
+//	in place rather than re-installing.
+//
+// Both are safe to run together because the write is idempotent by
+// definition: copyOnce is a no-op for a file that already exists, which is
+// the whole contract - after the first deploy the file belongs to the user.
+//
+// A cache entry that is not there is not an error: a RouteCopyOnce sweep
+// runs over mods a flow may not have cached (an external mod, a row whose
+// entry a prune removed), and reporting that here would duplicate the
+// per-file walk's own missing-file finding.
+func seedCopyOnceFiles(gameCache *cache.Cache, a adapter.GameAdapter, game *domain.Game, sourceID, modID, version string) error {
+	files, err := gameCache.ListFiles(game.ID, sourceID, modID, version)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("listing cache files for %s: %w", domain.ModKey(sourceID, modID), err)
+	}
+	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	for _, rel := range adapterCopyOnceFiles(a, game, files) {
+		// M2: the containment guard belongs BESIDE the write, the way
+		// applyProfileOverrides has one for an override path. Cache
+		// members are sanitised at extraction, so this is not reachable
+		// today - but the adapter tree rewriter can now put a path into a
+		// cache entry the extractor never saw.
+		dest, err := copyOnceDest(game.ModPath, rel)
+		if err != nil {
+			return fmt.Errorf("writing %s for %s: %w", rel, domain.ModKey(sourceID, modID), err)
+		}
+		if err := copyOnce(filepath.Join(versionDir, filepath.FromSlash(rel)), dest); err != nil {
+			return fmt.Errorf("writing %s for %s: %w", rel, domain.ModKey(sourceID, modID), err)
 		}
 	}
 	return nil
@@ -237,40 +269,4 @@ func captureOverriddenOriginal(originals *originalsStore, profileName, rel, dest
 		originals.noteFailure(fmt.Sprintf(
 			"could not preserve %s before writing a profile override over it; it will not be restorable from a snapshot: %v", dest, err))
 	}
-}
-
-// seedBepInExConfig writes a mod-shipped BepInEx/config/** file into the
-// game directory as a REAL FILE, and only when nothing is there already
-// (#358 (b)).
-//
-// It lives here, beside applyProfileOverrides, because it is the same
-// mechanism and the same reasoning: BepInEx generates its plugin configs on
-// first run and users hand-edit them afterwards, so a mod that ships one is
-// seeding a DEFAULT, not shipping content. Deploying it the way every other
-// member is deployed would break in whichever direction the link method
-// chose - a symlink sends the user's edit INTO the cache, where the next
-// re-download destroys it and every profile sharing the entry inherits it;
-// a hardlink does the same through a different door.
-//
-// It differs from applyProfileOverrides in the one way it has to: an
-// override is content a profile ASSERTS, so it is written every deploy and
-// the file it replaces is preserved in the originals store. A seeded config
-// is content a mod SUGGESTS, so an existing file wins outright and there is
-// nothing to preserve - which is also why it needs no originals store
-// parameter and captures nothing.
-//
-// Copy-on-first-deploy is the whole contract: after the first deploy the
-// file belongs to the user, so it is never overwritten, never entered into
-// deployed_files, and never removed by an uninstall - exactly the standing
-// every profile override has.
-func seedBepInExConfig(srcPath, dstPath string) error {
-	if _, err := os.Lstat(dstPath); err == nil {
-		return nil // already there: it is the user's file now
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("checking %s: %w", dstPath, err)
-	}
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-	return copyFileStreaming(srcPath, dstPath)
 }

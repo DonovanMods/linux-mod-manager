@@ -66,7 +66,10 @@ func init() {
 // It narrows the per-file and version passes only. The merged-pak staleness
 // and deploy-convergence passes are profile-scoped and run regardless
 // (internal/core/verify.go), so a filtered repair still resyncs a stale
-// merged pak and still sweeps stale deployments - core's documented
+// merged pak and still sweeps stale deployments. The one profile-scoped
+// REMOVAL a filter does stop is the nested BepInEx/ tree's: a filtered run
+// reports the tree and leaves it for a whole-profile repair
+// (internal/core/verify_loader_nested.go). Both are core's documented
 // behaviour, passed through unchanged rather than reinterpreted here.
 type verifyFixPlanRequest struct {
 	ModFilter string `json:"mod_filter,omitzero"`

@@ -100,6 +100,11 @@ type DisableResult struct {
 // database. Returns a result with Changed false — not an error — if the
 // mod was already enabled.
 //
+// Enabling deploys, so a game whose adapter refuses - an unknown adapter
+// name, a composition AdapterFor rejects, an adapter precondition - refuses
+// it with the error every Plan gives that game, before anything is read or
+// written (#413). DisableMod is a removal and runs regardless.
+//
 // A SetModDeployed failure is non-fatal (recorded in Notes) — mirroring
 // both DisableMod's own treatment of the identical call and
 // DeployProfile's/PurgeProfile's existing SetModDeployed call sites: the
@@ -130,6 +135,17 @@ func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName,
 	// BEFORE the already-enabled short-circuit so the answer is the same
 	// whatever the row happens to say.
 	if err := refuseExternal("enable", mod, ReasonExternalNoToggle); err != nil {
+		return nil, err
+	}
+
+	// Enabling deploys, so the game's adapter has its say first, exactly as
+	// it does in every Plan (#413): a refused game refuses here with the
+	// same message and remedy `lmm deploy` gives, rather than deploying
+	// through the identity routing a refused adapter leaves behind. Before
+	// the already-enabled short-circuit, for refuseExternal's reason.
+	// DisableMod asks nothing: it is a removal, and a removal is the way
+	// out of a refused state.
+	if err := s.deployRefusal(ctx, game, profileName); err != nil {
 		return nil, err
 	}
 

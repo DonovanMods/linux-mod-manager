@@ -4,7 +4,7 @@ package app
 //
 // This is the one test in the tree where all four pieces meet: the real
 // internal/source/thunderstore source, the real core.Service install flow,
-// the real Downloader, and #358's BepInEx normaliser. It lives here because
+// the real Downloader, and the BepInEx adapter's archive normaliser (#358, behind the game-adapter seam since #413). It lives here because
 // internal/app is the composition root - internal/core is forbidden from
 // importing a concrete source (its own boundary ratchet), and this test has
 // to use the actual one, not a double.
@@ -49,8 +49,8 @@ func newThunderstoreFixture(t *testing.T, loader *domain.GameLoader) thunderstor
 
 	// The archive shape is the one a Valheim-era BepInEx plugin actually
 	// ships: the payload rooted at `plugins/`, BepInEx-RELATIVE, with the
-	// package metadata Thunderstore requires at the root beside it. #358's
-	// normaliser prefixes the payload with BepInEx/ and drops the metadata;
+	// package metadata Thunderstore requires at the root beside it. The
+	// BepInEx adapter prefixes the payload with BepInEx/ and drops the metadata;
 	// without it, the DLL would deploy to <game root>/plugins/ where
 	// nothing loads it, and manifest.json and icon.png would be scattered
 	// into the Steam install directory.
@@ -81,6 +81,12 @@ func newThunderstoreFixture(t *testing.T, loader *domain.GameLoader) thunderstor
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.RegisterSource(thunderstore.New(thunderstore.Options{CacheDir: cacheDir, BaseURL: srv.URL}))
+	// The composition root's own registration (#413): the BepInEx layout
+	// rules live behind the game-adapter seam, so a Service without the
+	// adapters registered is a build of lmm that does not ship. This test
+	// constructs the Service directly rather than through Open, so it
+	// throws the same switch Open does.
+	RegisterAdapters(svc)
 
 	// A BepInEx game: mod_path IS the install path, which is how lmm
 	// expresses "this game's mods live in the game root".

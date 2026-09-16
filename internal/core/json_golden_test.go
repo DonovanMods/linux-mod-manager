@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/require"
@@ -77,6 +78,78 @@ var jsonGoldenGame = domain.Game{
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// The golden table's game documents, named so
+// TestJSONGoldens_GameRowsAreWhatProductionEmits can hold each one against
+// the row a Service with production's adapters emits for the same Game
+// (#413 re-review L3: game_detail pinned a declared-BepInEx Valheim with no
+// effective_adapter, which no production lmm writes).
+var (
+	goldenGameListEntry = core.GameListEntry{Game: jsonGoldenGame, Default: true}
+
+	goldenGameEffectiveAdapter = core.GameListEntry{
+		Game: domain.Game{
+			ID: "valheim", Name: "Valheim",
+			InstallPath: "/games/valheim", ModPath: "/games/valheim",
+			LinkMethod: domain.LinkSymlink,
+			Loader:     &domain.GameLoader{Kind: domain.LoaderKindBepInEx},
+		},
+		EffectiveAdapter: "bepinex",
+	}
+
+	goldenGameAdapterError = core.GameListEntry{
+		Game: domain.Game{
+			ID: "valheim", Name: "Valheim",
+			InstallPath: "/games/valheim", ModPath: "/games/valheim",
+			LinkMethod: domain.LinkSymlink,
+			Adapter:    "bepinx",
+		},
+		AdapterError: `game "valheim": unknown adapter "bepinx" (registered: bepinex, generic-files, icarus)`,
+	}
+
+	goldenGameDetailEntry = core.GameListEntry{
+		Game: domain.Game{
+			ID: "valheim", Name: "Valheim",
+			InstallPath: "/home/user/.steam/steam/steamapps/common/Valheim",
+			ModPath:     "/home/user/.steam/steam/steamapps/common/Valheim",
+			SourceIDs:   map[string]string{"nexusmods": "valheim"},
+			Loader:      &domain.GameLoader{Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5"},
+		},
+		Default:          true,
+		EffectiveAdapter: "bepinex",
+	}
+)
+
+// TestJSONGoldens_GameRowsAreWhatProductionEmits builds each golden game
+// row's Game into a Service carrying the adapters app.Open registers, and
+// requires the row it lists to be the golden's, field for field. A golden
+// whose fixture registered no adapters pinned a document production never
+// emits, and stayed byte-identical through the change that made it wrong.
+func TestJSONGoldens_GameRowsAreWhatProductionEmits(t *testing.T) {
+	for name, want := range map[string]core.GameListEntry{
+		"game_list_entry":                   goldenGameListEntry,
+		"game_list_entry_effective_adapter": goldenGameEffectiveAdapter,
+		"game_list_entry_adapter_error":     goldenGameAdapterError,
+		"game_detail":                       goldenGameDetailEntry,
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, svc.Close()) })
+			app.RegisterAdapters(svc)
+
+			game := want.Game
+			require.NoError(t, svc.SaveGame(t.Context(), &game))
+			if want.Default {
+				require.NoError(t, svc.SetDefaultGame(t.Context(), game.ID))
+			}
+			entries, err := svc.ListGameEntries(t.Context())
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.Equal(t, want, entries[0])
+		})
+	}
+}
 
 func TestJSONGoldens(t *testing.T) {
 	tests := []struct {
@@ -1007,7 +1080,23 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{
 			"game_list_entry",
-			core.GameListEntry{Game: jsonGoldenGame, Default: true},
+			goldenGameListEntry,
+		},
+		{
+			// #426: a game whose adapter lmm DERIVED - no `adapter` key,
+			// because games.yaml has none, and `effective_adapter` naming
+			// the one in use. A generic game omits the key, which is why
+			// game_list_entry above is unchanged.
+			"game_list_entry_effective_adapter",
+			goldenGameEffectiveAdapter,
+		},
+		{
+			// #413 re-review L2: a game every flow refuses uses no adapter,
+			// so effective_adapter is absent and adapter_error says why -
+			// rather than an absent effective_adapter alone, which reads
+			// as generic-files.
+			"game_list_entry_adapter_error",
+			goldenGameAdapterError,
 		},
 		{
 			"verify_report",
@@ -1918,16 +2007,7 @@ func TestJSONGoldens(t *testing.T) {
 			// "loader_status".
 			"game_detail",
 			core.GameDetail{
-				GameListEntry: core.GameListEntry{
-					Game: domain.Game{
-						ID: "valheim", Name: "Valheim",
-						InstallPath: "/home/user/.steam/steam/steamapps/common/Valheim",
-						ModPath:     "/home/user/.steam/steam/steamapps/common/Valheim",
-						SourceIDs:   map[string]string{"nexusmods": "valheim"},
-						Loader:      &domain.GameLoader{Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5"},
-					},
-					Default: true,
-				},
+				GameListEntry: goldenGameDetailEntry,
 				Loader: &core.LoaderStatus{
 					GameID:          "valheim",
 					Declared:        &domain.GameLoader{Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5"},
@@ -1968,11 +2048,15 @@ func TestJSONGoldens(t *testing.T) {
 			// #359's plan-time precondition. The setup steps are DATA on the
 			// wire, which is what lets the web UI render the same sentences
 			// the terminal prints instead of carrying its own copy - so the
-			// golden records what newLoaderRequiredError actually produces,
+			// golden records what newLoaderRequirement actually produces for
+			// an archive-shape claim (no version: a shape cannot know one),
 			// not a hand-built stand-in of the same shape (review F12).
+			// TestPlanImportArchive_BepInEx_RefusesAGameWithNoLoader pins
+			// that the import flow builds exactly this.
 			"loader_required_error",
-			core.NewLoaderRequiredErrorForTest(
-				&domain.Game{ID: "lethal-company"}, "Skinwalkers", "game-root-relative"),
+			core.NewLoaderRequirementForTest(
+				&domain.Game{ID: "lethal-company"}, "Skinwalkers",
+				domain.LoaderKindBepInEx, "", "game-root-relative"),
 		},
 		{
 			// #409: the same refusal, reported by the SOURCE instead of

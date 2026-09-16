@@ -380,11 +380,15 @@ func TestE2E_WorkshopTier2_LibraryRowMenuHidesRelinkForAnExternalRow(t *testing.
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// openRowMenuJS clicks the per-row menu button of the library row whose text
+// openRowMenuJS clicks the per-row ⋯ button of the library row whose text
 // contains name - the same shape e2e_test.go's own row-menu scenarios use.
+//
+// It names the button by its data-action rather than taking the first one in
+// the cell: since issue 417 a row with an update pending carries a visible
+// Update button there too, and "the first button" would be that one.
 func openRowMenuJS(name string) string {
 	return `Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes(` +
-		strconvQuote(name) + `)).querySelector("td.col--menu button").click();`
+		strconvQuote(name) + `)).querySelector('td.col--menu [data-action="row-menu"]').click();`
 }
 
 // rowMenuItemsJS reads the open row menu's item labels.

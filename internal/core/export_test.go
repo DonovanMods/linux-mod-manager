@@ -261,19 +261,13 @@ func (i *Importer) ImportForTest(ctx context.Context, archivePath string, game *
 	return i.importWithIdentity(ctx, archivePath, game, opts, resolveImportIdentity(filepath.Base(archivePath), opts))
 }
 
-// NewLoaderRequiredErrorForTest builds #359's refusal exactly as the flows
-// build it, so the JSON golden pins the sentences a USER actually reads
+// NewLoaderRequirementForTest builds #359's refusal exactly as the flows
+// build it, so the JSON goldens pin the sentences a USER actually reads
 // rather than a hand-typed stand-in that only happens to have the same
-// shape. A reader of that golden reasonably assumes it is the shipping copy;
-// this is what makes that true (review F12).
-func NewLoaderRequiredErrorForTest(game *domain.Game, modName, layout string) *LoaderRequiredError {
-	return newLoaderRequiredError(game, modName, layout)
-}
-
-// NewLoaderRequirementForTest is the same for the half a SOURCE reports
-// (#409): the kind and the version come from the package's own metadata
-// rather than from an archive's shape, and the golden built through this
-// is what pins the extra wire member and the version-aware first sentence.
+// shape (review F12). It is the ONE constructor both halves call: an
+// adapter's archive claim (no version - a shape cannot know one) and a
+// SOURCE's own report (#409), whose kind and version come from the
+// package's metadata.
 func NewLoaderRequirementForTest(game *domain.Game, modName, kind, version, evidence string) *LoaderRequiredError {
 	return newLoaderRequirement(game, modName, kind, version, evidence)
 }
@@ -310,4 +304,19 @@ func (s *Service) SetBeforeProfileBackfillScanForTest(fn func()) {
 // did - or restores it when fn is nil.
 func (s *Service) SetProfileMarkerForTest(fn func(path string, mods []domain.ModReference) ([]domain.ModReference, error)) {
 	s.profileMarker = fn
+}
+
+// SetNestedTreeHookForTest arms verify's nested-BepInEx-tree seam: fn runs
+// with "classify" just before the trees are classified and with "remove"
+// just before a tree's leftovers are removed, so a test can change the
+// world in the window a concurrent process would (#413 fix round 4).
+func (s *Service) SetNestedTreeHookForTest(fn func(stage string)) {
+	s.nestedTreeHook = fn
+}
+
+// ExecForTest runs one statement against the Service's own database, for a
+// test that has to make a lookup fail or a row appear mid-run.
+func (s *Service) ExecForTest(ctx context.Context, query string, args ...any) error {
+	_, err := s.db.ExecContext(ctx, query, args...)
+	return err
 }

@@ -54,6 +54,7 @@ import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
 import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
+import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import {
   ModSettingsControls,
@@ -128,6 +129,9 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   const sourceID = route.sourceID;
   const modID = route.modID;
   const origin = (action) => `mod:${sourceID}/${modID}:${action}`;
+  // issue 432: what this mod's toggle was asked for and has not got yet -
+  // the ledger entry every surface shares (toggleack.js).
+  const toggleRequested = toggleRequestFor(state, `${sourceID}:${modID}`);
 
   // The lock/policy pair reads the LIBRARY listing first and the live
   // ModDetail only as a fallback (I-5): core.ModListing carries locked,
@@ -138,6 +142,11 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
     (m) => m.source_id === sourceID && m.id === modID,
   );
   const settingsSource = listing ?? installed;
+  // The toggle's value comes from the listing first for the same reason,
+  // and one more (issue 432): the library document is what a toggle
+  // request settles on (toggleack.js), so a control reading anything else
+  // could show a value the request was never checked against.
+  const enabled = listing?.enabled ?? installedMod.enabled;
   const settingsRow = settingsSource && {
     source_id: sourceID,
     id: modID,
@@ -211,15 +220,25 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             <button
               type="button"
               class="button"
+              data-action="toggle"
+              disabled=${toggleRequested !== undefined}
+              aria-busy=${toggleRequested !== undefined ? "true" : null}
               onClick=${() =>
                 actions.startToggle({
-                  action: installedMod.enabled ? "disable" : "enable",
-                  sourceID,
-                  modID,
-                  origin: origin("toggle"),
+                  key: `${sourceID}:${modID}`,
+                  source_id: sourceID,
+                  id: modID,
+                  enabled,
+                  name: installedMod.name,
                 })}
             >
-              ${installedMod.enabled ? "Disable" : "Enable"}
+              ${
+                toggleRequested === undefined
+                  ? enabled
+                    ? "Disable"
+                    : "Enable"
+                  : pendingToggleLabel(toggleRequested.want)
+              }
             </button>
           <//>`
         }

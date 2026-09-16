@@ -19,6 +19,7 @@
     "version": "5.4.23.5"
   },
   "default": true,
+  "effective_adapter": "bepinex",
   "loader_status": {
     "game_id": "valheim",
     "declared": {

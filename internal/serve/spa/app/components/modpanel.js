@@ -20,6 +20,8 @@ import { exitMillis } from "../motion.js";
 import { navigate } from "../router.js";
 import { getModDetail, ApiError } from "../api.js";
 import { findingLabel } from "../verify.js";
+import { healthLabel } from "../modrows.js";
+import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { InlineJob } from "./jobprogress.js";
 
@@ -323,6 +325,12 @@ export function ModPanel({
   const findings = findingsFor(state.health, row.id);
   const conflicts = conflictsFor(state.conflicts, row.key);
   const origin = (action) => `mod:${row.source_id}/${row.id}:${action}`;
+  // issue 432: what this mod's toggle was asked for and has not got yet -
+  // the same ledger entry the library row reads (toggleack.js), so this
+  // panel acknowledges a click in the frame it was made in, and shows a
+  // request the batch bar made too. Looked up by the mod on screen: the
+  // ledger, not this panel, remembers a request across ←/→.
+  const toggleRequested = toggleRequestFor(state, row.key);
 
   return html`
     <div
@@ -378,6 +386,22 @@ export function ModPanel({
         </p>
 
         ${row.external && html`<${ManagedBySteam} row=${row} />`}
+        ${
+          // issue 418: this mod's health, in every state rather than only
+          // the bad one. The Findings section below renders when there ARE
+          // findings; until this line there was no way to tell a mod that
+          // had been checked and was fine from one nothing had looked at -
+          // both rendered as the absence of a section. Built as ONE string,
+          // since htm collapses the whitespace between adjacent
+          // interpolations (modrows.js#lockedNote documents the trap).
+          html`<p
+            class="slide-over__health"
+            data-testid="mod-health"
+            data-health=${row.healthState}
+          >
+            ${`Health: ${healthLabel(row)}`}
+          </p>`
+        }
 
         <${ModSettingsControls}
           row=${row}
@@ -424,15 +448,18 @@ export function ModPanel({
               <button
                 type="button"
                 class="button"
-                onClick=${() =>
-                  actions.startToggle({
-                    action: row.enabled ? "disable" : "enable",
-                    sourceID: row.source_id,
-                    modID: row.id,
-                    origin: origin("toggle"),
-                  })}
+                data-action="toggle"
+                disabled=${toggleRequested !== undefined}
+                aria-busy=${toggleRequested !== undefined ? "true" : null}
+                onClick=${() => actions.startToggle(row)}
               >
-                ${row.enabled ? "Disable" : "Enable"}
+                ${
+                  toggleRequested === undefined
+                    ? row.enabled
+                      ? "Disable"
+                      : "Enable"
+                    : pendingToggleLabel(toggleRequested.want)
+                }
               </button>
             <//>`
           }

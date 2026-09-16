@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
@@ -228,6 +229,9 @@ func TestDoGameShow_SkipsTheLoaderSectionForAGameWithNoLoaderInSight(t *testing.
 // one.
 func TestDoGameShow_AnInstalledButUndeclaredLoaderSaysTheDeclarationIsMissing(t *testing.T) {
 	svc := setupGameEditTest(t)
+	// Production's adapters: the hint is for a game lmm lays BepInEx
+	// archives out for, which is what this one resolves to in a real lmm.
+	app.RegisterAdapters(svc)
 	install := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(install, "BepInEx", "core"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(install, "BepInEx", "core", "BepInEx.Preloader.dll"), []byte("pe"), 0o644))
