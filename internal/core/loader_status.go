@@ -29,10 +29,18 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// BepInEx paths lmm reads to answer "is the loader actually installed, and
-// is its bootstrap intact for the declared mode?" Every one is
+// The two BepInEx paths core still reads for itself. Both are
 // game-root-relative, which is the whole reason a BepInEx game's mod_path is
 // its install path.
+//
+// The bootstrap FILE names that used to sit here went to
+// internal/adapter/bepinex with the check that compares them against the
+// declared mode (#413). These two did not, because they answer questions
+// core owns whatever a game's adapter is: whether BepInEx is installed at
+// all (which is one of the two facts that RESOLVE the bepinex adapter, so
+// it cannot be asked of the adapter), and whether the loader has actually
+// run (whose remedy is the Steam launch option, which LoaderStatus computes
+// for every game below).
 const (
 	// bepinexPreloaderPath is the file whose presence means BepInEx is
 	// installed at all. It is BepInEx's own entry point, so nothing else
@@ -42,14 +50,6 @@ const (
 	// the only honest "did it actually load?" signal available without
 	// launching the game.
 	bepinexLogPath = "BepInEx/LogOutput.log"
-	// bepinexNativeScript and bepinexNativeDoorstop are the native Linux
-	// bootstrap: run_bepinex.sh sets up LD_PRELOAD for libdoorstop.so.
-	bepinexNativeScript   = "run_bepinex.sh"
-	bepinexNativeDoorstop = "libdoorstop.so"
-	// bepinexProtonProxy and bepinexProtonConfig are the Proton/Wine
-	// bootstrap: the Windows winhttp.dll proxy plus its doorstop config.
-	bepinexProtonProxy  = "winhttp.dll"
-	bepinexProtonConfig = "doorstop_config.ini"
 )
 
 // The two Steam launch options, verbatim. They are the entire user-facing
