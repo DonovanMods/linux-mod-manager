@@ -22,10 +22,11 @@ export function modKey(mod) {
  * badge column, the text is the sentence the slide-over and the badge's own
  * name use. One table, because the row and the panel saying this
  * differently is the drift verify.js#findingLabel already exists to prevent
- * one level down. */
+ * one level down. "issues" has no fixed text: its sentence is a count,
+ * which healthLabel builds. */
 const healthStateLabels = {
   ok: { badge: "✓", text: "Verified — no issues found" },
-  issues: { badge: "⚠", text: "health findings" },
+  issues: { badge: "⚠" },
   unknown: { badge: "?", text: "Not verified yet" },
 };
 
@@ -33,12 +34,11 @@ const healthStateLabels = {
  * for the "issues" state, since "2 health findings" is the whole of what
  * that state means to a reader. */
 export function healthLabel(row) {
-  const entry =
-    healthStateLabels[row?.healthState] ?? healthStateLabels.unknown;
   if (row?.healthState === "issues") {
     return countOf(row.findingCount, "health finding");
   }
-  return entry.text;
+  return (healthStateLabels[row?.healthState] ?? healthStateLabels.unknown)
+    .text;
 }
 
 /** healthBadge is the same state as the one glyph the library's badge column
