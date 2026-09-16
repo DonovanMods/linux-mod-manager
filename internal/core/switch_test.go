@@ -53,6 +53,30 @@ func seedInstalledModUnderProfile(t *testing.T, svc *core.Service, game *domain.
 	}))
 }
 
+// seedDeployedModUnderProfile records an installed row that is already
+// enabled AND deployed under profileName, without touching the cache (the
+// caller has usually seeded the bytes under another profile already). It is
+// what "this mod is already live under the target profile" looks like in
+// the DB - the state #430 made the switch ask about, rather than reading
+// the outgoing profile's row and assuming.
+func seedDeployedModUnderProfile(t *testing.T, svc *core.Service, game *domain.Game, profileName, sourceID, modID, name, version string) {
+	t.Helper()
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       modID,
+			SourceID: sourceID,
+			Name:     name,
+			Version:  version,
+			GameID:   game.ID,
+		},
+		ProfileName:  profileName,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+	}))
+}
+
 // installEnabledBlockingTrigger mirrors installBlockingTrigger but targets
 // installed_mods.enabled specifically, isolating SetModEnabled failures from
 // SetModLinkMethod/SetModDeployed (which installBlockingTrigger blocks) or
@@ -98,10 +122,19 @@ func TestService_PlanProfileSwitch_AlreadyActive(t *testing.T) {
 }
 
 // TestService_PlanProfileSwitch_NoChangesWhenModSetsMatch guards the no-op
-// fast path: when the target profile's mod set already matches what's
-// enabled under the current default profile, PlanProfileSwitch reports
-// NoChanges (only SetDefault is needed) - mirroring doProfileSwitch's
-// "No mod changes, just switch the default" branch.
+// fast path: when the target profile's mod set already matches what is
+// enabled AND already live under the target's own rows, PlanProfileSwitch
+// reports NoChanges (only SetDefault is needed) - mirroring
+// doProfileSwitch's "No mod changes, just switch the default" branch.
+//
+// #430 narrowed what qualifies. This test used to seed the shared mod under
+// the OUTGOING profile only and still expect NoChanges, which is the defect
+// itself written down as an expectation: the target profile had no row, so
+// the switch made it the default with its mod listed, enabled nowhere, and
+// deployed anyway. The "nothing to do" case is the one where the target's
+// own row already says enabled and deployed - asserted here - and the
+// cross-profile case it used to cover is now
+// TestService_ProfileSwitch_SharedModEndsEnabledUnderTheTargetProfile.
 func TestService_PlanProfileSwitch_NoChangesWhenModSetsMatch(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
@@ -114,6 +147,7 @@ func TestService_PlanProfileSwitch_NoChangesWhenModSetsMatch(t *testing.T) {
 	require.NoError(t, err)
 
 	seedInstalledMod(t, svc, game, "src", "shared", "1.0", true, map[string][]byte{"shared.esp": []byte("s")})
+	seedDeployedModUnderProfile(t, svc, game, "other", "src", "shared", "Test Mod", "1.0")
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
 
@@ -1422,8 +1456,13 @@ func TestPlanProfileSwitch_VersionDrift_SchedulesReinstall(t *testing.T) {
 
 // TestPlanProfileSwitch_MatchingVersion_RemainsNoop is the regression guard
 // for the new drift case's guard conditions: when the target ref's Version
-// matches the installed mod's (or is empty), the mod must be classified
-// exactly as it was before #96 - no ToInstall entry.
+// matches the installed mod's (or is empty), the mod must NOT be scheduled
+// for reinstall - no ToInstall entry, exactly as before #96.
+//
+// It stays a whole no-op only when the target profile's own row is already
+// enabled and deployed (#430); the row is seeded here for that reason,
+// where the test previously relied on the outgoing profile's row answering
+// for the target's.
 func TestPlanProfileSwitch_MatchingVersion_RemainsNoop(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
@@ -1436,6 +1475,7 @@ func TestPlanProfileSwitch_MatchingVersion_RemainsNoop(t *testing.T) {
 	require.NoError(t, err)
 
 	seedInstalledModUnderProfile(t, svc, game, "testing", "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
+	seedDeployedModUnderProfile(t, svc, game, "stable", "src", "mod1", "Mod One", "1.5")
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "testing", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 

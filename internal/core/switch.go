@@ -24,8 +24,26 @@ type SwitchPlan struct {
 	From   string `json:"from"`
 	To     string `json:"to"`
 
-	ToEnable  []domain.InstalledMod `json:"to_enable"`  // installed+disabled (or installed under a different profile) -> enable, deployed under To
-	ToDisable []domain.InstalledMod `json:"to_disable"` // enabled under From but absent from To -> disable, undeployed under From
+	ToEnable []domain.InstalledMod `json:"to_enable"` // installed+disabled (or installed under a different profile) -> enable, deployed under To
+
+	// ToDisable is every installed row this switch has to turn off. Each
+	// entry names the profile it belongs to in ProfileName, and
+	// ApplyProfileSwitch undeploys and clears it under THAT profile - not
+	// unconditionally under From, as it did while every entry came from the
+	// outgoing profile's own set.
+	//
+	// Two kinds reach it (#431). The first is the historical one: enabled
+	// under From and absent from To, or listed by To with the document's
+	// `disabled:` marker set - either way From's own row, undeployed with
+	// From's link method. The second is To's own row when the target
+	// document marks the mod disabled while that row still says enabled -
+	// a pair nothing in lmm writes, but one `profile import --force` and
+	// `snapshot restore` both produce by replacing the document under live
+	// rows. Both rows can be present for one mod, and then both are listed:
+	// each carries its own profile's enabled flag, and Installer.Uninstall
+	// is idempotent (#260), so the second undeploy of the same files is a
+	// no-op rather than a failure.
+	ToDisable []domain.InstalledMod `json:"to_disable"`
 	ToInstall []domain.ModReference `json:"to_install"` // in To but not installed anywhere -> download+install (FileIDs preserved from the installed mod's own record when this is really a cache-miss redeploy - see PlanProfileSwitch)
 
 	// PriorVersions carries, for each ToInstall entry that is really a #96
@@ -119,7 +137,16 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	// considers these two profiles.
 	allInstalled := make(map[string]*domain.InstalledMod)
 	allMods, _ := s.GetInstalledMods(ctx, game.ID, target)
+	// #430: the merge below is lossy on purpose - it answers "is this mod
+	// available anywhere, and at what version?" - so the TARGET's own rows
+	// are also kept unmerged. Whether a mod ends the switch enabled is a
+	// question about the target profile's row, and reading it off a merged
+	// map where the outgoing profile wins is exactly the bug: a mod both
+	// profiles list took the "already enabled" path and the target profile
+	// never got a row at all.
+	targetInstalled := make(map[string]*domain.InstalledMod, len(allMods))
 	for i := range allMods {
+		targetInstalled[domain.ModKey(allMods[i].SourceID, allMods[i].ID)] = &allMods[i]
 		allInstalled[domain.ModKey(allMods[i].SourceID, allMods[i].ID)] = &allMods[i]
 	}
 	for i := range currentMods {
@@ -140,7 +167,11 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		if _, enabled := currentEnabled[key]; !enabled {
 			continue
 		}
-		if _, inTarget := targetKeys[key]; !inTarget {
+		// #431: absent from the target document and listed there with the
+		// off marker mean the same thing for the outgoing deployment -
+		// these files must come down either way.
+		ref, inTarget := targetKeys[key]
+		if !inTarget || ref.Disabled {
 			// #269: an external mod is never disabled by a profile switch -
 			// lmm cannot unsubscribe it, and marking it disabled while the
 			// game still loads it would be a lie. It is counted instead, so
@@ -174,6 +205,18 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		if installed && im.External {
 			continue
 		}
+		if ref.Disabled {
+			// #431: the document says this mod is in the profile but off,
+			// so the switch neither installs nor enables it. The one thing
+			// left to do is converge a target row that still says
+			// otherwise - see SwitchPlan.ToDisable for how that row gets
+			// there and why it is listed even when From's row already is.
+			if tr, ok := targetInstalled[key]; ok && !tr.External && (tr.Enabled || tr.Deployed) {
+				toDisable = append(toDisable, *tr)
+			}
+			continue
+		}
+
 		switch {
 		case !installed:
 			toInstall = append(toInstall, ref)
@@ -198,14 +241,26 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			refWithFileIDs := ref
 			refWithFileIDs.FileIDs = im.FileIDs
 			toInstall = append(toInstall, refWithFileIDs)
-		case !im.Enabled:
-			toEnable = append(toEnable, *im)
 		default:
-			// Installed, cached, and enabled - but was it enabled under the
-			// CURRENT profile? If not (e.g. it was only ever enabled under
-			// some other profile), it still needs an explicit enable pass
-			// for the target.
-			if _, wasCurrent := currentEnabled[key]; !wasCurrent {
+			// Installed at the right version with its bytes in the cache,
+			// so the only question left is whether it is already live under
+			// the TARGET profile (#430). It is not, unless the target has a
+			// row of its own that says both enabled and deployed:
+			//
+			//   - no row at all - the mod is installed under some other
+			//     profile only, and the target needs its own row minted
+			//     (ApplyProfileSwitch's ErrModNotFound fallback does that);
+			//   - a disabled row - the ordinary enable;
+			//   - an enabled row that is not deployed - the flag says on
+			//     while the game directory does not, which a switch to this
+			//     profile is exactly the moment to fix.
+			//
+			// This used to ask whether the mod was enabled under the
+			// profile being switched AWAY from, which answered "already
+			// done" for every mod the two profiles share and left the
+			// target profile rowless with the files deployed.
+			tr, hasTargetRow := targetInstalled[key]
+			if !hasTargetRow || !tr.Enabled || !tr.Deployed {
 				toEnable = append(toEnable, *im)
 			}
 		}
@@ -344,15 +399,36 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		im := plan.ToDisable[idx]
 		scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalDisable, ModName: im.Name, Mod: &domain.ModReference{SourceID: im.SourceID, ModID: im.ID}}
 
-		if err := fromInstaller.Uninstall(ctx, game, &im.Mod, plan.From); err != nil {
+		// #431: the entry names its own profile, because ToDisable can now
+		// carry the TARGET's row as well as the outgoing one (see
+		// SwitchPlan.ToDisable). An entry with no ProfileName - a plan a
+		// caller built by hand - keeps the historical From scoping.
+		disableProfile, disableInstaller := plan.From, fromInstaller
+		if im.ProfileName == plan.To {
+			disableProfile, disableInstaller = plan.To, toInstaller
+		}
+
+		if err := disableInstaller.Uninstall(ctx, game, &im.Mod, disableProfile); err != nil {
 			msg := fmt.Sprintf("Warning: failed to undeploy %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: SwitchDisableNote, Detail: msg})
 		}
-		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.From, false); err != nil {
+		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, disableProfile, false); err != nil {
 			msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: SwitchDisableNote, Detail: msg})
+		}
+		// #183's pair: a row whose files just came down must stop claiming
+		// they are deployed, or the next plan reads a deployed=true it can
+		// never clear. The outgoing rows reached here through
+		// DisableMod-shaped paths that already cleared it; the target row
+		// #431 adds did not.
+		if im.Deployed {
+			if err := s.setModDeployed(ctx, im.SourceID, im.ID, game.ID, disableProfile, false); err != nil {
+				msg := fmt.Sprintf("Warning: could not mark %s as not deployed: %v", im.Name, err)
+				result.Notes = append(result.Notes, msg)
+				emit(StepEvent{Scope: scope, Phase: SwitchDisableNote, Detail: msg})
+			}
 		}
 
 		result.Disabled++
