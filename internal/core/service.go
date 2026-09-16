@@ -2227,6 +2227,7 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	// still hold. A name that resolves nowhere, or bepinex off the game
 	// root, which never laid anything out, keeps the identity.
 	installer.recordedOnly = true
+	installer.refused = err
 	if named, rerr := s.adapterRegistry().Resolve(s.AdapterName(game)); rerr == nil && !bepinexOffRoot(game) {
 		installer.setAdapter(named)
 	}

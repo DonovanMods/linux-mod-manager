@@ -341,3 +341,33 @@ func joinNotes(groups ...[]string) string {
 	}
 	return out
 }
+
+// TestInstaller_BuiltForARefusedGameDeploysNothing is the backstop under
+// every gate above: an Installer core builds for a game whose adapter does
+// not resolve refuses every deploy with that refusal, so a path that forgot
+// to ask fails instead of deploying through the identity routing.
+func TestInstaller_BuiltForARefusedGameDeploysNothing(t *testing.T) {
+	ctx := context.Background()
+	for name, edit := range refusals {
+		t.Run(name, func(t *testing.T) {
+			svc, game, dotfile := newGameRootWithUserConfigs(t)
+			mod := onlyMod(t, svc, game)
+			_, err := svc.DisableMod(ctx, game, "default", mod.SourceID, mod.ID)
+			require.NoError(t, err)
+			game = refuse(t, svc, game, edit)
+			_, want := svc.AdapterFor(game)
+			before := byteTreeSnapshot(t, game.InstallPath)
+
+			installer := svc.GetInstallerForTest(game)
+			err = installer.Install(ctx, game, &mod.Mod, "default")
+			require.Error(t, err)
+			assert.Equal(t, want.Error(), err.Error())
+			err = installer.Replace(ctx, game, &mod.Mod, &mod.Mod, "default")
+			require.Error(t, err)
+			assert.Equal(t, want.Error(), err.Error())
+
+			assert.Equal(t, before, byteTreeSnapshot(t, game.InstallPath))
+			requireUserConfigsKept(t, game, dotfile)
+		})
+	}
+}

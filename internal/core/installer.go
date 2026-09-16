@@ -48,6 +48,15 @@ type Installer struct {
 	// since replaced with a link of their own - is no proof lmm put what is
 	// there, and the linker removes any symlink it is pointed at.
 	recordedOnly bool
+
+	// refused is the adapter refusal this Installer was built under, or
+	// nil (#413). Service.newInstallerWithLinker sets it with recordedOnly;
+	// every deploy method returns it before touching anything. The flows
+	// ask the adapter first (deployRefusal, a Plan's snapshot) and say so in
+	// their own words - this is the backstop that makes a path that forgot
+	// fail rather than deploy through the identity routing a refused
+	// adapter leaves behind.
+	refused error
 }
 
 // NewInstaller creates a new installer
@@ -229,6 +238,9 @@ func (i *Installer) foreignFile(ctx context.Context, game *domain.Game, profileN
 // the filesystem stays consistent with the database (previously deployed+tracked
 // files are left in place).
 func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
+	if i.refused != nil {
+		return i.refused
+	}
 	// Check if mod is cached
 	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
 		return fmt.Errorf("mod not in cache: %s/%s@%s", mod.SourceID, mod.ID, mod.Version)
@@ -340,6 +352,9 @@ func (i *Installer) ReplaceWithOldCache(ctx context.Context, game *domain.Game, 
 }
 
 func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string, oldFileIDs, newFileIDs []string) error {
+	if i.refused != nil {
+		return i.refused
+	}
 	if !oldCache.Exists(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version) {
 		return fmt.Errorf("old mod not in cache: %s/%s@%s", oldMod.SourceID, oldMod.ID, oldMod.Version)
 	}
