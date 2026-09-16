@@ -89,7 +89,7 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 	}
 	fmt.Printf("  Sources:      %s\n", formatGameSources(detail.SourceIDs))
 
-	printLoaderStatus(detail.Loader)
+	printLoaderStatus(detail.Loader, detail.EffectiveAdapter == domain.LoaderKindBepInEx)
 	return nil
 }
 
@@ -106,7 +106,10 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 // Runtime: unknown / Bootstrap: unknown" and then advising
 // `--loader-bootstrap` for an Unreal game is advice to configure something
 // it neither has nor needs.
-func printLoaderStatus(status *core.LoaderStatus) {
+//
+// laysOut reports that the game resolves to the bepinex adapter, which is
+// the only case the "declare it" hint below is advice for.
+func printLoaderStatus(status *core.LoaderStatus, laysOut bool) {
 	if !status.Relevant() {
 		return
 	}
@@ -121,7 +124,14 @@ func printLoaderStatus(status *core.LoaderStatus) {
 		// declaration stays silent until one exists, and the fix is one
 		// command. Saying "none" and moving on left that user with nothing
 		// to act on.
-		if status.Installed {
+		//
+		// Only while lmm DOES act on it (laysOut). On a game whose adapter
+		// is another one - an explicit key, a compile game, a mod_path off
+		// the game root - declaring the loader creates the contradiction
+		// decision 11 warns about, so the hint would be advice that causes
+		// a warning (#413 re-review M1); the loader report's own warning,
+		// if any, says what to do there instead.
+		if status.Installed && laysOut {
 			fmt.Printf("  Declared:     %s\n", colorRed("none - BepInEx is in the game directory but this game does not declare it"))
 			fmt.Printf("                %s\n", colorDim(fmt.Sprintf("declare it with `lmm game edit %s --loader bepinex`", status.GameID)))
 		} else {

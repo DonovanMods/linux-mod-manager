@@ -170,3 +170,42 @@ func TestAdapterWarning_TheEditThatCreatesItSaysSoOnce(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(stderr, `game "valheim2" declares the BepInEx loader`), "stderr: %s", stderr)
 	})
 }
+
+// TestDoGameShow_OffersToDeclareTheLoaderOnlyWhereItHelps: an undeclared
+// BepInEx install gets "declare it with `lmm game edit <id> --loader
+// bepinex`" (re-review R3) - but only on a game lmm lays BepInEx archives
+// out for. On a game whose adapter is another one, following that advice
+// CREATES the contradiction decision 11 warns about (#413 re-review M1:
+// every remedy offered must silence, never cause, a warning).
+func TestDoGameShow_OffersToDeclareTheLoaderOnlyWhereItHelps(t *testing.T) {
+	svc := setupGameEditTest(t)
+	app.RegisterAdapters(svc)
+	const hint = "declare it with `lmm game edit"
+	for id, g := range map[string]func(root string) *domain.Game{
+		"derived": func(root string) *domain.Game {
+			return &domain.Game{ID: "derived", Name: "Derived", InstallPath: root, ModPath: root}
+		},
+		"explicit": func(root string) *domain.Game {
+			return &domain.Game{ID: "explicit", Name: "Explicit", InstallPath: root, ModPath: root, Adapter: "generic-files"}
+		},
+		"plugins-dir": func(root string) *domain.Game {
+			return &domain.Game{ID: "plugins-dir", Name: "Plugins Dir", InstallPath: root, ModPath: filepath.Join(root, "BepInEx", "plugins")}
+		},
+	} {
+		root := t.TempDir()
+		preloader := filepath.Join(root, filepath.FromSlash(domain.BepInExPreloaderPath))
+		require.NoError(t, os.MkdirAll(filepath.Dir(preloader), 0o755))
+		require.NoError(t, os.WriteFile(preloader, []byte("preloader"), 0o644))
+		game := g(root)
+		game.SourceIDs = map[string]string{"nexusmods": id}
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+	}
+
+	out := captureStdout(t, func() error { return doGameShow(context.Background(), svc, "derived") })
+	assert.Contains(t, out, hint, "lmm acts on this BepInEx, so declaring it is the next step")
+	for _, id := range []string{"explicit", "plugins-dir"} {
+		out := captureStdout(t, func() error { return doGameShow(context.Background(), svc, id) })
+		assert.Contains(t, out, "Installed:    yes")
+		assert.NotContains(t, out, hint, "%s: declaring the loader here would create a contradiction", id)
+	}
+}
