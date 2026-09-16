@@ -1918,3 +1918,113 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenInstallLoopMods_Retur
 	_, err = svc.GetInstalledMod(context.Background(), "src", "second", "g1", "target")
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
+
+// --- #430 / #431: which profile's row owns "enabled" ---
+
+// TestService_ProfileSwitch_SharedModEndsEnabledUnderTheTargetProfile is
+// #430's regression. Two profiles list the same mod; it is installed and
+// enabled under the outgoing one. PlanProfileSwitch merged the two
+// profiles' installed rows with "current wins on collision", so the target
+// loop was handed the FROM row, its `default:` branch asked "was it enabled
+// under the CURRENT profile?", got yes, and classified the mod as no work
+// at all - leaving the target profile with no row of its own (or a stale
+// disabled one) while the files sat deployed in the game directory.
+//
+// The question the branch has to ask is about the TARGET.
+func TestService_ProfileSwitch_SharedModEndsEnabledUnderTheTargetProfile(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "a"))
+
+	// Installed and enabled under "a"; listed by BOTH profiles.
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "shared", "Shared Mod", "1.0", true, map[string][]byte{"shared.esp": []byte("s")})
+	seedProfileWithMod(t, svc, "g1", "a", "src", "shared", "1.0")
+	seedProfileWithMod(t, svc, "g1", "b", "src", "shared", "1.0")
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "b")
+	require.NoError(t, err)
+	require.Len(t, plan.ToEnable, 1, "the shared mod has no row under the target profile, so the switch must enable it there")
+	assert.Equal(t, "shared", plan.ToEnable[0].ID)
+	assert.Empty(t, plan.ToDisable)
+	assert.Empty(t, plan.ToInstall)
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Enabled)
+
+	row, err := svc.GetInstalledMod(context.Background(), "src", "shared", "g1", "b")
+	require.NoError(t, err, "the target profile must have a row of its own after the switch")
+	assert.True(t, row.Enabled, "a mod both profiles list must come out of the switch ENABLED under the profile switched to")
+	assert.True(t, row.Deployed)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "shared.esp"))
+	assert.NoError(t, err, "and its files must be deployed")
+
+	list, err := svc.ListMods(context.Background(), game, "b")
+	require.NoError(t, err)
+	require.Len(t, list.Mods, 1)
+	assert.True(t, list.Mods[0].Enabled, "`lmm list --profile b` must show it enabled")
+}
+
+// TestService_ProfileSwitch_DisabledModStaysDisabledAcrossSwitchAwayAndBack
+// is #431's regression. Disabling a mod only flipped the installed_mods
+// row; the profile document - the desired state a converge run restores -
+// had nowhere to record the intent, so PlanProfileSwitch read "listed in
+// the target profile" as "should be enabled" and the next switch back
+// deployed it again.
+func TestService_ProfileSwitch_DisabledModStaysDisabledAcrossSwitchAwayAndBack(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+	_, err = pm.Create(ctx, game.ID, "b")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "off", "Off Mod", "1.0", true, map[string][]byte{"off.esp": []byte("o")})
+	seedProfileWithMod(t, svc, "g1", "a", "src", "off", "1.0")
+
+	// Deploy it for real, then switch it off - the user's "off" intent.
+	_, err = svc.DisableMod(ctx, game, "a", "src", "off")
+	require.NoError(t, err)
+
+	profile, err := pm.Get(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	require.True(t, profile.Mods[0].Disabled, "disable must record the intent in the profile document, not only in the DB row")
+
+	deployed := filepath.Join(gameDir, "off.esp")
+	require.NoFileExists(t, deployed)
+
+	switchTo := func(target string) {
+		t.Helper()
+		plan, err := svc.PlanProfileSwitch(ctx, game, target)
+		require.NoError(t, err)
+		_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+		require.NoError(t, err)
+	}
+	switchTo("b")
+	switchTo("a")
+
+	row, err := svc.GetInstalledMod(ctx, "src", "off", "g1", "a")
+	require.NoError(t, err)
+	assert.False(t, row.Enabled, "a mod switched off under a profile must still be off after switching away and back")
+	assert.False(t, row.Deployed)
+	assert.NoFileExists(t, deployed, "and its files must not be back in the game directory")
+
+	// The marker itself survives the round trip, so the next converge run
+	// reads the same intent.
+	profile, err = pm.Get(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.True(t, profile.Mods[0].Disabled)
+}
