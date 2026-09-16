@@ -324,12 +324,14 @@ disable` records them for good.
   A database row naming a game or profile that no file can have is named
   and skipped. Nothing in the step can stop lmm from starting, and a
   command never waits for it: when another lmm is mid-change, the next
-  command that changes something runs the step first. A plan made before
-  the step recorded a mod in its profile is refused as out of date, so a
-  `profile apply` or `profile sync` confirmed earlier cannot undo what the
-  step just recorded. The step runs once per installation, decided by a database migration, and an installation with
-  nothing to record writes nothing. Mods disabled afterwards by an older lmm
-  still running, or after a downgrade, are not recorded.
+  command that changes something runs the step first. `profile apply` and
+  `profile sync` run it before they plan, and a plan of theirs made before
+  the step recorded a mod in its profile is refused as out of date, so one
+  confirmed earlier cannot undo what the step just recorded. The step runs
+  once per installation, decided by a database migration, and an
+  installation with nothing to record writes nothing. Mods disabled
+  afterwards by an older lmm still running, or after a downgrade, are not
+  recorded.
 
 - **The game-adapter seam: one `adapter:` key in `games.yaml` (#353, #411).**
   What a game does with mod content — how an archive's files are laid out,
