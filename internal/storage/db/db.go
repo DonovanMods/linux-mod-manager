@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // secureFileMode is the permission mask for the database and its WAL/SHM sidecars.
@@ -83,13 +85,58 @@ type Options struct {
 // relative Path as "file://<path>", which parses back with the path's first
 // segment as the host instead of as part of the file path; New resolves
 // relative paths before calling this.
+//
+// journal_mode is deliberately not among them: WAL is a property of the
+// database FILE, not of a connection, so it is set once per open by
+// enableWAL - which has to retry it, and a DSN pragma cannot.
 func dsnFor(path string) string {
-	const pragmas = "_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	const pragmas = "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 	if path == ":memory:" {
-		return "file::memory:?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+		return "file::memory:?" + pragmas
 	}
 	u := url.URL{Scheme: "file", Path: path, RawQuery: pragmas}
 	return u.String()
+}
+
+// walBudget bounds enableWAL's retries: as long as busy_timeout would have
+// waited, had SQLite consulted it.
+const walBudget = 5 * time.Second
+
+// enableWAL switches the database file into write-ahead-log mode. Once the
+// file is in WAL mode this is a no-op that takes no lock; the first switch
+// of a brand-new file needs the write lock, and SQLite answers SQLITE_BUSY
+// AT ONCE when another connection holds it, without consulting
+// busy_timeout. Several lmm processes starting together on a fresh
+// installation (`lmm serve` beside a CLI command) all make that first
+// switch, and all but one used to fail to open with "database is locked".
+// So a busy answer is retried, briefly, until walBudget runs out.
+func (d *DB) enableWAL(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, walBudget)
+	defer cancel()
+	pause := 5 * time.Millisecond
+	for {
+		var mode string
+		err := d.QueryRowContext(ctx, "PRAGMA journal_mode = WAL").Scan(&mode)
+		if err == nil {
+			return nil
+		}
+		if !isBusy(err) {
+			return fmt.Errorf("enabling the write-ahead log: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("enabling the write-ahead log: %w", err)
+		case <-time.After(pause):
+		}
+		pause = min(2*pause, 100*time.Millisecond)
+	}
+}
+
+// isBusy reports whether err is SQLite's SQLITE_BUSY, in any of its
+// extended forms.
+func isBusy(err error) bool {
+	var sqliteErr *sqlite.Error
+	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqlite3.SQLITE_BUSY
 }
 
 // New creates a new database connection and runs migrations, with a
@@ -159,6 +206,15 @@ func OpenWithOptions(path string, opts Options) (*DB, error) {
 	// and the credential re-encryption below share it, so this package keeps
 	// exactly one context.Background() call site (CLAUDE.md's ctx census).
 	openCtx := context.Background()
+
+	if path != ":memory:" {
+		if err := database.enableWAL(openCtx); err != nil {
+			if closeErr := sqlDB.Close(); closeErr != nil {
+				return nil, fmt.Errorf("opening database: %w (closing database: %v)", err, closeErr)
+			}
+			return nil, fmt.Errorf("opening database: %w", err)
+		}
+	}
 
 	if err := database.migrate(openCtx); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {

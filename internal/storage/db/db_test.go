@@ -718,21 +718,14 @@ func TestNew_OwesTheProfileBackfillOnlyForADisabledUndeployedRow(t *testing.T) {
 // Pending migrations therefore run under one write transaction that
 // re-reads the version first: every open succeeds, and each migration runs
 // once.
+//
+// A brand-new database file is the same race one step earlier: the DSN's
+// journal_mode(WAL) pragma needs the write lock the first time, and it used
+// to run before busy_timeout(5000) was set, so a second opener got
+// "database is locked" at once instead of waiting its turn.
 func TestOpen_ConcurrentFirstOpensMigrateExactlyOnce(t *testing.T) {
-	for round := range 5 {
-		path := filepath.Join(t.TempDir(), "lmm.db")
-		ctx := t.Context()
-		seed, err := db.New(path)
-		require.NoError(t, err)
-		require.NoError(t, seed.SaveInstalledMod(ctx, &domain.InstalledMod{
-			Mod:          domain.Mod{ID: "off", SourceID: "src", Name: "Off", Version: "1", GameID: "g"},
-			ProfileName:  "default",
-			UpdatePolicy: domain.UpdateNotify,
-		}))
-		_, err = seed.Exec("DELETE FROM schema_migrations WHERE version >= 17")
-		require.NoError(t, err)
-		require.NoError(t, seed.Close())
-
+	openAll := func(t *testing.T, path string, round int) {
+		t.Helper()
 		const openers = 8
 		start := make(chan struct{})
 		errs := make(chan error, openers)
@@ -750,6 +743,37 @@ func TestOpen_ConcurrentFirstOpensMigrateExactlyOnce(t *testing.T) {
 		for range openers {
 			require.NoError(t, <-errs, "round %d: every concurrent open must succeed", round)
 		}
+	}
+
+	t.Run("a brand-new file", func(t *testing.T) {
+		for round := range 20 {
+			path := filepath.Join(t.TempDir(), "lmm.db")
+			openAll(t, path, round)
+
+			check, err := db.New(path)
+			require.NoError(t, err)
+			var recorded int
+			require.NoError(t, check.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&recorded))
+			assert.Equal(t, 17, recorded)
+			require.NoError(t, check.Close())
+		}
+	})
+
+	for round := range 5 {
+		path := filepath.Join(t.TempDir(), "lmm.db")
+		ctx := t.Context()
+		seed, err := db.New(path)
+		require.NoError(t, err)
+		require.NoError(t, seed.SaveInstalledMod(ctx, &domain.InstalledMod{
+			Mod:          domain.Mod{ID: "off", SourceID: "src", Name: "Off", Version: "1", GameID: "g"},
+			ProfileName:  "default",
+			UpdatePolicy: domain.UpdateNotify,
+		}))
+		_, err = seed.Exec("DELETE FROM schema_migrations WHERE version >= 17")
+		require.NoError(t, err)
+		require.NoError(t, seed.Close())
+
+		openAll(t, path, round)
 
 		check, err := db.New(path)
 		require.NoError(t, err)
