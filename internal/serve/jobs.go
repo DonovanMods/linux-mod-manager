@@ -518,7 +518,12 @@ func (r *jobRegistry) run(j *job, apply func(context.Context, core.EventSink) (a
 				"job", j.id, "kind", j.kind, "panic", p, "stack", string(debug.Stack()))
 			result, err = nil, fmt.Errorf("%s job panicked: %v", j.kind, p)
 		}()
-		result, err = apply(r.rootCtx, sink)
+		// The job's context also carries its sink as the observer for
+		// source notices (#436): a throttled request or a stalled download
+		// deep inside a source is reported on THIS job, without every
+		// ModSource method between the Apply and the transport having to
+		// pass a sink along.
+		result, err = apply(core.WithSourceNotices(r.rootCtx, sink), sink)
 	}()
 
 	j.finish(result, err, time.Now())

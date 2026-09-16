@@ -323,11 +323,22 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 // Only the NAMED-source path and the all-sources-failed case reach here; an
 // aggregate search where some source worked reports the rest as
 // core.SearchReport.Warnings and answers 200.
+//
+// Two more are the local-index surface's (#410): a game whose identifier
+// for the source is missing or malformed is bad input (400), and an index
+// that could not be had at all is the upstream failing (502) - both
+// classified by core, the only package here that may name the sentinels.
 func searchErrorStatus(err error) int {
-	if errors.Is(err, domain.ErrAuthRequired) {
+	switch {
+	case errors.Is(err, domain.ErrAuthRequired):
 		return http.StatusUnauthorized
+	case core.IsGameIdentifierInvalid(err):
+		return http.StatusBadRequest
+	case core.IsIndexUnavailable(err):
+		return http.StatusBadGateway
+	default:
+		return http.StatusInternalServerError
 	}
-	return http.StatusInternalServerError
 }
 
 // maxPagingParam bounds every numeric paging parameter this endpoint

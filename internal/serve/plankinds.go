@@ -133,8 +133,23 @@ var errBadPlanRequest = errors.New("invalid plan request")
 // core call (PlanRelinkMod's mod lookup) or from a kind's own pre-check
 // (profile_sync's profile existence check) - answers 404, the same
 // not-found treatment every other resource lookup in this package gives.
+//
+// Three refusals are the user's game or configuration rather than the
+// server (#423, #410). A mod that needs a loader the game does not declare
+// is 409: the request is fine, the game's current state refuses it, and
+// the user resolves that and asks again - the envelope's details carry the
+// setup steps that say how. A game whose identifier for the source is
+// missing or malformed is 400, and an index that could not be had is 502,
+// exactly as the search and the index routes answer them.
 func planErrorStatus(err error) int {
+	var loader *core.LoaderRequiredError
 	switch {
+	case errors.As(err, &loader):
+		return http.StatusConflict
+	case core.IsGameIdentifierInvalid(err):
+		return http.StatusBadRequest
+	case core.IsIndexUnavailable(err):
+		return http.StatusBadGateway
 	case errors.Is(err, errBadPlanRequest):
 		return http.StatusBadRequest
 	case errors.Is(err, domain.ErrModNotFound),

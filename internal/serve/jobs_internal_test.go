@@ -780,3 +780,49 @@ func TestJobRegistry_ConcurrentSubscribersAndEmits(t *testing.T) {
 	}
 	waitFor(t, j.done(), "job completion")
 }
+
+// TestJobRegistry_ASourceNoticeLandsOnTheJob is #436's web half: whatever a
+// job's Apply is WAITING on deep inside a source or a download - a throttle
+// and its wait - arrives on that job's own event stream and on the activity
+// stream's progress frame, with the sentence core wrote, though the Apply
+// never passed the job's sink anywhere near the transport.
+func TestJobRegistry_ASourceNoticeLandsOnTheJob(t *testing.T) {
+	r := newTestRegistry(t, t.Context(), 8, 4)
+	_, frames, stop := r.watch(8)
+	defer stop()
+
+	id, err := r.Start("install", func(ctx context.Context, _ core.EventSink) (any, error) {
+		source.Notify(ctx, source.Notice{
+			Kind: source.NoticeRetry, Source: "Thunderstore", Reason: source.RetryRateLimited,
+			Attempt: 2, MaxAttempts: 3, Wait: 12 * time.Second,
+		})
+		return &core.InstallResult{}, nil
+	})
+	require.NoError(t, err)
+	j, ok := r.job(id)
+	require.True(t, ok)
+	waitFor(t, j.done(), "job completion")
+
+	replay, _, cancel := j.subscribe(8)
+	cancel()
+	require.Len(t, replay, 1)
+	warning, isWarning := replay[0].(core.WarningEvent)
+	require.True(t, isWarning, "%T", replay[0])
+	assert.Equal(t, core.SourceRetrying, warning.Phase)
+	assert.Equal(t, "Rate limited by Thunderstore; retrying in 12s (attempt 2 of 3).", warning.Message)
+
+	var progress *jobProgressFrame
+	for progress == nil {
+		select {
+		case ev := <-frames:
+			if f, ok := ev.Payload.(jobProgressFrame); ok {
+				progress = &f
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("no progress frame for the notice")
+		}
+	}
+	assert.Equal(t, id, progress.JobID)
+	assert.Equal(t, "source_retrying", progress.Phase)
+	assert.Equal(t, warning.Message, progress.Detail)
+}
