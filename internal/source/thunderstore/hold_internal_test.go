@@ -368,3 +368,16 @@ func TestHold_AListingNamesEveryHoldInForce(t *testing.T) {
 	clock.advance(breakerCooldown + time.Second)
 	assert.Empty(t, src.Holds(t.Context()), "an expired hold is not listed")
 }
+
+// TestHold_AHeldColdBuildLeavesNothingOnDisk: a refusal sends nothing and
+// writes nothing - it used to create the community's directory (and its
+// lock file) on the way to refusing, which then listed as an index.
+func TestHold_AHeldColdBuildLeavesNothingOnDisk(t *testing.T) {
+	cacheDir, clock := t.TempDir(), newHoldClock()
+	src := holdProcess(t, cacheDir, "http://127.0.0.1:9", clock)
+	src.holds.named("", clock.now().Add(10*time.Minute), "rate limited")
+
+	var later *source.RetryLaterError
+	require.ErrorAs(t, search(src, t.Context(), noticeCommunity), &later)
+	assert.NoDirExists(t, filepath.Join(cacheDir, rootDirName, noticeCommunity))
+}

@@ -142,6 +142,15 @@ func (s *Source) ensureIndex(ctx context.Context, community string, force bool, 
 		return current, rows, true, nil
 	}
 
+	// A held host or community refuses before anything is locked or
+	// created: a refusal leaves no directory behind to list as an index.
+	if heldErr := s.heldRefusal(ctx, community); heldErr != nil {
+		if current, rows, usable := s.usable(community); usable {
+			return current, rows, true, heldErr
+		}
+		return watermark{}, nil, false, heldErr
+	}
+
 	// From here a rebuild is possible, so the CROSS-PROCESS lock applies
 	// (T1 review #2): `lmm serve` and a `lmm search` in a terminal are two
 	// processes sharing one TTL, and two of their commits interleaving
@@ -200,11 +209,10 @@ func (s *Source) ensureIndex(ctx context.Context, community string, force bool, 
 // is not a package list - is recorded against it, and a good answer clears
 // it.
 func (s *Source) refresh(ctx context.Context, community string, current watermark, usable bool, progress source.IndexProgressFunc) (watermark, error) {
-	if held, scope, open := s.holds.active(community); open {
-		source.Notify(ctx, source.Notice{Kind: source.NoticeSuspended, Source: serviceName, GameID: scope, Until: held.Until})
-		return watermark{}, indexUnavailable(community, &source.RetryLaterError{
-			Source: serviceName, GameID: scope, Until: held.Until, Reason: held.Reason,
-		})
+	// Asked again under the lock: another process may have set a hold
+	// while this one waited for it.
+	if err := s.heldRefusal(ctx, community); err != nil {
+		return watermark{}, err
 	}
 	wm, err := s.fetchAndBuild(ctx, community, current, usable, progress)
 	var doc *documentError
@@ -215,6 +223,19 @@ func (s *Source) refresh(ctx context.Context, community string, current watermar
 		s.holds.failed(community, doc.Error())
 	}
 	return wm, err
+}
+
+// heldRefusal is the refusal, and its notice, for a request about
+// community while the host or community is held; nil otherwise.
+func (s *Source) heldRefusal(ctx context.Context, community string) error {
+	held, scope, open := s.holds.active(community)
+	if !open {
+		return nil
+	}
+	source.Notify(ctx, source.Notice{Kind: source.NoticeSuspended, Source: serviceName, GameID: scope, Until: held.Until})
+	return indexUnavailable(community, &source.RetryLaterError{
+		Source: serviceName, GameID: scope, Until: held.Until, Reason: held.Reason,
+	})
 }
 
 // fetchAndBuild is refresh's request and rebuild.
