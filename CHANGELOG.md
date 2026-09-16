@@ -1500,6 +1500,19 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A warning only a download can raise now reaches you whichever command
+  downloaded (#425).** #424's "BepInEx found in <path>; declare it with
+  `lmm game edit <id> --loader bepinex`" and #358's "layout lmm cannot
+  place" are only knowable once an archive is extracted, and every flow's
+  download step dropped them — `lmm install`'s too — while an archive from a
+  directory source, or a Steam Workshop item fetched with steamcmd, raised
+  them with nowhere to go but the log (off by default). They now reach the
+  terminal as `Warning: <mod>: <message>` on stderr from `lmm install`,
+  `update`, `deploy`, `profile switch`/`apply`/`import`, `snapshot restore`
+  and `import`, as a `Warning:` sub-line under the repair in
+  `lmm verify --fix`, and in the web UI's job activity. On the wire they
+  are ordinary `warning` events with the new phase `download_warning`.
+
 - **`lmm verify` no longer says "No installed mods to verify." about mods it
   simply has no checksums for (#429).** A game whose mods were all tracked
   from Steam, or all imported from disk, read as empty: the run began with

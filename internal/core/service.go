@@ -1322,7 +1322,7 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 		if !servesLocal || !lfs.ServesLocalFiles() {
 			return nil, fmt.Errorf("source %q returned a local file:// URL but is not a directory source", sourceID)
 		}
-		return s.ingestLocalToCache(ctx, gameCache, game, mod, file, localPath)
+		return s.ingestLocalToCache(ctx, gameCache, game, mod, file, localPath, sink)
 	}
 
 	// Stage the download under the data dir, not $TMPDIR — see newStagingDir.
@@ -1509,7 +1509,10 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 // install/verify --fix converge instead of looping on NO CHECKSUM. A
 // directory with no regular files yields an empty checksum - nothing to
 // fingerprint - and callers must report that honestly.
-func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string) (*DownloadModResult, error) {
+//
+// sink receives the archive's download-time warnings (#425) - the same
+// DownloadWarning events a fetched archive raises - and may be nil.
+func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string, sink EventSink) (*DownloadModResult, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
 		return nil, fmt.Errorf("local mod path: %w", err)
@@ -1585,7 +1588,7 @@ func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache
 			return nil, fmt.Errorf("hashing local mod file: %w", err)
 		}
 	default:
-		if members, err = s.extractIntoStaging(ctx, game, mod, localPath, cachePath, stagePath, nil); err != nil {
+		if members, err = s.extractIntoStaging(ctx, game, mod, localPath, cachePath, stagePath, sink); err != nil {
 			return nil, fmt.Errorf("extracting mod: %w", err)
 		}
 		if checksum, err = md5File(localPath); err != nil {
@@ -1809,14 +1812,15 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 	// A download has no plan to carry the adapter's warnings: its shape is
 	// not knowable until it is extracted, which is this function. So they
 	// ride the flow's own event sink as ordinary WarningEvents - the wire
-	// type every warning in every flow already uses - and the log keeps the
+	// type every warning in every flow already uses - under the one phase
+	// every flow forwards (DownloadWarning, #425), and the log keeps the
 	// record for a caller that passed no sink.
 	for _, w := range layout.Warnings {
 		s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
 		if sink != nil {
 			sink(WarningEvent{
 				Scope:   Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}},
-				Phase:   InstallWarning,
+				Phase:   DownloadWarning,
 				Message: w,
 			})
 		}

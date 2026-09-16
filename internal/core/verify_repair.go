@@ -56,7 +56,7 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 	// source with a non-identity SourceIDs mapping, while the GetModFiles
 	// lookup directly above was already mapped. The cache side is unaffected
 	// either way: every cache path is keyed off game.ID, not mod.GameID.
-	result, err := r.svc.downloadMod(ctx, mod.SourceID, r.game, SourceMappedMod(r.game, &mod.Mod), downloadFile, nil)
+	result, err := r.svc.downloadMod(ctx, mod.SourceID, r.game, SourceMappedMod(r.game, &mod.Mod), downloadFile, r.downloadWarningSink())
 	if err != nil {
 		return false, err
 	}
@@ -67,6 +67,18 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 		return false, fmt.Errorf("saving checksum: %w", err)
 	}
 	return true, nil
+}
+
+// downloadWarningSink carries a re-download's download-time warnings
+// (#425) into verify's own stream, as a sub-line under the repair that
+// fetched it - verify's events are VerifyEvents, so the flows' shared
+// DownloadWarning phase has no arm there.
+func (r *verifyRun) downloadWarningSink() EventSink {
+	return func(e Event) {
+		if w, ok := e.(WarningEvent); ok && w.Phase == DownloadWarning {
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + w.Message})
+		}
+	}
 }
 
 // servesRecordedVersion reports whether file is the source's copy of the
