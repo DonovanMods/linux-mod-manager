@@ -1598,9 +1598,10 @@ create`, `lmm profile import` or an install that makes it.
   file lmm cannot read, which could be the active one - is reported by
   `lmm profile list` on stderr (and in its `--json` document's
   `warnings`). lmm no longer guesses which profile is active there: `lmm
-deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links and
-  the web UI's equivalents (`409`) refuse, name the cause and point at
-  `lmm profile list`. A guess is what let a typo in the active profile's
+deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
+  a mod_path move with files deployed (`lmm game edit --mod-path`, and
+  detection's repair of a configured game) and the web UI's equivalents
+  (`409`) refuse, name the cause and point at `lmm profile list`. A guess is what let a typo in the active profile's
   file turn `lmm purge -p <other>` into a full purge that deleted the
   active profile's files. A game with a single profile file counts that
   profile as active, marked or not. `lmm profile switch <name>` is the way

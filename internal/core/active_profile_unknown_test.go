@@ -417,3 +417,67 @@ func keysOf(m map[string]string) []string {
 	}
 	return keys
 }
+
+// writeProfileFile writes gameID's profile file by hand - text is its whole
+// content.
+func writeProfileFile(t *testing.T, svc *core.Service, gameID, name, text string) {
+	t.Helper()
+	dir := filepath.Join(svc.ConfigDir(), "games", gameID, "profiles")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name+".yaml"), []byte(text), 0o644))
+}
+
+// spoilActiveProfile leaves g1's profiles default and second saying no
+// single thing about which of them is active, the three ways
+// ErrActiveProfileUnknown names.
+var spoilActiveProfile = map[string]func(t *testing.T, svc *core.Service){
+	"none marked": func(t *testing.T, svc *core.Service) {
+		writeProfileFile(t, svc, "g1", "default", "name: default\ngame_id: g1\nmods: []\n")
+		writeProfileFile(t, svc, "g1", "second", "name: second\ngame_id: g1\nmods: []\n")
+	},
+	"both marked": func(t *testing.T, svc *core.Service) {
+		writeProfileFile(t, svc, "g1", "default", "name: default\ngame_id: g1\nmods: []\nis_default: true\n")
+		writeProfileFile(t, svc, "g1", "second", "name: second\ngame_id: g1\nmods: []\nis_default: true\n")
+	},
+	"a file it cannot read": func(t *testing.T, svc *core.Service) {
+		writeProfileFile(t, svc, "g1", "second", "name: second\n  game_id: g1\n")
+	},
+}
+
+// TestSetGameModPath_AnUnknownActiveProfileRefusesTheMove: the mod_path
+// refusal (#427) names the purges that clear the files deployed under it
+// and the profile `lmm deploy` puts back. With no single active profile the
+// latter is a guess - GetDefault's - and every purge it names is refused
+// (#445 review F2), so the move is refused with that fail-closed error
+// instead. With nothing deployed there is nothing to strand, and the move
+// goes ahead whatever the profile files say.
+func TestSetGameModPath_AnUnknownActiveProfileRefusesTheMove(t *testing.T) {
+	ctx := context.Background()
+	for name, spoil := range spoilActiveProfile {
+		t.Run(name, func(t *testing.T) {
+			svc := newFlowsTestService(t)
+			game := seedModPathGame(t, svc, true)
+			deployOneFile(t, svc, game, "default", "m1")
+			spoil(t, svc)
+
+			_, err := svc.SetGameModPath(ctx, game.ID, game.InstallPath)
+
+			requireActiveUnknown(t, err, "mod_path", "1 deployed file(s)")
+			var inUse *core.GameModPathInUseError
+			assert.NotErrorAs(t, err, &inUse, "no purge list a purge would refuse")
+			reloaded, gerr := svc.GetGame(game.ID)
+			require.NoError(t, gerr)
+			assert.Equal(t, game.ModPath, reloaded.ModPath)
+		})
+
+		t.Run(name+", nothing deployed", func(t *testing.T) {
+			svc := newFlowsTestService(t)
+			game := seedModPathGame(t, svc, true)
+			spoil(t, svc)
+
+			entry, err := svc.SetGameModPath(ctx, game.ID, game.InstallPath)
+			require.NoError(t, err)
+			assert.Equal(t, game.InstallPath, entry.ModPath)
+		})
+	}
+}

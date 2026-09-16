@@ -137,6 +137,23 @@ func TestAPIGameSources_ModPathRefusals(t *testing.T) {
 		assert.Equal(t, game.ModPath, reloaded.ModPath)
 	})
 
+	// #445 review F2: with no single active profile, the purges the
+	// refusal would name are refused too - so the move is refused with that.
+	t.Run("an unknown active profile is 409", func(t *testing.T) {
+		s, game := newMissingModPathServer(t)
+		require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+		deployOneModFile(t, s.svc, game)
+		dir := filepath.Join(s.svc.ConfigDir(), "games", "skyrim-se", "profiles")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "second.yaml"), []byte("name: second\n  game_id: skyrim-se\n"), 0o644))
+
+		rec := doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se", `{"mod_path":`+jsonString(game.InstallPath)+`}`)
+		require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "lmm profile list")
+		reloaded, err := s.svc.GetGame("skyrim-se")
+		require.NoError(t, err)
+		assert.Equal(t, game.ModPath, reloaded.ModPath)
+	})
+
 	t.Run("with the loader is 400", func(t *testing.T) {
 		s, game := newMissingModPathServer(t)
 		rec := doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se",
@@ -217,6 +234,31 @@ func TestAPIGameDetectApply_RefusesToMoveAModPathWithFilesDeployed(t *testing.T)
 	profile, err := s.svc.NewProfileManager().Get(t.Context(), "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Len(t, profile.Mods, 1, "the default profile was not reset either")
+}
+
+// TestAPIGameDetectApply_AnUnknownActiveProfileIs409 (#445 review F2): the
+// same repair, with a profile file lmm cannot read, is refused as on PUT -
+// 409, naming `lmm profile list` - rather than naming purges that would be
+// refused too.
+func TestAPIGameDetectApply_AnUnknownActiveProfileIs409(t *testing.T) {
+	s := newGamesServer(t)
+	install := fakeSteamApp(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
+	game := &domain.Game{
+		ID: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: install,
+		ModPath: filepath.Join(install, "mods"), SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"},
+	}
+	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+	require.NoError(t, s.svc.SaveGame(t.Context(), game))
+	deployOneModFile(t, s.svc, game)
+	dir := filepath.Join(s.svc.ConfigDir(), "games", "skyrim-se", "profiles")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "second.yaml"), []byte("name: second\n  game_id: skyrim-se\n"), 0o644))
+
+	rec := doAPI(s, http.MethodPost, "/api/v1/games/detect", `{"select":["1"]}`)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "lmm profile list")
+	reloaded, err := s.svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, game.ModPath, reloaded.ModPath)
 }
 
 // deployOneModFile deploys one cached file for game through the real

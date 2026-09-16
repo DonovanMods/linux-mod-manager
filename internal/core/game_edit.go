@@ -248,6 +248,10 @@ func (s *Service) SetGameModPath(ctx context.Context, gameID, modPath string) (*
 // file relative to the mod_path it was deployed under, so a move under a
 // live deployment strands every file: still live, no longer recorded, and
 // looked for in the wrong place by the next purge. The purge comes first.
+// When the profile files do not say which profile is active, the refusal
+// is ErrActiveProfileUnknown instead (#445 review F2): every purge the
+// in-use error would name refuses then, and the profile it would name for
+// `lmm deploy` would be a guess.
 func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to string) error {
 	if samePath(game.ModPath, to) {
 		return nil
@@ -265,24 +269,11 @@ func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to s
 		inUse.Profiles = append(inUse.Profiles, ProfileDeployedFiles{Profile: profile, DeployedFiles: counts[profile]})
 		inUse.DeployedFiles += counts[profile]
 	}
-	if inUse.ActiveProfile, err = s.activeProfileName(ctx, game.ID); err != nil {
-		return err
+	if inUse.ActiveProfile, err = s.liveProfile(ctx, game.ID); err != nil {
+		return fmt.Errorf("cannot move the mod_path of %s: %d deployed file(s) are recorded under it, and they cannot be purged until lmm can tell which profile is active - %w",
+			game.ID, inUse.DeployedFiles, err)
 	}
 	return inUse
-}
-
-// activeProfileName is the profile a command without --profile acts on:
-// the game's default profile, or "default" when it has none marked - the
-// rule `lmm deploy` and `lmm purge` resolve by.
-func (s *Service) activeProfileName(ctx context.Context, gameID string) (string, error) {
-	profile, err := s.NewProfileManager().GetDefault(ctx, gameID)
-	if errors.Is(err, domain.ErrProfileNotFound) {
-		return "default", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
-	}
-	return profile.Name, nil
 }
 
 // samePath reports whether a and b name the same directory: equal once
