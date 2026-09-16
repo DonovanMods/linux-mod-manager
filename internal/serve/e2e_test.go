@@ -4127,6 +4127,41 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	}, 5*time.Second, 20*time.Millisecond, "set-default must actually flip the default")
 	settle()
 
+	// Deleting outpost while it is the active profile is refused (#446) -
+	// its mods are the ones in the game directory - and the confirm row
+	// says how to proceed.
+	f.runInBrowser(t,
+		clickInRow(".profiles-row", "outpost", "Delete"),
+		chromedp.WaitVisible(`.profiles-row--confirm`, chromedp.ByQuery),
+		chromedp.Click(`.profiles-row--confirm button.button--danger`, chromedp.ByQuery),
+		pollUntil(`(document.querySelector(".profiles-row--confirm .modal__error")?.textContent ?? "").includes("lmm profile switch")`),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profiles-row--confirm button"))
+				.find((b) => b.textContent.trim() === "Cancel").click();
+		`, nil),
+		pollUntil(`document.querySelector(".profiles-row--confirm") === null`),
+	)
+	_, err = f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "outpost")
+	require.NoError(t, err, "the active profile must not be deleted")
+	settle()
+
+	// Make "default" the default again, so outpost can go.
+	f.runInBrowser(t, clickInRow(".profiles-row", "default", "Set default"))
+	require.Eventually(t, func() bool {
+		listing, err := f.Svc.ListProfiles(t.Context(), f.Game.ID)
+		if err != nil {
+			return false
+		}
+		for _, p := range listing.Profiles {
+			if p.Name == "default" {
+				return p.IsDefault
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond, "set-default must move the default back")
+	f.runInBrowser(t, pollUntil(`!Array.from(document.querySelectorAll(".profiles-row")).find((r) => r.textContent.includes("outpost")).querySelector(".badge")`))
+	settle()
+
 	// Delete outpost (inline confirm - no nested modal).
 	f.runInBrowser(t,
 		clickInRow(".profiles-row", "outpost", "Delete"),
@@ -4211,7 +4246,15 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	assert.Equal(t, "fake", byID["b"].SourceID)
 	assert.Equal(t, "1.0", byID["b"].Version)
 
-	assert.Empty(t, f.BrowserErrors())
+	// The refused delete of the active profile is the one expected console
+	// line (Chrome logs the 409). Nothing else may error.
+	var unexpected []string
+	for _, e := range f.BrowserErrors() {
+		if !strings.Contains(e, "409 (Conflict) (") || !strings.Contains(e, "/api/v1/profiles/outpost?") {
+			unexpected = append(unexpected, e)
+		}
+	}
+	assert.Empty(t, unexpected)
 }
 
 // TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed is N1's
