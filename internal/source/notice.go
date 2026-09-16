@@ -115,10 +115,21 @@ type RetryLaterError struct {
 	Reason string
 }
 
-// Error names the service, why it is not being asked, and when it will be.
+// Error names the service, when it will be asked again - in local time,
+// which is the clock the reader has - and why not before.
 func (e *RetryLaterError) Error() string {
-	return fmt.Sprintf("%v: %s is not being asked again until %s (%s)",
-		ErrIndexUnavailable, e.Source, e.Until.UTC().Format(time.RFC3339), e.Reason)
+	return fmt.Sprintf("not asking %s again until %s: %s", e.Source, clockTime(e.Until), e.Reason)
+}
+
+// clockTime renders a moment the way a person checks it against a clock:
+// the time alone when it is within the next twelve hours, the date too
+// otherwise.
+func clockTime(t time.Time) string {
+	local := t.Local()
+	if d := time.Until(t); d > -12*time.Hour && d < 12*time.Hour {
+		return local.Format("15:04:05")
+	}
+	return local.Format("2006-01-02 15:04:05")
 }
 
 // Is makes errors.Is(err, ErrIndexUnavailable) true.

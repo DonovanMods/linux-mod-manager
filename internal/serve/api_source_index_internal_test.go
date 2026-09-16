@@ -237,7 +237,7 @@ func TestAPISourceIndexRefresh_NoIndexAndNoUpstreamIs502(t *testing.T) {
 	rec := doAPI(s, http.MethodPost, indexPath(game.ID), `{"refresh":true}`)
 	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
 	env := decodeIndexEnvelope(t, rec.Body.Bytes())
-	assert.Contains(t, env.Error, "not being asked again")
+	assert.Contains(t, env.Error, "not asking Thunderstore again until")
 	assert.Equal(t, map[string]any{
 		"source": indexSourceID, "game": "lethal-company",
 		"reason": "suspended after repeated failures", "retry_at": "2026-09-16T12:05:00Z",

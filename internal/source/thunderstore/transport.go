@@ -146,7 +146,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			_ = resp.Body.Close()
 			if hint > maxRetryAfter {
 				until := t.now().Add(hint)
-				reason := fmt.Sprintf("%s asked lmm to wait %s (%v)", serviceName, hint, lastErr)
+				reason := fmt.Sprintf("%v, which asked lmm to wait %s", lastErr, hint)
 				t.suspend(until, reason)
 				return nil, &source.RetryLaterError{Source: serviceName, Until: until, Reason: reason}
 			}

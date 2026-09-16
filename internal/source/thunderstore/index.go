@@ -11,6 +11,7 @@ package thunderstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -371,7 +372,14 @@ func (s *Source) communityLock(community string) *sync.Mutex {
 // which failure it actually was. Flattening the cause to text with %v left
 // callers unable to tell an unreachable upstream from an unwritable cache
 // directory without matching on a sentence.
+//
+// A cause that already IS the sentinel (a host lmm is refusing to ask) is
+// not wrapped in it a second time, which only repeated "source index is
+// unavailable" in the sentence a user reads.
 func indexUnavailable(community string, err error) error {
+	if errors.Is(err, ErrIndexUnavailable) {
+		return fmt.Errorf("source %q: the %s index could not be built: %w", sourceID, community, err)
+	}
 	return fmt.Errorf("source %q: the %s index could not be built: %w: %w", sourceID, community, err, ErrIndexUnavailable)
 }
 

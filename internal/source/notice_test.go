@@ -66,7 +66,7 @@ func TestWithNotices_NilObserverSilencesTheOuterOne(t *testing.T) {
 // even try names the moment it lifts, as data, and still classifies as the
 // index being unavailable.
 func TestRetryLaterError_CarriesWhenAndMatchesTheIndexSentinel(t *testing.T) {
-	until := time.Date(2026, 9, 16, 15, 4, 5, 0, time.UTC)
+	until := time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC) // far from any "now" a test runs at
 	err := fmt.Errorf("fetching: %w", &source.RetryLaterError{
 		Source: "Thunderstore", Until: until, Reason: "suspended after repeated failures",
 	})
@@ -75,7 +75,11 @@ func TestRetryLaterError_CarriesWhenAndMatchesTheIndexSentinel(t *testing.T) {
 	require.True(t, errors.As(err, &later))
 	assert.Equal(t, until, later.Until)
 	assert.ErrorIs(t, err, source.ErrIndexUnavailable)
-	assert.Contains(t, err.Error(), "Thunderstore")
+	assert.Contains(t, err.Error(), "not asking Thunderstore again until")
 	assert.Contains(t, err.Error(), "suspended after repeated failures")
-	assert.Contains(t, err.Error(), "2026-09-16T15:04:05Z")
+	assert.Contains(t, err.Error(), until.Local().Format("2006-01-02 15:04:05"), "a moment far from now carries its date, in local time")
+
+	soon := time.Now().Add(5 * time.Minute)
+	near := &source.RetryLaterError{Source: "Thunderstore", Until: soon, Reason: "x"}
+	assert.Contains(t, near.Error(), "until "+soon.Local().Format("15:04:05")+": x", "a moment today is a clock time")
 }

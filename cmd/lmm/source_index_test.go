@@ -268,11 +268,11 @@ func TestReportError_JSON_IndexUnavailableError(t *testing.T) {
 		Source: "thunderstore", Game: "lethal-company",
 		Reason:  "suspended after repeated failures",
 		RetryAt: time.Date(2026, 9, 16, 12, 5, 0, 0, time.UTC),
-		Err:     errors.New("source index is unavailable: Thunderstore is not being asked again until 2026-09-16T12:05:00Z (suspended after repeated failures)"),
+		Err:     errors.New(`source "thunderstore": the lethal-company index could not be built: not asking Thunderstore again until 2026-09-16 08:05:00: suspended after repeated failures`),
 	}
 	out := captureStdout(t, func() error { reportError(err); return nil })
 	assert.Equal(t, "{\n"+
-		"  \"error\": \"source index is unavailable: Thunderstore is not being asked again until 2026-09-16T12:05:00Z (suspended after repeated failures)\",\n"+
+		"  \"error\": \"source \\\"thunderstore\\\": the lethal-company index could not be built: not asking Thunderstore again until 2026-09-16 08:05:00: suspended after repeated failures\",\n"+
 		"  \"details\": {\n"+
 		"    \"source\": \"thunderstore\",\n"+
 		"    \"game\": \"lethal-company\",\n"+
