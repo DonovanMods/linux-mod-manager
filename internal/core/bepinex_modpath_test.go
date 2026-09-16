@@ -156,6 +156,31 @@ func TestAddGame_ABepInExGameDefaultsItsModPathToTheInstallPath(t *testing.T) {
 		})
 	}
 
+	// #413 final review F1: `game add --from-detected` and POST
+	// /api/v1/games prefill an uncatalogued candidate's mod path before
+	// AddGame's own default can run, so the prefill must apply the same
+	// rule - or `--loader bepinex` writes a game contradicted from birth,
+	// and `--adapter bepinex` is refused over a mod path nobody typed.
+	for name, overrides := range cases {
+		t.Run("from a detected, uncatalogued game: "+name, func(t *testing.T) {
+			svc := newGameAddService(t)
+			svc.RegisterAdapter(bepinex.New())
+			install := t.TempDir()
+			overrides.SourceID, overrides.Identifier = "nexusmods", "oddity"
+			spec, err := svc.PrefillGameSpecFromDetected(domain.DetectedGame{
+				SteamAppID: "777777", Slug: "oddity", Name: "Oddity", InstallPath: install,
+			}, overrides)
+			require.NoError(t, err)
+			assert.Equal(t, install, spec.ModPath)
+
+			entry, err := svc.AddGame(t.Context(), spec)
+			require.NoError(t, err)
+			assert.Equal(t, install, entry.ModPath)
+			assert.Equal(t, "bepinex", entry.EffectiveAdapter)
+			assert.Empty(t, svc.AdapterConfigWarning(entry.ID), "no contradiction at birth")
+		})
+	}
+
 	t.Run("every other game keeps <install>/mods", func(t *testing.T) {
 		spec := core.GameSpec{InstallPath: "/games/skyrim"}
 		assert.Equal(t, filepath.Join("/games/skyrim", "mods"), spec.DefaultModPath())
