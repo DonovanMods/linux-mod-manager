@@ -245,6 +245,52 @@ func TestE2E_UpdatesCardSelectAll_SkipsTheRowsWithNoCheckbox(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// typeIntoOmnibar narrows the library by text the way a user does: focus the
+// top bar's field and type. It does not press Enter, which would fan the
+// query out to the sources instead.
+func typeIntoOmnibar(text string) chromedp.Action {
+	return chromedp.SendKeys(`.omnibar`, text, chromedp.ByQuery)
+}
+
+// TestE2E_LibrarySelectAll_IsRefusedWithNothingItCouldTake is issue 434's
+// empty case. With only Steam-managed rows in view the box used to be live,
+// unchecked and named "Select all 0 mods in view" - a checkbox that would
+// not tick, saying so only in a tooltip. The Updates card's box has always
+// been disabled in its equivalent state; the library's now agrees.
+func TestE2E_LibrarySelectAll_IsRefusedWithNothingItCouldTake(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+	seedWorkshopManagedMod(t, f)
+
+	var box struct {
+		Disabled bool   `json:"disabled"`
+		Title    string `json:"title"`
+	}
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 2`),
+		typeIntoOmnibar("Sample Workshop"),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 1`),
+		chromedp.Evaluate(`(() => {
+			const b = document.querySelector('[data-testid="select-all"]');
+			return {disabled: b.disabled, title: b.getAttribute("title") ?? ""};
+		})()`, &box),
+	)
+	assert.True(t, box.Disabled, "with nothing in view it could take, the box is refused, not silently inert")
+	assert.Contains(t, box.Title, "Steam", "and it still says why")
+
+	// The keyboard binding has nothing to take either.
+	var selected int
+	f.runInBrowser(t,
+		chromedp.Blur(`.omnibar`, chromedp.ByQuery),
+		chromedp.KeyEvent("a"),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelectorAll(".mod-row--selected").length`, &selected),
+	)
+	assert.Zero(t, selected)
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // updatesCardStateJS reads the Updates card's selection surfaces together:
 // which rows are ticked, and what the batch button says and allows.
 const updatesCardStateJS = `(() => {

@@ -822,6 +822,7 @@ export function Library({
                           data-testid="select-all"
                           checked=${allTaken}
                           indeterminate=${takenCount > 0 && !allTaken}
+                          disabled=${selectable.length === 0}
                           aria-label=${selectAllLabel}
                           title=${selectAllTitle}
                           onChange=${toggleSelectAll}
