@@ -487,6 +487,9 @@ func adapterCopyOnceFiles(a adapter.GameAdapter, game *domain.Game, files []stri
 // those members, and applies it in place. It returns the Layout so the
 // caller can surface its warnings, which a download has no plan to carry.
 //
+// modName is the MOD's name as its source reports it, which is the one
+// thing this path has that the archive does not.
+//
 // It lists here rather than taking a member slice because the download
 // path's caller walks the tree afterwards anyway; keeping the listing here
 // means the claim, the adapter and the walk all see the same tree, in that
@@ -504,7 +507,13 @@ func (s *Service) layoutStagedExtract(game *domain.Game, modName, root string) (
 	if err := s.requireAdapterClaim(game, modName, members); err != nil {
 		return adapter.Layout{}, err
 	}
-	layout, err := s.archiveLayout(game, "", members)
+	// The mod's own name, not "": an adapter that names a directory after
+	// the mod (bepinex wraps a loose root .dll in
+	// BepInEx/plugins/<ModName>/) has nothing else to call it on this path,
+	// and the archive's own shape cannot supply one - a bare Foo.dll has no
+	// top-level directory to fold. A download HAS a real name, from its
+	// source, and it is the name the user sees in `lmm list`.
+	layout, err := s.archiveLayout(game, modName, members)
 	if err != nil {
 		return adapter.Layout{}, err
 	}

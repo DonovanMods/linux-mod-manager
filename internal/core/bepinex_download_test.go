@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -420,4 +422,55 @@ func TestDownloadIngest_BepInEx_ADeclaredGameGetsNoNotice(t *testing.T) {
 			assert.NotContains(t, w.Message, "declare it with")
 		}
 	}
+}
+
+// TestDownloadIngest_BepInEx_ALooseDLLIsNamedAfterTheMod is the one shape
+// whose layout depends on something the ARCHIVE does not carry: a bare
+// `Thing.dll` at the root has no top-level directory to fold, so the plugin
+// directory it lands in is named after the MOD.
+//
+// The download path is the only ingest with a real name to give - it comes
+// from the source, and it is the name the user sees in `lmm list` - which is
+// exactly why it has to be passed to the adapter rather than left empty.
+// Empty collapses `BepInEx/plugins//Thing.dll` to `BepInEx/plugins/`, and
+// the plugin deploys loose beside every other mod's.
+func TestDownloadIngest_BepInEx_ALooseDLLIsNamedAfterTheMod(t *testing.T) {
+	fixture := newBepInExDownloadFixture(t, map[string]string{
+		"Thing.dll":     "assembly",
+		"Thing.xml":     "<doc/>",
+		"manifest.json": "{}",
+	}, true)
+	require.NoError(t, fixture.download(t))
+
+	entry := fixture.svc.GetGameCache(fixture.game).ModPath(
+		fixture.game.ID, "bepinex-repo", fixture.mod.ID, fixture.file.Version)
+	assert.Equal(t, []string{
+		"BepInEx/plugins/Thing/Thing.dll",
+		"BepInEx/plugins/Thing/Thing.xml",
+	}, cacheTreeForTest(t, entry))
+}
+
+// cacheTreeForTest lists a cache entry's regular files as slash-separated
+// relative paths, sorted, skipping lmm's own bookkeeping entries.
+func cacheTreeForTest(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	require.NoError(t, filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		require.NoError(t, err)
+		if strings.HasPrefix(d.Name(), cache.ReservedPrefix) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, p)
+		require.NoError(t, rerr)
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	}))
+	sort.Strings(out)
+	return out
 }
