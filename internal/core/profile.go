@@ -634,6 +634,22 @@ func (s *Service) liveProfile(ctx context.Context, gameID string) (string, error
 	return profile.Name, nil
 }
 
+// refuseInactive refuses verb for profileName unless it is gameID's live
+// profile (#445): the game directory holds the active profile's
+// deployment, so deploying another profile there mixes two profiles' mods,
+// and purging one removes files that profile does not own.
+func (s *Service) refuseInactive(ctx context.Context, gameID, profileName, verb string) error {
+	live, err := s.liveProfile(ctx, gameID)
+	if err != nil {
+		return err
+	}
+	if live == profileName {
+		return nil
+	}
+	return fmt.Errorf("%w: cannot %s profile %q of %s - the game directory holds the active profile %q's mods; run `lmm profile switch %s` to make it active first",
+		ErrProfileNotActive, verb, profileName, gameID, live, profileName)
+}
+
 // flaggedActiveProfile returns gameID's one profile whose file says
 // `is_default: true`, by file name, or "" when none does, several do, or a
 // profile file cannot be read - the cases where "which profile is active?"

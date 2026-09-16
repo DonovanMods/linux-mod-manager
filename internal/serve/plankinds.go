@@ -133,10 +133,15 @@ var errBadPlanRequest = errors.New("invalid plan request")
 // core call (PlanRelinkMod's mod lookup) or from a kind's own pre-check
 // (profile_sync's profile existence check) - answers 404, the same
 // not-found treatment every other resource lookup in this package gives.
+// A deploy or purge asked for a profile that is not the game's active one
+// (#445) answers 409: the request is well-formed and the profile exists,
+// but the game's state - which profile is live - refuses it until a switch.
 func planErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, errBadPlanRequest):
 		return http.StatusBadRequest
+	case errors.Is(err, core.ErrProfileNotActive):
+		return http.StatusConflict
 	case errors.Is(err, domain.ErrModNotFound),
 		errors.Is(err, domain.ErrGameNotFound),
 		errors.Is(err, domain.ErrProfileNotFound),

@@ -142,6 +142,15 @@ func (e *GameDetectPartialError) Details() any { return e.Result }
 // frontend's 409 never depends on an untyped error's wording (#332 M6).
 var ErrProfileExists = errors.New("profile already exists")
 
+// ErrProfileNotActive is returned when a flow that writes into a game's
+// directory - deploy, purge (#445) - is asked to act for a profile that is
+// not the game's active one. A game has one directory, holding the active
+// profile's deployment: deploying another profile there mixes two
+// profiles' mods, and purging one removes files it does not own. The error
+// names the active profile and `lmm profile switch`, the way to make
+// another profile live.
+var ErrProfileNotActive = errors.New("profile is not active")
+
 // ErrConfirmationRequired is returned by a frontend-facing entry point that
 // would have to prompt but cannot - the CLI's --json mode, which never reads
 // stdin (Ruling 2). The decision must come from a flag instead.

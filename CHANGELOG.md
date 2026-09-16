@@ -1472,6 +1472,16 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **`lmm deploy` and `lmm purge` act for the active profile only (#445).**
+  A game has one game directory, and it holds the active profile's mods.
+  `lmm deploy -p <other profile>` deployed that profile's mods beside them,
+  and `lmm purge -p <other profile>` removed files that profile did not
+  own. Both — and the web UI's Deploy and per-profile Purge, which answer
+  `409` — now refuse any profile but the active one, name the active
+  profile, and point at `lmm profile switch`, which makes a profile active
+  and deploys it. A plan made before another profile became active is
+  refused when applied.
+
 - **A profile you are not using keeps its mods (#444).** Every `lmm profile
 switch` marks the profile you leave as having its mods switched off —
   that is how it takes them out of the game directory — and three flows

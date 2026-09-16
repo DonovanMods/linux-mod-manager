@@ -256,9 +256,16 @@ type PurgePlan struct {
 // pre-lift cmd/lmm/purge.go did itself before prompting (its "getting
 // installed mods: …" wording is preserved on that read's failure).
 //
+// A purge acts for the game's active profile only (#445): any other
+// profile is refused with ErrProfileNotActive, since its files are not the
+// ones in the game directory.
+//
 // The returned plan is a snapshot: pass it to ApplyPurge promptly, and be
 // ready for ErrStalePlan if the installed set moved underneath it.
 func (s *Service) PlanPurge(ctx context.Context, game *domain.Game, profileName string, opts PurgeOptions) (*PurgePlan, error) {
+	if err := s.refuseInactive(ctx, game.ID, profileName, "purge"); err != nil {
+		return nil, err
+	}
 	installed, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
@@ -300,6 +307,9 @@ func (s *Service) ApplyPurge(ctx context.Context, game *domain.Game, plan *Purge
 	defer release()
 	if plan == nil {
 		return &PurgeResult{}, errors.New("purge plan is nil: call PlanPurge first")
+	}
+	if err := s.refuseInactive(ctx, game.ID, plan.Profile, "purge"); err != nil {
+		return &PurgeResult{}, err
 	}
 	if err := s.checkRemovalPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
 		return &PurgeResult{}, err
@@ -375,6 +385,9 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 		return &PurgeResult{}, err
 	}
 	defer release()
+	if err := s.refuseInactive(ctx, game.ID, profileName, "purge"); err != nil {
+		return &PurgeResult{}, err
+	}
 	return s.purgeProfile(ctx, game, profileName, mods, opts, sink)
 }
 

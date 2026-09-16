@@ -32,13 +32,16 @@ want to start fresh.
 Mod records are preserved in the database, so you can deploy them later
 with 'lmm deploy'. Use --uninstall to also remove the database records.
 
+The game directory holds the active profile's mods, so a purge acts for the
+active profile only: -p/--profile naming any other profile is refused. Make
+that profile active first with 'lmm profile switch'.
+
 Use --dry-run to print what the purge would do - which mods would be
 undeployed and what happens to their records - without changing anything
 and without prompting.
 
 Examples:
   lmm purge --game skyrim-se
-  lmm purge --game skyrim-se --profile survival
   lmm purge --game skyrim-se --uninstall
   lmm purge --game skyrim-se --dry-run
   lmm purge --game skyrim-se --yes`,
@@ -46,7 +49,7 @@ Examples:
 }
 
 func init() {
-	purgeCmd.Flags().StringVarP(&purgeProfile, "profile", "p", "", "profile to purge (default: active profile)")
+	purgeCmd.Flags().StringVarP(&purgeProfile, "profile", "p", "", "profile to purge; only the active profile can be purged (default: active profile)")
 	purgeCmd.Flags().BoolVar(&purgeUninstall, "uninstall", false, "also remove mod records from database (like uninstalling each mod)")
 	purgeCmd.Flags().BoolVarP(&purgeYes, "yes", "y", false, "skip confirmation prompt")
 	purgeCmd.Flags().BoolVarP(&purgeForce, "force", "f", false, "continue even if hooks fail")

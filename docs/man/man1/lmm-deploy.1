@@ -24,6 +24,12 @@ game has exactly one configured source, or prompts interactively when it
 has several. -s is ignored when deploying the whole profile.
 
 .PP
+The game directory holds one profile's mods at a time - the active
+profile's - so a deploy acts for the active profile only: -p/--profile
+naming any other profile is refused. Make that profile active first with
+\&'lmm profile switch', which deploys it.
+
+.PP
 A mod the profile marks \fBdisabled: true\fR is not deployed. Deploy is not a
 converge run, so it never takes files down: if such a mod's files are still
 in the game directory, deploy leaves them there and names the mod, and
@@ -76,7 +82,7 @@ Examples:
 
 .PP
 \fB-p\fP, \fB--profile\fP=""
-	profile (default: active profile)
+	profile; only the active profile can be deployed (default: active profile)
 
 .PP
 \fB--purge\fP[=false]
