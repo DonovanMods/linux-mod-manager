@@ -113,10 +113,11 @@ func TestVerify_ANestedBepInExTreeLmmDidNotPlaceIsOnlyReported(t *testing.T) {
 		require.NoError(t, err)
 		row := findingWithStatus(report.Result, "loader_foreign_nested_tree")
 		require.NotNil(t, row, "fix=%t statuses: %v", fix, findingStatuses(report.Result))
-		assert.Equal(t, "BepInEx/plugins/Hand/bepinex/ is a BepInEx/ tree nested inside BepInEx/plugins/, holding 2 file(s) lmm has no record of placing - "+
+		assert.Equal(t, "BepInEx/plugins/Hand/bepinex/ is a BepInEx/ tree nested inside BepInEx/plugins/, holding 2 file(s) lmm cannot prove this game left there - "+
 			"BepInEx loads every plugin anywhere under BepInEx/plugins/, so a plugin in it loads from there (a second time, if it is also installed where it belongs), and BepInEx reads no config in it", row.Note)
 		assert.False(t, row.Fixable)
-		assert.Equal(t, "lmm cannot tell that every file in it is its own, so --fix leaves the directory alone - move what belongs to BepInEx up into BepInEx/, or delete the directory", row.FixableReason)
+		assert.Equal(t, "lmm cannot prove every file in it is a leftover of this game's, so --fix leaves the directory alone - "+
+			"if another games.yaml entry for this install deployed it, purge that entry; otherwise move what belongs to BepInEx up into BepInEx/, or delete the directory", row.FixableReason)
 		assert.Equal(t, 1, report.Result.Warnings, "fix=%t: a warning, not an issue", fix)
 		assert.Zero(t, report.Result.Issues)
 		assert.FileExists(t, hand)

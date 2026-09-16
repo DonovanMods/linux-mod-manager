@@ -29,8 +29,11 @@ import (
 )
 
 // loaderForeignNestedRefusal is the reason a nested tree lmm cannot prove
-// is its own carries: the fix is the user's, and it says which one.
-const loaderForeignNestedRefusal = "lmm cannot tell that every file in it is its own, so --fix leaves the directory alone - move what belongs to BepInEx up into BepInEx/, or delete the directory"
+// is its own carries: the fix is the user's, and it says which one - first
+// the one that is lmm's to do, since a second games.yaml entry for the same
+// install deploys exactly this shape, and deleting its live deployment by
+// hand would leave that entry's records pointing at nothing.
+const loaderForeignNestedRefusal = "lmm cannot prove every file in it is a leftover of this game's, so --fix leaves the directory alone - if another games.yaml entry for this install deployed it, purge that entry; otherwise move what belongs to BepInEx up into BepInEx/, or delete the directory"
 
 // nestedLoaderTree is one BepInEx/ directory found inside BepInEx/plugins/.
 type nestedLoaderTree struct {
@@ -98,7 +101,7 @@ func (r *verifyRun) loaderNestedTreeCheck() {
 			r.result.Warnings++
 			r.finding(VerifyFinding{
 				Status: "loader_foreign_nested_tree",
-				Note: fmt.Sprintf("%s/ is a BepInEx/ tree nested inside BepInEx/plugins/, holding %d file(s) lmm has no record of placing - BepInEx loads every plugin anywhere under BepInEx/plugins/, so a plugin in it loads from there (a second time, if it is also installed where it belongs), and BepInEx reads no config in it",
+				Note: fmt.Sprintf("%s/ is a BepInEx/ tree nested inside BepInEx/plugins/, holding %d file(s) lmm cannot prove this game left there - BepInEx loads every plugin anywhere under BepInEx/plugins/, so a plugin in it loads from there (a second time, if it is also installed where it belongs), and BepInEx reads no config in it",
 					tree.rel, tree.foreign+len(tree.leftovers)),
 				FixableReason: loaderForeignNestedRefusal,
 			}, VerifyEvent{})
