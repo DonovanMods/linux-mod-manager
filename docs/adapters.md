@@ -363,8 +363,10 @@ persistent warning is for a contradiction, not for a deliberate choice.**
   `bepinex` rules would have laid out — where the harm happens. That
   warning offers one remedy, the change that makes lmm lay such an archive
   out, because nothing else silences it.
-- **A contradiction**, persistently: when lmm loads `games.yaml`, in `lmm
-  game show`'s loader report and the web loader panel, as a
+- **A contradiction**, persistently: when lmm loads `games.yaml` — as one
+  short line naming the game, the contradiction and `lmm game show <id>`,
+  since every command prints it until the configuration changes (#456) —
+  in full in `lmm game show`'s loader report and the web loader panel, as a
   `loader_adapter_ignored` WARNING in `lmm verify` (which the web Health
   count includes), and right after the `lmm game edit` or `lmm game add`
   that creates it. A contradiction is a `loader:` block the adapter
@@ -404,9 +406,15 @@ relative to the working directory. So:
   deploying into that directory exactly as packaged. Deriving bepinex there
   nested every plugin under `BepInEx/plugins/BepInEx/plugins/`, where
   nothing loads it. That game is a contradiction in the sense above, with
-  both remedies: move it to the game root (purge, set `mod_path`,
-  re-deploy, and `lmm verify --fix` re-lays out what was already
-  imported), or pin `adapter: generic-files`;
+  both remedies: move it to the game root (`lmm purge`, then `lmm game
+  edit <id> --mod-path <install path>`, then re-deploy, and `lmm verify
+  --fix` re-lays out what was already imported), or pin
+  `adapter: generic-files`;
+- `lmm game edit --mod-path` (and `PUT /api/v1/games/{id}`'s `mod_path`)
+  refuses to move a `mod_path` while anything is deployed under it — lmm
+  records deployed files relative to it, so the purge comes first — and
+  refuses a move that would leave an explicit `adapter: bepinex` off the
+  game root, while a game already refused can be moved back;
 - an **explicit** `adapter: bepinex` with any other `mod_path` is refused
   by name, like a compile game's non-compiling adapter, and `lmm game
   edit`/`lmm game add` cannot write it;
