@@ -177,9 +177,15 @@ sweep found appears. status is one of "ok", "missing", "no_checksum",
 "fixed_needs_reingest", or one of the loader tier's own rows -
 "loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
 "loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
-"fixed_loader_plugin_unlinked", "loader_deployed_outside_loader" and
-"fixed_loader_deployed_outside_loader", each of which carries its whole
-sentence in note; note adds detail where there's something extra to
+"fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",
+"fixed_loader_deployed_outside_loader", "loader_adapter_ignored" (a game
+with BepInEx whose adapter is another one), "loader_nested_tree" and
+"fixed_loader_nested_tree" (a BepInEx/ directory inside BepInEx/plugins/
+holding links into the game's own cache that no game records, which --fix
+removes unless the run names a mod) and "loader_foreign_nested_tree" (one
+holding anything lmm cannot prove it left there for this game, a warning
+--fix leaves alone), each of which carries its
+whole sentence in note; note adds detail where there's something extra to
 say - a blocked cache rename, sibling-repair results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
@@ -214,7 +220,7 @@ func init() {
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
-	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
+	return withGameReportService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
 		return doVerify(cmd, svc, game, args)
 	})
 }
@@ -270,16 +276,14 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	}
 
 	if !result.HasFiles {
-		// #217: the empty-profile path ran nothing but the deploy-
-		// convergence sweep - no checksummed files means no issues are
-		// possible, only whatever stale-deployment candidates (plain) or
-		// fixes (--fix) that sweep found.
-		if result.Warnings > 0 {
+		// #217: the empty-profile path runs no per-file checks, but the
+		// game-level tiers (external presence, adapter, loader) and the
+		// deploy-convergence sweep still can find something - an issue
+		// as much as a warning (#413 re-review P-a) - so the tally is the
+		// result's own, and a quiet run stays quiet.
+		if result.Issues > 0 || result.Warnings > 0 {
 			fmt.Println()
-			fmt.Printf("0 issue(s), %d warning(s) found.\n", result.Warnings)
-			if !verifyFix {
-				fmt.Println("Run with --fix to remove stale lmm-deployed files.")
-			}
+			printVerifyTally(result, fixHintFor(result))
 		}
 		return nil
 	}
@@ -292,15 +296,74 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	}
 
 	if result.Issues > 0 || result.Warnings > 0 {
-		fmt.Printf("%d issue(s), %d warning(s) found.\n", result.Issues, result.Warnings)
-		if !verifyFix {
-			fmt.Println("Run with --fix to re-download missing files, populate missing checksums, repair version-record mismatches, and remove stale lmm-deployed files.")
-		}
+		printVerifyTally(result, "Run with --fix to re-download missing files, populate missing checksums, repair version-record mismatches, and remove stale lmm-deployed files.")
 	} else {
 		fmt.Println(colorGreen("All files verified OK."))
 	}
 
 	return nil
+}
+
+// printVerifyTally prints a run's issue/warning counts, then fixHint when a
+// plain run found something --fix would repair.
+//
+// The hint turns on the findings' own Fixable flag - the engine's answer to
+// "would --fix act on this row" - rather than on the counts: a loader that
+// never ran, or a game whose adapter ignores its loader, is counted but has
+// no repair, and telling that user to run --fix sends them to a command that
+// changes nothing (#413 re-review P-a).
+func printVerifyTally(result *core.VerifyResult, fixHint string) {
+	fmt.Printf("%d issue(s), %d warning(s) found.\n", result.Issues, result.Warnings)
+	if verifyFix {
+		return
+	}
+	for _, f := range result.Findings {
+		if f.Fixable {
+			fmt.Println(fixHint)
+			return
+		}
+	}
+}
+
+// fixRepairs is what --fix does about each status it repairs, in the words
+// the empty-profile branch's hint strings together. The branch with files
+// keeps its historical fixed sentence (its golden pins it); this one used to
+// name a single repair - removing stale files - whatever the fixable row
+// was (#413 final review F6).
+var fixRepairs = map[string]string{
+	"stale_deployment":               "remove stale lmm-deployed files",
+	"loader_plugin_unlinked":         "re-deploy plugins missing from the game directory",
+	"loader_deployed_outside_loader": "move plugins deployed outside BepInEx/ under it",
+	"loader_nested_tree":             "remove the links lmm left in a nested BepInEx/ directory",
+}
+
+// fixHintFor names what --fix would do about result's fixable rows, each
+// repair once, in the order the rows came. A fixable status the table does
+// not know still gets a hint, in general terms.
+func fixHintFor(result *core.VerifyResult) string {
+	var repairs []string
+	seen := map[string]bool{}
+	for _, f := range result.Findings {
+		if !f.Fixable {
+			continue
+		}
+		repair, known := fixRepairs[f.Status]
+		if !known {
+			repair = "repair the other rows it can"
+		}
+		if !seen[repair] {
+			seen[repair] = true
+			repairs = append(repairs, repair)
+		}
+	}
+	switch len(repairs) {
+	case 0:
+		return ""
+	case 1:
+		return "Run with --fix to " + repairs[0] + "."
+	default:
+		return "Run with --fix to " + strings.Join(repairs[:len(repairs)-1], ", ") + " and " + repairs[len(repairs)-1] + "."
+	}
 }
 
 // renderVerifyEvent prints ev's text-mode line(s), reproducing every format
@@ -421,7 +484,7 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 	}
 }
 
-// loaderFindingStatuses are the loader tier's own statuses (#359, #424) -
+// loaderFindingStatuses are the loader tier's own statuses (#359, #424, #413) -
 // the rows renderVerifyLoaderFinding prints, mapped to the marker each one
 // deserves. A row NOT in this table prints nothing, which is the switch's
 // pre-existing behaviour for a status the CLI does not know.
@@ -441,8 +504,12 @@ var loaderFindingStatuses = map[string]string{
 	"loader_plugin_unlinked":               "X",
 	"loader_deployed_outside_loader":       "X",
 	"loader_stale_log":                     "?",
+	"loader_adapter_ignored":               "?",
+	"loader_nested_tree":                   "X",
+	"loader_foreign_nested_tree":           "?",
 	"fixed_loader_plugin_unlinked":         "+",
 	"fixed_loader_deployed_outside_loader": "+",
+	"fixed_loader_nested_tree":             "+",
 }
 
 // renderVerifyLoaderFinding prints one loader-tier row: its marker, the mod
@@ -474,10 +541,11 @@ func renderVerifyLoaderFinding(f core.VerifyFinding) {
 // renderVerifySkipped disambiguates the several distinct "skipped" finding
 // sites the verify engine emits (fileCountPrePass's two lookup failures,
 // perFileWalk's unknown-mod row, versionPass's source-unreachable row,
-// mergedPakStalenessPass's own check failure, and convergencePass's
-// per-item failures) - all share one Status string but the pre-#224
-// doVerify printed each with different wording. The dispatch is structural
-// (which Finding fields are populated) except for three Note prefixes,
+// mergedPakStalenessPass's own check failure, convergencePass's per-item
+// failures, and adapterPass's resolution or Verify failure) - all share one
+// Status string but the pre-#224 doVerify printed each with different
+// wording. The dispatch is structural (which Finding fields are populated)
+// except for four Note prefixes,
 // which the emitting passes format deliberately for exactly this purpose:
 // their text-mode line drops the prefix for a friendlier phrase (or reuses
 // it verbatim), while their --json Note keeps the full formatted string.
@@ -504,6 +572,13 @@ func renderVerifySkipped(f core.VerifyFinding) {
 	// mergedPakStalenessPass: CheckMergedPakStaleness itself failed - Note
 	// is already the full message.
 	case strings.HasPrefix(f.Note, "could not check merged pak staleness: "):
+		fmt.Printf("%s %s\n", colorYellow("?"), f.Note)
+
+	// adapterPass: the game's adapter would not resolve, or its Verify
+	// failed - Note is already "adapter: <err>" or "adapter <id>: <err>",
+	// and the row names no mod. Before the file-count arm below, which
+	// would otherwise claim it (#413 final review).
+	case f.ModID == "" && strings.HasPrefix(f.Note, "adapter"):
 		fmt.Printf("%s %s\n", colorYellow("?"), f.Note)
 
 	// fileCountPrePass: the installed-mod lookup itself failed (a genuine

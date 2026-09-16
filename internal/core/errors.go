@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
@@ -324,8 +325,25 @@ func AuthRequiredSource(err error) string {
 	return ""
 }
 
+// ErrNotAMod is the sentinel an adapter's ingest refusal carries: this
+// archive is the loader, the framework or the base game rather than a mod
+// for it (adapter.ErrNotAMod, re-exported so a frontend can errors.Is it
+// without importing internal/adapter, whose allow-lists do not include one).
+//
+// It replaced core's own ErrBepInExFrameworkPack in U3 (#413) when the
+// BepInEx rules moved behind the seam. The refusal is unchanged - a payload
+// under BepInEx/core/ is the loader, which lmm configures per game and which
+// must survive a profile switch, so installing it as a mod would put the
+// preloader under lmm's deployed-files bookkeeping where the next uninstall
+// tears it out from under every plugin - but the NAME is now the general
+// one, because the rule is general and the next adapter's base-game archive
+// is refused through it too. The adapter wraps it with the message naming
+// the remedy.
+var ErrNotAMod = adapter.ErrNotAMod
+
 // LoaderRequiredError refuses a mod that needs a mod loader the game does
-// not declare (#359).
+// not have - neither declared nor installed where lmm can see it (#359,
+// #424).
 //
 // It is a PLAN-time precondition, not a dependency: the DependencyResolver
 // orders mods within a profile, and the loader is not in the profile - it
@@ -336,10 +354,11 @@ func AuthRequiredSource(err error) string {
 // which is the hardest kind of failure to diagnose.
 //
 // The requirement is inferred from the archive's SHAPE - an archive that
-// names the directory `BepInEx` is a BepInEx mod (bepinex_layout.go) - which
-// is why it fires only where lmm is certain. A Thunderstore source will
-// later infer it from the package's own dependency strings
-// ("BepInEx-BepInExPack-5.4.2100") as well.
+// names the directory `BepInEx` is a BepInEx mod, which the bepinex
+// adapter's archive claim decides (adapter_claim.go) - which is why it fires
+// only where lmm is certain. A Thunderstore source infers it from the
+// package's own dependency strings ("BepInEx-BepInExPack-5.4.2100") as well
+// (loader_source_requirement.go, #409).
 //
 // It follows this file's convention: Details() any puts the whole thing in
 // the --json error envelope's "details" (Ruling 3), so `lmm serve`'s failed
@@ -399,15 +418,11 @@ func loaderDisplayName(kind string) string {
 	return kind
 }
 
-// newLoaderRequiredError builds the refusal for game, naming the mod and the
-// archive shape the requirement was read off. The setup steps are written
-// once, here, so the CLI, the web UI and `--json` cannot drift about them.
-func newLoaderRequiredError(game *domain.Game, modName, layout string) *LoaderRequiredError {
-	return newLoaderRequirement(game, modName, domain.LoaderKindBepInEx, "", layout)
-}
-
-// newLoaderRequirement is newLoaderRequiredError with the two facts only a
-// SOURCE can supply (#409): which loader, and at which version.
+// newLoaderRequirement builds the refusal for game, naming the mod, the
+// loader kind, the version when whatever reported the requirement knew one
+// (only a SOURCE can, #409), and the evidence it was inferred from. The
+// setup steps are written once, here, so the CLI, the web UI and `--json`
+// cannot drift about them.
 //
 // ONE constructor for both halves, deliberately. #359 infers the
 // requirement from an archive's shape and #409's Thunderstore source reads

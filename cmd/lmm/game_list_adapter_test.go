@@ -112,7 +112,10 @@ func TestDoGameList_RowArityMatchesHeader(t *testing.T) {
 	assert.Equal(t, "extract", rows[0][adapterCol+1], "DEPLOY MODE follows ADAPTER")
 	assert.Equal(t, "nexusmods:alpha", rows[0][len(header)-1], "SOURCES is the last cell")
 
-	// A game with no `adapter:` key IS the identity, so the column names it.
+	// This service registers no concrete adapter, so a compile game with no
+	// `adapter:` key has nothing to derive and resolves to the identity -
+	// which the column names rather than leaving blank. With icarus
+	// registered it reads "icarus" (TestDoGameList_NamesTheEffectiveAdapter).
 	assert.Equal(t, "generic-files", rows[1][adapterCol])
 	assert.Equal(t, "compile", rows[1][adapterCol+1])
 	assert.Equal(t, "on", rows[1][adapterCol+2])

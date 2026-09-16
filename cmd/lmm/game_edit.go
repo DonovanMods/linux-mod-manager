@@ -75,7 +75,7 @@ func init() {
 	gameEditCmd.Flags().StringArrayVar(&gameEditRemove, "remove-source", nil,
 		"drop a source mapping by its source id (repeatable)")
 	gameEditCmd.Flags().StringVar(&gameEditAdapter, "adapter", "",
-		`set the game adapter; the empty string ("") clears it back to generic-files`)
+		`set the game adapter; the empty string ("") clears it, so the game uses its derived adapter (generic-files unless deploy_mode or BepInEx selects one)`)
 	gameEditCmd.Flags().StringVar(&gameEditLoader, "loader", "",
 		`declare a mod loader installed in the game directory (today: bepinex); "" removes the declaration`)
 	gameEditCmd.Flags().StringVar(&gameEditLoaderVersion, "loader-version", "",
@@ -88,7 +88,7 @@ func init() {
 
 func runGameEdit(cmd *cobra.Command, args []string) error {
 	adapterSet := cmd.Flags().Changed("adapter")
-	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+	return withGameWriteService(cmd, args[0], func(ctx context.Context, service *core.Service) error {
 		// Changed("loader") rather than a non-empty value, so `--loader ""`
 		// is an explicit "this game has no loader after all" and reaches
 		// core's nil rather than reading as "no loader flag was passed" -
@@ -175,7 +175,14 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 			if jsonOutput {
 				return emitJSON(entry)
 			}
-			fmt.Printf("%s %s adapter set to %s\n", colorGreen("✓"), entry.Name, formatGameAdapter(entry.Adapter))
+			// #426: clearing the key hands the game back to whatever lmm
+			// derives for it, which is not always generic-files - so say
+			// which adapter is now in use.
+			if entry.Adapter == "" {
+				fmt.Printf("%s %s adapter cleared; it now uses %s\n", colorGreen("✓"), entry.Name, formatGameAdapter(*entry))
+				return nil
+			}
+			fmt.Printf("%s %s adapter set to %s\n", colorGreen("✓"), entry.Name, formatAdapterName(entry.Adapter))
 			return nil
 		}
 	}

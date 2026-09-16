@@ -14,6 +14,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -123,4 +125,33 @@ func TestFlowToggle_JobStreamsToItsTerminalFrame(t *testing.T) {
 	mod, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled)
+}
+
+// TestFlowToggle_EnableOnARefusedGame_FailsWithTheRefusal: enabling
+// deploys, so on a game whose adapter core refuses, the web UI's enable
+// control gets the refusal every other deploy gives - through the ordinary
+// job-failure envelope - and nothing is deployed or flipped (#413).
+func TestFlowToggle_EnableOnARefusedGame_FailsWithTheRefusal(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	seedFixtureModEnabled(t, svc, game, false)
+	refused := *game
+	refused.Adapter = "no-such-adapter"
+	require.NoError(t, svc.SaveGame(t.Context(), &refused))
+	_, want := svc.PlanDeploy(t.Context(), &refused, "default", core.DeployOptions{})
+	require.Error(t, want, "fixture: every deploy refuses this game")
+
+	j := startToggle(t, s, &refused, "enable", fixtureSourceID, "m1")
+	require.Equal(t, jobFailed, j.status().State)
+	require.NotNil(t, j.status().Error)
+	assert.Equal(t, want.Error(), j.status().Error.Error, "the same refusal, and remedy, `lmm deploy` gives")
+
+	mod, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled, "the row stays disabled")
+	assert.NoFileExists(t, deployedFixturePath(game), "nothing was deployed")
+
+	// Disable is a removal, and still runs where enable is refused.
+	seedFixtureModEnabled(t, svc, game, true)
+	j = startToggle(t, s, &refused, "disable", fixtureSourceID, "m1")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
 }

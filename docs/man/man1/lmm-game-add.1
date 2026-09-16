@@ -15,7 +15,8 @@ Add a new game configuration.
 .PP
 With no flags this prompts for a mod source (every registered source,
 built-in or custom, sorted by ID), then the game's identity and its
-install path and mod path (defaulting to the install path plus "/mods"),
+install path and mod path (defaulting to the install path plus "/mods",
+or to the install path itself for a BepInEx game),
 and saves the result to games.yaml along with an empty default profile.
 
 .PP
@@ -29,8 +30,8 @@ If the game is already installed via Steam, --from-detected with the
 Steam app id prefills nearly everything from the install itself (#206):
 the display name, the install path, the local game id, and either the
 curated mod path and source mapping (for a game in lmm's known-games
-list) or a default mod path of the install path plus "/mods" for one
-that is not. List the app ids with 'lmm game detect --include-unknown'.
+list) or, for one that is not, the default mod path --mod-path
+describes. List the app ids with 'lmm game detect --include-unknown'.
 Every other flag still wins over the prefill, so
 --mod-path/--game-id/--name correct a guess; for a game with no curated
 sources, name one with --source, and either give --id or let the source's
@@ -98,7 +99,7 @@ lmm game detect --include-unknown          # list installed app ids
 
 .SH OPTIONS
 \fB--adapter\fP=""
-	game adapter (default: generic-files; see \fBlmm game list\fR for each game's)
+	game adapter (default: derived - bepinex with --loader bepinex, generic-files otherwise; see \fBlmm game list\fR for each game's)
 
 .PP
 \fB--from-detected\fP=""
@@ -134,7 +135,7 @@ lmm game detect --include-unknown          # list installed app ids
 
 .PP
 \fB--mod-path\fP=""
-	mod directory, absolute or relative to the install path (default: <install path>/mods)
+	mod directory, absolute or relative to the install path (default: <install path>/mods; the install path for a BepInEx game - one given --loader bepinex or --adapter bepinex, or with BepInEx already in the install path and no other --adapter)
 
 .PP
 \fB--name\fP=""

@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
@@ -44,6 +45,21 @@ import (
 // archive so the rules run over a fresh copy" re-runs the identical ingest,
 // reproduces the identical deployment and leaves the row exactly where it
 // was - a remedy that is a dead end reads as worse than none at all.
+// loaderContentRoot is the game-root directory a loader owns, and the one
+// piece of BepInEx vocabulary this tier keeps after U3 moved the layout
+// rules into internal/adapter/bepinex (#413).
+//
+// It is here rather than in the adapter because the question it answers is
+// core's own: which of a mod's RECORDED DEPLOY ROWS sit outside the
+// loader's tree, asked of deployed_files, and answered so core can REPAIR
+// them - which is the half of "adapters report, core repairs" that stays
+// here by design (§1, decision 6). It is a carry-out for the day a second
+// loader adapter lands, at which point it becomes a question for the
+// adapter rather than a constant; #353's own precedent for naming an
+// adapter's vocabulary in core without importing it is
+// Service.AdapterName's icarusAdapterID/bepinexAdapterID.
+const loaderContentRoot = "BepInEx"
+
 const loaderRelayoutRemedy = "lmm cannot place this mod's files under BepInEx/ on its own, and re-importing the same archive lays it out the same way - move its files under BepInEx/plugins/ inside the archive (or put them there by hand) and re-import it"
 
 // loaderMisplacedDeployCheck reports an installed mod whose recorded deploy
@@ -84,12 +100,13 @@ func (r *verifyRun) loaderMisplacedDeployCheck(installedMods []domain.InstalledM
 		repairable := r.cacheRelayoutApplies(mod)
 		fixing := r.opts.Fix
 		r.result.Issues++
+		fixable, reason := r.deployRowFixability(repairable && !fixing, loaderRelayoutRefusal(repairable, fixing), repairable && fixing)
 		r.finding(VerifyFinding{
 			ModID: mod.ID, ModName: mod.Name, Status: "loader_deployed_outside_loader",
 			Note: fmt.Sprintf("%d file(s) this mod deploys sit outside BepInEx/, including an assembly - starting with %s - so this game's loader reads none of them",
 				len(misplaced), misplaced[0]),
-			Fixable:       repairable && !fixing,
-			FixableReason: loaderRelayoutRefusal(repairable, fixing),
+			Fixable:       fixable,
+			FixableReason: reason,
 		}, VerifyEvent{})
 		if !fixing || !repairable {
 			continue
@@ -124,8 +141,8 @@ func loaderRelayoutRefusal(repairable, fixing bool) string {
 // never counts - not even towards the assembly test (#424 review, finding
 // 1). <Game>_Data/Managed/Assembly-CSharp.dll is an assembly outside
 // BepInEx/ and is exactly where it belongs: the game's own engine reads
-// that directory and BepInEx never will. It is bepinexGameOwnedRoot that
-// decides - the same rule and the same disk test shape F is gated on. The
+// that directory and BepInEx never will. It is adapter.GameOwnsDir
+// that decides - the one copy of the disk test shape F is gated on too. The
 // INPUTS differ, though: this check asks it with the profile's
 // deployed_files rows, the re-layout with the cache entry's members, so
 // for one run after an update drops a member the two can disagree; the
@@ -148,14 +165,14 @@ func (r *verifyRun) misplacedLoaderRows(mod *domain.InstalledMod) []string {
 	var misplaced []string
 	assembly := false
 	for _, slash := range slashed {
-		if strings.HasPrefix(slash, bepinexDirName+"/") {
+		if strings.HasPrefix(slash, loaderContentRoot+"/") {
 			continue
 		}
 		root, _, nested := strings.Cut(slash, "/")
 		if nested {
 			owned, asked := gameOwned[root]
 			if !asked {
-				owned = bepinexGameOwnedRoot(r.game.InstallPath, root, slashed)
+				owned = adapter.GameOwnsDir(r.game.InstallPath, root, slashed)
 				gameOwned[root] = owned
 			}
 			if owned {
@@ -182,9 +199,9 @@ func (r *verifyRun) misplacedLoaderRows(mod *domain.InstalledMod) []string {
 // files without answering the complaint. Together they are what lets --fix
 // promise something it can deliver.
 //
-// It reads the same member list normalizeBepInExTree will (relativeFileMembers),
-// so the classification and the mutation cannot disagree about what is in
-// the entry.
+// It reads the same member list the rebuild will (relativeFileMembers), and
+// asks the same adapter, so the classification and the mutation cannot
+// disagree about what is in the entry.
 func (r *verifyRun) cacheRelayoutApplies(mod *domain.InstalledMod) bool {
 	members, err := relativeFileMembers(r.cacheEntryPath(mod))
 	if err != nil || len(members) == 0 {
@@ -194,7 +211,7 @@ func (r *verifyRun) cacheRelayoutApplies(mod *domain.InstalledMod) bool {
 	for i, m := range members {
 		slash[i] = filepath.ToSlash(m)
 	}
-	layout, err := bepinexNormalise(slash, mod.Name, true, r.game.InstallPath)
+	layout, err := r.svc.archiveLayout(r.game, mod.Name, slash)
 	if err != nil || !layout.Applies() {
 		return false
 	}
@@ -204,7 +221,7 @@ func (r *verifyRun) cacheRelayoutApplies(mod *domain.InstalledMod) bool {
 		if !kept {
 			continue
 		}
-		if !strings.HasPrefix(dest, bepinexDirName+"/") {
+		if !strings.HasPrefix(dest, loaderContentRoot+"/") {
 			return false
 		}
 		if dest != m {
@@ -237,6 +254,13 @@ func (r *verifyRun) cacheEntryPath(mod *domain.InstalledMod) string {
 // failure to read it refuses the repair outright, because the alternative
 // is mutating the entry without knowing who else is standing on it.
 func (r *verifyRun) repairMisplacedLoaderDeploy(mod *domain.InstalledMod, count int) {
+	// Undeploy, re-lay out, re-deploy: on a refused game none of it runs,
+	// and the row - which already names the refusal - stays an issue
+	// (#413).
+	if err := r.refuseDeploy(); err != nil {
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("--fix did not re-lay out %s: %s", mod.Name, deployRefusedReason(err))})
+		return
+	}
 	holders, err := r.profilesDeploying(mod)
 	if err != nil {
 		r.failRelayout(mod, fmt.Sprintf("could not enumerate this game's profiles: %v", err))
@@ -486,7 +510,7 @@ const (
 //
 // The layout is re-derived here rather than passed in from
 // cacheRelayoutApplies' dry run: the two must agree, and the way to
-// guarantee that is for both to ask bepinexNormalise over the same member
+// guarantee that is for both to ask the game's adapter over the same member
 // list rather than for one to trust a decision the other made earlier.
 //
 // A member the layout drops (package metadata) is simply not placed, which
@@ -502,7 +526,7 @@ func (r *verifyRun) buildRelaidOutEntry(src, dst string, mod *domain.InstalledMo
 	for i, m := range members {
 		slash[i] = filepath.ToSlash(m)
 	}
-	layout, err := bepinexNormalise(slash, mod.Name, true, r.game.InstallPath)
+	layout, err := r.svc.archiveLayout(r.game, mod.Name, slash)
 	if err != nil {
 		return err
 	}
@@ -540,7 +564,7 @@ func (r *verifyRun) buildRelaidOutEntry(src, dst string, mod *domain.InstalledMo
 // and those members have just moved (#424 review, finding 4). Copying it
 // verbatim would leave a manifest naming paths that no longer exist, so
 // each is re-stamped through the same layout the members went through.
-func (r *verifyRun) relayoutReservedEntries(src, dst string, layout *bepinexLayout) error {
+func (r *verifyRun) relayoutReservedEntries(src, dst string, layout adapter.Layout) error {
 	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -601,7 +625,7 @@ func (r *verifyRun) copyRelayoutTree(src, dst string) error {
 // fixes. A legacy BARE marker stays bare: it never recorded a member list,
 // and inventing one here would turn "unknown provenance", which every
 // consumer handles by falling back to the union, into a claim.
-func restampFileManifests(src, dst string, layout *bepinexLayout) error {
+func restampFileManifests(src, dst string, layout adapter.Layout) error {
 	manifests, err := cache.FileManifestsAt(src)
 	if err != nil {
 		return fmt.Errorf("reading the cache entry's completion markers: %w", err)

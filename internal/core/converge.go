@@ -224,15 +224,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	// cacheRoots (fix round 2 Finding 1): the global cache dir ALWAYS
-	// applies, and game.CachePath is added on top when set - a per-game
-	// override augments the global root rather than replacing it as a
-	// valid home for lmm-owned content, so a target under EITHER root is
-	// cache-pointing.
-	cacheRoots := []string{filepath.Clean(s.GlobalCacheDir())}
-	if game.CachePath != "" {
-		cacheRoots = append(cacheRoots, filepath.Clean(game.CachePath))
-	}
+	cacheRoots := s.cacheRoots(game)
 
 	checked := 0
 	walkErr := filepath.WalkDir(game.ModPath, func(path string, d fs.DirEntry, err error) error {
@@ -318,6 +310,19 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		return result, errors.Join(errs...)
 	}
 	return result, nil
+}
+
+// cacheRoots is every directory lmm-owned content for game can live under
+// (fix round 2 Finding 1): the global cache dir ALWAYS applies, and
+// game.CachePath is added on top when set - a per-game override augments
+// the global root rather than replacing it as a valid home for lmm-owned
+// content, so a target under EITHER root is cache-pointing.
+func (s *Service) cacheRoots(game *domain.Game) []string {
+	roots := []string{filepath.Clean(s.GlobalCacheDir())}
+	if game.CachePath != "" {
+		roots = append(roots, filepath.Clean(game.CachePath))
+	}
+	return roots
 }
 
 // underAnyCacheRoot reports whether target (already filepath.Clean'd) falls

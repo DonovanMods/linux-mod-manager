@@ -119,14 +119,14 @@ func importMemberRelPath(name string) (string, error) {
 // Install links versionDir/<file> to ModPath/<file>), so these paths need no
 // further translation.
 //
-// layout is the BepInEx archive-root normalisation the INGEST will apply
-// (bepinex_layout.go, #358), or nil for an archive it does not recognise:
-// applying it here is what keeps a preview from promising
-// "SomePack/BepInEx/plugins/A.dll" for an import that will deploy
-// "BepInEx/plugins/A.dll". A member the layout drops (the package metadata
-// every Thunderstore archive carries) contributes nothing and is absent
-// from the result, exactly as it will be absent from the cache entry.
-func importDeployablePaths(kind importArchiveKind, filename string, members []archiveMember, layout *bepinexLayout) ([]string, error) {
+// The ADAPTER's own rewrite is deliberately NOT applied here (#413): this
+// is the archive's raw contribution, and PlanImportArchive hands exactly
+// this list to the adapter and then to rewritePlannedPaths, so the member
+// list the adapter is asked about and the paths the plan renders are the
+// same strings. Two rewrites - one here from a layout resolved separately,
+// one there - was how the BepInEx normaliser and the adapter seam briefly
+// coexisted, and the pair could disagree about what it had been given.
+func importDeployablePaths(kind importArchiveKind, filename string, members []archiveMember) ([]string, error) {
 	switch kind {
 	case importKindMergeSource:
 		return []string{}, nil
@@ -143,42 +143,10 @@ func importDeployablePaths(kind importArchiveKind, filename string, members []ar
 		if m.Dir {
 			continue
 		}
-		dest, kept := layout.Rewrite(filepath.ToSlash(rel))
-		if !kept {
-			continue
-		}
-		paths = append(paths, filepath.FromSlash(dest))
+		paths = append(paths, rel)
 	}
 	slices.Sort(paths)
 	return slices.Compact(paths), nil
-}
-
-// bepinexLayoutForListing is the BepInEx normalisation the ingest of these
-// members would apply, for a plan that has only the archive's table of
-// contents. It runs bepinexNormalise over exactly the paths
-// importDeployablePaths will map, so the plan and the ingest agree by
-// construction rather than by inspection.
-//
-// A member the extractor itself would refuse (a reserved name, a zip-slip
-// escape) fails the whole listing here, the same refusal at the same
-// granularity importDeployablePaths makes - a plan must not preview an
-// import the ingest will reject.
-func bepinexLayoutForListing(kind importArchiveKind, members []archiveMember, modName string, loaderDeclared bool, gameRoot string) (*bepinexLayout, error) {
-	if kind != importKindExtract {
-		return nil, nil
-	}
-	paths := make([]string, 0, len(members))
-	for _, m := range members {
-		if m.Dir {
-			continue
-		}
-		rel, err := importMemberRelPath(m.Path)
-		if err != nil {
-			return nil, err
-		}
-		paths = append(paths, filepath.ToSlash(rel))
-	}
-	return bepinexNormalise(paths, modName, loaderDeclared, gameRoot)
 }
 
 // importedModName is the mod name an import records for archivePath's

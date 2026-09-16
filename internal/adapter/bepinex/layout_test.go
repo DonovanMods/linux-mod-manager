@@ -1,12 +1,27 @@
-package core
+package bepinex
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// Applies and Rewrite give the internal layout the two accessors this table
+// is written against. They are the adapter.Layout the seam actually hands
+// core, asked through the same conversion NormalizeArchive performs, so a
+// table case proves what a caller of the adapter would see rather than what
+// the normaliser happens to hold internally.
+func (l *layout) Applies() bool { return l != nil && l.applies }
+
+func (l *layout) Rewrite(member string) (string, bool) {
+	return l.asAdapterLayout().Rewrite(member)
+}
 
 // TestBepInExLayout_TheThreeObservedShapes covers the archive shapes the
 // #267 spike listed from real Thunderstore packages (docs/plans/
@@ -26,8 +41,8 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 		// loaderDeclared is the game's `loader: kind: bepinex` block, the
 		// Tier-2 signal that widens the normaliser past the shapes that
 		// are unmistakable on their own.
-		loaderDeclared bool
-		wantShape      bepinexShape
+		gated     bool
+		wantShape shape
 		// wantPaths maps each member to where it deploys. A member absent
 		// from the map is dropped (metadata).
 		wantPaths map[string]string
@@ -39,7 +54,7 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 				"BepInEx/plugins/SkinwalkerMod.dll",
 				"icon.png", "manifest.json", "README.md",
 			},
-			wantShape: bepinexShapeRooted,
+			wantShape: shapeRooted,
 			wantPaths: map[string]string{"BepInEx/plugins/SkinwalkerMod.dll": "BepInEx/plugins/SkinwalkerMod.dll"},
 		},
 		{
@@ -49,7 +64,7 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 				"BepInEx/plugins/MoreEmotes/anim/emote.bundle",
 				"manifest.json", "icon.png", "README.md", "CHANGELOG.md",
 			},
-			wantShape: bepinexShapeRooted,
+			wantShape: shapeRooted,
 			wantPaths: map[string]string{
 				"BepInEx/plugins/MoreEmotes1.3.3.dll":          "BepInEx/plugins/MoreEmotes1.3.3.dll",
 				"BepInEx/plugins/MoreEmotes/anim/emote.bundle": "BepInEx/plugins/MoreEmotes/anim/emote.bundle",
@@ -62,8 +77,8 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 				"config/HookGenPatcher.cfg",
 				"manifest.json", "icon.png", "README.md",
 			},
-			loaderDeclared: true,
-			wantShape:      bepinexShapeRelative,
+			gated:     true,
+			wantShape: shapeRelative,
 			wantPaths: map[string]string{
 				"patchers/BepInEx.MonoMod.HookGenPatcher/HookGenPatcher.dll": "BepInEx/patchers/BepInEx.MonoMod.HookGenPatcher/HookGenPatcher.dll",
 				"config/HookGenPatcher.cfg":                                  "BepInEx/config/HookGenPatcher.cfg",
@@ -75,7 +90,7 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 				"plugins/Something.dll",
 				"manifest.json",
 			},
-			wantShape: bepinexShapeNone,
+			wantShape: shapeNone,
 		},
 		{
 			name: "shape C: denikson/BepInExPack_Valheim - a single wrapper dir containing BepInEx/",
@@ -84,7 +99,7 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 				"BepInExPack_Valheim/BepInEx/config/thing.cfg",
 				"manifest.json", "icon.png",
 			},
-			wantShape: bepinexShapeWrapped,
+			wantShape: shapeWrapped,
 			wantPaths: map[string]string{
 				"BepInExPack_Valheim/BepInEx/plugins/Thing.dll": "BepInEx/plugins/Thing.dll",
 				"BepInExPack_Valheim/BepInEx/config/thing.cfg":  "BepInEx/config/thing.cfg",
@@ -103,7 +118,7 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 				"SomePack/manifest.json", "SomePack/icon.png",
 				"SomePack/README.md", "SomePack/CHANGELOG.md",
 			},
-			wantShape: bepinexShapeWrapped,
+			wantShape: shapeWrapped,
 			wantPaths: map[string]string{
 				"SomePack/BepInEx/plugins/Thing.dll": "BepInEx/plugins/Thing.dll",
 			},
@@ -117,7 +132,7 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			// F3); the archive's own spelling stays the rewrite key.
 			name:      "a Windows-authored listing with backslashes is normalised, not read as a loose assembly",
 			members:   []string{`BepInEx\plugins\Thing.dll`, "manifest.json"},
-			wantShape: bepinexShapeRooted,
+			wantShape: shapeRooted,
 			wantPaths: map[string]string{`BepInEx\plugins\Thing.dll`: "BepInEx/plugins/Thing.dll"},
 		},
 		{
@@ -128,7 +143,7 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			// was not dropped at all.
 			name:      `a "./"-prefixed listing is shape A, not a wrapper directory named "."`,
 			members:   []string{"./BepInEx/plugins/Foo.dll", "./manifest.json"},
-			wantShape: bepinexShapeRooted,
+			wantShape: shapeRooted,
 			wantPaths: map[string]string{"./BepInEx/plugins/Foo.dll": "BepInEx/plugins/Foo.dll"},
 		},
 		{
@@ -141,13 +156,13 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			// on one character.
 			name:      "a lowercase bepinex/ root is normalised to the canonical spelling",
 			members:   []string{"bepinex/plugins/Thing.dll", "manifest.json"},
-			wantShape: bepinexShapeRooted,
+			wantShape: shapeRooted,
 			wantPaths: map[string]string{"bepinex/plugins/Thing.dll": "BepInEx/plugins/Thing.dll"},
 		},
 		{
 			name:      "a wrapper containing a case-variant BepInEx/ is still shape C",
 			members:   []string{"SomePack/BEPINEX/plugins/Thing.dll", "SomePack/manifest.json"},
-			wantShape: bepinexShapeWrapped,
+			wantShape: shapeWrapped,
 			wantPaths: map[string]string{"SomePack/BEPINEX/plugins/Thing.dll": "BepInEx/plugins/Thing.dll"},
 		},
 		{
@@ -161,22 +176,22 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 				"BepInEx/plugins/Thing.dll",
 				"README.txt", "LICENSE", "CHANGELOG.txt", "icon.jpg", "Manifest.JSON",
 			},
-			wantShape: bepinexShapeRooted,
+			wantShape: shapeRooted,
 			wantPaths: map[string]string{"BepInEx/plugins/Thing.dll": "BepInEx/plugins/Thing.dll"},
 		},
 		{
 			name:      "a loose root .dll becomes a plugin under its own directory",
 			members:   []string{"CoolMod.dll", "manifest.json", "README.md"},
-			wantShape: bepinexShapePlugin,
+			wantShape: shapePlugin,
 			wantPaths: map[string]string{"CoolMod.dll": "BepInEx/plugins/CoolMod/CoolMod.dll"},
 			// A bare .dll is not unmistakably BepInEx (a Minecraft-adjacent
 			// archive could ship one), so it needs the declaration.
-			loaderDeclared: true,
+			gated: true,
 		},
 		{
 			name:      "a loose root .dll without the declaration is left alone",
 			members:   []string{"CoolMod.dll", "manifest.json"},
-			wantShape: bepinexShapeNone,
+			wantShape: shapeNone,
 		},
 		{
 			// #424: the standard NexusMods Valheim layout - a PLUGIN
@@ -189,8 +204,8 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 				"Jotunn/Jotunn.dll", "Jotunn/Jotunn.pdb", "Jotunn/Jotunn.xml",
 				"Jotunn/README.md", "Jotunn/CHANGELOG.md",
 			},
-			loaderDeclared: true,
-			wantShape:      bepinexShapePluginFolder,
+			gated:     true,
+			wantShape: shapePluginFolder,
 			wantPaths: map[string]string{
 				"Jotunn/Jotunn.dll":   "BepInEx/plugins/Jotunn/Jotunn.dll",
 				"Jotunn/Jotunn.pdb":   "BepInEx/plugins/Jotunn/Jotunn.pdb",
@@ -206,8 +221,8 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 				"ModB/ModB.dll",
 				"manifest.json", "README.md",
 			},
-			loaderDeclared: true,
-			wantShape:      bepinexShapePluginFolder,
+			gated:     true,
+			wantShape: shapePluginFolder,
 			wantPaths: map[string]string{
 				"ModA/ModA.dll":      "BepInEx/plugins/ModA/ModA.dll",
 				"ModA/data/a.bundle": "BepInEx/plugins/ModA/data/a.bundle",
@@ -217,7 +232,7 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 		{
 			name:      "shape F needs the gate: a plugin folder on a game with no BepInEx is left alone",
 			members:   []string{"Jotunn/Jotunn.dll", "Jotunn/Jotunn.xml"},
-			wantShape: bepinexShapeNone,
+			wantShape: shapeNone,
 		},
 		{
 			// The 7 Days to Die shape: Mods/<Mod>/ModInfo.xml beside the
@@ -227,25 +242,25 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			members: []string{
 				"Mods/MyMod/ModInfo.xml", "Mods/MyMod/MyMod.dll",
 			},
-			wantShape: bepinexShapeNone,
+			wantShape: shapeNone,
 		},
 		{
 			name: "shape F refuses to guess: a root mixing a DLL folder with loose files is reported",
 			members: []string{
 				"Jotunn/Jotunn.dll", "install-me-by-hand.txt",
 			},
-			loaderDeclared: true,
-			wantShape:      bepinexShapeNone,
-			wantWarn:       true,
+			gated:     true,
+			wantShape: shapeNone,
+			wantWarn:  true,
 		},
 		{
 			name: "shape F refuses to guess: a root mixing a DLL folder with a non-DLL directory is reported",
 			members: []string{
 				"Jotunn/Jotunn.dll", "Assets/thing.bundle",
 			},
-			loaderDeclared: true,
-			wantShape:      bepinexShapeNone,
-			wantWarn:       true,
+			gated:     true,
+			wantShape: shapeNone,
+			wantWarn:  true,
 		},
 		{
 			// A root name BepInEx owns is never a plugin folder: half of
@@ -256,24 +271,24 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			members: []string{
 				"Jotunn/Jotunn.dll", "plugins/Other.dll",
 			},
-			loaderDeclared: true,
-			wantShape:      bepinexShapeNone,
-			wantWarn:       true,
+			gated:     true,
+			wantShape: shapeNone,
+			wantWarn:  true,
 		},
 		{
 			name: "an unrecognised root warns and rewrites nothing",
 			members: []string{
 				"Data/StreamingAssets/thing.bundle", "notes.txt",
 			},
-			loaderDeclared: true,
-			wantShape:      bepinexShapeNone,
-			wantWarn:       true,
+			gated:     true,
+			wantShape: shapeNone,
+			wantWarn:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			layout, err := bepinexNormalise(tt.members, "CoolMod", tt.loaderDeclared, "")
+			layout, err := normalise(tt.members, "CoolMod", tt.gated, "")
 			require.NoError(t, err)
 			require.NotNil(t, layout)
 			assert.Equal(t, tt.wantShape, layout.Shape)
@@ -282,7 +297,7 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			} else {
 				assert.Empty(t, layout.Warnings)
 			}
-			if tt.wantShape == bepinexShapeNone {
+			if tt.wantShape == shapeNone {
 				assert.False(t, layout.Applies(), "an unapplied layout rewrites nothing")
 				return
 			}
@@ -326,10 +341,10 @@ func TestBepInExLayout_FrameworkPackIsRefused(t *testing.T) {
 		{"BepInExPack/BepInEx/Core/BepInEx.Preloader.dll", "BepInExPack/winhttp.dll", "manifest.json"},
 		{"BepInExPack/BepInEx/CORE/BepInEx.Preloader.dll", "BepInExPack/winhttp.dll", "manifest.json"},
 	} {
-		layout, err := bepinexNormalise(members, "BepInExPack", false, "")
+		layout, err := normalise(members, "BepInExPack", false, "")
 		assert.Nil(t, layout)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrBepInExFrameworkPack), "want ErrBepInExFrameworkPack, got %v", err)
+		assert.True(t, errors.Is(err, adapter.ErrNotAMod), "want adapter.ErrNotAMod, got %v", err)
 		assert.Contains(t, err.Error(), "loader")
 	}
 }
@@ -339,7 +354,7 @@ func TestBepInExLayout_FrameworkPackIsRefused(t *testing.T) {
 // are the same path. "Never guesses" applies here too - the archive is
 // refused rather than half-deployed.
 func TestBepInExLayout_RefusesACollidingRewrite(t *testing.T) {
-	_, err := bepinexNormalise([]string{
+	_, err := normalise([]string{
 		"plugins/A.dll",
 		"BepInEx/plugins/A.dll",
 		"patchers/x.dll",
@@ -349,7 +364,7 @@ func TestBepInExLayout_RefusesACollidingRewrite(t *testing.T) {
 	// sibling of the wrapper.
 	require.NoError(t, err)
 
-	_, err = bepinexNormalise([]string{
+	_, err = normalise([]string{
 		"Wrapper/BepInEx/plugins/A.dll",
 		"config/A.dll",
 	}, "Mod", true, "")
@@ -357,13 +372,17 @@ func TestBepInExLayout_RefusesACollidingRewrite(t *testing.T) {
 }
 
 // TestBepInExConfigSeedMember names the paths the deploy path treats as
-// seeded configuration rather than linked mod content (#358 (b)).
+// seeded configuration rather than linked mod content (#358 (b)). Since U3
+// (#413) that is adapter.RouteCopyOnce, asked of the FileRouter capability;
+// the paths it answers for are unchanged.
 func TestBepInExConfigSeedMember(t *testing.T) {
-	assert.True(t, isBepInExConfigMember("BepInEx/config/thing.cfg"))
-	assert.True(t, isBepInExConfigMember("BepInEx/config/nested/thing.cfg"))
-	assert.False(t, isBepInExConfigMember("BepInEx/plugins/thing.dll"))
-	assert.False(t, isBepInExConfigMember("BepInEx/config"))
-	assert.False(t, isBepInExConfigMember("config/thing.cfg"))
+	a := New()
+	route := func(rel string) adapter.FileRoute { return a.RouteFile(nil, rel) }
+	assert.Equal(t, adapter.RouteCopyOnce, route("BepInEx/config/thing.cfg"))
+	assert.Equal(t, adapter.RouteCopyOnce, route("BepInEx/config/nested/thing.cfg"))
+	assert.Equal(t, adapter.RouteLink, route("BepInEx/plugins/thing.dll"))
+	assert.Equal(t, adapter.RouteLink, route("BepInEx/config"))
+	assert.Equal(t, adapter.RouteLink, route("config/thing.cfg"))
 }
 
 // TestBepInExLayout_CanonicalisesBepInExsOwnSubdirectories is re-review
@@ -402,7 +421,7 @@ func TestBepInExLayout_CanonicalisesBepInExsOwnSubdirectories(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			layout, err := bepinexNormalise(tc.members, "Mod", true, "")
+			layout, err := normalise(tc.members, "Mod", true, "")
 			require.NoError(t, err)
 			require.True(t, layout.Applies())
 			for member, want := range tc.want {
@@ -454,11 +473,11 @@ func TestBepInExLayout_TheGamesOwnDirectoriesAreNotPluginFolders(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			layout, err := bepinexNormalise(tc.members, "Patch", true, gameRoot)
+			layout, err := normalise(tc.members, "Patch", true, gameRoot)
 			require.NoError(t, err)
 			assert.False(t, layout.Applies(),
 				"a directory the game itself owns is a game-root overlay, deployed verbatim")
-			assert.Equal(t, bepinexShapeNone, layout.Shape)
+			assert.Equal(t, shapeNone, layout.Shape)
 			require.NotEmpty(t, layout.Warnings, "and lmm says it did not recognise the layout")
 		})
 	}
@@ -479,10 +498,10 @@ func TestBepInExLayout_APluginFolderIsStillShapeFOnARealGameRoot(t *testing.T) {
 
 	t.Run("a game root that has never seen it", func(t *testing.T) {
 		gameRoot := writeArchiveTree(t, "valheim_Data/Managed/UnityEngine.dll")
-		layout, err := bepinexNormalise(members, "Jotunn", true, gameRoot)
+		layout, err := normalise(members, "Jotunn", true, gameRoot)
 		require.NoError(t, err)
 		require.True(t, layout.Applies())
-		assert.Equal(t, bepinexShapePluginFolder, layout.Shape)
+		assert.Equal(t, shapePluginFolder, layout.Shape)
 		for from, to := range want {
 			dest, kept := layout.Rewrite(from)
 			assert.True(t, kept)
@@ -495,25 +514,25 @@ func TestBepInExLayout_APluginFolderIsStillShapeFOnARealGameRoot(t *testing.T) {
 			"valheim_Data/Managed/UnityEngine.dll",
 			"Jotunn/Jotunn.dll", "Jotunn/Jotunn.xml",
 		)
-		layout, err := bepinexNormalise(members, "Jotunn", true, gameRoot)
+		layout, err := normalise(members, "Jotunn", true, gameRoot)
 		require.NoError(t, err)
 		require.True(t, layout.Applies(),
 			"lmm's own misdeployment must not read as a directory the game owns")
-		assert.Equal(t, bepinexShapePluginFolder, layout.Shape)
+		assert.Equal(t, shapePluginFolder, layout.Shape)
 	})
 
 	t.Run("...but one the user has added a file to is left alone", func(t *testing.T) {
 		gameRoot := writeArchiveTree(t,
 			"Jotunn/Jotunn.dll", "Jotunn/Jotunn.xml", "Jotunn/hand-edited.cfg",
 		)
-		layout, err := bepinexNormalise(members, "Jotunn", true, gameRoot)
+		layout, err := normalise(members, "Jotunn", true, gameRoot)
 		require.NoError(t, err)
 		assert.False(t, layout.Applies(),
 			"something lmm cannot account for lives there: refuse rather than move it")
 	})
 
 	t.Run("no game root to consult", func(t *testing.T) {
-		layout, err := bepinexNormalise(members, "Jotunn", true, "")
+		layout, err := normalise(members, "Jotunn", true, "")
 		require.NoError(t, err)
 		assert.True(t, layout.Applies(), "the rules still work with nothing to compare against")
 	})
@@ -521,7 +540,7 @@ func TestBepInExLayout_APluginFolderIsStillShapeFOnARealGameRoot(t *testing.T) {
 
 // TestBepInExLayout_ABepInExRootWithSiblingsIsReported is #424 review
 // finding 2. `BepInEx` is the one name BepInEx owns that shape F's
-// owned-name refusal never reached: bepinexRootHas short-circuits the whole
+// owned-name refusal never reached: rootHas short-circuits the whole
 // switch, so `BepInEx/patchers/Pre.dll` beside `Jotunn/Jotunn.dll`
 // classified as shape A and the plugin folder deployed into the game root -
 // #424's own bug, on a game that DOES declare the loader, with no warning
@@ -546,11 +565,11 @@ func TestBepInExLayout_ABepInExRootWithSiblingsIsReported(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			layout, err := bepinexNormalise(tc.members, "Mod", true, "")
+			layout, err := normalise(tc.members, "Mod", true, "")
 			require.NoError(t, err)
 			assert.False(t, layout.Applies(),
 				"BepInEx/ beside another root entry is a layout lmm cannot read")
-			assert.Equal(t, bepinexShapeNone, layout.Shape)
+			assert.Equal(t, shapeNone, layout.Shape)
 			require.Len(t, layout.Warnings, 1)
 			assert.Contains(t, layout.Warnings[0], "did not recognise")
 		})
@@ -561,8 +580,24 @@ func TestBepInExLayout_ABepInExRootWithSiblingsIsReported(t *testing.T) {
 // loader must be refused whatever else rides along at its root, or the
 // safety check could be walked past by adding one file.
 func TestBepInExLayout_AFrameworkPackWithSiblingsIsStillRefused(t *testing.T) {
-	_, err := bepinexNormalise([]string{
+	_, err := normalise([]string{
 		"BepInEx/core/BepInEx.Preloader.dll", "Jotunn/Jotunn.dll",
 	}, "Pack", true, "")
-	assert.ErrorIs(t, err, ErrBepInExFrameworkPack)
+	assert.ErrorIs(t, err, adapter.ErrNotAMod)
+}
+
+// writeArchiveTree materialises members as a real directory tree, for the
+// two rules that consult the GAME ROOT rather than the member list
+// (adapter.GameOwnsDir, and shape F through it). Moved here with the rules in U3
+// (#413); the tree-REWRITING half of the old core test lives on in
+// internal/core, which is where the executor is.
+func writeArchiveTree(t *testing.T, members ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, m := range members {
+		p := filepath.Join(root, filepath.FromSlash(m))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte("payload of "+m), 0o644))
+	}
+	return root
 }

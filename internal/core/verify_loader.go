@@ -1,35 +1,40 @@
-// Package core: this file holds verify's LOADER tier (#359) - the pass that
-// runs only for a game declaring a mod loader.
+// Package core: this file holds what is left of verify's LOADER tier (#359)
+// after U3 (#413) moved the reporting half into
+// internal/adapter/bepinex.Verify: the two checks that REPAIR, plus the two
+// that belong to the `loader:` block's own report.
 //
-// It is population, not architecture: verify already has the tier vocabulary
-// (VerifyTier) and the repair vocabulary (--fix), so this adds findings to an
-// existing engine rather than a second one.
+// The split is the design's own rule - adapters report, core repairs (§1,
+// decision 6) - and the line falls where the evidence put it:
 //
-// Its shape follows from what lmm does and does not do about a loader: FOUR
-// checks report and ONE repairs.
+//	IN THE ADAPTER, because only it knows what the loader's own files look
+//	like and what the declaration is meant to match: is the preloader there,
+//	is it the version games.yaml says, are the bootstrap files the ones the
+//	declared mode needs. None of the three is fixable, and each says so.
 //
-// The four that only report - loader missing, version drift, an incomplete
-// bootstrap, and a loader that has never run - are about the loader
-// INSTALLATION, which lmm deliberately does not install and whose Steam
-// launch option it deliberately does not write (see loader_status.go). There
-// is nothing for --fix to attempt, and each says so in the engine's own
-// voice (notFixableLoader).
+//	HERE, because they REPAIR: loaderPluginLinkCheck (a mod whose files are
+//	all gone from BepInEx/plugins/ is invisible to the per-file walk, which
+//	asks about the CACHE, and to convergeDeployedFiles, which is remove-only
+//	- yet it is exactly the state that makes every plugin silently stop
+//	working) and loaderMisplacedDeployCheck (#424, verify_loader_layout.go).
+//	Both re-deploy through the ordinary idempotent Installer.Install, so the
+//	profile's link method and the deployed-files bookkeeping stay the deploy
+//	path's own.
 //
-// The fifth, loaderPluginLinkCheck, is repairable and is the reason the tier
-// is worth having beyond diagnostics: a mod whose files are all gone from
-// BepInEx/plugins/ is invisible to the per-file walk (which asks about the
-// CACHE) and to convergeDeployedFiles (which is remove-only), yet it is
-// exactly the state that makes every plugin silently stop working. Its
-// repair is the ordinary idempotent Installer.Install, not a bespoke
-// re-link, so the profile's link method and the deployed-files bookkeeping
-// stay the deploy path's own.
+//	ALSO HERE, because their remedy is the Steam launch option: "did the
+//	loader ever run", and "is its log older than the newest deployed
+//	plugin". The exact launch string is computed once, for every game, by
+//	LoaderStatus (loader_status.go) - which resolves the EFFECTIVE bootstrap
+//	from the declaration or the install directory's own Unity markers, and
+//	which the design keeps on domain.Game rather than on an adapter
+//	(decision 11). A second copy of that string in an adapter would be a
+//	second thing to get wrong, and getting it wrong leaves a game that
+//	launches perfectly and loads nothing.
 package core
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -37,39 +42,83 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// notFixableLoader is the reason the tier's four REPORTING findings carry -
-// loader missing, version drift, incomplete bootstrap, never ran: lmm
-// deliberately does not install the loader or write the launch option, so
-// there is no repair for --fix to attempt. loaderPluginLinkCheck, the fifth
-// check, is repairable and carries loaderUnlinkedRefusal instead.
+// notFixableLoader is the reason this file's two REPORTING findings carry -
+// loader never ran, and a log older than the newest deploy: lmm deliberately
+// does not install the loader or write the launch option, so there is no
+// repair for --fix to attempt. The adapter's own findings carry the same
+// sentence for the same reason (internal/adapter/bepinex/verify.go's
+// notFixable), because the user is in the same position whichever half
+// noticed. loaderPluginLinkCheck, which IS repairable, carries
+// loaderUnlinkedRefusal instead.
 const notFixableLoader = "lmm does not install the mod loader or write Steam launch options, so there is nothing for --fix to do here - the remedy is the setup `lmm game show` prints"
 
-// loaderPass reports what is wrong with a loader-declaring game's loader, in
-// the order a user would work through it: is it there, is it the version you
-// said, is its bootstrap the one you said, and did it actually RUN.
+// loaderPass runs the loader tier's core-owned half: the two repairs, and
+// the "did it actually RUN?" question.
 //
-// The last question is the one worth having the tier for. Everything else
-// says the files are in the right places; only BepInEx/LogOutput.log says the
-// loader ran, and it is the only honest evidence available without launching
-// the game. A user who pasted the launch option wrong otherwise finds out
-// from a mod that mysteriously does nothing.
+// That last one is the one worth having the tier for. Everything the
+// adapter reports says the files are in the right places; only
+// BepInEx/LogOutput.log says the loader ran, and it is the only honest
+// evidence available without launching the game. A user who pasted the
+// launch option wrong otherwise finds out from a mod that mysteriously does
+// nothing.
 //
-// A game that neither declares BepInEx nor has it installed runs none of
-// this, so every other game's verify output is exactly what it was.
+// A game that neither declares a loader nor has one installed runs none of
+// this, so every other game's verify output is exactly what it was. The
+// gate is hasBepInEx - the same two-source test the bepinex derivation
+// makes (Service.AdapterName), so the tier and the adapter cannot disagree
+// about whether this is a loader game. A loader game the derivation still
+// does not resolve to bepinex (an explicit adapter, a compile game, a
+// mod_path off the game root) is the bypass the first check below reports.
 func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
-	gate := bepinexGateFor(r.game)
-	if !gate.Gated {
+	if !hasBepInEx(r.game) {
 		return
 	}
 
+	// Design decision 11 (#413 review F5): a game with BepInEx whose
+	// adapter is another one gets none of the adapter's rules or checks,
+	// and verify is where a user looks to find out why. A WARNING - the
+	// state is allowed - and not fixable, because the fix is a games.yaml
+	// edit lmm does not make on the user's behalf. Only for a
+	// contradiction: an explicit adapter on a game whose BepInEx is merely
+	// installed is the user's choice, and gets no row at all
+	// (adapter_loader_bypass.go says why not a note). The rest of the tier
+	// still runs: the loader is there, so whether it ran is still worth
+	// asking.
+	if w := r.svc.adapterConfigWarning(r.game); w != "" {
+		r.result.Warnings++
+		r.finding(VerifyFinding{
+			Status:        "loader_adapter_ignored",
+			Note:          w,
+			FixableReason: "the fix is an edit to this game's configuration, which --fix does not make",
+		}, VerifyEvent{})
+	}
+
 	// #424: the misplaced-deployment check asks about the archive LAYOUT
-	// rules, which the gate turns on for a game whose BepInEx lmm can see
-	// as well as one that declares it - and the undeclared game is exactly
-	// where the misplaced deployments came from. Everything below it is
-	// about the DECLARATION (is the installation the version, bootstrap and
-	// runtime you said?), which a game that declares nothing has not made,
-	// so those checks still run only for a declaring game.
-	r.loaderMisplacedDeployCheck(installedMods)
+	// rules, which apply to a game whose BepInEx lmm can see as well as one
+	// that declares it - and the undeclared game is exactly where the
+	// misplaced deployments came from. But only to a game that RESOLVES to
+	// bepinex: its question is where that adapter's layout puts a file, and
+	// its repair re-lays the cache entry out through it. Asked of a game on
+	// another adapter it had no layout to compare against - a v1 game whose
+	// mod_path is BepInEx/plugins records every plugin relative to that
+	// directory, so each one read as "outside BepInEx/" (#413 re-review
+	// P-b) - and the bypass row above already says why nothing is laid out.
+	// RESOLVES, not names: an explicit `adapter: bepinex` off the game root
+	// names it and every flow refuses it, so it has the same v1 rows and
+	// the same false "misplaced" reading (#413 final review F3); adapterPass
+	// already reports that refusal as its own row.
+	//
+	// Everything below it is about the DECLARATION, which a game that
+	// declares nothing has not made, so those checks still run only for a
+	// declaring game.
+	if r.svc.runsBepInEx(r.game) {
+		r.loaderMisplacedDeployCheck(installedMods)
+		// The same gate for the same reason: "nested inside
+		// BepInEx/plugins/" is a statement about the game-root layout, and
+		// under a mod_path of BepInEx/plugins it is a v1 game's own
+		// deployment of a BepInEx/-rooted archive (verify_loader_nested.go).
+		r.loaderNestedTreeCheck()
+	}
 	if !r.game.DeclaresBepInEx() {
 		return
 	}
@@ -77,86 +126,15 @@ func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
 	root := r.game.InstallPath
 	name := loaderDisplayName(r.game.Loader.Kind)
 
-	if !regularFileAt(root, bepinexPreloaderPath) {
-		r.result.Issues++
-		r.finding(VerifyFinding{
-			Status: "loader_missing",
-			Note: fmt.Sprintf("this game declares the %s loader, but %s is not in its install directory - no plugin will load until it is",
-				name, bepinexPreloaderPath),
-			FixableReason: notFixableLoader,
-		}, VerifyEvent{})
-		// Every check below asks about an installation that is not there.
+	// An installation that is not there: the adapter has already reported
+	// it (loader_missing), and every question below asks about files it
+	// would have had to write.
+	if !regularFileAt(root, domain.BepInExPreloaderPath) {
 		return
 	}
 
-	r.loaderVersionCheck(root, name)
-	r.loaderBootstrapCheck(root, name)
 	r.loaderRanCheck(root, name)
 	r.loaderPluginLinkCheck(installedMods)
-}
-
-// loaderVersionCheck reports drift between the declared version and the one
-// on disk. Reported, never repaired: choosing a BepInEx build is the hard
-// part of installing it (a Windows pack is right for Proton and wrong for a
-// native build; IL2CPP needs a bleeding-edge build that is not a release at
-// all), and lmm getting it wrong leaves a game that silently loads nothing.
-//
-// An empty declared version means "do not check", and an installation whose
-// version lmm cannot read reports nothing rather than guessing at drift.
-func (r *verifyRun) loaderVersionCheck(root, name string) {
-	declared := strings.TrimSpace(r.game.Loader.Version)
-	if declared == "" {
-		return
-	}
-	installed := installedLoaderVersion(root)
-	if installed == "" || installed == declared {
-		return
-	}
-	r.result.Issues++
-	r.finding(VerifyFinding{
-		Status:    "loader_version_mismatch",
-		Recorded:  declared,
-		Effective: installed,
-		Note: fmt.Sprintf("this game declares %s %s, but the installation says %s - update the declaration with `lmm game edit %s --loader-version %s`, or install the version you meant",
-			name, declared, installed, r.game.ID, installed),
-		FixableReason: notFixableLoader,
-	}, VerifyEvent{Recorded: declared, Effective: installed})
-}
-
-// loaderBootstrapCheck reports a bootstrap that does not match the declared
-// mode - the single most common BepInEx-on-Linux mistake, and one nothing
-// else catches: the game launches perfectly and loads nothing.
-//
-// It only fires for a DECLARED bootstrap. With none declared the report has
-// no expectation to compare against, and loader_never_ran below already
-// covers the outcome.
-func (r *verifyRun) loaderBootstrapCheck(root, name string) {
-	var want []string
-	switch r.game.Loader.Bootstrap {
-	case domain.LoaderBootstrapNative:
-		want = []string{bepinexNativeScript, bepinexNativeDoorstop}
-	case domain.LoaderBootstrapProton:
-		want = []string{bepinexProtonProxy, bepinexProtonConfig}
-	default:
-		return
-	}
-
-	var missing []string
-	for _, f := range want {
-		if !regularFileAt(root, f) {
-			missing = append(missing, f)
-		}
-	}
-	if len(missing) == 0 {
-		return
-	}
-	r.result.Issues++
-	r.finding(VerifyFinding{
-		Status: "loader_bootstrap_incomplete",
-		Note: fmt.Sprintf("this game declares a %s bootstrap, which needs %s in the game directory - %s missing. The two bootstrap modes ship in DIFFERENT %s archives, so this usually means the wrong pack is installed",
-			r.game.Loader.Bootstrap, strings.Join(want, " and "), strings.Join(missing, " and ")+" "+isAre(len(missing)), name),
-		FixableReason: notFixableLoader,
-	}, VerifyEvent{})
 }
 
 // loaderRanCheck is the honest "did it actually load?" question, answered
@@ -167,11 +145,11 @@ func (r *verifyRun) loaderBootstrapCheck(root, name string) {
 // deployed plugin means it ran, but not since the current set of mods was
 // deployed - so nothing here proves THIS set ever loaded.
 func (r *verifyRun) loaderRanCheck(root, name string) {
-	logPath := filepath.Join(root, filepath.FromSlash(bepinexLogPath))
+	logPath := filepath.Join(root, filepath.FromSlash(domain.BepInExLogPath))
 	info, err := os.Stat(logPath)
 	if err != nil {
 		option := BepInExLaunchOption(loaderEffectiveBootstrap(r.game))
-		note := fmt.Sprintf("%s is installed but has never written %s, so it has not run - the Steam launch option is the usual cause", name, bepinexLogPath)
+		note := fmt.Sprintf("%s is installed but has never written %s, so it has not run - the Steam launch option is the usual cause", name, domain.BepInExLogPath)
 		if option != "" {
 			note += fmt.Sprintf(". Set this game's launch options to: %s", option)
 		}
@@ -204,48 +182,11 @@ func loaderEffectiveBootstrap(game *domain.Game) domain.LoaderBootstrap {
 	return detected
 }
 
-// isAre keeps the bootstrap finding's sentence grammatical for one file or
-// two, which is the whole range it ever reports.
-func isAre(n int) string {
-	if n == 1 {
-		return "is"
-	}
-	return "are"
-}
-
 // regularFileAt reports whether root/rel (a slash-separated relative path) is
 // a regular file.
 func regularFileAt(root, rel string) bool {
 	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
 	return err == nil && info.Mode().IsRegular()
-}
-
-// loaderVersionLine matches the version BepInEx announces in the first lines
-// of its own log, for an installation with no .doorstop_version file.
-var loaderVersionLine = regexp.MustCompile(`BepInEx\s+v?(\d+(?:\.\d+)+)`)
-
-// installedLoaderVersion reads the loader version actually installed under
-// root, or "" when nothing on disk says.
-//
-// Two sources, in order of authority: the .doorstop_version file BepInEx's
-// own archives ship at the game root, then the version BepInEx announces in
-// its log. Neither requires parsing a PE assembly, and "" - "the disk does
-// not say" - is a real answer that suppresses the drift check rather than
-// inventing a mismatch.
-func installedLoaderVersion(root string) string {
-	if b, err := os.ReadFile(filepath.Join(root, ".doorstop_version")); err == nil {
-		if v := strings.TrimSpace(string(b)); v != "" {
-			return v
-		}
-	}
-	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(bepinexLogPath)))
-	if err != nil {
-		return ""
-	}
-	if m := loaderVersionLine.FindSubmatch(b); m != nil {
-		return string(m[1])
-	}
-	return ""
 }
 
 // newestPluginDeploy returns the modification time of the most recently
@@ -316,12 +257,13 @@ func (r *verifyRun) loaderPluginLinkCheck(installedMods []domain.InstalledMod) {
 		}
 		r.result.Issues++
 		fixing := r.opts.Fix
+		fixable, reason := r.deployRowFixability(!fixing, loaderUnlinkedRefusal(fixing), fixing)
 		r.finding(VerifyFinding{
 			ModID: mod.ID, ModName: mod.Name, Status: "loader_plugin_unlinked",
 			Note: fmt.Sprintf("%d loader file(s) this mod provides are not in the game directory, starting with %s - nothing will load them",
 				len(missing), missing[0]),
-			Fixable:       !fixing,
-			FixableReason: loaderUnlinkedRefusal(fixing),
+			Fixable:       fixable,
+			FixableReason: reason,
 		}, VerifyEvent{})
 		if !fixing {
 			continue
@@ -354,6 +296,10 @@ func (r *verifyRun) unlinkedLoaderFiles(mod *domain.InstalledMod) []string {
 	if err != nil {
 		gameAdapter = adapter.Generic{}
 	}
+	// deployableFiles has already asked the adapter's FileRouter, so a
+	// seeded config is not in this list at all - which is the answer this
+	// check wants (#358): it was written once and then became the user's,
+	// so its absence is a choice, not a failed deploy.
 	files, err := deployableFiles(r.svc.GetGameCache(r.game), gameAdapter, r.game, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return nil
@@ -361,7 +307,7 @@ func (r *verifyRun) unlinkedLoaderFiles(mod *domain.InstalledMod) []string {
 	var missing []string
 	for _, f := range files {
 		slash := filepath.ToSlash(f)
-		if !strings.HasPrefix(slash, "BepInEx/") || isBepInExConfigMember(slash) {
+		if !strings.HasPrefix(slash, loaderContentRoot+"/") {
 			continue
 		}
 		if _, err := os.Lstat(filepath.Join(r.game.ModPath, f)); err != nil {
@@ -376,6 +322,12 @@ func (r *verifyRun) unlinkedLoaderFiles(mod *domain.InstalledMod) []string {
 // the failure named, which is the convention every other repair in this
 // engine follows.
 func (r *verifyRun) repairUnlinkedLoaderFiles(mod *domain.InstalledMod, count int) {
+	// A re-deploy: on a refused game it does not run, and the row - which
+	// already names the refusal - stays an issue (#413).
+	if err := r.refuseDeploy(); err != nil {
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("--fix did not re-deploy %s: %s", mod.Name, deployRefusedReason(err))})
+		return
+	}
 	installer, err := r.svc.getInstallerForProfile(r.ctx, r.game, r.profile)
 	if err == nil {
 		err = installer.Install(r.ctx, r.game, &domain.Mod{

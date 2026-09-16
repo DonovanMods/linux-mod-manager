@@ -39,6 +39,24 @@ type Installer struct {
 	// linker, exactly as lmm always did - and Service.newInstallerWithLinker
 	// replaces it with the game's resolved adapter.
 	adapter adapter.GameAdapter
+
+	// recordedOnly narrows every removal to the paths a deployed_files row
+	// names for the mod (#413 fix round 4, F2). Service.newInstallerWithLinker
+	// sets it when the game's adapter is refused: purge and uninstall still
+	// run then (removalSnapshotOf), but without the adapter's routing a
+	// path the cache entry merely NAMES - a seeded config the user has
+	// since replaced with a link of their own - is no proof lmm put what is
+	// there, and the linker removes any symlink it is pointed at.
+	recordedOnly bool
+
+	// refused is the adapter refusal this Installer was built under, or
+	// nil (#413). Service.newInstallerWithLinker sets it with recordedOnly;
+	// every deploy method returns it before touching anything. The flows
+	// ask the adapter first (deployRefusal, a Plan's snapshot) and say so in
+	// their own words - this is the backstop that makes a path that forgot
+	// fail rather than deploy through the identity routing a refused
+	// adapter leaves behind.
+	refused error
 }
 
 // NewInstaller creates a new installer
@@ -147,6 +165,31 @@ func (i *Installer) restoreReplacedOriginal(relPath, dstPath string) {
 	}
 }
 
+// notLinkerOwned reports that the game's adapter routed this cache member
+// away from the linker (#413): adapter.RouteCopyOnce, which is a real file
+// the user owns after its first deploy, or adapter.RouteSkip, which is
+// never deployed at all.
+//
+// Every REMOVAL loop asks it, and each of them iterates the cache entry's
+// RAW ListFiles union rather than its deployable set - deliberately, so a
+// stale member a pre-#210 deploy linked is still cleaned up. That union
+// names the routed members too, and neither of them is lmm's to remove:
+// "never entered into deployed_files, and never removed by an uninstall"
+// is the whole standing adapter.RouteCopyOnce inherits from a profile
+// override.
+//
+// It is asked BEFORE foreignFile rather than left to it. In production
+// foreignFile already protects a seeded file - it is a regular file no
+// profile has a deployed_files row for - so this changes nothing a user
+// can see (#413 review F8). What it changes is where the guarantee comes
+// from: foreignFile can only answer with a database and answers false
+// without one, so the promise held for a Service and not for a bare
+// Installer. Asking the adapter first makes it a property of the route
+// rather than of the ownership lookup.
+func (i *Installer) notLinkerOwned(game *domain.Game, file string) bool {
+	return adapter.Route(i.adapter, game, filepath.ToSlash(file)) != adapter.RouteLink
+}
+
 // foreignFile reports whether dstPath holds content lmm did not put there:
 // a REGULAR file (a symlink is a deployment, lmm's or another tool's) that
 // no profile of this GAME has a deployed_files row for.
@@ -195,6 +238,9 @@ func (i *Installer) foreignFile(ctx context.Context, game *domain.Game, profileN
 // the filesystem stays consistent with the database (previously deployed+tracked
 // files are left in place).
 func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
+	if i.refused != nil {
+		return i.refused
+	}
 	// Check if mod is cached
 	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
 		return fmt.Errorf("mod not in cache: %s/%s@%s", mod.SourceID, mod.ID, mod.Version)
@@ -204,6 +250,23 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	files, err := deployableFiles(i.cache, i.adapter, game, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return fmt.Errorf("resolving deployable files: %w", err)
+	}
+
+	// #353/#413: the adapter's copy-once members are seeded BEFORE anything
+	// is linked, and they are not in `files` at all - deployableFiles
+	// already routed them out, because they are not the linker's to deploy.
+	// They take no deployed_files row and no rollback slot deliberately:
+	// once one is on disk it is the user's file, and the two things that
+	// make a file lmm's own are exactly the two things a hand-edited config
+	// must not be subject to.
+	//
+	// First rather than interleaved (where #358's BepInEx version sat), so
+	// a seeding failure aborts with NOTHING deployed rather than with a
+	// partial deployment to roll back. The install still fails, which is
+	// the semantics that matters: a mod whose defaults could not be written
+	// is not installed.
+	if err := seedCopyOnceFiles(i.cache, i.adapter, game, mod.SourceID, mod.ID, mod.Version); err != nil {
+		return err
 	}
 
 	var deployed []string
@@ -216,26 +279,6 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 
 		srcPath := i.cache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
-
-		// #358 (b): a BepInEx plugin config is seeded, not linked - see
-		// seedBepInExConfig. It takes no deployed_files row and no rollback
-		// slot deliberately: once it is on disk it is the user's file, and
-		// the two things that make a file lmm's own are exactly the two
-		// things a hand-edited config must not be subject to.
-		if isBepInExConfigMember(file) {
-			if err := seedBepInExConfig(srcPath, dstPath); err != nil {
-				rollbackErr := rollbackDeploy(i.linker, game.ModPath, deployed)
-				i.restoreReplacedOriginals(game, deployed)
-				if i.db != nil {
-					_ = i.db.DeleteDeployedFiles(ctx, game.ID, profileName, mod.SourceID, mod.ID)
-				}
-				if rollbackErr != nil {
-					return &domain.DeployError{Op: fmt.Sprintf("seeding %s", file), Primary: err, Rollback: rollbackErr}
-				}
-				return fmt.Errorf("seeding %s: %w", file, err)
-			}
-			continue
-		}
 
 		// #350: preserve whatever is there before the deploy replaces it.
 		i.captureOriginal(ctx, game, profileName, file, dstPath, mod)
@@ -309,6 +352,9 @@ func (i *Installer) ReplaceWithOldCache(ctx context.Context, game *domain.Game, 
 }
 
 func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string, oldFileIDs, newFileIDs []string) error {
+	if i.refused != nil {
+		return i.refused
+	}
 	if !oldCache.Exists(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version) {
 		return fmt.Errorf("old mod not in cache: %s/%s@%s", oldMod.SourceID, oldMod.ID, oldMod.Version)
 	}
@@ -385,6 +431,12 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 			continue
 		}
 		dstPath := filepath.Join(game.ModPath, file)
+		// #413: a copy-once member the OLD version shipped stays exactly
+		// where it is. It is the user's file, and the new version's own
+		// default is seeded above only if nothing is there.
+		if i.notLinkerOwned(game, file) {
+			continue
+		}
 		// #350 / review finding 4: this loop iterates the OLD entry's RAW
 		// ListFiles union, not its deployable set, so a member lmm never
 		// deployed is visited here - the #210 narrowing case, and the
@@ -407,6 +459,19 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		removedOld = append(removedOld, file)
 	}
 
+	// #353/#413: the new version's copy-once defaults, seeded before
+	// anything is linked. They are not part of the replacement and never
+	// were: the old version's copy stays exactly where it is (the
+	// obsolete-file loop above skips it - a regular file with no
+	// deployed_files row, which foreignFile answers for), and copyOnce
+	// never overwrites the user's edit with a new version's default.
+	if err := seedCopyOnceFiles(newCache, i.adapter, game, newMod.SourceID, newMod.ID, newMod.Version); err != nil {
+		if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, nil, oldSet); rollbackErr != nil {
+			return &domain.DeployError{Op: "seeding adapter files", Primary: err, Rollback: rollbackErr}
+		}
+		return err
+	}
+
 	var replacedOrAdded []string
 	for _, file := range newFiles {
 		select {
@@ -420,21 +485,6 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 
 		srcPath := newCache.GetFilePath(game.ID, newMod.SourceID, newMod.ID, newMod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
-		// #358 (b): a seeded config is not part of the replacement. The old
-		// version's copy stays exactly where it is (the obsolete-file loop
-		// above already skips it - it is a regular file with no
-		// deployed_files row, which foreignFile answers for), and the new
-		// version's default does not overwrite the user's edit.
-		if isBepInExConfigMember(file) {
-			if err := seedBepInExConfig(srcPath, dstPath); err != nil {
-				rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet)
-				if rollbackErr != nil {
-					return &domain.DeployError{Op: fmt.Sprintf("seeding %s", file), Primary: err, Rollback: rollbackErr}
-				}
-				return fmt.Errorf("seeding %s: %w", file, err)
-			}
-			continue
-		}
 		// #350: a replace can also land on a file lmm does not own - a
 		// new version whose file list grew into stock content - so the
 		// original is preserved here before the new file goes over it.
@@ -464,9 +514,6 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 			return fmt.Errorf("resetting file tracking: %w", err)
 		}
 		for _, file := range newFiles {
-			if isBepInExConfigMember(file) {
-				continue // seeded, never tracked (#358 (b))
-			}
 			if err := i.db.SaveDeployedFile(ctx, game.ID, profileName, file, newMod.SourceID, newMod.ID); err != nil {
 				_ = i.db.DeleteDeployedFiles(ctx, game.ID, profileName, newMod.SourceID, newMod.ID)
 				for _, oldFile := range oldRestorable {
@@ -710,31 +757,9 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 // whole purge prunes ONCE, over its whole removal set, instead of per mod -
 // which is what its single trailing CleanupEmptyDirs has always been.
 func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]string, error) {
-	// Deliberately the full ListFiles union, not deployableFiles (#210):
-	// removal must cover anything that might ever have been linked, including
-	// stale unclaimed files a pre-fix deploy linked. Narrowing this would
-	// strand those links forever.
-	//
-	// An absent cache entry is not an error (#260): uninstall must stay
-	// idempotent when the entry is already gone - the steady state
-	// syncMergedPak's zero branch and purge --uninstall leave behind. The
-	// deployment can still be fully on disk, though (a copy/hardlink deploy
-	// owns real files, not links back into the cache), so fall back to the
-	// DB's tracked deployed paths rather than orphaning them while erasing
-	// the only record that they were ours. Ownership rows upsert on
-	// overwrite ("new mod takes ownership"), so the fallback never removes
-	// a path another mod has since claimed.
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := i.removalPaths(ctx, game, mod, profileName)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("listing cached files: %w", err)
-		}
-		files = nil
-		if i.db != nil {
-			if files, err = i.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
-				return nil, fmt.Errorf("listing tracked deployed files: %w", err)
-			}
-		}
+		return nil, err
 	}
 
 	// Undeploy each file
@@ -786,6 +811,83 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 	}
 
 	return removed, nil
+}
+
+// removalPaths lists the paths, relative to game.ModPath, an uninstall of
+// mod considers removing - the ONE list the removal loop walks and every
+// removal preview (PlanUninstall, PlanPurge's merged artifact, deploy
+// --purge) describes, so a dry run cannot name a file the real run leaves.
+//
+// It is the cache entry's full ListFiles union, not deployableFiles (#210):
+// removal must cover anything that might ever have been linked, including
+// stale unclaimed files a pre-fix deploy linked. Narrowing this would
+// strand those links forever.
+//
+// An absent cache entry is not an error (#260): uninstall must stay
+// idempotent when the entry is already gone - the steady state
+// syncMergedPak's zero branch and purge --uninstall leave behind. The
+// deployment can still be fully on disk, though (a copy/hardlink deploy
+// owns real files, not links back into the cache), so the DB's tracked
+// deployed paths stand in rather than orphaning them while erasing the only
+// record that they were ours. Ownership rows upsert on overwrite ("new mod
+// takes ownership"), so the fallback never names a path another mod has
+// since claimed.
+//
+// Two narrowings follow. A member the adapter routes away from the linker
+// is left out (notLinkerOwned). And when the game's adapter is refused
+// (recordedOnly), only a path this profile's deployed_files rows name for
+// the mod is kept: without the adapter, a listing is not proof.
+func (i *Installer) removalPaths(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]string, error) {
+	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	switch {
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("listing cached files: %w", err)
+	case err != nil:
+		files = nil
+		if i.db == nil {
+			break
+		}
+		if files, err = i.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+			return nil, fmt.Errorf("listing tracked deployed files: %w", err)
+		}
+	case i.recordedOnly:
+		if files, err = i.onlyRecorded(ctx, game, mod, profileName, files); err != nil {
+			return nil, err
+		}
+	}
+
+	kept := files[:0:0]
+	for _, file := range files {
+		// #413: a member the adapter routed away from the linker was never
+		// deployed as mod content, so an uninstall does not remove it.
+		if !i.notLinkerOwned(game, file) {
+			kept = append(kept, file)
+		}
+	}
+	return kept, nil
+}
+
+// onlyRecorded keeps the entries of files that profileName's deployed_files
+// rows name for mod. An Installer with no database has no proof of any.
+func (i *Installer) onlyRecorded(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, files []string) ([]string, error) {
+	if i.db == nil {
+		return nil, nil
+	}
+	rows, err := i.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID)
+	if err != nil {
+		return nil, fmt.Errorf("listing tracked deployed files: %w", err)
+	}
+	recorded := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		recorded[r] = true
+	}
+	var kept []string
+	for _, f := range files {
+		if recorded[filepath.ToSlash(f)] {
+			kept = append(kept, f)
+		}
+	}
+	return kept, nil
 }
 
 // IsInstalled checks if a mod is currently deployed. Returns true only if every

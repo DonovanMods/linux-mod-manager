@@ -31,6 +31,12 @@ type Options struct {
 	WarnWriter io.Writer
 	// Logger receives diagnostics from the opened service. nil means discard.
 	Logger *slog.Logger
+	// OmitAdapterWarnings names the games whose design-decision-11 adapter
+	// warning the caller reports itself (a game's own detail view, its
+	// verify run, an edit that re-checks it afterwards), so Open does not
+	// print that game's load-time copy on WarnWriter as well (#413
+	// re-review M2). Every other game's warning is still printed.
+	OmitAdapterWarnings []string
 }
 
 // Paths is a resolved on-disk layout.

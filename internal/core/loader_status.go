@@ -29,29 +29,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// BepInEx paths lmm reads to answer "is the loader actually installed, and
-// is its bootstrap intact for the declared mode?" Every one is
-// game-root-relative, which is the whole reason a BepInEx game's mod_path is
-// its install path.
-const (
-	// bepinexPreloaderPath is the file whose presence means BepInEx is
-	// installed at all. It is BepInEx's own entry point, so nothing else
-	// plausibly puts it there.
-	bepinexPreloaderPath = "BepInEx/core/BepInEx.Preloader.dll"
-	// bepinexLogPath is written by the loader on every run, which makes it
-	// the only honest "did it actually load?" signal available without
-	// launching the game.
-	bepinexLogPath = "BepInEx/LogOutput.log"
-	// bepinexNativeScript and bepinexNativeDoorstop are the native Linux
-	// bootstrap: run_bepinex.sh sets up LD_PRELOAD for libdoorstop.so.
-	bepinexNativeScript   = "run_bepinex.sh"
-	bepinexNativeDoorstop = "libdoorstop.so"
-	// bepinexProtonProxy and bepinexProtonConfig are the Proton/Wine
-	// bootstrap: the Windows winhttp.dll proxy plus its doorstop config.
-	bepinexProtonProxy  = "winhttp.dll"
-	bepinexProtonConfig = "doorstop_config.ini"
-)
-
 // The two Steam launch options, verbatim. They are the entire user-facing
 // output of this file, and getting one wrong is worse than printing nothing:
 // a game with the wrong option launches normally and loads no mods, with no
@@ -250,14 +227,22 @@ func (s *Service) LoaderStatus(_ context.Context, gameID string) (*LoaderStatus,
 	}
 	status.LaunchOption = BepInExLaunchOption(status.EffectiveBootstrap)
 
-	if info, err := os.Stat(filepath.Join(game.InstallPath, filepath.FromSlash(bepinexPreloaderPath))); err == nil && info.Mode().IsRegular() {
+	if info, err := os.Stat(filepath.Join(game.InstallPath, filepath.FromSlash(domain.BepInExPreloaderPath))); err == nil && info.Mode().IsRegular() {
 		status.Installed = true
 	}
-	if info, err := os.Stat(filepath.Join(game.InstallPath, filepath.FromSlash(bepinexLogPath))); err == nil {
+	if info, err := os.Stat(filepath.Join(game.InstallPath, filepath.FromSlash(domain.BepInExLogPath))); err == nil {
 		status.LoadedAt = info.ModTime().UTC().Format(loaderTimeFormat)
 	}
 
 	status.Warnings = loaderStatusWarnings(status)
+	// Design decision 11 (#413 review F5): a game whose BepInEx its adapter
+	// never acts on is told so here too, on the report a user reads when
+	// inspecting the game rather than only when importing into it - when
+	// that is a contradiction rather than the user's stated choice
+	// (adapter_loader_bypass.go).
+	if w := s.adapterConfigWarning(game); w != "" {
+		status.Warnings = append(status.Warnings, w)
+	}
 	return status, nil
 }
 
@@ -364,5 +349,5 @@ func (s *Service) GameDetail(ctx context.Context, gameID string) (*GameDetail, e
 	if err != nil {
 		return nil, err
 	}
-	return &GameDetail{GameListEntry: newGameListEntry(game, defaultGame), Loader: status}, nil
+	return &GameDetail{GameListEntry: s.newGameListEntry(game, defaultGame), Loader: status}, nil
 }

@@ -19,6 +19,7 @@ const modulePrefix = "github.com/DonovanMods/linux-mod-manager/v2/"
 // line here is caught by TestEveryAdapterPackageIsChecked below.
 var adapterPackages = []string{
 	"internal/adapter",
+	"internal/adapter/bepinex",
 	"internal/adapter/icarus",
 }
 

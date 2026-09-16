@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
@@ -42,7 +43,10 @@ func init() {
 }
 
 func runGameShow(cmd *cobra.Command, args []string) error {
-	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+	// The loader section (or, under --json, loader_status.warnings) carries
+	// this game's adapter warning, so the load-time copy is left out
+	// (#413 re-review M2).
+	return withServiceOpts(cmd, app.Options{OmitAdapterWarnings: []string{args[0]}}, func(ctx context.Context, service *core.Service) error {
 		return doGameShow(ctx, service, args[0])
 	})
 }
@@ -71,13 +75,21 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 	}
 	fmt.Printf("  Link method:  %s\n", detail.LinkMethod)
 	fmt.Printf("  Deploy mode:  %s\n", detail.DeployMode)
-	// #353: the same cell `lmm game list` prints, spelled the same way -
-	// an absent key IS the generic-files identity, so it is named rather
-	// than left blank.
-	fmt.Printf("  Adapter:      %s\n", formatGameAdapter(detail.Adapter))
+	// #353/#426: the same cell `lmm game list` prints - the adapter the
+	// game USES - and, when games.yaml does not name it, a note saying lmm
+	// derived it, so a reader comparing this with their file is not left
+	// wondering where it came from.
+	adapterLine := formatGameAdapter(detail.GameListEntry)
+	if detail.Adapter == "" && detail.EffectiveAdapter != "" {
+		adapterLine += " " + colorDim("(derived - games.yaml sets no adapter)")
+	}
+	fmt.Printf("  Adapter:      %s\n", adapterLine)
+	if detail.AdapterError != "" {
+		fmt.Printf("                %s\n", colorRed(detail.AdapterError))
+	}
 	fmt.Printf("  Sources:      %s\n", formatGameSources(detail.SourceIDs))
 
-	printLoaderStatus(detail.Loader)
+	printLoaderStatus(detail.Loader, detail.EffectiveAdapter == domain.LoaderKindBepInEx)
 	return nil
 }
 
@@ -94,7 +106,10 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 // Runtime: unknown / Bootstrap: unknown" and then advising
 // `--loader-bootstrap` for an Unreal game is advice to configure something
 // it neither has nor needs.
-func printLoaderStatus(status *core.LoaderStatus) {
+//
+// laysOut reports that the game resolves to the bepinex adapter, which is
+// the only case the "declare it" hint below is advice for.
+func printLoaderStatus(status *core.LoaderStatus, laysOut bool) {
 	if !status.Relevant() {
 		return
 	}
@@ -104,10 +119,19 @@ func printLoaderStatus(status *core.LoaderStatus) {
 	if status.Declared == nil {
 		// An UNDECLARED game with the preloader actually on disk is the
 		// one state where the missing declaration is the whole story
-		// (re-review R3): lmm will refuse to deploy a plugin into it, and
-		// the fix is one command. Saying "none" and moving on left that
-		// user with nothing to act on.
-		if status.Installed {
+		// (re-review R3): lmm acts on the BepInEx it found (#424), but
+		// every verify check that compares the installation against a
+		// declaration stays silent until one exists, and the fix is one
+		// command. Saying "none" and moving on left that user with nothing
+		// to act on.
+		//
+		// Only while lmm DOES act on it (laysOut). On a game whose adapter
+		// is another one - an explicit key, a compile game, a mod_path off
+		// the game root - declaring the loader creates the contradiction
+		// decision 11 warns about, so the hint would be advice that causes
+		// a warning (#413 re-review M1); the loader report's own warning,
+		// if any, says what to do there instead.
+		if status.Installed && laysOut {
 			fmt.Printf("  Declared:     %s\n", colorRed("none - BepInEx is in the game directory but this game does not declare it"))
 			fmt.Printf("                %s\n", colorDim(fmt.Sprintf("declare it with `lmm game edit %s --loader bepinex`", status.GameID)))
 		} else {

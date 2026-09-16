@@ -318,37 +318,16 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 		}
 	}
 
-	// #358: the BepInEx archive-root normalisation the ingest will apply,
-	// resolved from the listing so the preview names the paths the deploy
-	// produces. modName comes from the RAW listing (importedModName), before
-	// any rewrite, for the same reason the ingest derives it before
-	// normalising: a normalised shape-A tree has BepInEx as its sole
-	// top-level directory, and naming the mod after that would be absurd.
-	//
-	// The game's BepInEx gate (#359, widened by #424 from "declares the
-	// loader" to "declares it OR has it installed") widens the normaliser
-	// onto the ambiguous shapes - a bare plugins/ root, a plugin folder, a
-	// loose .dll. See bepinexNormalise's doc comment.
+	// modName comes from the RAW listing (importedModName), before any
+	// rewrite, for the same reason the ingest derives it before normalising:
+	// a normalised shape-A BepInEx tree has BepInEx as its sole top-level
+	// directory, and naming the mod after that would be absurd.
 	modName := importedModName(kind, filename, ident.version, members)
-	gate := bepinexGateFor(game)
-	layout, err := bepinexLayoutForListing(kind, members, modName, gate.Gated, game.InstallPath)
+	files, err := importDeployablePaths(kind, filename, members)
 	if err != nil {
 		return nil, err
 	}
-	noteUndeclaredBepInEx(layout, game, gate)
 
-	// #359: refuse before computing a plan that would promise a plugin the
-	// game has nothing to load it with. Plan time is the earliest an archive
-	// import can answer this, and the answer costs nothing beyond the
-	// listing already read.
-	if err := requireDeclaredLoader(game, modName, layout, gate); err != nil {
-		return nil, err
-	}
-
-	files, err := importDeployablePaths(kind, filename, members, layout)
-	if err != nil {
-		return nil, err
-	}
 	// #353: the plan and the ingest share ONE Layout AND one derivation of
 	// its inputs - the same member list and the same mod name, read off the
 	// archive before either side rewrites anything - so a plan can never
@@ -356,18 +335,21 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// import is the only kind whose members an adapter has a say over - a
 	// retained merge source and a copied artifact are single files under
 	// their own names.
-	//
-	// It runs AFTER #358's BepInEx normalisation, on the paths that
-	// normalisation produced, which is the same order the ingest uses -
-	// that shared order is what keeps plan and ingest agreeing when both a
-	// loader and an adapter are in play. Named apart from the BepInEx
-	// `layout` above deliberately: that one still owns the plan's warnings.
+	var warnings []string
 	if kind == importKindExtract {
-		adapterLayout, lerr := s.archiveLayout(game, modName, files)
+		// #359/#413: refuse before computing a plan that would promise a
+		// plugin the game has nothing to load it with. Plan time is the
+		// earliest an archive import can answer this, and the answer costs
+		// nothing beyond the listing already read.
+		if err := s.requireAdapterClaim(game, modName, files); err != nil {
+			return nil, err
+		}
+		layout, lerr := s.archiveLayout(game, modName, files)
 		if lerr != nil {
 			return nil, lerr
 		}
-		if files, lerr = rewritePlannedPaths(adapterLayout, files); lerr != nil {
+		warnings = layout.Warnings
+		if files, lerr = rewritePlannedPaths(layout, files); lerr != nil {
 			return nil, lerr
 		}
 	}
@@ -379,12 +361,12 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 		Files:          files,
 		Conflicts:      []Conflict{},
 		EntryPreExists: entryPreExists,
-		// The normaliser's own diagnostic (an archive a BepInEx game's
-		// layout rules could not place) reaches the user on the plan,
-		// which is the surface both frontends render BEFORE committing to
-		// an import - the one place a "this is not the layout I expected"
-		// note can still change the answer.
-		Warnings:    append([]string{}, layout.warnings()...),
+		// The adapter's own diagnostics (an archive its layout rules could
+		// not place, a loader lmm noticed but the game does not declare)
+		// reach the user on the plan, which is the surface both frontends
+		// render BEFORE committing to an import - the one place a "this is
+		// not the layout I expected" note can still change the answer.
+		Warnings:    append([]string{}, warnings...),
 		ident:       ident,
 		fingerprint: fingerprint,
 	}

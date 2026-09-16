@@ -158,9 +158,12 @@ export function SetupGames({ actions, game, profile }) {
   }
 
   // The Adapter column (issue 353, the game-adapter seam) is READ-ONLY in
-  // this unit. An absent `adapter` key IS the generic-files identity, so
-  // the cell names it rather than leaving a blank - there is no such thing
-  // as a game with no adapter.
+  // this unit. It shows the adapter the game USES (issue 426):
+  // `effective_adapter`, which names a derived adapter too (icarus for
+  // deploy_mode: compile, bepinex for a game with BepInEx), where `adapter`
+  // is only what games.yaml says. An absent `effective_adapter` IS the
+  // generic-files identity, so the cell names it rather than leaving a
+  // blank - there is no such thing as a game with no adapter.
   return html`
     <div class="setup-section" data-testid="setup-games">
       <table class="setup-table">
@@ -188,7 +191,7 @@ export function SetupGames({ actions, game, profile }) {
                 <td class="col--path mono" title=${g.mod_path}>
                   ${g.mod_path}
                 </td>
-                <td class="mono">${g.adapter || "generic-files"}</td>
+                <td class="mono">${g.effective_adapter || "generic-files"}</td>
                 <td>
                   <span class="mono"
                     >${Object.keys(g.source_ids ?? {}).join(", ") || "—"}</span

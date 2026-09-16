@@ -23,6 +23,11 @@
 // state transition and nothing else. serve does not manufacture core events
 // to fill that gap - an event a core flow never emitted would be a
 // frontend inventing the contract it is supposed to render.
+//
+// Having no plan step does not mean having no adapter check: EnableMod
+// deploys, so on a game whose adapter core refuses it fails with the same
+// refusal every plan kind returns for that game, and the job fails with it
+// through the ordinary envelope. DisableMod is a removal and runs there.
 package serve
 
 import (

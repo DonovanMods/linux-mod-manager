@@ -112,19 +112,16 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
-	snapshot, err := s.snapshotOf(game.ID, installed)
-	if err != nil {
-		return nil, err
-	}
 	plan := &UninstallPlan{
 		Mod:            *mod,
 		External:       mod.External,
 		KeepCache:      opts.KeepCache,
 		Hooks:          uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks),
 		MergedArtifact: s.mergedArtifactEffectForUninstall(ctx, game, profileName, mod),
-		snapshot:       snapshot,
+		// A removal: the adapter has no say (removalSnapshotOf).
+		snapshot: removalSnapshotOf(installed),
 	}
-	for _, f := range s.deployedPathsFor(ctx, game, profileName, mod) {
+	for _, f := range s.deployedPathsFor(ctx, s.getInstaller(game), game, profileName, mod) {
 		if isDeployedNow(game, f) {
 			plan.Files = append(plan.Files, f)
 		}
@@ -149,7 +146,7 @@ func (s *Service) ApplyUninstall(ctx context.Context, game *domain.Game, plan *U
 	if plan == nil {
 		return nil, errors.New("uninstall plan is nil: call PlanUninstall first")
 	}
-	if err := s.checkPlanFresh(ctx, game.ID, plan.Mod.ProfileName, plan.snapshot); err != nil {
+	if err := s.checkRemovalPlanFresh(ctx, game.ID, plan.Mod.ProfileName, plan.snapshot); err != nil {
 		return nil, err
 	}
 	return s.uninstallMod(ctx, game, plan.Mod.ProfileName, plan.Mod.SourceID, plan.Mod.ID, opts)

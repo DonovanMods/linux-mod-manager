@@ -212,8 +212,9 @@ func ExactGameCatalogMatch(report *GameCatalogReport, name string) *GameCatalogM
 //     SearchGameCatalog suggested, which is derived from the entry's SLUG -
 //     that is what keeps a CurseForge add keyed "minecraft" rather than
 //     "432".
-//   - ModPath is optional: empty defaults to <InstallPath>/mods, exactly
-//     the default the CLI's prompt offered. A non-empty value may be
+//   - ModPath is optional: empty defaults to DefaultModPath -
+//     <InstallPath>/mods, exactly the default the CLI's prompt offered, or
+//     the install path itself for a BepInEx game. A non-empty value may be
 //     absolute OR relative to InstallPath: a relative one is resolved
 //     against it, the same rule config.ResolveModPath applies when
 //     games.yaml is read (#363), and the ABSOLUTE result is what gets
@@ -229,8 +230,10 @@ func ExactGameCatalogMatch(report *GameCatalogReport, name string) *GameCatalogM
 //     layered on top of it, so an explicit source ADDS to a prefilled map
 //     rather than replacing it, and a spec carrying only this map is
 //     complete on its own.
-//   - Adapter is games.yaml's adapter string (#353). Optional: "" means
-//     the generic-files identity.
+//   - Adapter is games.yaml's adapter string (#353). Optional: "" writes
+//     no key, so the game uses the adapter Service.AdapterName derives -
+//     bepinex for a spec carrying a BepInEx Loader, icarus for a compile
+//     DeployMode, generic-files otherwise.
 //   - DeployMode is games.yaml's deploy_mode string, passed through to
 //     domain.ParseDeployMode. Optional: "" means the default (extract),
 //     exactly what every add wrote before this field existed. #206's
@@ -247,9 +250,11 @@ type GameSpec struct {
 	LinkMethod  domain.LinkMethod
 	Sources     map[string]string
 	DeployMode  string
-	// Adapter is games.yaml's `adapter:` value (#353). Optional: ""
-	// means the generic-files identity, which is every game lmm managed
-	// before the seam existed. Validated for SYNTAX here; whether the
+	// Adapter is games.yaml's `adapter:` value (#353). Optional: "" writes
+	// no key, which leaves the choice to Service.AdapterName's derivation
+	// (generic-files unless DeployMode or Loader selects another), exactly
+	// as for every game lmm managed before the seam existed. Validated for
+	// SYNTAX here; whether the
 	// named adapter is registered is checked by the caller against
 	// Service.ListAdapters(), and again when core resolves the game.
 	Adapter string
@@ -359,8 +364,14 @@ func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEn
 	// fail at resolve time with nothing the form could mark. The CLI's own
 	// pre-check (cmd/lmm/adapter_flag.go) stays for its friendlier
 	// message, but it is no longer the only thing enforcing this.
+	//
+	// AdapterFor rather than a bare registry lookup, so the composition
+	// rules an explicit adapter has with the rest of the entry (a compile
+	// game's adapter must compile; bepinex needs a game-root mod_path) are
+	// refused HERE, on the field a form can mark, rather than written and
+	// then refused by every flow - the same check SetGameAdapter makes.
 	if game.Adapter != "" {
-		if _, err := s.adapterRegistry().Resolve(game.Adapter); err != nil {
+		if _, err := s.AdapterFor(game); err != nil {
 			return nil, &GameSpecError{
 				Field: "adapter", Value: game.Adapter,
 				Reason: err.Error(), Err: err,
@@ -381,7 +392,7 @@ func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEn
 	if err != nil {
 		return nil, err
 	}
-	entry := newGameListEntry(game, defaultGame)
+	entry := s.newGameListEntry(game, defaultGame)
 	return &entry, nil
 }
 
@@ -570,7 +581,7 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 
 	modPath := config.ExpandPath(strings.TrimSpace(spec.ModPath))
 	if modPath == "" {
-		modPath = filepath.Join(installPath, "mods")
+		modPath = spec.DefaultModPath()
 	}
 	// #363: the WRITE side applies the LOADER's rule. A relative mod_path
 	// has always meant "relative to install_path" in a hand-written
@@ -633,4 +644,50 @@ func requireDir(path string) error {
 		return errors.New("path exists and is not a directory")
 	}
 	return nil
+}
+
+// DefaultModPath is the mod path AddGame writes when spec names none, so a
+// frontend's prompt can offer the value that will actually be written.
+//
+// <install>/mods for every game but a BepInEx one, which gets the install
+// path itself (#413 re-review P-b): a BepInEx layout is relative to the game
+// root, the bepinex adapter is only derived for a game that deploys there,
+// and <install>/mods is a directory BepInEx never reads. "A BepInEx one" is
+// a spec that declares the loader or names the bepinex adapter - the two
+// things a new game can say about it before it exists - or one whose
+// install directory already holds BepInEx (#413 final review F5), which is
+// the same fact the derivation reads. AddGame requires that directory to
+// exist, so the preloader is right there to stat, and <install>/mods would
+// contradict it the moment it was written. A spec that names another
+// adapter, or compiles its mods, has made its own choice and keeps
+// <install>/mods.
+//
+// It is one os.Stat, and only for a spec that declares nothing.
+func (spec GameSpec) DefaultModPath() string {
+	installPath := config.ExpandPath(strings.TrimSpace(spec.InstallPath))
+	if spec.declaresBepInEx() || spec.findsBepInEx(installPath) {
+		return installPath
+	}
+	return filepath.Join(installPath, "mods")
+}
+
+// findsBepInEx reports whether BepInEx is installed at installPath and
+// nothing in spec keeps the bepinex adapter from being derived for it.
+func (spec GameSpec) findsBepInEx(installPath string) bool {
+	if installPath == "" || strings.TrimSpace(spec.Adapter) != "" {
+		return false
+	}
+	if mode, ok := domain.ParseDeployMode(strings.TrimSpace(spec.DeployMode)); ok && mode == domain.DeployCompile {
+		return false
+	}
+	return regularFileAt(installPath, domain.BepInExPreloaderPath)
+}
+
+// declaresBepInEx reports whether spec says the game loads its mods through
+// BepInEx, by either key.
+func (spec GameSpec) declaresBepInEx() bool {
+	if strings.TrimSpace(spec.Adapter) == bepinexAdapterID {
+		return true
+	}
+	return spec.Loader != nil && strings.EqualFold(strings.TrimSpace(spec.Loader.Kind), domain.LoaderKindBepInEx)
 }

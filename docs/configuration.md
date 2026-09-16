@@ -89,7 +89,7 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 | `cache_path`   | string | no       | Per-game cache directory override                                     |
 | `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                   |
 | `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile` |
-| `adapter`      | string | no       | Game adapter: `generic-files` (default) or `icarus` — see below        |
+| `adapter`      | string | no       | Game adapter: `generic-files` (default), `icarus` or `bepinex` — below |
 
 #### `mod_path` and relative values
 
@@ -160,14 +160,61 @@ whether the game's mods have to be compiled into one artifact, and what
   > compiles exactly like one from Project Daedalus, because the adapter
   > decides, not the source.
 
+- **`bepinex`**: Unity games modded through
+  [BepInEx](https://github.com/BepInEx/BepInEx). It normalises plugin
+  archives into the game-root layout the loader reads, treats
+  `BepInEx/config/**` as configuration the user owns after its first deploy
+  (copied once, never overwritten, never removed by an uninstall), refuses
+  an archive that is the BepInEx pack itself rather than a mod for it, and
+  gives `lmm verify` its loader tier. See the README's
+  [BepInEx section](../README.md#bepinex-unity-games) for the whole
+  workflow.
+
+  You rarely have to write this one: a game whose `mod_path` is its
+  `install_path` resolves to it on its own when it declares `loader: kind:
+  bepinex` or merely HAS BepInEx installed in its directory. A game with
+  any other `mod_path` keeps `generic-files` (BepInEx's layout is relative
+  to the game root), and `adapter: bepinex` with such a `mod_path` is
+  refused.
+
+  Set `adapter: generic-files` explicitly, with no `loader:` block, when
+  you want a BepInEx game's archives treated as plain files. That is a
+  legitimate choice, and the explicit key is the acknowledgement: lmm
+  flags it nowhere persistently, and says only, on the import plan or
+  download of an archive the BepInEx rules would have laid out, that it is
+  deploying that archive exactly as packaged (a Thunderstore package's
+  `manifest.json` lands in the game directory and its `BepInEx/config`
+  files are linked from the shared mod cache).
+
+  What lmm DOES flag persistently — when it loads the file, in `lmm game
+  show` and the web loader panel, as a `loader_adapter_ignored` warning in
+  `lmm verify`, and right after the edit that causes it — is a
+  contradiction: a `loader:` block the adapter ignores (an explicit other
+  adapter, or `deploy_mode: compile`, which selects `icarus`), or an
+  installed BepInEx that a derived adapter ignores (`deploy_mode:
+  compile`, or a `mod_path` off the game root). Each warning names the
+  fixes for its own configuration, and each fix silences it. See
+  [adapters.md](adapters.md#loader) for the whole rule.
+
 The adapters that follow are added in the same tree, so `lmm game list`
 always names what this build actually has:
 
 ```bash
-lmm game list                           # the ADAPTER column names each game's
+lmm game list                           # the ADAPTER column names the adapter each game USES
 lmm game add --adapter <name> ...
-lmm game edit <game> --adapter <name>   # "" clears it back to generic-files
+lmm game edit <game> --adapter <name>   # "" clears the key; the game falls back to its derived adapter
 ```
+
+`lmm game list` and `lmm game show` name the adapter a game actually
+resolves to, including one lmm derived (`icarus` for `deploy_mode:
+compile`, `bepinex` for a game-root game with BepInEx), so a game with no
+`adapter:` key does not read as `generic-files` when it is not. In `--json`
+(and `GET /api/v1/games`) `adapter` stays exactly what `games.yaml` says,
+and `effective_adapter` is the one in use — omitted when that is
+`generic-files`, so an absent `effective_adapter` means `generic-files`.
+The one exception is a game lmm refuses to run any flow on, which uses no
+adapter: it has no `effective_adapter` and an `adapter_error` naming the
+refusal, and the CLI shows its adapter as `<name> (refused)`.
 
 An adapter name this build does not ship is refused, naming the ones it
 does, rather than silently downgraded to the default: `game add` and `game
@@ -175,6 +222,10 @@ edit` refuse it as you type it, and a name already in `games.yaml` is
 refused when lmm resolves that game. Only the NAME's syntax is checked when
 `games.yaml` loads, so an unknown-but-well-formed name still lets every
 other game work.
+
+Writing an adapter for a game that needs one is a package under
+`internal/adapter/` plus one registration line, with nothing in lmm's core
+to change: see [adapters.md](adapters.md).
 
 #### `adapter` and `deploy_mode: compile`
 

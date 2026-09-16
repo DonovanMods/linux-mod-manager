@@ -40,10 +40,29 @@ func withServiceOpts(cmd *cobra.Command, opts app.Options, fn func(ctx context.C
 // the *domain.Game for the global -g flag, so callers receive a fully-populated
 // game and never need to repeat the GetGame boilerplate.
 func withGameService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.Service, game *domain.Game) error) error {
+	return withGameServiceOpts(cmd, false, fn)
+}
+
+// withGameReportService is withGameService for a command that reports the
+// game's own adapter warning (design decision 11) itself, as verify's
+// loader_adapter_ignored row does: the load-time copy is left out for that
+// game, so the command says it once (#413 re-review M2).
+func withGameReportService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.Service, game *domain.Game) error) error {
+	return withGameServiceOpts(cmd, true, fn)
+}
+
+// withGameServiceOpts is withGameService and withGameReportService's shared
+// body. The game id is only known once requireGame has run, which is why
+// the omission is a flag here rather than an app.Options the caller builds.
+func withGameServiceOpts(cmd *cobra.Command, reportsAdapterWarning bool, fn func(ctx context.Context, svc *core.Service, game *domain.Game) error) error {
 	if err := requireGame(cmd); err != nil {
 		return err
 	}
-	return withService(cmd, func(ctx context.Context, svc *core.Service) error {
+	var opts app.Options
+	if reportsAdapterWarning {
+		opts.OmitAdapterWarnings = []string{gameID}
+	}
+	return withServiceOpts(cmd, opts, func(ctx context.Context, svc *core.Service) error {
 		game, err := svc.GetGame(gameID)
 		if err != nil {
 			// Wrap rather than reformat so callers can errors.Is(err, domain.ErrGameNotFound).
@@ -52,6 +71,31 @@ func withGameService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.
 		}
 		return fn(ctx, svc, game)
 	})
+}
+
+// withGameWriteService is withService for a command that writes gameID's
+// configuration (`lmm game edit`): the load-time adapter warning is left out
+// for that game, and once fn has succeeded the game's warning is re-checked
+// against what was written and printed if it still applies. So the edit that
+// fixes a contradiction does not print it before succeeding, and the edit
+// that creates one says so at that moment (#413 re-review M2).
+func withGameWriteService(cmd *cobra.Command, gameID string, fn func(ctx context.Context, svc *core.Service) error) error {
+	return withServiceOpts(cmd, app.Options{OmitAdapterWarnings: []string{gameID}}, func(ctx context.Context, svc *core.Service) error {
+		if err := fn(ctx, svc); err != nil {
+			return err
+		}
+		warnGameAdapterConfig(svc, gameID)
+		return nil
+	})
+}
+
+// warnGameAdapterConfig prints gameID's design-decision-11 warning on stderr,
+// in the load-time warning's own format, when its configuration contradicts
+// itself. Stderr, so a --json run's stdout stays one document.
+func warnGameAdapterConfig(svc *core.Service, gameID string) {
+	if w := svc.AdapterConfigWarning(gameID); w != "" {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
 }
 
 func closeService(svc *core.Service) {
