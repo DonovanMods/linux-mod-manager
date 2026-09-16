@@ -91,7 +91,7 @@ func TestDoVerify_FilteredWorkshopModOnAChecksummedProfileIsNotNoFilesFound(t *t
 	seedVerifySummaryMod(t, svc, game)
 	seedVerifyExternal(t, svc, game, "3000000001", "ModMenu")
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, []string{"3000000001"}) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, []string{"3000000001"}) })
 	assert.Contains(t, out, "tracked from Steam - present on disk")
 	assert.NotContains(t, out, "No files found for mod", "the filter matched ModMenu; this message is for a filter that matched nothing")
 }
@@ -103,6 +103,6 @@ func TestDoVerify_AFilterMatchingNothingStillSaysNoFilesFound(t *testing.T) {
 	cmd, svc, game := setupVerifySummaryGame(t, "")
 	seedVerifySummaryMod(t, svc, game)
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, []string{"does-not-exist"}) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, []string{"does-not-exist"}) })
 	assert.Contains(t, out, "No files found for mod does-not-exist")
 }
