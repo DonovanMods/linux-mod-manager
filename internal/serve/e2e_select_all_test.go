@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -250,6 +251,45 @@ func TestE2E_UpdatesCardSelectAll_SkipsTheRowsWithNoCheckbox(t *testing.T) {
 // query out to the sources instead.
 func typeIntoOmnibar(text string) chromedp.Action {
 	return chromedp.SendKeys(`.omnibar`, text, chromedp.ByQuery)
+}
+
+// TestE2E_LibrarySelectAll_HonoursTheSearch is the search half of issue
+// 434's "everything currently visible": the omnibar narrows the table just
+// as the Filter does, and select-all takes what that leaves - then, with the
+// search cleared, the rows it did not take read the box as partial.
+func TestE2E_LibrarySelectAll_HonoursTheSearch(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var searched e2eSelectAllState
+	var names []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 3`),
+		typeIntoOmnibar("alpha"),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 1`),
+		chromedp.Evaluate(`document.querySelector('[data-testid="select-all"]').click()`, nil),
+		settleEffects(),
+		chromedp.Evaluate(selectAllStateJS, &searched),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll(".mod-row--selected"))
+			.map((r) => r.querySelector(".mod-row__name").textContent.trim())`, &names),
+	)
+	assert.Equal(t, []string{"Alpha Mod"}, names, "select-all takes only what the search left in view")
+	assert.True(t, searched.Checked)
+	assert.Contains(t, searched.BatchText, "1 of 1 selected")
+
+	var cleared e2eSelectAllState
+	f.runInBrowser(t,
+		chromedp.Focus(`.omnibar`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 3`),
+		settleEffects(),
+		chromedp.Evaluate(selectAllStateJS, &cleared),
+	)
+	assert.Equal(t, 1, cleared.Selected, "clearing the search does not widen the selection")
+	assert.True(t, cleared.Indeterminate, "and the full table reads it as partial")
+	assert.Contains(t, cleared.BatchText, "1 of 3 selected")
+	assert.Empty(t, f.BrowserErrors())
 }
 
 // TestE2E_LibrarySelectAll_IsRefusedWithNothingItCouldTake is issue 434's
