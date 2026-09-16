@@ -32,8 +32,20 @@ const profileBackfillPendingPrefix = db.MetaProfileDisabledBackfill + ":"
 // backfill did: every reference it marked, and every profile file it could
 // not edit (kept, and retried once that file changes).
 type ProfileBackfillReport struct {
-	Marked  []ProfileBackfillMark
-	Skipped []ProfileBackfillSkip
+	Marked    []ProfileBackfillMark
+	Skipped   []ProfileBackfillSkip
+	Rewritten []ProfileBackfillRewrite
+}
+
+// ProfileBackfillRewrite is a profile file whose layout the marker editor
+// could not edit, so the backfill rewrote it whole to record its markers
+// (#441 review F11), and where it kept the file as it was ("" when the
+// rewrite lost nothing).
+type ProfileBackfillRewrite struct {
+	GameID  string
+	Profile string
+	File    string
+	Backup  string
 }
 
 // ProfileBackfillMark is one reference the backfill wrote `disabled: true`
@@ -497,6 +509,17 @@ func (s *Service) markPendingProfile(ctx context.Context, pending pendingProfile
 			names[domain.ModKey(mod.SourceID, mod.ModID)] = mod.Name
 		}
 		marked, err := s.markModsDisabled(path, refs)
+		if errors.Is(err, config.ErrProfileLayoutUnsupported) {
+			// What a save does with a layout it cannot edit (#441
+			// review F11): lmm's saves now keep the author's layout, so
+			// no later save would make this file editable, and a switch
+			// into the profile would turn these mods back on.
+			var rewrite *ProfileBackfillRewrite
+			marked, rewrite, err = s.rewriteWithMarkers(pending, path, refs)
+			if rewrite != nil {
+				report.Rewritten = append(report.Rewritten, *rewrite)
+			}
+		}
 		switch {
 		case errors.Is(err, domain.ErrProfileNotFound):
 			// Deleted since it was listed: nothing to mark.
@@ -534,6 +557,48 @@ func (s *Service) markModsDisabled(path string, refs []domain.ModReference) (mar
 		mark = s.profileMarker
 	}
 	return mark(path, refs)
+}
+
+// rewriteWithMarkers is markPendingProfile's fallback for a layout the
+// marker editor declines: pending's profile, loaded, with every reference
+// to refs marked, saved as any profile is (config.SaveProfileReporting) -
+// in place when the save's own editor can, otherwise whole, with the file
+// as it was kept beside it. It returns the mods it newly marked, as
+// config.MarkModsDisabled does, and the rewrite when there was one.
+func (s *Service) rewriteWithMarkers(pending pendingProfile, path string, refs []domain.ModReference) ([]domain.ModReference, *ProfileBackfillRewrite, error) {
+	profile, err := config.LoadProfile(s.configDir, pending.GameID, pending.Profile)
+	if err != nil {
+		return nil, nil, err
+	}
+	wanted := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		wanted[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+	var marked []domain.ModReference
+	reported := make(map[string]bool, len(refs))
+	for i := range profile.Mods {
+		ref := &profile.Mods[i]
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if !wanted[key] || ref.Disabled {
+			continue
+		}
+		ref.Disabled = true
+		if !reported[key] {
+			reported[key] = true
+			marked = append(marked, domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID})
+		}
+	}
+	if len(marked) == 0 {
+		return nil, nil, nil
+	}
+	saved, err := config.SaveProfileReporting(s.configDir, profile)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !saved.Rewritten {
+		return marked, nil, nil
+	}
+	return marked, &ProfileBackfillRewrite{GameID: pending.GameID, Profile: pending.Profile, File: path, Backup: saved.Backup}, nil
 }
 
 // keepPendingProfile records pending for a retry once its file changes, and
@@ -686,6 +751,14 @@ func (s *Service) printProfileBackfillReport(report *ProfileBackfillReport) {
 		_, _ = fmt.Fprintf(w, "warning: could not record %d mod(s) disabled before this upgrade in %s (game %s, profile %s): %v\n",
 			len(skip.Mods), skip.File, skip.GameID, skip.Profile, skip.Err)
 		_, _ = fmt.Fprintf(w, "  not recorded: %s - lmm looks at that file again once it changes\n", strings.Join(skip.Mods, ", "))
+	}
+	for _, r := range report.Rewritten {
+		kept := "it lost nothing, so no copy was kept"
+		if r.Backup != "" {
+			kept = "the file as it was is kept as " + r.Backup
+		}
+		_, _ = fmt.Fprintf(w, "warning: rewrote %s whole (game %s, profile %s) to record mods disabled before this upgrade, since its layout could not be edited in place; %s\n",
+			r.File, r.GameID, r.Profile, kept)
 	}
 	if len(report.Marked) == 0 {
 		return

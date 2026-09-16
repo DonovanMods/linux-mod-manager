@@ -1501,6 +1501,11 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   - A writable profile in a directory lmm cannot create files in is still
     saved: in place, as before this change, with a warning that the save
     was not atomic.
+  - The one-time upgrade step that records mods you disabled before the
+    upgrade (#431) relied on lmm's next save rewriting a profile it could
+    not edit in place. Saves keep your layout now, so it rewrites such a
+    file itself — whole, with the original kept as above, naming both —
+    instead of leaving it for a switch that would turn those mods back on.
 
 - **A hand-edited config file can no longer crash lmm at startup (#452).**
   A `games.yaml`, `config.yaml` or source definition holding a construct the

@@ -22,6 +22,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -33,7 +34,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1221,33 +1221,26 @@ func TestBackfillProfileDisabledMarkers_RoundOnesKeyIsNotAnObligation(t *testing
 	assert.Empty(t, f.disabledRefs(t, "a"))
 }
 
+// declinedWrite is what the profile editor seam returns to model a profile
+// file the backfill cannot write now - an unwritable file, or an editor
+// panic, both of which keep the profile's share for later. (A layout the
+// editor cannot edit used to as well; it is rewritten whole now, #441
+// review F11 - backfill_layout_test.go.)
+var declinedWrite = &fs.PathError{Op: "open", Path: "a.yaml", Err: fs.ErrPermission}
+
 // pendingSwitchBack leaves profile a's share of the backfill kept for later
-// - declined by the editor, which is what a layout it cannot edit, an
-// unwritable file and an editor panic all come to - with b the active
-// profile. The switch to b rewrote a's file (SetDefault), so the next
-// mutation retries a, whichever profile is active by then. how is
-// "declined", through the editor seam, or "layout", a flow reference with a
-// comment before its closing brace, which the editor really declines and
-// SetDefault's rewrite normalises.
+// - declined by the editor - with b the active profile. The switch to b
+// rewrote a's file (SetDefault), so the next mutation retries a, whichever
+// profile is active by then.
 func pendingSwitchBack(t *testing.T, how string) *backfillFixture {
 	t.Helper()
 	f := newBackfillFixture(t)
 	f.row(t, "a", "off", false, false)
 	f.row(t, "b", "x", true, false)
-	switch how {
-	case "declined":
-		f.svc.SetProfileMarkerForTest(func(string, []domain.ModReference) ([]domain.ModReference, error) {
-			return nil, config.ErrProfileLayoutUnsupported
-		})
-	case "layout":
-		doc := mustRead(t, f.profilePath("a"))
-		start := strings.Index(doc, "- source_id: src")
-		end := strings.Index(doc, "version: \"1.0\"\n")
-		require.True(t, start >= 0 && end > start, "unexpected profile layout:\n%s", doc)
-		end += len("version: \"1.0\"\n")
-		doc = doc[:start] + "- {source_id: src, mod_id: \"off\", version: \"1.0\" # kept by hand\n      }\n" + doc[end:]
-		require.NoError(t, os.WriteFile(f.profilePath("a"), []byte(doc), 0o644))
-	}
+	require.Equal(t, "declined", how)
+	f.svc.SetProfileMarkerForTest(func(string, []domain.ModReference) ([]domain.ModReference, error) {
+		return nil, declinedWrite
+	})
 	f.owe(t)
 	report, err := f.svc.BackfillProfileDisabledMarkers(context.Background())
 	require.NoError(t, err)
@@ -1256,15 +1249,6 @@ func pendingSwitchBack(t *testing.T, how string) *backfillFixture {
 
 	f.switchTo(t, "b")
 	f.svc.SetProfileMarkerForTest(nil) // the editor takes the changed file
-	if how == "layout" {
-		// lmm's own save keeps the author's layout (#441), so what makes
-		// the entry editable is the author changing it - here, moving the
-		// comment out of the braces.
-		doc := mustRead(t, f.profilePath("a"))
-		fixed := strings.Replace(doc, `version: "1.0" # kept by hand`+"\n      }", `version: "1.0"} # kept by hand`, 1)
-		require.NotEqual(t, doc, fixed, "unexpected profile layout after the switch:\n%s", doc)
-		require.NoError(t, os.WriteFile(f.profilePath("a"), []byte(fixed), 0o644))
-	}
 	require.Empty(t, f.disabledRefs(t, "a"))
 	f.warnings.Reset()
 	return f
@@ -1292,7 +1276,7 @@ func (f *backfillFixture) assertOffAndUndeployed(t *testing.T) {
 // with no contention at all.
 func TestBackfillProfileDisabledMarkers_ASwitchIntoAKeptProfile(t *testing.T) {
 	ctx := context.Background()
-	for _, how := range []string{"declined", "layout"} {
+	for _, how := range []string{"declined"} {
 		t.Run(how, func(t *testing.T) {
 			// The plan settles the retry before it reads the document, so
 			// the ordinary case plans the switch right the first time.
@@ -1412,7 +1396,7 @@ func TestBackfillProfileDisabledMarkers_AnUnchangedKeptProfileCostsAPlanNothing(
 	f.row(t, "a", "off", false, false)
 	f.row(t, "b", "x", false, false)
 	f.svc.SetProfileMarkerForTest(func(string, []domain.ModReference) ([]domain.ModReference, error) {
-		return nil, config.ErrProfileLayoutUnsupported
+		return nil, declinedWrite
 	})
 	f.owe(t)
 	report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
