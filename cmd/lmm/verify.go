@@ -271,16 +271,14 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	}
 
 	if !result.HasFiles {
-		// #217: the empty-profile path ran nothing but the deploy-
-		// convergence sweep - no checksummed files means no issues are
-		// possible, only whatever stale-deployment candidates (plain) or
-		// fixes (--fix) that sweep found.
-		if result.Warnings > 0 {
+		// #217: the empty-profile path runs no per-file checks, but the
+		// game-level tiers (external presence, adapter, loader) and the
+		// deploy-convergence sweep still can find something - an issue
+		// as much as a warning (#413 re-review P-a) - so the tally is the
+		// result's own, and a quiet run stays quiet.
+		if result.Issues > 0 || result.Warnings > 0 {
 			fmt.Println()
-			fmt.Printf("0 issue(s), %d warning(s) found.\n", result.Warnings)
-			if !verifyFix {
-				fmt.Println("Run with --fix to remove stale lmm-deployed files.")
-			}
+			printVerifyTally(result, "Run with --fix to remove stale lmm-deployed files.")
 		}
 		return nil
 	}
@@ -293,15 +291,33 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	}
 
 	if result.Issues > 0 || result.Warnings > 0 {
-		fmt.Printf("%d issue(s), %d warning(s) found.\n", result.Issues, result.Warnings)
-		if !verifyFix {
-			fmt.Println("Run with --fix to re-download missing files, populate missing checksums, repair version-record mismatches, and remove stale lmm-deployed files.")
-		}
+		printVerifyTally(result, "Run with --fix to re-download missing files, populate missing checksums, repair version-record mismatches, and remove stale lmm-deployed files.")
 	} else {
 		fmt.Println(colorGreen("All files verified OK."))
 	}
 
 	return nil
+}
+
+// printVerifyTally prints a run's issue/warning counts, then fixHint when a
+// plain run found something --fix would repair.
+//
+// The hint turns on the findings' own Fixable flag - the engine's answer to
+// "would --fix act on this row" - rather than on the counts: a loader that
+// never ran, or a game whose adapter ignores its loader, is counted but has
+// no repair, and telling that user to run --fix sends them to a command that
+// changes nothing (#413 re-review P-a).
+func printVerifyTally(result *core.VerifyResult, fixHint string) {
+	fmt.Printf("%d issue(s), %d warning(s) found.\n", result.Issues, result.Warnings)
+	if verifyFix {
+		return
+	}
+	for _, f := range result.Findings {
+		if f.Fixable {
+			fmt.Println(fixHint)
+			return
+		}
+	}
 }
 
 // renderVerifyEvent prints ev's text-mode line(s), reproducing every format
