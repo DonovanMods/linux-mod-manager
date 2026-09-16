@@ -134,9 +134,13 @@ func TestDownloader_AThrottledDownloadWaitsWhatItWasToldAndSaysSo(t *testing.T) 
 // TestRetryAfterOf_ClampsBeforeItOverflows: an absurd delay is a very long
 // wait, never a wrapped negative one that reads as no wait at all.
 func TestRetryAfterOf_ClampsBeforeItOverflows(t *testing.T) {
-	d := retryAfterOf("99999999999999", time.Now())
-	assert.Positive(t, d)
-	assert.Greater(t, d, downloadMaxRetryAfter)
+	// Exact values (T3 review P4 B6/B11): "positive and large" also held
+	// for the wrapped value this clamp exists to prevent.
+	now := time.Now()
+	for _, v := range []string{"99999999999999", "99999999999999999999", "9223372036854775807", "Mon, 01 Jan 2300 00:00:00 GMT"} {
+		assert.Equal(t, downloadRetryAfterCeiling, retryAfterOf(v, now), "Retry-After: %s", v)
+	}
+	assert.Equal(t, 90*time.Second, retryAfterOf("90", now))
 }
 
 // TestDownloader_ARetryAfterPastTheCeilingFailsNow: a download is not held

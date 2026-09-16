@@ -14,7 +14,6 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -32,6 +31,12 @@ const (
 	// however long a CDN chose; the thunderstore source's maxRetryAfter,
 	// and its reasoning, is the same number.
 	downloadMaxRetryAfter = time.Minute
+	// downloadRetryAfterCeiling caps what a Retry-After is READ as, before
+	// it becomes a time.Duration (T3 review F8). Any value past
+	// downloadMaxRetryAfter already fails the download; this only keeps
+	// the wait the failure names finite and true to the header's order of
+	// magnitude.
+	downloadRetryAfterCeiling = 24 * time.Hour
 	// downloadStallTimeout is how long a download may go without receiving
 	// a byte before its attempt fails as stalled (#436). The default
 	// client had NO timeout at all, so a body that stopped arriving held a
@@ -378,23 +383,11 @@ func (r *progressReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// retryAfterOf reads a Retry-After value in either RFC 9110 form -
-// delay-seconds, or an HTTP-date judged against now. Anything unparseable,
-// negative or past is 0.
+// retryAfterOf reads a Retry-After value in either RFC 9110 form, capped
+// at downloadRetryAfterCeiling (httpclient.RetryAfter). Anything
+// unparseable, negative or past is 0.
 func retryAfterOf(v string, now time.Time) time.Duration {
-	if v == "" {
-		return 0
-	}
-	if secs, err := strconv.Atoi(v); err == nil {
-		// Clamped before the multiplication, which would otherwise wrap for
-		// an absurd value; a year is far past anything lmm waits.
-		return time.Duration(min(max(secs, 0), 365*24*60*60)) * time.Second
-	}
-	at, err := http.ParseTime(v)
-	if err != nil {
-		return 0
-	}
-	return max(at.Sub(now), 0)
+	return httpclient.RetryAfter(v, now, downloadRetryAfterCeiling)
 }
 
 // hostOf names the server a download is waiting on - the host, never the
