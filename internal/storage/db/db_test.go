@@ -3,6 +3,7 @@ package db_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -645,4 +646,62 @@ func TestMigrationV7_DeployedFilesTable(t *testing.T) {
 	assert.Equal(t, "meshes/test.nif", path)
 	assert.Equal(t, "nexusmods", sourceID)
 	assert.Equal(t, "12345", modID)
+}
+
+// TestNew_OwesTheProfileBackfillOnlyForADisabledUndeployedRow pins
+// migrateV17 (#431 fix round 2). The one-time profile-document backfill is
+// recorded as OWED by the migration, when a database written by an older lmm
+// already holds a row it might act on - a managed row that says both
+// enabled = 0 and deployed = 0. Every other database never owes it: a fresh
+// one has no rows, and a row a profile switch left at (0, 1) is not one the
+// backfill will ever mark. Deciding it HERE, before any flow of the new
+// binary can write a row, is what keeps those flows from manufacturing
+// evidence the backfill would then misread.
+func TestNew_OwesTheProfileBackfillOnlyForADisabledUndeployedRow(t *testing.T) {
+	type row struct{ enabled, deployed, external bool }
+	tests := []struct {
+		name string
+		rows []row
+		owed bool
+	}{
+		{name: "no rows"},
+		{name: "enabled rows only", rows: []row{{true, true, false}, {true, false, false}}},
+		{name: "a switched-away row", rows: []row{{false, true, false}}},
+		{name: "an external disabled row", rows: []row{{false, false, true}}},
+		{name: "a disabled, undeployed managed row", rows: []row{{true, true, false}, {false, false, false}}, owed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "lmm.db")
+			ctx := t.Context()
+
+			fresh, err := db.New(path)
+			require.NoError(t, err)
+			value, err := fresh.GetMeta(ctx, db.MetaProfileDisabledBackfill)
+			require.NoError(t, err)
+			require.Empty(t, value, "a fresh database never owes the backfill")
+
+			// An older lmm's database: the rows exist before v17 runs.
+			for i, r := range tt.rows {
+				require.NoError(t, fresh.SaveInstalledMod(ctx, &domain.InstalledMod{
+					Mod:          domain.Mod{ID: fmt.Sprintf("m%d", i), SourceID: "src", Name: "M", Version: "1", GameID: "g"},
+					ProfileName:  "default",
+					UpdatePolicy: domain.UpdateNotify,
+					Enabled:      r.enabled,
+					Deployed:     r.deployed,
+					External:     r.external,
+				}))
+			}
+			_, err = fresh.Exec("DELETE FROM schema_migrations WHERE version >= 17")
+			require.NoError(t, err)
+			require.NoError(t, fresh.Close())
+
+			upgraded, err := db.New(path)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, upgraded.Close()) }()
+			value, err = upgraded.GetMeta(ctx, db.MetaProfileDisabledBackfill)
+			require.NoError(t, err)
+			assert.Equal(t, tt.owed, value != "")
+		})
+	}
 }

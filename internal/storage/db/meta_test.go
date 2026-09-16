@@ -46,21 +46,22 @@ func TestDisabledModRows_EveryGameAndProfileInOrder(t *testing.T) {
 	defer func() { require.NoError(t, database.Close()) }()
 	ctx := context.Background()
 
-	save := func(gameID, profileName, modID string, enabled, external bool) {
+	save := func(gameID, profileName, modID string, enabled, deployed, external bool) {
 		t.Helper()
 		require.NoError(t, database.SaveInstalledMod(ctx, &domain.InstalledMod{
-			Mod:          domain.Mod{ID: modID, SourceID: "src", Name: modID, Version: "1.0", GameID: gameID},
+			Mod:          domain.Mod{ID: modID, SourceID: "src", Name: "Mod " + modID, Version: "1.0", GameID: gameID},
 			ProfileName:  profileName,
 			UpdatePolicy: domain.UpdateNotify,
 			Enabled:      enabled,
+			Deployed:     deployed,
 			External:     external,
 		}))
 	}
-	save("g2", "default", "zulu", false, false)
-	save("g1", "other", "bravo", false, false)
-	save("g1", "default", "alpha", false, false)
-	save("g1", "default", "on", true, false)
-	save("g1", "default", "workshop", false, true)
+	save("g2", "default", "zulu", false, false, false)
+	save("g1", "other", "bravo", false, true, false)
+	save("g1", "default", "alpha", false, false, false)
+	save("g1", "default", "on", true, true, false)
+	save("g1", "default", "workshop", false, false, true)
 
 	rows, err := database.DisabledModRows(ctx)
 	require.NoError(t, err)
@@ -74,8 +75,43 @@ func TestDisabledModRows_EveryGameAndProfileInOrder(t *testing.T) {
 	}, got, "every disabled row, grouped by game and profile; the enabled one is absent")
 
 	for _, r := range rows {
-		if r.ModID == "workshop" {
+		assert.Equal(t, "Mod "+r.ModID, r.Name, "the display name travels with the row, for the notice")
+		switch r.ModID {
+		case "workshop":
 			assert.True(t, r.External, "the external flag travels with the row, so the caller can skip it (#269)")
+		case "bravo":
+			assert.True(t, r.Deployed, "so does the deployed flag: (0,1) is what a profile switch leaves, not a disable")
+		default:
+			assert.False(t, r.Deployed)
 		}
 	}
+}
+
+// TestMeta_DeleteAndPrefix pins the two accessors the per-profile
+// obligations use: a delete of an absent key is not an error, and a prefix
+// match is exact - a LIKE wildcard character in the prefix (the `_` in
+// every key this table holds) must not match anything but itself.
+func TestMeta_DeleteAndPrefix(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+	ctx := context.Background()
+
+	for _, key := range []string{"a_b", "a_b:g/p", "a_b:g/q", "aXb:g/p", "a_c"} {
+		require.NoError(t, database.SetMeta(ctx, key, "v-"+key))
+	}
+
+	got, err := database.MetaWithPrefix(ctx, "a_b")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"a_b": "v-a_b", "a_b:g/p": "v-a_b:g/p", "a_b:g/q": "v-a_b:g/q"}, got)
+
+	require.NoError(t, database.DeleteMeta(ctx, "a_b:g/p"))
+	require.NoError(t, database.DeleteMeta(ctx, "never-written"))
+	value, err := database.GetMeta(ctx, "a_b:g/p")
+	require.NoError(t, err)
+	assert.Empty(t, value)
+
+	got, err = database.MetaWithPrefix(ctx, "nothing")
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }

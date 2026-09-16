@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 func (d *DB) migrate(ctx context.Context) error {
@@ -41,6 +42,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV14,
 		migrateV15,
 		migrateV16,
+		migrateV17,
 	}
 
 	if version < len(migrations) {
@@ -283,5 +285,36 @@ func migrateV15(ctx context.Context, d *DB) error {
 // what those rows carried in memory before this column existed.
 func migrateV16(ctx context.Context, d *DB) error {
 	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN updated_at DATETIME`)
+	return err
+}
+
+// migrateV17 records #431's one-time profile-document backfill as OWED -
+// under MetaProfileDisabledBackfill, which core discharges - when this
+// database, written by an lmm that predates the profile document's
+// `disabled:` marker, holds a row the backfill might act on: a managed row
+// that says both enabled = 0 and deployed = 0. A fresh database (no rows)
+// never owes it, and neither does one whose only disabled rows are ones a
+// profile switch left at (0, 1) or external Workshop items (#269).
+//
+// Why a migration and not a check at open. The evidence the backfill reads
+// is the rows themselves, and the new binary's own flows write the same
+// flag values for other reasons - its profile switch clears deployed on
+// every mod it switches away from. So the obligation has to be fixed before
+// any of those flows can run, and the one step that runs before all of them,
+// exactly once per database, is this. Deciding it later from whatever the
+// rows look like by then would misread them.
+//
+// This predicate is deliberately a SUPERSET of the one core applies (which
+// adds "under the game's single explicitly-default profile"): it only has
+// to be true whenever there could be work.
+func migrateV17(ctx context.Context, d *DB) error {
+	_, err := d.ExecContext(ctx, `
+		INSERT OR IGNORE INTO db_meta (key, value)
+		SELECT ?, ?
+		WHERE EXISTS (
+			SELECT 1 FROM installed_mods
+			WHERE enabled = 0 AND deployed = 0 AND COALESCE(external, 0) = 0
+		)
+	`, MetaProfileDisabledBackfill, time.Now().UTC().Format(time.RFC3339))
 	return err
 }
