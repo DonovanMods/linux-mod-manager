@@ -136,8 +136,9 @@ func pendingProfileKey(gameID, profile string) string {
 //
 // HOW IT WRITES. config.MarkModsDisabled inserts the marker into the file's
 // own bytes - the file the profile was read from - so comments, `~/` paths
-// and layout survive; SaveProfile's round trip would have rewritten them
-// from a read-only command.
+// and layout survive. SaveProfile edits in place too (#441), but rewrites a
+// layout it cannot edit whole; the backfill runs from read-only commands, so
+// it never does that - a file it cannot edit is kept for later instead.
 //
 // WHAT IF A FILE CANNOT BE WRITTEN. That profile's share is kept in db_meta
 // with the rows it was captured with, reported by file, and retried when

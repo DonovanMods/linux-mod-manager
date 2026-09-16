@@ -164,6 +164,17 @@ func (s *Service) ListProfiles(ctx context.Context, gameID string) (*ProfileList
 			flagged = append(flagged, p.Name)
 		}
 	}
+	// #441: a profile is known by its file name. A hand-copied file whose
+	// `name:` still names another profile is read - and written - as the
+	// copy, and the user is told the two disagree.
+	for _, p := range profiles {
+		declared, err := config.DeclaredProfileName(s.configDir, gameID, p.Name)
+		if err == nil && declared != "" && declared != p.Name {
+			listing.Warnings = append(listing.Warnings, fmt.Sprintf(
+				"profile file %s.yaml of %s says `name: %s` - lmm knows it by its file name, %q; set its name: to %s, or rename the file",
+				p.Name, gameID, declared, p.Name, p.Name))
+		}
+	}
 	switch {
 	case len(profiles) == 0 || len(flagged) == 1:
 	case len(flagged) == 0:

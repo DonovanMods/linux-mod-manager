@@ -1472,6 +1472,29 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **lmm writes a profile to its own file, safely, and keeps what you wrote
+  in it (#441).**
+  - A profile copied by hand (`default.yaml` → `vanilla.yaml`, `name:`
+    unchanged) was written back to **`default.yaml`** by every change to
+    `vanilla` — overwriting default's own mods, disabled markers and
+    `is_default` — and read as `default` by every command that used its
+    name. A profile is now the file it lives in: lmm reads and writes it
+    under its file name (and its game's directory), and `lmm profile list`
+    warns while the file's `name:` says otherwise.
+  - A save truncated the file before writing it, so a crash or a full disk
+    could leave half a profile. Every write now goes to a temporary file
+    that is renamed into place.
+  - Every save rebuilt the file from scratch: comments gone, `~/` hook
+    paths expanded to this machine's home directory, eight `null` hook
+    keys added, flow style, indentation and the `overrides:` block
+    rewritten. A save now edits the file in place, changing only the text
+    of what changed, and checks that the result reads back as the intended
+    profile before writing it. A layout it cannot edit that way is
+    rewritten whole, as before, but the file as you wrote it is kept beside
+    it as `<name>.yaml.bak`; a profile the YAML encoder cannot write so
+    that it reads back is refused rather than saved unreadable. A rename
+    keeps the file's text too.
+
 - **A hand-edited config file can no longer crash lmm at startup (#452).**
   A `games.yaml`, `config.yaml` or source definition holding a construct the
   YAML decoder panicked on (a merge key over a mapping keyed by a mapping,

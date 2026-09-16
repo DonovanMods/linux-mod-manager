@@ -298,7 +298,7 @@ func (pm *ProfileManager) Rename(ctx context.Context, gameID, oldName, newName s
 	renamed := *profile
 	renamed.Name = newName
 	err = completeRename(ctx, func(ctx context.Context) error {
-		if err := config.SaveProfile(pm.configDir, &renamed); err != nil {
+		if err := config.SaveRenamedProfile(pm.configDir, &renamed, oldName); err != nil {
 			return err
 		}
 		if err := pm.db.RenameProfile(ctx, gameID, oldName, newName); err != nil {

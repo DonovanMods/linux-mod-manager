@@ -44,14 +44,15 @@ func ProfilePath(configDir, gameID, profileName string) (string, error) {
 // decides it by its first reference, but a copy left unmarked is one a
 // later edit - deleting the first, reordering - would turn back on.
 //
-// Unlike SaveProfile it does not re-serialize the document: the marker is
-// inserted into the file's own bytes, next to the reference it belongs to,
-// so comments, key order, flow style, blank lines, indentation and an
-// unexpanded `~/` hook path all stay exactly as the author wrote them. That
-// is what makes it safe to run on a hand-edited file the user never asked
-// lmm to rewrite. The edit is checked before anything is written - the new
-// text must decode to the original document with only those markers set -
-// and anything else is ErrProfileLayoutUnsupported with the file untouched.
+// The marker is inserted into the file's own bytes, next to the reference
+// it belongs to, so comments, key order, flow style, blank lines,
+// indentation and an unexpanded `~/` hook path all stay exactly as the
+// author wrote them. That is what makes it safe to run on a hand-edited file
+// the user never asked lmm to change. The edit is checked before anything is
+// written - the new text must decode to the original document with only
+// those markers set - and anything else is ErrProfileLayoutUnsupported with
+// the file untouched: unlike SaveProfile, which edits the same way (#441),
+// it never falls back to rewriting the file whole.
 //
 // The write goes to path itself (through a symlink, to its target) by
 // writing a temporary file beside it and renaming it into place, so a
@@ -540,6 +541,9 @@ func quotedEnd(data []byte, start int) (int, bool) {
 // dotfile manager that hard-links, rather than symlinks, into place), so it
 // is rewritten in place instead, trading atomicity for keeping the link.
 func writeFileAtomic(path string, data []byte) error {
+	if err := checkWritable(path); err != nil {
+		return err
+	}
 	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return fmt.Errorf("resolving profile path: %w", err)
@@ -548,16 +552,32 @@ func writeFileAtomic(path string, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("reading profile file mode: %w", err)
 	}
-	if err := syscall.Access(target, accessWrite); err != nil {
-		return fmt.Errorf("writing profile: %w", &os.PathError{Op: "access", Path: target, Err: err})
-	}
 	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
 		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
 			return fmt.Errorf("writing profile: %w", err)
 		}
 		return nil
 	}
+	return renameIntoPlace(target, data, info.Mode().Perm())
+}
 
+// checkWritable refuses a profile file - through a symlink, its target -
+// the user cannot write (see writeFileAtomic).
+func checkWritable(path string) error {
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("resolving profile path: %w", err)
+	}
+	if err := syscall.Access(target, accessWrite); err != nil {
+		return fmt.Errorf("writing profile: %w", &os.PathError{Op: "access", Path: target, Err: err})
+	}
+	return nil
+}
+
+// renameIntoPlace writes data, with mode, to a temporary file beside target
+// and renames it to target - creating target, or replacing it whole - so a
+// reader never sees a partial file.
+func renameIntoPlace(target string, data []byte, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("writing profile: %w", err)
@@ -565,7 +585,7 @@ func writeFileAtomic(path string, data []byte) error {
 	renamed := false
 	defer func() {
 		// Whatever stopped the write short - an error, or a panic on its
-		// way to the backfill's recover - leaves no temporary file behind.
+		// way to a caller's recover - leaves no temporary file behind.
 		if !renamed {
 			_ = tmp.Close()
 			_ = os.Remove(tmp.Name())
@@ -574,7 +594,7 @@ func writeFileAtomic(path string, data []byte) error {
 	if _, err := tmp.Write(data); err != nil {
 		return fmt.Errorf("writing profile: %w", err)
 	}
-	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+	if err := tmp.Chmod(mode); err != nil {
 		return fmt.Errorf("writing profile: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {

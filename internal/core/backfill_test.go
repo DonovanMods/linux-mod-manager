@@ -1255,7 +1255,16 @@ func pendingSwitchBack(t *testing.T, how string) *backfillFixture {
 	require.Empty(t, report.Marked)
 
 	f.switchTo(t, "b")
-	f.svc.SetProfileMarkerForTest(nil) // the editor takes the rewritten file
+	f.svc.SetProfileMarkerForTest(nil) // the editor takes the changed file
+	if how == "layout" {
+		// lmm's own save keeps the author's layout (#441), so what makes
+		// the entry editable is the author changing it - here, moving the
+		// comment out of the braces.
+		doc := mustRead(t, f.profilePath("a"))
+		fixed := strings.Replace(doc, `version: "1.0" # kept by hand`+"\n      }", `version: "1.0"} # kept by hand`, 1)
+		require.NotEqual(t, doc, fixed, "unexpected profile layout after the switch:\n%s", doc)
+		require.NoError(t, os.WriteFile(f.profilePath("a"), []byte(fixed), 0o644))
+	}
 	require.Empty(t, f.disabledRefs(t, "a"))
 	f.warnings.Reset()
 	return f
