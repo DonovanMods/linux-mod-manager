@@ -705,3 +705,88 @@ func TestNew_OwesTheProfileBackfillOnlyForADisabledUndeployedRow(t *testing.T) {
 		})
 	}
 }
+
+// TestOpen_ConcurrentFirstOpensMigrateExactlyOnce: several lmm processes
+// opening an older database at once - `lmm serve` started beside a CLI
+// command right after an upgrade. Each read the schema version, ran the
+// pending migrations, and all but one then failed to record them
+// (UNIQUE constraint failed: schema_migrations.version), refusing to start.
+// Worse for migrateV17, a migration run that lands AFTER another process
+// has already discharged the obligation it records would record it again.
+// Pending migrations therefore run under one write transaction that
+// re-reads the version first: every open succeeds, and each migration runs
+// once.
+func TestOpen_ConcurrentFirstOpensMigrateExactlyOnce(t *testing.T) {
+	for round := range 5 {
+		path := filepath.Join(t.TempDir(), "lmm.db")
+		ctx := t.Context()
+		seed, err := db.New(path)
+		require.NoError(t, err)
+		require.NoError(t, seed.SaveInstalledMod(ctx, &domain.InstalledMod{
+			Mod:          domain.Mod{ID: "off", SourceID: "src", Name: "Off", Version: "1", GameID: "g"},
+			ProfileName:  "default",
+			UpdatePolicy: domain.UpdateNotify,
+		}))
+		_, err = seed.Exec("DELETE FROM schema_migrations WHERE version >= 17")
+		require.NoError(t, err)
+		require.NoError(t, seed.Close())
+
+		const openers = 8
+		start := make(chan struct{})
+		errs := make(chan error, openers)
+		for range openers {
+			go func() {
+				<-start
+				opened, err := db.New(path)
+				if err == nil {
+					err = opened.Close()
+				}
+				errs <- err
+			}()
+		}
+		close(start)
+		for range openers {
+			require.NoError(t, <-errs, "round %d: every concurrent open must succeed", round)
+		}
+
+		check, err := db.New(path)
+		require.NoError(t, err)
+		var recorded int
+		require.NoError(t, check.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version = 17").Scan(&recorded))
+		assert.Equal(t, 1, recorded)
+		value, err := check.GetMeta(ctx, db.MetaProfileDisabledBackfill)
+		require.NoError(t, err)
+		assert.NotEmpty(t, value)
+		require.NoError(t, check.Close())
+	}
+}
+
+// TestOpen_AMigrationRunsOnceEvenAfterItsWorkIsUndone pins the
+// exactly-once half directly: once v17 is recorded, a later open never runs
+// it again, so an obligation core has discharged stays discharged.
+func TestOpen_AMigrationRunsOnceEvenAfterItsWorkIsUndone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lmm.db")
+	ctx := t.Context()
+	seed, err := db.New(path)
+	require.NoError(t, err)
+	require.NoError(t, seed.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "off", SourceID: "src", Name: "Off", Version: "1", GameID: "g"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	_, err = seed.Exec("DELETE FROM schema_migrations WHERE version >= 17")
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+
+	first, err := db.New(path)
+	require.NoError(t, err)
+	require.NoError(t, first.DeleteMeta(ctx, db.MetaProfileDisabledBackfill)) // core discharged it
+	require.NoError(t, first.Close())
+
+	again, err := db.New(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, again.Close()) }()
+	value, err := again.GetMeta(ctx, db.MetaProfileDisabledBackfill)
+	require.NoError(t, err)
+	assert.Empty(t, value)
+}

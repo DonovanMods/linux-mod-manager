@@ -2,9 +2,17 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 )
+
+// migrationExec is what a migration needs: a statement executor. The one a
+// pending run passes is the single connection holding its write
+// transaction (see migrate).
+type migrationExec interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
 
 func (d *DB) migrate(ctx context.Context) error {
 	// Create migrations table if it doesn't exist
@@ -17,15 +25,8 @@ func (d *DB) migrate(ctx context.Context) error {
 		return fmt.Errorf("creating migrations table: %w", err)
 	}
 
-	// Get current version
-	var version int
-	err := d.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&version)
-	if err != nil {
-		return fmt.Errorf("getting schema version: %w", err)
-	}
-
 	// Apply migrations
-	migrations := []func(context.Context, *DB) error{
+	migrations := []func(context.Context, migrationExec) error{
 		migrateV1,
 		migrateV2,
 		migrateV3,
@@ -45,24 +46,76 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV17,
 	}
 
+	// The ordinary open: the schema is current, and finding that out takes
+	// one read and no lock.
+	version, err := schemaVersion(ctx, d)
+	if err != nil {
+		return err
+	}
+	if version >= len(migrations) {
+		return nil
+	}
+
+	// Something is pending. Several lmm processes can get here at once - a
+	// `lmm serve` started beside a CLI command right after an upgrade - and
+	// each used to run the pending migrations and then fail to record them
+	// (UNIQUE constraint on schema_migrations), or, for a migration that
+	// records an obligation (migrateV17), record it again after another
+	// process had discharged it. So the pending run is one IMMEDIATE
+	// transaction on one connection: it takes the write lock up front (a
+	// second opener waits out busy_timeout), re-reads the version under it,
+	// and applies and records exactly what is still missing - atomically,
+	// since SQLite's DDL is transactional.
+	conn, err := d.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("reserving a connection for migrations: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("locking the database for migrations: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		}
+	}()
+
+	if version, err = schemaVersion(ctx, conn); err != nil {
+		return err
+	}
 	if version < len(migrations) {
 		d.log.Debug("running migrations", "from", version, "to", len(migrations))
 	}
-
 	for i := version; i < len(migrations); i++ {
-		if err := migrations[i](ctx, d); err != nil {
+		if err := migrations[i](ctx, conn); err != nil {
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}
-		if _, err := d.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", i+1); err != nil {
+		if _, err := conn.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", i+1); err != nil {
 			return fmt.Errorf("recording migration %d: %w", i+1, err)
 		}
 		d.log.Debug("migration applied", "version", i+1)
 	}
 
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("committing migrations: %w", err)
+	}
+	committed = true
 	return nil
 }
 
-func migrateV1(ctx context.Context, d *DB) error {
+// schemaVersion is the highest migration recorded, read through q.
+func schemaVersion(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}) (int, error) {
+	var version int
+	if err := q.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&version); err != nil {
+		return 0, fmt.Errorf("getting schema version: %w", err)
+	}
+	return version, nil
+}
+
+func migrateV1(ctx context.Context, d migrationExec) error {
 	statements := []string{
 		`CREATE TABLE installed_mods (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,20 +157,20 @@ func migrateV1(ctx context.Context, d *DB) error {
 	return nil
 }
 
-func migrateV2(ctx context.Context, d *DB) error {
+func migrateV2(ctx context.Context, d migrationExec) error {
 	// Add previous_version column for rollback support
 	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN previous_version TEXT`)
 	return err
 }
 
-func migrateV3(ctx context.Context, d *DB) error {
+func migrateV3(ctx context.Context, d migrationExec) error {
 	// Add link_method column to track deployment method per mod
 	// Default 0 = symlink (LinkSymlink)
 	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN link_method INTEGER DEFAULT 0`)
 	return err
 }
 
-func migrateV4(ctx context.Context, d *DB) error {
+func migrateV4(ctx context.Context, d migrationExec) error {
 	// Create table to track which source files were downloaded for each installed mod
 	// Supports multiple files per mod (e.g., MAIN + OPTIONAL files)
 	_, err := d.ExecContext(ctx, `
@@ -136,7 +189,7 @@ func migrateV4(ctx context.Context, d *DB) error {
 	return err
 }
 
-func migrateV5(ctx context.Context, d *DB) error {
+func migrateV5(ctx context.Context, d migrationExec) error {
 	// Add deployed column to track whether mod files are currently in game directory
 	// enabled = user intent (wants mod active)
 	// deployed = current state (files are in game directory)
@@ -145,13 +198,13 @@ func migrateV5(ctx context.Context, d *DB) error {
 	return err
 }
 
-func migrateV6(ctx context.Context, d *DB) error {
+func migrateV6(ctx context.Context, d migrationExec) error {
 	// Add checksum column for cache integrity verification
 	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mod_files ADD COLUMN checksum TEXT`)
 	return err
 }
 
-func migrateV7(ctx context.Context, d *DB) error {
+func migrateV7(ctx context.Context, d migrationExec) error {
 	// Create table to track which mod owns each deployed file
 	// Used for conflict detection when installing mods
 	_, err := d.ExecContext(ctx, `
@@ -168,7 +221,7 @@ func migrateV7(ctx context.Context, d *DB) error {
 	return err
 }
 
-func migrateV8(ctx context.Context, d *DB) error {
+func migrateV8(ctx context.Context, d migrationExec) error {
 	// Add manual_download column to track mods that require manual download
 	// (e.g., CurseForge mods with API restrictions)
 	// Default 0 = false (can be auto-downloaded)
@@ -176,7 +229,7 @@ func migrateV8(ctx context.Context, d *DB) error {
 	return err
 }
 
-func migrateV9(ctx context.Context, d *DB) error {
+func migrateV9(ctx context.Context, d migrationExec) error {
 	// Add metadata columns for expanded mod information
 	statements := []string{
 		`ALTER TABLE installed_mods ADD COLUMN summary TEXT DEFAULT ''`,
@@ -190,7 +243,7 @@ func migrateV9(ctx context.Context, d *DB) error {
 	return nil
 }
 
-func migrateV10(ctx context.Context, d *DB) error {
+func migrateV10(ctx context.Context, d migrationExec) error {
 	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN previous_file_ids TEXT DEFAULT '[]'`)
 	return err
 }
@@ -199,12 +252,12 @@ func migrateV10(ctx context.Context, d *DB) error {
 // is keyed entirely by directory layout (internal/storage/cache), so a DB mirror
 // would only add a way for the two to disagree; the metadata that turned out to
 // matter was added to installed_mods in v9 instead.
-func migrateV11(ctx context.Context, d *DB) error {
+func migrateV11(ctx context.Context, d migrationExec) error {
 	_, err := d.ExecContext(ctx, `DROP TABLE IF EXISTS mod_cache`)
 	return err
 }
 
-func migrateV12(ctx context.Context, d *DB) error {
+func migrateV12(ctx context.Context, d migrationExec) error {
 	// #221: per-mod pak-to-exmod conversion opt-out. Default 1 = convert
 	// (paks join the merged pak); 0 = deploy raw. Deliberately excluded
 	// from SaveInstalledMod's upsert so reinstall preserves the user's choice.
@@ -218,7 +271,7 @@ func migrateV12(ctx context.Context, d *DB) error {
 // SQLite cannot default an added column to CURRENT_TIMESTAMP, so it is added
 // nullable and backfilled from updated_at, which for a row that was never
 // re-logged-in is the same instant.
-func migrateV13(ctx context.Context, d *DB) error {
+func migrateV13(ctx context.Context, d migrationExec) error {
 	if _, err := d.ExecContext(ctx, `ALTER TABLE auth_tokens ADD COLUMN created_at DATETIME`); err != nil {
 		return err
 	}
@@ -241,7 +294,7 @@ func migrateV13(ctx context.Context, d *DB) error {
 // as the envelopes and deleted only once both scrub steps have proved they
 // completed, so the obligation survives a crash, a contended run, and a
 // process that is killed mid-scrub.
-func migrateV14(ctx context.Context, d *DB) error {
+func migrateV14(ctx context.Context, d migrationExec) error {
 	_, err := d.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS db_meta (
 			key TEXT PRIMARY KEY,
@@ -261,7 +314,7 @@ func migrateV14(ctx context.Context, d *DB) error {
 // re-adopt must be able to move a mod's recorded path when Steam moved the
 // library. Existing rows default to 0/” - every mod installed before this
 // migration is an ordinary managed one.
-func migrateV15(ctx context.Context, d *DB) error {
+func migrateV15(ctx context.Context, d migrationExec) error {
 	if _, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN external INTEGER DEFAULT 0`); err != nil {
 		return err
 	}
@@ -283,7 +336,7 @@ func migrateV15(ctx context.Context, d *DB) error {
 //
 // NULL for every existing row, which decodes to the zero time - exactly
 // what those rows carried in memory before this column existed.
-func migrateV16(ctx context.Context, d *DB) error {
+func migrateV16(ctx context.Context, d migrationExec) error {
 	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN updated_at DATETIME`)
 	return err
 }
@@ -307,7 +360,7 @@ func migrateV16(ctx context.Context, d *DB) error {
 // This predicate is deliberately a SUPERSET of the one core applies (which
 // adds "under the game's single explicitly-default profile"): it only has
 // to be true whenever there could be work.
-func migrateV17(ctx context.Context, d *DB) error {
+func migrateV17(ctx context.Context, d migrationExec) error {
 	_, err := d.ExecContext(ctx, `
 		INSERT OR IGNORE INTO db_meta (key, value)
 		SELECT ?, ?
