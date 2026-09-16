@@ -172,10 +172,17 @@ func TestMarkModsDisabled_Shapes(t *testing.T) {
 			wantMark: 1,
 		},
 		{
-			name:     "only the first of two references to one mod",
-			content:  "name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: m}\n  - {source_id: s, mod_id: m}\n",
+			name:     "every reference to a mod listed twice, reported once",
+			content:  "name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: m}\n  - {source_id: s, mod_id: n}\n  - {source_id: s, mod_id: m}\n",
 			mods:     []domain.ModReference{ref("s", "m")},
-			want:     "name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: m, disabled: true}\n  - {source_id: s, mod_id: m}\n",
+			want:     "name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: m, disabled: true}\n  - {source_id: s, mod_id: n}\n  - {source_id: s, mod_id: m, disabled: true}\n",
+			wantMark: 1,
+		},
+		{
+			name:     "the unmarked copy of a mod whose first copy is marked",
+			content:  "name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: m, disabled: true}\n  - {source_id: s, mod_id: m}\n",
+			mods:     []domain.ModReference{ref("s", "m")},
+			want:     "name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: m, disabled: true}\n  - {source_id: s, mod_id: m, disabled: true}\n",
 			wantMark: 1,
 		},
 		// Fix round 3's F1: yaml.v3 counts a lone CR, NEL (U+0085), LS

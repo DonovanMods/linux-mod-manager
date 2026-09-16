@@ -36,10 +36,12 @@ func ProfilePath(configDir, gameID, profileName string) (string, error) {
 
 // MarkModsDisabled records #431's `disabled: true` marker on each reference
 // in the profile file at path whose source_id/mod_id pair is in mods, and
-// returns the references it newly marked, in file order. A reference that
-// already carries the marker, and a mod the file does not list, are simply
-// not returned; only the first reference to a mod is considered, the one
-// every flow reads.
+// returns the mods it newly marked - each once, in the file order of its
+// first newly marked reference. A reference that already carries the
+// marker, and a mod the file does not list, are simply not returned. A mod
+// listed more than once (a hand edit) is marked on every copy: every flow
+// decides it by its first reference, but a copy left unmarked is one a
+// later edit - deleting the first, reordering - would turn back on.
 //
 // Unlike SaveProfile it does not re-serialize the document: the marker is
 // inserted into the file's own bytes, next to the reference it belongs to,
@@ -84,7 +86,7 @@ func MarkModsDisabled(path string, mods []domain.ModReference) ([]domain.ModRefe
 
 // planMarkers works out, without checking the result, the edits that mark
 // mods in data (the file at path): the document they should decode to, the
-// edits, and the references they mark, in file order.
+// edits, and the mods they mark (see MarkModsDisabled).
 func planMarkers(path string, data []byte, mods []domain.ModReference) (ProfileConfig, []textEdit, []domain.ModReference, error) {
 	var before ProfileConfig
 	if err := unmarshalYAML(data, &before); err != nil {
@@ -114,13 +116,9 @@ func planMarkers(path string, data []byte, mods []domain.ModReference) (ProfileC
 	)
 	expected := before
 	expected.Mods = slices.Clone(before.Mods)
-	seen := make(map[string]bool, len(before.Mods))
+	reported := make(map[string]bool, len(mods))
 	for i, ref := range before.Mods {
 		key := domain.ModKey(ref.SourceID, ref.ModID)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
 		if !wanted[key] || ref.Disabled {
 			continue
 		}
@@ -130,7 +128,10 @@ func planMarkers(path string, data []byte, mods []domain.ModReference) (ProfileC
 		}
 		edits = append(edits, edit)
 		expected.Mods[i].Disabled = true
-		marked = append(marked, domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID})
+		if !reported[key] {
+			reported[key] = true
+			marked = append(marked, domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID})
+		}
 	}
 	return expected, edits, marked, nil
 }

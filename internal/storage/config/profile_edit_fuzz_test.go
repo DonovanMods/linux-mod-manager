@@ -93,8 +93,8 @@ var markerFuzzSeeds = []string{
 //
 //   - it declines: an error, and the file is byte-identical; or
 //   - it succeeds: the file decodes to exactly the original document with the
-//     marker set on the first reference of every requested mod not already
-//     marked (and nothing else), and its bytes differ from the input only by
+//     marker set on every reference to a requested mod not already marked
+//     (and nothing else), and its bytes differ from the input only by
 //     marker text - a `true` over a plain `disabled:` value, `, disabled:
 //     true` before a flow reference's closing brace, or a whole marker line
 //     at the end of a block reference's line, ending the way that line does.
@@ -139,7 +139,8 @@ func FuzzMarkModsDisabled(f *testing.F) {
 		}
 		require.True(t, parsed, "an input yaml.v3 cannot decode is never edited")
 
-		// Exactly the requested, listed, not-yet-marked mods, in file order.
+		// Every unmarked reference to a requested mod; each such mod reported
+		// once, in the file order of its first newly marked reference.
 		requested := make(map[string]bool, len(mods))
 		for _, m := range mods {
 			requested[domain.ModKey(m.SourceID, m.ModID)] = true
@@ -147,15 +148,17 @@ func FuzzMarkModsDisabled(f *testing.F) {
 		want := before
 		want.Mods = slices.Clone(before.Mods)
 		var wantMarked []domain.ModReference
-		seen := make(map[string]bool)
+		wantEdits := 0
+		reported := make(map[string]bool)
 		for i, ref := range before.Mods {
 			key := domain.ModKey(ref.SourceID, ref.ModID)
-			if seen[key] {
+			if !requested[key] || ref.Disabled {
 				continue
 			}
-			seen[key] = true
-			if requested[key] && !ref.Disabled {
-				want.Mods[i].Disabled = true
+			want.Mods[i].Disabled = true
+			wantEdits++
+			if !reported[key] {
+				reported[key] = true
 				wantMarked = append(wantMarked, domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID})
 			}
 		}
@@ -173,7 +176,7 @@ func FuzzMarkModsDisabled(f *testing.F) {
 		// and every one of them is marker text in a marker's place.
 		_, edits, _, err := planMarkers(path, data, mods)
 		require.NoError(t, err)
-		require.Len(t, edits, len(marked))
+		require.Len(t, edits, wantEdits)
 		applied, err := applyEdits(data, edits)
 		require.NoError(t, err)
 		require.Equal(t, string(applied), string(after))
