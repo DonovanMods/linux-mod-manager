@@ -10,7 +10,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // ErrStalePlan is returned by every Apply whose plan was computed against an
@@ -136,25 +135,6 @@ func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (install
 		snap[key] = entry
 	}
 	return snap, nil
-}
-
-// documentDisabledKeys is the set of mods gameID/profileName's document
-// marks disabled, or nil when there is no document to read.
-func (s *Service) documentDisabledKeys(gameID, profileName string) map[string]bool {
-	profile, err := config.LoadProfile(s.configDir, gameID, profileName)
-	if err != nil {
-		return nil
-	}
-	var disabled map[string]bool
-	for _, ref := range profile.Mods {
-		if ref.Disabled {
-			if disabled == nil {
-				disabled = make(map[string]bool)
-			}
-			disabled[domain.ModKey(ref.SourceID, ref.ModID)] = true
-		}
-	}
-	return disabled
 }
 
 // checkPlanFresh re-derives gameID/profileName's CURRENT installed-mod

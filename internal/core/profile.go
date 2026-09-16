@@ -561,7 +561,17 @@ func (pm *ProfileManager) SetModDisabled(ctx context.Context, gameID, profileNam
 // deploy pass must not fail over a missing desired-state document it is
 // only consulting.
 func (s *Service) profileDisabledKeys(ctx context.Context, gameID, profileName string) map[string]bool {
-	profile, err := s.NewProfileManager().Get(ctx, gameID, profileName)
+	if ctx.Err() != nil {
+		return nil
+	}
+	return s.documentDisabledKeys(gameID, profileName)
+}
+
+// documentDisabledKeys is profileDisabledKeys for a caller with no ctx to
+// check - the plan snapshot (snapshotOf) - reading the same file the same
+// way.
+func (s *Service) documentDisabledKeys(gameID, profileName string) map[string]bool {
+	profile, err := loadProfile(s.configDir, gameID, profileName)
 	if err != nil {
 		return nil
 	}
