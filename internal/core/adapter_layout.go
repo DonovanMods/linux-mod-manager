@@ -481,54 +481,75 @@ func adapterCopyOnceFiles(a adapter.GameAdapter, game *domain.Game, files []stri
 	return out
 }
 
-// rewriteStagedExtract is the download path's use of the tree rewriter: it
-// lists the pristine extraction directory, asks the adapter for a Layout
-// over those members, and applies it in place.
+// layoutStagedExtract is the DOWNLOAD path's use of the tree rewriter: it
+// lists the pristine extraction directory, refuses an archive that is
+// unmistakably another adapter's, asks the game's adapter for a Layout over
+// those members, and applies it in place. It returns the Layout so the
+// caller can surface its warnings, which a download has no plan to carry.
 //
-// It re-lists rather than taking a member slice because the download path's
-// caller walks the tree afterwards anyway; keeping the listing here means
-// the adapter and the walk see the same tree, in that order.
-func (s *Service) rewriteStagedExtract(game *domain.Game, root string) error {
+// It lists here rather than taking a member slice because the download
+// path's caller walks the tree afterwards anyway; keeping the listing here
+// means the claim, the adapter and the walk all see the same tree, in that
+// order.
+//
+// The claim runs BEFORE the rewrite so a refusal leaves the staging tree
+// exactly as the extractor left it - the same guarantee rewriteExtractedTree
+// makes about its own failures.
+func (s *Service) layoutStagedExtract(game *domain.Game, modName, root string) (adapter.Layout, error) {
 	members, err := relativeFileMembers(root)
 	if err != nil {
-		return fmt.Errorf("listing extracted members: %w", err)
+		return adapter.Layout{}, fmt.Errorf("listing extracted members: %w", err)
 	}
 	members = slashMembers(members)
+	if err := s.requireAdapterClaim(game, modName, members); err != nil {
+		return adapter.Layout{}, err
+	}
 	layout, err := s.archiveLayout(game, "", members)
 	if err != nil {
-		return err
+		return adapter.Layout{}, err
 	}
 	if !layout.Applies() {
-		return nil
+		return layout, nil
 	}
-	_, err = rewriteExtractedTree(root, layout, members)
-	return err
+	if _, err := rewriteExtractedTree(root, layout, members); err != nil {
+		return adapter.Layout{}, err
+	}
+	return layout, nil
 }
 
-// rewriteExtracted is the ARCHIVE-IMPORT path's use of the tree rewriter,
-// the twin of Service.rewriteStagedExtract: it runs against the staging
-// directory `lmm import <archive>` extracts into, before the mod name is
-// derived from that tree.
+// layoutExtracted is the ARCHIVE-IMPORT path's twin of
+// Service.layoutStagedExtract: it runs against the staging directory `lmm
+// import <archive>` extracts into, after the mod name has been derived from
+// that tree and before it is committed to the cache.
 //
 // It lives on Importer rather than Service because an Importer carries its
 // game's resolved adapter (a standalone NewImporter carries the identity),
 // which is what keeps this path working for the one Importer built without
-// service context.
-func (i *Importer) rewriteExtracted(game *domain.Game, modName, root string) error {
+// service context. That Importer also carries no claim function, so it
+// makes no foreign-archive refusal - the same standing it has for every
+// other Service-scoped check.
+func (i *Importer) layoutExtracted(game *domain.Game, modName, root string) (adapter.Layout, error) {
 	members, err := relativeFileMembers(root)
 	if err != nil {
-		return fmt.Errorf("listing extracted members: %w", err)
+		return adapter.Layout{}, fmt.Errorf("listing extracted members: %w", err)
 	}
 	members = slashMembers(members)
+	if i.claimArchive != nil {
+		if err := i.claimArchive(game, modName, members); err != nil {
+			return adapter.Layout{}, err
+		}
+	}
 	layout, err := i.adapter.NormalizeArchive(adapter.NormalizeRequest{Game: game, ModName: modName, Members: members})
 	if err != nil {
-		return fmt.Errorf("laying out %s: %w", modName, err)
+		return adapter.Layout{}, fmt.Errorf("laying out %s: %w", modName, err)
 	}
 	if !layout.Applies() {
-		return nil
+		return layout, nil
 	}
-	_, err = rewriteExtractedTree(root, layout, members)
-	return err
+	if _, err := rewriteExtractedTree(root, layout, members); err != nil {
+		return adapter.Layout{}, err
+	}
+	return layout, nil
 }
 
 // AdapterLayoutError reports an adapter Layout that core refused to

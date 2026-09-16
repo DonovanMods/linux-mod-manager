@@ -77,6 +77,14 @@ type Importer struct {
 	// exactly what every import did before the seam existed, and
 	// Service.newImporter replaces it with the game's resolved adapter.
 	adapter adapter.GameAdapter
+	// claimArchive refuses an extracted archive that some OTHER registered
+	// adapter recognises as unmistakably its own (#359/#413 - a BepInEx
+	// plugin going into a game with no BepInEx). It is a func field rather
+	// than a call on i.adapter because the question is asked of the
+	// REGISTRY, which only a Service holds; a standalone NewImporter leaves
+	// it nil and makes no such refusal, exactly as it makes none of the
+	// other Service-scoped checks.
+	claimArchive func(game *domain.Game, modName string, members []string) error
 }
 
 // NewImporter creates a new Importer that stages extraction in the OS temp
@@ -100,6 +108,7 @@ func (s *Service) newImporter(game *domain.Game) *Importer {
 	imp := NewImporter(s.GetGameCache(game))
 	imp.stagingRoot = s.stagingRoot()
 	imp.resolveMergeCompiler = s.adapterCompiler
+	imp.claimArchive = s.requireAdapterClaim
 	imp.log = s.logger()
 	// #353: a resolution failure here (a games.yaml naming an adapter this
 	// build does not ship) is reported by the flow's own AdapterFor call,
@@ -327,41 +336,22 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// would otherwise name every plugin "BepInEx".
 		modName = DetectModName(extractedPath, filename)
 
-		// #358: the archive-root normaliser. It runs against the PRISTINE
-		// extracted tree (this staging directory holds exactly this
-		// archive's members), which is the precondition
-		// normalizeBepInExTree documents, and before the move into the
-		// cache, so the cache entry - whose layout IS the game directory's
-		// layout - is already correct for every later deploy.
+		// #353: the game's adapter lays the extracted tree out. It runs
+		// against the PRISTINE extracted tree - this staging directory
+		// holds exactly this archive's members - and before the move into
+		// the cache, so the cache entry, whose layout IS the game
+		// directory's layout, is already correct for every later deploy.
 		//
-		// The game's BepInEx gate (#359, widened by #424) widens the rules
-		// onto the ambiguous shapes - a bare plugins/ root, a plugin
-		// folder, a loose .dll.
-		gate := bepinexGateFor(game)
-		layout, err := normalizeBepInExTree(extractedPath, modName, gate.Gated, game.InstallPath)
+		// The refusal PlanImportArchive makes is repeated here because a
+		// caller can reach the ingest without planning first (#359). It
+		// lands before the cache commit, so nothing is deployed and nothing
+		// is recorded.
+		layout, err := i.layoutExtracted(game, modName, extractedPath)
 		if err != nil {
 			return nil, err
 		}
-		noteUndeclaredBepInEx(layout, game, gate)
-		// #359: the same refusal PlanImportArchive makes, repeated here
-		// because a caller can reach the ingest without planning first. It
-		// lands before the cache commit, so nothing is deployed and nothing
-		// is recorded.
-		if err := requireDeclaredLoader(game, modName, layout, gate); err != nil {
-			return nil, err
-		}
-		for _, w := range layout.warnings() {
+		for _, w := range layout.Warnings {
 			i.log.Warn(w, "archive", filename, "game", game.ID)
-		}
-
-		// #353: the game's adapter lays the extracted tree out - AFTER
-		// #358's BepInEx normalisation has put a loader archive into its
-		// canonical shape. That order is the same one PlanImportArchive
-		// uses, which is what keeps plan and ingest agreeing: the adapter
-		// always sees the member list the plan showed it. A generic-files
-		// game gets the identity Layout and nothing moves.
-		if err := i.rewriteExtracted(game, modName, extractedPath); err != nil {
-			return nil, err
 		}
 
 		// Move extracted files to cache

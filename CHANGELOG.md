@@ -291,6 +291,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pipeline (#221) are unchanged: this is where the rules live, not what
   they are.
 
+- **BepInEx is the second real adapter (#353, #413).** Everything lmm knows
+  about BepInEx — how a plugin archive's files are laid out, that
+  `BepInEx/config/**` is the user's configuration rather than mod content,
+  that a BepInEx archive going into a game with no BepInEx is a mistake
+  worth refusing, and what `lmm verify` can honestly check about the
+  installation — now lives behind the `adapter:` key (`adapter: bepinex`)
+  instead of being threaded through `internal/core` as a bool parameter, an
+  inline path test and an `if game.Loader != nil` branch.
+
+  **Nothing to migrate, and nothing to type.** A game that declares
+  `loader: kind: bepinex` resolves to the adapter on its own, in memory,
+  and so does a game that merely HAS BepInEx installed in its directory —
+  the same two-source rule #424 settled on, because the declaration is a
+  statement of intent lmm asks for while the loader's own preloader on disk
+  is a fact lmm can read. `games.yaml` is not rewritten either way.
+
+  Two user-visible improvements come out of the move. A BepInEx game's
+  seeded `BepInEx/config/**` files are now safe on **every** path that
+  deploys a mod rather than only on some: they are written once, never
+  overwritten by a later deploy or a version update, and never removed by
+  an uninstall, a profile switch or a purge — which previously held only
+  when lmm had a database row to check and, under `copy`/`hardlink`
+  deploys, could go the other way. And the "this archive needs a mod
+  loader your game does not have" refusal is no longer BepInEx-specific
+  machinery in the core: any adapter can claim an archive as unmistakably
+  its own, so the next loader lmm learns about is refused for the right
+  reason with no change to the engine.
+
+  `lmm verify`'s loader tier reports exactly what it did — a missing
+  preloader, a declared version the installation contradicts, bootstrap
+  files that do not match the declared mode, a loader that has never run,
+  a log older than the newest deployed plugin, an unlinked plugin, a mod
+  deployed outside `BepInEx/` — and repairs exactly the two it could
+  before. The split is now explicit: the adapter reports what only it can
+  see, and lmm's core owns every repair.
+
 - **BepInEx plugin archives deploy correctly (#358).** BepInEx installs into
   the game root, which lmm already expresses by pointing a game's
   `mod_path` at its own `install_path` (the same absolute path twice — not

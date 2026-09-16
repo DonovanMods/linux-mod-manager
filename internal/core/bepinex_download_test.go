@@ -225,10 +225,10 @@ func TestDownloadIngest_BepInEx_AFrameworkPackRefusalRetainsNothing(t *testing.T
 		"manifest.json":                      "{}",
 	}, true)
 
-	require.ErrorIs(t, fixture.download(t), core.ErrBepInExFrameworkPack)
+	require.ErrorIs(t, fixture.download(t), core.ErrNotAMod)
 	assert.Equal(t, int64(1), fixture.downloads.Load())
 
-	require.ErrorIs(t, fixture.download(t), core.ErrBepInExFrameworkPack)
+	require.ErrorIs(t, fixture.download(t), core.ErrNotAMod)
 	assert.Equal(t, int64(2), fixture.downloads.Load(),
 		"nothing was retained, so the second attempt fetches again")
 }

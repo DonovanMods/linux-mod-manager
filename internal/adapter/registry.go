@@ -85,3 +85,40 @@ func (r *Registry) Has(name string) bool {
 	_, ok := r.Get(name)
 	return ok
 }
+
+// ClaimArchive asks every registered adapter EXCEPT exceptID whether members
+// are unmistakably a mod for its kind of game (#359 through #353's seam).
+//
+// exceptID is the game's OWN adapter, and excluding it is what keeps this a
+// question about a FOREIGN archive: an adapter has already had its full say
+// about an archive for its own game, through NormalizeArchive.
+//
+// Adapters are asked in registered-name order, so a build shipping two
+// claimers answers deterministically, and the FIRST answer wins - a refusal
+// (ErrNotAMod) ahead of a claim, because "this archive is the framework
+// itself" is a better thing to tell a user than "your game needs that
+// framework". An adapter implementing no ArchiveClaimer is skipped, which is
+// every adapter but bepinex today.
+func (r *Registry) ClaimArchive(exceptID string, members []string) (GameAdapter, Claim, error) {
+	for _, name := range r.Names() {
+		if name == exceptID {
+			continue
+		}
+		a, ok := r.Get(name)
+		if !ok {
+			continue
+		}
+		claimer, ok := a.(ArchiveClaimer)
+		if !ok {
+			continue
+		}
+		claim, err := claimer.ClaimArchive(members)
+		if err != nil {
+			return a, Claim{}, err
+		}
+		if claim.Claimed() {
+			return a, claim, nil
+		}
+	}
+	return nil, Claim{}, nil
+}

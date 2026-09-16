@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -113,7 +114,7 @@ func TestImportArchive_BepInEx_FrameworkPackIsRefused(t *testing.T) {
 	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
 		core.ImportArchiveOptions{Force: true}, nil)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, core.ErrBepInExFrameworkPack)
+	assert.ErrorIs(t, err, core.ErrNotAMod)
 	assert.Contains(t, err.Error(), "--loader bepinex")
 
 	_, statErr := os.Lstat(filepath.Join(game.InstallPath, "BepInEx"))
@@ -355,7 +356,7 @@ func TestImportArchive_BepInEx_FrameworkPackIsRefusedInEverySpelling(t *testing.
 			_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
 				core.ImportArchiveOptions{Force: true}, nil)
 			require.Error(t, err)
-			assert.ErrorIs(t, err, core.ErrBepInExFrameworkPack)
+			assert.ErrorIs(t, err, core.ErrNotAMod)
 
 			mods, listErr := svc.ListMods(context.Background(), game, "default")
 			require.NoError(t, listErr)
@@ -645,4 +646,51 @@ func TestImportArchive_BepInEx_AGameOwnedDirectoryIsDeployedVerbatim(t *testing.
 		"valheim_Data/resources.assets",
 	}, gameTreeForTest(t, game.InstallPath),
 		"the patch replaces the game's assembly in place; nothing moves under BepInEx/")
+}
+
+// TestVerifyFix_BepInEx_ReSeedsAConfigTheRepairedDeployNeeds is the F14
+// carry-in's reach requirement (#413): the copy-once write has to run on
+// every path that deploys a mod, verify --fix's re-deploy included.
+//
+// #358 got that for free by seeding inside Installer.Install's own file
+// loop; U1's adapter.RouteCopyOnce pass ran in the deploy flow and nowhere
+// else. U3 puts it back on the Installer, so `verify --fix` - which repairs
+// an unlinked plugin by re-running the ordinary install - seeds the mod's
+// defaults again, exactly as a fresh install would.
+func TestVerifyFix_BepInEx_ReSeedsAConfigTheRepairedDeployNeeds(t *testing.T) {
+	svc, game := newBepInExDeclaredService(t)
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapProton, time.Now())
+
+	archivePath := filepath.Join(t.TempDir(), "Thing-1.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"BepInEx/plugins/Thing.dll": "assembly",
+		"BepInEx/config/thing.cfg":  "[General]\nvolume=5\n",
+		"manifest.json":             "{}",
+	})
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	// The game directory loses both halves - a launcher update, a manual
+	// cleanup. Only the plugin is a verify finding (a deleted seeded config
+	// is a choice, not a failed deploy), but the repair re-installs the mod,
+	// and a re-install seeds.
+	plugin := filepath.Join(game.ModPath, "BepInEx", "plugins", "Thing.dll")
+	seeded := filepath.Join(game.ModPath, "BepInEx", "config", "thing.cfg")
+	require.NoError(t, os.Remove(plugin))
+	require.NoError(t, os.Remove(seeded))
+
+	_, err = svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	_, err = os.Lstat(plugin)
+	require.NoError(t, err, "--fix re-deploys the mod")
+	body, err := os.ReadFile(seeded)
+	require.NoError(t, err)
+	assert.Equal(t, "[General]\nvolume=5\n", string(body),
+		"and the same install seeds the defaults it ships")
+	info, err := os.Lstat(seeded)
+	require.NoError(t, err)
+	assert.True(t, info.Mode().IsRegular(), "as a real file, not a link into the cache")
 }

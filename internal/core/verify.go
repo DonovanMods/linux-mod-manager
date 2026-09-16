@@ -648,7 +648,9 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 // A failure to resolve or run the adapter is reported as a "skipped" row
 // rather than failing the whole verify, matching every other pass's
 // tolerance: a verify that reports nothing because one tier could not run
-// is worse than one that says which tier did not.
+// is worse than one that says which tier did not. A "skipped" row is core's
+// own and counts towards neither tally, exactly as the other passes' skips
+// do.
 func (r *verifyRun) adapterPass(installedMods []domain.InstalledMod) {
 	a, err := r.svc.AdapterFor(r.game)
 	if err != nil {
@@ -661,12 +663,26 @@ func (r *verifyRun) adapterPass(installedMods []domain.InstalledMod) {
 		return
 	}
 	for _, f := range findings {
+		// The tally is core's, on the adapter's say-so: Issues and Warnings
+		// decide `lmm verify`'s exit code, and only the adapter knows
+		// whether "the loader has never run" is a problem or a remark
+		// (#413). adapter.SeverityIssue is the zero value, so an adapter
+		// that says nothing reports a problem.
+		switch f.Severity {
+		case adapter.SeverityIssue:
+			r.result.Issues++
+		case adapter.SeverityWarning:
+			r.result.Warnings++
+		case adapter.SeverityNote:
+		}
 		r.finding(VerifyFinding{
 			Status:        f.Status,
 			Note:          f.Note,
+			Recorded:      f.Recorded,
+			Effective:     f.Effective,
 			Fixable:       f.Fixable,
 			FixableReason: f.FixableReason,
-		}, VerifyEvent{})
+		}, VerifyEvent{Recorded: f.Recorded, Effective: f.Effective})
 	}
 }
 

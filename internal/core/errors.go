@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
@@ -323,6 +324,22 @@ func AuthRequiredSource(err error) string {
 	}
 	return ""
 }
+
+// ErrNotAMod is the sentinel an adapter's ingest refusal carries: this
+// archive is the loader, the framework or the base game rather than a mod
+// for it (adapter.ErrNotAMod, re-exported so a frontend can errors.Is it
+// without importing internal/adapter, whose allow-lists do not include one).
+//
+// It replaced core's own ErrBepInExFrameworkPack in U3 (#413) when the
+// BepInEx rules moved behind the seam. The refusal is unchanged - a payload
+// under BepInEx/core/ is the loader, which lmm configures per game and which
+// must survive a profile switch, so installing it as a mod would put the
+// preloader under lmm's deployed-files bookkeeping where the next uninstall
+// tears it out from under every plugin - but the NAME is now the general
+// one, because the rule is general and the next adapter's base-game archive
+// is refused through it too. The adapter wraps it with the message naming
+// the remedy.
+var ErrNotAMod = adapter.ErrNotAMod
 
 // LoaderRequiredError refuses a mod that needs a mod loader the game does
 // not declare (#359).

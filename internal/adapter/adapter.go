@@ -223,6 +223,41 @@ type Preconditioner interface {
 	CheckPreconditions(g *domain.Game, mods []domain.InstalledMod) error
 }
 
+// Severity is how a Finding counts towards a verify run's tally. It is the
+// one thing core cannot read off the finding itself: the Issues/Warnings
+// counters are what decide `lmm verify`'s exit code, and only the adapter
+// knows whether "the loader has never run" is a problem or a remark.
+//
+// Its ZERO value is SeverityIssue, because a report an adapter bothered to
+// make is a problem by default - an adapter that means otherwise says so.
+type Severity int
+
+const (
+	// SeverityIssue counts towards VerifyResult.Issues: something is
+	// wrong and the user has to act.
+	SeverityIssue Severity = iota
+	// SeverityWarning counts towards VerifyResult.Warnings: worth saying,
+	// not worth failing over.
+	SeverityWarning
+	// SeverityNote counts towards neither - a row that is purely
+	// informational.
+	SeverityNote
+)
+
+// String returns the severity's diagnostic name.
+func (s Severity) String() string {
+	switch s {
+	case SeverityIssue:
+		return "issue"
+	case SeverityWarning:
+		return "warning"
+	case SeverityNote:
+		return "note"
+	default:
+		return "unknown"
+	}
+}
+
 // Finding is one read-only observation from an adapter's Verify. Its fields
 // map one-for-one onto core.VerifyFinding, so an adapter row renders as an
 // ordinary verify row in every frontend that already exists.
@@ -232,6 +267,16 @@ type Finding struct {
 	Status string
 	// Note is the human-facing explanation.
 	Note string
+	// Recorded and Effective are the two halves of a DRIFT report - what
+	// the configuration says versus what the installation says - and they
+	// land on the same two VerifyFinding fields every other drift row in
+	// the engine uses (a version mismatch, a link-method change). Both
+	// empty for a finding that is not about a disagreement.
+	Recorded  string
+	Effective string
+	// Severity is how this row counts towards the run's tally. The zero
+	// value is SeverityIssue.
+	Severity Severity
 	// Fixable reports whether `verify --fix` would attempt a repair. No
 	// adapter finding is fixable in 2.0 (design §1): the one BepInEx check
 	// that could be repaired is core's own per-file deployment pass, not
@@ -395,6 +440,54 @@ type MergeSource struct {
 type MergeFailure struct {
 	ModRef string
 	Reason string
+}
+
+// Claim is one adapter's answer to "is this archive yours?", asked of an
+// adapter that is NOT the game's own (see ArchiveClaimer). An empty Claim
+// is "not mine".
+type Claim struct {
+	// Evidence names the archive shape that made the claim, in the
+	// adapter's own words ("game-root-relative"), so a user can see WHY
+	// lmm decided this archive belongs to a game kind theirs is not.
+	Evidence string
+	// Requires is the mod-loader kind (domain.LoaderKindBepInEx) a game
+	// must declare before this archive is usable in it, or "" when the
+	// claim implies no loader. It is a domain kind rather than the
+	// adapter's own ID because the two are free to diverge - the loader is
+	// a fact about the game INSTALLATION (domain.Game.Loader), and an
+	// adapter is a choice about how lmm treats it.
+	Requires string
+}
+
+// Claimed reports whether this Claim is an actual claim.
+func (c Claim) Claimed() bool { return c.Evidence != "" }
+
+// ArchiveClaimer is the optional capability that answers "this archive is
+// unmistakably for MY kind of game" from the member list alone - no
+// domain.Game, because the whole point is that core asks it of an adapter
+// the game in hand does NOT use.
+//
+// It exists for one shipped refusal (#359): importing a BepInEx plugin into
+// a game with no BepInEx deploys an assembly nothing will ever load and
+// reports success. The game's own adapter cannot catch that - it is the
+// identity, and the identity has no opinion - so core asks every OTHER
+// registered adapter through Registry.ClaimArchive.
+//
+// UNMISTAKABLE is the whole bar, and it is narrower than NormalizeArchive's.
+// An adapter asked about an archive for someone else's game must only claim
+// a shape that no other game's mod plausibly has: `plugins/` at an archive
+// root is an ordinary directory name, and claiming it would tell a 7 Days
+// to Die user to install a mod loader they do not need. A directory
+// literally named `BepInEx` is the other kind of evidence.
+//
+// A non-nil error is the adapter's own refusal - ErrNotAMod for an archive
+// that is the framework itself rather than a mod for it - which core
+// surfaces ahead of any requirement.
+type ArchiveClaimer interface {
+	// ClaimArchive judges members (slash-separated, archive-relative,
+	// files only, sorted - the same normalisation NormalizeRequest.Members
+	// carries).
+	ClaimArchive(members []string) (Claim, error)
 }
 
 // ErrNotAMod is the refusal an adapter makes for an archive that is the

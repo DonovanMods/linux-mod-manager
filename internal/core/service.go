@@ -309,18 +309,36 @@ func (s *Service) ListAdapters() []string {
 	return s.adapterRegistry().Names()
 }
 
-// AdapterName is the adapter game SELECTS, after the one derivation #353's
-// migration performs: `deploy_mode: compile` with no `adapter:` key means
-// the icarus adapter (design §2, OQ1 - kept for 2.0 so every existing
-// Icarus games.yaml keeps working with no user action).
+// AdapterName is the adapter game SELECTS, after the two derivations #353's
+// migration performs, in this order:
 //
-// The derivation fires only once an icarus adapter is REGISTERED. U1
-// registers none, so a compile game resolves to the identity and keeps
-// taking the source-based compile path below; U2 (#412) registers the
-// adapter and the derivation goes live with no change here.
+//	`deploy_mode: compile` with no `adapter:` key means the icarus adapter
+//	(design §2, OQ1 - kept for 2.0 so every existing Icarus games.yaml keeps
+//	working with no user action);
+//
+//	a game with BepInEx means the bepinex adapter (#413) - "with BepInEx"
+//	being the same two-source gate #359 and #424 settled on, because the two
+//	answer different halves of one fact and a user has only ever supplied
+//	one of them. The `loader: kind: bepinex` block is a statement of intent
+//	lmm asks for; BepInEx/core/BepInEx.Preloader.dll in the install directory
+//	is a FACT lmm can read, and nothing else plausibly puts that file there.
+//	A Valheim entry added before the catalog declared the loader (#416), on a
+//	machine where the user installed BepInEx by hand, has the second and not
+//	the first - and treating that as "not a BepInEx game" is what let a
+//	plugin extract verbatim into a Steam install directory and report
+//	success.
+//
+// Each derivation fires only once its adapter is REGISTERED, so a build that
+// ships neither resolves every game to the identity and behaves exactly as
+// lmm did before #353.
 //
 // An explicit `adapter:` always wins, and the value is never written back
 // to games.yaml - domain.Game.Adapter stays what the user typed.
+//
+// The BepInEx half is the one derivation that touches DISK, which is a cost
+// worth naming: one os.Stat per resolution, and only for a game that
+// declares no adapter, is not a compile game and does not declare the
+// loader. Resolution happens once per flow, never per file.
 func (s *Service) AdapterName(game *domain.Game) string {
 	if game.Adapter != "" {
 		return game.Adapter
@@ -328,13 +346,30 @@ func (s *Service) AdapterName(game *domain.Game) string {
 	if game.DeployMode == domain.DeployCompile && s.adapterRegistry().Has(icarusAdapterID) {
 		return icarusAdapterID
 	}
+	if s.adapterRegistry().Has(bepinexAdapterID) && hasBepInEx(game) {
+		return bepinexAdapterID
+	}
 	return adapter.GenericID
 }
 
-// icarusAdapterID is the adapter `deploy_mode: compile` migrates to. It is
-// a NAME, not an import: core must never depend on the concrete adapter
-// package (design §4).
-const icarusAdapterID = "icarus"
+// hasBepInEx reports whether anything says this game loads mods through
+// BepInEx: its own declaration, or the loader's preloader sitting in its
+// install directory. A nil game says nothing, so every caller can ask
+// without a guard.
+func hasBepInEx(game *domain.Game) bool {
+	if game == nil {
+		return false
+	}
+	return game.DeclaresBepInEx() || regularFileAt(game.InstallPath, bepinexPreloaderPath)
+}
+
+// icarusAdapterID and bepinexAdapterID are the adapters core's two
+// derivations migrate to. They are NAMES, not imports: core must never
+// depend on a concrete adapter package (design §4).
+const (
+	icarusAdapterID  = "icarus"
+	bepinexAdapterID = "bepinex"
+)
 
 // AdapterFor resolves game's adapter, failing loud when the configured name
 // is not registered - the existence check design §2 assigns to this layer,
@@ -1621,41 +1656,31 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 		return nil, err
 	}
 
-	// #358: the BepInEx archive-root normaliser, run on the pristine
-	// intermediate rather than on stagePath - exactly the attribution
-	// property that intermediate exists for. A mod downloaded from
-	// NexusMods and one imported from a local archive therefore reach the
-	// cache in the same layout, which is what lets a BepInEx plugin deploy
-	// correctly with no source work at all (spike §5).
+	// #353: the game's adapter gets its say on the archive's layout HERE,
+	// against the PRISTINE intermediate rather than on stagePath - exactly
+	// the attribution property that intermediate exists for, and the only
+	// point at which "what did this archive contribute" is still an
+	// answerable question. A mod downloaded from NexusMods and one imported
+	// from a local archive therefore reach the cache in the same layout,
+	// which is what lets a BepInEx plugin deploy correctly with no source
+	// work at all (spike §5).
 	//
-	// The plugin directory a loose .dll lands in is named after the MOD, not
-	// the archive: a source-backed download has a real mod name, and it is
-	// the name the user sees in `lmm list`.
-	//
-	// The game's BepInEx gate (#359, widened by #424 to a loader lmm can
-	// SEE as well as one the game declares) widens the rules onto the
-	// ambiguous shapes.
-	gate := bepinexGateFor(game)
-	layout, err := normalizeBepInExTree(extractPath, mod.Name, gate.Gated, game.InstallPath)
+	// The refusal it makes first (#359/#413) is one a downloaded archive
+	// cannot answer any earlier: its shape is not knowable until it is
+	// extracted, which is why PlanInstall cannot ask. It lands before the
+	// staged entry is committed, so nothing is deployed and nothing is
+	// recorded - a cache fill is not a mutation of managed state (Ruling 1),
+	// the same standing a declined ConflictError leaves behind.
+	layout, err := s.layoutStagedExtract(game, mod.Name, extractPath)
 	if err != nil {
 		return nil, err
 	}
-	noteUndeclaredBepInEx(layout, game, gate)
-	// #359: a downloaded archive's shape is not knowable until it is
-	// extracted, which is why PlanInstall cannot answer this and this is the
-	// earliest point that can. The refusal lands before the staged entry is
-	// committed, so nothing is deployed and nothing is recorded - a cache
-	// fill is not a mutation of managed state (Ruling 1), the same standing
-	// a declined ConflictError leaves behind.
-	if err := requireDeclaredLoader(game, mod.Name, layout, gate); err != nil {
-		return nil, err
-	}
-	// A download has no plan to carry these: its shape is not knowable
-	// until it is extracted, which is this function. So they ride the
-	// flow's own event sink as ordinary WarningEvents - the wire type every
-	// warning in every flow already uses - and the log keeps the record for
-	// a caller that passed no sink.
-	for _, w := range layout.warnings() {
+	// A download has no plan to carry the adapter's warnings: its shape is
+	// not knowable until it is extracted, which is this function. So they
+	// ride the flow's own event sink as ordinary WarningEvents - the wire
+	// type every warning in every flow already uses - and the log keeps the
+	// record for a caller that passed no sink.
+	for _, w := range layout.Warnings {
 		s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
 		if sink != nil {
 			sink(WarningEvent{
@@ -1664,16 +1689,6 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 				Message: w,
 			})
 		}
-	}
-
-	// #353: the game's adapter gets its say on the archive's layout HERE,
-	// against the pristine directory that holds exactly this archive's
-	// members - the only point at which "what did this archive contribute"
-	// is still an answerable question. It runs AFTER #358's normalisation,
-	// the same order the import path uses. A generic-files game gets the
-	// identity Layout and nothing is touched.
-	if err := s.rewriteStagedExtract(game, extractPath); err != nil {
-		return nil, err
 	}
 
 	var members []string

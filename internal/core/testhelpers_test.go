@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bepinex"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
@@ -45,6 +46,20 @@ func createTestScript(t *testing.T, dir, name, content string) string {
 // newFlowsTestService returns a *core.Service backed by fresh temp dirs
 // (config/data/cache), matching the construction pattern used throughout
 // service_test.go.
+//
+// It registers the real BepInEx adapter, which is what internal/app does
+// (registerAdapters) and therefore what every flow test in this package
+// needs to be testing: since U3 (#413) the archive-layout rules, the config
+// routing, the loader precondition and the loader verify tier all live
+// behind the seam, and a Service without the adapter registered is a build
+// of lmm that does not ship. It is the ONE concrete adapter registered
+// here - icarus's own tests live in its package and core's compile tests use
+// purpose-built stubs, while BepInEx's flow tests are end-to-end claims
+// about an import or a deploy and have nowhere else to live.
+//
+// Registering it changes nothing for a game that is not a BepInEx game:
+// Service.AdapterName resolves the identity unless the game declares the
+// loader or has BepInEx in its install directory.
 func newFlowsTestService(t *testing.T) *core.Service {
 	t.Helper()
 	cfg := core.ServiceConfig{
@@ -54,6 +69,7 @@ func newFlowsTestService(t *testing.T) *core.Service {
 	}
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
+	svc.RegisterAdapter(bepinex.New())
 	t.Cleanup(func() {
 		require.NoError(t, svc.Close())
 	})
