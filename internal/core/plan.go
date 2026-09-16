@@ -7,14 +7,18 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// ErrStalePlan is returned by every Apply whose plan was computed against an
-// installed-mod set that has since changed. The frontend re-plans.
-var ErrStalePlan = errors.New("plan is stale: installed mods changed since it was computed")
+// ErrStalePlan is returned by every Apply whose plan was computed against
+// state that has since changed - the installed-mod set, a profile's
+// `disabled:` markers, an archive. The error wrapping it says which. The
+// frontend re-plans.
+var ErrStalePlan = errors.New("plan is stale")
 
 // installedSnapshot is the precondition a Plan records and an Apply
 // re-derives: the set of (source_id, mod_id, version, enabled) for the
@@ -181,9 +185,52 @@ func (s *Service) checkPlanFresh(ctx context.Context, gameID, profileName string
 		return err
 	}
 	if !maps.Equal(got, want) {
-		return fmt.Errorf("%w: %s/%s", ErrStalePlan, gameID, profileName)
+		return staleSnapshotError(gameID, profileName, got, want)
 	}
 	return nil
+}
+
+// staleSnapshotError says what moved between want, a plan's snapshot, and
+// got, the current one: an installed mod or, when every row is still as the
+// plan saw it, only the document's `disabled:` markers - named, since "the
+// installed mods changed" would send the user looking for a change that
+// never happened (merge gate Q1).
+func staleSnapshotError(gameID, profileName string, got, want installedSnapshot) error {
+	rowsChanged := fmt.Errorf("%w: installed mods changed since it was computed: %s/%s", ErrStalePlan, gameID, profileName)
+	if len(got) != len(want) {
+		return rowsChanged
+	}
+	var marked, unmarked []string
+	for key, w := range want {
+		g, ok := got[key]
+		if !ok {
+			return rowsChanged
+		}
+		gotRow, gotOff := strings.CutSuffix(g, "|off")
+		wantRow, wantOff := strings.CutSuffix(w, "|off")
+		switch {
+		case gotRow != wantRow:
+			return rowsChanged
+		case gotOff && !wantOff:
+			marked = append(marked, key)
+		case wantOff && !gotOff:
+			unmarked = append(unmarked, key)
+		}
+	}
+	var changes []string
+	if len(marked) > 0 {
+		slices.Sort(marked)
+		changes = append(changes, "now marked: "+strings.Join(marked, ", "))
+	}
+	if len(unmarked) > 0 {
+		slices.Sort(unmarked)
+		changes = append(changes, "no longer marked: "+strings.Join(unmarked, ", "))
+	}
+	if len(changes) == 0 {
+		return rowsChanged
+	}
+	return fmt.Errorf("%w: the disabled markers in profile %s/%s changed since it was computed (%s)",
+		ErrStalePlan, gameID, profileName, strings.Join(changes, "; "))
 }
 
 // isDeployedNow reports whether the game-dir-relative path f currently

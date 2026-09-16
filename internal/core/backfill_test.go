@@ -1308,6 +1308,9 @@ func TestBackfillProfileDisabledMarkers_ASwitchIntoAKeptProfile(t *testing.T) {
 
 				_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
 				require.ErrorIs(t, err, core.ErrStalePlan)
+				assert.Contains(t, err.Error(), "g1/a")
+				assert.Contains(t, err.Error(), "disabled markers", "a marker is what changed")
+				assert.NotContains(t, err.Error(), "installed mods", "no installed mod changed")
 				assert.Contains(t, f.warnings.String(), "Mod off")
 				f.assertOffAndUndeployed(t)
 
@@ -1343,6 +1346,45 @@ func TestBackfillProfileDisabledMarkers_ASwitchIntoAKeptProfile(t *testing.T) {
 		_, err := f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
 		require.ErrorIs(t, err, core.ErrStalePlan)
 		f.assertOffAndUndeployed(t)
+	})
+}
+
+// TestCheckPlanFresh_SaysWhatChanged: a plan refused because an installed
+// mod moved says so, as it always has; one refused because only a
+// `disabled:` marker moved names the marker instead (the merge gate's Q1).
+func TestCheckPlanFresh_SaysWhatChanged(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("an installed mod", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		plan, err := f.svc.PlanProfileApply(ctx, f.game, "a")
+		require.NoError(t, err)
+		require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+			Mod:         domain.Mod{ID: "off", SourceID: "src", Name: "Mod off", Version: "2.0", GameID: f.game.ID},
+			ProfileName: "a", UpdatePolicy: domain.UpdateNotify,
+		}))
+
+		_, err = f.svc.ApplyProfileApply(ctx, f.game, plan, core.ProfileApplyOptions{}, nil)
+		require.ErrorIs(t, err, core.ErrStalePlan)
+		assert.Equal(t, "plan is stale: installed mods changed since it was computed: g1/a", err.Error())
+	})
+
+	t.Run("a marker", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		f.row(t, "a", "on", false, false)
+		pm := f.svc.NewProfileManager()
+		require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "a", "src", "on", true))
+		plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
+		require.NoError(t, err)
+		require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "a", "src", "off", true))
+		require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "a", "src", "on", false))
+
+		_, err = f.svc.ApplyProfileSync(ctx, f.game, plan, nil)
+		require.ErrorIs(t, err, core.ErrStalePlan)
+		assert.Equal(t, "plan is stale: the disabled markers in profile g1/a changed since it was computed "+
+			"(now marked: src:off; no longer marked: src:on)", err.Error())
 	})
 }
 
