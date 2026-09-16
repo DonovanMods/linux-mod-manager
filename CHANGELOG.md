@@ -262,17 +262,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 mod enable`, it keeps the mod's load-order position and its pinned
   version, and it travels through `lmm profile export`/`import` and `lmm
 profile sync`. A mod marked this way is never downloaded or deployed by a
-  converge run, and a mod newly added to a profile still defaults to
-  enabled.
+  converge run, is skipped by `lmm deploy` and by the web UI's Deploy button
+  and refused by name by `lmm deploy --mod <mod-id>` (`lmm deploy --all`,
+  which exists to deploy switched-off mods, still deploys it), and a mod
+  newly added to a profile still defaults to enabled.
+
+  Two commands clear the marker, and each is an explicit statement about one
+  mod: `lmm mod enable` — which clears it even when the database already
+  said the mod was enabled, so a document and a database that disagree are
+  always recoverable — and `lmm install` of the same mod, because asking for
+  a mod by name is a request to have it, not something the next converge run
+  should undo.
 
   The key is additive in both directions. **A missing `disabled` key means
   enabled**, which is what every profile file written by an earlier lmm
-  already says, so nothing needs migrating and nothing is rewritten on
-  read; and the key is omitted whenever it would be false, so a profile
-  file, an export and every `--json` document that carries a mod reference
-  are byte-identical to what they were before this existed until you
-  actually disable something. Editing it by hand is supported — see
+  already says, so nothing is rewritten on read; and the key is omitted
+  whenever it would be false, so a profile file, an export and every
+  `--json` document that carries a mod reference are byte-identical to what
+  they were before this existed until you actually disable something.
+  Editing it by hand is supported — see
   [docs/configuration.md](docs/configuration.md#per-mod-keys).
+
+  **Mods you had already disabled are recorded once.** Their off state lived
+  only in the database, which no converge run reads, so the first `lmm`
+  command after this upgrade writes each one's `disabled: true` into the
+  profile that lists it and says how many it recorded. Without that, the
+  first `lmm profile switch` or `lmm profile apply` after upgrading would
+  switch every already-disabled mod back on, and a `lmm profile sync` would
+  delete its reference outright. It runs once per installation — a marker in
+  the database discharges it — so a marker you later edit away by hand stays
+  away, and an installation with no disabled mods writes nothing.
 
 - **The game-adapter seam: one `adapter:` key in `games.yaml` (#353, #411).**
   What a game does with mod content — how an archive's files are laid out,
@@ -1228,7 +1247,13 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   showed as disabled — or vanished from `lmm list` entirely — while its
   files sat deployed in the game directory. The question is now asked of
   the target profile: a mod is enabled and deployed under the profile you
-  switched to unless that profile's own row already says both.
+  switched to unless that profile's own row already says both. The target
+  profile's row is also what the switch now reads the mod's version and
+  file list from, and what it records the deployment on — so two profiles
+  holding one unpinned mod at different versions no longer leave `lmm list`
+  and the game directory disagreeing, and switching back and forth settles
+  instead of re-planning the same mod and asking for confirmation on every
+  pass. A mod both profiles have a row for is listed once, not twice.
 
 - **A mod you disabled stays disabled across a profile switch or apply
   (#431).** Disable a mod under one profile, switch away, switch back, and
