@@ -142,6 +142,11 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
     (m) => m.source_id === sourceID && m.id === modID,
   );
   const settingsSource = listing ?? installed;
+  // The toggle's value comes from the listing first for the same reason,
+  // and one more (issue 432): the library document is what a toggle
+  // request settles on (toggleack.js), so a control reading anything else
+  // could show a value the request was never checked against.
+  const enabled = listing?.enabled ?? installedMod.enabled;
   const settingsRow = settingsSource && {
     source_id: sourceID,
     id: modID,
@@ -223,13 +228,13 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
                   key: `${sourceID}:${modID}`,
                   source_id: sourceID,
                   id: modID,
-                  enabled: installedMod.enabled,
+                  enabled,
                   name: installedMod.name,
                 })}
             >
               ${
                 toggleRequested === undefined
-                  ? installedMod.enabled
+                  ? enabled
                     ? "Disable"
                     : "Enable"
                   : pendingToggleLabel(toggleRequested.want)

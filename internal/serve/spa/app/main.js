@@ -1084,20 +1084,25 @@ function awaitBindings() {
 // finished" for code that needs to run its own next step only after it has.
 const jobDoneWaiters = new Map();
 
-// jobEndings is every job this page has seen end, by id: {summary, reread,
+// jobEndings is every job this page has seen end, by id: {summary, after,
 // lost}. It is what makes an ending happen ONCE per job, however many ways
 // it arrives (a live job_done frame, a reconnect's snapshot, a direct
 // lookup - activity.js#connectActivity), and what a late binding consults:
 // a job's end can be applied before the start that names it has been read,
-// so waitForJobDone and toggleack.js#bind both look here first. `reread` is
-// the hydrate that ending started - the document read taken AFTER the job
-// ended, which is what a toggle request's success waits for. One small
-// record per job this tab saw end; the page never forgets one mid-session.
+// so waitForJobDone and toggleack.js#bind both look here first. `after` is
+// the slice fence's mark at that end: a read claimed above it was asked for
+// AFTER the job ended, which is what a toggle request's success waits for.
+// One small record per job this tab saw end; the page never forgets one
+// mid-session.
 const jobEndings = new Map();
 
 // toggles is the enable/disable request ledger (toggleack.js) - the only
 // writer of state.toggleRequests.
-const toggles = createToggleLedger(store, { endingOf: knownEnding });
+const toggles = createToggleLedger(store, {
+  endingOf: knownEnding,
+  fence: slices,
+  onUnread: toggleUnread,
+});
 
 /** knownEnding is jobID's ending if this page knows one, or undefined.
  *
@@ -1253,12 +1258,29 @@ async function startBatchToggle(action, mods) {
  * start that never produced a job.
  */
 function toggleUnanswered(entry, err) {
-  toggles.unanswered(entry, hydrate(store.get().route));
+  toggles.unanswered(entry, slices.mark());
+  hydrate(store.get().route);
   const seconds = Math.round(err.deadlineMillis / 1000);
   pushToast({
     tone: "failure",
     title: "lmm serve did not answer",
     detail: `${entry.want ? "Enable" : "Disable"} ${entry.name ?? entry.modKey}: the server did not answer within ${seconds} seconds, so the change may or may not have been applied. The row now shows what the server reports.`,
+  });
+}
+
+/**
+ * toggleUnread tells the user a toggle request ended without a read of what
+ * its mod is now (toggleack.js's "unread"): the library read after it
+ * failed. The row is showing the last library document the server sent,
+ * which may be from before the change, and nothing on screen says so
+ * except this.
+ */
+function toggleUnread(entry, reason) {
+  const name = entry.name ?? entry.modKey;
+  pushToast({
+    tone: "failure",
+    title: `The current state of ${name} could not be read`,
+    detail: `After the request to ${entry.want ? "enable" : "disable"} it, the library could not be read (${reason}). The row shows the last state lmm serve reported, and updates once a read succeeds.`,
   });
 }
 
@@ -1771,15 +1793,16 @@ async function onJobDone(summary) {
   // the origin is actually known.
   const mountedAtCompletion = mountedOriginsSnapshot();
 
-  // The re-read is recorded with the ending, and the ending is applied to
-  // the toggle ledger straight away: a request bound to this job settles
-  // now (failed) or once this very read has finished (succeeded), and one
-  // bound LATER finds the ending here (toggleack.js#bind). All of this runs
-  // before this function's first await, which knownEnding relies on.
-  const reread = hydrate(store.get().route);
-  const ending = { summary, reread, lost: false };
+  // The ending is recorded, with the fence's mark at it, and applied to the
+  // toggle ledger straight away: a request bound to this job settles now
+  // (failed) or once a read issued from here on has been written
+  // (succeeded) - the hydrate below is one - and one bound LATER finds the
+  // ending here (toggleack.js#bind). All of this runs before this
+  // function's first await, which knownEnding relies on.
+  const ending = { summary, after: slices.mark(), lost: false };
   jobEndings.set(summary.id, ending);
   toggles.ended(summary.id, ending);
+  hydrate(store.get().route);
   refreshSearchResults();
 
   // Wait for every currently in-flight start to bind its origin before
@@ -1847,10 +1870,10 @@ function onJobLost(jobID, err) {
   };
   resolveWaiter(summary);
 
-  const reread = hydrate(store.get().route);
-  const ending = { summary, reread, lost: true };
+  const ending = { summary, after: slices.mark(), lost: true };
   jobEndings.set(jobID, ending);
   const requests = toggles.ended(jobID, ending);
+  hydrate(store.get().route);
 
   const origin = originOf(jobID);
   if (origin) clearOrigin(origin);

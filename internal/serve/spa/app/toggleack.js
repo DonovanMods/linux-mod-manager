@@ -24,6 +24,16 @@
 // job, and a request whose job has not run can be overtaken by one that
 // has. Both of those once left a row pending for the rest of the session.
 //
+// RE-READ MEANS A READ WAS WRITTEN. "Re-read" is the library document -
+// the one every toggle renders from - committed to the store by a read
+// issued after the job's end, for the entry's own context
+// (slicefence.js stamps every claim, so "issued after" is exact). Not "the
+// read the ending started has finished": a read can finish having been
+// superseded by a newer one and written nothing, and the control would
+// then show the document from before the job until the newer read landed.
+// A read committed with an error settles the entry too, with a toast: the
+// current state could not be read.
+//
 // Transitions are driven by events (main.js), not by polling a render:
 //
 //   state       what it means                   leaves when                             to
@@ -48,13 +58,17 @@
 //                                               ended(lost): reconciliation found the   confirming
 //                                                 server no longer knows the job, or
 //                                                 could not ask; always toasted
-//   confirming  its job succeeded, or was       the re-read that job's ending started   (removed)
-//               lost; holding the asked-for       has finished - committed, failed or
-//               value until a read taken after    superseded; the control then shows
-//               that end lands                    the document, whatever it says
-//   unanswered  its start was never answered,   the re-read the deadline started has    (removed)
-//               so nothing says whether the       finished; the control then shows the
-//               change happened; holding the      document, whatever it says
+//   confirming  its job succeeded, or was       read: a library read issued after the   (removed)
+//               lost; holding the asked-for       job's end is committed for this
+//               value until a read taken after    context; the control then shows it,
+//               that end lands                    whatever it says
+//                                               unread: that read was committed as an   (removed)
+//                                                 error; toasted as "could not be read",
+//                                                 and the control shows the last
+//                                                 document the server sent
+//   unanswered  its start was never answered,   read: as confirming, for a read issued  (removed)
+//               so nothing says whether the       after the start's deadline
+//               change happened; holding the    unread: as confirming                   (removed)
 //               asked-for value until a read
 //               taken after the deadline lands
 //
@@ -83,11 +97,15 @@
 //     job the snapshot does not carry. A job the server cannot account for
 //     is lost. The stream always comes back: EventSource retries on its own,
 //     and sse.js#followActivity reopens it when the browser gives up.
-//   - confirming, unanswered: the re-read is an ordinary hydrate, which
-//     settles.
+//   - confirming, unanswered: the ending (or the start's deadline) begins a
+//     read of the library, and a read written - a document or an error -
+//     ends the hold. A superseded read ends nothing: the read that
+//     superseded it was issued later still, so its commit is the one that
+//     counts.
 //
-// An entry for a context nobody is looking at still settles the same way;
-// it simply is not rendered until that context is on screen again.
+// An entry for a context nobody is looking at still settles on a read of
+// its own context; it simply is not rendered until that context is on
+// screen again.
 
 /** modToggleOrigin is the stable origin every enable/disable control for one
  * mod shares - "mod:{source}/{id}:toggle" (modrows.js#modOriginPattern).
@@ -123,15 +141,47 @@ function ledgerKey(context, modKey) {
   return JSON.stringify([context.game ?? "", context.profile ?? "", modKey]);
 }
 
+/** toggleDocument is the store slice every toggle renders its value from. */
+const toggleDocument = "mods";
+
 let requestSeq = 0;
 
 /**
  * createToggleLedger is the ledger's only writer, over `store`. One per
- * application. `endingOf(jobID)` answers with the ending main.js recorded
- * for a job - {summary, reread, lost} - or undefined while it has none.
+ * application.
+ *
+ *   - `endingOf(jobID)` answers with the ending main.js recorded for a job -
+ *     {summary, after, lost}, `after` being the fence's mark at that end -
+ *     or undefined while it has none.
+ *   - `fence` is main.js's slice fence (slicefence.js), which says what was
+ *     written, and when it was asked for.
+ *   - `onUnread(entry, reason)` hears an entry that settled without a read:
+ *     the current state could not be read, and `reason` says why.
  */
-export function createToggleLedger(store, { endingOf }) {
+export function createToggleLedger(store, { endingOf, fence, onUnread }) {
   const entries = () => store.get().toggleRequests ?? {};
+  // holds is every entry waiting on a read, by request: {entry, phase,
+  // after}. Kept here rather than in the store, because nothing renders
+  // it.
+  const holds = new Map();
+
+  const inContext = (entry, route) =>
+    ledgerKey(route ?? {}, entry.modKey) === entry.key;
+
+  // lastRead is the newest library document written, and the context it
+  // was read for: the route on screen when it was committed, which the
+  // fence's route check guarantees is the one it was asked for. A binding
+  // that arrives after its job's end may find its read already here.
+  let lastRead;
+  fence.onCommit((key, write) => {
+    if (key !== toggleDocument) return;
+    const route = store.get().route ?? {};
+    lastRead = { ...write, route };
+    for (const waiting of [...holds.values()]) {
+      if (write.stamp > waiting.after && inContext(waiting.entry, route))
+        release(waiting, write.error);
+    }
+  });
 
   // Every write names the REQUEST it is about, never just the key: an
   // entry that has since been replaced by a newer request for the same mod
@@ -158,26 +208,38 @@ export function createToggleLedger(store, { endingOf }) {
 
   // A failed job changed nothing the document on screen does not already
   // say, so its request goes at once. A succeeded job changed the mod, and a
-  // lost one may have: only the read its ending started can say what is
-  // true now, and until it lands the control keeps what was asked rather
-  // than flick back to the document from before the job.
+  // lost one may have: only a read taken after its end can say what is true
+  // now, and until one lands the control keeps what was asked rather than
+  // flick back to the document from before the job.
   function settle(entry, ending) {
     if (ending.summary.state === "failed" && !ending.lost) {
       remove(entry);
       return;
     }
-    holdUntil(entry, "confirming", ending.reread);
+    hold(entry, "confirming", ending.after);
   }
 
-  // holdUntil moves entry to `phase` and removes it once `reread` has
-  // finished, unless something else has moved it on by then.
-  function holdUntil(entry, phase, reread) {
+  // hold moves entry to `phase` until a read stamped above `after` is
+  // written for its context - or already has been, which a late binding
+  // finds.
+  function hold(entry, phase, after) {
     const held = update(entry, { phase });
     if (!held) return;
-    const done = () => {
-      if (current(held)?.phase === phase) remove(held);
-    };
-    Promise.resolve(reread).then(done, done);
+    const waiting = { entry: held, phase, after };
+    holds.set(held.request, waiting);
+    if (lastRead?.stamp > after && inContext(held, lastRead.route))
+      release(waiting, lastRead.error);
+  }
+
+  // release ends waiting's hold: the control shows the document from here
+  // on, and `error`, when there is one, is why it could not be re-read.
+  function release(waiting, error) {
+    const { entry, phase } = waiting;
+    if (holds.get(entry.request) !== waiting) return;
+    holds.delete(entry.request);
+    if (current(entry)?.phase !== phase) return;
+    remove(entry);
+    if (error) onUnread(entry, error);
   }
 
   return {
@@ -225,11 +287,11 @@ export function createToggleLedger(store, { endingOf }) {
 
     /** unanswered ends a requested entry whose start went unanswered past
      * its deadline: nothing says whether the change happened, so the entry
-     * keeps what was asked until `reread` - a read issued after the
-     * deadline - has finished, and the control then shows that read. */
-    unanswered(entry, reread) {
+     * keeps what was asked until a read stamped above `after` - the fence's
+     * mark at the deadline - is written, and the control then shows it. */
+    unanswered(entry, after) {
       if (current(entry)?.phase === "requested")
-        holdUntil(entry, "unanswered", reread);
+        hold(entry, "unanswered", after);
     },
 
     /** ended applies a job's ending to every entry running on it, and

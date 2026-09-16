@@ -62,7 +62,15 @@ import (
 //     lateAnswers counts it. stallMod, when set, confines the stall to that
 //     mod's start;
 //
-// GET /api/v1/mods is held while holdMods is set, until releaseMods.
+// GET /api/v1/mods is held while holdMods is set: releaseNextMods answers
+// the oldest read still held, releaseMods every read, held or to come.
+// modsHeld counts the reads held, modsAnswered the held reads since
+// answered. Chrome sends a second GET for a URL whose first is still
+// unanswered only once that first one is (its HTTP cache's lock), so while
+// one library read is held the next waits in the browser, not here.
+// updatesReads counts GET /api/v1/updates, which a hydrate issues together
+// with its library read and which nothing holds - the sign that a hydrate
+// has got as far as its library read.
 //
 // The activity stream (GET /api/v1/events) is relayed frame by frame so a
 // scenario can:
@@ -102,10 +110,13 @@ type toggleWire struct {
 	stalledOnce sync.Once
 	lateAnswers atomic.Int64
 
-	holdMods atomic.Bool
-	modsGate chan struct{}
-	modsOnce sync.Once
-	modsHeld atomic.Int64
+	holdMods     atomic.Bool
+	modsGate     chan struct{}
+	modsOnce     sync.Once
+	modsHeld     atomic.Int64
+	modsAnswered atomic.Int64
+	modsQueue    []chan struct{} // guarded by mu
+	updatesReads atomic.Int64
 
 	withholdDone    atomic.Bool
 	withholdStarted atomic.Bool
@@ -123,6 +134,16 @@ func (w *toggleWire) releaseToggles() { w.gateOnce.Do(func() { close(w.gate) }) 
 func (w *toggleWire) releaseAnswers() { w.answersOnce.Do(func() { close(w.answers) }) }
 func (w *toggleWire) releaseMods()    { w.modsOnce.Do(func() { close(w.modsGate) }) }
 func (w *toggleWire) releaseStalled() { w.stalledOnce.Do(func() { close(w.stalled) }) }
+
+// releaseNextMods answers the oldest library read still held.
+func (w *toggleWire) releaseNextMods(t *testing.T) {
+	t.Helper()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	require.NotEmpty(t, w.modsQueue, "no library read is held")
+	close(w.modsQueue[0])
+	w.modsQueue = w.modsQueue[1:]
+}
 
 // killStreams hangs up every activity stream open right now.
 func (w *toggleWire) killStreams() {
@@ -213,13 +234,24 @@ func (w *toggleWire) serveStalled(rw http.ResponseWriter, r *http.Request, mode 
 
 func (w *toggleWire) serveMods(rw http.ResponseWriter, r *http.Request) {
 	if w.holdMods.Load() {
+		mine := make(chan struct{})
+		w.mu.Lock()
+		w.modsQueue = append(w.modsQueue, mine)
+		w.mu.Unlock()
 		w.modsHeld.Add(1)
 		select {
 		case <-w.modsGate:
+		case <-mine:
 		case <-r.Context().Done():
 			return
 		}
+		defer w.modsAnswered.Add(1)
 	}
+	w.proxy.ServeHTTP(rw, r)
+}
+
+func (w *toggleWire) serveUpdates(rw http.ResponseWriter, r *http.Request) {
+	w.updatesReads.Add(1)
 	w.proxy.ServeHTTP(rw, r)
 }
 
@@ -371,6 +403,7 @@ func newToggleWireFixture(t *testing.T, src *fakeSource, pass int64) (e2eFixture
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/mods/{source}/{id}/{action}", w.serveToggle)
 	mux.HandleFunc("GET /api/v1/mods", w.serveMods)
+	mux.HandleFunc("GET /api/v1/updates", w.serveUpdates)
 	mux.HandleFunc("GET /api/v1/events", w.serveEvents)
 	mux.HandleFunc("GET /api/v1/jobs/{id}", w.serveJobLookup)
 	mux.Handle("/", w.proxy)
@@ -1101,6 +1134,143 @@ func TestE2E_LibraryToggle_AStartTheServerNeverAnswersSettlesAtTheDeadline(t *te
 			}
 			assert.Equal(t, 1, unanswered, "the request was settled once: %q", toasts)
 			assert.Empty(t, uncaughtErrors(f))
+		})
+	}
+}
+
+// recordRowStatesJS starts recording every state the row for modKey paints
+// ("checked/pending", "unchecked/settled", ...), each once per change and
+// timed from the moment it starts. A MutationObserver rather than a sampled
+// frame: a render that settles a row changes its class and its box's
+// disabled attribute, so no painted state, however brief, goes unrecorded -
+// and a headless page that stops scheduling frames stops nothing here.
+func recordRowStatesJS(modKey string) string {
+	return fmt.Sprintf(`(() => {
+	window.__rowStates = [];
+	window.__recordingSince = performance.now();
+	let last = "";
+	const sample = () => {
+		const row = document.querySelector('.mod-row[data-mod=%q]');
+		if (!row) return;
+		const box = row.querySelector("td.col--enabled input");
+		const state = (box.checked ? "checked" : "unchecked") + "/" +
+			(row.classList.contains("mod-row--pending") ? "pending" : "settled");
+		if (state === last) return;
+		last = state;
+		window.__rowStates.push({state, at: performance.now() - window.__recordingSince});
+	};
+	sample();
+	new MutationObserver(sample).observe(document.body,
+		{subtree: true, childList: true, attributes: true, characterData: true});
+})()`, modKey)
+}
+
+// e2eRowStateChange is one entry recordRowStatesJS records.
+type e2eRowStateChange struct {
+	State string  `json:"state"`
+	At    float64 `json:"at"`
+}
+
+func rowStateNames(changes []e2eRowStateChange) []string {
+	names := make([]string, 0, len(changes))
+	for _, c := range changes {
+		names = append(names, c.State)
+	}
+	return names
+}
+
+// awaitMods waits until the proxy has held n library reads and answered
+// `answered` of them.
+func awaitMods(t *testing.T, w *toggleWire, held, answered int64) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return w.modsHeld.Load() >= held && w.modsAnswered.Load() >= answered
+	}, 15*time.Second, 20*time.Millisecond,
+		"the library reads: want %d held and %d answered", held, answered)
+}
+
+// TestE2E_LibraryToggle_ASupersededRereadSettlesNothing is the final
+// review's R1. Alpha's job ends, and the library read its ending starts is
+// slow; Beta's job ends meanwhile and starts a newer read, which supersedes
+// Alpha's - so Alpha's read resolves having written nothing. The request
+// used to be removed right there, and Alpha's box painted the document from
+// BEFORE its job, live, until Beta's read landed (about the gap between the
+// two clicks, with a slow update check). A request settles only once a read
+// taken after its job's end has actually been committed.
+func TestE2E_LibraryToggle_ASupersededRereadSettlesNothing(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		name := "rows"
+		if batch {
+			name = "batch"
+		}
+		t.Run(name, func(t *testing.T) {
+			f, wire := newToggleWireFixture(t, newFakeSource("fake"), 1<<30)
+			seedDeployableMods(t, f.Svc, f.Game)
+
+			f.runInBrowser(t,
+				chromedp.Navigate(f.HomePath()),
+				chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+				pollUntil(`document.querySelectorAll(".mod-row").length === 2`),
+			)
+			if batch {
+				f.runInBrowser(t,
+					chromedp.Evaluate(selectLibraryRowJS("Alpha Mod"), nil),
+					chromedp.Evaluate(selectLibraryRowJS("Beta Mod"), nil),
+					chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+				)
+			}
+			f.runInBrowser(t, chromedp.Evaluate(recordRowStatesJS("fake:a"), nil))
+			require.EqualValues(t, 1, wire.updatesReads.Load(), "the page's first hydrate")
+			wire.holdMods.Store(true)
+
+			// Alpha's job ends, and the page has started the read its
+			// ending asks for.
+			if batch {
+				f.runInBrowser(t, chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery))
+			} else {
+				f.runInBrowser(t, chromedp.Evaluate(libraryToggleJS("Alpha Mod"), nil))
+			}
+			awaitJobsOver(t, f, wire, map[string]bool{"a": false})
+			awaitMods(t, wire, 1, 0)
+
+			// Beta's job ends too - clicked, or started by the batch - and the
+			// read its ending asks for, issued later, is the newer one. It is
+			// on its way: its update check is on the wire, and its library
+			// read waits in the browser behind Alpha's.
+			if !batch {
+				f.runInBrowser(t, chromedp.Evaluate(libraryToggleJS("Beta Mod"), nil))
+			}
+			awaitJobsOver(t, f, wire, map[string]bool{"a": false, "b": false})
+			require.Eventually(t, func() bool { return wire.updatesReads.Load() >= 3 },
+				15*time.Second, 20*time.Millisecond, "Beta's ending must start a newer read")
+
+			// Alpha's own read is answered, and is already out of date. Beta's
+			// library read reaches the server once it is.
+			wire.releaseNextMods(t)
+			awaitMods(t, wire, 2, 1)
+			var superseded e2eRowToggleState
+			f.runInBrowser(t, settleEffects(), chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &superseded))
+			assert.True(t, superseded.Pending,
+				"a superseded read settles nothing: the row keeps what was asked until the newer read lands (row: %+v)", superseded)
+			assert.False(t, superseded.Checked, "and never shows the document from before its job")
+
+			wire.releaseMods()
+			var settled e2eRowToggleState
+			var changes []e2eRowStateChange
+			wait := []chromedp.Action{pollUntil(noRowPendingJS)}
+			if batch {
+				wait = append(wait, pollUntil(toastSaysJS("Disabled 2/2")))
+			}
+			wait = append(wait,
+				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &settled),
+				chromedp.Evaluate(`window.__rowStates`, &changes),
+			)
+			runWithin(t, f, 20*time.Second, wait...)
+			assert.False(t, settled.Checked, "the box shows the newer read, which has the disable")
+			assert.False(t, settled.Disabled)
+			assert.Equal(t, []string{"checked/settled", "unchecked/pending", "unchecked/settled"}, rowStateNames(changes),
+				"from the click on, Alpha never painted its pre-job value")
+			assert.Empty(t, f.BrowserErrors())
 		})
 	}
 }

@@ -36,6 +36,14 @@
 // "unclaim-anything" primitive: it rolls a key back only while the
 // abandoning claim is still the newest on it, so a load that has already
 // been superseded cannot resurrect itself and reopen the race.
+//
+// The fence also says WHEN an answer was asked for, which is what a toggle
+// request needs to settle (toggleack.js): not "has my own read finished",
+// since a read can finish having been superseded and written nothing, but
+// "has a read issued after my job ended been written". Every claim carries
+// a stamp from one counter that only goes up, mark() reads that counter,
+// and every commit is reported to onCommit's listeners with the stamp of
+// the claim that wrote it.
 
 /**
  * Creates a fence over `store`. One per application - the numbers are the
@@ -44,18 +52,24 @@
  */
 export function createSliceFence(store) {
   const latest = new Map();
+  // issued stamps claims in the order they are made, across every key, and
+  // never goes back - release() rolls a key's number back, not this.
+  let issued = 0;
+  const listeners = new Set();
 
   /**
    * Claims the next number for each of `keys`, invalidating every claim on
    * those keys still in flight. Called when the requests are ISSUED, not
-   * when they resolve, so claim order is request order.
+   * when they resolve, so claim order is request order - and every key of
+   * one claim carries the same stamp, the order it was made in.
    */
   function claim(keys) {
+    const stamp = ++issued;
     const claimed = new Map();
     for (const key of keys) {
-      const next = (latest.get(key) ?? 0) + 1;
-      latest.set(key, next);
-      claimed.set(key, next);
+      const number = (latest.get(key) ?? 0) + 1;
+      latest.set(key, number);
+      claimed.set(key, { number, stamp });
     }
     return claimed;
   }
@@ -70,7 +84,7 @@ export function createSliceFence(store) {
    * older answer land on top of it.
    */
   function release(claimed) {
-    for (const [key, number] of claimed) {
+    for (const [key, { number }] of claimed) {
       if (latest.get(key) === number) latest.set(key, number - 1);
     }
   }
@@ -82,7 +96,7 @@ export function createSliceFence(store) {
    * ones.
    */
   function isCurrent(claimed, key) {
-    return !claimed.has(key) || latest.get(key) === claimed.get(key);
+    return !claimed.has(key) || latest.get(key) === claimed.get(key).number;
   }
 
   /**
@@ -93,15 +107,19 @@ export function createSliceFence(store) {
    * fetchErrors is merged against the store's CURRENT value here rather
    * than by the caller, so a dropped slice's error message is dropped with
    * it and a stale snapshot of the other keys can never ride along.
+   *
+   * Each claimed key written is then reported, once the store holds it, as
+   * {stamp, error}: the claim's stamp, and the error written for the key
+   * (null for a document).
    */
   function commit(claimed, patch, errors) {
     const next = {};
-    let wrote = false;
+    const landed = new Set();
 
     for (const [key, value] of Object.entries(patch ?? {})) {
       if (!isCurrent(claimed, key)) continue;
       next[key] = value;
-      wrote = true;
+      landed.add(key);
     }
 
     const fresh = Object.entries(errors ?? {}).filter(([key]) =>
@@ -112,12 +130,33 @@ export function createSliceFence(store) {
         ...store.get().fetchErrors,
         ...Object.fromEntries(fresh),
       };
-      wrote = true;
+      for (const [key] of fresh) landed.add(key);
     }
 
-    if (wrote) store.set(next);
-    return wrote;
+    if (landed.size === 0) return false;
+    store.set(next);
+    for (const key of landed) {
+      if (!claimed.has(key)) continue;
+      const write = {
+        stamp: claimed.get(key).stamp,
+        error: errors?.[key] ?? null,
+      };
+      for (const listener of listeners) listener(key, write);
+    }
+    return true;
   }
 
-  return { claim, release, isCurrent, commit };
+  /** mark is the stamp of the newest claim so far: every claim made after
+   * this call is stamped above it. */
+  function mark() {
+    return issued;
+  }
+
+  /** onCommit calls listener(key, {stamp, error}) for every claimed key a
+   * commit writes, from then on. */
+  function onCommit(listener) {
+    listeners.add(listener);
+  }
+
+  return { claim, release, isCurrent, commit, mark, onCommit };
 }
