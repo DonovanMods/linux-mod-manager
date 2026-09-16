@@ -237,7 +237,11 @@ func TestE2E_LibraryRow_ToggleAcknowledgesTheClickImmediately(t *testing.T) {
 	assert.False(t, pending.Checked,
 		"the box must move to the state the click ASKED for, not sit on the server's")
 	assert.True(t, pending.Pending, "and the row must mark itself as not-yet-settled")
-	assert.True(t, pending.Busy, "aria-busy is how that reaches a screen reader on the control itself")
+	// aria-busy on a checkbox is close to inert for assistive technology;
+	// what reaches a screen reader is the checked state changing and the
+	// row's own role="status" line below. It is asserted as the marker the
+	// markup carries, not as the announcement.
+	assert.True(t, pending.Busy, "the control is marked busy while the request is in flight")
 	assert.True(t, pending.Spinner, "with a visible affordance beside the box")
 	assert.Equal(t, "Disabling…", pending.Live,
 		"and the row must say what it is doing, in the same words the running job will use")
