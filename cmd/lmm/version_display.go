@@ -90,6 +90,31 @@ func displayUpdateTarget(external bool, newVersion string) string {
 	return newVersion
 }
 
+// displayVersionAt renders a CURRENTLY INSTALLED version for a line that
+// embeds a literal "v" itself - "is pinned at v1.2.3", "up to date (v1.2.3)"
+// - rather than through a table column: "v1.2.3" for an ordinary mod,
+// "revision of <date>" for a Workshop item (#428), mirroring
+// displayModVersion but with the "v" baked into the ordinary branch so
+// these callers never print "v" in front of a date.
+func displayVersionAt(workshop bool, version string, updatedAt time.Time) string {
+	if workshop {
+		return displayRevision(updatedAt)
+	}
+	return "v" + version
+}
+
+// displayRollbackTarget is displayUpdateTarget's rollback twin: the version
+// a rollback moves TO. Unlike a forward update, lmm keeps no date for the
+// version being rolled back to (domain.InstalledMod has no
+// PreviousUpdatedAt), so "previous revision" is the honest analogue of
+// displayUpdateTarget's "newer" (#428).
+func displayRollbackTarget(workshop bool, toVersion string) string {
+	if workshop {
+		return "previous revision"
+	}
+	return toVersion
+}
+
 // displayLockTarget renders a lock or pin TARGET as a human reads it: "v1.2.3"
 // for an ordinary mod, and the EMPTY STRING for an external one.
 //
