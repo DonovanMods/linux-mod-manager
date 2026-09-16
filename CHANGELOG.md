@@ -259,7 +259,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   served both at `/static/favicon.svg`, which the shell names, and at
   `/favicon.ico`, which browsers ask for on their own. It is one drawing
   rather than a size per platform, and it is a filled tile so it reads on a
-  light and a dark tab strip alike.
+  light and a dark tab strip alike. Both paths, and every other embedded
+  asset, now carry a content-hash `ETag`: the assets were already sent
+  `Cache-Control: no-cache`, but an embedded file has no modification time,
+  so there was nothing to revalidate against and every page load
+  re-downloaded every module.
 
 - **Every mod says whether it has been verified, and Verify is on screen
   (#418).** A library row carried a ⚠ when something was wrong and nothing

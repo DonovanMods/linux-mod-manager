@@ -9,7 +9,9 @@ package serve
 // nothing to answer with.
 
 import (
+	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -22,13 +24,14 @@ import (
 // separately-maintained raster icon is exactly the drift this avoids.
 func TestFavicon_ServedAtBothPathsFromOneAsset(t *testing.T) {
 	s, _, _ := newFlowFixtureServer(t)
+	mark := embeddedFavicon(t)
 
 	for _, path := range []string{"/favicon.ico", "/static/favicon.svg"} {
 		t.Run(path, func(t *testing.T) {
 			rec := doAPI(s, http.MethodGet, path, "")
 			require.Equal(t, http.StatusOK, rec.Code)
 			assert.Contains(t, rec.Header().Get("Content-Type"), "image/svg+xml")
-			assert.Equal(t, string(faviconBytes), rec.Body.String(),
+			assert.Equal(t, mark, rec.Body.String(),
 				"both paths answer with the one embedded mark")
 		})
 	}
@@ -53,7 +56,7 @@ func TestFavicon_ShellDeclaresIt(t *testing.T) {
 // chrome paints outside the page, so the guarantee has to be a property of
 // the asset itself rather than of a header.
 func TestFavicon_IsAnSVGWithNoScriptOrExternalReference(t *testing.T) {
-	mark := string(faviconBytes)
+	mark := embeddedFavicon(t)
 
 	assert.Contains(t, mark, "<svg")
 	for _, forbidden := range []string{"<script", "<foreignObject", "<image", "<use", "href", "url("} {
@@ -69,4 +72,61 @@ func TestFavicon_IsAnSVGWithNoScriptOrExternalReference(t *testing.T) {
 		"nothing in this document points anywhere")
 	assert.True(t, strings.Contains(mark, `viewBox="0 0 32 32"`),
 		"and scales from one square drawing, rather than shipping a size per platform")
+}
+
+// TestFavicon_RevalidatesInsteadOfRedownloading is the Cache-Control
+// promise kept. no-cache means "ask before reusing", which only saves a
+// download if the response carries something to ask WITH - and an embedded
+// file has no modification time, so neither path sent a validator and every
+// page load fetched the mark (and, on /static/, every module) again.
+//
+// Both paths must answer a conditional request with 304 and agree on the
+// validator, since they are one asset.
+func TestFavicon_RevalidatesInsteadOfRedownloading(t *testing.T) {
+	s, _, _ := newFlowFixtureServer(t)
+
+	var tags []string
+	for _, path := range []string{"/favicon.ico", "/static/favicon.svg"} {
+		t.Run(path, func(t *testing.T) {
+			first := doAPI(s, http.MethodGet, path, "")
+			require.Equal(t, http.StatusOK, first.Code)
+			assert.Equal(t, "no-cache", first.Header().Get("Cache-Control"))
+			tag := first.Header().Get("ETag")
+			require.NotEmpty(t, tag, "a no-cache response needs a validator to revalidate against")
+			tags = append(tags, tag)
+
+			req := apiRequest(s, http.MethodGet, path, "")
+			req.Header.Set("If-None-Match", tag)
+			again := httptest.NewRecorder()
+			s.Handler().ServeHTTP(again, req)
+			assert.Equal(t, http.StatusNotModified, again.Code)
+			assert.Empty(t, again.Body.String(), "a revalidated asset is not sent again")
+		})
+	}
+	require.Len(t, tags, 2)
+	assert.Equal(t, tags[0], tags[1], "one asset, one validator")
+}
+
+// TestStaticAssets_ChangeTheirETagWithTheirContent pins what makes a
+// content-hash validator safe to revalidate against: two different files
+// never share one, so a binary that ships a changed module is never told
+// "not modified" about it.
+func TestStaticAssets_ChangeTheirETagWithTheirContent(t *testing.T) {
+	sub, err := fs.Sub(spaFS, "spa")
+	require.NoError(t, err)
+	tags := contentETags(sub)
+
+	require.Contains(t, tags, "app.css")
+	require.Contains(t, tags, "app/main.js")
+	assert.NotEqual(t, tags["app.css"], tags["app/main.js"])
+	assert.True(t, strings.HasPrefix(tags["app.css"], `"`) && strings.HasSuffix(tags["app.css"], `"`),
+		"a strong ETag is a quoted string")
+}
+
+// embeddedFavicon is the mark as the binary carries it.
+func embeddedFavicon(t *testing.T) string {
+	t.Helper()
+	data, err := fs.ReadFile(spaFS, "spa/"+faviconFile)
+	require.NoError(t, err)
+	return string(data)
 }

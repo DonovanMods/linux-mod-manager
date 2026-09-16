@@ -101,27 +101,15 @@ func buildContentSecurityPolicy() string {
 		"; base-uri 'self'; form-action 'self'"
 }
 
-// faviconPath is the embedded mark's path inside spaFS, and faviconBytes is
-// the mark itself - read once at startup, like the shell's own template,
-// because a broken embed is a build defect rather than a runtime condition
-// to recover from (issue 435).
-const faviconPath = "spa/favicon.svg"
+// faviconFile is the embedded mark's name inside the spa/ asset tree
+// (issue 435).
+const faviconFile = "favicon.svg"
 
-var faviconBytes = mustReadEmbedded(spaFS, faviconPath)
-
-// mustReadEmbedded reads one file out of an embedded tree or panics. See
-// assetHandler for the same reasoning applied to a whole tree.
-func mustReadEmbedded(embedded fs.FS, name string) []byte {
-	data, err := fs.ReadFile(embedded, name)
-	if err != nil {
-		panic(fmt.Errorf("serve: reading embedded asset %q: %w", name, err))
-	}
-	return data
-}
-
-// handleFavicon answers GET /favicon.ico with the SAME embedded mark the
+// faviconHandler answers GET /favicon.ico with the SAME embedded mark the
 // shell's <link rel="icon"> names at /static/favicon.svg - one asset, so the
-// tab icon and the fallback can never drift apart.
+// tab icon and the fallback can never drift apart. It is served BY the
+// spa/ tree's own handler, so its content type, its caching and its
+// revalidation are that handler's and cannot drift either.
 //
 // The route exists at all because spaRoutes registers no bare "/" catch-all
 // (see its doc comment), so the request every browser makes for this path
@@ -133,14 +121,13 @@ func mustReadEmbedded(embedded fs.FS, name string) []byte {
 // path, and shipping a second, redundant raster copy of the same mark to
 // satisfy the extension would be a byte-for-byte drift risk for no benefit.
 // SVG favicons are supported by every browser this local UI targets.
-func (s *Server) handleFavicon(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "image/svg+xml")
-	// no-cache (revalidate, don't re-download), matching assetHandler: the
-	// mark only ever changes with the binary.
-	w.Header().Set("Cache-Control", "no-cache")
-	if _, err := w.Write(faviconBytes); err != nil {
-		s.log.Debug("writing the favicon", "err", err)
-	}
+func faviconHandler(spaAssets http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asFile := r.Clone(r.Context())
+		asFile.URL.Path = "/" + faviconFile
+		asFile.URL.RawPath = ""
+		spaAssets.ServeHTTP(w, asFile)
+	})
 }
 
 // handleShell serves the SPA shell. Cache-Control is no-store rather than
@@ -160,6 +147,14 @@ func (s *Server) handleShell(w http.ResponseWriter, _ *http.Request) {
 // re-download) rather than a long max-age: the assets only ever change with
 // the binary, and a stale module paired with a fresh shell is the one
 // failure mode worth spending a conditional request to avoid.
+//
+// A revalidation needs a validator to revalidate AGAINST, and an embedded
+// file has none of its own: embed.FS reports a zero modification time, so
+// http.FileServerFS sends no Last-Modified, and it never computes an ETag.
+// Without one, no-cache meant every load re-downloaded every module. Each
+// file's ETag is therefore its content hash, computed once here; the file
+// server's own conditional-request handling answers a matching
+// If-None-Match with 304.
 func assetHandler(embedded fs.FS, dir string) http.Handler {
 	sub, err := fs.Sub(embedded, dir)
 	if err != nil {
@@ -167,6 +162,7 @@ func assetHandler(embedded fs.FS, dir string) http.Handler {
 		// build-time defect, not a runtime condition to recover from.
 		panic(fmt.Errorf("serve: opening embedded assets %q: %w", dir, err))
 	}
+	etags := contentETags(sub)
 	files := http.FileServerFS(sub)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The shell is a template with a per-process token in it, so it is
@@ -182,8 +178,34 @@ func assetHandler(embedded fs.FS, dir string) http.Handler {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-cache")
+		if tag, ok := etags[p]; ok {
+			w.Header().Set("ETag", tag)
+		}
 		files.ServeHTTP(w, r)
 	})
+}
+
+// contentETags maps every file in tree to a strong ETag derived from its
+// bytes. See assetHandler for why; a tree that cannot be read is the same
+// build-time defect a broken embed is.
+func contentETags(tree fs.FS) map[string]string {
+	tags := map[string]string{}
+	err := fs.WalkDir(tree, ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(tree, name)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(data)
+		tags[name] = `"` + base64.RawURLEncoding.EncodeToString(sum[:18]) + `"`
+		return nil
+	})
+	if err != nil {
+		panic(fmt.Errorf("serve: hashing embedded assets: %w", err))
+	}
+	return tags
 }
 
 // legacyRedirect answers one of the deleted page layer's URLs with a 301
@@ -225,13 +247,15 @@ func (s *Server) spaRoutes() {
 	s.mux.Handle("GET /{$}", s.wrap(s.handleShell))
 	s.mux.Handle("GET /g/", s.wrap(s.handleShell))
 
+	spaAssets := assetHandler(spaFS, "spa")
+
 	// The tab icon (issue 435). Registered beside the asset trees and, like
 	// them, NOT through wrap: it carries no user data and accepts no
 	// state-changing method. The shell's own <link rel="icon"> names the
 	// /static/ copy; this is the path a browser asks for on its own.
-	s.mux.Handle("GET /favicon.ico", http.HandlerFunc(s.handleFavicon))
+	s.mux.Handle("GET /favicon.ico", faviconHandler(spaAssets))
 
-	s.mux.Handle("GET /static/", http.StripPrefix("/static/", assetHandler(spaFS, "spa")))
+	s.mux.Handle("GET /static/", http.StripPrefix("/static/", spaAssets))
 	s.mux.Handle("GET /vendor/", http.StripPrefix("/vendor/", assetHandler(vendorFS, "vendor")))
 
 	// The six page routes, plus the job page. /mods, /updates, /profiles
