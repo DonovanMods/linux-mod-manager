@@ -27,7 +27,21 @@ func communityPackagesPath(community string) string {
 // fetchTimeout bounds one community fetch end to end. Generous on purpose:
 // the largest community on the site is 34.6 MB on the wire, and a user on a
 // slow link must still get an index rather than a timeout.
+//
+// It is a CEILING, not the thing that notices a dead transfer - that is
+// stallTimeout's job (#436). On its own, a body that stopped arriving a
+// second in would have held a search silent for all ten minutes.
 const fetchTimeout = 10 * time.Minute
+
+// stallTimeout is how long one attempt may go without receiving a byte -
+// waiting for the response headers, or between two reads of the body -
+// before it fails as stalled. Thirty seconds: the design measured the
+// largest community's whole transfer at a few seconds, so a half-minute of
+// silence is a dead transfer rather than a slow one, while a slow link that
+// keeps delivering is never cut off. It sits UNDER the retry transport, so
+// a stalled attempt before the headers is retried like any dropped
+// connection, and each attempt gets its own window.
+const stallTimeout = 30 * time.Second
 
 // maxIndexBytes is the ceiling on ONE community document, measured on the
 // stream the decoder reads - which net/http has already decompressed, so
@@ -48,6 +62,11 @@ const maxIndexBytes = 512 << 20
 // retrying transport.
 type client struct {
 	http *apiClient
+	// retry and idle are the two layers of the transport, kept so this
+	// package's internal tests can replace their clocks: retry's sleep and
+	// idle's timer. Production never touches either after newClient.
+	retry *retryTransport
+	idle  *httpclient.IdleTimeout
 	// baseURL is the host every request is built against, kept here because
 	// ONE url this source produces is handed back to a caller to fetch
 	// rather than issued here: a version's download URL (#409 §3.3). It has
@@ -68,13 +87,23 @@ func newClient(opts Options, now func() time.Time) *client {
 	// Retry and circuit-breaking live in the transport rather than around
 	// the call: only that layer sees Retry-After, and only that layer can
 	// retry BEFORE the streaming decode has started reading the body.
+	//
+	// The stall guard sits BELOW the retries: an attempt that never
+	// answers is one more failed attempt, and each gets its own window.
+	idle := &httpclient.IdleTimeout{Base: httpClient.Transport, Timeout: stallTimeout}
+	retry := newRetryTransport(idle, now)
 	retrying := *httpClient
-	retrying.Transport = newRetryTransport(httpClient.Transport, now)
+	retrying.Transport = retry
 	limit := opts.MaxIndexBytes
 	if limit <= 0 {
 		limit = maxIndexBytes
 	}
-	return &client{http: newAPIClient(&retrying, baseURL, limit), baseURL: strings.TrimSuffix(baseURL, "/")}
+	return &client{
+		http:    newAPIClient(&retrying, baseURL, limit),
+		retry:   retry,
+		idle:    idle,
+		baseURL: strings.TrimSuffix(baseURL, "/"),
+	}
 }
 
 // fetchCommunity issues the conditional GET. ifModifiedSince is the

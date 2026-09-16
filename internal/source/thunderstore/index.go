@@ -180,10 +180,24 @@ func (s *Source) ensureIndex(ctx context.Context, community string, force bool, 
 
 // refresh performs the conditional GET and, when the document has changed,
 // the streaming rebuild.
+//
+// A COLD build that nobody asked for by name - the one Search, a package
+// read or an update check does for itself - is announced as a
+// source.Notice on ctx (#360 §2.7, T1 review #8): it is the one-time wait of
+// a few seconds that otherwise explains itself to nobody, whichever command
+// happened to trigger it. A caller that passed its own progress function
+// asked for the build and reports it that way, so it is not announced
+// twice; a refresh over a usable index is a conditional request that costs
+// nothing worth explaining.
 func (s *Source) refresh(ctx context.Context, community string, current watermark, usable bool, progress source.IndexProgressFunc) (watermark, error) {
 	ifModifiedSince := ""
 	if usable {
 		ifModifiedSince = current.LastModified
+	}
+	announce := progress == nil && !usable
+	started := s.now()
+	if announce {
+		source.Notify(ctx, source.Notice{Kind: source.NoticeIndexBuilding, Source: serviceName, GameID: community})
 	}
 	tick := progress
 	if tick == nil {
@@ -211,6 +225,12 @@ func (s *Source) refresh(ctx context.Context, community string, current watermar
 		return watermark{}, err
 	}
 	tick(source.FetchPhaseDone, fmt.Sprintf("indexed %d packages for %s", wm.Packages, community), 0)
+	if announce {
+		source.Notify(ctx, source.Notice{
+			Kind: source.NoticeIndexBuilt, Source: serviceName, GameID: community,
+			Packages: wm.Packages, Elapsed: s.now().Sub(started),
+		})
+	}
 	return wm, nil
 }
 

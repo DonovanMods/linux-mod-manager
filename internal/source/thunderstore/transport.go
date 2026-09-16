@@ -6,6 +6,37 @@
 // It lives in a RoundTripper rather than around the call because only this
 // layer sees the Retry-After header, and because a retry has to happen
 // BEFORE the streaming decode starts reading the body.
+//
+// # What Thunderstore documents, and what these numbers rest on (#436)
+//
+// Thunderstore publishes NO rate limit for the endpoints lmm uses - the
+// community listing (/c/<community>/api/v1/package/) and the package
+// download (/package/download/<ns>/<name>/<version>/). Checked 2026-09-16:
+//
+//   - The API documentation (https://thunderstore.io/api/docs/) states no
+//     limit, quota or throttle for any endpoint.
+//   - The server's own source (github.com/thunderstore-io/Thunderstore,
+//     django/thunderstore/core/settings.py) configures Django REST
+//     Framework with NO default throttle classes or rates. The only
+//     throttle in the codebase is 6 requests per MINUTE on the experimental
+//     legacy-profile upload (modpacks/api/experimental/views/legacyprofile.py),
+//     which lmm never calls.
+//   - The listing itself is a precomputed per-community blob
+//     (repository/api/v1/viewsets.py, APIV1PackageCache) served with
+//     Last-Modified - a conditional GET is a 304 with no body - and
+//     measured with Cache-Control: max-age=30 (docs/plans/
+//     2026-09-10-thunderstore-design.md, Appendix A). With no blob it
+//     answers 503 "No cache available", which is retried like any 5xx.
+//
+// So a 429 lmm sees comes from the edge in front of the application, at a
+// rate nobody publishes. The constants below are therefore pinned to the
+// numbers that ARE real rather than to a guessed quota: a Retry-After is
+// honoured as a floor and waited out up to maxRetryAfter - one minute, the
+// only window Thunderstore's own throttling uses - and a longer one is
+// refused and remembered rather than slept through; lmm's own exponential
+// backoff tops out below that window; and the index TTL (index.go, six
+// hours) already keeps a warm index from asking more often than the
+// listing's own 30-second max-age could ever make useful.
 package thunderstore
 
 import (
@@ -16,7 +47,12 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
+
+// serviceName is how a notice or an error names the host being waited on.
+const serviceName = "Thunderstore"
 
 const (
 	// maxAttempts is the total number of tries for one request - the
@@ -24,9 +60,16 @@ const (
 	maxAttempts = 3
 	// baseBackoff is the first retry delay; each further retry doubles it.
 	baseBackoff = 500 * time.Millisecond
-	// maxBackoff caps one wait, so an absurd Retry-After cannot wedge a
-	// search behind a five-minute sleep.
+	// maxBackoff caps lmm's OWN exponential wait. It sits below
+	// maxRetryAfter, so lmm never outwaits what a server would ask for.
 	maxBackoff = 30 * time.Second
+	// maxRetryAfter is the longest server-named wait lmm sits through:
+	// one minute, the only throttling window Thunderstore's code uses (see
+	// the package doc). A Retry-After beyond it is not slept - a search
+	// that went silent for five minutes would read as a hang, which is
+	// #436 - but it IS honoured: no request is sent to the host before the
+	// time it named.
+	maxRetryAfter = time.Minute
 	// breakerThreshold is how many consecutive failed requests trip the
 	// circuit breaker.
 	breakerThreshold = 3
@@ -34,9 +77,13 @@ const (
 	breakerCooldown = 5 * time.Minute
 )
 
-// retryTransport retries a throttled (429) or failing (5xx) request with
-// exponential backoff and jitter, and refuses to dial at all while the
-// circuit breaker is open.
+// retryTransport retries a throttled (429) or failing (5xx, or no answer
+// at all) request with exponential backoff and jitter, and refuses to dial
+// at all while the circuit breaker is open.
+//
+// Every wait it is about to sit through, and every refusal, is reported as
+// a source.Notice on the request's context (#436), so a frontend can say
+// "rate limited by Thunderstore, retrying in 12s" instead of going quiet.
 //
 // Everything this package sends is an idempotent, bodiless GET, so
 // re-sending one is safe by construction.
@@ -45,15 +92,18 @@ type retryTransport struct {
 	now  func() time.Time
 	// sleep waits out one backoff, or returns the request context's error
 	// the moment the caller gives up. GO.md's context-threading rule: with
-	// maxBackoff at 30s and two retries, a Ctrl-C during a cold index build
-	// (or a closed browser tab) could otherwise wait out a minute of
-	// sleeping before the cancellation was observed. Injectable so the
-	// tests assert the backoff POLICY without spending it.
+	// maxRetryAfter at a minute and two retries, a Ctrl-C during a cold
+	// index build (or a closed browser tab) could otherwise wait out two
+	// minutes of sleeping before the cancellation was observed. Injectable
+	// so the tests assert the backoff POLICY without spending it.
 	sleep func(context.Context, time.Duration) error
 
 	mu           sync.Mutex
 	failures     int
 	suspendUntil time.Time
+	// suspendReason is why suspendUntil is set: a tripped breaker, or a
+	// server that asked for a wait longer than maxRetryAfter.
+	suspendReason string
 }
 
 func newRetryTransport(base http.RoundTripper, now func() time.Time) *retryTransport {
@@ -65,33 +115,45 @@ func newRetryTransport(base http.RoundTripper, now func() time.Time) *retryTrans
 
 // RoundTrip implements http.RoundTripper.
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if until, open := t.breakerOpen(); open {
-		return nil, fmt.Errorf("%w: suspended after repeated failures, retrying after %s",
-			ErrIndexUnavailable, until.Format(time.RFC3339))
+	ctx := req.Context()
+	if until, reason, open := t.breakerOpen(); open {
+		source.Notify(ctx, source.Notice{Kind: source.NoticeSuspended, Source: serviceName, Until: until})
+		return nil, &source.RetryLaterError{Source: serviceName, Until: until, Reason: reason}
 	}
 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		resp, err := t.base.RoundTrip(req)
+		retry := source.Notice{Kind: source.NoticeRetry, Source: serviceName, Attempt: attempt + 1, MaxAttempts: maxAttempts}
+		var hint time.Duration
 		switch {
 		case err != nil:
+			if ctx.Err() != nil {
+				// The caller gave up: not an upstream failure, and nothing
+				// to retry or count against the host.
+				return nil, err
+			}
 			lastErr = err
+			retry.Reason, retry.Err = source.RetryNetworkError, err
 		case retryableStatus(resp.StatusCode):
-			lastErr = fmt.Errorf("API error (status %d)", resp.StatusCode)
-			wait := retryAfter(resp)
+			lastErr = statusFailure(resp.StatusCode)
+			retry.Reason, retry.Status, retry.Err = retryReason(resp.StatusCode), resp.StatusCode, lastErr
+			hint = retryAfter(resp, t.now())
 			// Closed so the connection can be released before the retry.
 			// Not drained: an unread 429/5xx body means the connection is
 			// not returned to the pool, which is the right trade for an
 			// error response whose size lmm has no reason to trust.
 			_ = resp.Body.Close()
+			if hint > maxRetryAfter {
+				until := t.now().Add(hint)
+				reason := fmt.Sprintf("%s asked lmm to wait %s (%v)", serviceName, hint, lastErr)
+				t.suspend(until, reason)
+				return nil, &source.RetryLaterError{Source: serviceName, Until: until, Reason: reason}
+			}
 			if attempt == maxAttempts {
 				t.recordFailure()
-				return nil, fmt.Errorf("%w: %v after %d attempts", ErrIndexUnavailable, lastErr, maxAttempts)
+				return nil, fmt.Errorf("%w: %w after %d attempts", ErrIndexUnavailable, lastErr, maxAttempts)
 			}
-			if err := t.sleep(req.Context(), backoffFor(attempt, wait)); err != nil {
-				return nil, err
-			}
-			continue
 		default:
 			t.recordSuccess()
 			return resp, nil
@@ -100,13 +162,31 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if attempt == maxAttempts {
 			break
 		}
-		if err := t.sleep(req.Context(), backoffFor(attempt, 0)); err != nil {
+		retry.Wait = backoffFor(attempt, hint)
+		source.Notify(ctx, retry)
+		if err := t.sleep(ctx, retry.Wait); err != nil {
 			return nil, err
 		}
 	}
 
 	t.recordFailure()
 	return nil, lastErr
+}
+
+// statusFailure words a retryable status for the error a user finally sees.
+func statusFailure(status int) error {
+	if status == http.StatusTooManyRequests {
+		return fmt.Errorf("rate limited by %s (HTTP %d)", serviceName, status)
+	}
+	return fmt.Errorf("%s answered HTTP %d", serviceName, status)
+}
+
+// retryReason classifies a retryable status for a notice.
+func retryReason(status int) string {
+	if status == http.StatusTooManyRequests {
+		return source.RetryRateLimited
+	}
+	return source.RetryServerError
 }
 
 // sleepCtx is the production sleep: it waits out d, or gives up the moment
@@ -132,33 +212,42 @@ func retryableStatus(status int) bool {
 	return status == http.StatusTooManyRequests || status >= 500
 }
 
-// retryAfter reads a Retry-After header in its delay-seconds form. An
-// HTTP-date value, or anything unparseable, yields 0 and lets the caller's
-// own backoff decide.
-func retryAfter(resp *http.Response) time.Duration {
+// retryAfter reads a Retry-After header in either of its RFC 9110 forms -
+// delay-seconds, or an HTTP-date judged against now. Anything unparseable,
+// negative or already past yields 0 and lets the caller's own backoff
+// decide.
+func retryAfter(resp *http.Response, now time.Time) time.Duration {
 	v := resp.Header.Get("Retry-After")
 	if v == "" {
 		return 0
 	}
-	secs, err := strconv.Atoi(v)
-	if err != nil || secs < 0 {
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs < 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	at, err := http.ParseTime(v)
+	if err != nil {
 		return 0
 	}
-	return time.Duration(secs) * time.Second
+	return max(at.Sub(now), 0)
 }
 
-// backoffFor returns the wait before the next attempt: the server's own
-// Retry-After when it named one, else exponential from baseBackoff, in both
-// cases capped at maxBackoff and jittered so a batch of requests throttled
-// together does not retry in lockstep.
+// backoffFor returns the wait before the next attempt.
+//
+// A server's own Retry-After is a FLOOR: coming back early is how a
+// throttled client gets throttled again, so the hint is waited in full and
+// the jitter only ever adds to it (a tenth, at most a second) to keep a
+// herd from returning in lockstep. Without a hint the wait is exponential
+// from baseBackoff, capped at maxBackoff, with full jitter over the lower
+// half so it is still bounded below by half the nominal delay.
 func backoffFor(attempt int, serverHint time.Duration) time.Duration {
-	d := serverHint
-	if d <= 0 {
-		d = baseBackoff << (attempt - 1)
+	if serverHint > 0 {
+		spread := min(serverHint/10, time.Second)
+		return serverHint + time.Duration(rand.Int64N(int64(spread)+1))
 	}
-	d = min(d, maxBackoff)
-	// Full jitter over the lower half keeps the wait bounded below by half
-	// the nominal delay while still spreading a herd.
+	d := min(baseBackoff<<(attempt-1), maxBackoff)
 	return d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
 }
 
@@ -169,7 +258,22 @@ func (t *retryTransport) recordFailure() {
 	defer t.mu.Unlock()
 	t.failures++
 	if t.failures >= breakerThreshold {
-		t.suspendUntil = t.now().Add(breakerCooldown)
+		t.suspendLocked(t.now().Add(breakerCooldown), "suspended after repeated failures")
+	}
+}
+
+// suspend holds every request off until until.
+func (t *retryTransport) suspend(until time.Time, reason string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.suspendLocked(until, reason)
+}
+
+// suspendLocked never SHORTENS a suspension already in force: a server that
+// asked for ten minutes is not re-asked after a later, shorter breaker trip.
+func (t *retryTransport) suspendLocked(until time.Time, reason string) {
+	if until.After(t.suspendUntil) {
+		t.suspendUntil, t.suspendReason = until, reason
 	}
 }
 
@@ -179,22 +283,22 @@ func (t *retryTransport) recordSuccess() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.failures = 0
-	t.suspendUntil = time.Time{}
+	t.suspendUntil, t.suspendReason = time.Time{}, ""
 }
 
-// breakerOpen reports whether calls are currently suspended, and until when.
-// Expiry resets the streak so the next call is a real probe rather than the
-// third strike of an old outage.
-func (t *retryTransport) breakerOpen() (time.Time, bool) {
+// breakerOpen reports whether calls are currently suspended, until when,
+// and why. Expiry resets the streak so the next call is a real probe rather
+// than the third strike of an old outage.
+func (t *retryTransport) breakerOpen() (time.Time, string, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.suspendUntil.IsZero() {
-		return time.Time{}, false
+		return time.Time{}, "", false
 	}
 	if !t.now().Before(t.suspendUntil) {
-		t.suspendUntil = time.Time{}
+		t.suspendUntil, t.suspendReason = time.Time{}, ""
 		t.failures = 0
-		return time.Time{}, false
+		return time.Time{}, "", false
 	}
-	return t.suspendUntil, true
+	return t.suspendUntil, t.suspendReason, true
 }
