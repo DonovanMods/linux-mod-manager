@@ -327,7 +327,7 @@ func openRealSubdir(root *os.Root, name string) (*os.Root, error) {
 		return nil, fmt.Errorf("reading %s: %w", name, err)
 	}
 	if named.Mode()&fs.ModeSymlink != 0 {
-		return nil, fmt.Errorf("%s is a symbolic link, which lmm never follows", name)
+		return nil, fmt.Errorf("%s is a symbolic link, which lmm never removes anything through", name)
 	}
 	if !named.IsDir() {
 		return nil, fmt.Errorf("%s is not a directory", name)
@@ -497,7 +497,7 @@ func (st *store) provablyIndex(community string) (int64, error) {
 		return 0, fmt.Errorf("reading %s: %w", dir, err)
 	}
 	if info.Mode()&fs.ModeSymlink != 0 {
-		return 0, fmt.Errorf("%s is a symbolic link, which lmm never follows", dir)
+		return 0, fmt.Errorf("%s is a symbolic link, which lmm never removes anything through", dir)
 	}
 	if !info.IsDir() {
 		return 0, fmt.Errorf("%s is not a directory", dir)
