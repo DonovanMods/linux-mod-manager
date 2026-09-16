@@ -77,6 +77,7 @@ internal/
 │   ├── db/               # SQLite (mod metadata, auth tokens)
 │   ├── config/           # YAML parsing (games, profiles)
 │   └── cache/            # Central mod file cache
+├── safeyaml/             # The one YAML decode every reader uses: a decoder panic is an error, never a crash (#452)
 ├── linker/               # Deploy strategies (symlink, hardlink, copy)
 ├── core/                 # Business logic orchestration (flat package, 55 files); frontends never reach past it
     ├── service.go         # Service facade: construction, ServiceConfig, the query/mutation concurrency contract
@@ -185,7 +186,7 @@ internal/
 - `github.com/spf13/cobra` - CLI framework
 - `github.com/hasura/go-graphql-client` - GraphQL client for NexusMods API
 - `modernc.org/sqlite` - Pure Go SQLite (no CGO)
-- `gopkg.in/yaml.v3` - YAML parsing
+- `go.yaml.in/yaml/v3` - YAML parsing (the maintained continuation of `gopkg.in/yaml.v3`); every read goes through `internal/safeyaml`, which turns a decoder panic into an error (#452)
 - `github.com/stretchr/testify` - Test assertions
 
 ## File Locations

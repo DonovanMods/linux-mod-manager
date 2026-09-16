@@ -14,8 +14,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ErrProfileLayoutUnsupported is returned by MarkModsDisabled when it cannot
@@ -74,7 +75,7 @@ func MarkModsDisabled(path string, mods []domain.ModReference) ([]domain.ModRefe
 		return nil, fmt.Errorf("%w: %s: %v", ErrProfileLayoutUnsupported, path, err)
 	}
 	var after ProfileConfig
-	if err := unmarshalYAML(edited, &after); err != nil || !reflect.DeepEqual(expected, after) {
+	if err := safeyaml.Unmarshal(edited, &after); err != nil || !reflect.DeepEqual(expected, after) {
 		return nil, fmt.Errorf("%w: %s: the edited text would not read back as the same profile", ErrProfileLayoutUnsupported, path)
 	}
 
@@ -89,11 +90,11 @@ func MarkModsDisabled(path string, mods []domain.ModReference) ([]domain.ModRefe
 // edits, and the mods they mark (see MarkModsDisabled).
 func planMarkers(path string, data []byte, mods []domain.ModReference) (ProfileConfig, []textEdit, []domain.ModReference, error) {
 	var before ProfileConfig
-	if err := unmarshalYAML(data, &before); err != nil {
+	if err := safeyaml.Unmarshal(data, &before); err != nil {
 		return ProfileConfig{}, nil, nil, fmt.Errorf("parsing profile: %w", err)
 	}
 	var doc yaml.Node
-	if err := unmarshalYAML(data, &doc); err != nil {
+	if err := safeyaml.Unmarshal(data, &doc); err != nil {
 		return ProfileConfig{}, nil, nil, fmt.Errorf("parsing profile: %w", err)
 	}
 	if len(before.Mods) == 0 {

@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
+
+	"go.yaml.in/yaml/v3"
 )
 
 //go:embed data/steam-games.yaml
@@ -142,7 +144,7 @@ func LoadKnownGames(configDir string) (map[string]GameInfo, error) {
 		return nil, fmt.Errorf("reading %s: %w", overridePath, err)
 	}
 	var override steamGamesYAML
-	if err := yaml.Unmarshal(overrideData, &override); err != nil {
+	if err := safeyaml.Unmarshal(overrideData, &override); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", overridePath, err)
 	}
 	for appID, e := range override {

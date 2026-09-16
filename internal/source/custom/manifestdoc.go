@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 )
 
 // sha256Pattern matches a lowercase- or uppercase-hex SHA-256 digest.
@@ -48,7 +48,7 @@ type manifestFile struct {
 // URL only.
 func parseManifest(data []byte, allowHTTP bool) (*manifestDoc, error) {
 	var doc manifestDoc
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := safeyaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parsing manifest: %w", err)
 	}
 	if doc.Version != 1 {

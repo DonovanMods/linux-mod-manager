@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -112,7 +113,7 @@ func FuzzMarkModsDisabled(f *testing.F) {
 		require.NoError(t, os.WriteFile(path, data, 0o644))
 
 		var before ProfileConfig
-		parsed := unmarshalYAML(data, &before) == nil
+		parsed := safeyaml.Unmarshal(data, &before) == nil
 		var mods []domain.ModReference
 		var keys []string
 		for _, ref := range before.Mods {
@@ -169,7 +170,7 @@ func FuzzMarkModsDisabled(f *testing.F) {
 		}
 
 		var got ProfileConfig
-		require.NoError(t, unmarshalYAML(after, &got))
+		require.NoError(t, safeyaml.Unmarshal(after, &got))
 		require.Equal(t, want, got)
 
 		// Byte level: the file is the input with the planned edits applied,

@@ -8,8 +8,9 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ProfileHookConfigYAML uses pointers to distinguish "not set" from "set to empty"
@@ -155,22 +156,6 @@ func validateProfilePath(gameID, profileName string) error {
 	return validateSegment(profileName, domain.ErrInvalidProfileName)
 }
 
-// unmarshalYAML is yaml.Unmarshal for a profile document a user may have
-// written by hand, with the decoder's own panics returned as errors.
-// gopkg.in/yaml.v3 v3.0.1 panics on some malformed input instead of
-// failing - a merge key over a mapping keyed by a mapping ("hash of
-// unhashable type") is one fuzzing found - and a profile is read at the
-// start of nearly every command, #431's upgrade step included, so one such
-// file must read as unparseable rather than stop lmm from starting.
-func unmarshalYAML(data []byte, v any) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("yaml: the decoder failed on this document: %v", r)
-		}
-	}()
-	return yaml.Unmarshal(data, v)
-}
-
 // LoadProfile reads a profile from disk
 func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error) {
 	if err := validateProfilePath(gameID, profileName); err != nil {
@@ -186,7 +171,7 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 	}
 
 	var cfg ProfileConfig
-	if err := unmarshalYAML(data, &cfg); err != nil {
+	if err := safeyaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing profile: %w", err)
 	}
 
@@ -404,7 +389,7 @@ func ExportProfile(profile *domain.Profile) ([]byte, error) {
 // ImportProfile imports a profile from portable format
 func ImportProfile(data []byte) (*domain.Profile, error) {
 	var wire exportedProfileYAML
-	if err := unmarshalYAML(data, &wire); err != nil {
+	if err := safeyaml.Unmarshal(data, &wire); err != nil {
 		return nil, fmt.Errorf("parsing exported profile: %w", err)
 	}
 
