@@ -441,3 +441,124 @@ func TestE2E_LibraryBatch_RetryAfterAFailedBatchIsAcknowledged(t *testing.T) {
 	)
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// slideOverToggleJS reads the slide-over's Enable/Disable button.
+const slideOverToggleJS = `(() => {
+	const b = document.querySelector('.slide-over [data-action="toggle"]');
+	return b ? {label: b.textContent.trim(), disabled: b.disabled} : null;
+})()`
+
+// e2eToggleButton is slideOverToggleJS's (and modPageToggleJS's) shape.
+type e2eToggleButton struct {
+	Label    string `json:"label"`
+	Disabled bool   `json:"disabled"`
+}
+
+// newE2EFixtureForStepping is the two-mod world the step-away scenarios use:
+// Alpha ENABLED and Beta DISABLED, both cached and both in the catalog (the
+// slide-over and the full mod page make live reads for a mod). The pairing is
+// deliberate - disabling Alpha asks for exactly the value Beta already
+// reads, which is what exposed a control that answered for the wrong mod.
+func newE2EFixtureForStepping(t *testing.T) (e2eFixture, func()) {
+	t.Helper()
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0"}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0"}})
+	f, release, _ := newE2EGatedToggleFixture(t, src, 0)
+	seedToggleMod(t, f, "a", "Alpha Mod", true, map[string][]byte{"alpha.pak": []byte("alpha")})
+	seedToggleMod(t, f, "b", "Beta Mod", false, map[string][]byte{"beta.pak": []byte("beta")})
+	return f, release
+}
+
+// TestE2E_SlideOver_SteppingAwayKeepsTheInFlightToggle is issue 432 on the
+// slide-over's ←/→. The panel is not re-mounted by a step - the same
+// component renders the next mod - so what it remembers about Alpha's
+// request survives the step, and the question is only whether it keeps
+// asking about ALPHA. It asked about whichever mod was on screen, so a step
+// onto a mod that already read "disabled" settled Alpha's disable, and
+// stepping back offered a live Disable over a job still in flight.
+func TestE2E_SlideOver_SteppingAwayKeepsTheInFlightToggle(t *testing.T) {
+	f, release := newE2EFixtureForStepping(t)
+
+	var inFlight, back e2eToggleButton
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SlideOverPath("fake", "a")),
+		chromedp.WaitVisible(`.slide-over [data-action="toggle"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('.slide-over [data-action="toggle"]').click()`, nil),
+		pollUntil(`document.querySelector('.slide-over [data-action="toggle"]').textContent.includes("Disabling")`),
+		chromedp.Evaluate(slideOverToggleJS, &inFlight),
+		chromedp.Evaluate(`document.querySelector('.slide-over [aria-label="Next mod"]').click()`, nil),
+		pollUntil(`document.querySelector('.slide-over').getAttribute("aria-label") === "Beta Mod details"`),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelector('.slide-over [aria-label="Previous mod"]').click()`, nil),
+		pollUntil(`document.querySelector('.slide-over').getAttribute("aria-label") === "Alpha Mod details"`),
+		settleEffects(),
+		chromedp.Evaluate(slideOverToggleJS, &back),
+	)
+
+	require.Equal(t, "Disabling…", inFlight.Label, "the click is acknowledged on Alpha")
+	assert.Equal(t, "Disabling…", back.Label,
+		"stepping away and back does not forget Alpha's request (button: %+v)", back)
+	assert.True(t, back.Disabled, "and a second, contrary request is still not offered")
+
+	release()
+	require.Eventually(t, func() bool {
+		m, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+		return err == nil && !m.Enabled
+	}, 10*time.Second, 20*time.Millisecond, "the request still disables Alpha")
+	f.runInBrowser(t, waitGone(`.slide-over [data-action="toggle"][disabled]`))
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// modPageToggleJS reads the full mod page's Enable/Disable button, once the
+// page on screen is the one for the mod named.
+func modPageToggleJS(name string) string {
+	return fmt.Sprintf(`(() => {
+		const title = document.querySelector(".mod-page__title");
+		const b = document.querySelector('.mod-page [data-action="toggle"]');
+		if (!title || title.textContent.trim() !== %q || !b) return null;
+		return {label: b.textContent.trim(), disabled: b.disabled};
+	})()`, name)
+}
+
+// clientNavigateJS moves the SPA to path the way router.js#navigate does -
+// pushState plus a popstate - so the page's components are re-rendered
+// rather than re-mounted by a full load.
+func clientNavigateJS(path string) string {
+	return fmt.Sprintf(`history.pushState(null, "", %q); window.dispatchEvent(new PopStateEvent("popstate"));`, path)
+}
+
+// TestE2E_FullModPage_NavigatingAwayKeepsTheInFlightToggle is the same
+// defect on the full mod page, which is also re-rendered rather than
+// re-mounted when one mod page leads to another.
+func TestE2E_FullModPage_NavigatingAwayKeepsTheInFlightToggle(t *testing.T) {
+	f, release := newE2EFixtureForStepping(t)
+
+	var inFlight, back e2eToggleButton
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		pollUntil(modPageToggleJS("Alpha Mod")+` !== null`),
+		chromedp.Evaluate(`document.querySelector('.mod-page [data-action="toggle"]').click()`, nil),
+		pollUntil(`document.querySelector('.mod-page [data-action="toggle"]').textContent.includes("Disabling")`),
+		chromedp.Evaluate(modPageToggleJS("Alpha Mod"), &inFlight),
+		chromedp.Evaluate(clientNavigateJS(f.ModPagePath("fake", "b")), nil),
+		pollUntil(modPageToggleJS("Beta Mod")+` !== null`),
+		settleEffects(),
+		chromedp.Evaluate(clientNavigateJS(f.ModPagePath("fake", "a")), nil),
+		pollUntil(modPageToggleJS("Alpha Mod")+` !== null`),
+		settleEffects(),
+		chromedp.Evaluate(modPageToggleJS("Alpha Mod"), &back),
+	)
+
+	require.Equal(t, "Disabling…", inFlight.Label, "the click is acknowledged on Alpha's page")
+	assert.Equal(t, "Disabling…", back.Label,
+		"visiting another mod's page and coming back does not forget Alpha's request (button: %+v)", back)
+	assert.True(t, back.Disabled)
+
+	release()
+	f.runInBrowser(t, pollUntil(`(() => {
+		const b = document.querySelector('.mod-page [data-action="toggle"]');
+		return b !== null && b.textContent.trim() === "Enable" && !b.disabled;
+	})()`))
+	assert.Empty(t, f.BrowserErrors())
+}

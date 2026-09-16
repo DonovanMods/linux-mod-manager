@@ -55,6 +55,7 @@ import { InlineJob } from "./jobprogress.js";
 import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
 import { pendingToggleLabel, usePendingToggles } from "../toggleack.js";
+import { modKey } from "../modrows.js";
 import { displayVersion } from "../version.js";
 import {
   ModSettingsControls,
@@ -77,11 +78,15 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   // hundred lines down, which does not exist yet at this point in the render
   // and (being re-hydrated by main.js#hydrateModPage) is a different
   // document from the library's own listing anyway.
-  const toggles = usePendingToggles(state, actions, () =>
-    state.modPage?.key === key
-      ? state.modPage?.filesReport?.mod?.enabled
-      : undefined,
-  );
+  //
+  // Answered for the key asked about, from the mod the loaded document is
+  // actually about: moving from one mod page to another re-renders this same
+  // instance, so a request made on the previous page is still pending here
+  // and must not be settled against the mod now on screen.
+  const toggles = usePendingToggles(state, actions, (pendingKey) => {
+    const mod = state.modPage?.filesReport?.mod;
+    return mod && modKey(mod) === pendingKey ? mod.enabled : undefined;
+  });
 
   const header = html`
     <${AwayBar}
