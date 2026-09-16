@@ -58,9 +58,10 @@ type lockTarget struct {
 // is no directory to lock and nothing to serialise: the release is a no-op
 // and the caller fails a few lines later on the real problem.
 //
-// The lock file is never opened through a symbolic link (O_NOFOLLOW): a
-// link planted at .lock would otherwise have lmm create or lock a file
-// somewhere it does not own.
+// The lock file is never opened through a symbolic link: plain
+// os.OpenFile honours O_NOFOLLOW (os.Root does not - see RemoveIndex), so a
+// link planted at .lock is a refusal rather than lmm creating or locking a
+// file somewhere it does not own.
 func (st *store) lockCommunity(ctx context.Context, community string) (func(), error) {
 	dir := st.dir(community)
 	if dir == "" {
@@ -89,6 +90,10 @@ func (st *store) lockCommunity(ctx context.Context, community string) (func(), e
 // flock on the removed inode would hold nothing a newcomer could see. So
 // the name is re-checked after every acquisition, and a lock on a file that
 // is no longer there is dropped and taken again on the one that is.
+//
+// That loop is bounded like the wait itself (T3 review F5): by the caller's
+// context and by indexLockWait. A name that never settles on the file lmm
+// locked is a failure, never a spin.
 func acquireLock(ctx context.Context, community string, target lockTarget) (func(), error) {
 	deadline := time.Now().Add(indexLockWait)
 	for {
@@ -97,6 +102,12 @@ func acquireLock(ctx context.Context, community string, target lockTarget) (func
 			return release, err
 		}
 		release()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("the %s index lock kept changing under lmm for %s", community, indexLockWait)
+		}
 	}
 }
 
@@ -115,6 +126,13 @@ func tryLock(ctx context.Context, community string, target lockTarget, deadline 
 				_ = file.Close()
 			}
 			now, statErr := target.stat()
+			if statErr == nil && !now.Mode().IsRegular() {
+				// Something other than a plain file sits at the name - a
+				// link planted after the open. Nothing lmm can lock is the
+				// lock then, and retrying would only find it again.
+				release()
+				return nil, false, fmt.Errorf("the %s index lock is not a plain file (a symbolic link?): not locking through it", community)
+			}
 			return release, statErr == nil && sameFile(file, now), nil
 		}
 		if err != syscall.EWOULDBLOCK { //nolint:errorlint // Flock returns a bare syscall.Errno

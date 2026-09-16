@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -36,20 +37,72 @@ var indexFileNames = []string{watermarkFileName, indexFileName, packagesFileName
 // beside them (builder, stageFile), which an interrupted build can leave.
 var stagingPrefixes = []string{".packages-", ".index-", ".stage-"}
 
-// isIndexFile reports whether name is one this package writes into a
-// community directory.
-func isIndexFile(name string) bool {
+// maxCreateTempDigits is the longest suffix os.CreateTemp gives a name: a
+// uint32 in decimal.
+const maxCreateTempDigits = 10
+
+// isIndexName reports whether name is one this package gives a file in a
+// community directory: an index file's exact name, or a staging prefix
+// followed by exactly the decimal suffix os.CreateTemp appends (T3 review
+// F6) - so ".index-my-backup.json" is not lmm's, however it starts.
+func isIndexName(name string) bool {
 	for _, known := range indexFileNames {
 		if name == known {
 			return true
 		}
 	}
 	for _, prefix := range stagingPrefixes {
-		if strings.HasPrefix(name, prefix) {
+		if suffix, ok := strings.CutPrefix(name, prefix); ok {
+			return suffix != "" && len(suffix) <= maxCreateTempDigits && strings.Trim(suffix, "0123456789") == ""
+		}
+	}
+	return false
+}
+
+// ownedHeads are the bytes each kind of file lmm writes begins with - the
+// first thing its writer puts there. A file with an lmm name and other
+// content is not lmm's.
+func ownedHeads(name string) []string {
+	switch {
+	case name == lockFileName:
+		return nil // lmm never writes a byte to its lock file
+	case name == indexFileName, strings.HasPrefix(name, ".index-"):
+		return []string{`{"schema":`}
+	case name == packagesFileName, strings.HasPrefix(name, ".packages-"):
+		// A record, or - for a community with no packages - the trailer.
+		return []string{`{"full_name":`, `{"generation":`}
+	default: // watermark.json and its .stage- staging copy
+		return []string{`{"last_modified":`}
+	}
+}
+
+// ownedHeadLen is how much of a file isOwnedContent needs to see: at least
+// the longest of ownedHeads.
+const ownedHeadLen = 32
+
+// isOwnedContent reports whether a file named name, of size bytes and
+// beginning with head, is one lmm wrote (T3 review F6). An EMPTY file is:
+// an interrupted build leaves one, and it holds nothing to lose.
+func isOwnedContent(name string, size int64, head []byte) bool {
+	if size == 0 {
+		return true
+	}
+	for _, want := range ownedHeads(name) {
+		if strings.HasPrefix(string(head), want) {
 			return true
 		}
 	}
 	return false
+}
+
+// readHead reads up to ownedHeadLen bytes from f.
+func readHead(f *os.File) ([]byte, error) {
+	head := make([]byte, ownedHeadLen)
+	n, err := io.ReadFull(f, head)
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		err = nil
+	}
+	return head[:n], err
 }
 
 // CachedIndexes implements source.IndexInventory: every community
@@ -59,11 +112,21 @@ func isIndexFile(name string) bool {
 //
 // An index root that is itself a symbolic link is an ERROR: nothing below
 // it is provably lmm's, and a caller that could not list must not prune.
+//
+// An index root that is itself a symbolic link is LISTED - lmm builds and
+// searches indexes through it, and hiding what is there behind "no
+// indexes" was not honest (T3 review F7) - with every entry refused for
+// removal: nothing below a link lmm did not make is provably lmm's.
 func (s *Source) CachedIndexes(ctx context.Context) ([]source.CachedIndex, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	root, ok, err := s.store.safeRoot()
+	linked := ""
+	var link *rootLinkError
+	if errors.As(err, &link) {
+		root, ok, err, linked = s.store.root, true, nil, link.Error()
+	}
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -79,9 +142,13 @@ func (s *Source) CachedIndexes(ctx context.Context) ([]source.CachedIndex, error
 		}
 		switch {
 		case e.Type()&fs.ModeSymlink != 0:
-			out = append(out, source.CachedIndex{GameID: name, Reason: "it is a symbolic link, which lmm never follows"})
+			out = append(out, source.CachedIndex{GameID: name, Reason: "it is a symbolic link, which lmm never removes anything through"})
 		case e.IsDir():
-			out = append(out, s.inspect(name))
+			ci := s.inspect(name)
+			if linked != "" {
+				ci.Removable, ci.Reason = false, linked
+			}
+			out = append(out, ci)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].GameID < out[j].GameID })
@@ -92,6 +159,8 @@ func (s *Source) CachedIndexes(ctx context.Context) ([]source.CachedIndex, error
 func (s *Source) inspect(community string) source.CachedIndex {
 	ci := source.CachedIndex{GameID: community, Bytes: s.store.dirFootprint(community)}
 	if _, err := s.store.provablyIndex(community); err != nil {
+		ci.Reason = err.Error()
+	} else if err := s.store.removable(community); err != nil {
 		ci.Reason = err.Error()
 	} else {
 		ci.Removable = true
@@ -156,9 +225,7 @@ func (s *Source) RemoveIndex(ctx context.Context, community string, ifFetchedAt 
 	defer func() { _ = dir.Close() }()
 
 	release, err := acquireLock(ctx, community, lockTarget{
-		open: func() (*os.File, error) {
-			return dir.OpenFile(lockFileName, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
-		},
+		open: func() (*os.File, error) { return openLockAt(dir, community) },
 		stat: func() (os.FileInfo, error) { return dir.Lstat(lockFileName) },
 	})
 	if err != nil {
@@ -200,6 +267,37 @@ func (s *Source) RemoveIndex(ctx context.Context, community string, ifFetchedAt 
 	// index is reported removed either way.
 	_ = root.Remove(community)
 	return freed, nil
+}
+
+// openLockAt opens community's lock file relative to the proven directory
+// handle dir, never through a symbolic link (T3 review F5).
+//
+// Not dir.OpenFile: os.Root adds O_NOFOLLOW itself and then FOLLOWS any
+// link whose target stays inside the root, so a ".lock" linked to
+// index.json locked the index - and a dangling one had lmm create its
+// target. openat(2) with O_NOFOLLOW, on the directory's own descriptor,
+// refuses a link outright, and O_NONBLOCK keeps a FIFO planted there from
+// blocking the open.
+func openLockAt(dir *os.Root, community string) (*os.File, error) {
+	handle, err := dir.Open(".")
+	if err != nil {
+		return nil, fmt.Errorf("opening the %s index directory: %w", community, err)
+	}
+	defer func() { _ = handle.Close() }()
+	fd, err := syscall.Openat(int(handle.Fd()), lockFileName,
+		syscall.O_RDWR|syscall.O_CREAT|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0o600)
+	if errors.Is(err, syscall.ELOOP) {
+		return nil, fmt.Errorf("the %s index lock is a symbolic link, which lmm never follows", community)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("opening the %s index lock: %w", community, err)
+	}
+	file := os.NewFile(uintptr(fd), lockFileName)
+	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, fmt.Errorf("the %s index lock is not a plain file: not locking through it", community)
+	}
+	return file, nil
 }
 
 // openRealDir opens path as a directory handle and proves the handle is the
@@ -264,17 +362,43 @@ func provableEntries(dir *os.Root, community string) ([]string, int64, error) {
 		if !e.Type().IsRegular() {
 			return nil, 0, fmt.Errorf("the %s index directory holds %s, which is not a plain file lmm wrote", community, e.Name())
 		}
-		if !isIndexFile(e.Name()) {
+		if !isIndexName(e.Name()) {
 			return nil, 0, fmt.Errorf("the %s index directory holds %s, which is not part of an index", community, e.Name())
 		}
 		info, err := e.Info()
 		if err != nil {
 			return nil, 0, fmt.Errorf("reading %s: %w", e.Name(), err)
 		}
+		if err := ownedAt(dir, community, e.Name(), info); err != nil {
+			return nil, 0, err
+		}
 		names = append(names, e.Name())
 		total += info.Size()
 	}
 	return names, total, nil
+}
+
+// ownedAt proves the file name in dir, described by listed, holds what lmm
+// writes there. It is opened through the handle without following a link
+// or blocking on a FIFO, and must still be the file that was listed.
+func ownedAt(dir *os.Root, community, name string, listed os.FileInfo) error {
+	f, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return fmt.Errorf("reading %s in the %s index: %w", name, community, err)
+	}
+	defer func() { _ = f.Close() }()
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(listed, opened) {
+		return fmt.Errorf("the %s index directory's %s changed while it was being checked", community, name)
+	}
+	head, err := readHead(f)
+	if err != nil {
+		return fmt.Errorf("reading %s in the %s index: %w", name, community, err)
+	}
+	if !isOwnedContent(name, opened.Size(), head) {
+		return fmt.Errorf("the %s index directory holds %s, whose content lmm did not write", community, name)
+	}
+	return nil
 }
 
 // checkFetchedAt refuses unless the index in dir was last fetched at want.
@@ -322,11 +446,39 @@ func (st *store) safeRoot() (string, bool, error) {
 	case err != nil:
 		return "", false, fmt.Errorf("reading %s: %w", st.root, err)
 	case info.Mode()&fs.ModeSymlink != 0:
-		return "", false, fmt.Errorf("%s is a symbolic link, which lmm never follows: not touching anything under it", st.root)
+		return "", false, &rootLinkError{root: st.root}
 	case !info.IsDir():
 		return "", false, fmt.Errorf("%s is not a directory", st.root)
 	}
 	return st.root, true, nil
+}
+
+// rootLinkError is safeRoot's refusal of an index root that is a symbolic
+// link.
+type rootLinkError struct{ root string }
+
+func (e *rootLinkError) Error() string {
+	return fmt.Sprintf("%s is a symbolic link: lmm builds and searches indexes through it, but never removes anything through one "+
+		"(to keep indexes on another disk, link lmm's whole cache directory instead)", e.root)
+}
+
+// access(2) modes: write, and search (execute) on a directory.
+const (
+	accessWrite  = 0x2
+	accessSearch = 0x1
+)
+
+// removable reports why lmm could not remove community's directory even
+// though it is provably an index: it has no write permission on it, or on
+// the root that holds it (T3 review F11). A dry run then says so, rather
+// than promising a removal the real run reports as failed.
+func (st *store) removable(community string) error {
+	for _, dir := range []string{st.dir(community), st.root} {
+		if err := syscall.Access(dir, accessWrite|accessSearch); err != nil {
+			return fmt.Errorf("lmm cannot remove this index: it has no write permission on %s (%w)", dir, err)
+		}
+	}
+	return nil
 }
 
 // provablyIndex proves community's directory holds nothing but this
@@ -354,17 +506,25 @@ func (st *store) provablyIndex(community string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("reading %s: %w", dir, err)
 	}
+	handle, err := os.OpenRoot(dir)
+	if err != nil {
+		return 0, fmt.Errorf("reading %s: %w", dir, err)
+	}
+	defer func() { _ = handle.Close() }()
 	var total int64
 	for _, e := range entries {
 		if !e.Type().IsRegular() {
 			return 0, fmt.Errorf("%s holds %s, which is not a plain file lmm wrote", dir, e.Name())
 		}
-		if !isIndexFile(e.Name()) {
+		if !isIndexName(e.Name()) {
 			return 0, fmt.Errorf("%s holds %s, which is not part of an index", dir, e.Name())
 		}
 		fi, err := e.Info()
 		if err != nil {
 			return 0, fmt.Errorf("reading %s: %w", filepath.Join(dir, e.Name()), err)
+		}
+		if err := ownedAt(handle, community, e.Name(), fi); err != nil {
+			return 0, err
 		}
 		total += fi.Size()
 	}

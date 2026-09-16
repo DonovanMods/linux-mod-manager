@@ -109,8 +109,9 @@ func TestCachedIndexes_IgnoresWhatIsNotACommunityDirectory(t *testing.T) {
 // case: every file goes, then the directory, and the next search is cold.
 func TestRemoveIndex_RemovesTheWholeIndexAndReportsWhatItFreed(t *testing.T) {
 	src, cacheDir, _ := builtSource(t)
-	// A staging file a crashed build left behind is part of the index too.
-	require.NoError(t, os.WriteFile(filepath.Join(indexDir(cacheDir, testCommunity), ".packages-123"), []byte("partial"), 0o600))
+	// A staging file a crashed build left behind is part of the index too:
+	// the record stream, cut off at a buffer boundary.
+	require.NoError(t, os.WriteFile(filepath.Join(indexDir(cacheDir, testCommunity), ".packages-123"), []byte(`{"full_name":"Owner-Pack","versio`), 0o600))
 	list, err := src.CachedIndexes(t.Context())
 	require.NoError(t, err)
 	before := findIndex(t, list, testCommunity)
@@ -200,6 +201,10 @@ func TestRemoveIndex_NeverFollowsASymlinkedCommunity(t *testing.T) {
 
 	_, err = src.RemoveIndex(t.Context(), "content-warning", time.Time{})
 	require.Error(t, err)
+	// The link check itself refuses it (T3 review P4 B16): the "not a
+	// directory" check behind it would too, and a test that accepted either
+	// could not tell the first guard was gone.
+	assert.Contains(t, err.Error(), "symbolic link")
 	assert.FileExists(t, victim)
 	_, err = os.Lstat(link)
 	assert.NoError(t, err, "the link itself is left alone too")
@@ -234,9 +239,16 @@ func TestRemoveIndex_RefusesASymlinkedIndexRoot(t *testing.T) {
 	require.NoError(t, os.Symlink(real, filepath.Join(cacheDir, "_thunderstore")))
 	src := thunderstore.New(thunderstore.Options{CacheDir: cacheDir, BaseURL: "http://127.0.0.1:1"})
 
-	_, err := src.CachedIndexes(t.Context())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "symbolic link")
+	// Listed - lmm builds and searches through the link, so hiding what is
+	// there behind "no indexes" was not honest (T3 review F7) - but never
+	// removable, with the reason.
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	ci := findIndex(t, list, testCommunity)
+	assert.False(t, ci.Removable)
+	assert.Contains(t, ci.Reason, "symbolic link")
+	assert.Contains(t, ci.Reason, "builds and searches", "the reason does not claim lmm never follows it")
+	assert.Positive(t, ci.Bytes, "what it costs is still reported")
 
 	_, err = src.RemoveIndex(t.Context(), testCommunity, time.Time{})
 	require.Error(t, err)
@@ -303,4 +315,78 @@ func TestRemoveIndex_AnAgePreconditionOnAnIndexWithNoAgeIsRefused(t *testing.T) 
 	_, err := src.RemoveIndex(t.Context(), testCommunity, clock.Now())
 	require.Error(t, err)
 	assert.FileExists(t, filepath.Join(indexDir(cacheDir, testCommunity), "index.json"))
+}
+
+// TestRemoveIndex_OnlyFilesLmmWroteAreItsOwn is T3 review F6: any name
+// starting ".index-", ".packages-" or ".stage-" used to count as lmm's
+// staging, so a user's ".index-my-backup.json" went with the index. A file
+// is lmm's only when it has the exact name a build gives it AND the content
+// that build writes first (or is empty, which an interrupted build leaves).
+func TestRemoveIndex_OnlyFilesLmmWroteAreItsOwn(t *testing.T) {
+	for name, tc := range map[string]struct {
+		file, content string
+		ours          bool
+	}{
+		"a backup named like staging":        {".index-my-backup.json", `{"schema":3,"rows":[]}`, false},
+		"staging-shaped name, foreign bytes": {".packages-4242", "my notes", false},
+		"a letter after the digits":          {".stage-12a", "", false},
+		"too many digits for CreateTemp":     {".index-12345678901", "", false},
+		"an interrupted build's index":       {".index-4242", "", true},
+		"an interrupted build's packages":    {".packages-777", `{"full_name":"a-b","versions":[]}`, true},
+		"a watermark being written":          {".stage-31337", `{"last_modified":"x","fetched_at":1}`, true},
+		"a lock file with something in it":   {".lock", "not a lock", false},
+		"an index.json lmm did not write":    {"index.json", "hello", false},
+		"an empty packages.jsonl":            {"packages.jsonl", "", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			src, cacheDir, _ := builtSource(t)
+			dir := indexDir(cacheDir, testCommunity)
+			path := filepath.Join(dir, tc.file)
+			require.NoError(t, os.WriteFile(path, []byte(tc.content), 0o644))
+
+			list, err := src.CachedIndexes(t.Context())
+			require.NoError(t, err)
+			ci := findIndex(t, list, testCommunity)
+			assert.Equal(t, tc.ours, ci.Removable, ci.Reason)
+
+			_, err = src.RemoveIndex(t.Context(), testCommunity, time.Time{})
+			if tc.ours {
+				require.NoError(t, err)
+				assert.NoDirExists(t, dir)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.file)
+			assert.FileExists(t, path, "a file lmm cannot prove it wrote is kept")
+			assert.Equal(t, tc.content, string(mustRead(t, path)))
+		})
+	}
+}
+
+// TestCachedIndexes_AnIndexLmmCannotWriteToIsNotRemovable is T3 review
+// F11: a dry run said "would remove" for a directory lmm had no write
+// permission on, and the real run then reported "failed". The listing
+// says so first.
+func TestCachedIndexes_AnIndexLmmCannotWriteToIsNotRemovable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes through any permission")
+	}
+	src, cacheDir, _ := builtSource(t)
+	dir := indexDir(cacheDir, testCommunity)
+	require.NoError(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	ci := findIndex(t, list, testCommunity)
+	assert.False(t, ci.Removable)
+	assert.Contains(t, ci.Reason, "cannot remove")
+	assert.Positive(t, ci.Bytes)
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return data
 }
