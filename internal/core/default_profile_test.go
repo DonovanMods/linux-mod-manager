@@ -102,6 +102,24 @@ func TestCreateOrResetDefault_LeavesAnotherActiveProfileActive(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, reset.IsDefault)
 	assert.Equal(t, []string{"default"}, defaultsOf(t, svc, "g1"), "and keeps it when default already had it")
+
+	// #445 review F2, ruling A: a game's only profile file is its active
+	// one, marked or not - so a reset does not take that away either, and
+	// where no profile is marked among several it does not pick one.
+	for name, files := range map[string][]string{"a sole unmarked profile": {"solo"}, "none marked among several": {"x", "y"}} {
+		t.Run(name, func(t *testing.T) {
+			svc := newFlowsTestService(t)
+			dir := filepath.Join(svc.ConfigDir(), "games", "g2", "profiles")
+			require.NoError(t, os.MkdirAll(dir, 0o755))
+			for _, f := range files {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, f+".yaml"), []byte("name: "+f+"\ngame_id: g2\nmods: []\n"), 0o644))
+			}
+			reset, err := svc.NewProfileManager().CreateOrResetDefault(ctx, "g2")
+			require.NoError(t, err)
+			assert.False(t, reset.IsDefault)
+			assert.Empty(t, defaultsOf(t, svc, "g2"))
+		})
+	}
 }
 
 func TestDeleteProfile_TheActiveProfileIsRefused(t *testing.T) {

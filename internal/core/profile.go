@@ -144,7 +144,12 @@ func (pm *ProfileManager) isFirstProfile(gameID string) (bool, error) {
 //
 // The reset profile is the game's active one unless another profile
 // already is (#446): re-configuring a game whose user has switched to
-// another profile must not leave two profiles marked `is_default`.
+// another profile must not leave two profiles marked `is_default`. A game
+// whose only profile file is another, unmarked one has that profile active
+// too (#445 review F2, ruling A), and one whose files mark no single
+// profile - or cannot all be read - is left as it is rather than resolved
+// by a guess: default is marked only when it already was, or when it is
+// the game's only profile.
 func (pm *ProfileManager) CreateOrResetDefault(ctx context.Context, gameID string) (*domain.Profile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -155,14 +160,16 @@ func (pm *ProfileManager) CreateOrResetDefault(ctx context.Context, gameID strin
 	if _, err := config.ProfilePath(pm.configDir, gameID, "default"); err != nil {
 		return nil, err
 	}
-	others, err := pm.List(ctx, gameID)
+	flags, err := readProfileFlags(pm.configDir, gameID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listing profiles: %w", err)
 	}
+	others := slices.DeleteFunc(slices.Clone(flags.names), func(n string) bool { return n == "default" })
+	markedOthers := slices.DeleteFunc(slices.Clone(flags.flagged), func(n string) bool { return n == "default" })
 	profile := &domain.Profile{
 		Name:      "default",
 		GameID:    gameID,
-		IsDefault: !slices.ContainsFunc(others, func(p *domain.Profile) bool { return p.IsDefault && p.Name != "default" }),
+		IsDefault: len(markedOthers) == 0 && (len(others) == 0 || slices.Contains(flags.flagged, "default")),
 	}
 	if err := pm.save(profile); err != nil {
 		return nil, err
