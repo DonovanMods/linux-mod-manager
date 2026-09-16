@@ -57,3 +57,30 @@ func TestRenderVerifyFinding_AnUnknownStatusStillPrintsNothing(t *testing.T) {
 	})
 	assert.Empty(t, out)
 }
+
+// TestRenderVerifySkipped_AnAdapterRowSaysItIsTheAdapter: verify's adapter
+// tier reports a game every flow refuses - an unknown adapter, or an
+// explicit bepinex off the game root - as a "skipped" row whose Note is
+// "adapter: <refusal>". It carries no mod, so it fell into the
+// file-count branch and printed "? Mod  - could not check file count:
+// adapter: ...", a check that never ran, in front of the refusal a user in
+// that state most needs to read (#413 final review, found walking F4).
+func TestRenderVerifySkipped_AnAdapterRowSaysItIsTheAdapter(t *testing.T) {
+	for _, note := range []string{
+		`adapter: game "valheim": unknown adapter "bepinx"`,
+		`adapter bepinex: reading the loader: permission denied`,
+	} {
+		out := captureStdout(t, func() error {
+			renderVerifyFinding(core.VerifyEvent{Finding: core.VerifyFinding{Status: "skipped", Note: note}})
+			return nil
+		})
+		assert.Equal(t, "? "+note+"\n", out)
+	}
+
+	// The file-count branch it shadowed still answers for its own row.
+	out := captureStdout(t, func() error {
+		renderVerifyFinding(core.VerifyEvent{Finding: core.VerifyFinding{Status: "skipped", ModID: "m1", Note: "db locked"}})
+		return nil
+	})
+	assert.Equal(t, "? Mod m1 - could not check file count: db locked\n", out)
+}

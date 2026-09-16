@@ -540,10 +540,11 @@ func renderVerifyLoaderFinding(f core.VerifyFinding) {
 // renderVerifySkipped disambiguates the several distinct "skipped" finding
 // sites the verify engine emits (fileCountPrePass's two lookup failures,
 // perFileWalk's unknown-mod row, versionPass's source-unreachable row,
-// mergedPakStalenessPass's own check failure, and convergencePass's
-// per-item failures) - all share one Status string but the pre-#224
-// doVerify printed each with different wording. The dispatch is structural
-// (which Finding fields are populated) except for three Note prefixes,
+// mergedPakStalenessPass's own check failure, convergencePass's per-item
+// failures, and adapterPass's resolution or Verify failure) - all share one
+// Status string but the pre-#224 doVerify printed each with different
+// wording. The dispatch is structural (which Finding fields are populated)
+// except for four Note prefixes,
 // which the emitting passes format deliberately for exactly this purpose:
 // their text-mode line drops the prefix for a friendlier phrase (or reuses
 // it verbatim), while their --json Note keeps the full formatted string.
@@ -570,6 +571,13 @@ func renderVerifySkipped(f core.VerifyFinding) {
 	// mergedPakStalenessPass: CheckMergedPakStaleness itself failed - Note
 	// is already the full message.
 	case strings.HasPrefix(f.Note, "could not check merged pak staleness: "):
+		fmt.Printf("%s %s\n", colorYellow("?"), f.Note)
+
+	// adapterPass: the game's adapter would not resolve, or its Verify
+	// failed - Note is already "adapter: <err>" or "adapter <id>: <err>",
+	// and the row names no mod. Before the file-count arm below, which
+	// would otherwise claim it (#413 final review).
+	case f.ModID == "" && strings.HasPrefix(f.Note, "adapter"):
 		fmt.Printf("%s %s\n", colorYellow("?"), f.Note)
 
 	// fileCountPrePass: the installed-mod lookup itself failed (a genuine
