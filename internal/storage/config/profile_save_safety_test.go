@@ -11,6 +11,8 @@ package config_test
 //   - F10: the atomic replace needs a temporary file beside the profile, so a
 //     writable profile in a read-only directory stopped saving. It is saved
 //     in place there again, and the save says it was not atomic.
+//   - F12: switching a flow-style reference back on wrote `disabled: false`
+//     into it; the key is removed instead (absent means enabled).
 //
 // CheckProfileSave is F5's precondition: whether a save could be made now,
 // decided the way the save decides it, with nothing written.
@@ -174,4 +176,53 @@ func TestCheckProfileSave(t *testing.T) {
 	assert.ErrorIs(t, config.CheckProfileSave(dir, fresh), fs.ErrPermission)
 	_, err = os.Stat(filepath.Join(gamesDir, "g2"))
 	assert.ErrorIs(t, err, fs.ErrNotExist, "checking creates nothing")
+}
+
+func TestSaveProfile_EnablingAFlowReferenceDropsTheMarker(t *testing.T) {
+	cases := map[string]struct{ before, after string }{
+		"last key": {
+			"name: p\ngame_id: g1\nmods:\n  - {source_id: s, mod_id: a, disabled: true}   # off for now\n",
+			"name: p\ngame_id: g1\nmods:\n  - {source_id: s, mod_id: a}   # off for now\n",
+		},
+		"middle key": {
+			"name: p\ngame_id: g1\nmods:\n  - {source_id: s, disabled: true, mod_id: a}\n",
+			"name: p\ngame_id: g1\nmods:\n  - {source_id: s, mod_id: a}\n",
+		},
+		"first key": {
+			"name: p\ngame_id: g1\nmods:\n  - {disabled: true, source_id: s, mod_id: a}\n",
+			"name: p\ngame_id: g1\nmods:\n  - {source_id: s, mod_id: a}\n",
+		},
+		"trailing comma": {
+			"name: p\ngame_id: g1\nmods:\n  - {source_id: s, mod_id: a, disabled: true,}\n",
+			"name: p\ngame_id: g1\nmods:\n  - {source_id: s, mod_id: a,}\n",
+		},
+		"spread over lines": {
+			"name: p\ngame_id: g1\nmods:\n  - {source_id: s,\n     mod_id: a,\n     disabled: true}\n",
+			"name: p\ngame_id: g1\nmods:\n  - {source_id: s,\n     mod_id: a}\n",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := writeProfileFile(t, dir, "g1", "p", tc.before)
+			profile, err := config.LoadProfile(dir, "g1", "p")
+			require.NoError(t, err)
+			require.True(t, profile.Mods[0].Disabled)
+			profile.Mods[0].Disabled = false
+			report, err := config.SaveProfileReporting(dir, profile)
+			require.NoError(t, err)
+			assert.False(t, report.Rewritten)
+			assert.Equal(t, tc.after, readFile(t, path))
+		})
+	}
+
+	t.Run("unlocking drops locked too", func(t *testing.T) {
+		dir := t.TempDir()
+		path := writeProfileFile(t, dir, "g1", "p", "name: p\ngame_id: g1\nmods:\n  - {source_id: s, mod_id: a, version: \"1\", locked: true}\n")
+		profile, err := config.LoadProfile(dir, "g1", "p")
+		require.NoError(t, err)
+		profile.Mods[0].Locked = false
+		require.NoError(t, config.SaveProfile(dir, profile))
+		assert.Equal(t, "name: p\ngame_id: g1\nmods:\n  - {source_id: s, mod_id: a, version: \"1\"}\n", readFile(t, path))
+	})
 }

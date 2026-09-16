@@ -1495,7 +1495,9 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
     is never replaced, and a `.bak` that is a link is never written through
     — and lmm prints where it kept it; a profile the YAML encoder cannot
     write so that it reads back is refused rather than saved unreadable. A
-    rename keeps the file's text too.
+    rename keeps the file's text too. Switching a mod back on removes the
+    `disabled:` key from a one-line `{…}` entry too, rather than writing
+    `disabled: false` into it.
   - A writable profile in a directory lmm cannot create files in is still
     saved: in place, as before this change, with a warning that the save
     was not atomic.

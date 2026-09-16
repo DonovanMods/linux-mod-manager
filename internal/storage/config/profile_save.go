@@ -1135,6 +1135,11 @@ func (e *docEditor) setItemKey(item modItem, rank int, key, wantText string, zer
 	}
 
 	if zero {
+		if flow && e.removeFlowEntry(k, v) == nil {
+			// #441 review F12: absent reads as the zero value, so the key
+			// goes, as it does from a block reference.
+			return nil
+		}
 		if flow || i == 0 {
 			// A key a line cannot be taken from: its value becomes the one
 			// that reads as absent.
@@ -1177,33 +1182,86 @@ func (e *docEditor) setItemKey(item modItem, rank int, key, wantText string, zer
 	return e.replaceEntry(k, v, entryText)
 }
 
+// removeFlowEntry removes a flow mapping's entry k: v together with the
+// comma that separates it from its neighbour - the one before it, or for a
+// first entry the one after it. An entry whose removal would take a comment
+// with it is refused.
+func (e *docEditor) removeFlowEntry(k, v *yaml.Node) error {
+	start, end, err := e.entrySpan(k, v)
+	if err != nil {
+		return err
+	}
+	blank := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+	before := start
+	for before > 0 && blank(e.data[before-1]) {
+		before--
+	}
+	switch {
+	case before > 0 && e.data[before-1] == ',':
+		start = before - 1
+	case before > 0 && e.data[before-1] == '{':
+		after := end
+		for after < len(e.data) && blank(e.data[after]) {
+			after++
+		}
+		if after >= len(e.data) || e.data[after] != ',' {
+			return errors.New("the entry is its mapping's only one")
+		}
+		after++
+		for after < len(e.data) && blank(e.data[after]) {
+			after++
+		}
+		end = after
+	default:
+		return errors.New("the entry's separator could not be located")
+	}
+	if bytes.IndexByte(e.data[start:end], '#') >= 0 {
+		return errors.New("removing the entry would remove a comment")
+	}
+	e.edits = append(e.edits, textEdit{offset: start, length: end - start})
+	return nil
+}
+
 // replaceEntry replaces a mapping entry - from its key to the end of its
 // value's last line - with text.
 func (e *docEditor) replaceEntry(k, v *yaml.Node, text string) error {
-	start, err := e.nodeOffset(k)
+	start, end, err := e.entrySpan(k, v)
 	if err != nil {
 		return err
 	}
+	e.edits = append(e.edits, textEdit{offset: start, length: end - start, text: text})
+	return nil
+}
+
+// entrySpan is the bytes a mapping entry occupies: from its key to the end
+// of its value - the end of the value's last line, or, for a scalar or a
+// flow collection, the value's own end, so what follows it on the line (a
+// comma and the rest of a flow reference) is not part of it.
+func (e *docEditor) entrySpan(k, v *yaml.Node) (start, end int, err error) {
+	start, err = e.nodeOffset(k)
+	if err != nil {
+		return 0, 0, err
+	}
 	if k.Style != 0 {
-		return errors.New("the key is quoted")
+		return 0, 0, errors.New("the key is quoted")
 	}
 	last, err := e.lastLineOf(k, v)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	end, _, ok := e.src.lineEnd(last)
 	if !ok {
-		return errors.New("the value's last line could not be located")
+		return 0, 0, errors.New("the value's last line could not be located")
 	}
 	if v.Kind != yaml.ScalarNode && v.Style&yaml.FlowStyle != 0 {
 		// A flow value can end mid-line, before more of a flow reference.
 		open, err := e.nodeOffset(v)
 		if err != nil {
-			return err
+			return 0, 0, err
 		}
 		close, ok := e.src.matchingClose(open)
 		if !ok {
-			return errors.New("the value's closing bracket could not be located")
+			return 0, 0, errors.New("the value's closing bracket could not be located")
 		}
 		end = close + 1
 	} else if v.Kind == yaml.ScalarNode && !isEmptyScalar(v) {
@@ -1211,22 +1269,21 @@ func (e *docEditor) replaceEntry(k, v *yaml.Node, text string) error {
 		// comma and the rest of a flow reference - stays.
 		sub := &docEditor{src: e.src, data: e.data}
 		if err := sub.replaceScalar(v, ""); err != nil {
-			return err
+			return 0, 0, err
 		}
 		end = sub.edits[0].offset + sub.edits[0].length
 	} else if isEmptyScalar(v) {
 		// `key:` with nothing after it: only the key and its colon go.
 		colon := bytes.IndexByte(e.data[start:end], ':')
 		if colon < 0 {
-			return errors.New("the key's colon could not be located")
+			return 0, 0, errors.New("the key's colon could not be located")
 		}
 		end = start + colon + 1
 		if rest := strings.TrimSpace(string(e.data[end:e.src.lines[k.Line-1].end])); rest != "" && !strings.HasPrefix(rest, "#") {
-			return errors.New("the empty value is followed by more text")
+			return 0, 0, errors.New("the empty value is followed by more text")
 		}
 	}
-	e.edits = append(e.edits, textEdit{offset: start, length: end - start, text: text})
-	return nil
+	return start, end, nil
 }
 
 // insertItemKey adds entryText to the reference, after the nearest key
