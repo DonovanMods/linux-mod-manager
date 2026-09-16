@@ -337,10 +337,11 @@ func (s *Service) ListAdapters() []string {
 // to games.yaml - domain.Game.Adapter stays what the user typed.
 //
 // The BepInEx half is the one derivation that touches DISK, which is a cost
-// worth naming: one os.Stat per resolution, and only for a game that
-// declares no adapter, is not a compile game, deploys into its game root and
-// does not declare the loader. Resolution happens once per flow, never per
-// file.
+// worth naming, and only for a game that declares no adapter and is not a
+// compile game: one os.Stat for the preloader unless the game declares the
+// loader, then - only where BepInEx is there and the two paths are SPELLED
+// differently - one each for mod_path and install_path (modPathIsGameRoot).
+// Resolution happens once per flow, never per file.
 func (s *Service) AdapterName(game *domain.Game) string {
 	if game.Adapter != "" {
 		return game.Adapter
@@ -348,7 +349,7 @@ func (s *Service) AdapterName(game *domain.Game) string {
 	if game.DeployMode == domain.DeployCompile && s.adapterRegistry().Has(icarusAdapterID) {
 		return icarusAdapterID
 	}
-	if s.adapterRegistry().Has(bepinexAdapterID) && modPathIsGameRoot(game) && hasBepInEx(game) {
+	if s.adapterRegistry().Has(bepinexAdapterID) && hasBepInEx(game) && modPathIsGameRoot(game) {
 		return bepinexAdapterID
 	}
 	return adapter.GenericID
@@ -366,14 +367,36 @@ func (s *Service) AdapterName(game *domain.Game) string {
 // plugin under BepInEx/plugins/BepInEx/plugins/, where nothing loads it.
 // Such a game keeps the identity, which is exactly what v1 did with it.
 //
-// The comparison is lexical, after filepath.Clean: an empty mod_path is
-// never the game root (the installer joins it verbatim, relative to the
-// working directory), and a trailing separator is.
+// The question is about DIRECTORIES, not spellings (#413 final review F2).
+// Two paths that are equal after filepath.Clean answer it without touching
+// disk - so a trailing separator is the game root, and games.yaml's `~` and
+// relative mod_path arrive here already expanded. Otherwise the two are
+// compared as the directories they name (os.SameFile, which follows
+// symlinks): Steam's ~/.steam/steam is a symlink to ~/.local/share/Steam on
+// most Linux installs, so one install is routinely written both ways, and a
+// lexical answer made such a game "off root" - generic-files, a loose plugin
+// deployed where BepInEx never loads it, and an explicit bepinex refused
+// for a layout that was right. A path that cannot be stat'd is not the game
+// root, which is the lexical answer it already had.
+//
+// An empty mod_path is never the game root: the installer joins it
+// verbatim, relative to the working directory.
 func modPathIsGameRoot(game *domain.Game) bool {
 	if game == nil || game.ModPath == "" || game.InstallPath == "" {
 		return false
 	}
-	return filepath.Clean(game.ModPath) == filepath.Clean(game.InstallPath)
+	if filepath.Clean(game.ModPath) == filepath.Clean(game.InstallPath) {
+		return true
+	}
+	modInfo, err := os.Stat(game.ModPath)
+	if err != nil {
+		return false
+	}
+	installInfo, err := os.Stat(game.InstallPath)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(modInfo, installInfo)
 }
 
 // hasBepInEx reports whether anything says this game loads mods through

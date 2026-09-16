@@ -331,7 +331,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   **A 1.x `games.yaml` keeps deploying where it did (#413).** BepInEx's
   layout is relative to the game root, so the adapter is only derived for
-  a game that deploys there. A game configured before lmm supported
+  a game that deploys there — the same directory as its install path,
+  however `games.yaml` spells the two (a symlinked Steam library path
+  included). A game configured before lmm supported
   BepInEx — `mod_path` pointing at `<install>/BepInEx/plugins` — keeps
   deploying its archives into that directory exactly as packaged, as 1.x
   did; deriving the adapter for it nested every plugin one level too deep,

@@ -383,8 +383,10 @@ The user and the curated known-games entry own it; no adapter rewrites it.
 But one adapter depends on it. Every path `bepinex` produces
 (`BepInEx/plugins/…`, `BepInEx/config/…`) is relative to the **game root**,
 so it is only right for a game whose `mod_path` IS its `install_path` —
-never `mod_path: ""`, which is joined verbatim and deploys relative to the
-working directory. So:
+the same directory, however the two are spelled (a trailing slash, `~`, a
+relative `mod_path`, or a symlink such as Steam's `~/.steam/steam` all
+count) — and never `mod_path: ""`, which is joined verbatim and deploys
+relative to the working directory. So:
 
 - bepinex is **derived** only for a game-root `mod_path`. A game that
   predates lmm's loader support and points `mod_path` at
