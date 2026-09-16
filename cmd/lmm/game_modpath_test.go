@@ -225,9 +225,15 @@ func TestDoGameDetect_SelectRefusesToMoveAModPathWithFilesDeployed(t *testing.T)
 func TestDoGameEdit_ModPathNamesEveryProfileToPurge(t *testing.T) {
 	svc, game := setupFreshModPathGame(t)
 	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
-	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "second")
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "second")
 	require.NoError(t, err)
+	// A deploy acts for the active profile only (#445), so second's files
+	// are the ones it deployed while it was active - what a switch before
+	// the upgrade, or `lmm import -p`, leaves behind.
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "second"))
 	deployOneFileForTest(t, svc, game, "second", "m2")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 	gameEditModPath, gameEditModPathSet = game.InstallPath, true
 
 	err = doGameEdit(context.Background(), svc, game.ID, false)
