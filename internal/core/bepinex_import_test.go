@@ -371,7 +371,7 @@ func TestImportArchive_BepInEx_FrameworkPackIsRefusedInEverySpelling(t *testing.
 // R2: a shape-B root spelled `Plugins/` and `Config/` used to keep the
 // archive's own spelling on the way through the BepInEx/ prefix, so the
 // plugin deployed to BepInEx/Plugins/ (where the loader never looks on a
-// case-sensitive filesystem) and the config missed isBepInExConfigMember
+// case-sensitive filesystem) and the config missed the config-routing rule
 // entirely - seeding the user's hand-edited .cfg as a symlink into lmm's
 // cache, which is exactly what #358 (b) exists to prevent.
 func TestImportArchive_BepInEx_CaseVariantShapeBSeedsARealConfig(t *testing.T) {
