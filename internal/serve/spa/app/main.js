@@ -1051,17 +1051,13 @@ if (typeof window !== "undefined") {
 
 /** startBinding runs work as origin's binding: recorded in bindingJobs
  * until it settles, keyed so a concurrent binding for a DIFFERENT origin is
- * never disturbed. Shared by confirmPlan and startToggle - the two entry
- * points that write into state.origins.
- *
- * work's own value comes back out (issue 432): startToggle answers its
- * caller with the job id it bound, so a control that acknowledged the click
- * optimistically can tell a start that never happened from one that did. */
+ * never disturbed. Shared by confirmPlan, retryInstallOverwrite and
+ * startToggle - the entry points that write into state.origins. */
 async function startBinding(origin, work) {
   const promise = work();
   bindingJobs.set(origin, promise);
   try {
-    return await promise;
+    await promise;
   } finally {
     if (bindingJobs.get(origin) === promise) bindingJobs.delete(origin);
   }
@@ -1828,8 +1824,9 @@ async function onJobDone(summary) {
  *
  * Nothing else could ever end it, so everything waiting on it is ended
  * here: a batch's wait resolves with an ending marked `lost`, which the
- * batch tallies as an unknown outcome; a toggle request bound to it settles
- * as failed; and a control morphed into its progress is handed back, since
+ * batch tallies as an unknown outcome; a toggle request bound to it is held
+ * until a fresh read lands, since the job may well have happened; and a
+ * control morphed into its progress is handed back, since
  * that readout would otherwise say "Working…" for good. The route is
  * re-read, so what is on screen afterwards is the server's current state,
  * whatever the lost job did. It always toasts: no control can show an
