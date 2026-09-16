@@ -737,7 +737,13 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		if err := refuseExternal("deploy", mod, ReasonExternalNoDeploy); err != nil {
 			return result, err
 		}
-		if !mod.Enabled && !opts.All {
+		// #431 (fix round F7): the document marking the mod off is the same
+		// statement about the same mod as the row's own flag, so it gets
+		// the same answer - a refusal that names the remedy, not a silent
+		// deploy. A targeted command that quietly did the opposite of what
+		// the profile says is worse than one that explains itself.
+		docOff := s.profileDisabledKeys(ctx, game.ID, profileName)[domain.ModKey(mod.SourceID, mod.ID)]
+		if (!mod.Enabled || docOff) && !opts.All {
 			return result, fmt.Errorf("mod %s is disabled - use --all to deploy disabled mods, or enable it with 'lmm mod enable %s'", mod.Name, opts.ModID)
 		}
 		modsToDeploy = append(modsToDeploy, mod)
@@ -746,11 +752,23 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		if err != nil {
 			return result, fmt.Errorf("getting installed mods: %w", err)
 		}
+		// #431 (fix round F7): the profile document is the desired state,
+		// so a mod it marks off is not deployed by the profile-wide deploy
+		// - the flow the web UI's Mission Control button drives - however
+		// the installed row's own enabled flag reads. That drift is what
+		// `profile import --force`, `snapshot restore` and a hand-edited
+		// document all leave behind, and deploy was the one flow of the
+		// five that still carried it into the game directory. --all is
+		// unaffected: it exists to deploy mods that are switched off, and
+		// overrides the marker exactly as it overrides the row's flag.
+		docDisabled := s.profileDisabledKeys(ctx, game.ID, profileName)
 		for i := range mods {
 			var shouldDeploy bool
 			switch {
 			case opts.All:
 				shouldDeploy = true
+			case docDisabled[domain.ModKey(mods[i].SourceID, mods[i].ID)]:
+				shouldDeploy = false
 			case enabledBeforePurge != nil:
 				shouldDeploy = enabledBeforePurge[domain.ModKey(mods[i].SourceID, mods[i].ID)]
 			default:

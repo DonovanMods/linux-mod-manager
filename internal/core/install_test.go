@@ -3436,3 +3436,48 @@ func TestInstallPlan_SkipDependencies(t *testing.T) {
 	assert.Nil(t, plan.DependencyWarnings)
 	assert.Equal(t, "m1", plan.Mod.ID, "the primary mod is untouched")
 }
+
+// TestService_ApplyInstall_ClearsTheProfilesDisabledMarker is the fix-round
+// F4 regression, and the product call behind it: asking for a mod by name is
+// the clearest statement of intent there is, so an explicit `lmm install`
+// of a mod the document marks off CLEARS the marker rather than installing
+// a mod the next converge run will take straight back off.
+//
+// UpsertMod deliberately preserves the marker (#431) - right for an update
+// or a convergence, which carry no such statement - so the install flow
+// clears it explicitly, exactly as `lmm mod enable` does.
+func TestService_ApplyInstall_ClearsTheProfilesDisabledMarker(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(ctx, "g1", "default", domain.ModReference{SourceID: "src", ModID: "mod1"}))
+	require.NoError(t, pm.SetModDisabled(ctx, "g1", "default", "src", "mod1", true))
+
+	plan, err := svc.PlanInstall(ctx, game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Notes)
+
+	profile, err := pm.Get(ctx, "g1", "default")
+
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.False(t, profile.Mods[0].Disabled,
+		"an explicit install of a mod the document marks off must clear the marker")
+
+	applyPlan, err := svc.PlanProfileApply(ctx, game, "default")
+	require.NoError(t, err)
+	assert.Empty(t, applyPlan.ToDisable, "and the next converge run must not undo the install")
+	assert.FileExists(t, filepath.Join(gameDir, "mod1.esp"))
+}

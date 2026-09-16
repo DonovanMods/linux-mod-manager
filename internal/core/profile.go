@@ -550,6 +550,30 @@ func (pm *ProfileManager) SetModDisabled(ctx context.Context, gameID, profileNam
 	return domain.ErrModNotFound
 }
 
+// profileDisabledKeys is which of gameID/profileName's mod references carry
+// #431's `disabled:` marker, keyed by domain.ModKey - the document's own
+// answer to "is this mod switched off?", for a flow that selects mods from
+// the database and has to honour the desired state as well.
+//
+// A profile that cannot be loaded (none exists yet, or it is unreadable)
+// returns an empty set, which is exactly "the document marks nothing off":
+// the callers all have DB rows to work from either way, and a converge or
+// deploy pass must not fail over a missing desired-state document it is
+// only consulting.
+func (s *Service) profileDisabledKeys(ctx context.Context, gameID, profileName string) map[string]bool {
+	profile, err := s.NewProfileManager().Get(ctx, gameID, profileName)
+	if err != nil {
+		return nil
+	}
+	disabled := make(map[string]bool)
+	for _, ref := range profile.Mods {
+		if ref.Disabled {
+			disabled[domain.ModKey(ref.SourceID, ref.ModID)] = true
+		}
+	}
+	return disabled
+}
+
 // RemoveMod removes a mod reference from a profile
 func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, sourceID, modID string) error {
 	if err := ctx.Err(); err != nil {

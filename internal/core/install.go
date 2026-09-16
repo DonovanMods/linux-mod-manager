@@ -1942,6 +1942,16 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
+	// #431 (fix round F4): UpsertMod preserves the document's off marker,
+	// which is right for an update or a convergence and wrong here. An
+	// install names the mod, and asking for a mod by name is the clearest
+	// statement of intent there is - so the marker is cleared rather than
+	// leaving the next converge run to undo the install. A no-op (and no
+	// file write) whenever the marker was not set.
+	if msg := s.recordProfileDisabled(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID, false); msg != "" {
+		result.Notes = append(result.Notes, msg)
+		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
+	}
 
 	result.Installed = append(result.Installed, InstalledRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version})
 	emit(ModEvent{Scope: scope, Phase: InstallDepInstalled, FilesExtracted: filesExtracted})
@@ -2447,6 +2457,12 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		}
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.ProfileWriteFailed = true
+		result.Notes = append(result.Notes, msg)
+		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
+	}
+	// #431 (fix round F4): the explicit install clears the document's off
+	// marker - see the dependency loop's identical call for why.
+	if msg := s.recordProfileDisabled(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID, false); msg != "" {
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}

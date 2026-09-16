@@ -1679,3 +1679,80 @@ func TestService_QueriesRunDuringMutation(t *testing.T) {
 		require.NoError(t, err)
 	}
 }
+
+// TestService_DeployProfile_SkipsAModTheDocumentMarksDisabled is the
+// fix-round F7 regression, and the product call behind it: the profile
+// document is desired state, so `lmm deploy` - the flow the web UI's
+// Mission Control button drives - must not deploy a mod the document says
+// is switched off. It selected on the installed row's enabled flag alone,
+// which is the one place a doc/row drift (an imported or restored document
+// over live rows) still reached the game directory.
+func TestService_DeployProfile_SkipsAModTheDocumentMarksDisabled(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	seedNamedInstalledMod(t, svc, game, "src", "on", "Mod On", "1.0", true, map[string][]byte{"on.esp": []byte("on")})
+	seedNamedInstalledMod(t, svc, game, "src", "off", "Mod Off", "1.0", true, map[string][]byte{"off.esp": []byte("off")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "on", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "off", "1.0")
+	// The document alone says off - the row still says enabled.
+	require.NoError(t, svc.NewProfileManager().SetModDisabled(ctx, "g1", "default", "src", "off", true))
+
+	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Deployed, "only the mod the document leaves on is deployed")
+
+	assert.FileExists(t, filepath.Join(gameDir, "on.esp"))
+	assert.NoFileExists(t, filepath.Join(gameDir, "off.esp"),
+		"a mod the profile document marks disabled must not reach the game directory")
+}
+
+// TestService_DeployProfile_AllDeploysAModTheDocumentMarksDisabled is the
+// limit of the rule above: `--all` exists to deploy disabled mods, so it
+// still says what it always said. The marker is desired state, not a
+// refusal - an explicit flag overrides it, exactly as it overrides the
+// row's own disabled flag.
+func TestService_DeployProfile_AllDeploysAModTheDocumentMarksDisabled(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	seedNamedInstalledMod(t, svc, game, "src", "off", "Mod Off", "1.0", true, map[string][]byte{"off.esp": []byte("off")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "off", "1.0")
+	require.NoError(t, svc.NewProfileManager().SetModDisabled(ctx, "g1", "default", "src", "off", true))
+
+	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{All: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Deployed)
+	assert.FileExists(t, filepath.Join(gameDir, "off.esp"))
+}
+
+// TestService_DeployProfile_TargetedDeployOfADocumentDisabledModIsRefused
+// completes F7 on the one deploy path that names a single mod. `lmm deploy
+// --mod X` already refuses a mod whose installed ROW says it is off, naming
+// the remedy; the document saying so is the same statement about the same
+// mod, so it gets the same answer rather than silently deploying. --all
+// still overrides, as it does for the row.
+func TestService_DeployProfile_TargetedDeployOfADocumentDisabledModIsRefused(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	seedNamedInstalledMod(t, svc, game, "src", "off", "Mod Off", "1.0", true, map[string][]byte{"off.esp": []byte("off")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "off", "1.0")
+	require.NoError(t, svc.NewProfileManager().SetModDisabled(ctx, "g1", "default", "src", "off", true))
+
+	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{SourceID: "src", ModID: "off"}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lmm mod enable off")
+	assert.NoFileExists(t, filepath.Join(gameDir, "off.esp"))
+
+	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{SourceID: "src", ModID: "off", All: true}, nil)
+	require.NoError(t, err, "--all still deploys a switched-off mod on request")
+	assert.Equal(t, 1, result.Deployed)
+	assert.FileExists(t, filepath.Join(gameDir, "off.esp"))
+}
