@@ -41,13 +41,14 @@ func (s *Service) currentInstalledSnapshot(ctx context.Context, gameID, profileN
 }
 
 // currentMarkedSnapshot is currentInstalledSnapshot for a plan the profile
-// document's markers decide (see markedSnapshotOf).
+// document's markers decide (see markedSnapshotOf), reading the document as
+// it is now.
 func (s *Service) currentMarkedSnapshot(ctx context.Context, gameID, profileName string) (installedSnapshot, error) {
 	mods, err := s.GetInstalledMods(ctx, gameID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading installed mods: %w", err)
 	}
-	return s.markedSnapshotOf(gameID, mods)
+	return s.markedSnapshotOf(gameID, mods, s.documentDisabledKeys(gameID, profileName))
 }
 
 // AdapterPreconditionError is the typed error a frontend branches on when a
@@ -137,7 +138,8 @@ func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (install
 // markedSnapshotOf is snapshotOf for a plan the profile document's
 // `disabled:` markers decide on a DISABLED row - `profile apply`, which
 // re-enables an unmarked one, and `profile sync`, which drops its
-// reference. Each entry also records whether the document marks the mod.
+// reference. Each of mods' entries also records whether disabled (the
+// document's markers, disabledKeysOf) holds it.
 //
 // #431 (fix round 3, F2): the one-time backfill writes exactly that marker,
 // and it can land between such a plan and its Apply - inside the Apply's
@@ -146,30 +148,22 @@ func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (install
 // Every other plan leaves a disabled row alone whether it is marked or not,
 // so its snapshot leaves markers out: a `lmm deploy` planned beside another
 // lmm's first open must not be refused over one it cannot act on.
-func (s *Service) markedSnapshotOf(gameID string, mods []domain.InstalledMod) (installedSnapshot, error) {
+//
+// A plan passes the rows and the markers it decided from - never a second
+// read, which another process's marker could slip in front of, leaving a
+// snapshot that already agrees with an Apply the marker has overruled.
+func (s *Service) markedSnapshotOf(gameID string, mods []domain.InstalledMod, disabled map[string]bool) (installedSnapshot, error) {
 	snap, err := s.snapshotOf(gameID, mods)
 	if err != nil {
 		return nil, err
 	}
-	s.recordDocumentMarkers(snap, gameID, mods)
-	return snap, nil
-}
-
-// recordDocumentMarkers adds each of mods' document markers to snap, and
-// the key that says snap carries them.
-func (s *Service) recordDocumentMarkers(snap installedSnapshot, gameID string, mods []domain.InstalledMod) {
-	markers := make(map[string]map[string]bool) // by profile
-	for _, m := range mods {
-		disabled, ok := markers[m.ProfileName]
-		if !ok {
-			disabled = s.documentDisabledKeys(gameID, m.ProfileName)
-			markers[m.ProfileName] = disabled
-		}
-		if key := domain.ModKey(m.SourceID, m.ID); disabled[key] {
+	for key := range snap {
+		if disabled[key] {
 			snap[key] += "|off"
 		}
 	}
 	snap[snapshotMarkersKey] = ""
+	return snap, nil
 }
 
 // checkPlanFresh re-derives gameID/profileName's CURRENT installed-mod

@@ -371,7 +371,9 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 		s.resolveProfileApplyInstall(ctx, game, &plan.ToInstall[i])
 	}
 
-	snapshot, err := s.currentMarkedSnapshot(ctx, game.ID, profileName)
+	// The rows and the document this plan was decided from (see
+	// markedSnapshotOf).
+	snapshot, err := s.markedSnapshotOf(game.ID, installedMods, disabledKeysOf(profile))
 	if err != nil {
 		return nil, err
 	}

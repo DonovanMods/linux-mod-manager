@@ -890,6 +890,48 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 		assert.Empty(t, plan.ToRemove, "the re-plan reads the marker")
 	})
 
+	// Another lmm's discharge can write the marker between the document
+	// read a plan decides from and the snapshot it records. The snapshot
+	// has to describe what the plan read, or the plan passes the check
+	// with a decision the marker has already overruled.
+	t.Run("a marker written while the plan is being made", func(t *testing.T) {
+		for _, flow := range []string{"apply", "sync"} {
+			t.Run(flow, func(t *testing.T) {
+				f := newBackfillFixture(t)
+				f.row(t, "a", "off", false, false)
+				other, _ := f.reopen(t) // another lmm, which owes nothing itself
+
+				var apply func() error
+				core.AfterProfileLoadForTest(func(loads int) {
+					if loads == 1 {
+						require.NoError(t, other.NewProfileManager().SetModDisabled(ctx, f.game.ID, "a", "src", "off", true))
+					}
+				}, func() {
+					switch flow {
+					case "apply":
+						plan, err := f.svc.PlanProfileApply(ctx, f.game, "a")
+						require.NoError(t, err)
+						require.Len(t, plan.ToEnable, 1, "decided from the unmarked read")
+						apply = func() error {
+							_, err := f.svc.ApplyProfileApply(ctx, f.game, plan, core.ProfileApplyOptions{}, nil)
+							return err
+						}
+					case "sync":
+						plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
+						require.NoError(t, err)
+						require.Len(t, plan.ToRemove, 1, "decided from the unmarked read")
+						apply = func() error {
+							_, err := f.svc.ApplyProfileSync(ctx, f.game, plan, nil)
+							return err
+						}
+					}
+				})
+				require.ErrorIs(t, apply(), core.ErrStalePlan)
+				assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+			})
+		}
+	})
+
 	// Only a plan the marker can change is refused. A deploy never enables a
 	// disabled row, and the backfill marks nothing else, so a deploy (or a
 	// purge) planned across the discharge still applies. Refusing it made a

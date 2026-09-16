@@ -575,6 +575,12 @@ func (s *Service) documentDisabledKeys(gameID, profileName string) map[string]bo
 	if err != nil {
 		return nil
 	}
+	return disabledKeysOf(profile)
+}
+
+// disabledKeysOf is which of profile's mod references carry the
+// `disabled:` marker, keyed by domain.ModKey.
+func disabledKeysOf(profile *domain.Profile) map[string]bool {
 	disabled := make(map[string]bool)
 	for _, ref := range profile.Mods {
 		if ref.Disabled {
