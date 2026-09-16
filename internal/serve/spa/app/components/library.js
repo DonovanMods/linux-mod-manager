@@ -11,7 +11,7 @@
 // exact list this table is showing, so this component now renders `visible`
 // rather than computing it.
 
-import { html, useEffect, useRef, useState } from "../render.js";
+import { html, useEffect, useMemo, useRef, useState } from "../render.js";
 import { navigate } from "../router.js";
 import { ApiError } from "../api.js";
 import {
@@ -709,6 +709,15 @@ export function Library({
   // The selection's size in words, shared by the batch bar and the live
   // region below.
   const selectionCount = `${selectedRows().length} of ${visible.length} selected`;
+  // What the live region says is recomputed only when the SELECTION
+  // changes. The count above also moves with `visible`, so a region reading
+  // it directly spoke up on every keystroke of a search - "0 of 1 selected"
+  // while nothing about the selection had changed. The words are the ones
+  // the bar shows at the moment of the change.
+  const selectionAnnouncement = useMemo(
+    () => (selected.size > 0 ? selectionCount : "No mods selected"),
+    [selected],
+  );
 
   return html`
     <section class="library">
@@ -723,7 +732,7 @@ export function Library({
         ""
       }
       <p class="visually-hidden" role="status" data-testid="selection-status">
-        ${selected.size > 0 ? selectionCount : "No mods selected"}
+        ${selectionAnnouncement}
       </p>
       <div class="library__toolbar">
         <h2 class="section-header">${libraryLabel}</h2>

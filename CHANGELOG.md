@@ -295,7 +295,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows the actions cannot apply to rather than selecting them and having the
   buttons refuse: a Steam-managed row has no enable/disable at all, and an
   update lmm cannot apply has no checkbox of its own. The batch bar says
-  **“3 of 12 selected”** (and a screen reader hears each change), every
+  **“3 of 12 selected”** (and a screen reader hears each change to the
+  selection, not each keystroke of a search), every
   batch button carries the number it is about to act on — **Update (3)** —
   and the count always describes rows still on screen: updating a ticked mod
   from anywhere takes it out of the Updates card's count, and a confirmed

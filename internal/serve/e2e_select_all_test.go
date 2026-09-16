@@ -8,6 +8,7 @@ package serve_test
 // can show whether a partial selection reads as one.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -376,6 +377,48 @@ func TestE2E_LibrarySelection_IsAnnounced(t *testing.T) {
 	assert.Equal(t, "No mods selected", clearedText, "and so is clearing it")
 	assert.True(t, sameElement, "one persistent region, not one mounted with the batch bar")
 	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibrarySelection_StatusSpeaksOnlyWhenTheSelectionChanges is the
+// re-review's F4: the always-present status region (issue 434) announced
+// "0 of 1 selected" on every keystroke of a search, with the selection
+// itself untouched. It speaks for a selection change and nothing else.
+func TestE2E_LibrarySelection_StatusSpeaksOnlyWhenTheSelectionChanges(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var whileTyping, afterSelecting []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 3`),
+		chromedp.Evaluate(selectLibraryRowJS("Alpha Mod"), nil),
+		settleEffects(),
+		chromedp.Evaluate(`(() => {
+			window.__statusLog = [];
+			const el = document.querySelector('[data-testid="selection-status"]');
+			new MutationObserver(() => window.__statusLog.push(el.textContent.trim()))
+				.observe(el, {subtree: true, childList: true, characterData: true});
+		})()`, nil),
+		typeIntoOmnibar("m"), settleEffects(),
+		typeIntoOmnibar("i"), settleEffects(),
+		typeIntoOmnibar("d"), settleEffects(),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 1`),
+		chromedp.Evaluate(`window.__statusLog.slice()`, &whileTyping),
+		chromedp.Evaluate(selectLibraryRowJS("Middle Mod"), nil),
+		settleEffects(),
+		chromedp.Evaluate(`window.__statusLog.slice()`, &afterSelecting),
+	)
+	assert.Empty(t, whileTyping, "narrowing the table is not a selection change, so the region stays quiet")
+	require.NotEmpty(t, afterSelecting, "a selection change is still announced")
+	assert.Contains(t, afterSelecting[len(afterSelecting)-1], "selected")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// selectLibraryRowJS ticks the batch-selection box of the row named.
+func selectLibraryRowJS(name string) string {
+	return fmt.Sprintf(`Array.from(document.querySelectorAll(".mod-row"))
+		.find((r) => r.textContent.includes(%q))
+		.querySelector("td.col--select input").click();`, name)
 }
 
 // updatesCardStateJS reads the Updates card's selection surfaces together:
