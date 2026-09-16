@@ -93,13 +93,24 @@ func (r *Registry) Has(name string) bool {
 // question about a FOREIGN archive: an adapter has already had its full say
 // about an archive for its own game, through NormalizeArchive.
 //
-// Adapters are asked in registered-name order, so a build shipping two
-// claimers answers deterministically, and the FIRST answer wins - a refusal
-// (ErrNotAMod) ahead of a claim, because "this archive is the framework
-// itself" is a better thing to tell a user than "your game needs that
-// framework". An adapter implementing no ArchiveClaimer is skipped, which is
-// every adapter but bepinex today.
+// Two priorities decide the answer, and registered-name order is only the
+// second:
+//
+//	a REFUSAL (a non-nil error, ErrNotAMod for an archive that is the
+//	framework itself) beats every claim, whichever adapter made either -
+//	"this archive is the framework itself" is a better thing to tell a user
+//	than "your game needs that framework", and that stays true when the
+//	claiming adapter happens to sort first. So every claimer is asked, and
+//	the first claim is only held until the scan ends;
+//
+//	among claims, and among refusals, the first in registered-name order
+//	wins, so a build shipping two claimers answers deterministically.
+//
+// An adapter implementing no ArchiveClaimer is skipped, which is every
+// adapter but bepinex today.
 func (r *Registry) ClaimArchive(exceptID string, members []string) (GameAdapter, Claim, error) {
+	var claimant GameAdapter
+	var first Claim
 	for _, name := range r.Names() {
 		if name == exceptID {
 			continue
@@ -116,9 +127,9 @@ func (r *Registry) ClaimArchive(exceptID string, members []string) (GameAdapter,
 		if err != nil {
 			return a, Claim{}, err
 		}
-		if claim.Claimed() {
-			return a, claim, nil
+		if claimant == nil && claim.Claimed() {
+			claimant, first = a, claim
 		}
 	}
-	return nil, Claim{}, nil
+	return claimant, first, nil
 }

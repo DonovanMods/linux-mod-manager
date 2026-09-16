@@ -199,6 +199,11 @@ user to install a loader they do not need. A directory literally named
 that user's problem is different in kind, because no amount of configuring
 their game makes it installable as a mod.
 
+When more than one adapter answers, `Registry.ClaimArchive` asks every one
+of them and a **refusal beats every claim**, whichever adapter sorts first.
+Among claims (and among refusals) the first in registered-name order wins,
+so a build shipping two claimers answers deterministically.
+
 ### Verifier
 
 An adapter's `Verify` is **read-only** — it must not write to the game

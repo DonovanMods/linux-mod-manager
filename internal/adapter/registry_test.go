@@ -246,16 +246,44 @@ func TestRegistryClaimArchive(t *testing.T) {
 		assert.Nil(t, who)
 	})
 
-	t.Run("a refusal is surfaced ahead of any claim", func(t *testing.T) {
-		r := adapter.NewRegistry()
-		refusal := fmt.Errorf("%w: it is the framework itself", adapter.ErrNotAMod)
-		r.Register(claimingAdapter{stubAdapter: stubAdapter{id: "alpha"}, marker: "alpha", refuse: refusal})
-		r.Register(claimingAdapter{stubAdapter: stubAdapter{id: "beta"}, marker: "beta"})
+	// A refusal wins over a claim WHEREVER the two sit in registered-name
+	// order (#413 review F1). The original case named its refuser "alpha"
+	// and its claimer "beta", so a scan that returned the first answer it
+	// met passed by alphabetical accident; the refuser is named on both
+	// sides of the claimer here, and only a scan that actually prefers the
+	// refusal passes both.
+	for _, tc := range []struct {
+		name      string
+		refuserID string
+	}{
+		{name: "the refuser sorts before the claimer", refuserID: "aardvark"},
+		{name: "the refuser sorts after the claimer", refuserID: "zebra"},
+	} {
+		t.Run("a refusal is surfaced ahead of any claim: "+tc.name, func(t *testing.T) {
+			r := adapter.NewRegistry()
+			refusal := fmt.Errorf("%w: it is the framework itself", adapter.ErrNotAMod)
+			r.Register(claimingAdapter{stubAdapter: stubAdapter{id: tc.refuserID}, refuse: refusal})
+			r.Register(claimingAdapter{stubAdapter: stubAdapter{id: "beta"}, marker: "beta"})
 
-		_, claim, err := r.ClaimArchive(adapter.GenericID, []string{"beta/plugin.dll"})
-		require.ErrorIs(t, err, adapter.ErrNotAMod)
-		assert.False(t, claim.Claimed(),
-			`"this archive is the framework itself" is a better thing to say than "your game needs that framework"`)
+			who, claim, err := r.ClaimArchive(adapter.GenericID, []string{"beta/plugin.dll"})
+			require.ErrorIs(t, err, adapter.ErrNotAMod)
+			require.NotNil(t, who)
+			assert.Equal(t, tc.refuserID, who.ID(), "the refusing adapter is the one reported")
+			assert.False(t, claim.Claimed(),
+				`"this archive is the framework itself" is a better thing to say than "your game needs that framework"`)
+		})
+	}
+
+	t.Run("of two claims, the first in registered-name order wins", func(t *testing.T) {
+		r := adapter.NewRegistry()
+		r.Register(claimingAdapter{stubAdapter: stubAdapter{id: "zebra"}, marker: "shared"})
+		r.Register(claimingAdapter{stubAdapter: stubAdapter{id: "alpha"}, marker: "shared"})
+
+		who, claim, err := r.ClaimArchive(adapter.GenericID, []string{"shared/plugin.dll"})
+		require.NoError(t, err)
+		require.NotNil(t, who)
+		assert.Equal(t, "alpha", who.ID(), "a build shipping two claimers answers deterministically")
+		assert.True(t, claim.Claimed())
 	})
 }
 
