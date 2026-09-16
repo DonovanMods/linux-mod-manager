@@ -134,7 +134,15 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 	}
 
 	installedRefs := make(map[string]domain.ModReference, len(installedMods))
+	// installedAny is every row, enabled or not (#431). The sync's
+	// staleness test - "no ENABLED row, so this ref is a leftover" - is
+	// right for a ref the document says nothing special about and wrong for
+	// one it marks disabled: that ref IS the user's off intent, and pruning
+	// it would take the marker, the load-order position and the pinned
+	// version with it, switching the mod back on at the next converge.
+	installedAny := make(map[string]bool, len(installedMods))
 	for _, im := range installedMods {
+		installedAny[domain.ModKey(im.SourceID, im.ID)] = true
 		if im.Enabled {
 			installedRefs[domain.ModKey(im.SourceID, im.ID)] = domain.ModReference{
 				SourceID: im.SourceID,
@@ -173,6 +181,12 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 		key := domain.ModKey(mr.SourceID, mr.ModID)
 		ref, exists := installedRefs[key]
 		if !exists {
+			// #431: kept because a row exists for it, not because the
+			// marker makes a ref immortal - a disabled ref with no row at
+			// all is as stale as any other unbacked ref.
+			if mr.Disabled && installedAny[key] {
+				continue
+			}
 			plan.ToRemove = append(plan.ToRemove, mr)
 		} else if len(ref.FileIDs) > 0 && len(mr.FileIDs) == 0 {
 			plan.ToUpdate = append(plan.ToUpdate, ref)
