@@ -648,3 +648,57 @@ surfaces (`lmm game list --json`, after `lmm verify`'s summary, the web game car
 to land in both frontends at once, and BepInEx's setup advice already reaches users
 through `LoaderStatus`, which U3 deliberately left in core. The docs say so rather than
 claiming a surface that does not exist; wiring it is §5's frontend pass.
+
+### Amendment — U3/U4 fix round 2 (2026-09-16)
+
+The scoped re-review of the round above found the first decision unfinished. It also
+found a live regression for 1.x users. Five more decisions follow.
+
+First, **where decision 11's warning is said follows one rule** (coordinator ruling): a
+warning must be silenceable by the fix it suggests, and a persistent flag is for a
+contradiction, not for a deliberate choice.
+- *Per archive*: every bypass case gets the `Layout.Warnings` note, offering only the
+  change that makes lmm lay such an archive out.
+- *Persistent*: load time, `LoaderStatus`, the verify row, and the new post-write
+  `Service.AdapterConfigWarning` flag only a contradiction. A contradiction is a
+  `loader:` block the adapter ignores, or an installed BepInEx that a DERIVED adapter
+  ignores. These warnings offer both ways out: lay BepInEx archives out, or state the
+  choice.
+- *Acknowledged*: an explicit `adapter:` on a game whose BepInEx is merely installed is
+  that stated choice. It gets **no** verify row, not a note-severity one, because the
+  web Health card lists every non-ok row and a note would be the same permanent entry.
+- *Tests*: every remedy either sentence offers is applied in
+  `TestLoaderBypass_EveryRemedySilencesItsWarning` and must silence it. A configuration
+  every flow refuses (`AdapterFor` errors) gets no bypass warning at all.
+
+Second, **one command says it once.** `app.Options.OmitAdapterWarnings` names the games a
+command reports itself: `lmm game show`, `lmm verify` and `lmm game edit`. `lmm game edit`
+and `lmm game add` re-check the game after the write and print its warning then, so the
+fixing edit is silent and the creating edit speaks.
+
+Third, **bepinex is derived only for a game whose `mod_path` IS its install path**
+(`modPathIsGameRoot`), and an explicit `adapter: bepinex` off the game root is refused in
+`AdapterFor`, as a compile game's non-compiling adapter is.
+- *What broke*: a 1.x `mod_path: <install>/BepInEx/plugins` game with BepInEx installed
+  derived bepinex under the old rule. Its game-root layout then deployed a loose plugin
+  to `<install>/BepInEx/plugins/BepInEx/plugins/<Mod>/`. This was reproduced on disk,
+  seeded config included.
+- *Resolution was fixed, not the layout*: re-relativising a game-root layout onto a
+  subdirectory mod path would have needed `../` rows for `BepInEx/config/**`, which
+  containment rightly refuses.
+- *Where the rule also applies*:
+  - `GameSpec.DefaultModPath` makes a BepInEx add default to the install path.
+  - Verify's misplaced-deployment check runs only for a game that resolves to bepinex.
+  - The known-games ratchet refuses a BepInEx catalog entry off the game root. Every
+    shipped entry already uses `""`.
+
+Fourth, **a game every flow refuses has `adapter_error`, not an `effective_adapter`**
+(additive, omitempty). An absent `effective_adapter` therefore means `generic-files`
+unless `adapter_error` is set. The golden fixtures register `app.RegisterAdapters`, now
+exported for exactly that, and
+`TestJSONGoldens_GameRowsAreWhatProductionEmits` holds each golden game row against
+production's.
+
+Fifth, **the Importer carries no bypass note of its own.** Its one production caller is
+`ApplyImportArchive`, whose plan already carries the note into the result and the event
+stream. A second copy reached only the log.

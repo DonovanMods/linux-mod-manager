@@ -602,6 +602,24 @@ Not `mod_path: ""` — an empty value is not "the game root", it is a
 relative path, and lmm would deploy into whatever directory you ran it
 from.
 
+`lmm game add` with `--loader bepinex` uses the install path as the mod path
+when you give none. A game whose `mod_path` is anywhere else — a
+`games.yaml` from before lmm supported BepInEx, pointing it at
+`BepInEx/plugins` — does **not** get the BepInEx rules below: every path
+they produce is relative to the game root, so lmm keeps deploying that
+game's archives exactly as packaged into that directory, as it always did.
+`lmm game show` and `lmm verify` say so and give you both ways out: move
+the game to its root (the warning lists the steps), or run `lmm game edit
+<id> --adapter generic-files` to keep it as it is.
+
+The same goes for any explicit `adapter:` other than `bepinex`. With no
+`loader:` block on a game whose BepInEx is merely installed, that key is
+how you tell lmm to treat the game's archives as plain files, and lmm only
+mentions it on the import of an archive it would otherwise have laid out.
+A `loader:` block the adapter ignores is a contradiction instead, and lmm
+flags it until one side changes. [docs/adapters.md](docs/adapters.md#loader)
+has the whole rule.
+
 The same thing from the command line, or in the web UI's Setup → Games row
 (the **Edit loader…** control):
 

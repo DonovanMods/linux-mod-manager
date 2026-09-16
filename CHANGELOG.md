@@ -273,7 +273,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for `deploy_mode: compile`, `bepinex` for a game with BepInEx — rather
   than reading `generic-files` for a game with no key (#426); in `--json`
   and the API, `adapter` stays what `games.yaml` says and the additive
-  `effective_adapter` names the one in use (omitted for `generic-files`). The adapter, the source
+  `effective_adapter` names the one in use (omitted for `generic-files`).
+  A game lmm refuses to run any flow on (an adapter this build does not
+  ship, or one a composition rule refuses) uses no adapter, so it has no
+  `effective_adapter`, and the additive `adapter_error` carries the
+  refusal; the CLI shows its adapter as `<name> (refused)` (#413). The adapter, the source
   map and the loader (#359) are each their own edit: `lmm game edit` and
   `PUT /api/v1/games/{id}` refuse a run asking for more than one rather than
   silently picking an order, because each is its own gated write. Adapters live in the tree (`internal/adapter`) and are
@@ -317,12 +321,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of being threaded through `internal/core` as a bool parameter, an
   inline path test and an `if game.Loader != nil` branch.
 
-  **Nothing to migrate, and nothing to type.** A game that declares
-  `loader: kind: bepinex` resolves to the adapter on its own, in memory,
-  and so does a game that merely HAS BepInEx installed in its directory —
-  the same two-source rule #424 settled on, because the declaration is a
-  statement of intent lmm asks for while the loader's own preloader on disk
-  is a fact lmm can read. `games.yaml` is not rewritten either way.
+  **Nothing to migrate, and nothing to type.** A game whose `mod_path` is
+  its install path resolves to the adapter on its own, in memory, when it
+  declares `loader: kind: bepinex` or merely HAS BepInEx installed in its
+  directory — the same two-source rule #424 settled on, because the
+  declaration is a statement of intent lmm asks for while the loader's own
+  preloader on disk is a fact lmm can read. `games.yaml` is not rewritten
+  either way.
+
+  **A 1.x `games.yaml` keeps deploying where it did (#413).** BepInEx's
+  layout is relative to the game root, so the adapter is only derived for
+  a game that deploys there. A game configured before lmm supported
+  BepInEx — `mod_path` pointing at `<install>/BepInEx/plugins` — keeps
+  deploying its archives into that directory exactly as packaged, as 1.x
+  did; deriving the adapter for it nested every plugin one level too deep,
+  under `BepInEx/plugins/BepInEx/plugins/`, where BepInEx never loads it.
+  lmm tells such a game how to move to the game root, or how to keep it as
+  it is. `lmm game add` with a BepInEx loader or adapter now defaults the
+  mod path to the install path, and `adapter: bepinex` with any other mod
+  path is refused.
 
   Nothing changes for a correctly configured BepInEx game. Its seeded
   `BepInEx/config/**` files are still written once, never overwritten by a
@@ -336,20 +353,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lmm learns about is refused for the right reason with no change to the
   engine.
 
-  **A game with BepInEx that names another adapter is told so (#413).**
-  `loader:` describes the installation and `adapter:` decides what lmm does
-  about it, so a game can carry both with the adapter pointing elsewhere —
-  an explicit `adapter: generic-files`, or `deploy_mode: compile`, which
-  selects the Icarus adapter. Such a game gets none of the BepInEx rules: a
-  Thunderstore package's `manifest.json` lands in the game directory, a
-  plugin stays wherever its archive put it, and a `BepInEx/config` file is
-  linked from the shared mod cache instead of copied once. That stays
-  allowed — a half-configured game is a real state — but it is no longer
-  silent. lmm warns when it opens a `games.yaml` whose `loader:` block the
-  adapter ignores, and says the same in `lmm game show`'s loader section
-  (and the web UI's loader panel), in `lmm verify`, and on the import plan
-  or download of any archive the BepInEx rules would have laid out — each
-  time naming the fix that applies to that game's configuration.
+  **A game with BepInEx on another adapter is told so, where it matters
+  (#413).** `loader:` describes the installation and `adapter:` decides
+  what lmm does about it, so a game can have BepInEx while its adapter
+  points elsewhere — an explicit `adapter: generic-files`, `deploy_mode:
+compile` (which selects the Icarus adapter), or a mod path off the game
+  root. Such a game gets none of the BepInEx rules: a Thunderstore
+  package's `manifest.json` is deployed with the mod, a plugin stays
+  wherever its archive put it, and a `BepInEx/config` file is linked from
+  the shared mod cache instead of copied once. That stays allowed, but it
+  is never silent:
+
+  - the import plan or download of any archive the BepInEx rules would
+    have laid out says so, for every such game;
+  - a **contradiction** — a `loader:` block the adapter ignores, or an
+    installed BepInEx that a derived adapter ignores — is also flagged when
+    lmm opens `games.yaml`, in `lmm game show`'s loader section and the web
+    UI's loader panel, as a `loader_adapter_ignored` warning in `lmm
+verify` (and so in the web Health count), and right after the `lmm
+game edit`/`lmm game add` that creates it;
+  - an explicit `adapter:` with no `loader:` block, on a game whose BepInEx
+    is merely installed, is a stated choice and is flagged nowhere else.
+
+  Each warning names only fixes that, applied, silence it, and a command
+  that shows a game's warning itself (`lmm game show`, `lmm verify`, `lmm
+game edit`) prints it once.
 
   **BepInEx installed in the game directory satisfies a loader requirement,
   exactly as a declaration does (#413).** It already selected the adapter;
@@ -1273,6 +1301,16 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **`lmm verify`'s closing summary counts what it found, and suggests
+  `--fix` only when `--fix` would act (#413).** On a profile with no mods
+  the summary appeared only when there were warnings, always read
+  "0 issue(s)", and ended with "Run with --fix to remove stale lmm-deployed
+  files" — so a loader that had never run got an issue row and no tally,
+  and a finding `--fix` cannot repair was sent to it anyway. Both summaries
+  now print the run's real counts, and the `--fix` hint appears only when
+  at least one finding is one `--fix` repairs (a locked version mismatch,
+  which `--fix` refuses, no longer gets it either).
 
 - **A NexusMods plugin folder installs into `BepInEx/plugins/`, not into the
   game root (#424).** Jotunn 2.30.0 from NexusMods extracts to a single

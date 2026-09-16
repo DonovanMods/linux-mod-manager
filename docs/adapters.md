@@ -31,11 +31,26 @@ under `internal/adapter/` and one registration line — and *nothing* in
 | --- | --- | --- |
 | `generic-files` | the default — an absent `adapter:` key | The identity. An archive lands exactly where it was extracted, every file is deployed by the linker, and nothing extra is checked. This is what every game lmm managed before adapters existed. |
 | `icarus` | `adapter: icarus`, or derived from `deploy_mode: compile` | Icarus's compile path: every enabled mod's `.EXMODZ` table diffs (and, with `convert_paks`, its prebuilt `.pak` artifacts) merge against the installed game's own `data.pak` into one artifact. |
-| `bepinex` | `adapter: bepinex`, or derived from a game that declares `loader: kind: bepinex` **or** has BepInEx installed in its directory | Plugin archive layout, `BepInEx/config/**` seeding, the "this game has no BepInEx" refusal, and verify's loader-installation tier. |
+| `bepinex` | `adapter: bepinex`, or derived from a game whose `mod_path` is its install path and that declares `loader: kind: bepinex` **or** has BepInEx installed in its directory | Plugin archive layout, `BepInEx/config/**` seeding, the "this game has no BepInEx" refusal, and verify's loader-installation tier. |
 
 `lmm game list` always names what *this* build actually ships, and
 `lmm game add --adapter` / `lmm game edit --adapter` validate against the
 same list — so the table above is documentation, not the source of truth.
+
+### Which adapter a game uses
+
+`lmm game list`, `lmm game show` and `GET /api/v1/games[/{id}]` name the
+adapter a game **resolves** to, derived or not. In the JSON document,
+`adapter` is exactly what `games.yaml` says and `effective_adapter` is the
+one in use. `effective_adapter` is omitted for `generic-files`: **an
+absent `effective_adapter` means `generic-files`**, the same "absent means
+the identity" rule `adapter` follows, unless `adapter_error` is set.
+
+`adapter_error` is present only for a game no flow can run on: an
+`adapter:` this build does not ship, or one a composition rule below
+refuses. It carries the refusal every flow on that game makes, and such a
+game has no `effective_adapter`, because it uses no adapter at all. The CLI
+renders it as `<adapter> (refused)`, and `lmm game show` prints the reason.
 
 ## The division of labour
 
@@ -311,35 +326,78 @@ Proton — and it is populated by detection and checked by verify, which are
 facts that outlive any adapter decision. The adapter is what makes the block
 *meaningful*: only `bepinex` reads it.
 
-A game that declares `loader: kind: bepinex` resolves to the `bepinex`
-adapter on its own, and so does one that merely *has* BepInEx installed in
-its directory. Those are two halves of one fact and a user has typically
-supplied only one of them: the declaration is a statement of intent lmm asks
-for, while the preloader on disk is a fact lmm can read. An explicit
-`adapter:` always wins over both — so `loader: kind: bepinex` with
-`adapter: generic-files` is a legitimate "record the loader, but treat this
-game's archives as plain files."
+A game that deploys into its game root and declares `loader: kind: bepinex`
+resolves to the `bepinex` adapter on its own, and so does one that merely
+*has* BepInEx installed in its directory. Those are two halves of one fact
+and a user has typically supplied only one of them: the declaration is a
+statement of intent lmm asks for, while the preloader on disk is a fact lmm
+can read. "Has BepInEx" means the same declared-or-installed test
+everywhere lmm asks it, including the loader requirement a source or an
+archive claim makes: BepInEx installed in the game directory satisfies it
+exactly as a declaration does.
 
-Legitimate, but never silent. Such a game gets none of the BepInEx rules —
-a package's `manifest.json` lands in the game directory, and its
-`BepInEx/config` files are linked from the shared mod cache — so lmm says
-so, naming the fix for that configuration: when it loads `games.yaml` (for a
-declared loader), in `lmm game show`'s loader report, as a
-`loader_adapter_ignored` warning in `lmm verify`, and on the plan or
-download of any archive the `bepinex` rules would have laid out. The same
-holds for a `deploy_mode: compile` game that declares the loader, since that
-key selects `icarus`. "Has BepInEx" means the same declared-or-installed
-test in every one of those places, and in the loader requirement a source
-or an archive claim makes: BepInEx installed in the game directory
-satisfies it exactly as a declaration does.
+A game can still have BepInEx and resolve elsewhere: an explicit
+`adapter:` always wins, `deploy_mode: compile` selects `icarus`, and a
+`mod_path` off the game root keeps `generic-files` (below). Such a game gets
+none of the BepInEx rules — a package's `manifest.json` is deployed with the
+mod, a plugin is not moved under `BepInEx/`, and a `BepInEx/config` file is
+linked from the shared mod cache — so lmm says so. Where it says it follows
+one rule: **a warning must be silenceable by the fix it suggests, and a
+persistent warning is for a contradiction, not for a deliberate choice.**
+
+- **Every such game**, on the import plan or download of an archive the
+  `bepinex` rules would have laid out — where the harm happens. That
+  warning offers one remedy, the change that makes lmm lay such an archive
+  out, because nothing else silences it.
+- **A contradiction**, persistently: when lmm loads `games.yaml`, in `lmm
+  game show`'s loader report and the web loader panel, as a
+  `loader_adapter_ignored` WARNING in `lmm verify` (which the web Health
+  count includes), and right after the `lmm game edit` or `lmm game add`
+  that creates it. A contradiction is a `loader:` block the adapter
+  ignores, or an installed BepInEx that an adapter **nobody chose** ignores
+  (`deploy_mode: compile`, or a `mod_path` off the game root). That
+  warning offers both ways out: lay BepInEx archives out, or state the
+  choice.
+- **A stated choice**, never persistently. `adapter: generic-files` (or any
+  explicit adapter) with **no** `loader:` block on a game whose BepInEx is
+  merely installed is a legitimate "treat this game's archives as plain
+  files": the explicit key is the acknowledgement. It gets the per-archive
+  warning and nothing else — no load-time line, no loader-panel line, and
+  no verify row at all (not even a note, since the Health card lists every
+  row that is not OK).
+
+Every remedy either warning offers is one that, applied, silences it. A
+command that reports a game's warning itself (`lmm game show`, `lmm
+verify`, `lmm game edit`) prints it once, not once at load and again in its
+own output. A game lmm refuses to run any flow on (an unknown adapter, a
+compile game on an adapter that cannot compile) gets no such warning:
+lmm deploys nothing there, and the refusal names the fix.
 
 ### `mod_path`
 
-Unchanged, and no adapter gets a say. The curated known-games entry owns it,
-including the game-root case a BepInEx game needs (`mod_path ==
-install_path` — never `mod_path: ""`, which is joined verbatim and deploys
-relative to the working directory). Giving an adapter an opinion here would
-mean two answers to one question.
+The user and the curated known-games entry own it; no adapter rewrites it.
+But one adapter depends on it. Every path `bepinex` produces
+(`BepInEx/plugins/…`, `BepInEx/config/…`) is relative to the **game root**,
+so it is only right for a game whose `mod_path` IS its `install_path` —
+never `mod_path: ""`, which is joined verbatim and deploys relative to the
+working directory. So:
+
+- bepinex is **derived** only for a game-root `mod_path`. A game that
+  predates lmm's loader support and points `mod_path` at
+  `<install>/BepInEx/plugins` keeps `generic-files`, and its archives keep
+  deploying into that directory exactly as packaged. Deriving bepinex there
+  nested every plugin under `BepInEx/plugins/BepInEx/plugins/`, where
+  nothing loads it. That game is a contradiction in the sense above, with
+  both remedies: move it to the game root (purge, set `mod_path`,
+  re-deploy, and `lmm verify --fix` re-lays out what was already
+  imported), or pin `adapter: generic-files`;
+- an **explicit** `adapter: bepinex` with any other `mod_path` is refused
+  by name, like a compile game's non-compiling adapter, and `lmm game
+  edit`/`lmm game add` cannot write it;
+- `lmm game add` with a BepInEx loader or adapter defaults `mod_path` to the
+  install path rather than `<install>/mods`; every curated BepInEx entry
+  uses the game root, and the known-games ratchet refuses one that does
+  not.
 
 ## Adding an adapter
 
