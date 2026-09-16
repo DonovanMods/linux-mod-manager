@@ -220,5 +220,11 @@ func (s *Service) CheckExternalInstallExclusivity(ctx context.Context, gameID, p
 	if err != nil {
 		return nil
 	}
-	return refuseExternal("install", mod, ReasonExternalAlreadyTracked)
+	// #428: the ruled wording, then which item and the exact command that
+	// stops the tracking - the reader should not have to work out either.
+	// The profile is always named: `lmm uninstall` defaults to the ACTIVE
+	// profile, which need not be the one this install targets.
+	reason := fmt.Sprintf("%s (`lmm uninstall %s --source %s --game %s --profile %s`)",
+		ReasonExternalAlreadyTracked, modID, sourceID, gameID, mod.ProfileName)
+	return refuseExternal("install", mod, reason)
 }

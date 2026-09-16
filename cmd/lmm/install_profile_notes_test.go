@@ -68,7 +68,7 @@ func TestShowInstallPlan_NamesADependencyItSwitchesBackOn(t *testing.T) {
 		ReenabledDependencies: []domain.ModReference{{SourceID: "src", ModID: "lib"}},
 	}
 	out := captureStdout(t, func() error {
-		showInstallPlan(plan)
+		showInstallPlan(nil, plan)
 		return nil
 	})
 	assert.Contains(t, out, `Note: Some Library is switched off in profile "survival". Installing Root Mod switches it back on there, because Root Mod depends on it.`)

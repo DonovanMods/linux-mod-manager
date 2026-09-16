@@ -261,7 +261,7 @@ func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Gam
 	// #269: a pin's target is the installed version, which for a Workshop
 	// item is the 19-digit content id - so an external mod is reported as
 	// pinned and nothing more (version_display.go).
-	if pinTarget := displayLockTarget(result.Mod.External, result.Mod.Version); modSetPin && pinTarget != "" {
+	if pinTarget := displayLockTarget(workshopVersioned(service, result.Mod.External, result.Mod.SourceID), result.Mod.Version); modSetPin && pinTarget != "" {
 		fmt.Printf(" (%s)", pinTarget)
 	}
 	fmt.Println()
@@ -368,7 +368,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 	// Workshop item today - the capability gate above refuses it, since the
 	// source reports Versions:false - and spelled once here anyway so a
 	// source that later CAN resolve versions cannot reintroduce the shape.
-	if lockTarget := displayLockTarget(result.Mod.External, target); lockTarget != "" {
+	if lockTarget := displayLockTarget(workshopVersioned(service, result.Mod.External, result.Mod.SourceID), target); lockTarget != "" {
 		fmt.Printf("%s %s locked at %s\n", colorGreen("✓"), result.Mod.Name, lockTarget)
 		// Locking is a metadata write, not a deploy (design decision): when
 		// the target differs from what is actually installed, the game
@@ -693,7 +693,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	// belongs, and it is the ONLY place it appears.
 	headerVersion := mod.Version
 	switch {
-	case installedInfo != nil && installedInfo.External:
+	case installedInfo != nil && workshopVersioned(svc, installedInfo.External, mod.SourceID):
 		headerVersion = displayRevision(installedInfo.UpdatedAt)
 	case sourceIsWorkshop(svc, mod.SourceID) && !mod.UpdatedAt.IsZero():
 		// Not adopted: there is no installed row to carry External, and no
@@ -751,7 +751,10 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	if installedInfo != nil {
 		fmt.Println()
-		if installedInfo.External {
+		// #428: an item lmm downloaded from the Workshop itself is not
+		// external, and its Version is the same content id.
+		installedContentID := workshopVersioned(svc, installedInfo.External, mod.SourceID)
+		if installedContentID {
 			// #269: for an external mod the installed line is a DATE - the
 			// Version field holds Steam's 19-digit content id, which is the
 			// item's version identity and not a version anybody can read.
@@ -780,7 +783,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			// the run it recommends is one `profile apply` deliberately
 			// skips for this mod.
 			lockLine := "locked"
-			if target := displayLockTarget(installedInfo.External, installedInfo.LockedVersion); target != "" {
+			if target := displayLockTarget(installedContentID, installedInfo.LockedVersion); target != "" {
 				lockLine += " at " + target
 				// Locking is a metadata write, not a deploy (same #97 design
 				// decision doModLock's own convergence hint follows): only say

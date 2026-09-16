@@ -155,7 +155,10 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		// not the 19-digit Steam content id its Version field carries - that
 		// id is the item's version identity, and no human-facing surface
 		// prints it as a version (the design's approval note).
-		version := displayModVersion(mod.External, mod.Version, mod.UpdatedAt)
+		// #428: an item lmm downloaded from the Workshop itself is not
+		// external, and its Version is the same content id.
+		contentID := workshopVersioned(service, mod.External, mod.SourceID)
+		version := displayModVersion(contentID, mod.Version, mod.UpdatedAt)
 		var row string
 		if verbose {
 			enabled := "yes"
@@ -187,7 +190,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 				// (displayLockTarget), so an external row says only THAT it
 				// is locked. Without this the two columns of one row
 				// disagreed - a date on the left, the content id on the right.
-				if target := displayLockTarget(mod.External, mod.LockedVersion); target != "" {
+				if target := displayLockTarget(contentID, mod.LockedVersion); target != "" {
 					locked = mod.LockedVersion
 				} else {
 					locked = "yes"

@@ -410,7 +410,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	if !jsonOutput {
-		if err := printUpdateTable(updates, autoUpdates); err != nil {
+		if err := printUpdateTable(service, updates, autoUpdates); err != nil {
 			return err
 		}
 
@@ -503,7 +503,7 @@ func printBatchSkips(skipped []core.UpdateApplyResult) {
 // run will apply" (computed for both output modes) from "what the human
 // sees" (printed only when there is a human). autoUpdates is the set the
 // ✓ marker names.
-func printUpdateTable(updates, autoUpdates []domain.Update) error {
+func printUpdateTable(service *core.Service, updates, autoUpdates []domain.Update) error {
 	auto := make(map[string]bool, len(autoUpdates))
 	for _, u := range autoUpdates {
 		auto[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)] = true
@@ -554,9 +554,11 @@ func printUpdateTable(updates, autoUpdates []domain.Update) error {
 		// something to print as a version (the design's approval note): the
 		// table shows the revision date, and "newer" for a target lmm has no
 		// date for at all (version_display.go).
-		external := update.InstalledMod.External
-		current := displayModVersion(external, update.InstalledMod.Version, update.InstalledMod.UpdatedAt)
-		available := displayUpdateTarget(external, update.NewVersion)
+		// #428: an item lmm downloaded from the Workshop itself is not
+		// external, and both of its versions are content ids too.
+		contentID := workshopVersioned(service, update.InstalledMod.External, update.InstalledMod.SourceID)
+		current := displayModVersion(contentID, update.InstalledMod.Version, update.InstalledMod.UpdatedAt)
+		available := displayUpdateTarget(contentID, update.NewVersion)
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			truncate(update.InstalledMod.Name, 40),
 			current,

@@ -1500,6 +1500,20 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A Steam Workshop item's version is its revision date on every CLI line
+  (#428).** A Workshop item's version is its 19-digit content id, which no
+  human-facing surface is meant to print, yet `lmm install` printed
+  `Selected: ModMenu v493958101155293591` while `lmm list` showed a date. The
+  search listing, `Selected:`, the dependency tree, the per-mod
+  `Installing:` lines and `✓ Installed:` now say `(revision of <date>)`.
+  The rule also covers an item lmm **downloaded itself** (`lmm install`'s
+  steamcmd path): it is not tracked from Steam, but its version is the same
+  content id, and `lmm list`, `lmm mod show`, `lmm mod lock`/`set-update
+--pin`, the `lmm update` table and the `lmm snapshot restore` preview
+  printed it. The refusal to install an lmm copy of an item Steam already
+  loads now ends with the exact command that clears the way, e.g.
+  ``(`lmm uninstall 3617086610 --source steamworkshop --game human-host --profile default`)``.
+
 - **`lmm import` no longer names every BepInEx-rooted plugin package
   "BepInEx" (#450).** An archive whose only top-level entry is `BepInEx/`
   took the loader's own directory as the mod's name, so every such plugin
