@@ -7,6 +7,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // Test-only accessors for package core_test. This file is compiled only into
@@ -275,4 +276,31 @@ func NewLoaderRequiredErrorForTest(game *domain.Game, modName, layout string) *L
 // is what pins the extra wire member and the version-aware first sentence.
 func NewLoaderRequirementForTest(game *domain.Game, modName, kind, version, evidence string) *LoaderRequiredError {
 	return newLoaderRequirement(game, modName, kind, version, evidence)
+}
+
+// OweProfileDisabledBackfillForTest puts the Service in the state
+// migrateV17 leaves a database an older lmm wrote: the one-time
+// profile-document backfill (#431) is owed. Every test database is created
+// fresh, so the migration itself never finds a row to owe it for - a test
+// seeds the rows an older lmm would have left FIRST, then calls this.
+func (s *Service) OweProfileDisabledBackfillForTest(ctx context.Context) error {
+	if err := s.db.SetMeta(ctx, db.MetaProfileDisabledBackfill, "test"); err != nil {
+		return err
+	}
+	s.backfillPending.Store(true)
+	return nil
+}
+
+// ProfileDisabledBackfillOwedForTest reports every db_meta key the backfill
+// still holds: the whole obligation, and any per-profile remainder.
+func (s *Service) ProfileDisabledBackfillOwedForTest(ctx context.Context) (map[string]string, error) {
+	return s.db.MetaWithPrefix(ctx, db.MetaProfileDisabledBackfill)
+}
+
+// SetBeforeProfileBackfillScanForTest arms a hook that runs once the
+// backfill holds the mutation slot, immediately before it reads the rows it
+// works from - the point a concurrent writer's committed change must
+// already be visible from (fix round 2, R4).
+func (s *Service) SetBeforeProfileBackfillScanForTest(fn func()) {
+	s.beforeProfileBackfillScan = fn
 }

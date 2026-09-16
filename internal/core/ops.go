@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
@@ -36,6 +37,31 @@ import (
 // NewService - so the failure is an immediate, clear panic instead of a
 // hang until the test's 10-minute timeout.
 func (s *Service) beginOp(ctx context.Context) (release func(), err error) {
+	release, err = s.acquireOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// #431 (fix round 2): a profile-document backfill still owed runs
+	// FIRST, inside this slot. The mutation about to run can write the very
+	// flag values the backfill reads as evidence - `lmm purge` clears
+	// deployed on every row - so it must not get there before the evidence
+	// has been read. Normally app.Open has already discharged it and this is
+	// one atomic load; it only does work when that open could not (the lock
+	// was held) or when a profile kept for later has changed. A failure
+	// refuses the mutation rather than letting it run over unread evidence.
+	if s.backfillPending.Load() {
+		if _, err := s.dischargeProfileBackfill(ctx); err != nil {
+			release()
+			return nil, fmt.Errorf("recording mods disabled before the upgrade in their profile files: %w", err)
+		}
+	}
+	return release, nil
+}
+
+// acquireOp is beginOp's slot acquisition alone - the in-process semaphore
+// and the cross-process lock - for the one caller that must not recurse
+// into the backfill beginOp runs: the backfill itself.
+func (s *Service) acquireOp(ctx context.Context) (release func(), err error) {
 	if s.opSem == nil {
 		panic("core: beginOp called on a Service with a nil opSem; construct it via NewService, not a struct literal")
 	}
