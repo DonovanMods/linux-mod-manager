@@ -1325,18 +1325,23 @@ select {
  *
  * A row whose enable/disable has been asked for but not yet happened shows
  * the REQUESTED value in its checkbox, so the only thing left to say is
- * that it is a request rather than the truth: the row is dimmed a little
- * and a small spinner sits beside the box. The .mod-row__live line in the
- * name column carries the words ("Enabling…"), and it is the one a screen
- * reader gets - this pair is purely visual and marked aria-hidden at the
- * markup, so nothing is announced twice.
+ * that it is a request rather than the truth: an accent bar runs down the
+ * row's leading edge and a small spinner sits beside the box. The
+ * .mod-row__live line in the name column carries the words ("Enabling…"),
+ * and it is the one a screen reader gets - the spinner is purely visual and
+ * marked aria-hidden at the markup, so nothing is announced twice.
  *
- * opacity, not a colour: the ratchets allow only tokens, and there is no
- * "pending" token - nor should there be one, since this is the same row in
- * the same state, merely not settled yet.
+ * Marked, never dimmed. Dimming the row (this rule's first cut was
+ * opacity: 0.75) re-composites every text token on it below WCAG AA in both
+ * themes - "Enabling…" itself went from 5.55:1 to 3.39:1 - and the token
+ * ratchet cannot see that, because it measures pairs, not what a partial
+ * opacity makes of them. The bar is --accent at full strength, a colour the
+ * ratchet already holds to 4.5:1 on every surface, and nothing on the row
+ * changes colour at all. TestE2E_LibraryRow_PendingRowKeepsItsContrast
+ * measures the painted row in both themes.
  */
-.mod-row--pending td {
-  opacity: 0.75;
+.mod-row--pending td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .toggle-pending {

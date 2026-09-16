@@ -207,3 +207,53 @@ func relativeLuminance(t *testing.T, hex string) float64 {
 	}
 	return 0.2126*channels[0] + 0.7152*channels[1] + 0.0722*channels[2]
 }
+
+// partialOpacityAllowList is every app.css rule that may paint at a partial
+// opacity, keyed by its whitespace-normalised selector, with the reason.
+var partialOpacityAllowList = map[string]string{
+	// WCAG 1.4.3 exempts inactive user-interface components from the
+	// contrast minimum, and a faded control is the conventional way to
+	// say "inactive".
+	".button:disabled, input:disabled, select:disabled": "disabled controls are exempt",
+	// PRE-EXISTING, and not a settled decision: the row under the pointer
+	// while a reorder drag is in progress. It carries the mod's name, so it
+	// is text below AA for as long as the drag lasts.
+	".reorder-row--dragging": "pre-existing drag ghost - see the note above",
+}
+
+var (
+	cssComment  = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	cssRule     = regexp.MustCompile(`([^{}]+)\{([^{}]*)\}`)
+	cssOpacity  = regexp.MustCompile(`(?:^|[;\s])opacity:\s*([0-9.]+)`)
+	cssSpaceRun = regexp.MustCompile(`\s+`)
+)
+
+// TestPartialOpacityIsAllowListed closes the gap TestThemeTokenContrast
+// cannot see by construction: a rule that re-composites a certified token
+// pair at partial opacity. Issue 432's first cut dimmed a pending library
+// row to 0.75, which took every text token on it below AA in both themes
+// while every pair this file measures still passed.
+//
+// A partial opacity is refused unless it is on the list above with its
+// reason. Zero and one are not partial: zero is the invisible end of an
+// entrance animation, and one changes nothing.
+func TestPartialOpacityIsAllowListed(t *testing.T) {
+	css := cssComment.ReplaceAllString(readAppCSS(t), "")
+
+	for _, rule := range cssRule.FindAllStringSubmatch(css, -1) {
+		m := cssOpacity.FindStringSubmatch(rule[2])
+		if m == nil {
+			continue
+		}
+		value, err := strconv.ParseFloat(m[1], 64)
+		require.NoError(t, err, "parsing opacity %q", m[1])
+		if value <= 0 || value >= 1 {
+			continue
+		}
+		selector := strings.TrimSpace(cssSpaceRun.ReplaceAllString(rule[1], " "))
+		_, allowed := partialOpacityAllowList[selector]
+		assert.Truef(t, allowed,
+			"%q paints at opacity %s, which re-composites every token pair beneath it below what TestThemeTokenContrast certified - mark the state some other way (a border, an indicator, a token)",
+			selector, m[1])
+	}
+}

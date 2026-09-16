@@ -562,3 +562,96 @@ func TestE2E_FullModPage_NavigatingAwayKeepsTheInFlightToggle(t *testing.T) {
 	})()`))
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// pendingRowContrastJS measures, in the browser, the lowest text contrast on
+// the pending library row and the contrast of its spinner ring - composited
+// the way the browser paints them, opacity included.
+//
+// contrast_test.go certifies token PAIRS and so cannot see a rule that
+// re-composites a certified pair at partial opacity; this can. Disabled form
+// controls are skipped, as WCAG 1.4.3 exempts them.
+const pendingRowContrastJS = `(() => {
+	const row = document.querySelector(".mod-row--pending");
+	if (!row) return null;
+	const parse = (c) => {
+		const m = /rgba?\(([^)]+)\)/.exec(c);
+		if (!m) return null;
+		const p = m[1].split(/[\s,\/]+/).filter(Boolean).map(Number);
+		return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+	};
+	const opacity = (el) => {
+		let o = 1;
+		for (let e = el; e; e = e.parentElement) o *= Number(getComputedStyle(e).opacity);
+		return o;
+	};
+	const background = (el) => {
+		for (let e = el; e; e = e.parentElement) {
+			const c = parse(getComputedStyle(e).backgroundColor);
+			if (c && c[3] > 0) return c;
+		}
+		return [255, 255, 255, 1];
+	};
+	const lum = (c) => {
+		const ch = c.slice(0, 3).map((v) => {
+			v /= 255;
+			return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+		});
+		return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+	};
+	const ratio = (fg, bg, o) => {
+		const mixed = fg.slice(0, 3).map((v, i) => v * o + bg[i] * (1 - o));
+		const [a, b] = [lum(mixed), lum(bg)].sort((x, y) => y - x);
+		return (a + 0.05) / (b + 0.05);
+	};
+	let text = Infinity, worst = "";
+	for (const el of row.querySelectorAll("*")) {
+		if (el.getClientRects().length === 0) continue;
+		if (el.closest("button:disabled, input:disabled")) continue;
+		const own = Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim() !== "");
+		if (!own) continue;
+		const r = ratio(parse(getComputedStyle(el).color), background(el), opacity(el));
+		if (r < text) { text = r; worst = el.className + ": " + el.textContent.trim().slice(0, 30); }
+	}
+	const ring = row.querySelector(".toggle-pending");
+	const indicator = ring
+		? ratio(parse(getComputedStyle(ring).borderLeftColor), background(ring), opacity(ring))
+		: 0;
+	return {text, worst, indicator};
+})()`
+
+// e2ePendingContrast is pendingRowContrastJS's shape.
+type e2ePendingContrast struct {
+	Text      float64 `json:"text"`
+	Worst     string  `json:"worst"`
+	Indicator float64 `json:"indicator"`
+}
+
+// TestE2E_LibraryRow_PendingRowKeepsItsContrast is issue 432's a11y half.
+// The pending row was marked by dimming it to 75% opacity, which took every
+// text token on it below WCAG AA in both themes - the "Enabling…" line
+// itself, the one piece of text that exists to say the click landed, went
+// from 5.55:1 to 3.39:1 - while the token ratchet, which measures pairs,
+// stayed green.
+func TestE2E_LibraryRow_PendingRowKeepsItsContrast(t *testing.T) {
+	f, release := newE2EFixtureWithAGatedToggle(t)
+	defer release()
+
+	var light, dark e2ePendingContrast
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(libraryToggleJS("Alpha Mod"), nil),
+		chromedp.WaitVisible(`.mod-row--pending [data-testid="toggle-pending"]`, chromedp.ByQuery),
+		chromedp.Evaluate(pendingRowContrastJS, &light),
+		chromedp.Evaluate(`document.documentElement.setAttribute("data-theme", "dark")`, nil),
+		chromedp.Evaluate(pendingRowContrastJS, &dark),
+	)
+
+	for name, got := range map[string]e2ePendingContrast{"light": light, "dark": dark} {
+		assert.GreaterOrEqualf(t, got.Text, 4.5,
+			"%s: every piece of text on a pending row stays at WCAG AA (worst: %s)", name, got.Worst)
+		assert.GreaterOrEqualf(t, got.Indicator, 3.0,
+			"%s: the spinner ring is a non-text indicator and holds SC 1.4.11's 3:1", name)
+	}
+	assert.Empty(t, f.BrowserErrors())
+}

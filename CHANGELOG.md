@@ -1251,7 +1251,11 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   The slide-over's and the full mod page's own Enable/Disable buttons do the
   same, and so does the batch bar: selecting forty mods and pressing
   **Disable** now moves all forty at once, rather than one row at a time as
-  the sequenced batch reaches it.
+  the sequenced batch reaches it. Each request is settled only by its own
+  job, so clicking again after a failed toggle is acknowledged like the
+  first click, and a request stays acknowledged when the slide-over steps to
+  another mod and back. The in-flight row is marked with an accent bar
+  rather than dimmed, so its text keeps its contrast in both themes.
 
 - **A NexusMods plugin folder installs into `BepInEx/plugins/`, not into the
   game root (#424).** Jotunn 2.30.0 from NexusMods extracts to a single
