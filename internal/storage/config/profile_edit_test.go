@@ -239,6 +239,24 @@ func TestMarkModsDisabled_Shapes(t *testing.T) {
 			want:     "\ufeff{name: p, game_id: g, mods: [{source_id: s, mod_id: m, disabled: true}]}\n",
 			wantMark: 1,
 		},
+		// yaml.v3 marks the empty value of an explicit `? key` that has no
+		// `:` at the NEXT token, which can be lines later (fix round 3's
+		// second fuzzing run). The value has no text; the key's line is
+		// where the reference ends.
+		{
+			name:     "an explicit key with no value ends the reference",
+			content:  "name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n    ? extra\n\n# trailing note\n",
+			mods:     []domain.ModReference{ref("s", "m")},
+			want:     "name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n    ? extra\n    disabled: true\n\n# trailing note\n",
+			wantMark: 1,
+		},
+		{
+			name:     "an explicit key with no value inside a nested mapping",
+			content:  "name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n    meta:\n      ? extra\n  - source_id: s\n    mod_id: n\n",
+			mods:     []domain.ModReference{ref("s", "m")},
+			want:     "name: p\ngame_id: g\nmods:\n  - source_id: s\n    mod_id: m\n    meta:\n      ? extra\n    disabled: true\n  - source_id: s\n    mod_id: n\n",
+			wantMark: 1,
+		},
 		{
 			name:    "an already-marked reference is not rewritten",
 			content: "name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: m, disabled: yes}\n  - {source_id: s, mod_id: n, disabled: true}\n",

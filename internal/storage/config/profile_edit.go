@@ -384,7 +384,10 @@ func (s sourceText) doubled(i int) bool {
 // lastLine is the last line node's text occupies: the deepest, latest
 // descendant's line, or a flow collection's closing bracket's. A block
 // scalar's text runs past its own mark, so one there is refused rather than
-// guessed at.
+// guessed at. An empty mapping value has no text at all, and its mark is not
+// always where its key is: after an explicit `? key` with no `:`, yaml.v3
+// marks it at the next token, which can be lines later - so its key's line
+// is where it ends.
 func (s sourceText) lastLine(node *yaml.Node) (int, bool) {
 	switch {
 	case node.Kind == yaml.AliasNode:
@@ -407,7 +410,10 @@ func (s sourceText) lastLine(node *yaml.Node) (int, bool) {
 		return line, line > 0
 	}
 	last := node.Line
-	for _, child := range node.Content {
+	for i, child := range node.Content {
+		if node.Kind == yaml.MappingNode && i%2 == 1 && isEmptyScalar(child) {
+			continue
+		}
 		line, ok := s.lastLine(child)
 		if !ok {
 			return 0, false
@@ -415,6 +421,12 @@ func (s sourceText) lastLine(node *yaml.Node) (int, bool) {
 		last = max(last, line)
 	}
 	return last, true
+}
+
+// isEmptyScalar reports whether node is a plain scalar with no text - an
+// omitted value.
+func isEmptyScalar(node *yaml.Node) bool {
+	return node.Kind == yaml.ScalarNode && node.Style == 0 && node.Value == ""
 }
 
 // matchingClose returns the offset of the bracket closing the flow
