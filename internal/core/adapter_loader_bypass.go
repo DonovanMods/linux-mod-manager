@@ -79,7 +79,7 @@ func (s *Service) bepinexBypass(game *domain.Game) (loaderBypass, bool) {
 	if name == bepinexAdapterID || !hasBepInEx(game) {
 		return loaderBypass{}, false
 	}
-	if _, err := s.AdapterFor(game); err != nil {
+	if _, err := s.adapterForName(game, name); err != nil {
 		return loaderBypass{}, false
 	}
 	return loaderBypass{game: game, adapterID: name, declared: game.DeclaresBepInEx()}, true
