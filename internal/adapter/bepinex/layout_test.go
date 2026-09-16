@@ -588,7 +588,7 @@ func TestBepInExLayout_AFrameworkPackWithSiblingsIsStillRefused(t *testing.T) {
 
 // writeArchiveTree materialises members as a real directory tree, for the
 // two rules that consult the GAME ROOT rather than the member list
-// (gameOwnedRoot, and shape F through it). Moved here with the rules in U3
+// (adapter.GameOwnsDir, and shape F through it). Moved here with the rules in U3
 // (#413); the tree-REWRITING half of the old core test lives on in
 // internal/core, which is where the executor is.
 func writeArchiveTree(t *testing.T, members ...string) string {

@@ -140,8 +140,8 @@ func loaderRelayoutRefusal(repairable, fixing bool) string {
 // never counts - not even towards the assembly test (#424 review, finding
 // 1). <Game>_Data/Managed/Assembly-CSharp.dll is an assembly outside
 // BepInEx/ and is exactly where it belongs: the game's own engine reads
-// that directory and BepInEx never will. It is gameOwnedRoot that
-// decides - the same rule and the same disk test shape F is gated on. The
+// that directory and BepInEx never will. It is adapter.GameOwnsDir
+// that decides - the one copy of the disk test shape F is gated on too. The
 // INPUTS differ, though: this check asks it with the profile's
 // deployed_files rows, the re-layout with the cache entry's members, so
 // for one run after an update drops a member the two can disagree; the
@@ -171,7 +171,7 @@ func (r *verifyRun) misplacedLoaderRows(mod *domain.InstalledMod) []string {
 		if nested {
 			owned, asked := gameOwned[root]
 			if !asked {
-				owned = gameOwnedRoot(r.game.InstallPath, root, slashed)
+				owned = adapter.GameOwnsDir(r.game.InstallPath, root, slashed)
 				gameOwned[root] = owned
 			}
 			if owned {
@@ -665,97 +665,4 @@ func linkOrCopyFile(src, dst string) error {
 		return nil
 	}
 	return copyFileStreaming(src, dst)
-}
-
-// gameOwnedRoot reports whether a top-level directory in the game root is
-// one the GAME itself owns, as opposed to one lmm deployed there.
-//
-// It is a generic disk probe with no loader vocabulary in it, and it is
-// here because misplacedLoaderRows above needs the answer about a
-// deployed_files ROW - a question core owns, asked of state only core has.
-// internal/adapter/bepinex carries the same rule for the shape it gates
-// (shape F, #424 review finding 1); the two are deliberately separate
-// copies rather than a shared helper, because the seam's whole rule is that
-// an adapter imports nothing from core and core imports no adapter, and a
-// third package existing only to hold fifty lines of os.ReadDir would be a
-// worse answer than saying the rule twice in the two places that ask it.
-//
-// For a loader game mod_path IS the game root, so a deployed row's top
-// segment and a directory the game shipped are the same kind of name:
-// <Game>_Data/ holds assemblies, and so, in their own way, do
-// MonoBleedingEdge/, unstripped_corlib/ and doorstop_libs/. Reporting one
-// of those as a misplaced plugin would send --fix to move a working
-// game-data patch out of the tree the ENGINE reads.
-//
-// Two halves, and the second is the difference between "the game owns this"
-// and "lmm put this here":
-//
-//	the game root has a directory of this name (matched case-insensitively,
-//	because the content very likely came from a Windows-authored archive);
-//	AND
-//
-//	that directory holds at least one file the given member list does not
-//	account for.
-//
-// A directory holding EXACTLY the members being classified is lmm's own
-// misdeployment - the #424 state this check exists to find - while one
-// holding the whole engine besides is the game's. It also answers the
-// question the repair actually needs, "would this directory survive an
-// undeploy", without consulting deployed_files from a context that may not
-// have them.
-//
-// Unreadable in any way - a walk error, a permission refusal, a symlink
-// where a directory was expected - counts as the game's, which is the safe
-// direction: lmm declines to move what it cannot read.
-func gameOwnedRoot(gameRoot, name string, members []string) bool {
-	if gameRoot == "" || name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
-		return false
-	}
-	entries, err := os.ReadDir(gameRoot)
-	if err != nil {
-		return false // no game root to consult: the member list is all there is
-	}
-	actual := ""
-	for _, e := range entries {
-		if strings.EqualFold(e.Name(), name) {
-			actual = e.Name()
-			break
-		}
-	}
-	if actual == "" {
-		return false
-	}
-	dir := filepath.Join(gameRoot, actual)
-	// Stat, not the DirEntry's own type: a game whose <Game>_Data is a
-	// symlink (a split install, a case-folding overlay) still owns it.
-	if info, serr := os.Stat(dir); serr != nil || !info.IsDir() {
-		return serr != nil
-	}
-
-	accounted := make(map[string]bool, len(members))
-	for _, m := range members {
-		root, rest, nested := strings.Cut(m, "/")
-		if !nested || !strings.EqualFold(root, name) {
-			continue
-		}
-		accounted[strings.ToLower(rest)] = true
-	}
-
-	owned := false
-	werr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			owned = true
-			return filepath.SkipAll
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, rerr := filepath.Rel(dir, p)
-		if rerr != nil || !accounted[strings.ToLower(filepath.ToSlash(rel))] {
-			owned = true
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	return owned || werr != nil
 }

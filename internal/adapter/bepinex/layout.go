@@ -12,8 +12,9 @@
 // the adapter for - passes gated=false to the shared implementation below.
 //
 // Almost every rule is a pure function of the member list. The one
-// exception is gameOwnedRoot, which reads the game's own install directory,
-// because one question genuinely cannot be answered from the archive alone:
+// exception is shape F's adapter.GameOwnsDir probe, which reads the game's
+// own install directory, because one question genuinely cannot be answered
+// from the archive alone:
 // for a BepInEx game mod_path IS the game root, so an archive root
 // directory and a directory the GAME owns are the same kind of name, and
 // only the game directory itself can say which this is (#424).
@@ -35,10 +36,7 @@ package bepinex
 
 import (
 	"fmt"
-	"io/fs"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -179,7 +177,8 @@ func (l *layout) asAdapterLayout() adapter.Layout {
 
 // NormalizeArchive is the adapter's rule table for a BepInEx game: it maps
 // the archive's members to the game-root-relative paths they deploy to, and
-// touches no disk except for shape F's game-owned refusal (gameOwnedRoot).
+// touches no disk except for shape F's game-owned refusal
+// (adapter.GameOwnsDir).
 //
 // The gate `loaderDeclared` used to carry is structural now - core only
 // resolves this adapter for a game that HAS BepInEx - so every shape is
@@ -258,7 +257,7 @@ func undeclaredNotice(game *domain.Game) string {
 //
 // gameRoot is the game's install directory, which for a BepInEx game is
 // also where these paths deploy. It is consulted by exactly one rule -
-// shape F's game-owned refusal (gameOwnedRoot) - and "" means "no game
+// shape F's game-owned refusal (adapter.GameOwnsDir) - and "" means "no game
 // directory to consult", which every pure-rule unit test passes and which
 // leaves the member list as the only evidence.
 func normalise(members []string, modName string, gated bool, gameRoot string) (*layout, error) {
@@ -625,8 +624,8 @@ func loosePluginRoot(members []string) bool {
 //	rather than prefixed.
 //
 //	NO root directory is one the GAME owns. That is the one condition the
-//	member list cannot answer, so gameOwnedRoot asks the game directory -
-//	see its own doc comment for why a name list will not do.
+//	member list cannot answer, so adapter.GameOwnsDir asks the game
+//	directory - see its own doc comment for why a name list will not do.
 func pluginFolderRoot(members []string, gameRoot string) bool {
 	if len(members) == 0 {
 		return false
@@ -655,100 +654,9 @@ func pluginFolderRoot(members []string, gameRoot string) bool {
 			return false
 		}
 		// Asked last, because it is the only rule that touches disk.
-		if gameOwnedRoot(gameRoot, name, members) {
+		if adapter.GameOwnsDir(gameRoot, name, members) {
 			return false
 		}
 	}
 	return true
-}
-
-// gameOwnedRoot reports whether the archive-root directory name is one the
-// GAME itself owns - the fourth of shape F's refusals, and the only one
-// that cannot be decided from the member list alone (#424 review, finding
-// 1).
-//
-// For a BepInEx game mod_path IS the game root, so the archive root and the
-// game root are ONE namespace: <Game>_Data/ is a root entry whose Managed/
-// holds assemblies, and so, in their own way, are MonoBleedingEdge/,
-// unstripped_corlib/, doorstop_libs/ and whatever else the engine or a
-// second loader keeps beside the executable. Every one of them satisfies
-// shape F's other three conditions exactly, and prefixing one with
-// BepInEx/plugins/ takes a working game-data patch out of the tree the
-// ENGINE reads and buries it where nothing looks.
-//
-// The test is what the game directory actually CONTAINS rather than a list
-// of names, which would have to grow with every engine, launcher and loader
-// lmm meets. Two halves, and the second is what keeps the rule from
-// swallowing the case shape F exists for:
-//
-//	the game root has a directory of this name (matched case-insensitively,
-//	because the archive was very likely authored on Windows); AND
-//
-//	that directory holds at least one file this member list does not
-//	account for.
-//
-// The second half is the difference between "the game owns this" and "lmm
-// put this here". A plugin folder lmm misdeployed into the game root (the
-// #424 state `verify --fix` exists to repair, and the state a re-import
-// walks into) holds EXACTLY the members being classified, so it is not the
-// game's; <Game>_Data/ holds the whole engine besides, so it is. It also
-// answers the question the repair actually needs - would this directory
-// survive an undeploy - without consulting deployed_files, which the plan
-// and the download ingest cannot read for a profile they were never given.
-//
-// Unreadable in any way - a walk error, a permission refusal, a symlink
-// where a directory was expected - counts as the game's. A refusal to
-// classify deploys the archive verbatim with a warning, which is the safe
-// direction for an archive lmm genuinely cannot read.
-func gameOwnedRoot(gameRoot, name string, members []string) bool {
-	if gameRoot == "" || name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
-		return false
-	}
-	entries, err := os.ReadDir(gameRoot)
-	if err != nil {
-		return false // no game root to consult: the member list is all there is
-	}
-	actual := ""
-	for _, e := range entries {
-		if strings.EqualFold(e.Name(), name) {
-			actual = e.Name()
-			break
-		}
-	}
-	if actual == "" {
-		return false
-	}
-	dir := filepath.Join(gameRoot, actual)
-	// Stat, not the DirEntry's own type: a game whose <Game>_Data is a
-	// symlink (a split install, a case-folding overlay) still owns it.
-	if info, serr := os.Stat(dir); serr != nil || !info.IsDir() {
-		return serr != nil
-	}
-
-	accounted := make(map[string]bool, len(members))
-	for _, m := range members {
-		root, rest, nested := strings.Cut(m, "/")
-		if !nested || !strings.EqualFold(root, name) {
-			continue
-		}
-		accounted[strings.ToLower(rest)] = true
-	}
-
-	owned := false
-	werr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			owned = true
-			return filepath.SkipAll
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, rerr := filepath.Rel(dir, p)
-		if rerr != nil || !accounted[strings.ToLower(filepath.ToSlash(rel))] {
-			owned = true
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	return owned || werr != nil
 }

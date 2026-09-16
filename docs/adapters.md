@@ -97,6 +97,12 @@ string-match `"BepInEx/config/"` without caring what separator the host
 filesystem uses, and why a plan and the ingest that applies it hand the
 adapter the same order.
 
+One question genuinely cannot be answered from a member list: for a game
+whose `mod_path` is its install path, is an archive's root directory one the
+*game* already owns (`<Game>_Data/`)? Ask `adapter.GameOwnsDir` rather than
+writing your own probe. It is read-only, it is the same copy core's
+verify repairs use, and it is tested once, in `internal/adapter`.
+
 `Layout` is one answer. **The zero `Layout` is the identity** — `Applies()`
 is false and `Rewrite()` returns its argument — so core holds one
 unconditionally instead of branching at every member:
