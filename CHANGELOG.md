@@ -315,10 +315,19 @@ deploy --all`, which exists to deploy switched-off mods, still deploys it,
 disable` records them for good.
 
   The step edits only the one entry in the file the profile was read from.
-  Comments, layout and `~/` paths survive, and a symlink is followed. A file
-  it cannot edit is named in a warning and tried again once it changes,
-  while every other profile is still recorded. It runs once per
-  installation, decided by a database migration, and an installation with
+  Comments, layout, line endings (LF, CRLF or CR) and `~/` paths survive,
+  and a symlink is followed. A file it cannot edit is named in a warning and
+  tried again once it changes, while every other profile is still recorded.
+  That covers a read-only file, an entry it cannot change in place, and a
+  failure of the step itself. A profile file the YAML parser itself fails
+  on now reads as unparseable, for every command, rather than crashing lmm.
+  A database row naming a game or profile that no file can have is named
+  and skipped. Nothing in the step can stop lmm from starting, and a
+  command never waits for it: when another lmm is mid-change, the next
+  command that changes something runs the step first. A plan made before
+  the step recorded a mod in its profile is refused as out of date, so a
+  `profile apply` or `profile sync` confirmed earlier cannot undo what the
+  step just recorded. The step runs once per installation, decided by a database migration, and an installation with
   nothing to record writes nothing. Mods disabled afterwards by an older lmm
   still running, or after a downgrade, are not recorded.
 
@@ -1265,6 +1274,13 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **lmm processes starting together on a new installation no longer fail
+  with "database is locked".** Switching a brand-new database file into
+  write-ahead-log mode needs the write lock, and SQLite refuses at once,
+  without its usual five-second wait, when another process holds it. So
+  `lmm serve` started beside a CLI command on a fresh installation could
+  kill one of them at startup. That first switch now waits its turn.
 
 - **A mod two profiles share is no longer disabled by switching between
   them (#430).** `lmm profile switch` (and the web UI's "Switch and

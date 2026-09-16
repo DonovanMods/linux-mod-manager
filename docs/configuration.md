@@ -269,6 +269,8 @@ Enabling a mod whose files were never downloaded (an imported profile on a fresh
 
 Before the marker existed, a mod you switched off was recorded only in lmm's database, and the profile file said nothing about it. The first `lmm` command after the upgrade records such mods in their profile files, once. Any command does it, a read-only one included, and so does `lmm serve` when it starts. It prints each mod it recorded (game, profile, mod and file) to stderr, followed by the `lmm mod enable <mod-id> --game <game> --source <source> --profile <profile>` command that undoes each one.
 
+A command never waits for this step. If another lmm is in the middle of a change when a command starts, the command skips the step and runs as usual. The next command that changes something does the step first, before its own work, and so does the next command that starts while no change is running. A plan made before the step ran (a `lmm profile apply` confirmation, or a plan open in the web UI) is refused as out of date if the step recorded a mod in that plan's profile, and has to be made again.
+
 It records only what it can be sure of: a mod that is switched off **and** not deployed (what `lmm mod disable` has written since v1.28.0), under the game's active profile, meaning the one profile file that says `is_default: true`. It deliberately leaves everything else unrecorded, because the database cannot tell those mods apart from ones you want on:
 
 - **Profiles other than the active one are never recorded.** Every `lmm profile switch` marks the mods of the profile it leaves as switched off in the database. So in any other profile, a switched-off mod is as likely to be one you want on there. Running `lmm purge` (or `lmm deploy --purge`, or a `lmm verify --fix` re-link that fails) before a switch leaves exactly the state a real disable does.
@@ -277,7 +279,13 @@ It records only what it can be sure of: a mod that is switched off **and** not d
 
 A mod that is not recorded behaves exactly as it did before the upgrade. The next switch into its profile, or `lmm profile apply`, switches it back on, and `lmm profile sync` drops its entry. Run `lmm mod disable` for it once and the marker is written for good.
 
-The upgrade step edits only the one entry. Comments, key order, flow style, indentation and `~/` paths stay as you wrote them. It writes to the file the profile was read from, and through a symlink it writes to the link's target. If it cannot edit a file (read-only, or laid out in a way it cannot change in place), a warning names that file, every other profile is still recorded, and lmm tries that file again once it changes. When there is nothing to record, no file is touched.
+The upgrade step edits only the one entry. Comments, key order, flow style, indentation, line endings (LF, CRLF or CR) and `~/` paths stay as you wrote them. It writes to the file the profile was read from, and through a symlink it writes to the link's target. If it cannot edit a file, a warning names that file, every other profile is still recorded, and lmm tries that file again once it changes. That happens when:
+
+- the file is read-only, or its directory is;
+- the entry is laid out in a way the step cannot change in place (for example, its last line ends in a Unicode line or paragraph separator);
+- the step itself fails on that file.
+
+A mod whose database row names a game or profile that no file can have is named in a warning and left unrecorded. When there is nothing to record, no file is touched. None of this ever stops lmm from starting, or stops a command from running.
 
 It runs once per installation. It does not record a mod switched off afterwards by an older lmm still running (for example, a `lmm serve` left up across the upgrade) or after a downgrade and re-upgrade, and it does not restore a marker lost when an older copy of a profile file is put back. A single `lmm mod disable` records any of them.
 
