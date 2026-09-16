@@ -38,6 +38,12 @@ var rootedWithConfigs = map[string]string{
 func newGameRootWithUserConfigs(t *testing.T) (*core.Service, *domain.Game, string) {
 	t.Helper()
 	svc, game := newGameRootBepInExGame(t)
+	return userConfigsOn(t, svc, game)
+}
+
+// userConfigsOn is newGameRootWithUserConfigs for a game the caller built.
+func userConfigsOn(t *testing.T, svc *core.Service, game *domain.Game) (*core.Service, *domain.Game, string) {
+	t.Helper()
 	importInto(t, svc, game, "Rooted-1.0.0.zip", rootedWithConfigs)
 
 	cfg := filepath.Join(game.InstallPath, "BepInEx", "config")

@@ -90,6 +90,28 @@ func (s *Service) checkAdapterPreconditions(gameID string, mods []domain.Install
 	return nil
 }
 
+// deployRefusal is the adapter check a deploy-direction step with no plan
+// of its own makes before it deploys (#413): `lmm mod enable`, verify
+// --fix's re-link and re-deploy repairs, and the merged-artifact resync
+// that ends every mutation touching a merge input. It is the check every
+// Plan's snapshot carries - checkAdapterPreconditions over profileName's
+// installed set - so a refused game gets the same refusal, and the same
+// remedy, from each of them as from `lmm deploy`.
+//
+// Removals do not ask it: undoing what lmm recorded deploying is the way
+// out of a refused state (removalSnapshotOf). A failed read of the
+// installed set is returned too, and a caller treats it the same way - it
+// cannot show the adapter consents. TestEverySingleStepDeployIsGated
+// (adapter_precondition_ratchet_test.go) fails the build for a deploy path
+// that reaches the Installer without this check or a Plan's.
+func (s *Service) deployRefusal(ctx context.Context, game *domain.Game, profileName string) error {
+	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
+	if err != nil {
+		return fmt.Errorf("loading installed mods: %w", err)
+	}
+	return s.checkAdapterPreconditions(game.ID, mods)
+}
+
 // snapshotOf builds the precondition from an ALREADY-READ installed-mod set,
 // for a Plan that had to load one anyway (PlanAdopt) - so the plan's own
 // views and its staleness precondition come from a single read rather than
