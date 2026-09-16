@@ -488,7 +488,12 @@ func (s *Service) supersedePendingProfileBackfill(ctx context.Context, gameID, p
 	ctx = context.WithoutCancel(ctx)
 	key := pendingProfileKey(gameID, profile)
 	value, err := s.db.GetMeta(ctx, key)
-	if err != nil || value == "" {
+	if err != nil {
+		s.logger().Warn("profile backfill: could not read a record an enable may supersede; dropping it", "key", key, "error", err)
+		_ = s.db.DeleteMeta(ctx, key)
+		return
+	}
+	if value == "" {
 		return
 	}
 	var pending pendingProfile
@@ -532,7 +537,7 @@ func (s *Service) printProfileBackfillReport(report *ProfileBackfillReport) {
 	for _, skip := range report.Skipped {
 		_, _ = fmt.Fprintf(w, "warning: could not record %d mod(s) disabled before this upgrade in %s (game %s, profile %s): %v\n",
 			len(skip.Mods), skip.File, skip.GameID, skip.Profile, skip.Err)
-		_, _ = fmt.Fprintf(w, "  not recorded yet: %s - lmm tries again once that file changes\n", strings.Join(skip.Mods, ", "))
+		_, _ = fmt.Fprintf(w, "  not recorded: %s - lmm looks at that file again once it changes\n", strings.Join(skip.Mods, ", "))
 	}
 	if len(report.Marked) == 0 {
 		return
