@@ -539,6 +539,16 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// T3 review F3: the same status while lmm is holding requests
+			// off - retry_at and hold_reason appear only then.
+			"index_status_held",
+			core.IndexStatus{
+				Source: "thunderstore", Game: "lethal-company",
+				RetryAt:    fixedTime.Add(10 * time.Minute),
+				HoldReason: "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s",
+			},
+		},
+		{
 			// #360: and the write half. Status is what the refresh DID,
 			// Changed whether the index the user searches is now different -
 			// a forced rebuild producing an identical index is "built" and
@@ -586,12 +596,29 @@ func TestJSONGoldens(t *testing.T) {
 			// mapped index that has never been built (cached false, no
 			// fetched_at), which is how a frontend offers to build it.
 			"source_index_listing",
+			//
+			// T3 review F7/F10: keep_reason is present only on an index a
+			// prune would keep whatever its use, and holds lists when lmm
+			// will next ask a host - an empty list when it is asking freely.
 			core.SourceIndexListing{
 				Indexes: []core.SourceIndexEntry{
 					{Source: "thunderstore", Game: "content-warning", Cached: true, Present: true, Packages: 900, FetchedAt: fixedTime, Bytes: 4096000, MappedBy: []string{}},
+					{Source: "thunderstore", Game: "old-mod-pack", Cached: true, Bytes: 5120, MappedBy: []string{}, KeepReason: "the old-mod-pack index directory holds notes.txt, which is not part of an index"},
 					{Source: "thunderstore", Game: "repo", MappedBy: []string{"repo"}},
 				},
+				Holds: []core.IndexHold{
+					{Source: "thunderstore", RetryAt: fixedTime.Add(10 * time.Minute), Reason: "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s"},
+				},
 				Warnings: []string{},
+			},
+		},
+		{
+			// T3 review F10: one hold. game is present only when a single
+			// index is held; a hold without it holds the whole host.
+			"index_hold",
+			core.IndexHold{
+				Source: "thunderstore", Game: "broken-community", RetryAt: fixedTime.Add(5 * time.Minute),
+				Reason: "suspended after 3 failed requests in a row; the last: Thunderstore has no package index at /c/broken-community/api/v1/package/ (HTTP 404)",
 			},
 		},
 		{

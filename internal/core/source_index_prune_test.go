@@ -398,3 +398,77 @@ func TestPruneSourceIndexes_TheGamesThisProcessLoadedStillCount(t *testing.T) {
 	assert.Equal(t, []string{"epsilon"}, unused.MappedBy)
 	assert.NotContains(t, src.removed, "unused")
 }
+
+// holdingSource is an inventory source that is holding requests off.
+type holdingSource struct {
+	*inventorySource
+	holds []source.Hold
+}
+
+func (s *holdingSource) Holds(context.Context) []source.Hold { return s.holds }
+
+// TestListSourceIndexes_ListsTheHoldsInForce is T3 review F10: the web UI's
+// setup card shows when lmm will next ask Thunderstore without asking it.
+func TestListSourceIndexes_ListsTheHoldsInForce(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	at := time.Date(2026, 9, 16, 12, 10, 0, 0, time.UTC)
+	svc.RegisterSource(&holdingSource{
+		inventorySource: &inventorySource{validatingIndexedSource: &validatingIndexedSource{indexedSource: newIndexedSource("ts")}},
+		holds: []source.Hold{
+			{Source: "Thunderstore", Until: at, Reason: "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s"},
+			{Source: "Thunderstore", GameID: "broken", Until: at.Add(time.Minute), Reason: "suspended after 3 failed requests in a row"},
+		},
+	})
+
+	listing, err := svc.ListSourceIndexes(t.Context(), "")
+	require.NoError(t, err)
+	assert.Equal(t, []core.IndexHold{
+		{Source: "ts", RetryAt: at, Reason: "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s"},
+		{Source: "ts", Game: "broken", RetryAt: at.Add(time.Minute), Reason: "suspended after 3 failed requests in a row"},
+	}, listing.Holds)
+
+	empty, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, empty.Close()) })
+	listing, err = empty.ListSourceIndexes(t.Context(), "")
+	require.NoError(t, err)
+	assert.NotNil(t, listing.Holds, "an empty list, not null")
+}
+
+// TestListSourceIndexes_SaysWhyAPruneWouldKeepAnIndex: an index the source
+// cannot prove is its own - a stranger in the directory, a symbolic link
+// above it - is listed with the reason, so the listing does not promise a
+// prune it will not make (review F7).
+func TestListSourceIndexes_SaysWhyAPruneWouldKeepAnIndex(t *testing.T) {
+	svc, _, _ := newPruneService(t)
+	listing, err := svc.ListSourceIndexes(t.Context(), "")
+	require.NoError(t, err)
+	for _, e := range listing.Indexes {
+		switch e.Game {
+		case "foreign":
+			assert.Equal(t, "holds notes.txt, which is not part of an index", e.KeepReason)
+		default:
+			assert.Empty(t, e.KeepReason, e.Game)
+		}
+	}
+}
+
+// TestListSourceIndexes_AnInventoryFailureStillListsMappedIndexes: a source
+// that cannot list its directories still has the indexes its games map
+// (review F7: they vanished with the warning).
+func TestListSourceIndexes_AnInventoryFailureStillListsMappedIndexes(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+	src.listErr = errors.New("reading the index root: permission denied")
+
+	listing, err := svc.ListSourceIndexes(t.Context(), "")
+	require.NoError(t, err)
+	require.Len(t, listing.Warnings, 1)
+	var games []string
+	for _, e := range listing.Indexes {
+		games = append(games, e.Game)
+		assert.False(t, e.Cached)
+	}
+	assert.Equal(t, []string{"fresh", "never-built", "old"}, games)
+}

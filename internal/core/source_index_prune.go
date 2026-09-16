@@ -64,11 +64,30 @@ type SourceIndexEntry struct {
 	// MappedBy is every lmm game whose games.yaml maps the source to this
 	// identifier, sorted; empty when no game uses it.
 	MappedBy []string `json:"mapped_by"`
+	// KeepReason, when set, is why a prune would keep this index whatever
+	// its use or age: the source cannot prove the directory is only its own
+	// index (T3 review F7).
+	KeepReason string `json:"keep_reason,omitempty"`
+}
+
+// IndexHold is a source that will not be asked - or, with Game set, will
+// not be asked about one index - before RetryAt (T3 review F10): a wait the
+// host named, or a breaker lmm tripped after repeated failures.
+type IndexHold struct {
+	Source string `json:"source"`
+	// Game is the source's identifier for the one index held; empty holds
+	// every index of the source.
+	Game    string    `json:"game,omitempty"`
+	RetryAt time.Time `json:"retry_at"`
+	Reason  string    `json:"reason"`
 }
 
 // SourceIndexListing is `lmm source index --all`'s document.
 type SourceIndexListing struct {
 	Indexes []SourceIndexEntry `json:"indexes"`
+	// Holds is every hold in force, so a frontend can say when lmm will
+	// next ask a host without asking it.
+	Holds []IndexHold `json:"holds"`
 	// Warnings names a source whose indexes could not be listed at all.
 	Warnings []string `json:"warnings"`
 }
@@ -136,22 +155,29 @@ func (s *Service) ListSourceIndexes(ctx context.Context, sourceID string) (*Sour
 		return nil, err
 	}
 	games := s.gamesSnapshot()
-	listing := &SourceIndexListing{Indexes: []SourceIndexEntry{}, Warnings: []string{}}
+	listing := &SourceIndexListing{Indexes: []SourceIndexEntry{}, Holds: []IndexHold{}, Warnings: []string{}}
 	for _, src := range inventories {
 		uses := indexUses(src, games)
+		listing.Holds = append(listing.Holds, indexHolds(ctx, src)...)
 		cached, err := src.CachedIndexes(ctx)
 		if err != nil {
+			// What is on disk is unknown; what the games map is not, and
+			// dropping those rows too left an empty table under the
+			// warning (T3 review F7).
 			listing.Warnings = append(listing.Warnings, fmt.Sprintf("source %s: %v", src.ID(), err))
-			continue
 		}
 		seen := map[string]bool{}
 		for _, ci := range cached {
 			seen[ci.GameID] = true
-			listing.Indexes = append(listing.Indexes, SourceIndexEntry{
+			entry := SourceIndexEntry{
 				Source: src.ID(), Game: ci.GameID, Cached: true, Present: ci.Present,
 				Packages: ci.Packages, FetchedAt: ci.FetchedAt, Bytes: ci.Bytes,
 				MappedBy: uses.mappedBy(ci.GameID),
-			})
+			}
+			if !ci.Removable {
+				entry.KeepReason = ci.Reason
+			}
+			listing.Indexes = append(listing.Indexes, entry)
 		}
 		for _, id := range uses.identifiers() {
 			if !seen[id] {
@@ -454,6 +480,19 @@ func (u indexUsage) identifiers() []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// indexHolds is every hold src has in force, as the wire shape.
+func indexHolds(ctx context.Context, src source.ModSource) []IndexHold {
+	reporter, ok := src.(source.HoldReporter)
+	if !ok {
+		return nil
+	}
+	var out []IndexHold
+	for _, h := range reporter.Holds(ctx) {
+		out = append(out, IndexHold{Source: src.ID(), Game: h.GameID, RetryAt: h.Until.UTC(), Reason: h.Reason})
+	}
+	return out
 }
 
 // indexInventoryOf is a registered source that can list and remove its own

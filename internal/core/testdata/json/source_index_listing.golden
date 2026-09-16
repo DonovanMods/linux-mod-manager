@@ -12,6 +12,16 @@
     },
     {
       "source": "thunderstore",
+      "game": "old-mod-pack",
+      "cached": true,
+      "present": false,
+      "packages": 0,
+      "bytes": 5120,
+      "mapped_by": [],
+      "keep_reason": "the old-mod-pack index directory holds notes.txt, which is not part of an index"
+    },
+    {
+      "source": "thunderstore",
       "game": "repo",
       "cached": false,
       "present": false,
@@ -20,6 +30,13 @@
       "mapped_by": [
         "repo"
       ]
+    }
+  ],
+  "holds": [
+    {
+      "source": "thunderstore",
+      "retry_at": "2026-08-27T12:10:00Z",
+      "reason": "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s"
     }
   ],
   "warnings": []

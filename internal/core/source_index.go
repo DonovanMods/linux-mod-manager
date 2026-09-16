@@ -49,6 +49,12 @@ type IndexStatus struct {
 	FetchedAt time.Time `json:"fetched_at,omitzero"`
 	Bytes     int64     `json:"bytes"`
 	Stale     bool      `json:"stale"`
+	// RetryAt, when set, is when lmm will next ask the source's host about
+	// this index - it is holding requests off (T3 review F3), for the
+	// reason HoldReason gives. A hold on the whole host and one on this
+	// index alone both count; the later wins.
+	RetryAt    time.Time `json:"retry_at,omitzero"`
+	HoldReason string    `json:"hold_reason,omitempty"`
 }
 
 // IndexReport is what a refresh did, as a frontend shows it (#360).
@@ -97,6 +103,11 @@ func (s *Service) SourceIndexStatus(ctx context.Context, sourceID, gameID string
 		return nil, fmt.Errorf("reading the %s index: %w", sourceID, err)
 	}
 	report := indexStatusOf(sourceID, status)
+	for _, h := range indexHolds(ctx, src) {
+		if (h.Game == "" || h.Game == indexGameID) && h.RetryAt.After(report.RetryAt) {
+			report.RetryAt, report.HoldReason = h.RetryAt, h.Reason
+		}
+	}
 	return &report, nil
 }
 
