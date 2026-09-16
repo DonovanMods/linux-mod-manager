@@ -91,6 +91,8 @@ var (
 	_ source.CapabilityReporter = (*Source)(nil)
 	_ source.TypeLabeler        = (*Source)(nil)
 	_ source.LocalIndexSource   = (*Source)(nil)
+
+	_ source.GameIdentifierValidator = (*Source)(nil)
 )
 
 // New constructs a Thunderstore source.
@@ -136,6 +138,11 @@ func (s *Source) TypeLabel() string { return "built-in" }
 func (s *Source) Capabilities() source.Capabilities {
 	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: false, Versions: true}
 }
+
+// ValidateGameIdentifier implements source.GameIdentifierValidator: the
+// identifier is a community slug, and core refuses one that is not before
+// it is joined onto anything.
+func (s *Source) ValidateGameIdentifier(id string) error { return validateCommunity(id) }
 
 // AuthURL: unsupported - there is no credential to obtain.
 func (s *Source) AuthURL() string { return "" }

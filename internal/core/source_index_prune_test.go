@@ -1,0 +1,273 @@
+package core_test
+
+// `lmm source index --all` and `lmm source index prune` (#410): what core
+// lists and what it decides to remove. The removal MECHANISM is the
+// source's (and is tested there, symlinks and all); these tests are the
+// POLICY - design §2.8 held to the project's fail-closed rule.
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"sort"
+	"testing"
+	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// inventorySource is an indexed source with directories on "disk".
+type inventorySource struct {
+	*validatingIndexedSource
+	cached    map[string]source.CachedIndex
+	listErr   error
+	removeErr map[string]error
+	removed   []string
+}
+
+func (s *inventorySource) CachedIndexes(context.Context) ([]source.CachedIndex, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	out := make([]source.CachedIndex, 0, len(s.cached))
+	for _, ci := range s.cached {
+		out = append(out, ci)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].GameID < out[j].GameID })
+	return out, nil
+}
+
+func (s *inventorySource) RemoveIndex(_ context.Context, id string) (int64, error) {
+	if err := s.removeErr[id]; err != nil {
+		return 0, err
+	}
+	ci, ok := s.cached[id]
+	if !ok {
+		return 0, nil
+	}
+	delete(s.cached, id)
+	s.removed = append(s.removed, id)
+	return ci.Bytes, nil
+}
+
+const day = 24 * time.Hour
+
+// newPruneService: one inventory source ("ts"), three games - two mapping
+// it to communities that are cached, one mapping it to a community that is
+// not - and four cached directories between them.
+func newPruneService(t *testing.T) (*core.Service, *inventorySource, string) {
+	t.Helper()
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	now := time.Now()
+	src := &inventorySource{
+		validatingIndexedSource: &validatingIndexedSource{indexedSource: newIndexedSource("ts")},
+		cached: map[string]source.CachedIndex{
+			"fresh":   {GameID: "fresh", Present: true, Packages: 10, Bytes: 100, FetchedAt: now.Add(-2 * day), Removable: true},
+			"old":     {GameID: "old", Present: true, Packages: 20, Bytes: 200, FetchedAt: now.Add(-31 * day), Removable: true},
+			"unused":  {GameID: "unused", Present: true, Packages: 30, Bytes: 300, FetchedAt: now.Add(-1 * day), Removable: true},
+			"foreign": {GameID: "foreign", Bytes: 400, Reason: "holds notes.txt, which is not part of an index"},
+		},
+	}
+	svc.RegisterSource(src)
+	svc.RegisterSource(newMockSource("other"))
+	for _, g := range []*domain.Game{
+		{ID: "alpha", SourceIDs: map[string]string{"ts": "fresh"}},
+		{ID: "beta", SourceIDs: map[string]string{"ts": "old", "other": "x"}},
+		{ID: "gamma", SourceIDs: map[string]string{"ts": "never-built"}},
+		{ID: "delta", SourceIDs: map[string]string{"ts": "fresh"}},
+	} {
+		g.Name, g.ModPath, g.LinkMethod = g.ID, t.TempDir(), domain.LinkSymlink
+		require.NoError(t, svc.SaveGame(t.Context(), g))
+	}
+	return svc, src, configDir
+}
+
+func entryFor(t *testing.T, entries []core.IndexPruneEntry, game string) core.IndexPruneEntry {
+	t.Helper()
+	for _, e := range entries {
+		if e.Game == game {
+			return e
+		}
+	}
+	require.Failf(t, "missing", "no prune entry for %s in %+v", game, entries)
+	return core.IndexPruneEntry{}
+}
+
+func TestListSourceIndexes_ListsCachedAndMappedIndexes(t *testing.T) {
+	svc, _, _ := newPruneService(t)
+
+	listing, err := svc.ListSourceIndexes(t.Context(), "")
+	require.NoError(t, err)
+	assert.Empty(t, listing.Warnings)
+
+	byGame := map[string]core.SourceIndexEntry{}
+	for _, e := range listing.Indexes {
+		assert.Equal(t, "ts", e.Source, "only a source that keeps an index is listed")
+		byGame[e.Game] = e
+	}
+	require.Len(t, byGame, 5)
+	assert.Equal(t, []string{"alpha", "delta"}, byGame["fresh"].MappedBy, "sorted, every game that maps it")
+	assert.True(t, byGame["fresh"].Cached)
+	assert.Equal(t, int64(100), byGame["fresh"].Bytes)
+	assert.Empty(t, byGame["unused"].MappedBy)
+	assert.NotNil(t, byGame["unused"].MappedBy, "an empty list, not null")
+	assert.False(t, byGame["never-built"].Cached, "a mapped index with nothing on disk is listed so it can be built")
+	assert.Equal(t, []string{"gamma"}, byGame["never-built"].MappedBy)
+}
+
+// TestPruneSourceIndexes_Policy is design §2.8 as a table: an index no game
+// uses goes; one a game uses stays until 30 days without a refresh; one
+// whose age is unknown stays; one the source cannot prove is its own stays.
+func TestPruneSourceIndexes_Policy(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	assert.False(t, report.DryRun)
+
+	assert.Equal(t, core.IndexPruneRemoved, entryFor(t, report.Entries, "unused").Action)
+	assert.Contains(t, entryFor(t, report.Entries, "unused").Reason, "no game uses it")
+	assert.Equal(t, core.IndexPruneRemoved, entryFor(t, report.Entries, "old").Action)
+	assert.Contains(t, entryFor(t, report.Entries, "old").Reason, "31 days")
+	fresh := entryFor(t, report.Entries, "fresh")
+	assert.Equal(t, core.IndexPruneKeep, fresh.Action)
+	assert.Contains(t, fresh.Reason, "alpha")
+	foreign := entryFor(t, report.Entries, "foreign")
+	assert.Equal(t, core.IndexPruneKeep, foreign.Action)
+	assert.Contains(t, foreign.Reason, "notes.txt")
+
+	sort.Strings(src.removed)
+	assert.Equal(t, []string{"old", "unused"}, src.removed)
+	assert.Equal(t, 2, report.Removed)
+	assert.Equal(t, int64(500), report.FreedBytes)
+	for _, e := range report.Entries {
+		assert.NotEqual(t, "never-built", e.Game, "nothing on disk, nothing to prune")
+	}
+}
+
+func TestPruneSourceIndexes_AnUnknownAgeIsKept(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+	ci := src.cached["old"]
+	ci.FetchedAt = time.Time{}
+	src.cached["old"] = ci
+
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	e := entryFor(t, report.Entries, "old")
+	assert.Equal(t, core.IndexPruneKeep, e.Action)
+	assert.Contains(t, e.Reason, "age")
+}
+
+// TestPruneSourceIndexes_ADryRunListsExactlyWhatTheRunRemoves: the preview
+// removes nothing, and a run restricted to what it listed removes exactly
+// that - which is how both frontends confirm before deleting.
+func TestPruneSourceIndexes_ADryRunListsExactlyWhatTheRunRemoves(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+
+	preview, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: true, DryRun: true})
+	require.NoError(t, err)
+	assert.True(t, preview.DryRun)
+	assert.Empty(t, src.removed)
+	assert.Equal(t, 3, preview.Removed, "the preview counts what the run would remove")
+	var planned []string
+	for _, e := range preview.Entries {
+		if e.Action == core.IndexPruneRemove {
+			planned = append(planned, e.Game)
+		}
+	}
+	sort.Strings(planned)
+	assert.Equal(t, []string{"fresh", "old", "unused"}, planned, "--all takes a mapped, fresh index too - never an unprovable one")
+	assert.Equal(t, int64(600), preview.FreedBytes, "the preview says what the run would free")
+
+	// Something changes between the preview and the run: a new index
+	// appears. The confirmed run must not take it.
+	src.cached["late"] = source.CachedIndex{GameID: "late", Bytes: 7, Removable: true, FetchedAt: time.Now()}
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: true, Only: preview.RemovalKeys()})
+	require.NoError(t, err)
+	sort.Strings(src.removed)
+	assert.Equal(t, planned, src.removed)
+	late := entryFor(t, report.Entries, "late")
+	assert.Equal(t, core.IndexPruneKeep, late.Action)
+	assert.Contains(t, late.Reason, "not in the list")
+}
+
+// TestPruneSourceIndexes_AGamesFileThatWillNotParseRemovesNothing: without
+// games.yaml lmm cannot tell what is in use, so it removes nothing at all -
+// not even with --all, which is still a claim about what the user has.
+func TestPruneSourceIndexes_AGamesFileThatWillNotParseRemovesNothing(t *testing.T) {
+	for _, all := range []bool{false, true} {
+		svc, src, configDir := newPruneService(t)
+		require.NoError(t, os.WriteFile(filepath.Join(configDir, "games.yaml"), []byte("games: [this is: not: a map"), 0o644))
+
+		_, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: all})
+		require.Error(t, err, "all=%v", all)
+		assert.Contains(t, err.Error(), "games.yaml")
+		assert.Empty(t, src.removed, "all=%v", all)
+	}
+}
+
+// TestPruneSourceIndexes_AnUnresolvableMappingKeepsUnusedIndexes: a game
+// that maps the source to nothing (or to something the source rejects)
+// wants SOME index lmm cannot name, so no index can be proved unused.
+func TestPruneSourceIndexes_AnUnresolvableMappingKeepsUnusedIndexes(t *testing.T) {
+	for _, value := range []string{"", "Not A Slug"} {
+		svc, src, _ := newPruneService(t)
+		require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+			ID: "epsilon", Name: "epsilon", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+			SourceIDs: map[string]string{"ts": value},
+		}))
+
+		report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+		require.NoError(t, err)
+		unused := entryFor(t, report.Entries, "unused")
+		assert.Equal(t, core.IndexPruneKeep, unused.Action, "mapping %q", value)
+		assert.Contains(t, unused.Reason, "epsilon")
+		assert.Equal(t, core.IndexPruneRemoved, entryFor(t, report.Entries, "old").Action,
+			"a mapped index past its age is still provably removable")
+		assert.NotContains(t, src.removed, "unused")
+	}
+}
+
+func TestPruneSourceIndexes_AnInventoryFailureIsAWarningNotARemoval(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+	src.listErr = errors.New("_thunderstore is a symbolic link")
+
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: true})
+	require.NoError(t, err)
+	assert.Empty(t, report.Entries)
+	require.Len(t, report.Warnings, 1)
+	assert.Contains(t, report.Warnings[0], "symbolic link")
+	assert.Empty(t, src.removed)
+}
+
+func TestPruneSourceIndexes_ARemovalThatFailsIsReportedAndTheRestContinue(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+	src.removeErr = map[string]error{"old": errors.New("holds sub, which is not a plain file lmm wrote")}
+
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	old := entryFor(t, report.Entries, "old")
+	assert.Equal(t, core.IndexPruneFailed, old.Action)
+	assert.Contains(t, old.Reason, "holds sub")
+	assert.Equal(t, core.IndexPruneRemoved, entryFor(t, report.Entries, "unused").Action)
+	assert.Equal(t, 1, report.Removed)
+	assert.Equal(t, int64(300), report.FreedBytes)
+}
+
+func TestPruneSourceIndexes_ScopesToOneSource(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{SourceID: "other"})
+	require.Error(t, err, "a source that keeps no index has nothing to prune")
+	assert.ErrorIs(t, err, source.ErrNotSupported)
+	assert.Nil(t, report)
+	assert.Empty(t, src.removed)
+}

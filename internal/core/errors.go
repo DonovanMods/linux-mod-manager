@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
@@ -66,6 +68,118 @@ type conflictErrorDetails struct {
 	// Additive and omitted when empty (#310), so an ordinary refusal's
 	// envelope is byte-identical to the one it emitted before.
 	CleanupWarnings []string `json:"cleanup_warnings,omitempty"`
+}
+
+// IndexUnavailableError reports that a source which answers from a LOCAL
+// index has none it can use and could not build one (#410, design §4.3):
+// the fetch failed, what is cached is unreadable, or the host is refusing
+// to be asked. It is the frontend-facing form of source.ErrIndexUnavailable
+// - `lmm serve` answers it 502, because the failure is upstream of lmm -
+// and Details() carries what the web UI shows beside the sentence.
+//
+// Error() is the cause's own sentence, unchanged; the struct only adds the
+// facts a frontend would otherwise have to parse back out of it.
+type IndexUnavailableError struct {
+	// Source is the source id ("thunderstore").
+	Source string `json:"source"`
+	// Game is the SOURCE's identifier for the game - the community slug -
+	// which is what names the index.
+	Game string `json:"game"`
+	// Reason is the underlying failure, without the "index is unavailable"
+	// framing around it.
+	Reason string `json:"reason"`
+	// RetryAt is when lmm will next ask the host, when it is refusing to
+	// ask before then (a tripped circuit breaker, or a throttle that asked
+	// for a longer wait than lmm sits through). Omitted otherwise.
+	RetryAt time.Time `json:"retry_at,omitzero"`
+
+	Err error `json:"-"`
+}
+
+// Error is the underlying failure's own message.
+func (e *IndexUnavailableError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the cause, which classifies as source.ErrIndexUnavailable.
+func (e *IndexUnavailableError) Unwrap() error { return e.Err }
+
+// Details implements the --json error envelope's extension point.
+func (e *IndexUnavailableError) Details() any { return e }
+
+// IsIndexUnavailable reports whether err means a source's local index could
+// not be had at all - the classifier a frontend that cannot import the
+// source packages branches on.
+func IsIndexUnavailable(err error) bool { return errors.Is(err, source.ErrIndexUnavailable) }
+
+// GameIdentifierError reports that a game's identifier for a source - the
+// value under games.yaml's `sources:` - is missing, empty or malformed for
+// a source that needs one (#410, design §4.3's ErrCommunityNotConfigured,
+// generalised: T2 made the sentinel cross-source). It is the user's
+// configuration being wrong, so `lmm serve` answers it 400, and Details()
+// names the game and the source so the web UI can open the sources editor
+// on the right row.
+type GameIdentifierError struct {
+	GameID string `json:"game_id"`
+	Source string `json:"source"`
+	// Value is what games.yaml says - empty when the mapping is blank or
+	// absent.
+	Value string `json:"value"`
+
+	Err error `json:"-"`
+}
+
+// Error is the refusal's own sentence, which names the command that fixes
+// it.
+func (e *GameIdentifierError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the cause, which classifies as
+// source.ErrGameIdentifierInvalid.
+func (e *GameIdentifierError) Unwrap() error { return e.Err }
+
+// Details implements the --json error envelope's extension point.
+func (e *GameIdentifierError) Details() any { return e }
+
+// IsGameIdentifierInvalid reports whether err means a game's identifier for
+// a source is missing or malformed - bad input rather than a failure.
+func IsGameIdentifierInvalid(err error) bool {
+	return errors.Is(err, source.ErrGameIdentifierInvalid)
+}
+
+// classifyIndexError types a source failure that left the caller with no
+// index, naming the source and its game identifier. Any other error, and one
+// already typed, passes through untouched.
+func classifyIndexError(sourceID, sourceGameID string, err error) error {
+	if err == nil || !errors.Is(err, source.ErrIndexUnavailable) {
+		return err
+	}
+	var typed *IndexUnavailableError
+	if errors.As(err, &typed) {
+		return err
+	}
+	typed = &IndexUnavailableError{Source: sourceID, Game: sourceGameID, Reason: indexFailureReason(err), Err: err}
+	var later *source.RetryLaterError
+	if errors.As(err, &later) {
+		typed.Reason = later.Reason
+		typed.RetryAt = later.Until.UTC()
+	}
+	return typed
+}
+
+// indexFailureReason digs the underlying cause out of an index failure: the
+// first error joined BESIDE the sentinel (a source's "could not be built:
+// %w: %w"), or the whole message when there is no such join.
+func indexFailureReason(err error) string {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		joined, ok := e.(interface{ Unwrap() []error })
+		if !ok {
+			continue
+		}
+		for _, part := range joined.Unwrap() {
+			if part != source.ErrIndexUnavailable {
+				return part.Error()
+			}
+		}
+	}
+	return err.Error()
 }
 
 // ProfileWarningsError carries the diagnostics `ApplyProfileSwitch`/

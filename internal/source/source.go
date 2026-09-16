@@ -523,6 +523,15 @@ type LoaderRequirer interface {
 // without importing the package (the ErrInvalidReference precedent).
 var ErrIndexUnavailable = errors.New("source index is unavailable")
 
+// GameIdentifierValidator is implemented by a source whose game identifier
+// has a fixed shape (#410) - a Thunderstore community slug - so core can
+// refuse a malformed games.yaml value before it reaches any path or URL,
+// with the game and the value named. The error must wrap
+// ErrGameIdentifierInvalid.
+type GameIdentifierValidator interface {
+	ValidateGameIdentifier(id string) error
+}
+
 // ErrGameIdentifierInvalid reports that a game's per-source mapped value
 // (games.yaml's `sources: {<id>: <value>}`) is missing or malformed for a
 // source that requires one - the counterpart to GameIdentifierIgnorer, which

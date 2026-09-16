@@ -96,6 +96,11 @@ func newBlockingIndexService(t *testing.T) (*Service, *blockingIndexSource) {
 
 	src := &blockingIndexSource{entered: make(chan struct{}), release: make(chan struct{})}
 	svc.RegisterSource(src)
+	// The index surface is about a game that maps the source (#410).
+	require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+		ID: "lethal", Name: "Lethal Company", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"blocking": "lethal-company"},
+	}))
 	return svc, src
 }
 
