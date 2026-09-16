@@ -1418,3 +1418,157 @@ func TestBackfillProfileDisabledMarkers_AnUnchangedKeptProfileCostsAPlanNothing(
 	assert.Less(t, time.Since(started), 250*time.Millisecond, "three plans, none of them waiting")
 	assert.Empty(t, f.disabledRefs(t, "a"))
 }
+
+// writeDuplicated writes profile's document by hand, listing mod "off" once
+// per entry of marks - marked disabled where the entry is true.
+func (f *backfillFixture) writeDuplicated(t *testing.T, profile string, isDefault bool, marks ...bool) {
+	t.Helper()
+	var doc strings.Builder
+	fmt.Fprintf(&doc, "name: %s\ngame_id: %s\nmods:\n", profile, f.game.ID)
+	for _, off := range marks {
+		doc.WriteString("  - source_id: src\n    mod_id: \"off\"\n    version: \"1.0\"\n")
+		if off {
+			doc.WriteString("    disabled: true\n")
+		}
+	}
+	if isDefault {
+		doc.WriteString("is_default: true\n")
+	}
+	require.NoError(t, os.WriteFile(f.profilePath(profile), []byte(doc.String()), 0o644))
+}
+
+// refCount is how many references profile's document holds.
+func (f *backfillFixture) refCount(t *testing.T, profile string) int {
+	t.Helper()
+	p, err := f.svc.NewProfileManager().Get(context.Background(), f.game.ID, profile)
+	require.NoError(t, err)
+	return len(p.Mods)
+}
+
+// TestBackfillProfileDisabledMarkers_ADuplicatedReference: a hand edit can
+// list one mod twice. The backfill marked only the first copy, `profile
+// apply` read the LAST copy and switched the mod back on, and `profile
+// sync` listed the unmarked copy for removal - through RemoveMod, which
+// removes every copy, the marked one and its marker with it. Every flow now
+// decides a listed-twice mod by its first reference, the backfill marks
+// every copy, and a sync never removes a marked copy of a mod that still
+// has a row.
+func TestBackfillProfileDisabledMarkers_ADuplicatedReference(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("the backfill marks every copy", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		f.writeDuplicated(t, "a", true, false, false)
+		f.owe(t)
+
+		report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
+		require.NoError(t, err)
+		require.Len(t, report.Marked, 1, "one mod, reported once")
+		assert.Equal(t, []string{"off", "off"}, f.disabledRefs(t, "a"))
+
+		apply, err := f.svc.PlanProfileApply(ctx, f.game, "a")
+		require.NoError(t, err)
+		assert.True(t, apply.NoChanges, "apply leaves it off")
+		sync, err := f.svc.PlanProfileSync(ctx, f.game, "a")
+		require.NoError(t, err)
+		assert.True(t, sync.NoChanges, "sync keeps both copies")
+	})
+
+	// A hand edit that marks one copy and not the other: the first copy
+	// decides, in every flow.
+	for _, tc := range []struct {
+		name  string
+		marks []bool
+		off   bool
+	}{
+		{name: "first copy marked", marks: []bool{true, false}, off: true},
+		{name: "first copy unmarked", marks: []bool{false, true}, off: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBackfillFixture(t)
+			f.row(t, "a", "off", false, false)
+			f.row(t, "b", "off", true, false) // live under b once b is active
+			f.switchTo(t, "b")
+			f.writeDuplicated(t, "a", false, tc.marks...)
+
+			apply, err := f.svc.PlanProfileApply(ctx, f.game, "a")
+			require.NoError(t, err)
+			switchPlan, err := f.svc.PlanProfileSwitch(ctx, f.game, "a")
+			require.NoError(t, err)
+			sync, err := f.svc.PlanProfileSync(ctx, f.game, "a")
+			require.NoError(t, err)
+			if tc.off {
+				assert.Empty(t, apply.ToEnable, "apply")
+				assert.Empty(t, switchPlan.ToEnable, "switch")
+				assert.Len(t, switchPlan.ToDisable, 1, "switch takes b's live copy down")
+				assert.True(t, sync.NoChanges, "sync keeps a marked mod")
+			} else {
+				assert.Len(t, apply.ToEnable, 1, "apply")
+				assert.Len(t, switchPlan.ToEnable, 1, "switch")
+				assert.Empty(t, switchPlan.ToDisable, "switch keeps b's live copy")
+				assert.Len(t, sync.ToRemove, 1, "sync lists the mod once")
+			}
+
+			// Either way the document ends the sync saying what the row
+			// says - off - and the marked copy is still there.
+			_, err = f.svc.ApplyProfileSync(ctx, f.game, sync, nil)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+			if !tc.off {
+				assert.Equal(t, 1, f.refCount(t, "a"), "only the unmarked copy was removed")
+			}
+		})
+	}
+
+	// deploy reads the same copy the converge flows do.
+	for _, tc := range []struct {
+		name     string
+		marks    []bool
+		deployed bool
+	}{
+		{name: "deploy, first copy marked", marks: []bool{true, false}, deployed: false},
+		{name: "deploy, first copy unmarked", marks: []bool{false, true}, deployed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBackfillFixture(t)
+			f.row(t, "a", "off", true, false)
+			f.writeDuplicated(t, "a", true, tc.marks...)
+
+			plan, err := f.svc.PlanDeploy(ctx, f.game, "a", core.DeployOptions{})
+			require.NoError(t, err)
+			selected := slices.ContainsFunc(plan.Mods, func(m core.DeployPlanMod) bool {
+				return m.Ref.ModID == "off" && m.Skipped == ""
+			})
+			assert.Equal(t, tc.deployed, selected)
+			apply, err := f.svc.PlanProfileApply(ctx, f.game, "a")
+			require.NoError(t, err)
+			assert.Equal(t, !tc.deployed, len(apply.ToDisable) == 1, "apply agrees with deploy")
+		})
+	}
+
+	t.Run("import, first copy marked", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		doc := "name: c\ngame_id: g1\nmods:\n" +
+			"  - {source_id: src, mod_id: new, disabled: true}\n" +
+			"  - {source_id: src, mod_id: new}\n"
+		plan, err := f.svc.PlanImport(ctx, f.game, []byte(doc))
+		require.NoError(t, err)
+		assert.Empty(t, plan.Missing, "nothing to fetch for a mod the document switches off")
+	})
+
+	// `lmm mod enable` and `lmm mod disable` write every copy, so lmm never
+	// leaves a document whose copies disagree.
+	t.Run("the toggle writes every copy", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		f.writeDuplicated(t, "a", true, true, true)
+		pm := f.svc.NewProfileManager()
+
+		require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "a", "src", "off", false))
+		assert.Empty(t, f.disabledRefs(t, "a"))
+		require.NoError(t, pm.SetModDisabled(ctx, f.game.ID, "a", "src", "off", true))
+		assert.Equal(t, []string{"off", "off"}, f.disabledRefs(t, "a"))
+		assert.Equal(t, 2, f.refCount(t, "a"))
+	})
+}

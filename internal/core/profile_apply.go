@@ -236,10 +236,9 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 		installedByKey[domain.ModKey(installedMods[i].SourceID, installedMods[i].ID)] = &installedMods[i]
 	}
 
-	profileKeys := make(map[string]domain.ModReference, len(profile.Mods))
-	for _, mr := range profile.Mods {
-		profileKeys[domain.ModKey(mr.SourceID, mr.ModID)] = mr
-	}
+	// A mod listed twice is decided by its first reference, as pass 2 below
+	// and every other flow decide it (firstRefs).
+	profileKeys := firstRefs(profile.Mods)
 
 	plan := &ProfileApplyPlan{GameID: game.ID, Profile: profileName}
 	gameCache := s.GetGameCache(game)

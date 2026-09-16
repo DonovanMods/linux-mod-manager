@@ -519,6 +519,9 @@ func (pm *ProfileManager) ClearModLock(ctx context.Context, gameID, profileName,
 // and, like them, touches nothing else on the ref: the load-order position
 // and the pinned Version are exactly what a disable must NOT throw away.
 //
+// A mod listed more than once (a hand edit) has every copy written, so the
+// document never ends up with copies that disagree (see firstRefs).
+//
 // A mod the profile does not list returns domain.ErrModNotFound, so the
 // caller can tell "nothing to record here" apart from a real write failure.
 // That is not an error condition for disable/enable: an installed row whose
@@ -534,20 +537,24 @@ func (pm *ProfileManager) SetModDisabled(ctx context.Context, gameID, profileNam
 		return err
 	}
 
+	found, changed := false, false
 	for i := range profile.Mods {
 		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID {
-			if profile.Mods[i].Disabled == disabled {
-				// Already what it should be - don't rewrite the file. A
-				// hand-edited profile stays byte-for-byte as its author
-				// left it whenever the intent already matches.
-				return nil
-			}
+			found = true
+			changed = changed || profile.Mods[i].Disabled != disabled
 			profile.Mods[i].Disabled = disabled
-			return config.SaveProfile(pm.configDir, profile)
 		}
 	}
-
-	return domain.ErrModNotFound
+	switch {
+	case !found:
+		return domain.ErrModNotFound
+	case !changed:
+		// Already what it should be - don't rewrite the file. A hand-edited
+		// profile stays byte-for-byte as its author left it whenever the
+		// intent already matches.
+		return nil
+	}
+	return config.SaveProfile(pm.configDir, profile)
 }
 
 // profileDisabledKeys is which of gameID/profileName's mod references carry
@@ -578,20 +585,46 @@ func (s *Service) documentDisabledKeys(gameID, profileName string) map[string]bo
 	return disabledKeysOf(profile)
 }
 
-// disabledKeysOf is which of profile's mod references carry the
-// `disabled:` marker, keyed by domain.ModKey.
+// disabledKeysOf is which of profile's mods the document marks
+// `disabled:`, keyed by domain.ModKey - each decided by its first
+// reference (firstRefs).
 func disabledKeysOf(profile *domain.Profile) map[string]bool {
 	disabled := make(map[string]bool)
-	for _, ref := range profile.Mods {
+	for key, ref := range firstRefs(profile.Mods) {
 		if ref.Disabled {
-			disabled[domain.ModKey(ref.SourceID, ref.ModID)] = true
+			disabled[key] = true
 		}
 	}
 	return disabled
 }
 
-// RemoveMod removes a mod reference from a profile
+// firstRefs keys refs by domain.ModKey, keeping each mod's FIRST reference.
+// lmm never lists a mod twice, but a hand edit can, and the copies can
+// disagree about the `disabled:` marker (#431). Every flow decides such a
+// mod by its first copy - the one domain.Profile.FindRef and a profile's
+// load order already name - so no two flows disagree about whether it is
+// switched off.
+func firstRefs(refs []domain.ModReference) map[string]domain.ModReference {
+	byKey := make(map[string]domain.ModReference, len(refs))
+	for _, ref := range refs {
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if _, seen := byKey[key]; !seen {
+			byKey[key] = ref
+		}
+	}
+	return byKey
+}
+
+// RemoveMod removes a mod's references - every one of them - from a profile
 func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, sourceID, modID string) error {
+	return pm.removeMod(ctx, gameID, profileName, sourceID, modID, false)
+}
+
+// removeMod is RemoveMod, sparing every reference that carries the
+// `disabled:` marker when keepMarked is set - `profile sync` removing the
+// unmarked copy of a mod listed twice, whose marked copy is the off intent
+// its installed row agrees with (#431).
+func (pm *ProfileManager) removeMod(ctx context.Context, gameID, profileName, sourceID, modID string, keepMarked bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -604,7 +637,7 @@ func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, so
 	found := false
 	newMods := make([]domain.ModReference, 0, len(profile.Mods))
 	for _, m := range profile.Mods {
-		if m.SourceID == sourceID && m.ModID == modID {
+		if m.SourceID == sourceID && m.ModID == modID && !(keepMarked && m.Disabled) {
 			found = true
 			continue
 		}

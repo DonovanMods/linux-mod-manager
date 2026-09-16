@@ -221,8 +221,15 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	pickedElsewhere := make(map[string]domain.InstalledMod)
 	var priorVersions map[string]domain.InstalledMod // #138 - see ImportPlan.priorVersions
 	gameCache := s.GetGameCache(game)
+	// seen: a mod listed twice is decided by its first reference, as every
+	// other flow decides it (firstRefs), and lands in one bucket at most.
+	seen := make(map[string]bool, len(profile.Mods))
 	for _, ref := range profile.Mods {
 		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 
 		if ref.Disabled {
 			// #431: the document says this mod belongs to the profile but

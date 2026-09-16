@@ -150,10 +150,9 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		}
 	}
 
-	targetKeys := make(map[string]domain.ModReference)
-	for _, mr := range targetProfile.Mods {
-		targetKeys[domain.ModKey(mr.SourceID, mr.ModID)] = mr
-	}
+	// A mod listed twice is decided by its first reference, as the target
+	// loop below and every other flow decide it (firstRefs).
+	targetKeys := firstRefs(targetProfile.Mods)
 
 	// allInstalled merges what's installed under the target profile with
 	// what's installed under the current one (current wins on key
