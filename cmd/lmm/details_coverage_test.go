@@ -24,6 +24,9 @@ var detailsCoverage = map[string]string{
 	// #353's adapter refusal: the game, the adapter and the remedy reach
 	// the envelope as data, so a frontend can act on the remedy.
 	"core.AdapterPreconditionError": "TestReportError_JSON_AdapterPreconditionError",
+	// #455: a game whose adapter is refused - the game and the adapter
+	// reach the envelope as data.
+	"core.AdapterRefusedError": "TestReportError_JSON_AdapterRefusedError",
 	// #373's ambiguous bare mod ID: the candidate sources reach the
 	// envelope as data, not only as the sentence.
 	"core.AmbiguousModError":      "TestReportError_JSON_AmbiguousModError",

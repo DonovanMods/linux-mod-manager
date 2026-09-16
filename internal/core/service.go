@@ -501,23 +501,28 @@ func (s *Service) AdapterFor(game *domain.Game) (adapter.GameAdapter, error) {
 
 // adapterForName is AdapterFor for a name the caller has already derived,
 // so a caller that needs both does not pay AdapterName's stat twice.
+//
+// Every refusal is an *AdapterRefusedError (#455).
 func (s *Service) adapterForName(game *domain.Game, name string) (adapter.GameAdapter, error) {
+	refuse := func(err error) error {
+		return &AdapterRefusedError{GameID: game.ID, Adapter: name, Err: err}
+	}
 	a, err := s.adapterRegistry().Resolve(name)
 	if err != nil {
-		return nil, fmt.Errorf("game %q: %w", game.ID, err)
+		return nil, refuse(fmt.Errorf("game %q: %w", game.ID, err))
 	}
 	if game.Adapter != "" && game.DeployMode == domain.DeployCompile {
 		if _, ok := adapter.Compiler(a); !ok {
-			return nil, fmt.Errorf("game %q sets deploy_mode: compile but adapter %q cannot compile; set an adapter that can (%s) or drop deploy_mode: compile",
-				game.ID, game.Adapter, strings.Join(s.adapterRegistry().Names(), ", "))
+			return nil, refuse(fmt.Errorf("game %q sets deploy_mode: compile but adapter %q cannot compile; set an adapter that can (%s) or drop deploy_mode: compile",
+				game.ID, game.Adapter, strings.Join(s.adapterRegistry().Names(), ", ")))
 		}
 	}
 	if bepinexOffRoot(game) {
 		// Both ways out, each in the order that works: the purge that
 		// starts the first one is a removal, which this refusal does not
 		// block (removalSnapshotOf).
-		return nil, fmt.Errorf("game %q sets adapter: bepinex but its mod_path (%s) is not its install path, and a BepInEx layout is relative to the game root. %s%s; or, to deploy archives into %s exactly as packaged, run `lmm game edit %s --adapter generic-files`",
-			game.ID, game.ModPath, bepinexEnableLead, strings.Join(bepinexEnableSteps(game), ", then "), game.ModPath, game.ID)
+		return nil, refuse(fmt.Errorf("game %q sets adapter: bepinex but its mod_path (%s) is not its install path, and a BepInEx layout is relative to the game root. %s%s; or, to deploy archives into %s exactly as packaged, run `lmm game edit %s --adapter generic-files`",
+			game.ID, game.ModPath, bepinexEnableLead, strings.Join(bepinexEnableSteps(game), ", then "), game.ModPath, game.ID))
 	}
 	return a, nil
 }

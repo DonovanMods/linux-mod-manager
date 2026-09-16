@@ -1500,6 +1500,17 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **`GET /api/v1/conflicts` no longer answers 500 for a game whose adapter
+  is refused (#455).** An unknown `adapter:` name, a compile game's adapter
+  that cannot compile, or `adapter: bepinex` off the game root is a known
+  state, not a server failure: the route now answers **409** with the
+  refusal itself and `details: {game_id, adapter}`, which the web UI's
+  conflicts card already renders as "Couldn't check for conflicts: …".
+  `lmm conflicts` agrees — it prints the refusal as it is, rather than
+  wrapped in "getting conflicts:", and `--json` carries the same details.
+  Every flow's adapter refusal is now the typed `core.AdapterRefusedError`;
+  its sentence is unchanged.
+
 - **A game whose `mod_path` no longer exists is flagged, with the repair
   (#427).** `lmm game show` and `lmm status --game` print the problem under
   the mod path; `lmm game list` marks the cell `(missing)` and `lmm status`
