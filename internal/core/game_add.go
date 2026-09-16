@@ -654,13 +654,33 @@ func requireDir(path string) error {
 // root, the bepinex adapter is only derived for a game that deploys there,
 // and <install>/mods is a directory BepInEx never reads. "A BepInEx one" is
 // a spec that declares the loader or names the bepinex adapter - the two
-// things a new game can say about it before it exists.
+// things a new game can say about it before it exists - or one whose
+// install directory already holds BepInEx (#413 final review F5), which is
+// the same fact the derivation reads. AddGame requires that directory to
+// exist, so the preloader is right there to stat, and <install>/mods would
+// contradict it the moment it was written. A spec that names another
+// adapter, or compiles its mods, has made its own choice and keeps
+// <install>/mods.
+//
+// It is one os.Stat, and only for a spec that declares nothing.
 func (spec GameSpec) DefaultModPath() string {
 	installPath := config.ExpandPath(strings.TrimSpace(spec.InstallPath))
-	if spec.declaresBepInEx() {
+	if spec.declaresBepInEx() || spec.findsBepInEx(installPath) {
 		return installPath
 	}
 	return filepath.Join(installPath, "mods")
+}
+
+// findsBepInEx reports whether BepInEx is installed at installPath and
+// nothing in spec keeps the bepinex adapter from being derived for it.
+func (spec GameSpec) findsBepInEx(installPath string) bool {
+	if installPath == "" || strings.TrimSpace(spec.Adapter) != "" {
+		return false
+	}
+	if mode, ok := domain.ParseDeployMode(strings.TrimSpace(spec.DeployMode)); ok && mode == domain.DeployCompile {
+		return false
+	}
+	return regularFileAt(installPath, domain.BepInExPreloaderPath)
 }
 
 // declaresBepInEx reports whether spec says the game loads its mods through

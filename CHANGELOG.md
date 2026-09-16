@@ -337,9 +337,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   did; deriving the adapter for it nested every plugin one level too deep,
   under `BepInEx/plugins/BepInEx/plugins/`, where BepInEx never loads it.
   lmm tells such a game how to move to the game root, or how to keep it as
-  it is. `lmm game add` with a BepInEx loader or adapter now defaults the
-  mod path to the install path (with `--from-detected` and from the web
-  UI too), and `adapter: bepinex` with any other mod
+  it is. `lmm game add` with a BepInEx loader or adapter — or on an
+  install directory that already holds BepInEx — now defaults the mod
+  path to the install path (with `--from-detected` and from the web UI
+  too), and `adapter: bepinex` with any other mod
   path is refused, with both ways out spelled in the order that works:
   `lmm purge` first, while lmm's records still say where the files are,
   then the mod path. `lmm purge` and `lmm uninstall` (and their

@@ -18,6 +18,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,6 +179,50 @@ func TestAddGame_ABepInExGameDefaultsItsModPathToTheInstallPath(t *testing.T) {
 			assert.Equal(t, install, entry.ModPath)
 			assert.Equal(t, "bepinex", entry.EffectiveAdapter)
 			assert.Empty(t, svc.AdapterConfigWarning(entry.ID), "no contradiction at birth")
+		})
+	}
+
+	// #413 final review F5: a game whose install directory already holds
+	// BepInEx is a BepInEx game whether or not the spec says so - AddGame
+	// requires that directory to exist, so the preloader is right there to
+	// stat - and <install>/mods would contradict it the moment it is
+	// written. A spec that names another adapter has made its choice.
+	installed := map[string]struct {
+		spec core.GameSpec
+		want func(install string) string
+	}{
+		"installed, nothing declared":      {core.GameSpec{}, func(install string) string { return install }},
+		"installed, from a detected game":  {core.GameSpec{}, func(install string) string { return install }},
+		"installed, another adapter named": {core.GameSpec{Adapter: "generic-files"}, func(install string) string { return filepath.Join(install, "mods") }},
+		"installed, a compile game":        {core.GameSpec{DeployMode: "compile"}, func(install string) string { return filepath.Join(install, "mods") }},
+	}
+	for name, tc := range installed {
+		t.Run(name, func(t *testing.T) {
+			svc := newGameAddService(t)
+			svc.RegisterAdapter(bepinex.New())
+			install := t.TempDir()
+			bepinexInstall(t, install, "", domain.LoaderBootstrapNative, time.Time{})
+			spec := tc.spec
+			spec.SourceID, spec.Identifier, spec.Name, spec.InstallPath = "nexusmods", "oddity", "Oddity", install
+			if strings.Contains(name, "detected") {
+				var err error
+				spec, err = svc.PrefillGameSpecFromDetected(domain.DetectedGame{
+					SteamAppID: "777777", Slug: "oddity", Name: "Oddity", InstallPath: install,
+				}, spec)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want(install), spec.ModPath)
+			}
+			assert.Equal(t, tc.want(install), spec.DefaultModPath())
+			if spec.DeployMode != "" {
+				return // a compile game needs a compiling adapter this Service does not register
+			}
+			entry, err := svc.AddGame(t.Context(), spec)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want(install), entry.ModPath)
+			if spec.Adapter == "" {
+				assert.Equal(t, "bepinex", entry.EffectiveAdapter)
+				assert.Empty(t, svc.AdapterConfigWarning(entry.ID), "no contradiction at birth")
+			}
 		})
 	}
 

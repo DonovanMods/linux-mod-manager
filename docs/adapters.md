@@ -398,9 +398,10 @@ working directory. So:
 - an **explicit** `adapter: bepinex` with any other `mod_path` is refused
   by name, like a compile game's non-compiling adapter, and `lmm game
   edit`/`lmm game add` cannot write it;
-- `lmm game add` with a BepInEx loader or adapter defaults `mod_path` to the
-  install path rather than `<install>/mods` — with `--from-detected` and
-  `POST /api/v1/games` too; every curated BepInEx entry
+- `lmm game add` with a BepInEx loader or adapter — or, naming no other
+  adapter, on an install directory that already holds BepInEx — defaults
+  `mod_path` to the install path rather than `<install>/mods`, with
+  `--from-detected` and `POST /api/v1/games` too; every curated BepInEx entry
   uses the game root, and the known-games ratchet refuses one that does
   not.
 

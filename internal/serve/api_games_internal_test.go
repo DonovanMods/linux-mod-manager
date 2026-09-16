@@ -633,18 +633,25 @@ func TestAPIGameAdd_FromSteamAppIDUnknownGameTakesTheSourcePair(t *testing.T) {
 
 // TestAPIGameAdd_FromSteamAppIDUnknownBepInExGameDeploysIntoTheGameRoot is
 // #413 final review F1's web half: an uncatalogued candidate the form
-// declares BepInEx for gets the install path as its mod path, like every other `game add` path,
+// declares BepInEx for - or whose install directory already holds BepInEx -
+// gets the install path as its mod path, like every other `game add` path,
 // rather than <install>/mods, which contradicted the loader from birth and
 // had an explicit bepinex adapter refused over a mod path nobody sent.
 func TestAPIGameAdd_FromSteamAppIDUnknownBepInExGameDeploysIntoTheGameRoot(t *testing.T) {
 	for name, extra := range map[string]string{
 		"a loader declaration": `,"loader":{"kind":"bepinex"}`,
 		"the bepinex adapter":  `,"adapter":"bepinex"`,
+		"BepInEx on disk":      ``,
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newGamesServer(t)
 			app.RegisterAdapters(s.svc) // what the real binary resolves against
 			install := fakeSteamApp(t, uncuratedAppID, uncuratedName, uncuratedDir)
+			if extra == "" {
+				preloader := filepath.Join(install, "BepInEx", "core", "BepInEx.Preloader.dll")
+				require.NoError(t, os.MkdirAll(filepath.Dir(preloader), 0o755))
+				require.NoError(t, os.WriteFile(preloader, []byte("preloader"), 0o644))
+			}
 
 			rec := doAPI(s, http.MethodPost, "/api/v1/games",
 				`{"from_steam_app_id":"9999990","source_id":"nexusmods","identifier":"uncurated-example-game"`+extra+`}`)
