@@ -46,6 +46,15 @@ type e2eIndexSource struct {
 	// searchGate, when non-nil, makes Search wait for it to close - the
 	// cold build a first search performs, held open for the browser to see.
 	searchGate chan struct{}
+	// holds is what Holds(ctx) reports in force (source.HoldReporter,
+	// #436) - a scenario sets it before the server starts, the same way it
+	// sets throttle/searchGate.
+	holds []source.Hold
+	// searchFailure, when non-nil, is returned by Search unconditionally -
+	// the shape of a source refusing to be asked at all (a *source.
+	// RetryLaterError wrapped the way thunderstore/index.go's own
+	// indexUnavailable wraps one).
+	searchFailure error
 }
 
 func (s *e2eIndexSource) Name() string                { return "Thunderstore" }
@@ -59,6 +68,9 @@ func (s *e2eIndexSource) ValidateGameIdentifier(id string) error {
 }
 
 func (s *e2eIndexSource) Search(ctx context.Context, q source.SearchQuery) (source.SearchResult, error) {
+	if s.searchFailure != nil {
+		return source.SearchResult{}, s.searchFailure
+	}
 	if s.searchGate != nil {
 		select {
 		case <-s.searchGate:
@@ -145,11 +157,22 @@ func (s *e2eIndexSource) removedIndexes() []string {
 	return append([]string(nil), s.removed...)
 }
 
+// Holds implements source.HoldReporter (#436): the holds the scenario
+// configured, in force from server start - unlike throttle/searchGate,
+// nothing in these tests trips a hold live, so there is no lock dance
+// needed beyond what mu already gives every other field here.
+func (s *e2eIndexSource) Holds(context.Context) []source.Hold {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]source.Hold(nil), s.holds...)
+}
+
 var (
 	_ source.LocalIndexSource        = (*e2eIndexSource)(nil)
 	_ source.IndexInventory          = (*e2eIndexSource)(nil)
 	_ source.LoaderRequirer          = (*e2eIndexSource)(nil)
 	_ source.GameIdentifierValidator = (*e2eIndexSource)(nil)
+	_ source.HoldReporter            = (*e2eIndexSource)(nil)
 )
 
 // e2eIndexModID is the one package the index scenarios install.
@@ -455,4 +478,162 @@ func TestE2E_SetupSources_APruneThatCouldNotRemoveSaysWhy(t *testing.T) {
 	assert.Equal(t, []string{"lethal-company"}, src.removedIndexes())
 	assert.False(t, allChecked, "the next prune starts from the safe default")
 	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SetupSources_ShowsTheHoldsInForce is #436's T3 review F10 on the
+// Setup page: a hold on the whole source and a hold on one index are both
+// shown WITHOUT a request being made - "not asking ... again until ..." -
+// and the one-index hold also marks its own row, while an index the hold
+// does not name gets no marker at all.
+func TestE2E_SetupSources_ShowsTheHoldsInForce(t *testing.T) {
+	hostUntil := time.Now().Add(9*time.Minute + 20*time.Second)
+	indexUntil := time.Now().Add(4 * time.Minute)
+	f, _ := newE2EIndexFixture(t, func(s *e2eIndexSource) {
+		s.holds = []source.Hold{
+			{
+				Until:  hostUntil,
+				Reason: "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s",
+			},
+			{
+				GameID: "content-warning",
+				Until:  indexUntil,
+				Reason: "suspended after 3 failed requests in a row; the last: Thunderstore has no package index at /c/content-warning/api/v1/package/ (HTTP 404)",
+			},
+		}
+	})
+
+	var holds, rowMarker string
+	var lethalMarkers int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/setup?section=sources"),
+		chromedp.WaitVisible(`[data-testid="source-index-holds"]`, chromedp.ByQuery),
+		textContent(`[data-testid="source-index-holds"]`, &holds),
+		chromedp.WaitVisible(indexRow("content-warning")+` [data-testid="index-held-until"]`, chromedp.ByQuery),
+		textContent(indexRow("content-warning")+` [data-testid="index-held-until"]`, &rowMarker),
+		chromedp.Evaluate(
+			fmt.Sprintf(`document.querySelectorAll(%q).length`, indexRow("lethal-company")+` [data-testid="index-held-until"]`),
+			&lethalMarkers,
+		),
+	)
+
+	assert.Contains(t, holds, "Thunderstore", "the source's display name, not its bare id")
+	assert.Contains(t, holds, "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s")
+	assert.Contains(t, holds, "content-warning", "the one-index hold names its index")
+	assert.Contains(t, holds, "suspended after 3 failed requests in a row")
+	assert.Contains(t, rowMarker, "held until")
+	assert.Zero(t, lethalMarkers, "only the index the hold names gets a row marker")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SetupSources_ARowAPruneWouldKeepSaysWhy is T3 review F7: an index
+// the source cannot prove is only its own (here, a stray notes.txt) shows
+// why a prune would keep it whatever its use or age, right on its row - not
+// only inside a prune preview the user has to open first.
+func TestE2E_SetupSources_ARowAPruneWouldKeepSaysWhy(t *testing.T) {
+	f, _ := newE2EIndexFixture(t, func(s *e2eIndexSource) {
+		s.cached["old-mod-pack"] = source.CachedIndex{
+			GameID:    "old-mod-pack",
+			Bytes:     5120,
+			Removable: false,
+			Reason:    "the old-mod-pack index directory holds notes.txt, which is not part of an index",
+		}
+	})
+
+	var reason string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/setup?section=sources"),
+		chromedp.WaitVisible(indexRow("old-mod-pack")+` [data-testid="index-keep-reason"]`, chromedp.ByQuery),
+		textContent(indexRow("old-mod-pack")+` [data-testid="index-keep-reason"]`, &reason),
+	)
+
+	assert.Contains(t, reason, "Prune keeps this:")
+	assert.Contains(t, reason, "notes.txt")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SetupSources_AConfirmedPruneThatKeptAnIndexSaysWhy is F11: the
+// preview said "content-warning" would be removed, but between the preview
+// and the confirm a game starts mapping it - the honest case where the
+// confirmed run removes zero rather than the one the preview promised. The
+// result must name the index and say why, not simply read as a prune that
+// removed everything it said it would.
+func TestE2E_SetupSources_AConfirmedPruneThatKeptAnIndexSaysWhy(t *testing.T) {
+	f, src := newE2EIndexFixture(t, nil)
+
+	var problems string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/setup?section=sources"),
+		chromedp.WaitVisible(`[data-testid="source-indexes"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="prune-indexes"]`),
+		chromedp.WaitVisible(`[data-testid="prune-preview"] [data-prune="content-warning"]`, chromedp.ByQuery),
+		chromedp.ActionFunc(func(context.Context) error {
+			other := &domain.Game{
+				ID: "other", Name: "Other Game",
+				InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+				SourceIDs: map[string]string{e2eIndexSourceID: "content-warning"},
+			}
+			return f.Svc.SaveGame(context.Background(), other)
+		}),
+		clickWhenSettled(`[data-action="confirm-prune"]`),
+		chromedp.WaitVisible(`[data-testid="prune-problems"] [data-kept-anyway="content-warning"]`, chromedp.ByQuery),
+		textContent(`[data-testid="prune-problems"]`, &problems),
+	)
+
+	assert.Contains(t, problems, "content-warning")
+	assert.Contains(t, problems, "was kept")
+	assert.Contains(t, problems, "used by other")
+	assert.Empty(t, src.removedIndexes(), "the preview's promise did not hold, so nothing was removed")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SearchPage_AnIndexFailureShowsWhenToRetry is #423/#436 on the
+// dedicated search page: a source that will not be asked before its own
+// retry_at answers a search 502 with a *core.IndexUnavailableError, and the
+// page must show it through ErrorDetails (errordetails.js) - the same
+// component confirmplan.js already renders a plan refusal's details
+// through - rather than only the raw error sentence.
+func TestE2E_SearchPage_AnIndexFailureShowsWhenToRetry(t *testing.T) {
+	// Seconds pinned away from a minute boundary (30, not whatever time.Now()
+	// happens to carry): classifyIndexError rounds RetryAt UP to the next
+	// whole second, which must never carry into the following minute and
+	// make the "HH:MM" assertion below flaky.
+	now := time.Now()
+	until := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute()+10, 30, 0, now.Location())
+	f, _ := newE2EIndexFixture(t, func(s *e2eIndexSource) {
+		retry := &source.RetryLaterError{
+			Source: "Thunderstore",
+			Until:  until,
+			Reason: "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s",
+		}
+		// The exact wrap thunderstore/index.go's own indexUnavailable
+		// produces for a cause that already IS the sentinel (RetryLaterError.Is
+		// makes errors.Is(err, ErrIndexUnavailable) true on its own): a single
+		// %w, not the double-%w join used for a cause that is not already the
+		// sentinel.
+		s.searchFailure = fmt.Errorf("source %q: the %s index could not be built: %w", e2eIndexSourceID, "lethal-company", retry)
+	})
+
+	var message, retryAt string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/search?q=Skinwalkers"),
+		chromedp.WaitVisible(`.app-error`, chromedp.ByQuery),
+		textContent(`.app-error`, &message),
+		chromedp.WaitVisible(`[data-testid="retry-at"]`, chromedp.ByQuery),
+		textContent(`[data-testid="retry-at"]`, &retryAt),
+	)
+
+	assert.Contains(t, message, "rate limited by Thunderstore (HTTP 429)")
+	// ErrorDetails/retryAtFor (failures.js) names the source by its wire id
+	// (core.IndexUnavailableError.Source, always the lowercase registry id)
+	// - the same convention every other reader of that field follows - so
+	// the capitalised "Thunderstore" a person reads comes from the message
+	// line above, not this one.
+	assert.Contains(t, retryAt, e2eIndexSourceID)
+	assert.Contains(t, retryAt, until.Local().Format("3:04"), "a clock time close enough to be recognisable")
+	// A refused search is a 502 the page reports as a failed request: the
+	// console line is the browser's own, not the application's (mirrors
+	// TestE2E_ALoaderRefusalRendersItsSetupSteps's own 409 case).
+	for _, e := range f.BrowserErrors() {
+		assert.Contains(t, e, "502", "the only browser error is the refused request itself: %s", e)
+	}
 }

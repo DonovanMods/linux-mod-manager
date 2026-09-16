@@ -21,7 +21,7 @@ import {
   pruneSourceIndexes,
 } from "../api.js";
 import { formatBytes } from "../progress.js";
-import { relativeTime } from "../relativetime.js";
+import { countdown, relativeTime } from "../relativetime.js";
 import { codeSpans } from "../errortext.js";
 import { ErrorDetails } from "./errordetails.js";
 import { forgetIndexListing } from "../indexnotice.js";
@@ -38,10 +38,16 @@ function describeError(err) {
  * SourceIndexes renders nothing until the listing has loaded, and nothing
  * at all for an installation where no source keeps an index and no game
  * maps one - the section is about a capability most games do not use.
+ *
+ * sources (optional) is the Sources card's own listing (app.SourceInfo,
+ * setupsources.js) - it already has each source's display name, so a hold
+ * (which the wire names only by source id) can say "Thunderstore" rather
+ * than "thunderstore" without a second fetch.
  */
-export function SourceIndexes() {
+export function SourceIndexes({ sources } = {}) {
   const [listing, setListing] = useState(null);
   const [error, setError] = useState(null);
+  const nameFor = (id) => sources?.find((s) => s.id === id)?.name || id;
 
   async function reload() {
     forgetIndexListing();
@@ -86,6 +92,7 @@ export function SourceIndexes() {
       ${(listing.warnings ?? []).map(
         (w) => html`<p key=${w} class="plan__note--warn">${w}</p>`,
       )}
+      <${IndexHolds} holds=${listing.holds ?? []} nameFor=${nameFor} />
       <table class="setup-table">
         <thead>
           <tr>
@@ -104,6 +111,12 @@ export function SourceIndexes() {
               <${IndexRow}
                 key=${`${entry.source}/${entry.game}`}
                 entry=${entry}
+                hold=${(listing.holds ?? []).find(
+                  (h) =>
+                    h.game &&
+                    h.source === entry.source &&
+                    h.game === entry.game,
+                )}
                 onChanged=${reload}
               />
             `,
@@ -119,11 +132,65 @@ export function SourceIndexes() {
 }
 
 /**
+ * IndexHolds is issue 436's holds in force (T3 review F10), shown WITHOUT a
+ * request: a source that will not be asked at all - or, with a game, will
+ * not be asked about that one index - before its own retry_at, and why. It
+ * is a role="status" region so a screen reader announces it the moment the
+ * listing loads, the same way a completed refresh's outcome does.
+ */
+function IndexHolds({ holds, nameFor }) {
+  if (holds.length === 0) return null;
+  return html`
+    <div
+      role="status"
+      class="source-indexes__holds"
+      data-testid="source-index-holds"
+    >
+      ${holds.map(
+        (h) => html`
+          <p
+            key=${`${h.source}/${h.game ?? ""}`}
+            class="plan__note--warn"
+            data-hold=${h.game || h.source}
+          >
+            ${holdLine(h, nameFor(h.source))}
+          </p>
+        `,
+      )}
+    </div>
+  `;
+}
+
+/** holdLine is one source.Hold as a sentence, mirroring
+ * source.RetryLaterError.Error()'s own wording ("not asking ... again
+ * until ...: ...") but capitalized for a standalone line, in local time
+ * (clockTime's own reasoning: the clock the reader has), plus the
+ * relative-time countdown so a reader does not have to do the subtraction
+ * themselves. */
+function holdLine(hold, name) {
+  const clock = holdClock(hold.retry_at);
+  const wait = countdown(hold.retry_at);
+  const about = hold.game ? ` about ${hold.game}` : "";
+  const when = wait ? `${clock} (${wait})` : clock;
+  return `Not asking ${name}${about} again until ${when}: ${hold.reason}`;
+}
+
+/** holdClock is a hold's end on the reader's clock: the time alone within
+ * the next twelve hours, the date as well further off - the CLI's rule. */
+function holdClock(value, now = Date.now()) {
+  const at = new Date(value);
+  if (Math.abs(at.getTime() - now) < 12 * 60 * 60 * 1000) {
+    return at.toLocaleTimeString();
+  }
+  return at.toLocaleString();
+}
+
+/**
  * IndexRow is one index. Its Refresh button rebuilds it for the first game
  * that maps it - the index route is game-scoped because an index IS a
  * game's mapping - and an index no game uses has nothing to refresh for.
  */
-function IndexRow({ entry, onChanged }) {
+function IndexRow({ entry, hold, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState(null);
   const [outcome, setOutcome] = useState("");
@@ -162,6 +229,14 @@ function IndexRow({ entry, onChanged }) {
       </td>
       <td data-testid="index-updated">
         ${entry.cached ? updated || "unknown" : "not built yet"}
+        ${
+          hold &&
+          html`
+            <span class="empty-state__hint" data-testid="index-held-until">
+              held until ${holdClock(hold.retry_at)}
+            </span>
+          `
+        }
       </td>
       <td>${usedBy.length > 0 ? usedBy.join(", ") : "—"}</td>
       <td class="setup-table__actions">
@@ -177,6 +252,14 @@ function IndexRow({ entry, onChanged }) {
             >
               ${busy ? "Refreshing…" : entry.cached ? "Refresh index" : "Build index"}
             </button>
+          `
+        }
+        ${
+          entry.keep_reason &&
+          html`
+            <p class="empty-state__hint" data-testid="index-keep-reason">
+              Prune keeps this: ${entry.keep_reason}
+            </p>
           `
         }
         ${
@@ -223,6 +306,11 @@ function PrunePanel({ onChanged }) {
   const [all, setAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  // confirmedOnly is exactly what the last confirm() sent as `only` - the
+  // keys PruneProblems needs to tell "the preview said remove and the run
+  // came back keep" (F11) apart from an entry that was never up for
+  // removal in the first place.
+  const [confirmedOnly, setConfirmedOnly] = useState([]);
   const [error, setError] = useState(null);
 
   async function runPreview(withAll) {
@@ -244,6 +332,7 @@ function PrunePanel({ onChanged }) {
     setError(null);
     try {
       setResult(await pruneSourceIndexes({ all, only }));
+      setConfirmedOnly(only);
       setPreview(null);
       // The next prune starts from the safe default again: "also remove
       // indexes a game uses" is a decision for one prune, not a setting.
@@ -277,7 +366,7 @@ function PrunePanel({ onChanged }) {
         }
         ${error && html`<span class="modal__error">${error}</span>`}
       </div>
-      <${PruneProblems} report=${result} />
+      <${PruneProblems} report=${result} only=${confirmedOnly} />
     `;
   }
 
@@ -367,15 +456,29 @@ function PrunePanel({ onChanged }) {
 
 /**
  * PruneProblems is what a finished prune could NOT do: every entry the
- * source refused or failed to remove, with its reason, and every source it
- * could not list at all. A prune that removed nothing because of these
- * must never read as a prune that simply had nothing to do.
+ * source refused or failed to remove, with its reason; every entry the
+ * preview said it would remove but the confirmed run kept instead - a
+ * refresh, or a game mapping it, landed between the two calls (F11); and
+ * every source it could not list at all. A prune that removed nothing
+ * because of these must never read as a prune that simply had nothing to
+ * do.
+ *
+ * only is the confirmed run's own `only` list (removalKeys of the preview
+ * it answered), so "kept anyway" names exactly the entries the preview
+ * promised to remove - never an entry that was never up for removal, which
+ * `action !== "remove"` alone could not tell apart.
  */
-function PruneProblems({ report }) {
+function PruneProblems({ report, only = [] }) {
   if (!report) return null;
   const failed = (report.entries ?? []).filter((e) => e.action === "failed");
+  const onlyKeys = new Set(only);
+  const keptAnyway = (report.entries ?? []).filter(
+    (e) => e.action === "keep" && onlyKeys.has(`${e.source}/${e.game}`),
+  );
   const warnings = report.warnings ?? [];
-  if (failed.length === 0 && warnings.length === 0) return null;
+  if (failed.length === 0 && keptAnyway.length === 0 && warnings.length === 0) {
+    return null;
+  }
   return html`
     <div class="modal__error" data-testid="prune-problems">
       ${
@@ -387,6 +490,20 @@ function PruneProblems({ report }) {
               (e) => html`
                 <li key=${`${e.source}/${e.game}`} data-failed=${e.game}>
                   <span class="mono">${e.game}</span> — ${e.reason}
+                </li>
+              `,
+            )}
+          </ul>
+        `
+      }
+      ${
+        keptAnyway.length > 0 &&
+        html`
+          <ul class="source-indexes__preview-list">
+            ${keptAnyway.map(
+              (e) => html`
+                <li key=${`${e.source}/${e.game}`} data-kept-anyway=${e.game}>
+                  <span class="mono">${e.game}</span> was kept: ${e.reason}
                 </li>
               `,
             )}

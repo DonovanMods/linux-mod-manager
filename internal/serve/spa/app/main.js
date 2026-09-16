@@ -766,6 +766,11 @@ async function runSearchPage({
         tags,
         report: null,
         error: err instanceof ApiError ? err.message : String(err),
+        // details carries a typed failure's structured facts (issue 436's
+        // *core.IndexUnavailableError, e.g.) so the page can render them
+        // through ErrorDetails the way confirmplan.js does, rather than
+        // leaving them buried in the message string above.
+        details: err instanceof ApiError ? err.details : null,
         facets,
       },
     });

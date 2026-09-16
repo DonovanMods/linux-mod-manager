@@ -1983,6 +1983,16 @@ select {
   padding-left: 1.5rem;
 }
 
+/* issue 436: the holds in force, above the index table - each line reuses
+ * .plan__note--warn's own token rather than a colour of its own. */
+.source-indexes__holds {
+  margin: var(--space-3) 0;
+}
+
+.source-indexes__holds p {
+  margin: 0 0 var(--space-1);
+}
+
 /* The search page's and the omnibar's one-time index build notice. */
 .index-notice {
   margin: var(--space-1) 0 0;

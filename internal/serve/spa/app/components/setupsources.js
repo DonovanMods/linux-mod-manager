@@ -162,7 +162,7 @@ export function SetupSources({ onChanged } = {}) {
         `
       }
     </div>
-    <${SourceIndexes} />
+    <${SourceIndexes} sources=${sources} />
   `;
 }
 

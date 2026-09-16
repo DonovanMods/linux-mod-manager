@@ -23,6 +23,7 @@ import { SourceResultsList, skippedSignInNotice } from "./searchresults.js";
 import { ModPanel } from "./modpanel.js";
 import { AwayBar } from "./awaybar.js";
 import { codeSpans } from "../errortext.js";
+import { ErrorDetails } from "./errordetails.js";
 
 // See tagsSupported below.
 const TAG_CAPABLE_SOURCES = new Set(["nexusmods", "thunderstore"]);
@@ -120,6 +121,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
       ${header}
       <main id="main" class="app-main search-page">
         <p class="app-error">Couldn't search: ${codeSpans(searchPage.error)}</p>
+        <${ErrorDetails} details=${searchPage.details} />
         <${CollectionOffer} collectionRef=${collectionRef} actions=${actions} />
       </main>
     `;
