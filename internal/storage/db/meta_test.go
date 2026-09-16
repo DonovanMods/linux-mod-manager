@@ -115,3 +115,26 @@ func TestMeta_DeleteAndPrefix(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
+
+// TestDisabledModRows_NullFlagsAreNotAnError: a flag stored as NULL - no lmm
+// writes one, a hand edit can - reads as deployed and not external. A scan
+// error here would fail the backfill, and with it every mutation, for good
+// (F3).
+func TestDisabledModRows_NullFlagsAreNotAnError(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+	ctx := context.Background()
+	require.NoError(t, database.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "m", SourceID: "src", Name: "M", Version: "1", GameID: "g"},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify,
+	}))
+	_, err = database.ExecContext(ctx, `UPDATE installed_mods SET deployed = NULL, external = NULL`)
+	require.NoError(t, err)
+
+	rows, err := database.DisabledModRows(ctx)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.True(t, rows[0].Deployed)
+	assert.False(t, rows[0].External)
+}

@@ -108,7 +108,9 @@ type DisabledModRow struct {
 
 // DisabledModRows returns every installed row across every game and profile
 // whose enabled flag is false, in a deterministic order (game, profile,
-// source, mod).
+// source, mod). A flag stored as NULL - which no lmm writes, but a hand edit
+// can - reads as deployed and as not external, so one odd row is never a
+// scan error that fails the whole query.
 //
 // It exists for #431's one-time profile-document backfill, which has to
 // answer "which mods does the database say are off?" without being told
@@ -119,7 +121,8 @@ type DisabledModRow struct {
 // disable - every profile switch writes it too.
 func (d *DB) DisabledModRows(ctx context.Context) ([]DisabledModRow, error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT game_id, profile_name, source_id, mod_id, name, deployed, external
+		SELECT game_id, profile_name, source_id, mod_id, name,
+			COALESCE(deployed, 1) != 0, COALESCE(external, 0) != 0
 		FROM installed_mods
 		WHERE enabled = 0
 		ORDER BY game_id, profile_name, source_id, mod_id

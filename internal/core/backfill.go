@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -47,7 +48,9 @@ type ProfileBackfillMark struct {
 
 // ProfileBackfillSkip is one profile file the backfill could not edit, with
 // the display names of the mods it would have marked there and why it could
-// not.
+// not. File is "" for rows whose game or profile name no file can have
+// (F3): those are reported once and dropped, since there is nothing to
+// retry.
 type ProfileBackfillSkip struct {
 	GameID  string
 	Profile string
@@ -178,7 +181,8 @@ func (s *Service) BackfillProfileDisabledMarkers(ctx context.Context) (*ProfileB
 
 // dischargeProfileBackfill is the backfill's work, run with the mutation
 // slot held: the whole obligation if it is still owed, then every pending
-// profile whose file has changed. It prints its report.
+// profile whose file has changed. It prints its report. A failure in one
+// part does not stop the others; the first is returned once they have run.
 func (s *Service) dischargeProfileBackfill(ctx context.Context) (*ProfileBackfillReport, error) {
 	keys, err := s.db.MetaWithPrefix(ctx, db.MetaProfileDisabledBackfill)
 	if err != nil {
@@ -189,10 +193,9 @@ func (s *Service) dischargeProfileBackfill(ctx context.Context) (*ProfileBackfil
 	// before a failure is still one the user has to hear about, and a
 	// retry would skip it as already marked.
 	defer s.printProfileBackfillReport(report)
+	var failed error
 	if _, owed := keys[db.MetaProfileDisabledBackfill]; owed {
-		if err := s.captureProfileBackfill(ctx, report); err != nil {
-			return report, err
-		}
+		failed = s.captureProfileBackfill(ctx, report)
 	}
 	for key, value := range sortedMeta(keys) {
 		if !strings.HasPrefix(key, profileBackfillPendingPrefix) {
@@ -202,8 +205,11 @@ func (s *Service) dischargeProfileBackfill(ctx context.Context) (*ProfileBackfil
 			return report, err
 		}
 		if err := s.retryPendingProfile(ctx, key, value, report); err != nil {
-			return report, err
+			failed = cmp.Or(failed, err)
 		}
+	}
+	if failed != nil {
+		return report, failed
 	}
 
 	left, err := s.db.MetaWithPrefix(ctx, db.MetaProfileDisabledBackfill)
@@ -236,6 +242,14 @@ func (s *Service) captureProfileBackfill(ctx context.Context, report *ProfileBac
 		if row.External || row.Deployed {
 			continue
 		}
+		if _, err := config.ProfilePath(s.configDir, row.GameID, row.ProfileName); err != nil {
+			// F3: no profile file can have this row's game or profile name
+			// (a build older than the 2026-07-23 validation, or a
+			// hand-edited games.yaml key). Nothing can be marked for it or
+			// retried later, and it must not hold up any other row.
+			reportUnnamedRow(report, row, err)
+			continue
+		}
 		profiles, ok := byGame[row.GameID]
 		if !ok {
 			profiles = make(map[string][]pendingMod)
@@ -245,43 +259,70 @@ func (s *Service) captureProfileBackfill(ctx context.Context, report *ProfileBac
 		profiles[row.ProfileName] = append(profiles[row.ProfileName], pendingMod{SourceID: row.SourceID, ModID: row.ModID, Name: row.Name})
 	}
 
+	// One game's failure (only a database write can fail here now) does
+	// not stop the others from being marked; the obligation is discharged
+	// only once every game has been handled.
+	var failed error
 	for _, gameID := range games {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		profiles := byGame[gameID]
-		flagged, unreadable, err := s.explicitDefaults(gameID)
-		if err != nil {
-			// The profiles directory itself could not be read, so any of
-			// these profiles might be the active one.
-			flagged, unreadable = nil, make(map[string]error, len(profiles))
-			for name := range profiles {
-				unreadable[name] = err
-			}
-		}
-		switch {
-		case len(flagged) == 1:
-			if mods, ok := profiles[flagged[0]]; ok {
-				if err := s.markPendingProfile(ctx, pendingProfile{GameID: gameID, Profile: flagged[0], Mods: mods}, "", report); err != nil {
-					return err
-				}
-			}
-		case len(flagged) == 0:
-			// No readable profile is the explicit default, so an unreadable
-			// one might be. Its rows are kept, frozen, until it can be read.
-			for _, name := range slices.Sorted(maps.Keys(unreadable)) {
-				mods, ok := profiles[name]
-				if !ok {
-					continue
-				}
-				pending := pendingProfile{GameID: gameID, Profile: name, NeedsActive: true, Mods: mods}
-				if err := s.keepPendingProfile(ctx, pending, report, unreadable[name]); err != nil {
-					return err
-				}
-			}
-		}
+		failed = cmp.Or(failed, s.captureGameBackfill(ctx, gameID, byGame[gameID], report))
+	}
+	if failed != nil {
+		return failed
 	}
 	return s.db.DeleteMeta(ctx, db.MetaProfileDisabledBackfill)
+}
+
+// captureGameBackfill marks, or keeps for later, gameID's candidate rows
+// (profiles, by profile name).
+func (s *Service) captureGameBackfill(ctx context.Context, gameID string, profiles map[string][]pendingMod, report *ProfileBackfillReport) error {
+	flagged, unreadable, err := s.explicitDefaults(gameID)
+	if err != nil {
+		// The profiles directory itself could not be read, so any of
+		// these profiles might be the active one.
+		flagged, unreadable = nil, make(map[string]error, len(profiles))
+		for name := range profiles {
+			unreadable[name] = err
+		}
+	}
+	switch {
+	case len(flagged) == 1:
+		if mods, ok := profiles[flagged[0]]; ok {
+			return s.markPendingProfile(ctx, pendingProfile{GameID: gameID, Profile: flagged[0], Mods: mods}, "", report)
+		}
+	case len(flagged) == 0:
+		// No readable profile is the explicit default, so an unreadable
+		// one might be. Its rows are kept, frozen, until it can be read.
+		var failed error
+		for _, name := range slices.Sorted(maps.Keys(unreadable)) {
+			mods, ok := profiles[name]
+			if !ok {
+				continue
+			}
+			pending := pendingProfile{GameID: gameID, Profile: name, NeedsActive: true, Mods: mods}
+			failed = cmp.Or(failed, s.keepPendingProfile(ctx, pending, report, unreadable[name]))
+		}
+		return failed
+	}
+	return nil
+}
+
+// reportUnnamedRow adds row, which no profile file can belong to, to
+// report's skipped rows - one entry per game and profile, the rows arriving
+// in that order.
+func reportUnnamedRow(report *ProfileBackfillReport, row db.DisabledModRow, cause error) {
+	if n := len(report.Skipped); n > 0 {
+		last := &report.Skipped[n-1]
+		if last.File == "" && last.GameID == row.GameID && last.Profile == row.ProfileName {
+			last.Mods = append(last.Mods, row.Name)
+			return
+		}
+	}
+	report.Skipped = append(report.Skipped, ProfileBackfillSkip{
+		GameID: row.GameID, Profile: row.ProfileName, Mods: []string{row.Name}, Err: cause,
+	})
 }
 
 // explicitDefaults returns the profiles of gameID - by FILE name, the name
@@ -317,6 +358,7 @@ func (s *Service) retryPendingProfile(ctx context.Context, key, value string, re
 	}
 	path, err := config.ProfilePath(s.configDir, pending.GameID, pending.Profile)
 	if err != nil {
+		s.logger().Warn("profile backfill: dropping a pending record no profile file can belong to", "key", key, "error", err)
 		return s.db.DeleteMeta(ctx, key)
 	}
 	fingerprint, exists := fileFingerprint(path)
@@ -342,15 +384,21 @@ func (s *Service) retryPendingProfile(ctx context.Context, key, value string, re
 	}
 
 	// Frozen evidence, re-checked against what is true now: a row that is
-	// gone, or that says enabled, no longer asks for a marker.
+	// gone, or that says enabled, no longer asks for a marker - and nor
+	// does one that cannot be read back (losing a marker is the safe
+	// direction; one bad row must not hold up the rest).
 	current := make([]pendingMod, 0, len(pending.Mods))
 	for _, mod := range pending.Mods {
 		row, err := s.db.GetInstalledMod(ctx, mod.SourceID, mod.ModID, pending.GameID, pending.Profile)
 		if err != nil {
-			if errors.Is(err, domain.ErrModNotFound) {
-				continue
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			return err
+			if !errors.Is(err, domain.ErrModNotFound) {
+				s.logger().Warn("profile backfill: dropping a pending mod whose row cannot be read",
+					"game", pending.GameID, "profile", pending.Profile, "mod", domain.ModKey(mod.SourceID, mod.ModID), "error", err)
+			}
+			continue
 		}
 		if !row.Enabled && !row.External {
 			current = append(current, mod)
@@ -556,6 +604,12 @@ func (s *Service) printProfileBackfillReport(report *ProfileBackfillReport) {
 	}
 	w := s.warnWriter
 	for _, skip := range report.Skipped {
+		if skip.File == "" {
+			_, _ = fmt.Fprintf(w, "warning: could not record %d mod(s) disabled before this upgrade (game %s, profile %s): %v\n",
+				len(skip.Mods), skip.GameID, skip.Profile, skip.Err)
+			_, _ = fmt.Fprintf(w, "  not recorded: %s - no profile file can have that name, so lmm does not try again\n", strings.Join(skip.Mods, ", "))
+			continue
+		}
 		_, _ = fmt.Fprintf(w, "warning: could not record %d mod(s) disabled before this upgrade in %s (game %s, profile %s): %v\n",
 			len(skip.Mods), skip.File, skip.GameID, skip.Profile, skip.Err)
 		_, _ = fmt.Fprintf(w, "  not recorded: %s - lmm looks at that file again once it changes\n", strings.Join(skip.Mods, ", "))

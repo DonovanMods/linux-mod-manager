@@ -22,8 +22,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -730,6 +732,17 @@ func TestBackfillProfileDisabledMarkers_ASecondProcessFindsItDone(t *testing.T) 
 	assert.Empty(t, f.disabledRefs(t, "a"), "neither wrote the marker the user has since removed")
 }
 
+// exec runs statement against the fixture's database file directly, the way
+// an older lmm - or a hand edit - would have written it.
+func (f *backfillFixture) exec(t *testing.T, statement string, args ...any) {
+	t.Helper()
+	conn, err := sql.Open("sqlite", filepath.Join(f.svc.DataDirForTest(), "lmm.db"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, conn.Close()) }()
+	_, err = conn.Exec(statement, args...)
+	require.NoError(t, err)
+}
+
 // TestBackfillProfileDisabledMarkers_AnEditorPanicSkipsTheProfile is fix
 // round 3's F1 boundary: the backfill runs from app.Open, before any command
 // does its work, so a panic in the profile editor - F1 was one - used to
@@ -779,4 +792,123 @@ func TestBackfillProfileDisabledMarkers_AnEditorPanicSkipsTheProfile(t *testing.
 	require.NoError(t, err)
 	require.Len(t, report.Marked, 1)
 	assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+}
+
+// TestBackfillProfileDisabledMarkers_ABadRowIsSkippedNotFatal is fix round
+// 3's F3. One disabled row whose game or profile could never name a file (a
+// pre-validation build, or a hand-edited games.yaml key) failed the
+// backfill on every open and, because a mutation refuses to run over an
+// owed backfill it could not discharge, every mutation of every game with
+// it. The row is skipped with a diagnostic; the rest are marked and the
+// obligation is discharged.
+func TestBackfillProfileDisabledMarkers_ABadRowIsSkippedNotFatal(t *testing.T) {
+	f := newBackfillFixture(t)
+	ctx := context.Background()
+	f.row(t, "a", "off", false, false)
+	f.exec(t, `INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, enabled, deployed)
+		VALUES ('src', 'm', 'weird..game', 'default', 'Weird', '1', 0, 0),
+		       ('src', 'n', 'g1', '../escape', 'Escape', '1', 0, 0)`)
+	// Flags an older lmm never wrote, but a hand edit can: they are read
+	// as "deployed" and "not external", never as a failure.
+	f.row(t, "a", "nulls", false, false)
+	f.exec(t, `UPDATE installed_mods SET deployed = NULL, external = NULL WHERE mod_id = 'nulls'`)
+	f.owe(t)
+
+	report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
+	require.NoError(t, err)
+	require.Len(t, report.Marked, 1, "the good row is still marked")
+	assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+	require.Len(t, report.Skipped, 2)
+	for _, skip := range report.Skipped {
+		assert.Empty(t, skip.File, "no file can be named for %s/%s", skip.GameID, skip.Profile)
+		require.Error(t, skip.Err)
+	}
+	assert.Contains(t, f.warnings.String(), "weird..game")
+	assert.Contains(t, f.warnings.String(), "../escape")
+	owed, err := f.svc.ProfileDisabledBackfillOwedForTest(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, owed, "discharged, bad rows and all")
+
+	// Nothing is left to refuse a mutation over.
+	f.warnings.Reset()
+	f.row(t, "b", "x", true, true)
+	_, err = f.svc.DisableMod(ctx, f.game, "b", "src", "x")
+	require.NoError(t, err)
+	assert.Empty(t, f.warnings.String())
+}
+
+// TestBackfillProfileDisabledMarkers_AnUnreadablePendingRowIsDropped: a
+// profile kept for later froze its rows; when the file is repaired, each is
+// read again. One that can no longer be read back is dropped - losing a
+// marker is the safe direction - and the rest are still marked (F3).
+func TestBackfillProfileDisabledMarkers_AnUnreadablePendingRowIsDropped(t *testing.T) {
+	f := newBackfillFixture(t)
+	ctx := context.Background()
+	f.row(t, "a", "off", false, false)
+	f.row(t, "a", "odd", false, false)
+	dir := filepath.Dir(f.profilePath("a"))
+	require.NoError(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	f.owe(t)
+	report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
+	require.NoError(t, err)
+	require.Len(t, report.Skipped, 1)
+	require.Equal(t, []string{"Mod odd", "Mod off"}, report.Skipped[0].Mods)
+
+	f.exec(t, `UPDATE installed_mods SET previous_file_ids = 'not a file list' WHERE mod_id = 'odd'`)
+	require.NoError(t, os.Chmod(dir, 0o755))
+	report, err = f.svc.BackfillProfileDisabledMarkers(ctx)
+	require.NoError(t, err, "one row that cannot be read back is not a failure")
+	require.Len(t, report.Marked, 1)
+	assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+	owed, err := f.svc.ProfileDisabledBackfillOwedForTest(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, owed)
+}
+
+// TestBackfillProfileDisabledMarkers_OneGamesFailureDoesNotStopTheOthers:
+// when the database refuses a write for one game, every other game is still
+// marked. The obligation stays owed - that game's share has nowhere to be
+// kept - and the next run, once the write succeeds, finishes it (F3).
+func TestBackfillProfileDisabledMarkers_OneGamesFailureDoesNotStopTheOthers(t *testing.T) {
+	f := newBackfillFixture(t)
+	ctx := context.Background()
+	f.row(t, "a", "off", false, false)
+
+	// g0 sorts first. Its active profile cannot be written, so its share
+	// has to be kept - and the database refuses that one write.
+	pm := f.svc.NewProfileManager()
+	_, err := pm.Create(ctx, "g0", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, "g0", "default"))
+	require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "z", SourceID: "src", Name: "Mod z", Version: "1.0", GameID: "g0"},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, pm.AddMod(ctx, "g0", "default", domain.ModReference{SourceID: "src", ModID: "z"}))
+	g0Dir := filepath.Join(f.svc.ConfigDir(), "games", "g0", "profiles")
+	require.NoError(t, os.Chmod(g0Dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(g0Dir, 0o755) })
+	f.exec(t, `CREATE TRIGGER refuse_g0 BEFORE INSERT ON db_meta
+		WHEN NEW.key = 'profile_disabled_backfill:g0/default'
+		BEGIN SELECT RAISE(ABORT, 'injected failure'); END`)
+	f.owe(t)
+
+	_, err = f.svc.BackfillProfileDisabledMarkers(ctx)
+	require.ErrorContains(t, err, "injected failure")
+	assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"), "g1 is marked all the same")
+	owed, err := f.svc.ProfileDisabledBackfillOwedForTest(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, owed, "profile_disabled_backfill", "still owed: g0's share was not kept")
+
+	f.exec(t, `DROP TRIGGER refuse_g0`)
+	f.warnings.Reset()
+	report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, report.Marked, "g1's marker is already there")
+	require.Len(t, report.Skipped, 1)
+	assert.Equal(t, "g0", report.Skipped[0].GameID)
+	owed, err = f.svc.ProfileDisabledBackfillOwedForTest(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"profile_disabled_backfill:g0/default"}, slices.Collect(maps.Keys(owed)))
 }
