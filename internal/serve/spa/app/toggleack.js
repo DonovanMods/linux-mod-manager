@@ -62,8 +62,8 @@
 //     (job_done), or while it is not - and then the reconnect's snapshot
 //     reconciles it (activity.js), asking GET /api/v1/jobs/{id} about any
 //     job the snapshot does not carry. A job the server cannot account for
-//     is lost. The stream comes back: EventSource retries a dropped
-//     connection on its own.
+//     is lost. The stream always comes back: EventSource retries on its own,
+//     and sse.js#followActivity reopens it when the browser gives up.
 //   - confirming: the re-read is an ordinary hydrate, which settles.
 //
 // An entry for a context nobody is looking at still settles the same way;

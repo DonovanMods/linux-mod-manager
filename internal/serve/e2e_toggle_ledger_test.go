@@ -7,9 +7,9 @@ package serve_test
 // e2e_toggle_ack_test.go covers what a click LOOKS like. This file covers
 // how a request ENDS - including the endings the wire can take away: a
 // start that never makes a job, a job that ends before its start is
-// answered, a job that ends while the activity stream is down, and a job the
-// server forgets. Each of those used to leave a row saying "Disabling…" for
-// the rest of the session.
+// answered, a job that ends while the activity stream is down, a job the
+// server forgets, and a stream the browser gives up on. Each of those used
+// to leave a row saying "Disabling…" for the rest of the session.
 //
 // The proxy below (toggleWire) is how the wire misbehaves on cue. It extends
 // e2e_toggle_ack_test.go's gated proxy with everything else these endings
@@ -729,6 +729,44 @@ func TestE2E_ActivityGap_AJobTheServerForgotSettlesAsLost(t *testing.T) {
 		assert.False(t, beta.Checked)
 		assert.Empty(t, uncaughtErrors(f))
 	})
+}
+
+// TestE2E_ActivityStream_IsReopenedAfterTheServerRefusesIt covers the one
+// way EventSource stops on its own: a reconnect answered with anything but
+// an event stream closes it for good. Nothing reopened it, so every job
+// still running at that moment kept its row pending for the rest of the
+// session. The page now opens a fresh stream itself, and the snapshot that
+// brings back settles what ended in the meantime.
+func TestE2E_ActivityStream_IsReopenedAfterTheServerRefusesIt(t *testing.T) {
+	f, wire := newToggleWireFixture(t, newFakeSource("fake"), 1<<30)
+	seedDeployableMods(t, f.Svc, f.Game)
+
+	wire.withholdDone.Store(true)
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 2`),
+		chromedp.Evaluate(libraryToggleJS("Alpha Mod"), nil),
+		pollUntil(`document.querySelectorAll(".mod-row--pending").length === 1`),
+	)
+	awaitJobsOver(t, f, wire, map[string]bool{"a": false})
+	wire.refuse.Store(true)
+	wire.killStreams()
+
+	require.Eventually(t, func() bool { return wire.refused.Load() >= 2 },
+		20*time.Second, 50*time.Millisecond,
+		"the page keeps opening the stream after the browser has given up on it")
+	wire.withholdDone.Store(false)
+	wire.refuse.Store(false)
+
+	var alpha e2eRowToggleState
+	runWithin(t, f, 30*time.Second,
+		pollUntil(noRowPendingJS),
+		chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &alpha),
+	)
+	assert.False(t, alpha.Checked)
+	assert.False(t, alpha.Disabled)
+	assert.Empty(t, uncaughtErrors(f))
 }
 
 // TestE2E_LibraryRow_AJobThatEndsBeforeItsStartIsAnsweredStillSettles is
