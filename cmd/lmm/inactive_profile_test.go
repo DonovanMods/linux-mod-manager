@@ -94,33 +94,56 @@ func TestDoPurge_ANonActiveProfileClearsOnlyWhatItRecorded(t *testing.T) {
 	setFlag(t, &purgeYes, true)
 	header := "alt is not the active profile of Game (default is), so this purge only removes the files alt recorded as deployed that nothing else still claims:\n" +
 		"  - altonly.esp\n" +
-		"Left in place (also recorded by default): shared.esp\n" +
+		"Left in place (still recorded by default): shared.esp\n" +
 		"Mod records and the profile are kept, and no hooks run.\n"
 
 	setFlag(t, &purgeDryRun, true)
 	stdout := captureStdout(t, func() error { return doPurge(ctx, svc, game) })
-	assert.Equal(t, "Purge plan for profile \"alt\" (dry run)\n\n"+header+"\nWould remove: 1 file(s)\n", stdout)
+	assert.Equal(t, "Purge plan for profile \"alt\" (dry run)\n\n"+header+"\nWould remove: 1 file(s), and drop alt's record of 1 file(s) it leaves\n", stdout)
 	require.FileExists(t, filepath.Join(game.ModPath, "altonly.esp"))
 
 	purgeDryRun = false
 	stdout = captureStdout(t, func() error { return doPurge(ctx, svc, game) })
 	assert.Equal(t, header+
 		"\nPurging mods from Game...\n\n"+
+		"  ✓ shared\n"+
 		"  ✓ altonly\n"+
-		"\nRemoved: 1 file(s); cleared: 1 mod(s)\n"+
-		"Left in place (also recorded by default): shared.esp\n"+
+		"\nRemoved: 1 file(s); cleared: 2 mod(s)\n"+
+		"Left in place (still recorded by default): shared.esp\n"+
 		"\nRun 'lmm profile switch alt' to deploy alt again.\n", stdout)
 	assert.NoFileExists(t, filepath.Join(game.ModPath, "altonly.esp"))
 	assert.FileExists(t, filepath.Join(game.ModPath, "shared.esp"), "the active profile's file survives")
 
+	// alt recorded nothing else, so a second purge has nothing to do.
+	nothing := "alt is not the active profile of Game (default is), so this purge only removes the files alt recorded as deployed that nothing else still claims:\n" +
+		"  (none)\n" +
+		"Mod records and the profile are kept, and no hooks run.\n" +
+		"\nNothing to remove.\n"
 	stdout = captureStdout(t, func() error { return doPurge(ctx, svc, game) })
-	assert.Equal(t, strings.Replace(header, "  - altonly.esp\n", "  (none)\n", 1)+"\nNothing to remove.\n", stdout)
+	assert.Equal(t, nothing, stdout)
 
 	setFlag(t, &jsonOutput, true)
 	stdout = captureStdout(t, func() error { return doPurge(ctx, svc, game) })
 	var result core.PurgeResult
 	require.NoError(t, json.Unmarshal([]byte(stdout), &result))
+	assert.Empty(t, result.Kept)
+}
+
+// TestDoPurge_JSONListsTheKeptPaths: the --json document of a
+// recorded-only purge names each path it keeps, with why.
+func TestDoPurge_JSONListsTheKeptPaths(t *testing.T) {
+	ctx := context.Background()
+	svc, game := mixedGameDir(t)
+	setFlag(t, &purgeProfile, "alt")
+	setFlag(t, &purgeYes, true)
+	setFlag(t, &jsonOutput, true)
+
+	stdout := captureStdout(t, func() error { return doPurge(ctx, svc, game) })
+
+	var result core.PurgeResult
+	require.NoError(t, json.Unmarshal([]byte(stdout), &result))
 	assert.Equal(t, []core.PurgeKeptPath{{Path: "shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default"}}}, result.Kept)
+	assert.Equal(t, 1, result.RemovedPaths)
 }
 
 // setFlag sets a command's package-level flag variable for one test.
@@ -144,9 +167,9 @@ func TestPrintKeptPaths_SaysWhyEachPathIsLeft(t *testing.T) {
 		})
 		return nil
 	})
-	assert.Equal(t, "Left in place (also recorded by default, survival): Data/shared.esp\n"+
+	assert.Equal(t, "Left in place (still recorded by default, survival): Data/shared.esp\n"+
 		"Left in place (its mod is in the active profile alt): Data/a.esp\n"+
-		"Left in place (also recorded by game sky): Data/b.esp\n"+
+		"Left in place (still recorded by game sky): Data/b.esp\n"+
 		"Kept your file; lmm no longer tracks it (the game hands it to you after its first deploy): BepInEx/config/m.cfg\n", stdout)
 }
 
@@ -184,7 +207,7 @@ func TestDoPurge_AConfigOnlyProfileStopsTrackingIt(t *testing.T) {
 
 	setFlag(t, &purgeDryRun, true)
 	stdout := captureStdout(t, func() error { return doPurge(ctx, svc, game) })
-	assert.Equal(t, "Purge plan for profile \"alt\" (dry run)\n\n"+header+"\nWould remove: 0 file(s), and stop tracking 1 of yours\n", stdout)
+	assert.Equal(t, "Purge plan for profile \"alt\" (dry run)\n\n"+header+"\nWould remove: 0 file(s), and drop alt's record of 1 file(s) it leaves\n", stdout)
 	recorded, err := svc.GetDeployedFilesForMod(ctx, game.ID, "alt", "src", "m")
 	require.NoError(t, err)
 	require.Len(t, recorded, 1, "a dry run changes nothing")

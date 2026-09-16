@@ -23,6 +23,18 @@ package core_test
 //
 // Each fixture writes the state an older lmm leaves - rows and files - by
 // hand, since no current flow can produce it.
+//
+// Every purge the mod_path refusal (#427) names has to be able to clear the
+// rows it counts, so each path is decided in this order (#445 audit):
+//
+//  1. its file is already gone: the purged profile's record goes;
+//  2. the game hands the file to the user: the file stays, the record goes;
+//  3. another profile, or another game, records it: the file stays - that
+//     claimant still tracks it, and its own purge decides it - and the
+//     purged profile's record goes;
+//  4. the active profile's document lists its mod: the file and the record
+//     stay, because the record is the file's only claim to be lmm's;
+//  5. otherwise it is the purged profile's alone: file and record go.
 
 import (
 	"context"
@@ -263,13 +275,128 @@ func TestRecordedPurge_AFileTheGameHandsToTheUserIsKept(t *testing.T) {
 	})
 }
 
-// TestPurgeKeptReason_OnlyAUserFileDropsItsRecord pins which kept paths
-// lose the purged profile's record: a file the game hands to the user,
-// alone. Every other reason is a file lmm may still have to remove.
-func TestPurgeKeptReason_OnlyAUserFileDropsItsRecord(t *testing.T) {
-	assert.True(t, core.PurgeKeptUserFile.DropsRecord())
-	for _, reason := range []core.PurgeKeptReason{core.PurgeKeptRecorded, core.PurgeKeptListed, core.PurgeKeptOtherGame} {
-		assert.False(t, reason.DropsRecord(), reason)
+// TestPurgeKeptReason_OnlyAListedPathKeepsItsRecord pins which kept paths
+// lose the purged profile's record: all but a path the active profile
+// lists, whose record is its only claim to be lmm's.
+func TestPurgeKeptReason_OnlyAListedPathKeepsItsRecord(t *testing.T) {
+	assert.False(t, core.PurgeKeptListed.DropsRecord())
+	for _, reason := range []core.PurgeKeptReason{core.PurgeKeptUserFile, core.PurgeKeptRecorded, core.PurgeKeptOtherGame} {
+		assert.True(t, reason.DropsRecord(), reason)
+	}
+}
+
+// sharedFixture is a plain game whose active profile default lists what
+// activeLists names, and whose non-active profiles alt and survival both
+// record x.esp for mod x - live, as a pre-upgrade switch leaves it.
+func sharedFixture(t *testing.T, activeLists ...string) *legacyFixture {
+	t.Helper()
+	f := newLegacyFixture(t, &domain.Game{ID: "sky", Name: "Sky", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy, LinkMethodExplicit: true})
+	f.profile(t, "default", true, activeLists...)
+	f.profile(t, "alt", false, "x")
+	f.profile(t, "survival", false, "x")
+	f.deployed(t, "alt", "x", domain.LinkCopy, map[string]string{"x.esp": "x"}, nil)
+	f.deployed(t, "survival", "x", domain.LinkCopy, map[string]string{"x.esp": "x"}, nil)
+	return f
+}
+
+// TestRecordedPurge_APathAnotherProfileRecordsKeepsItsFileNotThisRecord is
+// rule 3: two profiles recording one file used to keep it for each other
+// forever, so neither purge could clear its record - and the mod_path
+// refusal counting those records never lifted. The first purge leaves the
+// file to the other claimant; the last one decides it.
+func TestRecordedPurge_APathAnotherProfileRecordsKeepsItsFileNotThisRecord(t *testing.T) {
+	x := func(f *legacyFixture) string { return filepath.Join(f.game.ModPath, "x.esp") }
+
+	t.Run("the first claimant's purge", func(t *testing.T) {
+		f := sharedFixture(t)
+
+		plan, result := f.purge(t, "alt")
+
+		assert.Empty(t, plan.Remove)
+		assert.Equal(t, []core.PurgeKeptPath{{Path: "x.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"survival"}}}, plan.Kept)
+		require.Len(t, plan.Mods, 1, "the plan names the mod whose record goes")
+		assert.FileExists(t, x(f))
+		assert.Zero(t, result.RemovedPaths)
+		assert.Equal(t, 1, result.Purged)
+		assert.Empty(t, f.recorded(t, "alt", "x"))
+		assert.Equal(t, []string{"x.esp"}, f.recorded(t, "survival", "x"), "the other claimant still tracks it")
+	})
+
+	t.Run("the last claimant's purge removes it", func(t *testing.T) {
+		f := sharedFixture(t)
+		f.purge(t, "alt")
+
+		plan, result := f.purge(t, "survival")
+
+		assert.Equal(t, []string{"x.esp"}, plan.Remove)
+		assert.NoFileExists(t, x(f))
+		assert.Equal(t, 1, result.RemovedPaths)
+		assert.Empty(t, f.recorded(t, "survival", "x"))
+	})
+
+	t.Run("the last claimant's purge keeps a file the active profile lists", func(t *testing.T) {
+		f := sharedFixture(t, "x")
+		f.purge(t, "alt")
+
+		plan, result := f.purge(t, "survival")
+
+		assert.Equal(t, []core.PurgeKeptPath{{Path: "x.esp", Reason: core.PurgeKeptListed, Profiles: []string{"default"}}}, plan.Kept)
+		assert.FileExists(t, x(f))
+		assert.Zero(t, result.RemovedPaths)
+		assert.Equal(t, []string{"x.esp"}, f.recorded(t, "survival", "x"), "its only record stays")
+	})
+
+	t.Run("the active profile recording it too", func(t *testing.T) {
+		f := sharedFixture(t, "x")
+		f.deployed(t, "default", "x", domain.LinkCopy, map[string]string{"x.esp": "x"}, nil)
+
+		f.purge(t, "alt")
+		plan, _ := f.purge(t, "survival")
+
+		assert.Equal(t, []core.PurgeKeptPath{{Path: "x.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default"}}}, plan.Kept)
+		assert.FileExists(t, x(f))
+		assert.Empty(t, f.recorded(t, "survival", "x"))
+		assert.Equal(t, []string{"x.esp"}, f.recorded(t, "default", "x"))
+	})
+
+	t.Run("a record the plan did not list as going stays", func(t *testing.T) {
+		f := sharedFixture(t)
+		ctx := context.Background()
+		plan, err := f.svc.PlanPurge(ctx, f.game, "alt", core.PurgeOptions{})
+		require.NoError(t, err)
+		plan.Kept = nil
+
+		result, err := f.svc.ApplyPurge(ctx, f.game, plan, core.PurgeOptions{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"x.esp"}, f.recorded(t, "alt", "x"))
+		assert.Zero(t, result.Purged)
+	})
+}
+
+// TestRecordedPurge_AGoneFileLosesItsRecordWhateverClaimsIt is rule 1: a
+// record of a file that is not there protects nothing, so it goes even when
+// the active profile lists the mod or records the path too - the state an
+// active profile's own purge leaves for every path it shared.
+func TestRecordedPurge_AGoneFileLosesItsRecordWhateverClaimsIt(t *testing.T) {
+	for name, activeRecords := range map[string]bool{"listed by the active profile": false, "recorded by the active profile too": true} {
+		t.Run(name, func(t *testing.T) {
+			f := sharedFixture(t, "x")
+			if activeRecords {
+				f.deployed(t, "default", "x", domain.LinkCopy, map[string]string{"x.esp": "x"}, nil)
+			}
+			require.NoError(t, os.Remove(filepath.Join(f.game.ModPath, "x.esp")))
+
+			plan, result := f.purge(t, "alt")
+
+			assert.Equal(t, []string{"x.esp"}, plan.Remove)
+			assert.Empty(t, plan.Kept)
+			assert.Equal(t, 1, result.Purged)
+			assert.Empty(t, f.recorded(t, "alt", "x"))
+			assert.Equal(t, []string{"x.esp"}, f.recorded(t, "survival", "x"), "only the purged profile's record goes")
+			if activeRecords {
+				assert.Equal(t, []string{"x.esp"}, f.recorded(t, "default", "x"))
+			}
+		})
 	}
 }
 
@@ -445,6 +572,12 @@ func TestRecordedPurge_APathAnotherGameRecordsIsKept(t *testing.T) {
 		require.NoError(t, err)
 		assert.Zero(t, result.RemovedPaths)
 		assert.Equal(t, "sky's", readLive(t, live))
+		alt, err := svc.GetDeployedFilesForMod(ctx, "sky2", "alt", "local", "a")
+		require.NoError(t, err)
+		assert.Empty(t, alt, "sky2's record goes: sky still tracks the file")
+		skys, err := svc.GetDeployedFilesForMod(ctx, "sky", "default", "local", "a")
+		require.NoError(t, err)
+		assert.Len(t, skys, 1, "and sky's record stays")
 	}
 
 	t.Run("the same mod directory", func(t *testing.T) {

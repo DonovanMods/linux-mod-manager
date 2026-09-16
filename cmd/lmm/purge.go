@@ -35,12 +35,14 @@ with 'lmm deploy'. Use --uninstall to also remove the database records.
 The game directory holds the active profile's mods. A purge of any other
 profile (-p/--profile) only clears what that profile put there: the files it
 recorded as deployed that nothing else still claims. A file is left in
-place, and listed with why, when another profile records it, the active
-profile lists its mod, another game sharing the directory records it, or
-the game hands it to you after its first deploy (a BepInEx config file) -
-a file lmm then stops tracking, as an ordinary purge does. It runs no
-hooks, keeps the mod records, and refuses --uninstall ('lmm profile switch'
-to that profile first to remove its records too).
+place, and listed with why, when the game hands it to you after its first
+deploy (a BepInEx config file), another profile or another game sharing
+the directory records it, or the active profile lists its mod. The purged
+profile's record of such a file goes - the others still track it, and a
+config file is yours - except where the active profile lists its mod. A
+record of a file that is already gone goes too. It runs no hooks, keeps
+the mod records, and refuses --uninstall ('lmm profile switch' to that
+profile first to remove its records too).
 
 A game whose profile files do not say which one is active - one cannot be
 read, or none or several are marked - is not purged or deployed at all;
@@ -225,16 +227,15 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 		fmt.Println("Mod records and the profile are kept, and no hooks run.")
 	}
 
-	// A kept file whose record goes (a legacy BepInEx config) is still work
-	// to do: skipping it would leave that record, and with it the game's
-	// mod_path locked (#427).
-	untracked := 0
+	// A kept file whose record goes is still work to do: skipping it would
+	// leave that record, and with it the game's mod_path locked (#427).
+	dropped := 0
 	for _, k := range plan.Kept {
 		if k.Reason.DropsRecord() {
-			untracked++
+			dropped++
 		}
 	}
-	if len(plan.Remove) == 0 && untracked == 0 {
+	if len(plan.Remove) == 0 && dropped == 0 {
 		if jsonOutput {
 			return emitJSON(&core.PurgeResult{Kept: plan.Kept})
 		}
@@ -243,8 +244,8 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 	if purgeDryRun {
 		fmt.Printf("\nWould remove: %d file(s)", len(plan.Remove))
-		if untracked > 0 {
-			fmt.Printf(", and stop tracking %d of yours", untracked)
+		if dropped > 0 {
+			fmt.Printf(", and drop %s's record of %d file(s) it leaves", plan.Profile, dropped)
 		}
 		fmt.Println()
 		return nil
@@ -286,7 +287,7 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 // stops tracking it.
 func printKeptPaths(kept []core.PurgeKeptPath) {
 	for _, k := range kept {
-		if k.Reason.DropsRecord() {
+		if k.Reason == core.PurgeKeptUserFile {
 			fmt.Printf("Kept your file; lmm no longer tracks it (%s): %s\n", keptReason(k), k.Path)
 			continue
 		}
@@ -300,11 +301,11 @@ func keptReason(k core.PurgeKeptPath) string {
 	case core.PurgeKeptListed:
 		return "its mod is in the active profile " + strings.Join(k.Profiles, ", ")
 	case core.PurgeKeptOtherGame:
-		return "also recorded by game " + strings.Join(k.Games, ", ")
+		return "still recorded by game " + strings.Join(k.Games, ", ")
 	case core.PurgeKeptUserFile:
 		return "the game hands it to you after its first deploy"
 	default:
-		return "also recorded by " + strings.Join(k.Profiles, ", ")
+		return "still recorded by " + strings.Join(k.Profiles, ", ")
 	}
 }
 

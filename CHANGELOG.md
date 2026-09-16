@@ -1625,17 +1625,21 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   still claims, so files a non-active profile put into the game directory
   (an `lmm import -p`, or a deploy before this fix) can still be cleared. A
   file stays — and the plan, `--dry-run` and the result all list it, with
-  why — when another profile records it too; when the active profile lists
-  its mod, which covers the files a v1.30.1 switch between two profiles
-  sharing a mod left live with no record under the new profile; when
-  another game whose mod directory holds it records it; and when the game
-  hands it to you after its first deploy (a BepInEx config file, which
-  such a purge deleted even where an ordinary purge keeps it). Like an
-  ordinary purge, it keeps such a file and stops tracking it ("Kept your
-  file; lmm no longer tracks it"), whoever else lists or records it: lmm 2
-  never records one, so the record is an older lmm's, and keeping it would
-  keep `lmm game edit --mod-path` refused with nothing left to purge. A
-  profile whose only record is such a file is still purged. A file it
+  why — when the game hands it to you after its first deploy (a BepInEx
+  config file, which such a purge deleted even where an ordinary purge
+  keeps it); when another profile, or another game whose mod directory
+  holds it, records it too; and when the active profile lists its mod,
+  which covers the files a v1.30.1 switch between two profiles sharing a
+  mod left live with no record under the new profile. Only in that last
+  case does the purged profile keep its record, the file's only claim to
+  be lmm's. A config file is yours, so like an ordinary purge it stops
+  tracking it ("Kept your file; lmm no longer tracks it"); a file someone
+  else records stays theirs to track, and their own purge decides it. A
+  record of a file that is already gone goes as well. So every purge
+  `lmm game edit --mod-path` names can clear what it counts: two profiles
+  recording one file used to keep it for each other, and the edit stayed
+  refused with nothing left to purge. A profile whose only records are
+  such files is still purged. A file it
   could not check (in a directory it cannot read, say) keeps its record
   and is reported instead of being counted as removed, and a file it
   could not remove is a warning rather than a `--verbose` note. Such a purge runs no hooks, keeps
