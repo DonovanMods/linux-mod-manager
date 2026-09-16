@@ -632,6 +632,20 @@ export function Library({
     `;
   }
 
+  // The selection's size in words, shared by the batch bar and the live
+  // region below.
+  const selectionCount = `${selectedRows().length} of ${visible.length} selected`;
+  // What the live region says is recomputed only when the SELECTION
+  // changes. The count above also moves with `visible`, so a region reading
+  // it directly spoke up on every keystroke of a search - "0 of 1 selected"
+  // while nothing about the selection had changed. The words are the ones
+  // the bar shows at the moment of the change. A hook, so it is called
+  // here, above the returns below: Preact matches hook state by call order.
+  const selectionAnnouncement = useMemo(
+    () => (selected.size > 0 ? selectionCount : "No mods selected"),
+    [selected],
+  );
+
   if (mods === null) {
     if (error) {
       return html`
@@ -712,19 +726,6 @@ export function Library({
     skipped > 0
       ? `${countOf(skipped, "row")} managed by Steam ${skipped === 1 ? "is" : "are"} not included — lmm cannot enable or disable ${skipped === 1 ? "it" : "them"}`
       : undefined;
-
-  // The selection's size in words, shared by the batch bar and the live
-  // region below.
-  const selectionCount = `${selectedRows().length} of ${visible.length} selected`;
-  // What the live region says is recomputed only when the SELECTION
-  // changes. The count above also moves with `visible`, so a region reading
-  // it directly spoke up on every keystroke of a search - "0 of 1 selected"
-  // while nothing about the selection had changed. The words are the ones
-  // the bar shows at the moment of the change.
-  const selectionAnnouncement = useMemo(
-    () => (selected.size > 0 ? selectionCount : "No mods selected"),
-    [selected],
-  );
 
   return html`
     <section class="library">
