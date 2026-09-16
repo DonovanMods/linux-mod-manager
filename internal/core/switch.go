@@ -418,11 +418,12 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: SwitchDisableNote, Detail: msg})
 		}
-		// #183's pair: a row whose files just came down must stop claiming
-		// they are deployed, or the next plan reads a deployed=true it can
-		// never clear. The outgoing rows reached here through
-		// DisableMod-shaped paths that already cleared it; the target row
-		// #431 adds did not.
+		// #183's pair, the one DisableMod already makes and this loop did
+		// not: a row whose files just came down must stop claiming they are
+		// deployed. It matters most for the target row #431 admits here,
+		// whose profile is the one about to become active - but an outgoing
+		// row left saying deployed = true was just as wrong, and `lmm
+		// verify` had no way to tell that apart from a real deployment.
 		if im.Deployed {
 			if err := s.setModDeployed(ctx, im.SourceID, im.ID, game.ID, disableProfile, false); err != nil {
 				msg := fmt.Sprintf("Warning: could not mark %s as not deployed: %v", im.Name, err)

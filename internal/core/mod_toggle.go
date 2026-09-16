@@ -15,16 +15,28 @@ import (
 // than left disagreeing with the row.
 //
 // Returns the diagnostic to record as a Note, or "" when there is nothing
-// to say. A profile that does not list the mod (domain.ErrModNotFound) is
-// one of those: there is no desired-state entry to mark, and no converge
-// pass will look for one - see ProfileManager.SetModDisabled.
+// to say. Three answers mean "nothing to say":
+//
+//   - the write succeeded;
+//   - the profile does not list the mod (domain.ErrModNotFound) or does not
+//     exist at all (domain.ErrProfileNotFound) - there is no desired-state
+//     entry to mark, and no converge pass will look for one (see
+//     ProfileManager.SetModDisabled);
+//   - the caller's ctx was cancelled. completeProfileWrite reports the
+//     cancellation in preference to the write's own result, but the write
+//     ran to completion under an uncancellable ctx, so saying "could not
+//     record" would be false. Neither EnableMod nor DisableMod checks
+//     cancellation anywhere else - they are single-step flows with no
+//     cancel-drain contract - so there is nothing for this to report it to
+//     either.
 func (s *Service) recordProfileDisabled(ctx context.Context, gameID, profileName, sourceID, modID string, disabled bool) string {
 	pm := s.NewProfileManager()
 	err := completeProfileWrite(ctx, func(ctx context.Context) error {
 		return pm.SetModDisabled(ctx, gameID, profileName, sourceID, modID, disabled)
 	})
 	switch {
-	case err == nil, errors.Is(err, domain.ErrModNotFound), errors.Is(err, domain.ErrProfileNotFound):
+	case err == nil, ctx.Err() != nil,
+		errors.Is(err, domain.ErrModNotFound), errors.Is(err, domain.ErrProfileNotFound):
 		return ""
 	default:
 		return fmt.Sprintf("Warning: could not record the profile's %s state: %v", disabledWord(disabled), err)
