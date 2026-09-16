@@ -12,6 +12,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -21,6 +22,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -197,17 +200,21 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 	if err != nil {
 		return nil, fmt.Errorf("not pruning anything: games.yaml could not be read, so lmm cannot tell which indexes are in use: %w", err)
 	}
-	// A games.yaml that is not there at all reads as "no games", which is
-	// not the same claim as "no game uses these": a mistyped config
-	// directory looks exactly like it. Only --all goes past that.
-	noGamesFile := ""
-	gamesPath := filepath.Join(s.configDir, "games.yaml")
-	if _, statErr := os.Stat(gamesPath); errors.Is(statErr, fs.ErrNotExist) {
-		noGamesFile = fmt.Sprintf("there is no %s, so lmm cannot tell whether this index is in use", gamesPath)
-	}
+	// Any doubt that the file lmm just read names every game there is -
+	// it is missing, or it holds more than lmm could read out of it (T3
+	// review F4) - keeps every index. Only --all goes past it.
+	doubt := s.gamesFileDoubt(gameMap)
+	// The games this Service loaded are a second witness (review F4): a
+	// games.yaml re-read while another lmm is rewriting it (#403) must not
+	// be the only one.
 	games := make([]*domain.Game, 0, len(gameMap))
 	for _, g := range gameMap {
 		games = append(games, g)
+	}
+	for _, g := range s.gamesSnapshot() {
+		if _, onDisk := gameMap[g.ID]; !onDisk {
+			games = append(games, g)
+		}
 	}
 
 	var only map[string]bool
@@ -236,8 +243,8 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 				MappedBy: uses.mappedBy(ci.GameID),
 			}
 			remove, reason := pruneDecision(ci, uses, entry.MappedBy, opts.All, now)
-			if remove && !opts.All && noGamesFile != "" {
-				remove, reason = false, noGamesFile
+			if remove && !opts.All && doubt != "" {
+				remove, reason = false, doubt
 			}
 			if remove && only != nil && !only[IndexPruneKey(src.ID(), ci.GameID)] {
 				remove, reason = false, "not in the list of indexes confirmed for removal"
@@ -271,6 +278,112 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 		}
 	}
 	return report, nil
+}
+
+// gamesFileKeys are the keys a game's block in games.yaml may hold
+// (storage/config.GameConfig). A key outside them is a typo, or another
+// game's line indented into this one.
+var gamesFileKeys = map[string]bool{
+	"name": true, "install_path": true, "mod_path": true, "sources": true,
+	"link_method": true, "cache_path": true, "hooks": true, "deploy_mode": true,
+	"adapter": true, "convert_paks": true, "loader": true,
+}
+
+// gamesFileDoubt says why games.yaml, as loaded, may not name every game
+// the user has - or "" when it can be trusted to. The loader decodes
+// leniently, so a file that is empty, has a mistyped key, or has a game
+// indented out of its block does not fail: it yields fewer games than it
+// holds, and the indexes those games use looked unused (T3 review F4).
+//
+// So the file is read a second time, structurally: its only top-level key
+// is games, that is a map of game blocks, each block holds only keys a game
+// has, and there are exactly as many as were loaded. And a game whose
+// profiles are on disk but which games.yaml does not list is the other
+// sign - a file cut off at a game boundary parses cleanly.
+func (s *Service) gamesFileDoubt(loaded map[string]*domain.Game) string {
+	path := filepath.Join(s.configDir, "games.yaml")
+	data, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// Not there at all reads as "no games", which is not the same
+		// claim as "no game uses these": a mistyped config directory
+		// looks exactly like it.
+		return fmt.Sprintf("there is no %s, so lmm cannot tell whether this index is in use", path)
+	case err != nil:
+		return fmt.Sprintf("%s could not be read (%v), so lmm cannot tell whether this index is in use", path, err)
+	}
+	if why := gamesFileShapeDoubt(data, len(loaded)); why != "" {
+		return fmt.Sprintf("%s %s, so lmm cannot tell whether this index is in use", path, why)
+	}
+	if id := unlistedGameWithProfiles(s.configDir, loaded); id != "" {
+		return fmt.Sprintf("game %s has profiles on disk but %s does not list it (was the file cut short?), so lmm cannot tell whether this index is in use", id, path)
+	}
+	return ""
+}
+
+// gamesFileShapeDoubt checks data's structure against what lmm writes, and
+// says what is wrong with it, or "".
+func gamesFileShapeDoubt(data []byte, loaded int) string {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "is empty"
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Sprintf("does not parse (%v)", err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return "holds no games: section"
+	}
+	top := doc.Content[0]
+	var games *yaml.Node
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		key := top.Content[i].Value
+		if key != "games" {
+			return fmt.Sprintf("has a top-level key %q lmm does not know (a typo, or a game indented out of its block)", key)
+		}
+		games = top.Content[i+1]
+	}
+	switch {
+	case games == nil:
+		return "holds no games: section"
+	case games.Kind != yaml.MappingNode:
+		return "has a games: section that is not a list of games"
+	}
+	blocks := 0
+	for i := 0; i+1 < len(games.Content); i += 2 {
+		id, block := games.Content[i].Value, games.Content[i+1]
+		if block.Kind != yaml.MappingNode {
+			return fmt.Sprintf("has a game %q that is not a block of settings", id)
+		}
+		for j := 0; j+1 < len(block.Content); j += 2 {
+			if key := block.Content[j].Value; !gamesFileKeys[key] {
+				return fmt.Sprintf("has a key %q in game %q that lmm does not know (a typo, or a line indented into the wrong game)", key, id)
+			}
+		}
+		blocks++
+	}
+	if blocks != loaded {
+		return fmt.Sprintf("holds %d game blocks but lmm read %d games from it", blocks, loaded)
+	}
+	return ""
+}
+
+// unlistedGameWithProfiles names a game that has a profiles directory under
+// configDir but is not in loaded, or "".
+func unlistedGameWithProfiles(configDir string, loaded map[string]*domain.Game) string {
+	entries, err := os.ReadDir(filepath.Join(configDir, "games"))
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() || loaded[e.Name()] != nil {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(configDir, "games", e.Name(), "profiles")); err == nil && info.IsDir() {
+			return e.Name()
+		}
+	}
+	return ""
 }
 
 // pruneDecision is design §2.8 for one cached index.

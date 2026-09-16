@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -318,4 +319,82 @@ func TestPruneSourceIndexes_NoGamesFileKeepsUnusedIndexes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, src.removed, 3, "--all is the explicit way past it")
 	assert.Equal(t, 3, report.Removed)
+}
+
+// TestPruneSourceIndexes_AGamesFileLmmCannotFullyReadKeepsEverything is T3
+// review F4: games.yaml is decoded leniently, so a file that is empty, has
+// a mistyped key, or has a game indented out of its block reads as FEWER
+// games than it holds - and every index those games use looked unused. Any
+// doubt about the file keeps every index, and says why; only --all, which
+// removes whatever a source can prove is its own, goes past it.
+func TestPruneSourceIndexes_AGamesFileLmmCannotFullyReadKeepsEverything(t *testing.T) {
+	alpha := "games:\n  alpha:\n    name: alpha\n    mod_path: /tmp/alpha\n    sources:\n      ts: fresh\n"
+	for name, content := range map[string]string{
+		"empty":               "",
+		"only a comment":      "# games go here\n",
+		"games with no value": "games:\n",
+		"a mistyped key":      "game:\n  alpha:\n    sources:\n      ts: fresh\n",
+		"a game out of its block": alpha +
+			"beta:\n  name: beta\n  sources:\n    ts: unused\n",
+		"a key out of its game":   alpha + "    name2: x\n",
+		"a game with no settings": "games:\n  alpha:\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, src, configDir := newPruneService(t)
+			require.NoError(t, os.WriteFile(filepath.Join(configDir, "games.yaml"), []byte(content), 0o644))
+
+			report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+			require.NoError(t, err)
+			assert.Empty(t, src.removed)
+			for _, e := range report.Entries {
+				assert.Equal(t, core.IndexPruneKeep, e.Action, "%s: %+v", e.Game, e)
+			}
+			unused := entryFor(t, report.Entries, "unused")
+			assert.Contains(t, unused.Reason, "games.yaml")
+
+			_, err = svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: true})
+			require.NoError(t, err)
+			assert.Len(t, src.removed, 3, "--all is the explicit way past it")
+		})
+	}
+}
+
+// TestPruneSourceIndexes_AGamesFileMissingAGameWithProfilesKeepsEverything:
+// a games.yaml cut off at a game boundary (#403's non-atomic writer) parses
+// cleanly with fewer games. A game whose profiles are still on disk but
+// which games.yaml no longer lists is that doubt, made visible.
+func TestPruneSourceIndexes_AGamesFileMissingAGameWithProfilesKeepsEverything(t *testing.T) {
+	svc, src, configDir := newPruneService(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(configDir, "games", "zeta", "profiles"), 0o755))
+
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, src.removed)
+	unused := entryFor(t, report.Entries, "unused")
+	assert.Equal(t, core.IndexPruneKeep, unused.Action)
+	assert.Contains(t, unused.Reason, "zeta")
+}
+
+// TestPruneSourceIndexes_TheGamesThisProcessLoadedStillCount: the games the
+// Service read at start are a second witness to what is mapped - a file
+// re-read mid-write must not be the only one.
+func TestPruneSourceIndexes_TheGamesThisProcessLoadedStillCount(t *testing.T) {
+	svc, src, configDir := newPruneService(t)
+	require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+		ID: "epsilon", Name: "epsilon", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"ts": "unused"},
+	}))
+	// games.yaml loses epsilon behind the Service's back, and still parses.
+	data, err := os.ReadFile(filepath.Join(configDir, "games.yaml"))
+	require.NoError(t, err)
+	trimmed := strings.Split(string(data), "    epsilon:")[0]
+	require.NotEqual(t, string(data), trimmed, "fixture: epsilon was written")
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "games.yaml"), []byte(trimmed), 0o644))
+
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	unused := entryFor(t, report.Entries, "unused")
+	assert.Equal(t, core.IndexPruneKeep, unused.Action)
+	assert.Equal(t, []string{"epsilon"}, unused.MappedBy)
+	assert.NotContains(t, src.removed, "unused")
 }
