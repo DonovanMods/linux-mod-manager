@@ -130,7 +130,7 @@ func init() {
 	gameAddCmd.Flags().StringVar(&gameAddGameID, "game-id", "", "the LOCAL games.yaml key (default: derived from the catalog match's slug, or from --id)")
 	gameAddCmd.Flags().StringVar(&gameAddPath, "path", "", "game install path (must exist)")
 	gameAddCmd.Flags().StringVar(&gameAddModPath, "mod-path", "", "mod directory, absolute or relative to the install path (default: <install path>/mods; the install path for a BepInEx game)")
-	gameAddCmd.Flags().StringVar(&gameAddAdapter, "adapter", "", "game adapter (default: generic-files; see `lmm game list` for each game's)")
+	gameAddCmd.Flags().StringVar(&gameAddAdapter, "adapter", "", "game adapter (default: derived - bepinex with --loader bepinex, generic-files otherwise; see `lmm game list` for each game's)")
 	gameAddCmd.Flags().StringVar(&gameAddLoader, "loader", "",
 		"declare a mod loader installed in the game directory (today: bepinex) - see 'lmm game show' for the launch option it needs")
 	gameAddCmd.Flags().StringVar(&gameAddLoaderVersion, "loader-version", "",

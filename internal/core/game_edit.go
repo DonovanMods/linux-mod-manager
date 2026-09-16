@@ -99,13 +99,16 @@ func (s *Service) UpdateGameSources(ctx context.Context, gameID string, sources 
 // the gate - and it is the ONLY way a frontend changes the key, so the
 // rules below cannot be bypassed by one of them.
 //
-// An EMPTY name clears the key, which is how a user returns a game to the
-// generic-files identity. Any other name must be registered: an
-// unregistered one is a GameSpecError on field "adapter", so an SPA marks
-// the input rather than parsing a sentence, and the message names what IS
-// registered. A `deploy_mode: compile` game may only be given an adapter
-// that can compile - the one composition rule the two keys have (design
-// §2) - refused by name for the same reason.
+// An EMPTY name clears the key, which hands the game back to the adapter
+// Service.AdapterName derives for it - icarus for `deploy_mode: compile`,
+// bepinex for a game-root game with BepInEx, generic-files otherwise - and
+// the returned row's EffectiveAdapter names which. Any other name must be
+// registered: an unregistered one is a GameSpecError on field "adapter", so
+// an SPA marks the input rather than parsing a sentence, and the message
+// names what IS registered. The composition rules AdapterFor enforces are
+// refused the same way, for the same reason: a `deploy_mode: compile` game
+// may only be given an adapter that can compile (design §2), and bepinex
+// only a game whose mod_path is its install path (#413 re-review P-b).
 func (s *Service) SetGameAdapter(ctx context.Context, gameID, name string) (*GameListEntry, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {

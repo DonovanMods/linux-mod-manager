@@ -122,9 +122,10 @@ type gameAddRequest struct {
 	InstallPath    string `json:"install_path"`
 	ModPath        string `json:"mod_path,omitempty"`
 	FromSteamAppID string `json:"from_steam_app_id,omitempty"`
-	// Adapter is games.yaml's `adapter:` key (#353). Absent or empty means
-	// the generic-files identity, which is what every game added before
-	// the seam existed carries.
+	// Adapter is games.yaml's `adapter:` key (#353). Absent or empty writes
+	// no key, so the game uses the adapter core derives for it - bepinex
+	// for a body declaring the BepInEx loader, icarus for a compile game,
+	// generic-files otherwise - which the answer's effective_adapter names.
 	Adapter string `json:"adapter,omitempty"`
 	// Loader is #359's mod-loader declaration, additive and optional: the
 	// same four values `lmm game add --loader ...` collects, unparsed, so a
@@ -232,7 +233,8 @@ func gameAddErrorStatus(err error) int {
 type gameSourcesRequest struct {
 	Sources map[string]string `json:"sources"`
 	// Adapter, when PRESENT, sets the game's `adapter:` key (#353); the
-	// empty string clears it back to generic-files. A pointer rather than
+	// empty string clears it, handing the game back to the adapter core
+	// derives for it (the answer's effective_adapter). A pointer rather than
 	// a string so an SPA that only edits the source map - every caller
 	// before #353 - cannot clear an adapter it never sent.
 	Adapter *string `json:"adapter,omitempty"`

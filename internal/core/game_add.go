@@ -230,8 +230,10 @@ func ExactGameCatalogMatch(report *GameCatalogReport, name string) *GameCatalogM
 //     layered on top of it, so an explicit source ADDS to a prefilled map
 //     rather than replacing it, and a spec carrying only this map is
 //     complete on its own.
-//   - Adapter is games.yaml's adapter string (#353). Optional: "" means
-//     the generic-files identity.
+//   - Adapter is games.yaml's adapter string (#353). Optional: "" writes
+//     no key, so the game uses the adapter Service.AdapterName derives -
+//     bepinex for a spec carrying a BepInEx Loader, icarus for a compile
+//     DeployMode, generic-files otherwise.
 //   - DeployMode is games.yaml's deploy_mode string, passed through to
 //     domain.ParseDeployMode. Optional: "" means the default (extract),
 //     exactly what every add wrote before this field existed. #206's
@@ -248,9 +250,11 @@ type GameSpec struct {
 	LinkMethod  domain.LinkMethod
 	Sources     map[string]string
 	DeployMode  string
-	// Adapter is games.yaml's `adapter:` value (#353). Optional: ""
-	// means the generic-files identity, which is every game lmm managed
-	// before the seam existed. Validated for SYNTAX here; whether the
+	// Adapter is games.yaml's `adapter:` value (#353). Optional: "" writes
+	// no key, which leaves the choice to Service.AdapterName's derivation
+	// (generic-files unless DeployMode or Loader selects another), exactly
+	// as for every game lmm managed before the seam existed. Validated for
+	// SYNTAX here; whether the
 	// named adapter is registered is checked by the caller against
 	// Service.ListAdapters(), and again when core resolves the game.
 	Adapter string
