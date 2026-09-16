@@ -343,6 +343,9 @@ func TestJSONGoldens(t *testing.T) {
 				MissingDependencies: []domain.ModReference{{SourceID: "nexusmods", ModID: "99"}},
 				CycleDetected:       true,
 				DependencyWarnings:  []core.DependencyWarning{{SourceID: "nexusmods", ModID: "99", Message: "fetch failed"}},
+				// #431 fix round 2 (R8): a dependency the profile switched
+				// off, which the install switches back on.
+				ReenabledDependencies: []domain.ModReference{{SourceID: "nexusmods", ModID: "98"}},
 				Conflicts: []core.Conflict{
 					{RelativePath: "Data/textures/armor/mesh.dds", CurrentSourceID: "nexusmods", CurrentModID: "7"},
 				},
@@ -707,8 +710,12 @@ func TestJSONGoldens(t *testing.T) {
 				// encoding/json/v2, omitempty would keep a false bool and
 				// so change every existing install document).
 				ProfileWriteFailed: true,
-				Warnings:           []string{"merged pak sync failed"},
-				Notes:              []string{"installed dependency Realistic Needs"},
+				// #431 fix round 2 (R8): the dependency switched back on.
+				ReenabledDependencies: []core.InstalledRef{
+					{SourceID: "nexusmods", ModID: "98", Name: "Required Library", Version: "2.0.0"},
+				},
+				Warnings: []string{"merged pak sync failed"},
+				Notes:    []string{"installed dependency Realistic Needs"},
 			},
 		},
 		{

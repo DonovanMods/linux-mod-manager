@@ -45,6 +45,13 @@
       "message": "fetch failed"
     }
   ],
+  "reenabled_dependencies": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "98",
+      "locked": false
+    }
+  ],
   "conflicts": [
     {
       "relative_path": "Data/textures/armor/mesh.dds",

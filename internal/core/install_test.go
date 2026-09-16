@@ -3481,3 +3481,81 @@ func TestService_ApplyInstall_ClearsTheProfilesDisabledMarker(t *testing.T) {
 	assert.Empty(t, applyPlan.ToDisable, "and the next converge run must not undo the install")
 	assert.FileExists(t, filepath.Join(gameDir, "mod1.esp"))
 }
+
+// TestService_ApplyInstall_ADependencyTheProfileSwitchedOffIsSwitchedBackOnAndSaid
+// is fix round 2's R8, and the product call behind it: installing X clears
+// the `disabled:` marker on a dependency D the profile document switched off
+// - X cannot work without D, so leaving D marked would have the next
+// converge run take it straight back down - but D is a mod the user did NOT
+// name, so the plan says so before anything happens and the result says so
+// after. The dependency loop's marker clear (F4) had no test at all.
+func TestService_ApplyInstall_ADependencyTheProfileSwitchedOffIsSwitchedBackOnAndSaid(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	dep2 := &domain.Mod{ID: "dep2", SourceID: "src", Name: "Dep Two", Version: "1.0", GameID: "g1"}
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep2"}}}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+	registerDownloadableMod(t, mock, dep2, "dep2.esp", "payload-dep2")
+	registerDownloadableMod(t, mock, dep1, "dep1.esp", "payload-dep1")
+	registerDownloadableMod(t, mock, root, "root.esp", "payload-root")
+
+	// An imported profile: dep1 listed but switched off, so never fetched;
+	// dep2 not listed at all.
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(ctx, "g1", "default", domain.ModReference{SourceID: "src", ModID: "dep1"}))
+	require.NoError(t, pm.SetModDisabled(ctx, "g1", "default", "src", "dep1", true))
+
+	plan, err := svc.PlanInstall(ctx, game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 2)
+	assert.Equal(t, []domain.ModReference{{SourceID: "src", ModID: "dep1"}}, plan.ReenabledDependencies,
+		"the plan names the switched-off dependency the install switches back on - and only that one")
+
+	var warnings []string
+	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, func(e core.Event) {
+		if w, ok := e.(core.WarningEvent); ok && w.Phase == core.InstallWarning {
+			warnings = append(warnings, w.Message)
+		}
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Dep One"}, installedRefNames(result.ReenabledDependencies))
+	require.Len(t, warnings, 1, "said as it happens, on the always-on channel")
+	for _, w := range []string{warnings[0], strings.Join(result.Warnings, "\n")} {
+		assert.Contains(t, w, "Dep One")
+		assert.Contains(t, w, "Root")
+		assert.Contains(t, w, `profile "default"`)
+		assert.Contains(t, w, "switched back on")
+	}
+
+	profile, err := pm.Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("src", "dep1")
+	require.NotNil(t, ref)
+	assert.False(t, ref.Disabled, "the dependency's marker is cleared, or the next converge run undoes the install")
+	assert.FileExists(t, filepath.Join(gameDir, "dep1.esp"))
+	applyPlan, err := svc.PlanProfileApply(ctx, game, "default")
+	require.NoError(t, err)
+	assert.Empty(t, applyPlan.ToDisable)
+}
+
+// TestInstallPlan_SkipDependenciesAlsoDropsTheSwitchOnNotice: with
+// --no-deps nothing is installed on a dependency's behalf, so nothing is
+// switched back on either.
+func TestInstallPlan_SkipDependenciesAlsoDropsTheSwitchOnNotice(t *testing.T) {
+	plan := &core.InstallPlan{
+		Dependencies:          []domain.Mod{{ID: "dep", SourceID: "fake"}},
+		ReenabledDependencies: []domain.ModReference{{SourceID: "fake", ModID: "dep"}},
+	}
+	plan.SkipDependencies()
+	assert.Nil(t, plan.ReenabledDependencies)
+}

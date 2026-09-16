@@ -1341,6 +1341,20 @@ func showInstallPlan(plan *core.InstallPlan) {
 	for _, w := range plan.DependencyWarnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s: %s\n", domain.ModKey(w.SourceID, w.ModID), w.Message)
 	}
+
+	// #431 (fix round 2, R8): a dependency the profile switched off is
+	// switched back on by this install - said before the prompt, because
+	// the user did not name it.
+	for _, ref := range plan.ReenabledDependencies {
+		name := domain.ModKey(ref.SourceID, ref.ModID)
+		for _, dep := range plan.Dependencies {
+			if dep.SourceID == ref.SourceID && dep.ID == ref.ModID {
+				name = dep.Name
+			}
+		}
+		fmt.Printf("\nNote: %s is switched off in profile %q. Installing %s switches it back on there, because %s depends on it.\n",
+			name, plan.Profile, plan.Mod.Name, plan.Mod.Name)
+	}
 }
 
 // truncateChecksum returns a display-friendly checksum (first 12 chars + "...").
