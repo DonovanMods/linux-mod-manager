@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,4 +75,47 @@ func TestOpen_AlreadyCancelledContext(t *testing.T) {
 
 	_, err := Open(ctx, Options{ConfigDir: t.TempDir(), DataDir: t.TempDir()})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestOpen_BackfillsProfileDisabledMarkers pins the call site of #431's
+// one-time profile-document backfill. It has to run where an installation is
+// opened rather than inside a flow: every converge flow READS the document,
+// so a mod disabled before the marker existed would be switched back on by
+// the first switch or apply after the upgrade, before any flow could have
+// recorded the intent. Open is the one place both frontends go through.
+func TestOpen_BackfillsProfileDisabledMarkers(t *testing.T) {
+	cfgDir, dataDir := t.TempDir(), filepath.Join(t.TempDir(), "lmm")
+
+	// An installation as an lmm predating the marker left it: a row that
+	// says the mod is off, and a profile document with no key for it. Built
+	// through core directly, NOT through Open - opening is what discharges
+	// the obligation, so the state has to exist before the first one.
+	paths, err := ResolvePaths(Options{ConfigDir: cfgDir, DataDir: dataDir})
+	require.NoError(t, err)
+	require.NoError(t, ensureDirs(paths))
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: paths.ConfigDir, DataDir: paths.DataDir, CacheDir: paths.CacheDir,
+	})
+	require.NoError(t, err)
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(t.Context(), "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(t.Context(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
+	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "off", SourceID: "src", Name: "Off Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      false,
+	}))
+	require.NoError(t, svc.Close())
+
+	svc, err = Open(t.Context(), Options{ConfigDir: cfgDir, DataDir: dataDir})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	profile, err := svc.NewProfileManager().Get(t.Context(), "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.True(t, profile.Mods[0].Disabled,
+		"opening an installation must record what the database already says is off")
 }

@@ -53,6 +53,24 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 	}
 	registerAdapters(svc)
 	registerSources(ctx, svc, p, warnWriter(opts))
+	// #431: the one-time backfill of the profile documents' `disabled:`
+	// markers. Opening an installation is the only place it can run - every
+	// converge flow READS the document, so a mod disabled before the marker
+	// existed would be switched back on by the first switch or apply after
+	// the upgrade, before any flow had a chance to record the intent. It is
+	// a no-op on every later open (a durable marker discharges it) and on
+	// any installation with nothing to record.
+	//
+	// A failure is a warning, never a refusal: the intent it records was
+	// already recorded in the database, so an unwritable profile file - or a
+	// mutation lock another lmm process is holding - must not stop lmm from
+	// starting. Same channel and same reasoning as the source warnings
+	// above; the next open finishes the job.
+	if n, err := svc.BackfillProfileDisabledMarkers(ctx); err != nil {
+		_, _ = fmt.Fprintf(warnWriter(opts), "warning: could not record disabled mods in their profiles: %v\n", err) //nolint:errcheck // best-effort warning write
+	} else if n > 0 {
+		_, _ = fmt.Fprintf(warnWriter(opts), "recorded %d disabled mod(s) in their profile files (one-time upgrade step)\n", n) //nolint:errcheck // best-effort notice write
+	}
 	return svc, nil
 }
 
