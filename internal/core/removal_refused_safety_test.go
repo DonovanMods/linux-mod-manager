@@ -110,6 +110,20 @@ func TestRemoval_ARefusedAdapterRemovesOnlyWhatLmmRecorded(t *testing.T) {
 			assert.NoFileExists(t, filepath.Join(game.InstallPath, "BepInEx", "plugins", "Rooted.dll"))
 		})
 
+		// `lmm mod disable` is a removal no adapter refusal gates at all.
+		t.Run(name+"/disable", func(t *testing.T) {
+			svc, game, dotfile := newGameRootWithUserConfigs(t)
+			game = refuse(t, svc, game, edit)
+			mods, err := svc.GetInstalledMods(ctx, game.ID, "default")
+			require.NoError(t, err)
+			require.Len(t, mods, 1)
+			_, err = svc.DisableMod(ctx, game, "default", mods[0].SourceID, mods[0].ID)
+			require.NoError(t, err)
+
+			requireUserConfigsKept(t, game, dotfile)
+			assert.NoFileExists(t, filepath.Join(game.InstallPath, "BepInEx", "plugins", "Rooted.dll"))
+		})
+
 		t.Run(name+"/uninstall", func(t *testing.T) {
 			svc, game, dotfile := newGameRootWithUserConfigs(t)
 			game = refuse(t, svc, game, edit)
