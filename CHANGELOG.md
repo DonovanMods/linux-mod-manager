@@ -279,9 +279,17 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
   names every such profile with its purge
   (`lmm purge --game <id> --profile <name>`) and says what the `lmm deploy`
   after the move does: it deploys the active profile, and any other profile
-  is deployed into the new directory when you next switch to it. On the web
-  it is a 409 carrying
-  `{game_id, mod_path, new_mod_path, deployed_files, profiles[], active_profile}`.
+  is deployed into the new directory when you next switch to it. Where the
+  active profile lists a mod whose live file only another profile records
+  (what a v1.30.1 switch between profiles sharing a mod left), it first
+  names `lmm profile apply <active>` or `lmm deploy`, which record that
+  file under the active profile, and the active profile's purge; running
+  exactly the commands it names, in its order, clears it. With no single
+  active profile it is refused naming `lmm profile list` instead. On the
+  web it is a 409 carrying
+  `{game_id, mod_path, new_mod_path, deployed_files, profiles[], active_profile}`,
+  plus `listed_unrecorded`, `needs_apply` and `needs_deploy` when those
+  first steps are needed.
   `lmm game detect`'s repair of an already-configured game, which rewrites
   `mod_path` from the catalog, is refused the same way (a 409 from
   `POST /api/v1/games/detect`) and writes nothing. The edit is also refused

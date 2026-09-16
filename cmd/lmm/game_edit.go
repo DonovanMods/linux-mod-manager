@@ -57,7 +57,11 @@ file relative to the mod_path, so the edit is refused while any profile
 has files deployed; the refusal names each one. Purge each with 'lmm
 purge --game <id> --profile <name>', run this, then 'lmm deploy', which
 deploys the active profile into the new directory; any other profile is
-deployed there when you next switch to it. A BepInEx game deploys into
+deployed there when you next switch to it. When the active profile lists
+a mod whose live file only another profile records - what a switch
+before lmm 2 could leave - the refusal first names 'lmm profile apply' or
+'lmm deploy' to record it under the active profile. Running exactly what
+the refusal names, in its order, clears it. A BepInEx game deploys into
 its install path, so that is its mod path.
 
 --source, --remove-source, --adapter and --mod-path are one edit: every

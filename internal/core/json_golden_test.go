@@ -1793,6 +1793,18 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #445 audit: a live file only a non-active profile records,
+			// whose mod the active profile lists - it has to be recorded
+			// under the active profile before any purge can clear it.
+			"game_mod_path_in_use_error_listed_unrecorded",
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/skyrim-se/Data", NewModPath: "/games/skyrim-se/Mods",
+				DeployedFiles: 1, ActiveProfile: "survival",
+				Profiles:         []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}},
+				ListedUnrecorded: 1, NeedsApply: true,
+			},
+		},
+		{
 			// One profile's share of game_mod_path_in_use_error.
 			"profile_deployed_files",
 			core.ProfileDeployedFiles{Profile: "survival", DeployedFiles: 2},

@@ -273,7 +273,50 @@ func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to s
 		return fmt.Errorf("cannot move the mod_path of %s: %d deployed file(s) are recorded under it, and they cannot be purged until lmm can tell which profile is active - %w",
 			game.ID, inUse.DeployedFiles, err)
 	}
+	if err := s.countListedUnrecorded(ctx, game, inUse); err != nil {
+		return err
+	}
 	return inUse
+}
+
+// countListedUnrecorded fills inUse's ListedUnrecorded, NeedsApply and
+// NeedsDeploy (#445 audit): the files a non-active profile's purge keeps
+// because the active profile lists their mods (PurgeKeptListed) - live for
+// the active profile, recorded only by that other profile. Until the
+// active profile records them, no purge the refusal names can clear them.
+func (s *Service) countListedUnrecorded(ctx context.Context, game *domain.Game, inUse *GameModPathInUseError) error {
+	var enabled map[string]bool
+	for _, p := range inUse.Profiles {
+		if p.Profile == inUse.ActiveProfile {
+			continue
+		}
+		_, kept, err := s.recordedPaths(ctx, game, p.Profile, inUse.ActiveProfile)
+		if err != nil {
+			return err
+		}
+		for _, k := range kept {
+			if k.Reason != PurgeKeptListed {
+				continue
+			}
+			if enabled == nil {
+				rows, err := s.GetInstalledMods(ctx, game.ID, inUse.ActiveProfile)
+				if err != nil {
+					return fmt.Errorf("getting installed mods: %w", err)
+				}
+				enabled = make(map[string]bool, len(rows))
+				for _, row := range rows {
+					enabled[domain.ModKey(row.SourceID, row.ID)] = row.Enabled
+				}
+			}
+			inUse.ListedUnrecorded++
+			if enabled[domain.ModKey(k.row.SourceID, k.row.ModID)] {
+				inUse.NeedsDeploy = true
+			} else {
+				inUse.NeedsApply = true
+			}
+		}
+	}
+	return nil
 }
 
 // samePath reports whether a and b name the same directory: equal once
@@ -484,6 +527,17 @@ type GameModPathInUseError struct {
 	DeployedFiles int                    `json:"deployed_files"`
 	Profiles      []ProfileDeployedFiles `json:"profiles"`
 	ActiveProfile string                 `json:"active_profile"`
+	// ListedUnrecorded is how many of those files are live for
+	// ActiveProfile - its document lists their mods - while only another
+	// profile records them: what a v1.30.1 switch between profiles sharing
+	// a mod left (#445 audit). That profile's purge keeps them
+	// (PurgeKeptListed), so ActiveProfile has to record them first, and is
+	// then purged too, rows or not: `lmm profile apply` does it for a mod
+	// ActiveProfile has no enabled row for (NeedsApply), `lmm deploy` for
+	// one it has (NeedsDeploy).
+	ListedUnrecorded int  `json:"listed_unrecorded,omitzero"`
+	NeedsApply       bool `json:"needs_apply,omitzero"`
+	NeedsDeploy      bool `json:"needs_deploy,omitzero"`
 }
 
 // ProfileDeployedFiles is one profile's share of a GameModPathInUseError.
@@ -495,19 +549,41 @@ type ProfileDeployedFiles struct {
 // Error implements error.
 func (e *GameModPathInUseError) Error() string {
 	shares := make([]string, len(e.Profiles))
-	purges := make([]string, len(e.Profiles))
+	purged := make([]string, 0, len(e.Profiles)+1)
 	var others []string
 	for i, p := range e.Profiles {
 		shares[i] = fmt.Sprintf("%d by profile %s", p.DeployedFiles, p.Profile)
-		purges[i] = fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, p.Profile)
+		purged = append(purged, p.Profile)
 		if p.Profile != e.ActiveProfile {
 			others = append(others, p.Profile)
 		}
 	}
+	// The files the active profile first records are its to purge.
+	if e.ListedUnrecorded > 0 && !slices.Contains(purged, e.ActiveProfile) {
+		purged = append(purged, e.ActiveProfile)
+		slices.Sort(purged)
+	}
+	purges := make([]string, len(purged))
+	for i, profile := range purged {
+		purges[i] = fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, profile)
+	}
 
-	msg := fmt.Sprintf("%d file(s) are deployed under %s (%s), and lmm records each one relative to the mod_path, so moving it to %s would strand them; purge them first - run %s - then change the mod_path, then run `lmm deploy --game %s`, which deploys the active profile (%s) into the new one",
+	purge := "purge them first"
+	if e.ListedUnrecorded > 0 {
+		var steps []string
+		if e.NeedsApply {
+			steps = append(steps, fmt.Sprintf("`lmm profile apply %s --game %s`", e.ActiveProfile, e.GameID))
+		}
+		if e.NeedsDeploy {
+			steps = append(steps, fmt.Sprintf("`lmm deploy --game %s`", e.GameID))
+		}
+		purge = fmt.Sprintf("the active profile %s lists the mods of %d of them, which only another profile records, so first run %s to record those under %s, then purge them all",
+			e.ActiveProfile, e.ListedUnrecorded, strings.Join(steps, ", then "), e.ActiveProfile)
+	}
+
+	msg := fmt.Sprintf("%d file(s) are deployed under %s (%s), and lmm records each one relative to the mod_path, so moving it to %s would strand them; %s - run %s - then change the mod_path, then run `lmm deploy --game %s`, which deploys the active profile (%s) into the new one",
 		e.DeployedFiles, e.ModPath, strings.Join(shares, ", "), e.NewModPath,
-		strings.Join(purges, ", then "), e.GameID, e.ActiveProfile)
+		purge, strings.Join(purges, ", then "), e.GameID, e.ActiveProfile)
 	for _, profile := range others {
 		msg += fmt.Sprintf("; profile %s is deployed there when you next switch to it (`lmm profile switch %s --game %s`)",
 			profile, profile, e.GameID)
