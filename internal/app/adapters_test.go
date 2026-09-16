@@ -36,7 +36,8 @@ func TestRegisterAdapters_LoaderGameMigratesToBepInEx(t *testing.T) {
 	svc := newTestService(t)
 	registerAdapters(svc)
 
-	game := &domain.Game{ID: "valheim", Loader: &domain.GameLoader{Kind: domain.LoaderKindBepInEx}}
+	root := t.TempDir()
+	game := &domain.Game{ID: "valheim", InstallPath: root, ModPath: root, Loader: &domain.GameLoader{Kind: domain.LoaderKindBepInEx}}
 	assert.Equal(t, "bepinex", svc.AdapterName(game))
 
 	a, err := svc.AdapterFor(game)
@@ -59,7 +60,7 @@ func TestRegisterAdapters_AnInstalledLoaderMigratesToo(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(preloader), 0o755))
 	require.NoError(t, os.WriteFile(preloader, []byte("preloader"), 0o644))
 
-	game := &domain.Game{ID: "valheim", InstallPath: root}
+	game := &domain.Game{ID: "valheim", InstallPath: root, ModPath: root}
 	assert.Equal(t, "bepinex", svc.AdapterName(game))
 }
 

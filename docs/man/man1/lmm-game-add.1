@@ -15,7 +15,8 @@ Add a new game configuration.
 .PP
 With no flags this prompts for a mod source (every registered source,
 built-in or custom, sorted by ID), then the game's identity and its
-install path and mod path (defaulting to the install path plus "/mods"),
+install path and mod path (defaulting to the install path plus "/mods",
+or to the install path itself for a BepInEx game),
 and saves the result to games.yaml along with an empty default profile.
 
 .PP
@@ -134,7 +135,7 @@ lmm game detect --include-unknown          # list installed app ids
 
 .PP
 \fB--mod-path\fP=""
-	mod directory, absolute or relative to the install path (default: <install path>/mods)
+	mod directory, absolute or relative to the install path (default: <install path>/mods; the install path for a BepInEx game)
 
 .PP
 \fB--name\fP=""

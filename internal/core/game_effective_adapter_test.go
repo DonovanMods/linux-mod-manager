@@ -9,6 +9,7 @@ package core_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,19 +27,27 @@ func TestListGameEntries_NamesTheEffectiveAdapter(t *testing.T) {
 
 	installed := t.TempDir()
 	bepinexInstall(t, installed, "", domain.LoaderBootstrapUnknown, time.Time{})
+	declared := t.TempDir()
 
 	games := []*domain.Game{
 		{ID: "a-plain", Name: "Plain", InstallPath: t.TempDir()},
 		{ID: "b-explicit-generic", Name: "Explicit", InstallPath: t.TempDir(), Adapter: "generic-files"},
 		{ID: "c-compile", Name: "Compile", InstallPath: t.TempDir(), DeployMode: domain.DeployCompile},
-		{ID: "d-declared", Name: "Declared", InstallPath: t.TempDir(),
+		{ID: "d-declared", Name: "Declared", InstallPath: declared, ModPath: declared,
 			Loader: &domain.GameLoader{Kind: domain.LoaderKindBepInEx}},
-		{ID: "e-installed", Name: "Installed", InstallPath: installed},
+		{ID: "e-installed", Name: "Installed", InstallPath: installed, ModPath: installed},
 		{ID: "f-explicit-icarus", Name: "Explicit Icarus", InstallPath: t.TempDir(), Adapter: "icarus"},
 		// An override wins over the loader, exactly as it does when the
 		// game is resolved - so this one's answer is its own key.
-		{ID: "g-override", Name: "Override", InstallPath: installed, Adapter: "generic-files",
+		{ID: "g-override", Name: "Override", InstallPath: installed, ModPath: installed, Adapter: "generic-files",
 			Loader: &domain.GameLoader{Kind: domain.LoaderKindBepInEx}},
+		// #413 re-review P-b: a mod_path that is not the game root keeps
+		// the identity, installed and declared alike.
+		{ID: "h-plugins-dir", Name: "Plugins Dir", InstallPath: installed,
+			ModPath: filepath.Join(installed, "BepInEx", "plugins")},
+		{ID: "i-declared-default-mods", Name: "Declared, mods dir", InstallPath: declared,
+			ModPath: filepath.Join(declared, "mods"),
+			Loader:  &domain.GameLoader{Kind: domain.LoaderKindBepInEx}},
 	}
 	for _, g := range games {
 		require.NoError(t, svc.SaveGame(ctx, g))
@@ -54,13 +63,15 @@ func TestListGameEntries_NamesTheEffectiveAdapter(t *testing.T) {
 	// {configured, effective}: effective is omitted for the identity,
 	// the same "absent means generic-files" rule the configured key has.
 	assert.Equal(t, map[string][2]string{
-		"a-plain":            {"", ""},
-		"b-explicit-generic": {"generic-files", ""},
-		"c-compile":          {"", "icarus"},
-		"d-declared":         {"", "bepinex"},
-		"e-installed":        {"", "bepinex"},
-		"f-explicit-icarus":  {"icarus", "icarus"},
-		"g-override":         {"generic-files", ""},
+		"a-plain":                 {"", ""},
+		"b-explicit-generic":      {"generic-files", ""},
+		"c-compile":               {"", "icarus"},
+		"d-declared":              {"", "bepinex"},
+		"e-installed":             {"", "bepinex"},
+		"f-explicit-icarus":       {"icarus", "icarus"},
+		"g-override":              {"generic-files", ""},
+		"h-plugins-dir":           {"", ""},
+		"i-declared-default-mods": {"", ""},
 	}, got)
 
 	for _, e := range entries {

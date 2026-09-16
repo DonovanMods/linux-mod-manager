@@ -64,9 +64,11 @@ const notFixableLoader = "lmm does not install the mod loader or write Steam lau
 //
 // A game that neither declares a loader nor has one installed runs none of
 // this, so every other game's verify output is exactly what it was. The
-// gate is hasBepInEx - the same two-source test that RESOLVES the bepinex
-// adapter for this game (Service.AdapterName), so the tier and the adapter
-// turn on together and cannot disagree about whether this is a loader game.
+// gate is hasBepInEx - the same two-source test the bepinex derivation
+// makes (Service.AdapterName), so the tier and the adapter cannot disagree
+// about whether this is a loader game. A loader game the derivation still
+// does not resolve to bepinex (an explicit adapter, a compile game, a
+// mod_path off the game root) is the bypass the first check below reports.
 func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
 	if !hasBepInEx(r.game) {
 		return
@@ -89,12 +91,22 @@ func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
 	}
 
 	// #424: the misplaced-deployment check asks about the archive LAYOUT
-	// rules, which the gate turns on for a game whose BepInEx lmm can see
-	// as well as one that declares it - and the undeclared game is exactly
-	// where the misplaced deployments came from. Everything below it is
-	// about the DECLARATION, which a game that declares nothing has not
-	// made, so those checks still run only for a declaring game.
-	r.loaderMisplacedDeployCheck(installedMods)
+	// rules, which apply to a game whose BepInEx lmm can see as well as one
+	// that declares it - and the undeclared game is exactly where the
+	// misplaced deployments came from. But only to a game that RESOLVES to
+	// bepinex: its question is where that adapter's layout puts a file, and
+	// its repair re-lays the cache entry out through it. Asked of a game on
+	// another adapter it had no layout to compare against - a v1 game whose
+	// mod_path is BepInEx/plugins records every plugin relative to that
+	// directory, so each one read as "outside BepInEx/" (#413 re-review
+	// P-b) - and the bypass row above already says why nothing is laid out.
+	//
+	// Everything below it is about the DECLARATION, which a game that
+	// declares nothing has not made, so those checks still run only for a
+	// declaring game.
+	if r.svc.AdapterName(r.game) == bepinexAdapterID {
+		r.loaderMisplacedDeployCheck(installedMods)
+	}
 	if !r.game.DeclaresBepInEx() {
 		return
 	}

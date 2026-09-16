@@ -31,6 +31,9 @@ func TestE2E_SetupGames_ShowsTheEffectiveAdapter(t *testing.T) {
 	f := newE2EFixture(t)
 	f.Svc.RegisterAdapter(namedE2EAdapter("bepinex"))
 	f.Game.Loader = &domain.GameLoader{Kind: domain.LoaderKindBepInEx}
+	// A BepInEx game deploys into its game root - bepinex is only derived
+	// for one that does (#413 re-review P-b).
+	f.Game.ModPath = f.Game.InstallPath
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
 
 	const cell = `document.querySelector('[data-testid="setup-games"] tbody tr td:nth-child(4)')?.textContent.trim()`

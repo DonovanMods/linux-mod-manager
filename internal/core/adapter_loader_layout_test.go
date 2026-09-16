@@ -89,6 +89,8 @@ func TestPlanImportArchive_AgreesWithIngestForALoaderGame(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			svc, game := newImportArchiveTestService(t)
 			game.Loader = &domain.GameLoader{Kind: domain.LoaderKindBepInEx}
+			// The game-root shape bepinex is derived for (#413 re-review P-b).
+			game.InstallPath = game.ModPath
 			require.NoError(t, svc.SaveGame(context.Background(), game))
 
 			planned := planAndImport(t, svc, game, tc.members)

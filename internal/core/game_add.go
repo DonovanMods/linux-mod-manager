@@ -212,8 +212,9 @@ func ExactGameCatalogMatch(report *GameCatalogReport, name string) *GameCatalogM
 //     SearchGameCatalog suggested, which is derived from the entry's SLUG -
 //     that is what keeps a CurseForge add keyed "minecraft" rather than
 //     "432".
-//   - ModPath is optional: empty defaults to <InstallPath>/mods, exactly
-//     the default the CLI's prompt offered. A non-empty value may be
+//   - ModPath is optional: empty defaults to DefaultModPath -
+//     <InstallPath>/mods, exactly the default the CLI's prompt offered, or
+//     the install path itself for a BepInEx game. A non-empty value may be
 //     absolute OR relative to InstallPath: a relative one is resolved
 //     against it, the same rule config.ResolveModPath applies when
 //     games.yaml is read (#363), and the ABSOLUTE result is what gets
@@ -359,8 +360,14 @@ func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEn
 	// fail at resolve time with nothing the form could mark. The CLI's own
 	// pre-check (cmd/lmm/adapter_flag.go) stays for its friendlier
 	// message, but it is no longer the only thing enforcing this.
+	//
+	// AdapterFor rather than a bare registry lookup, so the composition
+	// rules an explicit adapter has with the rest of the entry (a compile
+	// game's adapter must compile; bepinex needs a game-root mod_path) are
+	// refused HERE, on the field a form can mark, rather than written and
+	// then refused by every flow - the same check SetGameAdapter makes.
 	if game.Adapter != "" {
-		if _, err := s.adapterRegistry().Resolve(game.Adapter); err != nil {
+		if _, err := s.AdapterFor(game); err != nil {
 			return nil, &GameSpecError{
 				Field: "adapter", Value: game.Adapter,
 				Reason: err.Error(), Err: err,
@@ -570,7 +577,7 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 
 	modPath := config.ExpandPath(strings.TrimSpace(spec.ModPath))
 	if modPath == "" {
-		modPath = filepath.Join(installPath, "mods")
+		modPath = spec.DefaultModPath()
 	}
 	// #363: the WRITE side applies the LOADER's rule. A relative mod_path
 	// has always meant "relative to install_path" in a hand-written
@@ -633,4 +640,30 @@ func requireDir(path string) error {
 		return errors.New("path exists and is not a directory")
 	}
 	return nil
+}
+
+// DefaultModPath is the mod path AddGame writes when spec names none, so a
+// frontend's prompt can offer the value that will actually be written.
+//
+// <install>/mods for every game but a BepInEx one, which gets the install
+// path itself (#413 re-review P-b): a BepInEx layout is relative to the game
+// root, the bepinex adapter is only derived for a game that deploys there,
+// and <install>/mods is a directory BepInEx never reads. "A BepInEx one" is
+// a spec that declares the loader or names the bepinex adapter - the two
+// things a new game can say about it before it exists.
+func (spec GameSpec) DefaultModPath() string {
+	installPath := config.ExpandPath(strings.TrimSpace(spec.InstallPath))
+	if spec.declaresBepInEx() {
+		return installPath
+	}
+	return filepath.Join(installPath, "mods")
+}
+
+// declaresBepInEx reports whether spec says the game loads its mods through
+// BepInEx, by either key.
+func (spec GameSpec) declaresBepInEx() bool {
+	if strings.TrimSpace(spec.Adapter) == bepinexAdapterID {
+		return true
+	}
+	return spec.Loader != nil && strings.EqualFold(strings.TrimSpace(spec.Loader.Kind), domain.LoaderKindBepInEx)
 }

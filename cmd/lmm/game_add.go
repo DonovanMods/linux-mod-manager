@@ -25,7 +25,8 @@ var gameAddCmd = &cobra.Command{
 
 With no flags this prompts for a mod source (every registered source,
 built-in or custom, sorted by ID), then the game's identity and its
-install path and mod path (defaulting to the install path plus "/mods"),
+install path and mod path (defaulting to the install path plus "/mods",
+or to the install path itself for a BepInEx game),
 and saves the result to games.yaml along with an empty default profile.
 
 Every prompt also has a flag, so the whole command runs non-interactively
@@ -128,7 +129,7 @@ func init() {
 	gameAddCmd.Flags().StringVar(&gameAddName, "name", "", "display name (defaults to the catalog match's name)")
 	gameAddCmd.Flags().StringVar(&gameAddGameID, "game-id", "", "the LOCAL games.yaml key (default: derived from the catalog match's slug, or from --id)")
 	gameAddCmd.Flags().StringVar(&gameAddPath, "path", "", "game install path (must exist)")
-	gameAddCmd.Flags().StringVar(&gameAddModPath, "mod-path", "", "mod directory, absolute or relative to the install path (default: <install path>/mods)")
+	gameAddCmd.Flags().StringVar(&gameAddModPath, "mod-path", "", "mod directory, absolute or relative to the install path (default: <install path>/mods; the install path for a BepInEx game)")
 	gameAddCmd.Flags().StringVar(&gameAddAdapter, "adapter", "", "game adapter (default: generic-files; see `lmm game list` for each game's)")
 	gameAddCmd.Flags().StringVar(&gameAddLoader, "loader", "",
 		"declare a mod loader installed in the game directory (today: bepinex) - see 'lmm game show' for the launch option it needs")
@@ -509,7 +510,7 @@ func resolveGameAddManual(cmd *cobra.Command, reader *bufio.Reader, selected sou
 }
 
 // resolveGameAddPaths fills the install path (required) and mod path
-// (optional - core defaults it to <install>/mods) from flags, prompting
+// (optional - core defaults it, GameSpec.DefaultModPath) from flags, prompting
 // for whatever a flag did not supply.
 func resolveGameAddPaths(cmd *cobra.Command, reader *bufio.Reader, spec *core.GameSpec) error {
 	if spec.InstallPath == "" {
@@ -528,10 +529,10 @@ func resolveGameAddPaths(cmd *cobra.Command, reader *bufio.Reader, spec *core.Ga
 		// Only offered as part of the interactive walk-through; a run that
 		// named --path but not --mod-path is taking core's documented
 		// default deliberately, not skipping a question.
-		cmd.Printf("Mod path [%s/mods]: ", spec.InstallPath)
+		cmd.Printf("Mod path [%s]: ", spec.DefaultModPath())
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			return promptReadErrorAs(err, interactiveOnlyVia("pass --mod-path (or --path, which takes the default of <install>/mods)"))
+			return promptReadErrorAs(err, interactiveOnlyVia("pass --mod-path (or --path, which takes the default mod path)"))
 		}
 		spec.ModPath = strings.TrimSpace(line)
 	}

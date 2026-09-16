@@ -316,7 +316,8 @@ func (s *Service) ListAdapters() []string {
 //	(design §2, OQ1 - kept for 2.0 so every existing Icarus games.yaml keeps
 //	working with no user action);
 //
-//	a game with BepInEx means the bepinex adapter (#413) - "with BepInEx"
+//	a game with BepInEx that deploys into its game root means the bepinex
+//	adapter (#413; the game-root half is modPathIsGameRoot's) - "with BepInEx"
 //	being the same two-source gate #359 and #424 settled on, because the two
 //	answer different halves of one fact and a user has only ever supplied
 //	one of them. The `loader: kind: bepinex` block is a statement of intent
@@ -337,8 +338,9 @@ func (s *Service) ListAdapters() []string {
 //
 // The BepInEx half is the one derivation that touches DISK, which is a cost
 // worth naming: one os.Stat per resolution, and only for a game that
-// declares no adapter, is not a compile game and does not declare the
-// loader. Resolution happens once per flow, never per file.
+// declares no adapter, is not a compile game, deploys into its game root and
+// does not declare the loader. Resolution happens once per flow, never per
+// file.
 func (s *Service) AdapterName(game *domain.Game) string {
 	if game.Adapter != "" {
 		return game.Adapter
@@ -346,10 +348,32 @@ func (s *Service) AdapterName(game *domain.Game) string {
 	if game.DeployMode == domain.DeployCompile && s.adapterRegistry().Has(icarusAdapterID) {
 		return icarusAdapterID
 	}
-	if s.adapterRegistry().Has(bepinexAdapterID) && hasBepInEx(game) {
+	if s.adapterRegistry().Has(bepinexAdapterID) && modPathIsGameRoot(game) && hasBepInEx(game) {
 		return bepinexAdapterID
 	}
 	return adapter.GenericID
+}
+
+// modPathIsGameRoot reports whether game deploys into its install directory
+// itself - the only place a BepInEx layout can be deployed, because every
+// path the bepinex adapter produces (BepInEx/plugins/..., BepInEx/config/...)
+// is relative to the game root (#413 re-review P-b).
+//
+// It is the bepinex derivation's third condition. A v1 games.yaml predates
+// lmm's loader support and points mod_path at <install>/BepInEx/plugins, so
+// that archives deploy into it exactly as packaged; deriving bepinex for such
+// a game joined the game-root layout onto that mod_path and nested every
+// plugin under BepInEx/plugins/BepInEx/plugins/, where nothing loads it.
+// Such a game keeps the identity, which is exactly what v1 did with it.
+//
+// The comparison is lexical, after filepath.Clean: an empty mod_path is
+// never the game root (the installer joins it verbatim, relative to the
+// working directory), and a trailing separator is.
+func modPathIsGameRoot(game *domain.Game) bool {
+	if game == nil || game.ModPath == "" || game.InstallPath == "" {
+		return false
+	}
+	return filepath.Clean(game.ModPath) == filepath.Clean(game.InstallPath)
 }
 
 // hasBepInEx reports whether anything says this game loads mods through
@@ -396,12 +420,19 @@ const (
 // because the registry lives here and internal/storage/config must not
 // learn it.
 //
-// It also enforces the one composition rule `deploy_mode` and `adapter:`
-// have: an EXPLICIT adapter that cannot compile is refused for a compile
-// game, naming both keys and the fix. The derived case cannot hit it (the
-// derivation only fires for an adapter that exists, and the icarus adapter
-// compiles by construction), so a compile game with no adapter key is
-// accepted exactly as it always was.
+// It also enforces the two composition rules an explicit `adapter:` has
+// with the rest of the entry, each refused by name with the fix:
+//
+//	an adapter that cannot compile, for a `deploy_mode: compile` game;
+//
+//	bepinex, for a game whose mod_path is not its install path
+//	(modPathIsGameRoot) - every deploy it made would be nested one
+//	BepInEx/ too deep (#413 re-review P-b).
+//
+// The derived case cannot hit either: the derivations only fire for an
+// adapter that exists, the icarus adapter compiles by construction, and
+// bepinex is only derived for a game-root mod_path. So a game with no
+// adapter key is accepted exactly as it always was.
 func (s *Service) AdapterFor(game *domain.Game) (adapter.GameAdapter, error) {
 	a, err := s.adapterRegistry().Resolve(s.AdapterName(game))
 	if err != nil {
@@ -412,6 +443,10 @@ func (s *Service) AdapterFor(game *domain.Game) (adapter.GameAdapter, error) {
 			return nil, fmt.Errorf("game %q sets deploy_mode: compile but adapter %q cannot compile; set an adapter that can (%s) or drop deploy_mode: compile",
 				game.ID, game.Adapter, strings.Join(s.adapterRegistry().Names(), ", "))
 		}
+	}
+	if game.Adapter == bepinexAdapterID && !modPathIsGameRoot(game) {
+		return nil, fmt.Errorf("game %q sets adapter: bepinex but its mod_path (%s) is not its install path; BepInEx archives are laid out relative to the game root, so set mod_path to %s or choose another adapter",
+			game.ID, game.ModPath, game.InstallPath)
 	}
 	return a, nil
 }
