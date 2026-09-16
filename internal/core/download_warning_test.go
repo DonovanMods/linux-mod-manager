@@ -156,6 +156,50 @@ func TestDownloadWarning_ReachesAVerifyFixRedownload(t *testing.T) {
 	assert.Contains(t, details, "Warning: "+bepinexUndeclaredNoticeText(fixture.game))
 }
 
+// TestDownloadWarning_AVerifyFixChecksumRepairSaysItUnderItsRow (#427
+// review F7): the NO CHECKSUM repair emits its row only once the
+// re-download is done, so the download's warning used to come out first -
+// an indented sub-line with no row above it, or under the previous mod's.
+// It follows the row now. And (#427 review F8) the warning also rides the
+// stream as the WarningEvent every other flow's does, which is what `lmm
+// serve`'s job activity renders.
+func TestDownloadWarning_AVerifyFixChecksumRepairSaysItUnderItsRow(t *testing.T) {
+	fixture := undeclaredBepInExFixture(t)
+	ctx := context.Background()
+
+	plan, err := fixture.svc.PlanInstall(ctx, fixture.game, "default", "bepinex-repo", fixture.mod.ID, false)
+	require.NoError(t, err)
+	_, err = fixture.svc.ApplyInstall(ctx, fixture.game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	require.NoError(t, fixture.svc.ExecForTest(ctx, `UPDATE installed_mod_files SET checksum = '' WHERE game_id = ?`, fixture.game.ID))
+
+	sink, events := core.RecordEvents()
+	_, err = fixture.svc.VerifyReport(ctx, fixture.game, "default", core.VerifyOptions{Fix: true, Force: true}, sink)
+	require.NoError(t, err)
+
+	notice := bepinexUndeclaredNoticeText(fixture.game)
+	row, warning := -1, -1
+	for i, e := range *events {
+		ev, ok := e.(core.VerifyEvent)
+		switch {
+		case !ok:
+		case ev.Kind == core.VerifyEvFinding && ev.Finding.ModName == fixture.mod.Name && row < 0:
+			row = i
+		case ev.Kind == core.VerifyEvRepairDetail && ev.Detail == "Warning: "+notice:
+			warning = i
+		}
+	}
+	require.GreaterOrEqual(t, row, 0, "fixture: the checksum repair reported its row")
+	require.GreaterOrEqual(t, warning, 0, "the warning is reported")
+	assert.Greater(t, warning, row, "the warning follows the row it belongs to")
+
+	got := downloadWarnings(*events)
+	require.Len(t, got, 1, "the warning also rides the stream as a WarningEvent")
+	assert.Equal(t, notice, got[0].Message)
+	assert.Equal(t, core.OpVerify, got[0].Op)
+	assert.Equal(t, fixture.mod.Name, got[0].ModName)
+}
+
 // writeZip writes a zip of members at path.
 func writeZip(t *testing.T, path string, members map[string]string) {
 	t.Helper()

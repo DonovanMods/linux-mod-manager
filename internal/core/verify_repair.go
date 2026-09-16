@@ -70,14 +70,34 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 }
 
 // downloadWarningSink carries a re-download's download-time warnings
-// (#425) into verify's own stream, as a sub-line under the repair that
-// fetched it - verify's events are VerifyEvents, so the flows' shared
-// DownloadWarning phase has no arm there.
+// (#425) into verify's own stream twice over: as a sub-line under the
+// repair that fetched it, which is what verify's own renderers read - they
+// read VerifyEvents only - and as the WarningEvent every other flow
+// forwards, under verify's scope, which is what `lmm serve`'s job activity
+// renders (#427 review F8). A consumer that reads both sees the warning
+// once in each vocabulary it reads.
+//
+// The sub-line is held while holdDetails is, for a repair whose row comes
+// after it (#427 review F7).
 func (r *verifyRun) downloadWarningSink() EventSink {
 	return func(e Event) {
-		if w, ok := e.(WarningEvent); ok && w.Phase == DownloadWarning {
-			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + w.Message})
+		w, ok := e.(WarningEvent)
+		if !ok || w.Phase != DownloadWarning {
+			return
 		}
+		if r.sink != nil {
+			r.sink(WarningEvent{
+				Scope:   Scope{Op: OpVerify, ModName: w.ModName, Mod: w.Mod},
+				Phase:   DownloadWarning,
+				Message: w.Message,
+			})
+		}
+		detail := VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + w.Message}
+		if r.held != nil {
+			*r.held = append(*r.held, detail)
+			return
+		}
+		r.emitEv(detail)
 	}
 }
 

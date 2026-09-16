@@ -360,6 +360,23 @@ type verifyRun struct {
 	// adapter lets a --fix repair deploy, asked at most once per run.
 	refusalAsked bool
 	refusal      error
+
+	// held, while set, collects the repair sub-lines downloadWarningSink
+	// would emit, for an arm whose row is not out yet (holdDetails).
+	held *[]VerifyEvent
+}
+
+// holdDetails makes the repair sub-lines downloadWarningSink emits wait
+// until the returned func is called, which stops holding and returns them -
+// for a repair that runs BEFORE the row it belongs to is emitted, so its
+// sub-lines can follow the row as they do everywhere else (#427 review F7).
+func (r *verifyRun) holdDetails() func() []VerifyEvent {
+	var held []VerifyEvent
+	r.held = &held
+	return func() []VerifyEvent {
+		r.held = nil
+		return held
+	}
 }
 
 // repairRefusal reports why no --fix repair that DEPLOYS may run on this
@@ -1157,7 +1174,15 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 			// verbatim from doVerify (originally lines 804-846), including
 			// the "ok"+ChecksumPopulated main-line emission on success.
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
+				// The row waits for the re-download's outcome, so the
+				// re-download's own sub-lines wait for the row.
+				release := r.holdDetails()
 				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
+				held := release()
+
+				row := VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"}
+				var extras VerifyEvent
+				var detail string
 				switch {
 				case errors.Is(err, ErrModLocked):
 					// #325 (review I2): refused, not failed - see the
@@ -1166,22 +1191,26 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 					// machine-checkable note; the sentence is the text
 					// surface.
 					r.result.Warnings++
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: "locked"}, VerifyEvent{})
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(err)})
+					row.Note, detail = "locked", lockedSkipDetail(err)
 				case err != nil:
 					r.result.Warnings++
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: err.Error()}, VerifyEvent{})
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download to populate checksum failed: %v", err)})
+					row.Note, detail = err.Error(), fmt.Sprintf("Re-download to populate checksum failed: %v", err)
 				case persisted:
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"}, VerifyEvent{ChecksumPopulated: true})
+					row.Status, extras.ChecksumPopulated = "ok", true
 				default:
 					// The download succeeded but produced no checksum to
 					// store - nothing was written, so the warning stands
 					// with an honest reason (#164: "checksum populated" was
 					// a lie here, and the summary lied with it).
 					r.result.Warnings++
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: "re-downloaded, but no checksum was available to store"}, VerifyEvent{})
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store"})
+					row.Note, detail = "re-downloaded, but no checksum was available to store", "Re-downloaded, but no checksum was available to store"
+				}
+				r.finding(row, extras)
+				for _, ev := range held {
+					r.emitEv(ev)
+				}
+				if detail != "" {
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: detail})
 				}
 				continue
 			}
