@@ -743,6 +743,20 @@ func (f *backfillFixture) exec(t *testing.T, statement string, args ...any) {
 	require.NoError(t, err)
 }
 
+// reopen constructs a second Service over the fixture's installation, as
+// the next lmm process would, with its own warnings.
+func (f *backfillFixture) reopen(t *testing.T) (*core.Service, *bytes.Buffer) {
+	t.Helper()
+	var warnings bytes.Buffer
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: f.svc.ConfigDir(), DataDir: f.svc.DataDirForTest(), CacheDir: t.TempDir(),
+		WarnWriter: &warnings, OpLockPath: f.lockPath,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	return svc, &warnings
+}
+
 // TestBackfillProfileDisabledMarkers_AnEditorPanicSkipsTheProfile is fix
 // round 3's F1 boundary: the backfill runs from app.Open, before any command
 // does its work, so a panic in the profile editor - F1 was one - used to
@@ -972,4 +986,32 @@ func TestBackfillProfileDisabledMarkers_AnOpenNeverWaitsForTheLock(t *testing.T)
 		require.Len(t, report.Marked, 1)
 		assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
 	})
+}
+
+// TestBackfillProfileDisabledMarkers_RoundOnesKeyIsNotAnObligation is fix
+// round 3's F6. Round 1's development builds recorded the backfill as DONE
+// under `profile_disabled_backfill_done`, a key that shares the
+// obligation's prefix - so on a database one of them touched the backfill
+// looked owed forever. It is not an obligation, and the first mutation
+// deletes it.
+func TestBackfillProfileDisabledMarkers_RoundOnesKeyIsNotAnObligation(t *testing.T) {
+	f := newBackfillFixture(t)
+	ctx := context.Background()
+	f.row(t, "a", "off", false, false)
+	f.exec(t, `INSERT INTO db_meta (key, value) VALUES ('profile_disabled_backfill_done', '2026-09-14T00:00:00Z')`)
+	svc, warnings := f.reopen(t)
+
+	report, err := svc.BackfillProfileDisabledMarkers(ctx)
+	require.NoError(t, err)
+	assert.Nil(t, report)
+	assert.Empty(t, f.disabledRefs(t, "a"), "nothing is owed, so nothing is marked")
+
+	f.row(t, "b", "x", true, true)
+	_, err = svc.DisableMod(ctx, f.game, "b", "src", "x")
+	require.NoError(t, err)
+	assert.Empty(t, warnings.String())
+	owed, err := svc.ProfileDisabledBackfillOwedForTest(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, owed, "the stray key is gone")
+	assert.Empty(t, f.disabledRefs(t, "a"))
 }

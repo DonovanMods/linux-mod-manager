@@ -116,6 +116,25 @@ func TestMeta_DeleteAndPrefix(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+// TestIsProfileBackfillKey pins F6 (fix round 3): the backfill's records are
+// the obligation and the per-profile remainders under it, and nothing else
+// that happens to share the bare prefix - round 1's `_done` key did, and
+// kept the backfill looking owed forever.
+func TestIsProfileBackfillKey(t *testing.T) {
+	require.Equal(t, "profile_disabled_backfill_done", db.MetaProfileDisabledBackfillLegacy, "the key round 1 actually wrote")
+	for key, want := range map[string]bool{
+		db.MetaProfileDisabledBackfill:             true,
+		db.MetaProfileDisabledBackfill + ":g/p":    true,
+		db.MetaProfileDisabledBackfillLegacy:       false,
+		db.MetaProfileDisabledBackfill + "x":       false,
+		"credential_scrub":                         false,
+		"profile_disabled_backfil":                 false,
+		":" + db.MetaProfileDisabledBackfill + ":": false,
+	} {
+		assert.Equal(t, want, db.IsProfileBackfillKey(key), key)
+	}
+}
+
 // TestDisabledModRows_NullFlagsAreNotAnError: a flag stored as NULL - no lmm
 // writes one, a hand edit can - reads as deployed and not external. A scan
 // error here would fail the backfill, and with it every mutation, for good

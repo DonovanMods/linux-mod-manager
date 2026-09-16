@@ -708,6 +708,28 @@ func TestNew_OwesTheProfileBackfillOnlyForADisabledUndeployedRow(t *testing.T) {
 	}
 }
 
+// TestNew_V17DropsRoundOnesBackfillKey (fix round 3, F6): a database a
+// fix-round-1 development build touched carries its `_done` key into v17,
+// which deletes it - so it no longer keeps the backfill looking owed.
+func TestNew_V17DropsRoundOnesBackfillKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lmm.db")
+	ctx := t.Context()
+	seed, err := db.New(path)
+	require.NoError(t, err)
+	require.NoError(t, seed.SetMeta(ctx, db.MetaProfileDisabledBackfillLegacy, "2026-09-14T00:00:00Z"))
+	_, err = seed.Exec("DELETE FROM schema_migrations WHERE version >= 17")
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+
+	upgraded, err := db.New(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, upgraded.Close()) }()
+	keys, err := upgraded.MetaWithPrefix(ctx, db.MetaProfileDisabledBackfill)
+	require.NoError(t, err)
+	assert.Empty(t, keys)
+	assert.False(t, upgraded.OwesProfileBackfill())
+}
+
 // TestOpen_ConcurrentFirstOpensMigrateExactlyOnce: several lmm processes
 // opening an older database at once - `lmm serve` started beside a CLI
 // command right after an upgrade. Each read the schema version, ran the

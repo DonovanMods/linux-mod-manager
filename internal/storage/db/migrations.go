@@ -360,7 +360,13 @@ func migrateV16(ctx context.Context, d migrationExec) error {
 // This predicate is deliberately a SUPERSET of the one core applies (which
 // adds "under the game's single explicitly-default profile"): it only has
 // to be true whenever there could be work.
+//
+// It also drops MetaProfileDisabledBackfillLegacy, which only a database a
+// fix-round-1 development build touched can hold.
 func migrateV17(ctx context.Context, d migrationExec) error {
+	if _, err := d.ExecContext(ctx, `DELETE FROM db_meta WHERE key = ?`, MetaProfileDisabledBackfillLegacy); err != nil {
+		return err
+	}
 	_, err := d.ExecContext(ctx, `
 		INSERT OR IGNORE INTO db_meta (key, value)
 		SELECT ?, ?

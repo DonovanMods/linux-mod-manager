@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // db_meta is the one-row-per-key store migrateV14 added for facts about the
@@ -82,12 +83,28 @@ func (d *DB) MetaWithPrefix(ctx context.Context, prefix string) (map[string]stri
 // any per-profile remainder under the same prefix.
 const MetaProfileDisabledBackfill = "profile_disabled_backfill"
 
+// MetaProfileDisabledBackfillLegacy is the key #431's first development
+// builds (fix round 1) wrote to say the backfill was DONE. No release reads
+// it: it shares MetaProfileDisabledBackfill's prefix without being one of
+// its records (IsProfileBackfillKey), and migrateV17 and core's discharge
+// delete it.
+const MetaProfileDisabledBackfillLegacy = MetaProfileDisabledBackfill + "_done"
+
+// IsProfileBackfillKey reports whether key is one of #431's backfill
+// records: the obligation itself, or a per-profile remainder under
+// MetaProfileDisabledBackfill + ":". A bare prefix match is not enough -
+// MetaProfileDisabledBackfillLegacy shares it.
+func IsProfileBackfillKey(key string) bool {
+	return key == MetaProfileDisabledBackfill || strings.HasPrefix(key, MetaProfileDisabledBackfill+":")
+}
+
 // OwesProfileBackfill reports whether, when this database was opened, it
 // held any record of #431's profile-document backfill - the whole
 // obligation migrateV17 records, or a per-profile remainder core keeps under
-// the same key prefix. Read once at open, after the migrations: only a
-// migration creates the obligation, and it has run by then, so a false here
-// stays false for the life of the handle.
+// the same key prefix - or the legacy key core still has to delete. Read
+// once at open, after the migrations: only a migration creates the
+// obligation, and it has run by then, so a false here stays false for the
+// life of the handle.
 func (d *DB) OwesProfileBackfill() bool {
 	return d.profileBackfillOwed
 }

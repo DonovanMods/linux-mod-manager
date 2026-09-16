@@ -167,12 +167,16 @@ func (s *Service) BackfillProfileDisabledMarkers(ctx context.Context) (*ProfileB
 	if !s.backfillPending.Load() {
 		return nil, nil
 	}
-	keys, err := s.db.MetaWithPrefix(ctx, db.MetaProfileDisabledBackfill)
+	keys, legacy, err := s.profileBackfillRecords(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if len(keys) == 0 {
-		s.backfillPending.Store(false)
+		// Round 1's stray key alone is no obligation. It keeps the flag up
+		// only until the first mutation deletes it: an open writes nothing.
+		if !legacy {
+			s.backfillPending.Store(false)
+		}
 		return nil, nil
 	}
 	_, owed := keys[db.MetaProfileDisabledBackfill]
@@ -196,14 +200,33 @@ func (s *Service) BackfillProfileDisabledMarkers(ctx context.Context) (*ProfileB
 	return s.dischargeProfileBackfill(ctx)
 }
 
+// profileBackfillRecords returns the backfill's db_meta records - the
+// obligation and every per-profile remainder - and whether round 1's stray
+// key (db.MetaProfileDisabledBackfillLegacy) is still there. That key shares
+// the records' prefix but is neither (F6).
+func (s *Service) profileBackfillRecords(ctx context.Context) (records map[string]string, legacy bool, err error) {
+	records, err = s.db.MetaWithPrefix(ctx, db.MetaProfileDisabledBackfill)
+	if err != nil {
+		return nil, false, err
+	}
+	_, legacy = records[db.MetaProfileDisabledBackfillLegacy]
+	maps.DeleteFunc(records, func(key, _ string) bool { return !db.IsProfileBackfillKey(key) })
+	return records, legacy, nil
+}
+
 // dischargeProfileBackfill is the backfill's work, run with the mutation
 // slot held: the whole obligation if it is still owed, then every pending
 // profile whose file has changed. It prints its report. A failure in one
 // part does not stop the others; the first is returned once they have run.
 func (s *Service) dischargeProfileBackfill(ctx context.Context) (*ProfileBackfillReport, error) {
-	keys, err := s.db.MetaWithPrefix(ctx, db.MetaProfileDisabledBackfill)
+	keys, legacy, err := s.profileBackfillRecords(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if legacy {
+		if err := s.db.DeleteMeta(ctx, db.MetaProfileDisabledBackfillLegacy); err != nil {
+			return nil, err
+		}
 	}
 	report := &ProfileBackfillReport{}
 	// Printed on the way out whatever happens: a marker already written
@@ -229,7 +252,7 @@ func (s *Service) dischargeProfileBackfill(ctx context.Context) (*ProfileBackfil
 		return report, failed
 	}
 
-	left, err := s.db.MetaWithPrefix(ctx, db.MetaProfileDisabledBackfill)
+	left, _, err := s.profileBackfillRecords(ctx)
 	if err != nil {
 		return report, err
 	}
