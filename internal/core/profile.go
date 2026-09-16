@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -38,6 +39,10 @@ type ProfileResult struct {
 type ProfileManager struct {
 	configDir string
 	db        *db.DB
+	// warn is the Service's always-on user channel (ServiceConfig.
+	// WarnWriter), where a save reports what it did beyond writing the
+	// document (save); nil for a ProfileManager built without a Service.
+	warn io.Writer
 }
 
 // NewProfileManager creates a new profile manager
@@ -45,6 +50,32 @@ func NewProfileManager(configDir string, database *db.DB) *ProfileManager {
 	return &ProfileManager{
 		configDir: configDir,
 		db:        database,
+	}
+}
+
+// save writes profile to its file and prints on warn whatever the save owes
+// the user a word about (config.SaveReport.Notices): a layout it had to
+// rewrite whole and where it kept the original, or a write it could not make
+// atomically (#441 review F6, F10).
+func (pm *ProfileManager) save(profile *domain.Profile) error {
+	report, err := config.SaveProfileReporting(pm.configDir, profile)
+	pm.report(report)
+	return err
+}
+
+// saveRenamed is save for config.SaveRenamedProfile.
+func (pm *ProfileManager) saveRenamed(profile *domain.Profile, oldName string) error {
+	report, err := config.SaveRenamedProfileReporting(pm.configDir, profile, oldName)
+	pm.report(report)
+	return err
+}
+
+func (pm *ProfileManager) report(report config.SaveReport) {
+	if pm.warn == nil {
+		return
+	}
+	for _, notice := range report.Notices() {
+		_, _ = fmt.Fprintf(pm.warn, "warning: %s\n", notice)
 	}
 }
 
@@ -74,7 +105,7 @@ func (pm *ProfileManager) Create(ctx context.Context, gameID, name string) (*dom
 		Mods:   []domain.ModReference{},
 	}
 
-	if err := config.SaveProfile(pm.configDir, profile); err != nil {
+	if err := pm.save(profile); err != nil {
 		return nil, fmt.Errorf("saving profile: %w", err)
 	}
 
@@ -114,7 +145,7 @@ func (pm *ProfileManager) CreateOrResetDefault(ctx context.Context, gameID strin
 		GameID:    gameID,
 		IsDefault: !slices.ContainsFunc(others, func(p *domain.Profile) bool { return p.IsDefault && p.Name != "default" }),
 	}
-	if err := config.SaveProfile(pm.configDir, profile); err != nil {
+	if err := pm.save(profile); err != nil {
 		return nil, err
 	}
 	return profile, nil
@@ -298,7 +329,7 @@ func (pm *ProfileManager) Rename(ctx context.Context, gameID, oldName, newName s
 	renamed := *profile
 	renamed.Name = newName
 	err = completeRename(ctx, func(ctx context.Context) error {
-		if err := config.SaveRenamedProfile(pm.configDir, &renamed, oldName); err != nil {
+		if err := pm.saveRenamed(&renamed, oldName); err != nil {
 			return err
 		}
 		if err := pm.db.RenameProfile(ctx, gameID, oldName, newName); err != nil {
@@ -312,7 +343,7 @@ func (pm *ProfileManager) Rename(ctx context.Context, gameID, oldName, newName s
 			if profile.IsDefault {
 				stale := *profile
 				stale.IsDefault = false
-				if saveErr := config.SaveProfile(pm.configDir, &stale); saveErr == nil {
+				if saveErr := pm.save(&stale); saveErr == nil {
 					compensated = " (compensated: cleared is_default on the old file so it cannot be mistaken for a second default)"
 				} else {
 					compensated = fmt.Sprintf(" (compensation also failed: could not clear is_default on the old file: %v)", saveErr)
@@ -379,7 +410,7 @@ func (pm *ProfileManager) SetDefault(ctx context.Context, gameID, name string) e
 
 	if !profile.IsDefault {
 		profile.IsDefault = true
-		if err := config.SaveProfile(pm.configDir, profile); err != nil {
+		if err := pm.save(profile); err != nil {
 			return err
 		}
 	}
@@ -387,7 +418,7 @@ func (pm *ProfileManager) SetDefault(ctx context.Context, gameID, name string) e
 	for _, p := range profiles {
 		if p.IsDefault && p.Name != name {
 			p.IsDefault = false
-			if err := config.SaveProfile(pm.configDir, p); err != nil {
+			if err := pm.save(p); err != nil {
 				return fmt.Errorf("made %q the active profile, but could not clear is_default on %q, so both are marked active - fix or remove %q's is_default by hand: %w",
 					name, p.Name, p.Name, err)
 			}
@@ -440,7 +471,7 @@ func (pm *ProfileManager) AddMod(ctx context.Context, gameID, profileName string
 	}
 
 	profile.Mods = append(profile.Mods, mod)
-	return config.SaveProfile(pm.configDir, profile)
+	return pm.save(profile)
 }
 
 // UpsertMod adds or updates a mod reference in a profile.
@@ -512,7 +543,7 @@ func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName str
 		profile.Mods = append(profile.Mods, mod)
 	}
 
-	return config.SaveProfile(pm.configDir, profile)
+	return pm.save(profile)
 }
 
 // SetModLock marks the profile ref for sourceID/modID as locked (#97: the
@@ -540,7 +571,7 @@ func (pm *ProfileManager) SetModLock(ctx context.Context, gameID, profileName, s
 			if version != "" {
 				profile.Mods[i].Version = version
 			}
-			return config.SaveProfile(pm.configDir, profile)
+			return pm.save(profile)
 		}
 	}
 
@@ -564,7 +595,7 @@ func (pm *ProfileManager) ClearModLock(ctx context.Context, gameID, profileName,
 	for i := range profile.Mods {
 		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID {
 			profile.Mods[i].Locked = false
-			return config.SaveProfile(pm.configDir, profile)
+			return pm.save(profile)
 		}
 	}
 
@@ -616,7 +647,7 @@ func (pm *ProfileManager) SetModDisabled(ctx context.Context, gameID, profileNam
 		// intent already matches.
 		return nil
 	}
-	return config.SaveProfile(pm.configDir, profile)
+	return pm.save(profile)
 }
 
 // profileDisabledKeys is which of gameID/profileName's mod references carry
@@ -750,7 +781,7 @@ func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, so
 	}
 
 	profile.Mods = newMods
-	return config.SaveProfile(pm.configDir, profile)
+	return pm.save(profile)
 }
 
 // ReorderMods updates the load order of mods in a profile
@@ -765,7 +796,7 @@ func (pm *ProfileManager) ReorderMods(ctx context.Context, gameID, profileName s
 	}
 
 	profile.Mods = mods
-	return config.SaveProfile(pm.configDir, profile)
+	return pm.save(profile)
 }
 
 // loadForExport loads gameID/profileName's profile and backfills each mod
@@ -841,7 +872,7 @@ func (pm *ProfileManager) ImportWithOptions(ctx context.Context, data []byte, fo
 		profile.IsDefault = existing.IsDefault
 	}
 
-	if err := config.SaveProfile(pm.configDir, profile); err != nil {
+	if err := pm.save(profile); err != nil {
 		return nil, err
 	}
 

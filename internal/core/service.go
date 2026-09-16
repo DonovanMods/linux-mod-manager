@@ -2265,7 +2265,9 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 // NewProfileManager returns a ProfileManager wired to this service's storage,
 // so callers do not need direct access to the database or registry.
 func (s *Service) NewProfileManager() *ProfileManager {
-	return NewProfileManager(s.configDir, s.db)
+	pm := NewProfileManager(s.configDir, s.db)
+	pm.warn = s.warnWriter
+	return pm
 }
 
 // NewUpdater returns an Updater wired to this service's source registry.

@@ -928,7 +928,7 @@ func (s *Service) writeSnapshotProfile(gameID string, doc *Snapshot) error {
 	if current, err := config.LoadProfile(s.configDir, gameID, doc.Profile); err == nil {
 		restored.IsDefault = current.IsDefault
 	}
-	if err := config.SaveProfile(s.configDir, restored); err != nil {
+	if err := s.NewProfileManager().save(restored); err != nil {
 		return fmt.Errorf("restoring the profile %s: %w", doc.Profile, err)
 	}
 	return nil
