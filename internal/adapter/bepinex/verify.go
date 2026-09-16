@@ -35,24 +35,12 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// Paths lmm reads to answer "is the loader actually installed, and is its
-// bootstrap intact for the declared mode?" Every one is game-root-relative,
-// which is the whole reason a BepInEx game's mod_path is its install path.
+// The bootstrap files lmm reads to answer "is the loader's bootstrap intact
+// for the declared mode?" Every one is game-root-relative. The preloader
+// and the log, which internal/core reads too, are domain's
+// (domain.BepInExPreloaderPath, domain.BepInExLogPath), so the spelling
+// exists once.
 const (
-	// PreloaderPath is the file whose presence means BepInEx is installed
-	// at all. It is BepInEx's own entry point, so nothing else plausibly
-	// puts it there.
-	//
-	// Exported because internal/core reads it for one question that is not
-	// a verify check: which ADAPTER a game gets. A game with BepInEx
-	// actually installed is a BepInEx game whatever games.yaml says (#424),
-	// and that resolution has to happen before any adapter is in hand.
-	PreloaderPath = dirName + "/core/BepInEx.Preloader.dll"
-	// LogPath is written by the loader on every run, which makes it the
-	// only honest "did it actually load?" signal available without
-	// launching the game. Exported for the same reason as PreloaderPath:
-	// core's own loader tier reads it.
-	LogPath = dirName + "/LogOutput.log"
 	// nativeScript and nativeDoorstop are the native Linux bootstrap:
 	// run_bepinex.sh sets up LD_PRELOAD for libdoorstop.so.
 	nativeScript   = "run_bepinex.sh"
@@ -78,7 +66,7 @@ const notFixable = "lmm does not install the mod loader or write Steam launch op
 // check below compares the installation against a declaration such a user
 // has not made. They get the archive-layout rules, which is what they came
 // for, and a notice naming the command that makes the declaration (see
-// UndeclaredNotice).
+// undeclaredNotice).
 //
 // Read-only, and cheap: a handful of stats plus at most two small file
 // reads. It writes nothing to the game directory, which is the Verifier
@@ -93,11 +81,11 @@ func (*Adapter) Verify(ctx context.Context, req adapter.VerifyRequest) ([]adapte
 	}
 
 	root := game.InstallPath
-	if !regularFileAt(root, PreloaderPath) {
+	if !regularFileAt(root, domain.BepInExPreloaderPath) {
 		return []adapter.Finding{{
 			Status: "loader_missing",
 			Note: fmt.Sprintf("this game declares the BepInEx loader, but %s is not in its install directory - no plugin will load until it is",
-				PreloaderPath),
+				domain.BepInExPreloaderPath),
 			FixableReason: notFixable,
 		}}, nil
 	}
@@ -207,7 +195,7 @@ func installedVersion(root string) string {
 			return v
 		}
 	}
-	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(LogPath)))
+	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(domain.BepInExLogPath)))
 	if err != nil {
 		return ""
 	}

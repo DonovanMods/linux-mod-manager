@@ -29,29 +29,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// The two BepInEx paths core still reads for itself. Both are
-// game-root-relative, which is the whole reason a BepInEx game's mod_path is
-// its install path.
-//
-// The bootstrap FILE names that used to sit here went to
-// internal/adapter/bepinex with the check that compares them against the
-// declared mode (#413). These two did not, because they answer questions
-// core owns whatever a game's adapter is: whether BepInEx is installed at
-// all (which is one of the two facts that RESOLVE the bepinex adapter, so
-// it cannot be asked of the adapter), and whether the loader has actually
-// run (whose remedy is the Steam launch option, which LoaderStatus computes
-// for every game below).
-const (
-	// bepinexPreloaderPath is the file whose presence means BepInEx is
-	// installed at all. It is BepInEx's own entry point, so nothing else
-	// plausibly puts it there.
-	bepinexPreloaderPath = "BepInEx/core/BepInEx.Preloader.dll"
-	// bepinexLogPath is written by the loader on every run, which makes it
-	// the only honest "did it actually load?" signal available without
-	// launching the game.
-	bepinexLogPath = "BepInEx/LogOutput.log"
-)
-
 // The two Steam launch options, verbatim. They are the entire user-facing
 // output of this file, and getting one wrong is worse than printing nothing:
 // a game with the wrong option launches normally and loads no mods, with no
@@ -250,10 +227,10 @@ func (s *Service) LoaderStatus(_ context.Context, gameID string) (*LoaderStatus,
 	}
 	status.LaunchOption = BepInExLaunchOption(status.EffectiveBootstrap)
 
-	if info, err := os.Stat(filepath.Join(game.InstallPath, filepath.FromSlash(bepinexPreloaderPath))); err == nil && info.Mode().IsRegular() {
+	if info, err := os.Stat(filepath.Join(game.InstallPath, filepath.FromSlash(domain.BepInExPreloaderPath))); err == nil && info.Mode().IsRegular() {
 		status.Installed = true
 	}
-	if info, err := os.Stat(filepath.Join(game.InstallPath, filepath.FromSlash(bepinexLogPath))); err == nil {
+	if info, err := os.Stat(filepath.Join(game.InstallPath, filepath.FromSlash(domain.BepInExLogPath))); err == nil {
 		status.LoadedAt = info.ModTime().UTC().Format(loaderTimeFormat)
 	}
 

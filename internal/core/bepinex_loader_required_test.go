@@ -119,8 +119,10 @@ func newBepInExDetectedService(t *testing.T) (*core.Service, *domain.Game) {
 }
 
 // bepinexUndeclaredNoticeText is the one sentence a detected-but-undeclared
-// game gets, named once so every assertion below reads the same string the
-// user does.
+// game gets, named once so every assertion in this package reads the same
+// string the user does. It is spelled out rather than borrowed from the
+// adapter on purpose: the adapter produces the sentence, and this is the
+// cross-package pin that fails the day its wording drifts.
 func bepinexUndeclaredNoticeText(game *domain.Game) string {
 	return "BepInEx found in " + game.InstallPath +
 		"; declare it with `lmm game edit " + game.ID + " --loader bepinex`"

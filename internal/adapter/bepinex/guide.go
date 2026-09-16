@@ -50,7 +50,7 @@ func (*Adapter) Guidance(g *domain.Game) []adapter.GuidanceNote {
 		return nil
 	}
 	var notes []adapter.GuidanceNote
-	if !regularFileAt(g.InstallPath, PreloaderPath) {
+	if !regularFileAt(g.InstallPath, domain.BepInExPreloaderPath) {
 		return append(notes, adapter.GuidanceNote{
 			Title: "BepInEx is not installed in this game's directory",
 			Body: fmt.Sprintf("Install it yourself - a native Linux build needs the BepInEx_linux_x64 archive from BepInEx's own GitHub releases, while a Proton/Wine game needs the Windows pack (winhttp.dll plus doorstop_config.ini). lmm does not choose or download it, because the wrong build leaves a game that silently loads nothing. `lmm game show %s` reports which one this game looks like it needs.",
@@ -60,14 +60,14 @@ func (*Adapter) Guidance(g *domain.Game) []adapter.GuidanceNote {
 	if !g.DeclaresBepInEx() {
 		notes = append(notes, adapter.GuidanceNote{
 			Title: "BepInEx is installed here but not declared",
-			Body:  UndeclaredNotice(g),
+			Body:  undeclaredNotice(g),
 		})
 	}
-	if _, err := os.Stat(filepath.Join(g.InstallPath, filepath.FromSlash(LogPath))); err != nil {
+	if _, err := os.Stat(filepath.Join(g.InstallPath, filepath.FromSlash(domain.BepInExLogPath))); err != nil {
 		notes = append(notes, adapter.GuidanceNote{
 			Title: "BepInEx has not run yet",
 			Body: fmt.Sprintf("It has never written %s, so nothing it was given has loaded. On Linux that is almost always the Steam launch option: `lmm game show %s` prints the exact string to paste for this game's bootstrap mode.",
-				LogPath, g.ID),
+				domain.BepInExLogPath, g.ID),
 		})
 	}
 	return notes

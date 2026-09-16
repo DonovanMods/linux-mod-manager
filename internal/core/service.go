@@ -360,7 +360,7 @@ func hasBepInEx(game *domain.Game) bool {
 	if game == nil {
 		return false
 	}
-	return game.DeclaresBepInEx() || regularFileAt(game.InstallPath, bepinexPreloaderPath)
+	return game.DeclaresBepInEx() || regularFileAt(game.InstallPath, domain.BepInExPreloaderPath)
 }
 
 // icarusAdapterID and bepinexAdapterID are the adapters core's two

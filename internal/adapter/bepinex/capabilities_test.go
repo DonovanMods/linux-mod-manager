@@ -104,7 +104,7 @@ func install(t *testing.T, root, version string, mode domain.LoaderBootstrap, lo
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
 		require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
 	}
-	write(PreloaderPath, "preloader")
+	write(domain.BepInExPreloaderPath, "preloader")
 	if version != "" {
 		write(".doorstop_version", version+"\n")
 	}
@@ -118,7 +118,7 @@ func install(t *testing.T, root, version string, mode domain.LoaderBootstrap, lo
 	case domain.LoaderBootstrapUnknown:
 	}
 	if logged {
-		write(LogPath, "[Info] BepInEx 5.4.23.5\n")
+		write(domain.BepInExLogPath, "[Info] BepInEx 5.4.23.5\n")
 	}
 }
 
@@ -269,7 +269,7 @@ func TestGuidance_NamesWhatIsStillMissing(t *testing.T) {
 		install(t, root, "5.4.23.5", domain.LoaderBootstrapNative, true)
 		notes := New().Guidance(bepinexGame(root, nil))
 		require.Len(t, notes, 1)
-		assert.Equal(t, UndeclaredNotice(bepinexGame(root, nil)), notes[0].Body)
+		assert.Equal(t, undeclaredNotice(bepinexGame(root, nil)), notes[0].Body)
 	})
 
 	t.Run("a working install has nothing to say", func(t *testing.T) {
@@ -295,13 +295,13 @@ func TestNormalizeArchive_NoticesAnUndeclaredLoaderOnlyWhenItActed(t *testing.T)
 	t.Run("undeclared and placed: the notice is on the layout", func(t *testing.T) {
 		game := bepinexGame(t.TempDir(), nil)
 		layout := normalizeFor(t, game, members)
-		assert.Contains(t, layout.Warnings, UndeclaredNotice(game))
+		assert.Contains(t, layout.Warnings, undeclaredNotice(game))
 	})
 
 	t.Run("undeclared and NOT placed: nothing useful was said, so nothing is", func(t *testing.T) {
 		game := bepinexGame(t.TempDir(), nil)
 		layout := normalizeFor(t, game, unplaceable)
-		assert.NotContains(t, layout.Warnings, UndeclaredNotice(game))
+		assert.NotContains(t, layout.Warnings, undeclaredNotice(game))
 	})
 
 	t.Run("declared: there is nothing for this user to do", func(t *testing.T) {

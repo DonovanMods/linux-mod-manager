@@ -89,7 +89,7 @@ func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
 	// An installation that is not there: the adapter has already reported
 	// it (loader_missing), and every question below asks about files it
 	// would have had to write.
-	if !regularFileAt(root, bepinexPreloaderPath) {
+	if !regularFileAt(root, domain.BepInExPreloaderPath) {
 		return
 	}
 
@@ -105,11 +105,11 @@ func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
 // deployed plugin means it ran, but not since the current set of mods was
 // deployed - so nothing here proves THIS set ever loaded.
 func (r *verifyRun) loaderRanCheck(root, name string) {
-	logPath := filepath.Join(root, filepath.FromSlash(bepinexLogPath))
+	logPath := filepath.Join(root, filepath.FromSlash(domain.BepInExLogPath))
 	info, err := os.Stat(logPath)
 	if err != nil {
 		option := BepInExLaunchOption(loaderEffectiveBootstrap(r.game))
-		note := fmt.Sprintf("%s is installed but has never written %s, so it has not run - the Steam launch option is the usual cause", name, bepinexLogPath)
+		note := fmt.Sprintf("%s is installed but has never written %s, so it has not run - the Steam launch option is the usual cause", name, domain.BepInExLogPath)
 		if option != "" {
 			note += fmt.Sprintf(". Set this game's launch options to: %s", option)
 		}

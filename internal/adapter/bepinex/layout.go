@@ -220,12 +220,12 @@ func noteUndeclared(l *layout, game *domain.Game) {
 	if game == nil || game.DeclaresBepInEx() || !l.applies {
 		return
 	}
-	l.Warnings = append(l.Warnings, UndeclaredNotice(game))
+	l.Warnings = append(l.Warnings, undeclaredNotice(game))
 }
 
-// UndeclaredNotice is that notice's exact text. Exported because the ingest,
-// the plan and the tests that pin them must all say the same sentence.
-func UndeclaredNotice(game *domain.Game) string {
+// undeclaredNotice is that notice's exact text, named once so the layout
+// warning and the guidance note say the same sentence.
+func undeclaredNotice(game *domain.Game) string {
 	return fmt.Sprintf("BepInEx found in %s; declare it with `lmm game edit %s --loader bepinex`",
 		game.InstallPath, game.ID)
 }

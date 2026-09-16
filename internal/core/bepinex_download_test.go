@@ -393,8 +393,7 @@ func TestDownloadIngest_BepInEx_DetectedInstallWidensTheGateAndSaysSo(t *testing
 		"BepInEx/plugins/Jotunn/Jotunn.xml",
 	}, slashed)
 
-	want := "BepInEx found in " + fixture.game.InstallPath +
-		"; declare it with `lmm game edit " + fixture.game.ID + " --loader bepinex`"
+	want := bepinexUndeclaredNoticeText(fixture.game)
 	var got []string
 	for _, e := range *events {
 		if w, ok := e.(core.WarningEvent); ok {
