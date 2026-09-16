@@ -39,10 +39,13 @@ type SwitchPlan struct {
 	// document marks the mod disabled while that row still says enabled -
 	// a pair nothing in lmm writes, but one `profile import --force` and
 	// `snapshot restore` both produce by replacing the document under live
-	// rows. Both rows can be present for one mod, and then both are listed:
-	// each carries its own profile's enabled flag, and Installer.Uninstall
-	// is idempotent (#260), so the second undeploy of the same files is a
-	// no-op rather than a failure.
+	// rows.
+	//
+	// One mod is one entry even when both rows are present (fix-round F5,
+	// which is what a plan preview and the Disabled count both read): the
+	// entry kept is the one that owns the live deployment, and
+	// ApplyProfileSwitch clears the OTHER profile's row alongside it rather
+	// than undeploying the same files twice.
 	ToDisable []domain.InstalledMod `json:"to_disable"`
 	ToInstall []domain.ModReference `json:"to_install"` // in To but not installed anywhere -> download+install (FileIDs preserved from the installed mod's own record when this is really a cache-miss redeploy - see PlanProfileSwitch)
 
@@ -78,6 +81,15 @@ type SwitchPlan struct {
 	// value (unset) on the AlreadyActive early return, whose plan is never
 	// passed to ApplyProfileSwitch.
 	snapshot installedSnapshot `json:"-"`
+
+	// targetSnapshot is the same precondition for To's own installed set.
+	// One snapshot was complete while every row this flow read or wrote
+	// belonged to From; it no longer is (#430/#431): the disable loop
+	// clears target-profile rows, the enable loop writes them, and
+	// ToDisable can name one outright. A plan applied over a target row
+	// that moved in between would undeploy or enable a stale identity, so
+	// the freshness check covers both profiles.
+	targetSnapshot installedSnapshot `json:"-"`
 }
 
 // PlanProfileSwitch computes the diff between game's currently-active
@@ -156,6 +168,10 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	var toDisable, toEnable []domain.InstalledMod
 	var toInstall []domain.ModReference
 	var priorVersions map[string]domain.InstalledMod // #96 - see SwitchPlan.PriorVersions
+	// disableKeys is which mods already have a ToDisable entry, so the
+	// target loop below does not list one a second time under its own
+	// profile (fix-round F5).
+	disableKeys := make(map[string]bool)
 
 	// Deterministic order: iterate currentMods in fromProfile's load order
 	// (mods enabled but absent from fromProfile.Mods sort first by key - see
@@ -181,6 +197,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 				continue
 			}
 			toDisable = append(toDisable, im)
+			disableKeys[key] = true
 		}
 	}
 
@@ -199,10 +216,25 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		seenTarget[key] = true
 
 		im, installed := allInstalled[key]
+		// #430, fix-round F6: every branch below classifies the row that
+		// OWNS the state this switch has to make true - the target
+		// profile's own, whenever it has one. allInstalled answers a
+		// different question ("is this mod available anywhere, and at what
+		// version?") and the OUTGOING profile wins its key collisions, so
+		// reading a version, a FileID list or a flag off it describes the
+		// wrong row: the enable then deployed the outgoing version's files
+		// while the write landed on a target row that kept its own.
+		row := im
+		if tr, ok := targetInstalled[key]; ok {
+			row = tr
+		}
 		// #269: an external mod the target profile lists needs no enable
 		// and no install - Steam already has it in place, whatever profile
-		// is active.
-		if installed && im.External {
+		// is active. EITHER row saying so is enough (fix-round F8):
+		// external is a fact about the mod, not about one profile's copy of
+		// it, and the `default:` branch below reads the target row's other
+		// two flags without re-checking this one.
+		if installed && (im.External || row.External) {
 			continue
 		}
 		if ref.Disabled {
@@ -210,9 +242,14 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			// so the switch neither installs nor enables it. The one thing
 			// left to do is converge a target row that still says
 			// otherwise - see SwitchPlan.ToDisable for how that row gets
-			// there and why it is listed even when From's row already is.
-			if tr, ok := targetInstalled[key]; ok && !tr.External && (tr.Enabled || tr.Deployed) {
+			// there. Fix-round F5: one mod is one entry, so this is skipped
+			// when the outgoing loop already listed the same mod; that
+			// entry carries the row that owns the live deployment, and
+			// ApplyProfileSwitch clears the target profile's row alongside
+			// it.
+			if tr, ok := targetInstalled[key]; ok && !tr.External && (tr.Enabled || tr.Deployed) && !disableKeys[key] {
 				toDisable = append(toDisable, *tr)
+				disableKeys[key] = true
 			}
 			continue
 		}
@@ -220,7 +257,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		switch {
 		case !installed:
 			toInstall = append(toInstall, ref)
-		case ref.Version != "" && im.Version != ref.Version:
+		case ref.Version != "" && row.Version != ref.Version:
 			// #96 convergence: the profile names a different version than
 			// the installed row - reinstall at the profile's version
 			// (downgrades included). ref is passed as-is: its own FileIDs
@@ -233,13 +270,13 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			if priorVersions == nil {
 				priorVersions = make(map[string]domain.InstalledMod)
 			}
-			priorVersions[key] = *im
-		case !s.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version):
+			priorVersions[key] = *row
+		case !s.GetGameCache(game).Exists(game.ID, row.SourceID, row.ID, row.Version):
 			// Cache missing - needs a redownload; preserve the installed
 			// mod's own FileIDs (not the profile YAML's, which may be
 			// empty or stale).
 			refWithFileIDs := ref
-			refWithFileIDs.FileIDs = im.FileIDs
+			refWithFileIDs.FileIDs = row.FileIDs
 			toInstall = append(toInstall, refWithFileIDs)
 		default:
 			// Installed at the right version with its bytes in the cache,
@@ -261,9 +298,18 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			// target profile rowless with the files deployed.
 			tr, hasTargetRow := targetInstalled[key]
 			if !hasTargetRow || !tr.Enabled || !tr.Deployed {
-				toEnable = append(toEnable, *im)
+				toEnable = append(toEnable, *row)
 			}
 		}
+	}
+
+	// Fix-round F9: the target profile's own precondition, built from the
+	// set already read above (snapshotOf, not a second query, for the
+	// reason its doc comment gives - and so the game adapter has its say
+	// about this profile's mods too).
+	targetSnapshot, err := s.snapshotOf(game.ID, allMods)
+	if err != nil {
+		return nil, err
 	}
 
 	return &SwitchPlan{
@@ -273,6 +319,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		ExternalUnchanged: externalUnchanged,
 		NoChanges:         len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0,
 		snapshot:          snapshot,
+		targetSnapshot:    targetSnapshot,
 	}, nil
 }
 
@@ -338,6 +385,27 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	return s.applyProfileSwitch(ctx, game, plan, sink)
 }
 
+// clearRowUnderProfile clears enabled and deployed on mod's installed row
+// under profileName, and returns the diagnostics to record as Notes (none,
+// on the common path). "There is no such row" is the expected answer, not a
+// diagnostic: the caller asks about the OTHER profile's copy of a mod
+// without knowing whether one exists, and a profile that never installed it
+// has nothing to clear.
+func (s *Service) clearRowUnderProfile(ctx context.Context, gameID, profileName string, mod *domain.InstalledMod) []string {
+	var notes []string
+	if err := s.setModEnabled(ctx, mod.SourceID, mod.ID, gameID, profileName, false); err != nil {
+		if errors.Is(err, domain.ErrModNotFound) {
+			return nil
+		}
+		notes = append(notes, fmt.Sprintf("Warning: failed to update %s under %s: %v", mod.Name, profileName, err))
+	}
+	if err := s.setModDeployed(ctx, mod.SourceID, mod.ID, gameID, profileName, false); err != nil &&
+		!errors.Is(err, domain.ErrModNotFound) {
+		notes = append(notes, fmt.Sprintf("Warning: could not mark %s as not deployed under %s: %v", mod.Name, profileName, err))
+	}
+	return notes
+}
+
 func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, sink EventSink) (*SwitchResult, error) {
 	result := &SwitchResult{}
 	emit := func(e Event) {
@@ -351,6 +419,12 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// above), so nothing this call does can race the re-derivation - a stale
 	// plan is refused having changed nothing at all.
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.From, plan.snapshot); err != nil {
+		return result, err
+	}
+	// Fix-round F9: and the target profile's, which this flow both reads
+	// (the enabled/deployed predicate) and writes (the enable loop, and the
+	// disable loop's cross-profile clear below).
+	if err := s.checkPlanFresh(ctx, plan.GameID, plan.To, plan.targetSnapshot); err != nil {
 		return result, err
 	}
 
@@ -431,6 +505,20 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				emit(StepEvent{Scope: scope, Phase: SwitchDisableNote, Detail: msg})
 			}
 		}
+		// Fix-round F5's other half. One mod is one entry, and the entry
+		// carries the row that owns the live deployment - the outgoing
+		// one. The profile about to become the active default can have a
+		// row of its own for the same mod, and leaving it saying
+		// enabled/deployed after this loop took the files down is the lie
+		// #183 exists to stop: `lmm list` under the new default would show
+		// a mod that is not in the game directory, and the next plan would
+		// schedule the same disable again.
+		if disableProfile != plan.To {
+			for _, msg := range s.clearRowUnderProfile(ctx, game.ID, plan.To, &im) {
+				result.Notes = append(result.Notes, msg)
+				emit(StepEvent{Scope: scope, Phase: SwitchDisableNote, Detail: msg})
+			}
+		}
 
 		result.Disabled++
 		emit(ModEvent{Scope: scope, Phase: SwitchDisabled})
@@ -468,6 +556,21 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				result.Notes = append(result.Notes, msg)
 				emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
 			}
+		}
+		// #183's pair, and the mirror of the disable loop's own
+		// setModDeployed above (fix-round F3): the files are live now, so
+		// the target row has to say so. Nothing else writes it on this
+		// path - Installer.Install does not touch the column, and the
+		// ErrModNotFound fallback above only runs when the row is absent -
+		// so without this the row kept deployed = false forever and
+		// PlanProfileSwitch's "enabled AND deployed" predicate re-planned
+		// the same enable on every later switch into this profile, while
+		// `lmm verify`'s loader-layout repair skipped the mod for having
+		// no deployment to re-link.
+		if err := s.setModDeployed(ctx, im.SourceID, im.ID, game.ID, plan.To, true); err != nil {
+			msg := fmt.Sprintf("Warning: could not mark %s as deployed: %v", im.Name, err)
+			result.Notes = append(result.Notes, msg)
+			emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
 		}
 
 		result.Enabled++

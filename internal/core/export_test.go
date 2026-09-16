@@ -160,6 +160,9 @@ func (s *Service) NewInstallerWithLinkerForTest(game *domain.Game, method domain
 // ApplyProfileSwitch to see.
 func (s *Service) FreshSwitchPlanForTest(ctx context.Context, plan *SwitchPlan) *SwitchPlan {
 	plan.snapshot, _ = s.currentInstalledSnapshot(ctx, plan.GameID, plan.From)
+	// Both halves, since the freshness check covers the target profile too
+	// (fix-round F9).
+	plan.targetSnapshot, _ = s.currentInstalledSnapshot(ctx, plan.GameID, plan.To)
 	return plan
 }
 

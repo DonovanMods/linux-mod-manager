@@ -563,10 +563,12 @@ func TestService_ApplyProfileSwitch_UsesTargetProfileLinkMethod(t *testing.T) {
 	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "enable-me", "g1", "target")
 	require.NoError(t, err)
 
-	plan := &core.SwitchPlan{
+	// Fix-round F9: the freshness precondition now covers the TARGET
+	// profile too, and this plan is hand-built - stamp both halves.
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "target",
 		ToEnable: []domain.InstalledMod{*enableMod},
-	}
+	})
 
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
 	require.NoError(t, err)
@@ -720,10 +722,12 @@ func TestService_ApplyProfileSwitch_EnableLoop_InstallFailureSkipsModEntirely(t 
 	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
 	require.NoError(t, err)
 
-	plan := &core.SwitchPlan{
+	// Fix-round F9: the freshness precondition now covers the TARGET
+	// profile too, and this plan is hand-built - stamp both halves.
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "target",
 		ToEnable: []domain.InstalledMod{*enableMod},
-	}
+	})
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
@@ -771,10 +775,12 @@ func TestService_ApplyProfileSwitch_EnableLoop_SetModEnabledFailureIsNonFatalNot
 	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
 	require.NoError(t, err)
 
-	plan := &core.SwitchPlan{
+	// Fix-round F9: the freshness precondition now covers the TARGET
+	// profile too, and this plan is hand-built - stamp both halves.
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "target",
 		ToEnable: []domain.InstalledMod{*enableMod},
-	}
+	})
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
@@ -1884,10 +1890,12 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenEnableLoopMods_Return
 	modB, err := svc.GetInstalledMod(context.Background(), "src", "b", "g1", "target")
 	require.NoError(t, err)
 
-	plan := &core.SwitchPlan{
+	// Fix-round F9: the freshness precondition now covers the TARGET
+	// profile too, and this plan is hand-built - stamp both halves.
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "target",
 		ToEnable: []domain.InstalledMod{*modA, *modB},
-	}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(e core.Event) {
@@ -2067,4 +2075,222 @@ func TestService_ProfileSwitch_DisabledModStaysDisabledAcrossSwitchAwayAndBack(t
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.True(t, profile.Mods[0].Disabled)
+}
+
+// --- fix round: which row the switch reads, writes and reports ---
+
+// TestService_ProfileSwitch_EnableLoopRecordsTheTargetRowAsDeployed is the
+// F3 regression. #430 made the plan ask whether the TARGET row says both
+// enabled and deployed, and taught the disable loop to clear the deployed
+// flag - but the enable loop only ever wrote `enabled`, and
+// Installer.Install does not touch the column. A target row that reached
+// "enabled" through a switch therefore kept deployed = false forever: every
+// later switch into that profile re-planned the same enable, so `lmm profile
+// switch` never reported "No mod changes", prompted for confirmation and
+// redeployed on every pass - and `lmm verify`'s loader-layout repair skipped
+// the mod, because that flag is how it decides whether a sibling's files are
+// live.
+func TestService_ProfileSwitch_EnableLoopRecordsTheTargetRowAsDeployed(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x.esp": []byte("x")})
+	// The target's own row says enabled while the game directory does not -
+	// the drift a switch into this profile is exactly the moment to fix.
+	seedInstalledModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "1.0", true, nil)
+	seedProfileWithMod(t, svc, "g1", "a", "src", "x", "1.0")
+	seedProfileWithMod(t, svc, "g1", "b", "src", "x", "1.0")
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	require.Len(t, plan.ToEnable, 1, "an enabled-but-undeployed target row is the switch's work")
+
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Enabled)
+
+	row, err := svc.GetInstalledMod(ctx, "src", "x", "g1", "b")
+	require.NoError(t, err)
+	assert.True(t, row.Deployed, "the enable loop must record the deployment it just made")
+	assert.FileExists(t, filepath.Join(gameDir, "x.esp"))
+
+	// The predicate the plan asks is now satisfied, so the switch converges:
+	// switching away and back reports nothing left to do.
+	back, err := svc.PlanProfileSwitch(ctx, game, "a")
+	require.NoError(t, err)
+	_, err = svc.ApplyProfileSwitch(ctx, game, back, nil)
+	require.NoError(t, err)
+
+	again, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	assert.Empty(t, again.ToEnable, "the switch must converge, not re-plan the same enable forever")
+	assert.True(t, again.NoChanges)
+}
+
+// TestPlanProfileSwitch_DisabledModWithRowsInBothProfilesIsListedOnce is the
+// F5 regression. A mod the target document marks off can have a row under
+// both profiles, and the plan appended both - so the confirmation prompt
+// listed the same mod twice and the summary said "Disabled: 2" for one mod.
+// The undeploy is idempotent (#260) and the second row still has to be
+// cleared, but that is one unit of work, not two.
+func TestPlanProfileSwitch_DisabledModWithRowsInBothProfilesIsListedOnce(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x.esp": []byte("x")})
+	seedDeployedModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "1.0")
+	seedProfileWithMod(t, svc, "g1", "a", "src", "x", "1.0")
+	seedProfileWithMod(t, svc, "g1", "b", "src", "x", "1.0")
+	installer := svc.GetInstallerForTest(game)
+	require.NoError(t, installer.Install(ctx, game, &domain.Mod{ID: "x", SourceID: "src", Version: "1.0", GameID: "g1"}, "a"))
+	// The target document turns it off.
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "b", "src", "x", true))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	require.Len(t, plan.ToDisable, 1, "one mod is one entry, whichever profiles have rows for it")
+	assert.Equal(t, "x", plan.ToDisable[0].ID)
+	assert.Empty(t, plan.ToEnable)
+
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Disabled, "and one mod is one line in the summary")
+
+	assert.NoFileExists(t, filepath.Join(gameDir, "x.esp"))
+	for _, profileName := range []string{"a", "b"} {
+		row, err := svc.GetInstalledMod(ctx, "src", "x", "g1", profileName)
+		require.NoError(t, err)
+		assert.False(t, row.Enabled, "profile %q's row must not claim the mod is on", profileName)
+		assert.False(t, row.Deployed, "profile %q's row must not claim a deployment that was just taken down", profileName)
+	}
+}
+
+// TestPlanProfileSwitch_EnableCarriesTheTargetProfilesOwnRow is the F6
+// regression. ToEnable carried the MERGED row (the outgoing profile wins on
+// a key collision) while ApplyProfileSwitch's enable loop writes the TARGET
+// profile's row, so when both profiles listed one unpinned mod at different
+// installed versions the target row kept its own version while the OUTGOING
+// version's files were deployed: `lmm list --profile b` said one thing, the
+// game directory held another, and `verify` looked for files that were
+// never deployed.
+func TestPlanProfileSwitch_EnableCarriesTheTargetProfilesOwnRow(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+
+	// One mod, two profiles, two installed versions, neither ref pinned.
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x-v1.esp": []byte("v1")})
+	seedInstalledModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "2.0", true, map[string][]byte{"x-v2.esp": []byte("v2")})
+	require.NoError(t, pm.AddMod(ctx, game.ID, "a", domain.ModReference{SourceID: "src", ModID: "x"}))
+	_, err = pm.Create(ctx, game.ID, "b")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(ctx, game.ID, "b", domain.ModReference{SourceID: "src", ModID: "x"}))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	require.Len(t, plan.ToEnable, 1)
+	assert.Equal(t, "2.0", plan.ToEnable[0].Version,
+		"the enable is about the target profile's row, so it must carry that row's version")
+	assert.Equal(t, "b", plan.ToEnable[0].ProfileName)
+
+	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+
+	row, err := svc.GetInstalledMod(ctx, "src", "x", "g1", "b")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", row.Version)
+	assert.True(t, row.Deployed)
+	assert.FileExists(t, filepath.Join(gameDir, "x-v2.esp"),
+		"`lmm list --profile b` and the game directory must agree on the version")
+}
+
+// TestPlanProfileSwitch_ExternalTargetRowIsNeverEnabled is the F8
+// regression: the `default:` branch read the target row's enabled/deployed
+// flags without the `!tr.External` guard its neighbour two lines above has,
+// so a target row flagged external with an outgoing row that is not was
+// scheduled for an ENABLE - which #269 says a switch must never do. External
+// is a fact about the mod (Steam owns its files wherever they sit), so
+// either profile's row saying so is enough.
+func TestPlanProfileSwitch_ExternalTargetRowIsNeverEnabled(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+	_, err = pm.Create(ctx, game.ID, "b")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x.esp": []byte("x")})
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "x", SourceID: "src", Name: "Mod X", Version: "1.0", GameID: game.ID},
+		ProfileName:  "b",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		External:     true,
+		ExternalPath: "/steam/workshop/content/1/222",
+	}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "a", domain.ModReference{SourceID: "src", ModID: "x", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "b", domain.ModReference{SourceID: "src", ModID: "x", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	assert.Empty(t, plan.ToEnable, "#269: a profile switch never enables an external mod")
+	assert.Empty(t, plan.ToInstall)
+}
+
+// TestApplyProfileSwitch_StalePlanWhenTheTargetProfilesRowsMoved is the F9
+// regression: the freshness precondition snapshotted the OUTGOING profile
+// only, which was complete while every entry came from that profile's own
+// set. It no longer is - the disable loop clears target-profile rows and the
+// enable loop writes them - so a plan applied over a target row that moved
+// in between was executed against a world it never saw, using the stale
+// identity.
+func TestApplyProfileSwitch_StalePlanWhenTheTargetProfilesRowsMoved(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x.esp": []byte("x")})
+	seedDeployedModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "1.0")
+	seedProfileWithMod(t, svc, "g1", "a", "src", "x", "1.0")
+	seedProfileWithMod(t, svc, "g1", "b", "src", "x", "1.0")
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "b", "src", "x", true))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	require.Len(t, plan.ToDisable, 1)
+
+	// Something else moves the TARGET profile's row behind the plan's back.
+	require.NoError(t, svc.SetModEnabledForTest(ctx, "src", "x", game.ID, "b", false))
+
+	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.ErrorIs(t, err, core.ErrStalePlan)
 }
