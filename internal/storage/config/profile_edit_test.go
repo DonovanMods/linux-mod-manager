@@ -354,6 +354,50 @@ func TestMarkModsDisabled_WritesThroughLinksAndKeepsTheMode(t *testing.T) {
 	})
 }
 
+// TestMarkModsDisabled_AReadOnlyFileIsLeftAlone is fix round 3's F4: a
+// profile file the user made read-only is theirs to keep that way. The
+// rename the atomic write uses only needs the DIRECTORY to be writable, so
+// it used to replace a 0444 file anyway - unlike every other lmm write,
+// and unlike what the documentation promises. Its mode is its answer.
+func TestMarkModsDisabled_AReadOnlyFileIsLeftAlone(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may write a read-only file")
+	}
+	content := "name: p\ngame_id: g\nmods:\n  - {source_id: s, mod_id: m}\n"
+	for name, link := range map[string]bool{"the file itself": false, "through a symlink": true} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path, err := config.ProfilePath(dir, "g", "p")
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+			target := path
+			if link {
+				target = filepath.Join(t.TempDir(), "p.yaml")
+				require.NoError(t, os.Symlink(target, path))
+			}
+			require.NoError(t, os.WriteFile(target, []byte(content), 0o444))
+
+			marked, err := config.MarkModsDisabled(path, []domain.ModReference{ref("s", "m")})
+			require.ErrorIs(t, err, os.ErrPermission)
+			assert.Nil(t, marked)
+			assert.Equal(t, content, mustReadFile(t, target))
+			info, err := os.Stat(target)
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o444), info.Mode().Perm())
+			entries, err := os.ReadDir(filepath.Dir(target))
+			require.NoError(t, err)
+			assert.Len(t, entries, 1, "no temporary file left behind")
+		})
+	}
+}
+
+func mustReadFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return string(data)
+}
+
 func TestMarkModsDisabled_MissingFileIsProfileNotFound(t *testing.T) {
 	_, err := config.MarkModsDisabled(filepath.Join(t.TempDir(), "nope.yaml"), []domain.ModReference{ref("s", "m")})
 	require.ErrorIs(t, err, domain.ErrProfileNotFound)

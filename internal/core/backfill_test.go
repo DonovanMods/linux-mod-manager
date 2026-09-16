@@ -563,6 +563,35 @@ func TestBackfillProfileDisabledMarkers_AnUnwritableProfileIsRetriedWhenItChange
 	assert.Empty(t, owed)
 }
 
+// TestBackfillProfileDisabledMarkers_AReadOnlyProfileIsSkippedUntilItChanges
+// is fix round 3's F4 end to end: a profile file the user made read-only is
+// skipped and named, not rewritten, and marked once they make it writable.
+func TestBackfillProfileDisabledMarkers_AReadOnlyProfileIsSkippedUntilItChanges(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may write a read-only file")
+	}
+	f := newBackfillFixture(t)
+	ctx := context.Background()
+	f.row(t, "a", "off", false, false)
+	require.NoError(t, os.Chmod(f.profilePath("a"), 0o444))
+	original := mustRead(t, f.profilePath("a"))
+	f.owe(t)
+
+	report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, report.Marked)
+	require.Len(t, report.Skipped, 1)
+	assert.Equal(t, f.profilePath("a"), report.Skipped[0].File)
+	require.ErrorIs(t, report.Skipped[0].Err, os.ErrPermission)
+	assert.Equal(t, original, mustRead(t, f.profilePath("a")))
+
+	require.NoError(t, os.Chmod(f.profilePath("a"), 0o644))
+	report, err = f.svc.BackfillProfileDisabledMarkers(ctx)
+	require.NoError(t, err)
+	require.Len(t, report.Marked, 1)
+	assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+}
+
 // TestBackfillProfileDisabledMarkers_ABrokenProfileDoesNotStopTheOthers: a
 // profile file that will not parse is skipped - it cannot be the active
 // profile as far as lmm is concerned (GetDefault skips it too) - and every

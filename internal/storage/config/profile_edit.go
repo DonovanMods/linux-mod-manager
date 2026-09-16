@@ -516,11 +516,16 @@ func quotedEnd(data []byte, start int) (int, bool) {
 // and its target is what changes; the temporary name does not end in .yaml,
 // so ListProfiles never sees it.
 //
+// A file the user cannot write is refused (os.ErrPermission), just as every
+// other lmm write refuses it: a rename only needs the directory to be
+// writable, so without the check a read-only profile would be replaced
+// anyway (fix round 3, F4).
+//
 // A file with more than one hard link is the exception: a rename would give
 // this name a new inode and silently fork it from its other names (a
 // dotfile manager that hard-links, rather than symlinks, into place), so it
 // is rewritten in place instead, trading atomicity for keeping the link.
-func writeFileAtomic(path string, data []byte) (err error) {
+func writeFileAtomic(path string, data []byte) error {
 	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return fmt.Errorf("resolving profile path: %w", err)
@@ -528,6 +533,9 @@ func writeFileAtomic(path string, data []byte) (err error) {
 	info, err := os.Stat(target)
 	if err != nil {
 		return fmt.Errorf("reading profile file mode: %w", err)
+	}
+	if err := syscall.Access(target, accessWrite); err != nil {
+		return fmt.Errorf("writing profile: %w", &os.PathError{Op: "access", Path: target, Err: err})
 	}
 	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
 		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
@@ -540,26 +548,33 @@ func writeFileAtomic(path string, data []byte) (err error) {
 	if err != nil {
 		return fmt.Errorf("writing profile: %w", err)
 	}
+	renamed := false
 	defer func() {
-		if err != nil {
+		// Whatever stopped the write short - an error, or a panic on its
+		// way to the backfill's recover - leaves no temporary file behind.
+		if !renamed {
 			_ = tmp.Close()
 			_ = os.Remove(tmp.Name())
 		}
 	}()
-	if _, err = tmp.Write(data); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		return fmt.Errorf("writing profile: %w", err)
 	}
-	if err = tmp.Chmod(info.Mode().Perm()); err != nil {
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
 		return fmt.Errorf("writing profile: %w", err)
 	}
-	if err = tmp.Sync(); err != nil {
+	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("writing profile: %w", err)
 	}
-	if err = tmp.Close(); err != nil {
+	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("writing profile: %w", err)
 	}
-	if err = os.Rename(tmp.Name(), target); err != nil {
+	if err := os.Rename(tmp.Name(), target); err != nil {
 		return fmt.Errorf("writing profile: %w", err)
 	}
+	renamed = true
 	return nil
 }
+
+// accessWrite is access(2)'s W_OK.
+const accessWrite = 0x2
