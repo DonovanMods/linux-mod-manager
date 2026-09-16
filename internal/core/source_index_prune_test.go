@@ -28,6 +28,8 @@ type inventorySource struct {
 	listErr   error
 	removeErr map[string]error
 	removed   []string
+	// ifFetchedAt records the precondition each removal was asked under.
+	ifFetchedAt map[string]time.Time
 }
 
 func (s *inventorySource) CachedIndexes(context.Context) ([]source.CachedIndex, error) {
@@ -42,7 +44,11 @@ func (s *inventorySource) CachedIndexes(context.Context) ([]source.CachedIndex, 
 	return out, nil
 }
 
-func (s *inventorySource) RemoveIndex(_ context.Context, id string) (int64, error) {
+func (s *inventorySource) RemoveIndex(_ context.Context, id string, ifFetchedAt time.Time) (int64, error) {
+	if s.ifFetchedAt == nil {
+		s.ifFetchedAt = map[string]time.Time{}
+	}
+	s.ifFetchedAt[id] = ifFetchedAt
 	if err := s.removeErr[id]; err != nil {
 		return 0, err
 	}
@@ -270,4 +276,46 @@ func TestPruneSourceIndexes_ScopesToOneSource(t *testing.T) {
 	assert.ErrorIs(t, err, source.ErrNotSupported)
 	assert.Nil(t, report)
 	assert.Empty(t, src.removed)
+}
+
+// TestPruneSourceIndexes_AnAgeDecisionTravelsToTheRemoval: a removal decided
+// on an index's age carries that age as its precondition, so a refresh in
+// between keeps the index. An unused index's age pins WHICH copy was judged
+// unused the same way; only --all, which removes whatever is there, asks for
+// no such check.
+func TestPruneSourceIndexes_AnAgeDecisionTravelsToTheRemoval(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+	oldAt, unusedAt := src.cached["old"].FetchedAt, src.cached["unused"].FetchedAt
+
+	_, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, oldAt, src.ifFetchedAt["old"], "the 30-day decision is re-checked under the lock")
+	assert.Equal(t, unusedAt, src.ifFetchedAt["unused"], "and so is which copy was judged unused")
+
+	svc, src, _ = newPruneService(t)
+	_, err = svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: true})
+	require.NoError(t, err)
+	for id, at := range src.ifFetchedAt {
+		assert.True(t, at.IsZero(), "--all removes %s whatever its age", id)
+	}
+}
+
+// TestPruneSourceIndexes_NoGamesFileKeepsUnusedIndexes: a games.yaml that is
+// not there is not proof that no game uses anything - a mistyped config
+// directory looks exactly like it - so only --all removes anything then.
+func TestPruneSourceIndexes_NoGamesFileKeepsUnusedIndexes(t *testing.T) {
+	svc, src, configDir := newPruneService(t)
+	require.NoError(t, os.Remove(filepath.Join(configDir, "games.yaml")))
+
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, src.removed)
+	unused := entryFor(t, report.Entries, "unused")
+	assert.Equal(t, core.IndexPruneKeep, unused.Action)
+	assert.Contains(t, unused.Reason, "games.yaml")
+
+	report, err = svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: true})
+	require.NoError(t, err)
+	assert.Len(t, src.removed, 3, "--all is the explicit way past it")
+	assert.Equal(t, 3, report.Removed)
 }

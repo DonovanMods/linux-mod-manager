@@ -473,9 +473,15 @@ type CachedIndex struct {
 // removing anything it did not write - and refuses otherwise with nothing
 // removed. The POLICY of which indexes to remove (unused ones, old ones)
 // is core's; this is only the safe mechanism.
+//
+// ifFetchedAt, when non-zero, is the FetchedAt the caller's decision was
+// made from: a removal decided on an index's age must not survive a refresh
+// that happened in between, so RemoveIndex refuses once the index on disk
+// is no longer that one (#410 review). Zero asks for no such check - the
+// caller is removing the index whatever its age.
 type IndexInventory interface {
 	CachedIndexes(ctx context.Context) ([]CachedIndex, error)
-	RemoveIndex(ctx context.Context, sourceGameID string) (freed int64, err error)
+	RemoveIndex(ctx context.Context, sourceGameID string, ifFetchedAt time.Time) (freed int64, err error)
 }
 
 // LoaderRequirer is implemented by sources whose package metadata SAYS a

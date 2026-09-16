@@ -192,6 +192,46 @@ func TestRetryTransport_ARetryAfterPastTheCeilingIsNotWaitedOut(t *testing.T) {
 	assert.Equal(t, 2, calls, "past the deadline the host is asked again")
 }
 
+// TestRetryTransport_AWaitNamedOnTheLastAttemptIsStillHonoured: running out
+// of attempts does not make the server's Retry-After void - the next
+// request, from this search or the next package read, waits for it too.
+func TestRetryTransport_AWaitNamedOnTheLastAttemptIsStillHonoured(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "45")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	clock := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	rt, _ := newTestTransport(t, func() time.Time { return clock })
+	_, err := get(t, rt, srv.URL)
+	require.Error(t, err)
+	assert.Equal(t, maxAttempts, calls)
+
+	_, err = get(t, rt, srv.URL)
+	var later *source.RetryLaterError
+	require.ErrorAs(t, err, &later, "the next request is held until the server's time")
+	assert.Equal(t, clock.Add(45*time.Second), later.Until)
+	assert.Equal(t, maxAttempts, calls, "nothing was sent")
+
+	clock = clock.Add(46 * time.Second)
+	_, _ = get(t, rt, srv.URL)
+	assert.Greater(t, calls, maxAttempts)
+}
+
+// TestRetryAfter_AnAbsurdValueIsClampedNotWrapped: a delay too large for a
+// time.Duration must not overflow into a negative (ignored) wait - it is a
+// very long wait, which the transport then refuses to sit through.
+func TestRetryAfter_AnAbsurdValueIsClampedNotWrapped(t *testing.T) {
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("Retry-After", "99999999999999")
+	d := retryAfter(resp, time.Now())
+	assert.Positive(t, d)
+	assert.Greater(t, d, maxRetryAfter)
+}
+
 func TestRetryTransport_RetriesA5xxAndGivesUpAfterThreeAttempts(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -44,24 +44,55 @@ const (
 	indexLockPoll = 25 * time.Millisecond
 )
 
+// lockTarget is how one lock file is reached: open creates-or-opens it,
+// and stat describes whatever is at its name NOW, without following a
+// link. A build reaches it by path; a removal reaches it through the
+// directory handle it has already proved (inventory.go).
+type lockTarget struct {
+	open func() (*os.File, error)
+	stat func() (os.FileInfo, error)
+}
+
 // lockCommunity takes the exclusive advisory lock on community's index
 // directory and returns the release. With no cache root configured there
 // is no directory to lock and nothing to serialise: the release is a no-op
 // and the caller fails a few lines later on the real problem.
 //
-// A lock is only a lock on the file that is AT the path (#410): a prune
-// removes the lock file while holding it, and a waiter that then won the
-// flock on the removed inode would hold nothing a newcomer could see. So
-// the path is re-checked after every acquisition, and a lock on a file that
-// is no longer there is dropped and taken again on the one that is.
+// The lock file is never opened through a symbolic link (O_NOFOLLOW): a
+// link planted at .lock would otherwise have lmm create or lock a file
+// somewhere it does not own.
 func (st *store) lockCommunity(ctx context.Context, community string) (func(), error) {
 	dir := st.dir(community)
 	if dir == "" {
 		return func() {}, nil
 	}
+	path := filepath.Join(dir, lockFileName)
+	return acquireLock(ctx, community, lockTarget{
+		open: func() (*os.File, error) {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, fmt.Errorf("creating %s: %w", dir, err)
+			}
+			file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+			if err != nil {
+				return nil, fmt.Errorf("opening the index lock: %w", err)
+			}
+			return file, nil
+		},
+		stat: func() (os.FileInfo, error) { return os.Lstat(path) },
+	})
+}
+
+// acquireLock takes the flock on target and returns the release.
+//
+// A lock is only a lock on the file that is AT the name (#410): a prune
+// removes the lock file while holding it, and a waiter that then won the
+// flock on the removed inode would hold nothing a newcomer could see. So
+// the name is re-checked after every acquisition, and a lock on a file that
+// is no longer there is dropped and taken again on the one that is.
+func acquireLock(ctx context.Context, community string, target lockTarget) (func(), error) {
 	deadline := time.Now().Add(indexLockWait)
 	for {
-		release, current, err := st.tryLockCommunity(ctx, community, deadline)
+		release, current, err := tryLock(ctx, community, target, deadline)
 		if err != nil || current {
 			return release, err
 		}
@@ -69,20 +100,13 @@ func (st *store) lockCommunity(ctx context.Context, community string) (func(), e
 	}
 }
 
-// tryLockCommunity takes the flock on whatever file is at the lock path
-// when it is opened, and reports whether that file is still the one at the
-// path once the lock is held.
-func (st *store) tryLockCommunity(ctx context.Context, community string, deadline time.Time) (func(), bool, error) {
-	dir := st.dir(community)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, false, fmt.Errorf("creating %s: %w", dir, err)
-	}
-	path := filepath.Join(dir, lockFileName)
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+// tryLock takes the flock on whatever file target opens, and reports
+// whether that file is still the one at its name once the lock is held.
+func tryLock(ctx context.Context, community string, target lockTarget, deadline time.Time) (func(), bool, error) {
+	file, err := target.open()
 	if err != nil {
-		return nil, false, fmt.Errorf("opening the index lock: %w", err)
+		return nil, false, err
 	}
-
 	for {
 		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
@@ -90,11 +114,12 @@ func (st *store) tryLockCommunity(ctx context.Context, community string, deadlin
 				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 				_ = file.Close()
 			}
-			return release, sameFileAtPath(file, path), nil
+			now, statErr := target.stat()
+			return release, statErr == nil && sameFile(file, now), nil
 		}
 		if err != syscall.EWOULDBLOCK { //nolint:errorlint // Flock returns a bare syscall.Errno
 			_ = file.Close()
-			return nil, false, fmt.Errorf("locking %s: %w", path, err)
+			return nil, false, fmt.Errorf("locking the %s index: %w", community, err)
 		}
 		if time.Now().After(deadline) {
 			_ = file.Close()
@@ -109,13 +134,9 @@ func (st *store) tryLockCommunity(ctx context.Context, community string, deadlin
 	}
 }
 
-// sameFileAtPath reports whether the open file is still the one path names.
-func sameFileAtPath(file *os.File, path string) bool {
+// sameFile reports whether the open file is the one now describes.
+func sameFile(file *os.File, now os.FileInfo) bool {
 	held, err := file.Stat()
-	if err != nil {
-		return false
-	}
-	now, err := os.Stat(path)
 	if err != nil {
 		return false
 	}

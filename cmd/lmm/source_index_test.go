@@ -50,7 +50,7 @@ func (s *inventoryIndexSource) CachedIndexes(context.Context) ([]source.CachedIn
 	return out, nil
 }
 
-func (s *inventoryIndexSource) RemoveIndex(_ context.Context, id string) (int64, error) {
+func (s *inventoryIndexSource) RemoveIndex(_ context.Context, id string, _ time.Time) (int64, error) {
 	ci, ok := s.cached[id]
 	if !ok {
 		return 0, nil

@@ -116,7 +116,7 @@ func TestRemoveIndex_RemovesTheWholeIndexAndReportsWhatItFreed(t *testing.T) {
 	before := findIndex(t, list, testCommunity)
 	require.True(t, before.Removable, before.Reason)
 
-	freed, err := src.RemoveIndex(t.Context(), testCommunity)
+	freed, err := src.RemoveIndex(t.Context(), testCommunity, time.Time{})
 	require.NoError(t, err)
 	assert.Equal(t, before.Bytes, freed)
 	assert.NoDirExists(t, indexDir(cacheDir, testCommunity))
@@ -133,7 +133,7 @@ func TestRemoveIndex_RemovesTheWholeIndexAndReportsWhatItFreed(t *testing.T) {
 
 func TestRemoveIndex_AMissingIndexIsNothingToDo(t *testing.T) {
 	src, _, _ := builtSource(t)
-	freed, err := src.RemoveIndex(t.Context(), "content-warning")
+	freed, err := src.RemoveIndex(t.Context(), "content-warning", time.Time{})
 	require.NoError(t, err)
 	assert.Zero(t, freed)
 }
@@ -141,7 +141,7 @@ func TestRemoveIndex_AMissingIndexIsNothingToDo(t *testing.T) {
 func TestRemoveIndex_RefusesAnInvalidSlug(t *testing.T) {
 	src, _, _ := builtSource(t)
 	for _, slug := range []string{"", "../x", "a/b", "UPPER"} {
-		_, err := src.RemoveIndex(t.Context(), slug)
+		_, err := src.RemoveIndex(t.Context(), slug, time.Time{})
 		assert.ErrorIs(t, err, thunderstore.ErrCommunityNotConfigured, "slug %q", slug)
 	}
 }
@@ -161,7 +161,7 @@ func TestRemoveIndex_KeepsADirectoryHoldingAnythingElse(t *testing.T) {
 	assert.Contains(t, ci.Reason, "notes.txt")
 	assert.Positive(t, ci.Bytes, "a directory that cannot be removed still reports what it costs")
 
-	_, err = src.RemoveIndex(t.Context(), testCommunity)
+	_, err = src.RemoveIndex(t.Context(), testCommunity, time.Time{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "notes.txt")
 	for _, name := range []string{"notes.txt", "index.json", "packages.jsonl", "watermark.json"} {
@@ -176,7 +176,7 @@ func TestRemoveIndex_KeepsASubdirectory(t *testing.T) {
 	dir := indexDir(cacheDir, testCommunity)
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0o755))
 
-	_, err := src.RemoveIndex(t.Context(), testCommunity)
+	_, err := src.RemoveIndex(t.Context(), testCommunity, time.Time{})
 	require.Error(t, err)
 	assert.FileExists(t, filepath.Join(dir, "index.json"))
 }
@@ -198,7 +198,7 @@ func TestRemoveIndex_NeverFollowsASymlinkedCommunity(t *testing.T) {
 	assert.False(t, ci.Removable)
 	assert.Contains(t, ci.Reason, "symbolic link")
 
-	_, err = src.RemoveIndex(t.Context(), "content-warning")
+	_, err = src.RemoveIndex(t.Context(), "content-warning", time.Time{})
 	require.Error(t, err)
 	assert.FileExists(t, victim)
 	_, err = os.Lstat(link)
@@ -214,7 +214,7 @@ func TestRemoveIndex_NeverFollowsASymlinkedFile(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(dir, "watermark.json")))
 	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "watermark.json")))
 
-	_, err := src.RemoveIndex(t.Context(), testCommunity)
+	_, err := src.RemoveIndex(t.Context(), testCommunity, time.Time{})
 	require.Error(t, err)
 	assert.FileExists(t, outside)
 	assert.FileExists(t, filepath.Join(dir, "index.json"))
@@ -238,7 +238,7 @@ func TestRemoveIndex_RefusesASymlinkedIndexRoot(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "symbolic link")
 
-	_, err = src.RemoveIndex(t.Context(), testCommunity)
+	_, err = src.RemoveIndex(t.Context(), testCommunity, time.Time{})
 	require.Error(t, err)
 	assert.FileExists(t, filepath.Join(community, "index.json"))
 }
@@ -260,7 +260,47 @@ func TestRemoveIndex_ASymlinkedCacheDirIsFine(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, findIndex(t, list, testCommunity).Removable)
 
-	_, err = src.RemoveIndex(t.Context(), testCommunity)
+	_, err = src.RemoveIndex(t.Context(), testCommunity, time.Time{})
 	require.NoError(t, err)
 	assert.NoDirExists(t, filepath.Join(realCache, "_thunderstore", testCommunity))
+}
+
+// TestRemoveIndex_RefusesAnIndexRefreshedSinceTheDecision is the prune's
+// age rule held at the moment of removal: a decision made from an index's
+// fetched_at does not survive a refresh that happened in between, so the
+// removal is refused and the fresh index kept.
+func TestRemoveIndex_RefusesAnIndexRefreshedSinceTheDecision(t *testing.T) {
+	src, cacheDir, clock := builtSource(t)
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	decidedOn := findIndex(t, list, testCommunity).FetchedAt
+
+	// A search refreshes it before the prune gets the lock.
+	clock.advance(7 * time.Hour)
+	_, err = src.RefreshIndex(t.Context(), testCommunity, true, nil)
+	require.NoError(t, err)
+
+	_, err = src.RemoveIndex(t.Context(), testCommunity, decidedOn)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refreshed")
+	assert.FileExists(t, filepath.Join(indexDir(cacheDir, testCommunity), "index.json"))
+
+	list, err = src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	current := findIndex(t, list, testCommunity).FetchedAt
+	freed, err := src.RemoveIndex(t.Context(), testCommunity, current)
+	require.NoError(t, err, "the index the decision was made about is removed")
+	assert.Positive(t, freed)
+	assert.NoDirExists(t, indexDir(cacheDir, testCommunity))
+}
+
+// TestRemoveIndex_AnAgePreconditionOnAnIndexWithNoAgeIsRefused: a decision
+// that rested on an age cannot be checked against an index whose age can no
+// longer be read.
+func TestRemoveIndex_AnAgePreconditionOnAnIndexWithNoAgeIsRefused(t *testing.T) {
+	src, cacheDir, clock := builtSource(t)
+	require.NoError(t, os.Remove(filepath.Join(indexDir(cacheDir, testCommunity), "watermark.json")))
+	_, err := src.RemoveIndex(t.Context(), testCommunity, clock.Now())
+	require.Error(t, err)
+	assert.FileExists(t, filepath.Join(indexDir(cacheDir, testCommunity), "index.json"))
 }

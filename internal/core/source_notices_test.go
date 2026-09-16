@@ -43,6 +43,11 @@ func TestNoticeText(t *testing.T) {
 			"Not asking Thunderstore again until 12:04:30 (in 4m30s).",
 		},
 		{
+			"suspended for a day",
+			source.Notice{Kind: source.NoticeSuspended, Source: "Thunderstore", Until: now.Add(26 * time.Hour)},
+			"Not asking Thunderstore again until " + now.Add(26*time.Hour).Format("2006-01-02 15:04:05") + " (in 26h0m0s).",
+		},
+		{
 			"index building",
 			source.Notice{Kind: source.NoticeIndexBuilding, Source: "Thunderstore", GameID: "lethal-company"},
 			"Building the Thunderstore index for lethal-company (one-time)...",

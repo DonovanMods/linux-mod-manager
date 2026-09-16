@@ -280,7 +280,10 @@ func TestRefreshIndex_AStalledBodyFailsFastAndKeepsTheOldIndex(t *testing.T) {
 	}()
 
 	window := <-timers.opened
-	assert.Equal(t, stallTimeout, window.d)
+	window.mu.Lock()
+	armedFor := window.d
+	window.mu.Unlock()
+	assert.Equal(t, stallTimeout, armedFor)
 	assert.Less(t, stallTimeout*10, fetchTimeout, "a stall is noticed in a small fraction of the request ceiling")
 	<-window.resets // the headers arrived
 	<-window.resets // and the first third of the body did

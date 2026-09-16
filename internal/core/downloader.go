@@ -383,7 +383,9 @@ func retryAfterOf(v string, now time.Time) time.Duration {
 		return 0
 	}
 	if secs, err := strconv.Atoi(v); err == nil {
-		return time.Duration(max(secs, 0)) * time.Second
+		// Clamped before the multiplication, which would otherwise wrap for
+		// an absurd value; a year is far past anything lmm waits.
+		return time.Duration(min(max(secs, 0), 365*24*60*60)) * time.Second
 	}
 	at, err := http.ParseTime(v)
 	if err != nil {

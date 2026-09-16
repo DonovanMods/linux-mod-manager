@@ -13,7 +13,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -193,6 +197,14 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 	if err != nil {
 		return nil, fmt.Errorf("not pruning anything: games.yaml could not be read, so lmm cannot tell which indexes are in use: %w", err)
 	}
+	// A games.yaml that is not there at all reads as "no games", which is
+	// not the same claim as "no game uses these": a mistyped config
+	// directory looks exactly like it. Only --all goes past that.
+	noGamesFile := ""
+	gamesPath := filepath.Join(s.configDir, "games.yaml")
+	if _, statErr := os.Stat(gamesPath); errors.Is(statErr, fs.ErrNotExist) {
+		noGamesFile = fmt.Sprintf("there is no %s, so lmm cannot tell whether this index is in use", gamesPath)
+	}
 	games := make([]*domain.Game, 0, len(gameMap))
 	for _, g := range gameMap {
 		games = append(games, g)
@@ -224,8 +236,18 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 				MappedBy: uses.mappedBy(ci.GameID),
 			}
 			remove, reason := pruneDecision(ci, uses, entry.MappedBy, opts.All, now)
+			if remove && !opts.All && noGamesFile != "" {
+				remove, reason = false, noGamesFile
+			}
 			if remove && only != nil && !only[IndexPruneKey(src.ID(), ci.GameID)] {
 				remove, reason = false, "not in the list of indexes confirmed for removal"
+			}
+			// Unless --all, the decision rested on WHICH index this was -
+			// its age, or the copy judged unused - so the source re-checks
+			// that under its lock and refuses once a refresh has replaced it.
+			var ifFetchedAt time.Time
+			if !opts.All {
+				ifFetchedAt = ci.FetchedAt
 			}
 			entry.Reason = reason
 			switch {
@@ -236,7 +258,7 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 				report.Removed++
 				report.FreedBytes += ci.Bytes
 			default:
-				freed, err := src.RemoveIndex(ctx, ci.GameID)
+				freed, err := src.RemoveIndex(ctx, ci.GameID, ifFetchedAt)
 				if err != nil {
 					entry.Action, entry.Reason = IndexPruneFailed, err.Error()
 					break

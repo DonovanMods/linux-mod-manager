@@ -131,6 +131,14 @@ func TestDownloader_AThrottledDownloadWaitsWhatItWasToldAndSaysSo(t *testing.T) 
 	assert.Equal(t, (*waits)[0], got[0].Wait)
 }
 
+// TestRetryAfterOf_ClampsBeforeItOverflows: an absurd delay is a very long
+// wait, never a wrapped negative one that reads as no wait at all.
+func TestRetryAfterOf_ClampsBeforeItOverflows(t *testing.T) {
+	d := retryAfterOf("99999999999999", time.Now())
+	assert.Positive(t, d)
+	assert.Greater(t, d, downloadMaxRetryAfter)
+}
+
 // TestDownloader_ARetryAfterPastTheCeilingFailsNow: a download is not held
 // silent for ten minutes because a CDN asked for it.
 func TestDownloader_ARetryAfterPastTheCeilingFailsNow(t *testing.T) {

@@ -38,6 +38,7 @@ type e2eIndexSource struct {
 	mu          sync.Mutex
 	cached      map[string]source.CachedIndex
 	removed     []string
+	removeErr   map[string]error
 	needsLoader bool
 	// throttle, when non-nil, makes GetDownloadURL report a rate-limited
 	// retry through the call's context and then wait for it to close.
@@ -123,9 +124,12 @@ func (s *e2eIndexSource) CachedIndexes(context.Context) ([]source.CachedIndex, e
 	return out, nil
 }
 
-func (s *e2eIndexSource) RemoveIndex(_ context.Context, id string) (int64, error) {
+func (s *e2eIndexSource) RemoveIndex(_ context.Context, id string, _ time.Time) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.removeErr[id]; err != nil {
+		return 0, err
+	}
 	ci, ok := s.cached[id]
 	if !ok {
 		return 0, nil
@@ -417,5 +421,38 @@ func TestE2E_ALoaderRefusalOnAFailedJobRendersItsSetupSteps(t *testing.T) {
 	assert.Contains(t, failure, "needs the BepInEx mod loader")
 	require.Len(t, steps, 3)
 	assert.Equal(t, "Record it: lmm game edit lethal --loader bepinex.", steps[1])
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SetupSources_APruneThatCouldNotRemoveSaysWhy: a removal the
+// source refused is shown with its reason after the prune - a prune that
+// removed nothing must never read as one that had nothing to do - and the
+// "also remove indexes in use" choice does not carry into the next prune.
+func TestE2E_SetupSources_APruneThatCouldNotRemoveSaysWhy(t *testing.T) {
+	f, src := newE2EIndexFixture(t, func(s *e2eIndexSource) {
+		s.removeErr = map[string]error{"content-warning": fmt.Errorf("the content-warning index directory holds notes.txt, which is not part of an index")}
+	})
+
+	var problems string
+	var allChecked bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/setup?section=sources"),
+		chromedp.WaitVisible(`[data-testid="source-indexes"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="prune-indexes"]`),
+		chromedp.WaitVisible(`[data-testid="prune-preview"]`, chromedp.ByQuery),
+		chromedp.Click(`input[name="prune-all"]`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll('[data-testid="prune-preview"] [data-prune]').length === 2`),
+		clickWhenSettled(`[data-action="confirm-prune"]`),
+		chromedp.WaitVisible(`[data-testid="prune-problems"]`, chromedp.ByQuery),
+		textContent(`[data-testid="prune-problems"]`, &problems),
+		clickWhenSettled(`[data-action="prune-indexes"]`),
+		chromedp.WaitVisible(`[data-testid="prune-preview"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('input[name="prune-all"]').checked`, &allChecked),
+	)
+
+	assert.Contains(t, problems, "content-warning")
+	assert.Contains(t, problems, "notes.txt")
+	assert.Equal(t, []string{"lethal-company"}, src.removedIndexes())
+	assert.False(t, allChecked, "the next prune starts from the safe default")
 	assert.Empty(t, f.BrowserErrors())
 }

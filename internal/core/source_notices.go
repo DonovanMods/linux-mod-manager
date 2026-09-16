@@ -28,8 +28,13 @@ import (
 //     IndexRefreshDone), the same phases an explicit refresh reports.
 //
 // Notices can arrive from several goroutines at once - an unscoped search
-// asks every source concurrently - and an EventSink is only ever called
-// from one at a time, so delivery is serialised here.
+// asks every source concurrently - so the notices are serialised among
+// themselves here. They are NOT serialised with the flow's own calls to the
+// same sink: a notice is delivered on whatever goroutine is waiting, which
+// may not be the operation's. A sink given here must therefore be safe to
+// call concurrently with the operation's own events - which every frontend
+// sink is (the CLI's printer writes one line per call; a web UI job's sink
+// takes the job's own lock).
 //
 // A nil sink returns ctx unchanged: a flow run with nothing to report to
 // must not silence an observer set further out.
@@ -87,8 +92,14 @@ func noticeText(n source.Notice, now time.Time) string {
 		}
 	case source.NoticeSuspended:
 		until := n.Until.Local()
-		return fmt.Sprintf("Not asking %s again until %s (in %s).",
-			n.Source, until.Format("15:04:05"), humanWait(until.Sub(now)))
+		wait := until.Sub(now)
+		// A clock time alone for today's resumption, the date as well for
+		// one further off - "until 09:00" is wrong by a day otherwise.
+		at := until.Format("15:04:05")
+		if wait >= 12*time.Hour || wait <= -12*time.Hour {
+			at = until.Format("2006-01-02 15:04:05")
+		}
+		return fmt.Sprintf("Not asking %s again until %s (in %s).", n.Source, at, humanWait(wait))
 	case source.NoticeIndexBuilding:
 		return fmt.Sprintf("Building the %s index for %s (one-time)...", n.Source, n.GameID)
 	case source.NoticeIndexBuilt:

@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -113,70 +114,184 @@ func (s *Source) inspect(community string) source.CachedIndex {
 // RemoveIndex implements source.IndexInventory: delete one community's
 // index, or refuse with nothing deleted.
 //
+// It works through DIRECTORY HANDLES, not paths (#410 review): the index
+// root and the community directory are each opened once, proved to be the
+// real directories that were inspected, and every listing, check and
+// removal after that goes through the handle - so a directory swapped for a
+// symbolic link between the check and the act is an error, never a
+// redirection. Only the names the proof approved are removed, each
+// re-checked as a regular file first.
+//
 // It takes the same two locks a build does - this process's per-community
-// mutex and the cross-process flock - so it can never remove files a build
-// is writing, and it re-proves the directory under them.
-func (s *Source) RemoveIndex(ctx context.Context, community string) (int64, error) {
+// mutex and the cross-process flock, reached through the same handle - so
+// it can never remove files a build is writing, and it removes the
+// directory itself while still holding them. ifFetchedAt, when set, must
+// still be the index's fetched_at under the lock: a removal decided on an
+// index's age is refused once a refresh has replaced that index.
+func (s *Source) RemoveIndex(ctx context.Context, community string, ifFetchedAt time.Time) (int64, error) {
 	if err := validateCommunity(community); err != nil {
 		return 0, err
 	}
-	root, ok, err := s.store.safeRoot()
+	rootPath, ok, err := s.store.safeRoot()
 	if err != nil || !ok {
 		return 0, err
 	}
-	dir := filepath.Join(root, community)
-	if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(rootPath, community)); errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
 	}
 
 	lock := s.communityLock(community)
 	lock.Lock()
 	defer lock.Unlock()
-	// Proved BEFORE the flock, too: lockCommunity creates its lock file, and
-	// through a symlinked community directory that would be a write
-	// somewhere lmm does not own.
-	if _, err := s.store.provablyIndex(community); err != nil {
-		return 0, fmt.Errorf("not removing the %s index: %w", community, err)
-	}
-	unlock, err := s.store.lockCommunity(ctx, community)
-	if err != nil {
-		return 0, fmt.Errorf("not removing the %s index: %w", community, err)
-	}
-	released := false
-	defer func() {
-		if !released {
-			unlock()
-		}
-	}()
 
-	freed, err := s.store.provablyIndex(community)
+	root, err := openRealDir(rootPath)
 	if err != nil {
 		return 0, fmt.Errorf("not removing the %s index: %w", community, err)
 	}
-	entries, err := os.ReadDir(dir)
+	defer func() { _ = root.Close() }()
+	dir, err := openRealSubdir(root, community)
 	if err != nil {
-		return 0, fmt.Errorf("reading %s: %w", dir, err)
+		return 0, fmt.Errorf("not removing the %s index: %w", community, err)
 	}
+	defer func() { _ = dir.Close() }()
+
+	release, err := acquireLock(ctx, community, lockTarget{
+		open: func() (*os.File, error) {
+			return dir.OpenFile(lockFileName, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+		},
+		stat: func() (os.FileInfo, error) { return dir.Lstat(lockFileName) },
+	})
+	if err != nil {
+		return 0, fmt.Errorf("not removing the %s index: %w", community, err)
+	}
+	defer release()
+
+	names, freed, err := provableEntries(dir, community)
+	if err != nil {
+		return 0, fmt.Errorf("not removing the %s index: %w", community, err)
+	}
+	if !ifFetchedAt.IsZero() {
+		if err := checkFetchedAt(dir, community, ifFetchedAt); err != nil {
+			return 0, err
+		}
+	}
+
 	// The watermark goes first, so an interrupted removal reads as cold -
 	// the same ordering rule a build's commit follows - and the lock file
 	// last, while it is still held.
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
 	sort.SliceStable(names, func(i, j int) bool { return removalRank(names[i]) < removalRank(names[j]) })
 	s.dropResident(community)
 	for _, name := range names {
-		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return 0, fmt.Errorf("removing %s: %w", filepath.Join(dir, name), err)
+		info, err := dir.Lstat(name)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil || !info.Mode().IsRegular() {
+			return 0, fmt.Errorf("not removing the rest of the %s index: %s changed while it was being removed", community, name)
+		}
+		if err := dir.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return 0, fmt.Errorf("removing %s from the %s index: %w", name, community, err)
 		}
 	}
-	unlock()
-	released = true
-	if err := os.Remove(dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return freed, fmt.Errorf("removing %s: %w", dir, err)
-	}
+	// The directory goes while the lock is still held. It can fail only if
+	// another process re-created its lock file there in the meantime,
+	// which leaves an empty directory with nothing of the index in it -
+	// harmless, listed as unbuilt, and removed by the next prune - so the
+	// index is reported removed either way.
+	_ = root.Remove(community)
 	return freed, nil
+}
+
+// openRealDir opens path as a directory handle and proves the handle is the
+// directory at path itself, not something a symbolic link there leads to.
+func openRealDir(path string) (*os.Root, error) {
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+	named, err := os.Lstat(path)
+	if err != nil {
+		_ = root.Close()
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	opened, err := root.Stat(".")
+	if err != nil || named.Mode()&fs.ModeSymlink != 0 || !os.SameFile(named, opened) {
+		_ = root.Close()
+		return nil, fmt.Errorf("%s is not the directory lmm inspected (a symbolic link, or replaced): not touching it", path)
+	}
+	return root, nil
+}
+
+// openRealSubdir is openRealDir for name inside root.
+func openRealSubdir(root *os.Root, name string) (*os.Root, error) {
+	named, err := root.Lstat(name)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", name, err)
+	}
+	if named.Mode()&fs.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s is a symbolic link, which lmm never follows", name)
+	}
+	if !named.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", name)
+	}
+	sub, err := root.OpenRoot(name)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", name, err)
+	}
+	opened, err := sub.Stat(".")
+	if err != nil || !os.SameFile(named, opened) {
+		_ = sub.Close()
+		return nil, fmt.Errorf("%s was replaced while it was being checked: not touching it", name)
+	}
+	return sub, nil
+}
+
+// provableEntries lists dir through its handle and proves every entry is a
+// regular file this package writes, returning their names and total size.
+func provableEntries(dir *os.Root, community string) ([]string, int64, error) {
+	handle, err := dir.Open(".")
+	if err != nil {
+		return nil, 0, fmt.Errorf("reading the %s index: %w", community, err)
+	}
+	defer func() { _ = handle.Close() }()
+	entries, err := handle.ReadDir(-1)
+	if err != nil {
+		return nil, 0, fmt.Errorf("reading the %s index: %w", community, err)
+	}
+	names := make([]string, 0, len(entries))
+	var total int64
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			return nil, 0, fmt.Errorf("the %s index directory holds %s, which is not a plain file lmm wrote", community, e.Name())
+		}
+		if !isIndexFile(e.Name()) {
+			return nil, 0, fmt.Errorf("the %s index directory holds %s, which is not part of an index", community, e.Name())
+		}
+		info, err := e.Info()
+		if err != nil {
+			return nil, 0, fmt.Errorf("reading %s: %w", e.Name(), err)
+		}
+		names = append(names, e.Name())
+		total += info.Size()
+	}
+	return names, total, nil
+}
+
+// checkFetchedAt refuses unless the index in dir was last fetched at want.
+func checkFetchedAt(dir *os.Root, community string, want time.Time) error {
+	f, err := dir.Open(watermarkFileName)
+	if err != nil {
+		return fmt.Errorf("not removing the %s index: its age can no longer be read: %w", community, err)
+	}
+	defer func() { _ = f.Close() }()
+	var wm watermark
+	if err := json.NewDecoder(f).Decode(&wm); err != nil {
+		return fmt.Errorf("not removing the %s index: its age can no longer be read: %w", community, err)
+	}
+	if wm.FetchedAt != want.Unix() {
+		return fmt.Errorf("not removing the %s index: it was refreshed after the prune decided to remove it", community)
+	}
+	return nil
 }
 
 // removalRank orders a directory's files for removal.

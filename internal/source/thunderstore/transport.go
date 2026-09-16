@@ -70,6 +70,10 @@ const (
 	// #436 - but it IS honoured: no request is sent to the host before the
 	// time it named.
 	maxRetryAfter = time.Minute
+	// maxRetryAfterSeconds clamps a Retry-After before it is multiplied
+	// into a time.Duration, which would otherwise wrap for an absurd value
+	// and read as no wait at all. A year is far past anything lmm waits.
+	maxRetryAfterSeconds = 365 * 24 * 60 * 60
 	// breakerThreshold is how many consecutive failed requests trip the
 	// circuit breaker.
 	breakerThreshold = 3
@@ -152,6 +156,11 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			if attempt == maxAttempts {
 				t.recordFailure()
+				if hint > 0 {
+					// Out of attempts is not out of obligation: the time the
+					// server named still holds for the next request.
+					t.suspend(t.now().Add(hint), fmt.Sprintf("%v, which asked lmm to wait %s", lastErr, hint))
+				}
 				return nil, fmt.Errorf("%w: %w after %d attempts", ErrIndexUnavailable, lastErr, maxAttempts)
 			}
 		default:
@@ -225,7 +234,7 @@ func retryAfter(resp *http.Response, now time.Time) time.Duration {
 		if secs < 0 {
 			return 0
 		}
-		return time.Duration(secs) * time.Second
+		return time.Duration(min(secs, maxRetryAfterSeconds)) * time.Second
 	}
 	at, err := http.ParseTime(v)
 	if err != nil {
