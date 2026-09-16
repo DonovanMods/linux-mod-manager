@@ -42,6 +42,12 @@ type indexPruneRequest struct {
 	Only   []string `json:"only,omitempty"`
 }
 
+// errUnboundPrune is the 400 for a prune that removes without naming what
+// (T3 review F11). An empty body used to be a real prune of everything
+// unused - and a form-encoded POST reaches the handler with an empty body,
+// because the CSRF check's ParseForm has already read it.
+var errUnboundPrune = errors.New("a prune that removes must name what it removes: preview with dry_run, then confirm with only set to the preview's keys")
+
 // errNoIndexGame is the 400 for an index route called without ?game=: an
 // index belongs to a game's mapping, and there is no default to guess.
 var errNoIndexGame = errors.New("the game query parameter is required: an index belongs to one game's source mapping")
@@ -114,11 +120,16 @@ func (s *Server) handleAPIIndexes(w http.ResponseWriter, r *http.Request) {
 // handleAPIIndexesPrune answers POST /api/v1/indexes/prune with
 // core.IndexPruneReport - `lmm source index prune --json`. The setup card
 // previews with dry_run, then confirms with only set to the preview's
-// removal keys, so nothing it did not show can go.
+// removal keys, so nothing it did not show can go - and a request that
+// removes without an only list is refused.
 func (s *Server) handleAPIIndexesPrune(w http.ResponseWriter, r *http.Request) {
 	var req indexPruneRequest
 	if err := decodeAPIBody(w, r, &req); err != nil {
 		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !req.DryRun && req.Only == nil {
+		s.writeAPIError(w, http.StatusBadRequest, errUnboundPrune)
 		return
 	}
 	report, err := s.svc.PruneSourceIndexes(r.Context(), core.IndexPruneOptions{

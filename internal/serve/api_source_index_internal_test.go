@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"sort"
 	"strings"
 	"testing"
@@ -284,10 +286,59 @@ func TestAPIIndexesPrune_PreviewThenConfirm(t *testing.T) {
 
 func TestAPIIndexesPrune_AllTakesTheIndexesInUse(t *testing.T) {
 	s, _, _, src := newIndexFixtureServer(t)
-	rec := doAPI(s, http.MethodPost, "/api/v1/indexes/prune", `{"all":true}`)
+	rec := doAPI(s, http.MethodPost, "/api/v1/indexes/prune", `{"all":true,"dry_run":true}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var preview core.IndexPruneReport
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &preview))
+
+	body, err := json.Marshal(map[string]any{"all": true, "only": preview.RemovalKeys()})
+	require.NoError(t, err)
+	rec = doAPI(s, http.MethodPost, "/api/v1/indexes/prune", string(body))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	sort.Strings(src.removed)
 	assert.Equal(t, []string{"content-warning", "lethal-company"}, src.removed)
+}
+
+// TestAPIIndexesPrune_ARemovalMustNameWhatItRemoves is T3 review F11: an
+// empty body was a real, unbound prune - and a form-encoded POST carrying
+// the token has an empty body by the time the handler reads it, because
+// the CSRF check's ParseForm consumed it. A removal now has to name the
+// indexes it confirms (only, from a preview); anything else is a 400 with
+// nothing removed.
+func TestAPIIndexesPrune_ARemovalMustNameWhatItRemoves(t *testing.T) {
+	for name, body := range map[string]string{
+		"an empty body":       "",
+		"an empty object":     `{}`,
+		"all, unconfirmed":    `{"all":true}`,
+		"only, null":          `{"only":null}`,
+		"dry_run false, bare": `{"dry_run":false}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, _, src := newIndexFixtureServer(t)
+			rec := doAPI(s, http.MethodPost, "/api/v1/indexes/prune", body)
+			assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "only")
+			assert.Empty(t, src.removed)
+		})
+	}
+
+	t.Run("a form-encoded POST with the token", func(t *testing.T) {
+		s, _, _, src := newIndexFixtureServer(t)
+		req := httptest.NewRequest(http.MethodPost, "http://"+internalTestAddr+"/api/v1/indexes/prune",
+			strings.NewReader(url.Values{csrfFormField: {s.csrf.token}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		assert.Empty(t, src.removed)
+	})
+
+	t.Run("a preview and an empty confirmation still answer", func(t *testing.T) {
+		s, _, _, src := newIndexFixtureServer(t)
+		assert.Equal(t, http.StatusOK, doAPI(s, http.MethodPost, "/api/v1/indexes/prune", `{"dry_run":true}`).Code)
+		assert.Equal(t, http.StatusOK, doAPI(s, http.MethodPost, "/api/v1/indexes/prune", `{"only":[]}`).Code)
+		assert.Empty(t, src.removed)
+	})
 }
 
 func TestAPIIndexesPrune_NeedsTheCSRFToken(t *testing.T) {
