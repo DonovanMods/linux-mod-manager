@@ -1320,16 +1320,17 @@ Filter (all/enabled/updatable/unhealthy) and sort (load order/name/recently
 installed) narrow it. The header checkbox selects **everything in view**
 — after the filter and whatever the omnibar is narrowing by — skipping rows
 the batch actions cannot apply to, and reads back as checked, empty or
-partial; `a` does the same from the keyboard. A selection raises a batch bar
-that says how much is selected out of what is in view, with the applicable
-count on each action (Enable / Disable / Update / Uninstall). More columns
-appear as the display widens: author and install date at 1440px, source and
-link method at 1920px. Its toolbar also carries **Check for updates** (which
-re-asks the sources rather than re-reading what they cached), **Update all
-(N)**, **Verify**, **Reorder…** and **Add mods ▾**: Search sources…
-(focuses the omnibar), Import an archive… and Adopt untracked mods… — the
-same three flows, and the same component, the empty-library state offers
-before you have installed a first mod.
+partial; `a` does the same from the keyboard anywhere on Mission Control
+(outside a text field, and not while a modal or the slide-over is open). A
+selection raises a batch bar that says how much is selected out of what is in
+view, with the applicable count on each action (Enable / Disable / Update /
+Uninstall). More columns appear as the display widens: author and install
+date at 1440px, source and link method at 1920px. Its toolbar also carries
+**Check for updates** (which re-asks the sources rather than re-reading what
+they cached), **Update all (N)**, **Verify**, **Reorder…** and
+**Add mods ▾**: Search sources… (focuses the omnibar), Import an archive…
+and Adopt untracked mods… — the same three flows, and the same component,
+the empty-library state offers before you have installed a first mod.
 
 Below the library sits the **Snapshots** card, which — unlike the attention
 cards — renders whether or not it has anything to show, because its value is
@@ -1450,16 +1451,16 @@ removes every mod record behind it.
 The whole UI is operable from the keyboard, and every focused control shows
 a visible ring in both themes.
 
-| Key                        | Where                                        | What it does                                                                                                   |
-| -------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `Tab` / `Shift+Tab`        | anywhere                                     | move through the controls; the first stop on every screen is **Skip to content**, which jumps past the top bar |
-| `?`                        | anywhere outside a text field                | open this keyboard-shortcuts help                                                                              |
-| `Enter`                    | omnibar                                      | search the game's sources for what you typed                                                                   |
-| `Esc`                      | omnibar                                      | clear the search and return to your plain library                                                              |
-| `Esc`                      | any modal, the slide-over, any open dropdown | close it and return focus to whatever opened it                                                                |
-| `a`                        | the library, outside a text field            | select every mod in view, or clear the selection                                                               |
-| `←` / `→`                  | the slide-over                               | step to the previous/next mod in the library's current order                                                   |
-| `←` / `→` / `Home` / `End` | the Setup page's section tabs                | move between sections                                                                                          |
+| Key                        | Where                                                                   | What it does                                                                                                   |
+| -------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Tab` / `Shift+Tab`        | anywhere                                                                | move through the controls; the first stop on every screen is **Skip to content**, which jumps past the top bar |
+| `?`                        | anywhere outside a text field                                           | open this keyboard-shortcuts help                                                                              |
+| `Enter`                    | omnibar                                                                 | search the game's sources for what you typed                                                                   |
+| `Esc`                      | omnibar                                                                 | clear the search and return to your plain library                                                              |
+| `Esc`                      | any modal, the slide-over, any open dropdown                            | close it and return focus to whatever opened it                                                                |
+| `a`                        | Mission Control, outside a text field, with no modal or slide-over open | select every mod in view, or clear the selection                                                               |
+| `←` / `→`                  | the slide-over                                                          | step to the previous/next mod in the library's current order                                                   |
+| `←` / `→` / `Home` / `End` | the Setup page's section tabs                                           | move between sections                                                                                          |
 
 The same table is in the app itself: press `?` (or the **?** button beside
 **⚙ Setup**) to open it. It is generated from one list, so the two cannot

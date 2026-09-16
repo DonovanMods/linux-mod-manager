@@ -291,9 +291,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows the actions cannot apply to rather than selecting them and having the
   buttons refuse: a Steam-managed row has no enable/disable at all, and an
   update lmm cannot apply has no checkbox of its own. The batch bar says
-  **“3 of 12 selected”**, every batch button carries the number it is about
-  to act on — **Update (3)** — and pressing **a** anywhere in the library,
-  outside a text field, selects everything in view or clears it.
+  **“3 of 12 selected”** (and a screen reader hears each change), every
+  batch button carries the number it is about to act on — **Update (3)** —
+  and the count always describes rows still on screen: updating a ticked mod
+  from anywhere takes it out of the Updates card's count, and a confirmed
+  batch clears that card's selection. With nothing in view it could take,
+  the header checkbox is disabled rather than silently inert. Pressing **a**
+  anywhere on Mission Control — outside a text field, and not while a modal
+  or the slide-over is open — selects everything in view or clears it.
 
 - **The game-adapter seam: one `adapter:` key in `games.yaml` (#353, #411).**
   What a game does with mod content — how an archive's files are laid out,

@@ -45,7 +45,8 @@ export const shortcutRows = [
   },
   {
     keys: "a",
-    where: "the library, outside a text field",
+    where:
+      "Mission Control, outside a text field, with no modal or slide-over open",
     what: "select every mod in view, or clear the selection",
   },
   {
