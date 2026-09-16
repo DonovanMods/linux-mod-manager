@@ -143,7 +143,10 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 	gameCache := s.GetGameCache(game)
 	// #353: one adapter resolution for the whole sweep - a games.yaml
 	// naming an adapter this build does not ship is a config error worth
-	// surfacing here rather than per mod.
+	// surfacing here rather than per mod. The refusal is returned as the
+	// typed *AdapterRefusedError (#455): which mod wins a path is a
+	// question about the layout, and a refused game has none, so there is
+	// no partial answer worth giving instead.
 	gameAdapter, err := s.AdapterFor(game)
 	if err != nil {
 		return nil, err

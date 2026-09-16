@@ -406,6 +406,18 @@ const (
 	// DeployWarning/printHookWarnings' batched timing).
 	InstallWarning
 
+	// DownloadWarning is a warning only a DOWNLOAD can raise, because an
+	// archive's shape is not knowable until it is extracted (#425): #424's
+	// "BepInEx found in <path>; declare it with ..." notice and #358's
+	// "layout lmm cannot place" warning. Service.extractIntoStaging emits it
+	// as a WarningEvent, and every flow that downloads forwards it
+	// (forwardFetchStep) under its OWN scope with this phase unchanged -
+	// install, update, deploy, switch, apply, import, snapshot restore - so
+	// a frontend handles one phase rather than learning each flow's name
+	// for the same fact. verify --fix, whose stream is VerifyEvents, carries
+	// it as a repair sub-line instead.
+	DownloadWarning
+
 	// --- Phase 5b Task 3: ApplyUpdate progress events, extending this same
 	// DeployPhase enum (matching Task 2's own "extend, don't fork"
 	// precedent). ApplyUpdate is a behavior-preserving extraction of
@@ -927,6 +939,7 @@ var deployPhaseNames = [...]string{
 	InstallDownloading: "install_downloading", InstallDownloadDone: "install_download_done", InstallDownloadFailed: "install_download_failed",
 	InstallChecksumComputed: "install_checksum_computed", InstallCompiling: "install_compiling", InstallExtracting: "install_extracting",
 	InstallDeploying: "install_deploying", InstallDone: "install_done", InstallNote: "install_note", InstallWarning: "install_warning",
+	DownloadWarning:   "download_warning",
 	UpdateDownloading: "update_downloading", UpdateDownloadDone: "update_download_done", UpdateBeforeEachForced: "update_before_each_forced",
 	UpdateWarning: "update_warning", UpdateNote: "update_note", PurgeModSkipped: "purge_mod_skipped", PurgeModPurged: "purge_mod_purged",
 	ImportSaved: "import_saved", ImportInstalling: "import_installing", ImportModInstalling: "import_mod_installing",

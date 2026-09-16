@@ -69,7 +69,7 @@ func TestParseNexusModsFilename(t *testing.T) {
 
 func TestDetectModName(t *testing.T) {
 	t.Run("empty path returns archive basename", func(t *testing.T) {
-		got := core.DetectModName("", "MyMod-123-1-0.zip")
+		got := core.DetectModName(nil, "", "MyMod-123-1-0.zip")
 		assert.Equal(t, "MyMod-123-1-0", got)
 	})
 
@@ -82,7 +82,7 @@ func TestDetectModName(t *testing.T) {
 		err = os.WriteFile(filepath.Join(modDir, "readme.txt"), []byte("test"), 0644)
 		require.NoError(t, err)
 
-		got := core.DetectModName(dir, "archive-12345-1-0.zip")
+		got := core.DetectModName(nil, dir, "archive-12345-1-0.zip")
 		assert.Equal(t, "MyAwesomeMod", got)
 	})
 
@@ -94,7 +94,7 @@ func TestDetectModName(t *testing.T) {
 		err = os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("test"), 0644)
 		require.NoError(t, err)
 
-		got := core.DetectModName(dir, "CoolMod-99999-2-0.zip")
+		got := core.DetectModName(nil, dir, "CoolMod-99999-2-0.zip")
 		assert.Equal(t, "CoolMod-99999-2-0", got)
 	})
 
@@ -103,12 +103,12 @@ func TestDetectModName(t *testing.T) {
 		err := os.WriteFile(filepath.Join(dir, "plugin.dll"), []byte("binary"), 0644)
 		require.NoError(t, err)
 
-		got := core.DetectModName(dir, "SingleFile-11111-1-0.zip")
+		got := core.DetectModName(nil, dir, "SingleFile-11111-1-0.zip")
 		assert.Equal(t, "SingleFile-11111-1-0", got)
 	})
 
 	t.Run("non-existent path falls back to archive basename", func(t *testing.T) {
-		got := core.DetectModName("/nonexistent/path", "SomeMod-22222-1-0.zip")
+		got := core.DetectModName(nil, "/nonexistent/path", "SomeMod-22222-1-0.zip")
 		assert.Equal(t, "SomeMod-22222-1-0", got)
 	})
 }

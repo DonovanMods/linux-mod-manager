@@ -165,7 +165,7 @@ func TestAdapterFor_TheOffRootRefusalPutsThePurgeFirst(t *testing.T) {
 	require.Error(t, err)
 	root := game.InstallPath
 	assert.Equal(t, fmt.Sprintf("game %[1]q sets adapter: bepinex but its mod_path (%[2]s) is not its install path, and a BepInEx layout is relative to the game root. "+
-		"To have lmm lay BepInEx archives out, run `lmm purge --game %[1]s`, then set its mod_path to %[3]s in games.yaml, "+
+		"To have lmm lay BepInEx archives out, run `lmm purge --game %[1]s --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit %[1]s --mod-path %[3]s`, "+
 		"then run `lmm deploy --game %[1]s` and `lmm verify --fix --game %[1]s`, which moves what is already imported under BepInEx/; "+
 		"or, to deploy archives into %[2]s exactly as packaged, run `lmm game edit %[1]s --adapter generic-files`",
 		"valheim", game.ModPath, root), err.Error())
@@ -186,7 +186,7 @@ func TestRefusedBepInExGame_FollowingTheRefusalLeavesNothingBehind(t *testing.T)
 			_, err := svc.PlanDeploy(ctx, game, "default", core.DeployOptions{})
 			require.Error(t, err)
 			msg := err.Error()
-			steps := []string{"`lmm purge --game valheim`", "set its mod_path to " + game.InstallPath, "`lmm deploy --game valheim`", "`lmm verify --fix --game valheim`"}
+			steps := []string{"`lmm purge --game valheim --profile <name>`", "`lmm game edit valheim --mod-path " + game.InstallPath + "`", "`lmm deploy --game valheim`", "`lmm verify --fix --game valheim`"}
 			last := -1
 			for _, step := range steps {
 				at := strings.Index(msg, step)
@@ -194,16 +194,18 @@ func TestRefusedBepInExGame_FollowingTheRefusalLeavesNothingBehind(t *testing.T)
 				last = at
 			}
 
-			// 1. lmm purge --game valheim
+			// 1. lmm purge --game valheim --profile default - the only
+			// profile with files deployed.
 			plan, err := svc.PlanPurge(ctx, game, "default", core.PurgeOptions{})
 			require.NoError(t, err)
 			_, err = svc.ApplyPurge(ctx, game, plan, core.PurgeOptions{}, nil)
 			require.NoError(t, err)
 
-			// 2. set its mod_path to the install path in games.yaml
-			moved := *game
-			moved.ModPath = game.InstallPath
-			require.NoError(t, svc.SaveGame(ctx, &moved))
+			// 2. lmm game edit valheim --mod-path <install path> - which
+			// refuses while anything is still deployed, so this also proves
+			// step 1 left nothing recorded.
+			_, err = svc.SetGameModPath(ctx, game.ID, game.InstallPath)
+			require.NoError(t, err)
 			game, err = svc.GetGame(game.ID)
 			require.NoError(t, err)
 			require.Equal(t, "bepinex", svc.AdapterName(game))

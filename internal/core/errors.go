@@ -133,6 +133,38 @@ func (e *GameDetectPartialError) Unwrap() error { return e.Err }
 // failure - for a frontend's error envelope's "details" field.
 func (e *GameDetectPartialError) Details() any { return e.Result }
 
+// AdapterRefusedError is AdapterFor's refusal (#455): GameID's configuration
+// resolves to Adapter, and no flow may run it - an adapter this build does
+// not ship, a `deploy_mode: compile` game's adapter that cannot compile, or
+// bepinex off the game root. Err is the sentence every flow has always
+// printed, remedy included, and Error returns it unchanged.
+//
+// It is typed because a read that cannot answer without a layout - conflict
+// detection - has nothing to report but the refusal, and a frontend should
+// render that as the known, handled state it is (GET /api/v1/conflicts
+// answers 409 with it) rather than as a failure.
+type AdapterRefusedError struct {
+	GameID  string
+	Adapter string
+	Err     error
+}
+
+// Error implements error.
+func (e *AdapterRefusedError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the underlying refusal.
+func (e *AdapterRefusedError) Unwrap() error { return e.Err }
+
+// Details returns the game and the adapter it names for the --json error
+// envelope's "details" field (Ruling 3); the sentence is the envelope's
+// "error".
+func (e *AdapterRefusedError) Details() any {
+	return struct {
+		GameID  string `json:"game_id"`
+		Adapter string `json:"adapter"`
+	}{GameID: e.GameID, Adapter: e.Adapter}
+}
+
 // ErrProfileExists is returned by ProfileManager.Create and ProfileManager.
 // Rename when the target profile name is already taken - either a profile
 // file already answers to it, or (Rename only) DB rows still name it after

@@ -116,7 +116,7 @@ func (s *Service) fetchModToCache(ctx context.Context, gameCache *cache.Cache, f
 	if verr := verifyFetchedPath(destDir, fetched); verr != nil {
 		return nil, verr
 	}
-	return s.ingestLocalToCache(ctx, gameCache, game, mod, file, fetched)
+	return s.ingestLocalToCache(ctx, gameCache, game, mod, file, fetched, sink)
 }
 
 // sourceGameIDFor resolves the identifier sourceID knows game by, falling
@@ -208,9 +208,9 @@ func (p DeployPhase) isWorkshopFetch() bool {
 	return p == WorkshopFetchStarted || p == WorkshopFetchProgress || p == WorkshopFetchDone
 }
 
-// forwardFetchStep re-emits a source.Fetcher's own progress step into a
-// flow's event stream under that flow's scope, reporting whether it
-// handled the event.
+// forwardFetchStep re-emits a source.Fetcher's own progress step - or a
+// download-time warning (DownloadWarning, #425) - into a flow's event
+// stream under that flow's scope, reporting whether it handled the event.
 //
 // Every flow that downloads adapts the downloader's raw stream to its own
 // vocabulary with a progressFn that keeps DownloadEvents and drops
@@ -223,7 +223,18 @@ func (p DeployPhase) isWorkshopFetch() bool {
 // The phase is passed through unchanged (unlike a download's, which each
 // flow renames): a fetch is the same operation whichever flow asked for
 // it, and the frontends humanize the phase name rather than table-match it.
+//
+// The warning rides the same clause for the same reason (#425): an
+// archive's shape is only knowable once the download is extracted, so the
+// warning is raised beneath every flow's progressFn - which dropped it,
+// install's included, and "lmm told you how to fix this" depended on which
+// verb you typed. This is the one function every such progressFn already
+// calls first, so forwarding it here reaches them all.
 func forwardFetchStep(e Event, scope Scope, emit func(Event)) bool {
+	if w, ok := e.(WarningEvent); ok && w.Phase == DownloadWarning {
+		emit(WarningEvent{Scope: scope, Phase: DownloadWarning, Message: w.Message})
+		return true
+	}
 	step, ok := e.(StepEvent)
 	if !ok || !step.Phase.isWorkshopFetch() {
 		return false

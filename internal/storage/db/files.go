@@ -143,6 +143,38 @@ func (d *DB) DeployedPathProfiles(ctx context.Context, gameID string) (profiles 
 	return profiles, rows.Err()
 }
 
+// DeployedFileCounts returns how many deployed_files rows each profile of
+// gameID has, keyed by profile name; a profile with none has no entry. It
+// is the population a mod_path move would strand, since each row is
+// relative to the mod_path it was deployed under - per profile, because
+// each profile is purged on its own.
+func (d *DB) DeployedFileCounts(ctx context.Context, gameID string) (counts map[string]int, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT profile_name, COUNT(*) FROM deployed_files
+		WHERE game_id = ?
+		GROUP BY profile_name
+	`, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("counting deployed files: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+
+	counts = map[string]int{}
+	for rows.Next() {
+		var profile string
+		var n int
+		if err := rows.Scan(&profile, &n); err != nil {
+			return nil, fmt.Errorf("scanning deployed file count: %w", err)
+		}
+		counts[profile] = n
+	}
+	return counts, rows.Err()
+}
+
 // DeleteDeployedFiles removes all deployed file records for a specific mod.
 func (d *DB) DeleteDeployedFiles(ctx context.Context, gameID, profileName, sourceID, modID string) error {
 	_, err := d.ExecContext(ctx, `

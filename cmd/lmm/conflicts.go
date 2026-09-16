@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -82,6 +83,13 @@ func doConflicts(ctx context.Context, svc *core.Service, game *domain.Game) erro
 
 	conflicts, err := svc.GetProfileConflicts(ctx, game, profileName)
 	if err != nil {
+		// #455: a refused adapter is reported as itself - its sentence
+		// already names the game and the fix, and --json carries the game
+		// and the adapter - the same answer GET /api/v1/conflicts gives.
+		var refused *core.AdapterRefusedError
+		if errors.As(err, &refused) {
+			return err
+		}
 		return fmt.Errorf("getting conflicts: %w", err)
 	}
 	report.Conflicts = conflicts

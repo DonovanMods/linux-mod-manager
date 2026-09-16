@@ -187,10 +187,41 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 		_, _ = fmt.Fprintln(h, row)
 	}
 
+	// The mod_path itself, and what verify's mod_path_missing row reads
+	// about it (#427 review F9). The tree walk below reads an absent root as
+	// an empty tree and never names the root, so without this a mod_path
+	// recreated by hand, or moved by an out-of-process games.yaml edit, went
+	// on being answered from the memo taken before. ModPathProblem's
+	// sentence carries every input the row has - the stat, the recorded
+	// deployments, the install path - and the stat kind is beside it
+	// because a quiet absent directory and an existing one both answer "".
+	modPathToken, err := s.modPathError(ctx, game)
+	if err != nil {
+		return "", fmt.Errorf("fingerprinting the mod path: %w", err)
+	}
+	_, _ = fmt.Fprintf(h, "modpath\x1f%s\x1f%s\x1f%s\x1f%s\n",
+		game.ModPath, game.InstallPath, statKind(game.ModPath), modPathToken)
+
 	if err := fingerprintTree(ctx, h, game.ModPath); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// statKind names what is at path, for a fingerprint: "absent", "dir",
+// "other", or "error" when it cannot be told.
+func statKind(path string) string {
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "absent"
+	case err != nil:
+		return "error"
+	case info.IsDir():
+		return "dir"
+	default:
+		return "other"
+	}
 }
 
 // fingerprintTree writes a stat-only summary of root into h: every entry's

@@ -2,7 +2,7 @@
 .TH "LMM" "1" "Sep 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
-lmm-game-edit - Edit a configured game's source mappings
+lmm-game-edit - Edit a configured game's sources, mod path, adapter or loader
 
 
 .SH SYNOPSIS
@@ -45,12 +45,34 @@ never writes a Steam launch option - 'lmm game show' prints the exact
 string to paste.
 
 .PP
+--mod-path sets the directory lmm deploys mods into - the repair for a
+mod_path that no longer exists, which 'lmm game show' and 'lmm status'
+flag. A relative path is relative to the game's install path, and "~/"
+is your home directory. The directory does not have to exist yet (a
+deploy creates it), but a file is refused. lmm records every deployed
+file relative to the mod_path, so the edit is refused while any profile
+has files deployed; the refusal names each one. Purge each with 'lmm
+purge --game <id> --profile <name>\&', run this, then 'lmm deploy', which
+deploys the active profile into the new directory; any other profile is
+deployed there when you next switch to it. A BepInEx game deploys into
+its install path, so that is its mod path.
+
+.PP
+--source, --remove-source, --adapter and --mod-path are one edit: every
+change is checked before any is written, so a run applies all of them or
+none. That is also what lets --mod-path and --adapter move a game onto
+bepinex, or off it, in one run.
+
+.PP
 Sources and the loader are separate edits: pass one or the other.
 
 .PP
 Examples:
   lmm game edit skyrim-se --source curseforge=skyrim
   lmm game edit icarus --source local-mods= --remove-source nexusmods
+  lmm game edit human-host --mod-path "~/.steam/steam/steamapps/common/Human Host"
+  lmm game edit valheim --mod-path /games/valheim --adapter bepinex
+  lmm game edit valheim --adapter generic-files --mod-path BepInEx/plugins
   lmm game edit valheim --loader bepinex --loader-version 5.4.23.5 --loader-bootstrap proton
   lmm game edit valheim --loader ""
   lmm game edit skyrim-se --source nexusmods=skyrimspecialedition --json
@@ -79,6 +101,10 @@ Examples:
 .PP
 \fB--loader-version\fP=""
 	the loader version installed in the game directory, e.g. 5.4.23.5 (checked by 'lmm verify')
+
+.PP
+\fB--mod-path\fP=""
+	set the directory lmm deploys mods into (relative to the install path unless absolute)
 
 .PP
 \fB--remove-source\fP=[]

@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
@@ -565,10 +564,8 @@ func (s *Service) otherGamesRecording(ctx context.Context, game *domain.Game) (*
 			continue
 		}
 		root := resolvedDir(other.ModPath)
-		if _, ok := pathWithin(root, records.root); !ok {
-			if _, ok := pathWithin(records.root, root); !ok {
-				continue
-			}
+		if !pathWithin(records.root, root) && !pathWithin(root, records.root) {
+			continue
 		}
 		paths, err := s.db.DeployedPathProfiles(ctx, other.ID)
 		if err != nil {
@@ -588,7 +585,7 @@ func (r *otherGameRecords) recording(rel string) []string {
 	abs := filepath.Join(r.root, filepath.FromSlash(rel))
 	var games []string
 	for _, g := range r.games {
-		if theirs, ok := pathWithin(g.root, abs); ok && len(g.paths[filepath.ToSlash(theirs)]) > 0 {
+		if theirs, ok := relWithin(g.root, abs); ok && len(g.paths[filepath.ToSlash(theirs)]) > 0 {
 			games = append(games, g.id)
 		}
 	}
@@ -601,19 +598,17 @@ func resolvedDir(dir string) string {
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs
 	}
-	if real, err := filepath.EvalSymlinks(dir); err == nil {
-		return real
-	}
-	return filepath.Clean(dir)
+	return resolvedPath(dir)
 }
 
-// pathWithin returns path relative to root, when path is root or below it.
-func pathWithin(root, path string) (string, bool) {
-	rel, err := filepath.Rel(root, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+// relWithin returns path relative to root, when path is root or below it
+// (pathWithin).
+func relWithin(root, path string) (string, bool) {
+	if !pathWithin(path, root) {
 		return "", false
 	}
-	return rel, true
+	rel, err := filepath.Rel(root, path)
+	return rel, err == nil
 }
 
 // purgeRecorded carries out a recorded-only purge plan (#445). The records
