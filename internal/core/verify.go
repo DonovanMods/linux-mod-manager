@@ -180,6 +180,12 @@ type VerifyFinding struct {
 	// beside a missing row that offers Repair; the refusal for the second
 	// one arrives on the repaired document, as note "locked".
 	FixableReason string `json:"fixable_reason,omitzero"`
+
+	// External marks a row about a Steam Workshop item lmm tracks but never
+	// deployed (#429): an "ok" row naming a present item, which the
+	// presence check is ALL lmm can verify about it, or its
+	// "external_missing" row. omitzero, so every other row is unchanged.
+	External bool `json:"external,omitzero"`
 }
 
 // notFixableLocal is the reason shared by every repair gated on
@@ -223,7 +229,20 @@ type VerifyResult struct {
 	Issues   int             `json:"issues"`
 	Warnings int             `json:"warnings"`
 	Checked  int             `json:"checked"`   // feeds the CLI's "No files found for mod X" gate
-	HasFiles bool            `json:"has_files"` // false = the #217 empty-profile path ran
+	HasFiles bool            `json:"has_files"` // false = no installed mod has recorded files (the #217 path)
+
+	// Mods is how many installed mods the run covered - every installed mod
+	// of the profile, or the one ModFilter names (#429). HasFiles says
+	// whether any of them has files to checksum; this says whether there
+	// was anything to verify at all, which is what "no installed mods"
+	// means. External counts the Steam Workshop items among them, each
+	// checked for presence and named by a row; Unverified counts the others
+	// with no recorded files - a mod imported from disk, typically - which
+	// lmm has nothing to compare against. All three are omitzero: an empty
+	// profile's document is unchanged.
+	Mods       int `json:"mods,omitzero"`
+	External   int `json:"external,omitzero"`
+	Unverified int `json:"unverified,omitzero"`
 
 	// CheckedAt is when the run began, in UTC (#334) - so a surface that
 	// renders a stored or cached result ("last verified 2 hours ago") reads
@@ -258,7 +277,7 @@ type VerifyEventKind int
 // -v-gated respectively). The trailing comment on each names which
 // VerifyEvent field the kind's extra data lives in.
 const (
-	VerifyEvBegin        VerifyEventKind = iota // HasFiles
+	VerifyEvBegin        VerifyEventKind = iota // HasFiles, Mods
 	VerifyEvFinding                             // Finding + extras; row was appended to Findings
 	VerifyEvRepairDetail                        // indented sub-line; Detail pre-formatted, Fixed tone flag
 	VerifyEvSyncWarning                         // stderr-bound merged-pak sync warning (Detail)
@@ -304,7 +323,8 @@ type VerifyEvent struct {
 	Scope
 	Kind     VerifyEventKind `json:"kind"`
 	HasFiles bool            `json:"has_files,omitempty"`
-	Finding  VerifyFinding   `json:"finding"` // valid for VerifyEvFinding
+	Mods     int             `json:"mods,omitempty"` // VerifyEvBegin: VerifyResult.Mods (#429)
+	Finding  VerifyFinding   `json:"finding"`        // valid for VerifyEvFinding
 
 	// Main-line extras the CLI needs beyond the finding row itself:
 	Recorded          string `json:"recorded,omitempty"`           // version_mismatch / missing
@@ -600,19 +620,20 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	if err != nil {
 		return nil, fmt.Errorf("getting files: %w", err)
 	}
+	installedMods, err := s.GetInstalledMods(ctx, game.ID, profile)
+	if err != nil {
+		return nil, fmt.Errorf("getting installed mods: %w", err)
+	}
 
 	result.HasFiles = len(files) > 0
-	r.emitEv(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles})
+	result.Mods, result.Unverified = verifyScope(installedMods, files, opts.ModFilter)
+	r.emitEv(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles, Mods: result.Mods})
 
 	if !result.HasFiles {
 		// #269: an all-external profile has no checksummed files at all, so
 		// its presence tier has to run on this branch too - otherwise a
 		// profile of nothing but Steam Workshop items would verify as
 		// "nothing to check" and never notice an unsubscribed one.
-		installedMods, err := s.GetInstalledMods(ctx, game.ID, profile)
-		if err != nil {
-			return nil, fmt.Errorf("getting installed mods: %w", err)
-		}
 		if err := r.externalPresencePass(installedMods); err != nil {
 			return result, err
 		}
@@ -650,11 +671,6 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	// safe behavior on a nil *domain.Profile does the right thing here
 	// without an extra guard.
 	prof, _ := config.LoadProfile(s.ConfigDir(), game.ID, profile)
-
-	installedMods, err := s.GetInstalledMods(ctx, game.ID, profile)
-	if err != nil {
-		return nil, fmt.Errorf("getting installed mods: %w", err)
-	}
 
 	if err := r.externalPresencePass(installedMods); err != nil {
 		// Cancelled mid-pass: return the partial result already
@@ -771,17 +787,47 @@ func (r *verifyRun) externalPresencePass(installedMods []domain.InstalledMod) er
 		if r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter {
 			continue
 		}
+		r.result.External++
 		if externalContentPresent(mod.ExternalPath) {
+			// #429: named, not skipped - "tracked, present, and not lmm's
+			// to verify" is the whole report for this item, and silence
+			// read as "not checked at all". An "ok" row, so no surface
+			// counts it as a problem.
+			r.finding(VerifyFinding{
+				ModID: mod.ID, ModName: mod.Name, Status: "ok", External: true,
+				Note: "tracked from Steam - present on disk; Steam owns its files, so lmm checks only that they are there",
+			}, VerifyEvent{})
 			continue
 		}
 		r.result.Issues++
 		r.finding(VerifyFinding{
-			ModID: mod.ID, ModName: mod.Name, Status: "external_missing",
+			ModID: mod.ID, ModName: mod.Name, Status: "external_missing", External: true,
 			Note:          "Steam no longer has this item on disk - it may have been unsubscribed",
 			FixableReason: "lmm does not own this item's files, so there is nothing for --fix to redownload - resubscribe in the Steam client, or uninstall it from lmm",
 		}, VerifyEvent{})
 	}
 	return nil
+}
+
+// verifyScope counts the installed mods a run covers (those ModFilter
+// names, or all of them) and, of those, the ones that are neither external
+// nor have a single recorded file - what VerifyResult.Mods and .Unverified
+// report (#429).
+func verifyScope(installedMods []domain.InstalledMod, files []DeployedFile, modFilter string) (mods, unverified int) {
+	withFiles := make(map[string]bool, len(files))
+	for _, f := range files {
+		withFiles[domain.ModKey(f.SourceID, f.ModID)] = true
+	}
+	for _, mod := range installedMods {
+		if modFilter != "" && mod.ID != modFilter {
+			continue
+		}
+		mods++
+		if !mod.External && !withFiles[domain.ModKey(mod.SourceID, mod.ID)] {
+			unverified++
+		}
+	}
+	return mods, unverified
 }
 
 // externalContentPresent reports whether path is a directory with at least

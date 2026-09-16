@@ -844,6 +844,19 @@ func TestJSONGoldens(t *testing.T) {
 			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime, Cached: true},
 		},
 		{
+			// #429: a profile with nothing checksummed is not empty - the
+			// counts say what the run covered, and a present Workshop item
+			// is named by an external "ok" row.
+			"verify_result_uncheckable_mods",
+			core.VerifyResult{
+				Findings: []core.VerifyFinding{{
+					ModID: "3617086610", ModName: "ModMenu", Status: "ok", External: true,
+					Note: "tracked from Steam - present on disk; Steam owns its files, so lmm checks only that they are there",
+				}},
+				Mods: 2, External: 1, Unverified: 1, CheckedAt: fixedTime,
+			},
+		},
+		{
 			"converged_file",
 			core.ConvergedFile{
 				Path: "Data/textures/old.dds", Reason: "no longer provided by nexusmods/42",

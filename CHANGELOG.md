@@ -1500,6 +1500,22 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **`lmm verify` no longer says "No installed mods to verify." about mods it
+  simply has no checksums for (#429).** A game whose mods were all tracked
+  from Steam, or all imported from disk, read as empty: the run began with
+  that line because nothing was checksummed, and an item Steam no longer
+  had was counted as an issue with no line saying which. The run now begins
+  `Verifying N installed mod(s)...`, names each Steam Workshop item —
+  `+ ModMenu - tracked from Steam - present on disk; …`, or
+  `X Unsubscribed - Steam no longer has this item on disk …` — says how many
+  mods lmm has no recorded files for, and still runs the game's adapter and
+  loader checks, as it always did; only a profile with nothing installed
+  says "No installed mods to verify." `--json` is additive: the result
+  gains `mods`, `external` and `unverified` counts (absent when zero), and a
+  row about a Workshop item carries `external: true` — the present item's
+  row is an `ok` row, so the web Health card, which lists only rows that
+  are not `ok`, does not count it as a finding.
+
 - **Every `lmm mod` subcommand addresses an imported mod (#447).**
   `lmm import` records a mod under the `local` source, which no game maps,
   and `lmm mod lock`, `unlock`, `set-update`, `files`, `show` and `convert`

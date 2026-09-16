@@ -173,19 +173,26 @@ or warnings.
 
 .PP
 --json emits {game_id, profile, result: {findings: [{mod_id, mod_name,
-file_id, status, note, recorded, effective, version}], issues, warnings,
-checked, has_files}}; each finding key is omitted when unset (a row only
-carries the fields its status needs - e.g. "version_mismatch" carries
-recorded/effective, "missing" carries version, most statuses carry
-neither). checked is the number of files/mods verify walked (feeds the
-"No files found for mod X" text-mode message); has_files is false only
-for the #217 empty-profile path, where no checksummed files exist so no
-findings/issues are possible and only whatever the deploy-convergence
-sweep found appears. status is one of "ok", "missing", "no_checksum",
+file_id, status, note, recorded, effective, version, external}], issues,
+warnings, checked, has_files, mods, external, unverified}}; each finding
+key is omitted when unset (a row only carries the fields its status needs -
+e.g. "version_mismatch" carries recorded/effective, "missing" carries
+version, most statuses carry neither). checked is the number of files/mods
+verify walked (feeds the "No files found for mod X" text-mode message);
+has_files is false when no installed mod has recorded files, so no
+per-file checks run - the game-level checks (Steam Workshop presence, the
+adapter's, the loader's) and the deploy-convergence sweep still do. mods
+counts the installed mods the run covered (absent for an empty profile -
+the only case text mode says "No installed mods to verify."), external the
+Steam Workshop items among them - each checked for presence and named by
+a row: "ok" with external true while Steam still has it, "external_missing"
+once it does not - and unverified the others lmm has no recorded files for
+(a mod imported from disk), which it cannot compare against anything.
+status is one of "ok", "missing", "no_checksum",
 "file_count_mismatch", "skipped", "version_mismatch",
 "version_unverifiable", "stale_compile", "stale_deployment",
 "fixed_stale_deployment", "conversion_failed", "needs_reingest",
-"fixed_needs_reingest", or one of the loader tier's own rows -
+"fixed_needs_reingest", "external_missing", or one of the loader tier's own rows -
 "loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
 "loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
 "fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",
