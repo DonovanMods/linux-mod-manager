@@ -533,3 +533,78 @@ Approved as written. The two open questions are answered as recommended:
 - **Decision 4 (`Auth: false`)** must not break the auth surfaces: `lmm auth status` and the
   setup card list the source with "no credential needed", not as unauthenticated.
 - Units T1 → T2 → T3 run sequentially as designed; each is its own story issue under #360.
+
+---
+
+## Amended by T3 (#410, with #436 and #423), 2026-09-16
+
+What T3 shipped differs from §2.4, §2.7, §2.8, §4 and §5 in these ways. Each
+is recorded here so nobody goes looking for the surface the original text
+names.
+
+- **There is no `lmm cache` command.** §2.8 and §4.1 assumed one; lmm has
+  never had it. The coordinator ruled (option A) that the footprint and the
+  pruning live beside the index instead: `lmm source index --all` lists every
+  index on disk (community, packages, size, fetched, the games that map it),
+  and `lmm source index prune [--all] [--dry-run] [-y]` applies §2.8's rules.
+  Core gains `ListSourceIndexes` and `PruneSourceIndexes`
+  (`internal/core/source_index_prune.go`); the source gains
+  `source.IndexInventory` (`CachedIndexes`, `RemoveIndex`). Web parity is two
+  more settings-class routes, `GET /api/v1/indexes` and
+  `POST /api/v1/indexes/prune`, and the Setup page's index section (whose tab
+  is now "Sources").
+- **Prune is fail-closed** (the coordinator's conditions): games.yaml is
+  re-read and an unreadable one removes nothing, even with `--all`; a game
+  that maps the source to an empty or malformed identifier keeps every
+  unused index; a source that cannot list its indexes is a warning; the
+  source removes a directory only when every entry is a regular file it
+  wrote (`index.json`, `packages.jsonl`, `watermark.json`, `.lock`, staging
+  files), file by file and then a plain rmdir, under both build locks, and
+  never through a symbolic link - a symlinked `_thunderstore` root refuses
+  everything, while a symlinked cache directory above it is allowed. A dry
+  run's removal keys (`IndexPruneOptions.Only`) bound the confirmed run, so
+  `--dry-run` lists exactly what the real run removes. `--all` removes a
+  mapped, fresh index too, after a confirmation. `lockCommunity` now
+  re-checks that the locked file is still the one at the path, so a lock
+  file a prune removed under its holder cannot let two builds run at once.
+- **The typed errors are core's.** `core.IndexUnavailableError`
+  (`{source, game, reason, retry_at?}`, HTTP 502) and
+  `core.GameIdentifierError` (`{game_id, source, value}`, HTTP 400), with
+  `core.IsIndexUnavailable` and `core.IsGameIdentifierInvalid` - the second
+  named for the cross-source sentinel T2 generalised, not
+  `IsCommunityNotConfigured`. A source with a fixed identifier shape
+  implements the new `source.GameIdentifierValidator`, so core refuses a
+  malformed mapping with the game named, and the index surface refuses a
+  game that does not map the source at all rather than indexing whatever
+  community shares the game's id. The same statuses answer a search and a
+  plan; a plan refused by `LoaderRequiredError` is 409 (#423).
+- **§2.4's stale-index warning** travels as `source.SearchResult.Warnings`,
+  which core copies into `SearchReport.Warnings` on both search paths.
+- **§2.7's readout comes from the source**, not from `lmm search`. A cold
+  build a source does for itself raises a `source.Notice` on the call's
+  context (`source.WithNotices`, the `net/http/httptrace` shape), and so do
+  a throttled retry and a suspended host (#436). `core.WithSourceNotices`
+  renders them as events; `withServiceOpts` prints them to stderr for every
+  command (so `lmm import`'s scan-mode matching gets the line - T1 review
+  #8), and every web UI job's context carries its own sink. The search page
+  and the omnibar show the cold-build line by asking the index route about
+  the indexes the game maps.
+- **T1 review #7 and nit 10, decided:** a package with `has_nsfw_content` is
+  marked with a synthetic `NSFW` category and left out of results unless the
+  query asks for that category or tag; `Deprecated` filters the same way;
+  neither word is searchable text. Index schema 3 carries the flag as a
+  ninth row element (after the offsets), so every existing index rebuilds
+  once.
+- **Rate limits (#436).** Thunderstore documents none for the listing or
+  the download endpoint: the API docs state none, and the server's own
+  Django REST settings configure no default throttle - the only throttle in
+  its code is 6/minute on the experimental legacy-profile upload. The
+  listing is a precomputed blob answering conditional GETs (503 when it is
+  missing). So the retry policy is pinned to that per-minute window: a
+  `Retry-After` is a floor (it was being jittered below), read in both
+  forms, waited out up to a minute and otherwise refused and remembered. A
+  30-second stall window sits under the retries for the index, and core's
+  download client - which had no timeout at all - gets a one-minute one.
+- **§5's "no E2E"** did not survive T3: the index rows, the prune preview,
+  the cold-build notice, the throttle readout on a job and the loader setup
+  steps are browser claims, and each has one (`e2e_source_index_test.go`).
