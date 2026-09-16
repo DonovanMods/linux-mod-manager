@@ -154,6 +154,11 @@ type Service struct {
 	// nil in production.
 	beforeProfileBackfillScan func()
 
+	// profileMarker, when non-nil, replaces config.MarkModsDisabled as the
+	// profile editor the backfill calls. Test-only seam (export_test.go's
+	// SetProfileMarkerForTest); always nil in production.
+	profileMarker func(path string, mods []domain.ModReference) ([]domain.ModReference, error)
+
 	// relayoutPlaceFile, when non-nil, replaces the per-file placement
 	// verify's BepInEx re-layout uses to build the new cache entry. Test-only
 	// seam (export_test.go's SetRelayoutPlaceFileForTest): the rewrite's

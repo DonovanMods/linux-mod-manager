@@ -304,3 +304,10 @@ func (s *Service) ProfileDisabledBackfillOwedForTest(ctx context.Context) (map[s
 func (s *Service) SetBeforeProfileBackfillScanForTest(fn func()) {
 	s.beforeProfileBackfillScan = fn
 }
+
+// SetProfileMarkerForTest replaces the profile editor the backfill calls
+// (config.MarkModsDisabled) - so a test can make it panic, the way F1's
+// did - or restores it when fn is nil.
+func (s *Service) SetProfileMarkerForTest(fn func(path string, mods []domain.ModReference) ([]domain.ModReference, error)) {
+	s.profileMarker = fn
+}

@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 
@@ -374,7 +375,7 @@ func (s *Service) markPendingProfile(ctx context.Context, pending pendingProfile
 			refs = append(refs, domain.ModReference{SourceID: mod.SourceID, ModID: mod.ModID})
 			names[domain.ModKey(mod.SourceID, mod.ModID)] = mod.Name
 		}
-		marked, err := config.MarkModsDisabled(path, refs)
+		marked, err := s.markModsDisabled(path, refs)
 		switch {
 		case errors.Is(err, domain.ErrProfileNotFound):
 			// Deleted since it was listed: nothing to mark.
@@ -392,6 +393,26 @@ func (s *Service) markPendingProfile(ctx context.Context, pending pendingProfile
 		key = pendingProfileKey(pending.GameID, pending.Profile)
 	}
 	return s.db.DeleteMeta(ctx, key)
+}
+
+// markModsDisabled is the backfill's one call into the profile editor,
+// behind a recover(). The editor reads bytes a user wrote by hand, and this
+// runs from app.Open, before any command does its work: a panic in it (F1
+// was one) used to crash every lmm command, the recovery one included, on
+// every run. A bug nobody has found yet now costs that one profile, kept and
+// reported like any other file the editor cannot edit.
+func (s *Service) markModsDisabled(path string, refs []domain.ModReference) (marked []domain.ModReference, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger().Error("profile backfill: the profile editor panicked", "file", path, "panic", r, "stack", string(debug.Stack()))
+			marked, err = nil, fmt.Errorf("internal error in lmm's profile editor (please report it): %v", r)
+		}
+	}()
+	mark := config.MarkModsDisabled
+	if s.profileMarker != nil {
+		mark = s.profileMarker
+	}
+	return mark(path, refs)
 }
 
 // keepPendingProfile records pending for a retry once its file changes, and

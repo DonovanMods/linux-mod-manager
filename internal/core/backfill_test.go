@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -727,4 +728,55 @@ func TestBackfillProfileDisabledMarkers_ASecondProcessFindsItDone(t *testing.T) 
 	assert.Empty(t, openerWarnings.String())
 	assert.Empty(t, mutatorWarnings.String())
 	assert.Empty(t, f.disabledRefs(t, "a"), "neither wrote the marker the user has since removed")
+}
+
+// TestBackfillProfileDisabledMarkers_AnEditorPanicSkipsTheProfile is fix
+// round 3's F1 boundary: the backfill runs from app.Open, before any command
+// does its work, so a panic in the profile editor - F1 was one - used to
+// crash every lmm command, the recovery one included, on every run. A bug
+// nobody has found yet now costs that one profile: kept, reported by file,
+// and not tried again until the file changes.
+func TestBackfillProfileDisabledMarkers_AnEditorPanicSkipsTheProfile(t *testing.T) {
+	f := newBackfillFixture(t)
+	ctx := context.Background()
+	f.row(t, "a", "off", false, false)
+	f.row(t, "b", "x", true, true)
+	f.owe(t)
+	original := mustRead(t, f.profilePath("a"))
+
+	calls := 0
+	f.svc.SetProfileMarkerForTest(func(path string, mods []domain.ModReference) ([]domain.ModReference, error) {
+		calls++
+		var lines []int
+		return nil, fmt.Errorf("unreachable: %d", lines[len(mods)]) // index out of range, as F1 was
+	})
+
+	var report *core.ProfileBackfillReport
+	var err error
+	require.NotPanics(t, func() { report, err = f.svc.BackfillProfileDisabledMarkers(ctx) })
+	require.NoError(t, err, "an editor bug is a skipped profile, not a failure")
+	require.Len(t, report.Skipped, 1)
+	assert.Equal(t, f.profilePath("a"), report.Skipped[0].File)
+	require.ErrorContains(t, report.Skipped[0].Err, "index out of range")
+	assert.Contains(t, f.warnings.String(), f.profilePath("a"))
+	assert.Equal(t, original, mustRead(t, f.profilePath("a")))
+	assert.Equal(t, 1, calls)
+
+	// Unchanged, the file is not tried again: not by the next open, and not
+	// by a mutation elsewhere - which is not refused either.
+	report, err = f.svc.BackfillProfileDisabledMarkers(ctx)
+	require.NoError(t, err)
+	assert.Nil(t, report)
+	_, err = f.svc.DisableMod(ctx, f.game, "b", "src", "x")
+	require.NoError(t, err)
+	assert.Equal(t, 1, calls)
+
+	// With the editor fixed and the file changed, it is marked.
+	f.svc.SetProfileMarkerForTest(nil)
+	later := time.Now().Add(time.Minute)
+	require.NoError(t, os.Chtimes(f.profilePath("a"), later, later))
+	report, err = f.svc.BackfillProfileDisabledMarkers(ctx)
+	require.NoError(t, err)
+	require.Len(t, report.Marked, 1)
+	assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
 }
