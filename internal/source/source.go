@@ -21,6 +21,11 @@ type SearchResult struct {
 	TotalCount int // Total results available (0 if unknown)
 	Page       int
 	PageSize   int
+	// Warnings are problems that did NOT stop this source answering - a
+	// local index whose refresh failed, served from the copy on disk
+	// (#360 §2.4). The results are real; a frontend reports these beside
+	// them rather than instead of them. nil for almost every search.
+	Warnings []error
 }
 
 // SearchQuery contains parameters for searching mods.

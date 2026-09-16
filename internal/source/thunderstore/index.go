@@ -33,14 +33,15 @@ const indexTTL = 6 * time.Hour
 const progressEvery = 1000
 
 // wirePackage is one package as Thunderstore serves it. Only the fields the
-// index keeps are declared; everything else (uuid4, rating_score, downloads,
-// has_nsfw_content, ...) is skipped by the decoder without allocating.
+// index keeps are declared; everything else (uuid4, rating_score,
+// downloads, ...) is skipped by the decoder without allocating.
 type wirePackage struct {
 	Name         string        `json:"name"`
 	FullName     string        `json:"full_name"`
 	Owner        string        `json:"owner"`
 	DateUpdated  string        `json:"date_updated"`
 	IsDeprecated bool          `json:"is_deprecated"`
+	HasNSFW      bool          `json:"has_nsfw_content"`
 	Categories   []string      `json:"categories"`
 	Versions     []wireVersion `json:"versions"`
 }
@@ -300,12 +301,14 @@ func project(p wirePackage) (packageRecord, indexRow) {
 		DateUpdated: p.DateUpdated,
 		Categories:  p.Categories,
 		Deprecated:  p.IsDeprecated,
+		NSFW:        p.HasNSFW,
 	}
 	row := indexRow{
 		FullName:    p.FullName,
 		Categories:  p.Categories,
 		DateUpdated: p.DateUpdated,
 		Deprecated:  p.IsDeprecated,
+		NSFW:        p.HasNSFW,
 	}
 	if len(p.Versions) > 0 {
 		latest := p.Versions[0]

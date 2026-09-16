@@ -57,6 +57,9 @@ type indexServer struct {
 	lastModified string
 	gzip         bool
 
+	// failStatus, when set, is what every listing request answers.
+	failStatus int
+
 	requests     int
 	conditionals int
 	served200    int
@@ -85,6 +88,10 @@ func (s *indexServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.requests++
 	if strings.HasPrefix(r.URL.Path, "/package/download/") {
 		s.serveDownload(w, r)
+		return
+	}
+	if s.failStatus != 0 {
+		http.Error(w, "failing on purpose", s.failStatus)
 		return
 	}
 	if want := "/c/" + testCommunity + "/api/v1/package/"; r.URL.Path != want {
@@ -316,4 +323,33 @@ func syntheticDocument(packages, descriptionRepeats int) []byte {
 	}
 	buf.WriteString("]")
 	return buf.Bytes()
+}
+
+// withNSFWPackage is the fixture document with one package marked
+// has_nsfw_content, for the tests whose subject is what lmm does with that
+// flag (#410 carry-in 3).
+func withNSFWPackage(t *testing.T, fullName string) []byte {
+	t.Helper()
+	var packages []map[string]any
+	require.NoError(t, json.Unmarshal(fixtureDocument(t), &packages))
+	found := false
+	for _, pkg := range packages {
+		if pkg["full_name"] == fullName {
+			pkg["has_nsfw_content"] = true
+			found = true
+		}
+	}
+	require.True(t, found, "the fixture has no package %s", fullName)
+	out, err := json.Marshal(packages)
+	require.NoError(t, err)
+	return out
+}
+
+// failWith makes every listing request answer status from now on, for the
+// tests whose subject is what a FAILED refresh leaves behind. 0 restores
+// normal service.
+func (s *indexServer) failWith(status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failStatus = status
 }

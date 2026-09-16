@@ -2,6 +2,7 @@ package thunderstore_test
 
 import (
 	"math"
+	"net/http"
 	"testing"
 	"time"
 
@@ -337,4 +338,82 @@ func TestConcurrentColdSearchesFetchOnce(t *testing.T) {
 
 	requests, _, _, _ := srv.counts()
 	assert.Equal(t, 1, requests)
+}
+
+// TestNSFWPackagesAreHiddenUnlessAskedFor is #410's decision on T1 review
+// #7: a package Thunderstore flags has_nsfw_content is marked with a
+// synthetic "NSFW" category and left out of results by default - the
+// default every Thunderstore client ships - and asking for that category or
+// tag is the opt-in. TotalCount counts what the user can see.
+func TestNSFWPackagesAreHiddenUnlessAskedFor(t *testing.T) {
+	srv := newIndexServer(t, withNSFWPackage(t, "Umlaut-Cafe_Mod"))
+	src, _, _ := newSource(t, srv)
+	search := func(q source.SearchQuery) source.SearchResult {
+		t.Helper()
+		q.GameID = testCommunity
+		res, err := src.Search(t.Context(), q)
+		require.NoError(t, err)
+		return res
+	}
+
+	browse := search(source.SearchQuery{PageSize: 100})
+	assert.Equal(t, 11, browse.TotalCount, "one of the twelve is hidden")
+	assert.NotContains(t, ids(browse), "Umlaut-Cafe_Mod")
+	assert.Empty(t, ids(search(source.SearchQuery{Query: "cafe"})), "a query does not reveal it either")
+
+	for _, q := range []source.SearchQuery{
+		{Tags: []string{"NSFW"}},
+		{Category: "nsfw"},
+		{Query: "cafe", Tags: []string{"nsfw"}},
+	} {
+		got := search(q)
+		assert.Equal(t, []string{"Umlaut-Cafe_Mod"}, ids(got), "opted in with %+v", q)
+		require.Len(t, got.Mods, 1)
+		assert.Contains(t, got.Mods[0].Category, "NSFW", "the hit says what it is")
+	}
+
+	// Asked for by id, it is never hidden: the user named it.
+	mod, err := src.GetMod(t.Context(), testCommunity, "Umlaut-Cafe_Mod")
+	require.NoError(t, err)
+	assert.Contains(t, mod.Category, "NSFW")
+}
+
+// TestSyntheticDeprecatedCategoryIsFilterable is T1 review nit 10: the
+// "Deprecated" category every renderer shows can be filtered on like any
+// other, without the word matching as free text.
+func TestSyntheticDeprecatedCategoryIsFilterable(t *testing.T) {
+	s := searchable(t)
+
+	deprecated := s.search(source.SearchQuery{Tags: []string{"Deprecated"}, PageSize: 100})
+	assert.Equal(t, []string{"Ghostbird-Skinwalker_Sounds"}, ids(deprecated))
+	assert.Equal(t, 1, deprecated.TotalCount)
+	assert.Equal(t, ids(deprecated), ids(s.search(source.SearchQuery{Category: "deprecated"})))
+
+	// The synthetic word is a filter, not text: nothing else says it.
+	assert.Empty(t, ids(s.search(source.SearchQuery{Query: "deprecated"})))
+}
+
+// TestSearch_AFailedRefreshOverAUsableIndexIsAWarning is design §2.4 (T1
+// carry-in 1): an index past its TTL whose refresh fails still answers the
+// search, and the result SAYS the copy could not be refreshed - the stale
+// answer is never silent, and never thrown away.
+func TestSearch_AFailedRefreshOverAUsableIndexIsAWarning(t *testing.T) {
+	s := searchable(t)
+	s.clock.advance(7 * time.Hour)
+	s.srv.failWith(http.StatusForbidden)
+
+	res, err := s.src.Search(t.Context(), source.SearchQuery{GameID: testCommunity, Query: "skinwalkers"})
+	require.NoError(t, err)
+	assert.NotEmpty(t, res.Mods, "the stale copy still answers")
+	require.Len(t, res.Warnings, 1)
+	assert.ErrorIs(t, res.Warnings[0], source.ErrIndexUnavailable)
+	assert.Contains(t, res.Warnings[0].Error(), "lethal-company")
+	assert.Contains(t, res.Warnings[0].Error(), "2026-09-10T12:00:00Z", "names how old the copy is")
+
+	// A fresh index carries no warning.
+	s.srv.failWith(0)
+	s.clock.advance(7 * time.Hour)
+	res, err = s.src.Search(t.Context(), source.SearchQuery{GameID: testCommunity})
+	require.NoError(t, err)
+	assert.Empty(t, res.Warnings)
 }
