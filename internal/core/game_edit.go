@@ -168,9 +168,9 @@ func (s *Service) SetGameAdapter(ctx context.Context, gameID, name string) (*Gam
 //
 //   - GameModPathInUseError while any profile of the game has files
 //     deployed. lmm records a deployed file relative to the mod_path it was
-//     deployed under, so a move under a live deployment strands every file
-//   - live, unrecorded, and looked for in the wrong place by the next
-//     purge. The purge comes first.
+//     deployed under, so a move under a live deployment strands every
+//     file: still live, no longer recorded, and looked for in the wrong
+//     place by the next purge. The purge comes first.
 //   - A GameSpecError when the move would turn a game its adapter accepts
 //     into one AdapterFor refuses (`adapter: bepinex` off the game root). A
 //     game that is ALREADY refused may be moved, because that is how such a
