@@ -591,6 +591,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #427/#456: the mod_path repair, with the adapter edit a BepInEx
+			// game's remedy pairs it with - the mod path is written first.
+			"game_mod_path_request",
+			gameSourcesRequest{ModPath: new("/games/valheim"), Adapter: new("bepinex")},
+		},
+		{
 			// The detect apply's body: which listing rows to add, named by
 			// 1-based index or slug (core.SelectDetectedGames resolves
 			// both, so the golden carries one of each).

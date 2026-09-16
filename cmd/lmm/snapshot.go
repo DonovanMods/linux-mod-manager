@@ -281,13 +281,13 @@ func doSnapshotRestore(ctx context.Context, service *core.Service, game *domain.
 		return emitJSON(plan)
 	}
 	if snapshotRestoreDry {
-		renderSnapshotRestorePlan(plan, game)
+		renderSnapshotRestorePlan(service, plan, game)
 		return nil
 	}
 
 	if !snapshotYes {
 		if !jsonOutput {
-			renderSnapshotRestorePlan(plan, game)
+			renderSnapshotRestorePlan(service, plan, game)
 			fmt.Print("\nContinue? [y/N] ")
 		}
 		response, err := readPromptLine()
@@ -346,7 +346,7 @@ func doSnapshotRestore(ctx context.Context, service *core.Service, game *domain.
 // renderSnapshotRestorePlan prints the plan: what goes away, what comes
 // back, and - first, because it is the only part the user may want to stop
 // for - what cannot be restored at all.
-func renderSnapshotRestorePlan(plan *core.SnapshotRestorePlan, game *domain.Game) {
+func renderSnapshotRestorePlan(service *core.Service, plan *core.SnapshotRestorePlan, game *domain.Game) {
 	fmt.Printf("Restore %s to snapshot %s (taken %s)\n",
 		game.Name, plan.Snapshot, plan.CreatedAt.Local().Format("2006-01-02 15:04"))
 	fmt.Printf("Profile: %s\n", plan.Profile)
@@ -430,7 +430,7 @@ func renderSnapshotRestorePlan(plan *core.SnapshotRestorePlan, game *domain.Game
 			detail = " (will download)"
 		}
 		fmt.Printf("  - %s %s%s\n", snapshotModLabel(m.Name, m.SourceID, m.ModID),
-			displayModVersion(m.External, m.Version, m.UpdatedAt), detail)
+			displayModVersion(workshopVersioned(service, m.External, m.SourceID), m.Version, m.UpdatedAt), detail)
 	}
 	if plan.ProfileChanged {
 		fmt.Printf("\nThe profile %s will be rewritten from the snapshot.\n", plan.Profile)

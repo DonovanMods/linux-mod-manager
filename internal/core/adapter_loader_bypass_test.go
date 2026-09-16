@@ -76,10 +76,13 @@ type bypassRemedy struct {
 type bypassCase struct {
 	adapterID string // what the game resolves to instead of bepinex
 	setup     func(t *testing.T, svc *core.Service, game *domain.Game)
-	// persistent is the load-time / loader-report / verify sentence, or ""
+	// persistent is the loader-report / verify / after-edit sentence, or ""
 	// for an acknowledged configuration that none of them flags. %[1]s is
 	// the install path, %[2]s the mod path.
 	persistent string
+	// loadTime is the one-line load-time warning (#456), for a case that
+	// declares the loader and is persistent.
+	loadTime string
 	// archive is the per-archive sentence, with the same verbs.
 	archive  string
 	remedies []bypassRemedy
@@ -108,16 +111,18 @@ var (
 		},
 	}
 	remedyMoveToGameRoot = bypassRemedy{
-		offers: "run `lmm purge --game lethal-company`, then set its mod_path to %[1]s in games.yaml, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`", perArchive: true,
-		apply: func(t *testing.T, svc *core.Service, id string) {
-			editGame(t, svc, id, func(g *domain.Game) { g.ModPath = g.InstallPath })
-		},
+		offers: "run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`", perArchive: true,
+		apply: func(t *testing.T, svc *core.Service, id string) { setModPathToRoot(t, svc, id) },
 	}
 	remedyMoveToGameRootAndBepInEx = bypassRemedy{
-		offers: "run `lmm purge --game lethal-company`, then set its mod_path to %[1]s in games.yaml, then run `lmm game edit lethal-company --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`", perArchive: true,
+		offers: "run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`", perArchive: true,
+		// One edit, as the step says (#427 review F5).
 		apply: func(t *testing.T, svc *core.Service, id string) {
-			editGame(t, svc, id, func(g *domain.Game) { g.ModPath = g.InstallPath })
-			setAdapter(t, svc, id, "bepinex")
+			game, err := svc.GetGame(id)
+			require.NoError(t, err)
+			bepinex := "bepinex"
+			_, err = svc.EditGame(context.Background(), id, core.GameEdit{ModPath: &game.InstallPath, Adapter: &bepinex})
+			require.NoError(t, err)
 		},
 	}
 )
@@ -140,6 +145,16 @@ func remedyPin(adapterID string, declared bool) bypassRemedy {
 func setAdapter(t *testing.T, svc *core.Service, id, name string) {
 	t.Helper()
 	_, err := svc.SetGameAdapter(context.Background(), id, name)
+	require.NoError(t, err)
+}
+
+// setModPathToRoot is `lmm game edit <id> --mod-path <install path>` (#456:
+// the step used to be a hand edit of games.yaml).
+func setModPathToRoot(t *testing.T, svc *core.Service, id string) {
+	t.Helper()
+	game, err := svc.GetGame(id)
+	require.NoError(t, err)
+	_, err = svc.SetGameModPath(context.Background(), id, game.InstallPath)
 	require.NoError(t, err)
 }
 
@@ -188,6 +203,7 @@ const nonRootWhy = `, because its mod_path (%[2]s) is not its install path and a
 
 var bypassCases = map[string]bypassCase{
 	"declared, explicit generic-files": {
+		loadTime:  `game "lethal-company" declares the BepInEx loader, but lmm ignores it because its adapter is "generic-files"; run ` + "`lmm game show lethal-company`" + ` for the fix`,
 		adapterID: "generic-files",
 		setup:     func(t *testing.T, _ *core.Service, g *domain.Game) { declare(g); g.Adapter = "generic-files" },
 		persistent: fmt.Sprintf(declaredOpening, `its adapter is "generic-files"`) + rootConsequence +
@@ -197,6 +213,7 @@ var bypassCases = map[string]bypassCase{
 		remedies: []bypassRemedy{remedyAdapterBepInEx, remedyUnloadExplicit},
 	},
 	"declared and installed, explicit generic-files": {
+		loadTime:  `game "lethal-company" declares the BepInEx loader, but lmm ignores it because its adapter is "generic-files"; run ` + "`lmm game show lethal-company`" + ` for the fix`,
 		adapterID: "generic-files",
 		setup: func(t *testing.T, _ *core.Service, g *domain.Game) {
 			declare(g)
@@ -210,6 +227,7 @@ var bypassCases = map[string]bypassCase{
 		remedies: []bypassRemedy{remedyAdapterBepInEx, remedyUnloadExplicit},
 	},
 	"declared, deploy_mode: compile": {
+		loadTime:  `game "lethal-company" declares the BepInEx loader, but lmm ignores it because ` + "`deploy_mode: compile` selects the \"icarus\" adapter; run `lmm game show lethal-company` for the fix",
 		adapterID: "icarus",
 		setup:     func(t *testing.T, svc *core.Service, g *domain.Game) { declare(g); compile(svc, g) },
 		persistent: fmt.Sprintf(declaredOpening, "its adapter is \"icarus\", which `deploy_mode: compile` selects") + rootConsequence +
@@ -219,6 +237,7 @@ var bypassCases = map[string]bypassCase{
 		remedies: []bypassRemedy{remedyDropCompile, remedyPin("icarus", true)},
 	},
 	"declared, explicit icarus with deploy_mode: compile": {
+		loadTime:  `game "lethal-company" declares the BepInEx loader, but lmm ignores it because its adapter is "icarus"; run ` + "`lmm game show lethal-company`" + ` for the fix`,
 		adapterID: "icarus",
 		setup: func(t *testing.T, svc *core.Service, g *domain.Game) {
 			declare(g)
@@ -267,21 +286,23 @@ var bypassCases = map[string]bypassCase{
 		adapterID: "generic-files",
 		setup:     func(t *testing.T, _ *core.Service, g *domain.Game) { install(t, g); pluginsModPath(g) },
 		persistent: fmt.Sprintf(installedOpening, `its adapter is "generic-files"`+nonRootWhy) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then set its mod_path to %[1]s in games.yaml, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, to keep this game on \"generic-files\", pin the adapter (`lmm game edit lethal-company --adapter generic-files`).",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, to keep this game on \"generic-files\", pin the adapter (`lmm game edit lethal-company --adapter generic-files`).",
 		archive: fmt.Sprintf(archiveOpening, `game "lethal-company"'s adapter is "generic-files"`+nonRootWhy) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then set its mod_path to %[1]s in games.yaml, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
 		remedies: []bypassRemedy{remedyMoveToGameRoot, remedyPin("generic-files", false)},
 	},
 	"declared, mod_path in BepInEx/plugins": {
+		loadTime:  `game "lethal-company" declares the BepInEx loader, but lmm ignores it because its mod_path is not the game root; run ` + "`lmm game show lethal-company`" + ` for the fix`,
 		adapterID: "generic-files",
 		setup:     func(t *testing.T, _ *core.Service, g *domain.Game) { declare(g); pluginsModPath(g) },
 		persistent: fmt.Sprintf(declaredOpening, `its adapter is "generic-files"`+nonRootWhy) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then set its mod_path to %[1]s in games.yaml, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, to keep this game on \"generic-files\", remove the `loader:` block (`lmm game edit lethal-company --loader \"\"`) and pin the adapter (`lmm game edit lethal-company --adapter generic-files`).",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, to keep this game on \"generic-files\", remove the `loader:` block (`lmm game edit lethal-company --loader \"\"`) and pin the adapter (`lmm game edit lethal-company --adapter generic-files`).",
 		archive: fmt.Sprintf(archiveOpening, `game "lethal-company"'s adapter is "generic-files"`+nonRootWhy) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then set its mod_path to %[1]s in games.yaml, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
 		remedies: []bypassRemedy{remedyMoveToGameRoot, remedyPin("generic-files", true)},
 	},
 	"declared and installed, explicit generic-files, mod_path in BepInEx/plugins": {
+		loadTime:  `game "lethal-company" declares the BepInEx loader, but lmm ignores it because its adapter is "generic-files"; run ` + "`lmm game show lethal-company`" + ` for the fix`,
 		adapterID: "generic-files",
 		setup: func(t *testing.T, _ *core.Service, g *domain.Game) {
 			declare(g)
@@ -290,9 +311,9 @@ var bypassCases = map[string]bypassCase{
 			g.Adapter = "generic-files"
 		},
 		persistent: fmt.Sprintf(declaredOpening, `its adapter is "generic-files"`) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then set its mod_path to %[1]s in games.yaml, then run `lmm game edit lethal-company --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, if \"generic-files\" is the adapter you meant, remove the `loader:` block (`lmm game edit lethal-company --loader \"\"`).",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, if \"generic-files\" is the adapter you meant, remove the `loader:` block (`lmm game edit lethal-company --loader \"\"`).",
 		archive: fmt.Sprintf(archiveOpening, `game "lethal-company"'s adapter is "generic-files"`) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then set its mod_path to %[1]s in games.yaml, then run `lmm game edit lethal-company --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
 		remedies: []bypassRemedy{remedyMoveToGameRootAndBepInEx, remedyUnloadExplicit},
 	},
 }
@@ -329,9 +350,9 @@ func bypassWarnings(ws []string) []string {
 	return out
 }
 
-// persistentWarnings is every persistent surface's bypass sentence for
-// game, in order: the one-game query, the loader report, the verify row,
-// and (for a declared game) the load-time list.
+// persistentWarnings is every persistent surface that says the whole
+// sentence for game, in order: the one-game query, the loader report and
+// the verify row. The load-time list says a short one (loadTimeWarnings).
 func persistentWarnings(t *testing.T, svc *core.Service, id string) []string {
 	t.Helper()
 	var got []string
@@ -349,6 +370,12 @@ func persistentWarnings(t *testing.T, svc *core.Service, id string) []string {
 	if f := findingWithStatus(res.Result, "loader_adapter_ignored"); f != nil {
 		got = append(got, f.Note)
 	}
+	return got
+}
+
+// loadTimeWarnings is the load-time list's lines about game id.
+func loadTimeWarnings(svc *core.Service, id string) []string {
+	var got []string
 	for _, w := range svc.AdapterConfigWarnings() {
 		if strings.Contains(w, `"`+id+`"`) {
 			got = append(got, w)
@@ -383,14 +410,21 @@ func TestLoaderBypass_EachSurfaceSaysItsSentence(t *testing.T) {
 				assert.Empty(t, persistent, "an explicit adapter on an installed BepInEx is an acknowledged choice")
 			} else {
 				want := fill(tc.persistent, game)
-				wantCount := 3 // one-game query, loader report, verify row
-				if game.DeclaresBepInEx() {
-					wantCount++ // the load-time list reads no disk, so it has only declared games
-				}
-				require.Len(t, persistent, wantCount, "%q", persistent)
+				require.Len(t, persistent, 3, "one-game query, loader report, verify row: %q", persistent)
 				for _, got := range persistent {
 					assert.Equal(t, want, got)
 				}
+			}
+
+			// #456: the load-time list is printed by every command, so it is
+			// one short sentence pointing at `lmm game show`, where the whole
+			// one is. It reads no disk, so it has only declared games.
+			loadTime := loadTimeWarnings(svc, game.ID)
+			if tc.persistent == "" || !game.DeclaresBepInEx() {
+				assert.Empty(t, loadTime)
+			} else {
+				require.Len(t, loadTime, 1)
+				assert.Equal(t, tc.loadTime, loadTime[0])
 			}
 
 			archive := archiveWarnings(t, svc, game.ID)
@@ -421,6 +455,7 @@ func TestLoaderBypass_EveryRemedySilencesItsWarning(t *testing.T) {
 				remedy.apply(t, svc, game.ID)
 
 				assert.Empty(t, persistentWarnings(t, svc, game.ID), "the remedy must silence the persistent warning")
+				assert.Empty(t, loadTimeWarnings(svc, game.ID), "the remedy must silence the load-time line")
 				if remedy.perArchive {
 					assert.Empty(t, archiveWarnings(t, svc, game.ID), "the remedy must silence the per-archive warning")
 				}

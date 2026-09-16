@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"flag"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -146,7 +148,16 @@ func TestJSONGoldens_GameRowsAreWhatProductionEmits(t *testing.T) {
 			entries, err := svc.ListGameEntries(t.Context())
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
-			require.Equal(t, want, entries[0])
+			got := entries[0]
+			// The goldens' paths are placeholders no test machine has, so
+			// production flags each one as missing (#427). That flag is
+			// what the row must say about THIS machine; the rest of the row
+			// is what the golden pins.
+			if _, statErr := os.Stat(game.ModPath); errors.Is(statErr, fs.ErrNotExist) {
+				assert.Contains(t, got.ModPathError, game.ModPath+" does not exist")
+				got.ModPathError = ""
+			}
+			require.Equal(t, want, got)
 		})
 	}
 }
@@ -831,6 +842,19 @@ func TestJSONGoldens(t *testing.T) {
 			// the key, and a real run omits it entirely.
 			"verify_result",
 			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime, Cached: true},
+		},
+		{
+			// #429: a profile with nothing checksummed is not empty - the
+			// counts say what the run covered, and a present Workshop item
+			// is named by an external "ok" row.
+			"verify_result_uncheckable_mods",
+			core.VerifyResult{
+				Findings: []core.VerifyFinding{{
+					ModID: "3617086610", ModName: "ModMenu", Status: "ok", External: true,
+					Note: "tracked from Steam - present on disk; Steam owns its files, so lmm checks only that they are there",
+				}},
+				Mods: 2, External: 1, Unverified: 1, CheckedAt: fixedTime,
+			},
 		},
 		{
 			"converged_file",
@@ -1683,6 +1707,61 @@ func TestJSONGoldens(t *testing.T) {
 			// UpdateGameSources was asked to drop from the map.
 			"game_source_in_use_error",
 			core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}},
+		},
+		{
+			// #427: a mod_path lmm deployed into that has gone, with the
+			// repair a frontend can offer as a button - here the BepInEx
+			// game's root.
+			"mod_path_missing_error",
+			core.ModPathMissingError{
+				GameID: "human-host", ModPath: "/games/human-host/mods",
+				Reason: "does not exist", DeployedFiles: 4, SuggestedModPath: "/games/human-host",
+			},
+		},
+		{
+			// #427 review F3: an absent mod_path a deploy could not create -
+			// the install path is gone too.
+			"mod_path_missing_error_install_path_missing",
+			core.ModPathMissingError{
+				GameID: "skyrim-se", ModPath: "/games/skyrim-se/Data", Reason: "does not exist",
+				InstallPath: "/games/skyrim-se", InstallPathMissing: true,
+			},
+		},
+		{
+			// #427 review F3: an absent mod_path outside the install path.
+			"mod_path_missing_error_outside_install_path",
+			core.ModPathMissingError{
+				GameID: "skyrim-se", ModPath: "/old-library/skyrim-se/Data", Reason: "does not exist",
+				InstallPath: "/games/skyrim-se", OutsideInstallPath: true,
+			},
+		},
+		{
+			// #427/#456: a mod_path move refused because it would strand
+			// deployed files, naming every profile that has them (#427
+			// review F2).
+			"game_mod_path_in_use_error",
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/skyrim-se/Data", NewModPath: "/games/skyrim-se/Mods",
+				DeployedFiles: 12, ActiveProfile: "default",
+				Profiles: []core.ProfileDeployedFiles{
+					{Profile: "default", DeployedFiles: 10},
+					{Profile: "survival", DeployedFiles: 2},
+				},
+			},
+		},
+		{
+			// One profile's share of game_mod_path_in_use_error.
+			"profile_deployed_files",
+			core.ProfileDeployedFiles{Profile: "survival", DeployedFiles: 2},
+		},
+		{
+			// #427: a game row whose mod_path is gone carries the sentence
+			// that repairs it.
+			"game_list_entry_mod_path_error",
+			core.GameListEntry{
+				Game:         jsonGoldenGame,
+				ModPathError: "mod_path /games/skyrim-se/Data does not exist, but lmm recorded 4 deployed file(s) under it; if the game still loads mods from there, run `lmm deploy --game skyrim-se` to put the active profile's back, or, if it loads them from somewhere else, purge them and run `lmm game edit skyrim-se --mod-path <path>`, which names the purge each profile needs",
+			},
 		},
 		{
 			// #373: a bare mod ID that matched more than one source. Caveat

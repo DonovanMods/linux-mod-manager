@@ -50,7 +50,7 @@ func TestDirectorySourceEndToEnd(t *testing.T) {
 	url, err := src.GetDownloadURL(ctx, &mod, files[0].ID)
 	require.NoError(t, err)
 
-	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, &mod, &files[0], url[len("file://"):])
+	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, &mod, &files[0], url[len("file://"):], nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 	assert.True(t, gameCache.Exists("7dtd", "my-mods", "BiggerBackpack", "1.2.0"))

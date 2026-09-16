@@ -295,3 +295,28 @@ func TestListDeployedFiles_EmptyProfileIsNotAnError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, files)
 }
+
+// TestDeployedFileCounts: the rows a mod_path move would strand, per
+// profile - so a refusal can name every profile that has to be purged, not
+// just the active one (#427 review F2).
+func TestDeployedFileCounts(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+	ctx := context.Background()
+
+	counts, err := database.DeployedFileCounts(ctx, "g1")
+	require.NoError(t, err)
+	assert.Empty(t, counts, "a game with nothing deployed has no entries")
+
+	require.NoError(t, database.SaveDeployedFile(ctx, "g1", "default", "a.txt", "src", "m1"))
+	require.NoError(t, database.SaveDeployedFile(ctx, "g1", "default", "b.txt", "src", "m1"))
+	require.NoError(t, database.SaveDeployedFile(ctx, "g1", "second", "a.txt", "src", "m2"))
+	require.NoError(t, database.SaveDeployedFile(ctx, "other", "default", "a.txt", "src", "m1"))
+
+	counts, err = database.DeployedFileCounts(ctx, "g1")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"default": 2, "second": 1}, counts, "another game's rows are not counted")
+}

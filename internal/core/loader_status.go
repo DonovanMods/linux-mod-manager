@@ -349,5 +349,9 @@ func (s *Service) GameDetail(ctx context.Context, gameID string) (*GameDetail, e
 	if err != nil {
 		return nil, err
 	}
-	return &GameDetail{GameListEntry: s.newGameListEntry(game, defaultGame), Loader: status}, nil
+	entry, err := s.newGameListEntry(ctx, game, defaultGame)
+	if err != nil {
+		return nil, err
+	}
+	return &GameDetail{GameListEntry: entry, Loader: status}, nil
 }

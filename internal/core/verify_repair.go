@@ -56,7 +56,7 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 	// source with a non-identity SourceIDs mapping, while the GetModFiles
 	// lookup directly above was already mapped. The cache side is unaffected
 	// either way: every cache path is keyed off game.ID, not mod.GameID.
-	result, err := r.svc.downloadMod(ctx, mod.SourceID, r.game, SourceMappedMod(r.game, &mod.Mod), downloadFile, nil)
+	result, err := r.svc.downloadMod(ctx, mod.SourceID, r.game, SourceMappedMod(r.game, &mod.Mod), downloadFile, r.downloadWarningSink())
 	if err != nil {
 		return false, err
 	}
@@ -67,6 +67,38 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 		return false, fmt.Errorf("saving checksum: %w", err)
 	}
 	return true, nil
+}
+
+// downloadWarningSink carries a re-download's download-time warnings
+// (#425) into verify's own stream twice over: as a sub-line under the
+// repair that fetched it, which is what verify's own renderers read - they
+// read VerifyEvents only - and as the WarningEvent every other flow
+// forwards, under verify's scope, which is what `lmm serve`'s job activity
+// renders (#427 review F8). A consumer that reads both sees the warning
+// once in each vocabulary it reads.
+//
+// The sub-line is held while holdDetails is, for a repair whose row comes
+// after it (#427 review F7).
+func (r *verifyRun) downloadWarningSink() EventSink {
+	return func(e Event) {
+		w, ok := e.(WarningEvent)
+		if !ok || w.Phase != DownloadWarning {
+			return
+		}
+		if r.sink != nil {
+			r.sink(WarningEvent{
+				Scope:   Scope{Op: OpVerify, ModName: w.ModName, Mod: w.Mod},
+				Phase:   DownloadWarning,
+				Message: w.Message,
+			})
+		}
+		detail := VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + w.Message}
+		if r.held != nil {
+			*r.held = append(*r.held, detail)
+			return
+		}
+		r.emitEv(detail)
+	}
 }
 
 // servesRecordedVersion reports whether file is the source's copy of the

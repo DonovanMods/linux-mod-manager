@@ -9,6 +9,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/spf13/cobra"
 )
@@ -165,7 +166,7 @@ Examples:
 }
 
 func init() {
-	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured)")
+	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "", `mod source; "local" names an imported mod (default: the source the installed mod carries, else the game's sole configured source; prompts when several are configured)`)
 	modCmd.PersistentFlags().StringVarP(&modProfile, "profile", "p", "", "profile (default: active profile)")
 
 	modSetUpdateCmd.Flags().BoolVar(&modSetAuto, "auto", false, "enable auto-update")
@@ -214,13 +215,7 @@ func validateModSetUpdatePolicyFlags() error {
 }
 
 func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
-	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
-	if err != nil {
-		return err
-	}
-
-	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
@@ -261,7 +256,7 @@ func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Gam
 	// #269: a pin's target is the installed version, which for a Workshop
 	// item is the 19-digit content id - so an external mod is reported as
 	// pinned and nothing more (version_display.go).
-	if pinTarget := displayLockTarget(result.Mod.External, result.Mod.Version); modSetPin && pinTarget != "" {
+	if pinTarget := displayLockTarget(workshopVersioned(service, result.Mod.External, result.Mod.SourceID), result.Mod.Version); modSetPin && pinTarget != "" {
 		fmt.Printf(" (%s)", pinTarget)
 	}
 	fmt.Println()
@@ -288,13 +283,7 @@ func runModLock(cmd *cobra.Command, args []string) error {
 // available versions, ErrNotSupported for a dynamic version-less source) are
 // surfaced verbatim.
 func doModLock(ctx context.Context, service *core.Service, game *domain.Game, modID, version string) error {
-	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
-	if err != nil {
-		return err
-	}
-
-	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
@@ -309,9 +298,16 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 	// SetModLock's own "any string goes" persistence makes that a silent
 	// footgun rather than a clean rejection - so this is checked before any
 	// upstream call.
-	caps, err := service.SourceCapabilities(modSource)
-	if err != nil {
-		return err
+	//
+	// An imported mod (#447) has no source at all - nothing is registered
+	// as `local` - so it has no versions to resolve either, and gets the
+	// same refusal rather than a registry lookup's "source not found".
+	var caps source.Capabilities
+	if modSource != domain.SourceLocal {
+		caps, err = service.SourceCapabilities(modSource)
+		if err != nil {
+			return err
+		}
 	}
 	if !caps.Versions {
 		// #142 round 5: set-update is profile-scoped too (SetModUpdatePolicy
@@ -368,7 +364,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 	// Workshop item today - the capability gate above refuses it, since the
 	// source reports Versions:false - and spelled once here anyway so a
 	// source that later CAN resolve versions cannot reintroduce the shape.
-	if lockTarget := displayLockTarget(result.Mod.External, target); lockTarget != "" {
+	if lockTarget := displayLockTarget(workshopVersioned(service, result.Mod.External, result.Mod.SourceID), target); lockTarget != "" {
 		fmt.Printf("%s %s locked at %s\n", colorGreen("✓"), result.Mod.Name, lockTarget)
 		// Locking is a metadata write, not a deploy (design decision): when
 		// the target differs from what is actually installed, the game
@@ -394,13 +390,7 @@ func runModUnlock(cmd *cobra.Command, args []string) error {
 // policy-neutral (#97 decision), so the update policy reported here is
 // whatever it already was.
 func doModUnlock(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
-	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
-	if err != nil {
-		return err
-	}
-
-	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
@@ -423,17 +413,49 @@ func doModUnlock(ctx context.Context, service *core.Service, game *domain.Game, 
 	return nil
 }
 
-// resolveInstalledModSource is resolveSource for a command that acts on a
-// mod already installed, which may be an imported one: its source is
-// domain.SourceLocal, which no game configures, and `lmm uninstall` has
-// always accepted it for the same reason. `lmm mod enable`/`disable` need it
-// because #431's one-time upgrade notice and its docs point at them to
-// switch a mod back on or record it as off.
-func resolveInstalledModSource(service *core.Service, game *domain.Game, sourceFlag string) (string, error) {
-	if sourceFlag == domain.SourceLocal {
-		return sourceFlag, nil
+// resolveModTarget is how EVERY `lmm mod` subcommand resolves the mod it
+// acts on (#447): the profile (-p, else the active one), then the source,
+// which it stores in modSource for the subcommand's readouts and remedies.
+//
+//   - -s/--source names a source the game maps, or domain.SourceLocal: an
+//     `lmm import`ed mod is recorded under `local`, which no game maps, and
+//     `lmm uninstall` has always accepted it for that reason.
+//   - Without -s, the source is the one the installed mod carries - the
+//     bare-id rule `lmm uninstall` and `lmm mod edit` follow
+//     (core.ResolveInstalledByID) - and an id installed under two sources is
+//     refused with the flag that chooses (#373). An id installed under none
+//     falls back to the game's own source (resolveSource, which prompts
+//     when several are mapped): `lmm mod show` browses mods that are not
+//     installed, and every other subcommand then reports "mod not found"
+//     as it always has.
+func resolveModTarget(ctx context.Context, svc *core.Service, game *domain.Game, modID string) (profileName string, err error) {
+	profileName, err = resolveProfile(ctx, svc, game.ID, modProfile)
+	if err != nil {
+		return "", err
 	}
-	return resolveSource(service, game, sourceFlag, false)
+	if modSource == domain.SourceLocal {
+		return profileName, nil
+	}
+	if modSource != "" {
+		modSource, err = resolveSource(svc, game, modSource, false)
+		return profileName, err
+	}
+
+	installed, err := svc.GetInstalledMods(ctx, game.ID, profileName)
+	if err != nil {
+		return "", fmt.Errorf("getting installed mods: %w", err)
+	}
+	mod, err := core.ResolveInstalledByID(installed, modID, profileName, "-s/--source")
+	var ambiguous *core.AmbiguousModError
+	switch {
+	case err == nil:
+		modSource = mod.SourceID
+		return profileName, nil
+	case errors.As(err, &ambiguous):
+		return "", err
+	}
+	modSource, err = resolveSource(svc, game, "", false)
+	return profileName, err
 }
 
 func runModEnable(cmd *cobra.Command, args []string) error {
@@ -443,14 +465,7 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 }
 
 func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
-	// Resolve source: use flag if set, otherwise first configured source
-	var err error
-	modSource, err = resolveInstalledModSource(service, game, modSource)
-	if err != nil {
-		return err
-	}
-
-	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
@@ -502,14 +517,7 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 }
 
 func doModDisable(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
-	// Resolve source: use flag if set, otherwise first configured source
-	var err error
-	modSource, err = resolveInstalledModSource(service, game, modSource)
-	if err != nil {
-		return err
-	}
-
-	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
@@ -595,12 +603,7 @@ func runModFiles(cmd *cobra.Command, args []string) error {
 }
 
 func doModFiles(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
-	profileName, err := resolveProfile(ctx, svc, game.ID, modProfile)
-	if err != nil {
-		return err
-	}
-
-	modSource, err = resolveSource(svc, game, modSource, false)
+	profileName, err := resolveModTarget(ctx, svc, game, modID)
 	if err != nil {
 		return err
 	}
@@ -646,12 +649,6 @@ func runModShow(cmd *cobra.Command, args []string) error {
 }
 
 func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
-	var err error
-	modSource, err = resolveSource(svc, game, modSource, false)
-	if err != nil {
-		return err
-	}
-
 	// #92/#86: mod show works for any mod on the source, installed or not,
 	// so a resolveProfile failure is a real problem (mirrors every other mod
 	// subcommand's error handling), but "not installed" is the ordinary
@@ -659,7 +656,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	// than erroring. Profile resolves BEFORE the detail call now that the
 	// composition lives in core (#86) - accepted deviation: when BOTH the
 	// profile and the mod ID are invalid, the profile error surfaces first.
-	profileName, err := resolveProfile(ctx, svc, game.ID, modProfile)
+	profileName, err := resolveModTarget(ctx, svc, game, modID)
 	if err != nil {
 		return err
 	}
@@ -693,7 +690,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	// belongs, and it is the ONLY place it appears.
 	headerVersion := mod.Version
 	switch {
-	case installedInfo != nil && installedInfo.External:
+	case installedInfo != nil && workshopVersioned(svc, installedInfo.External, mod.SourceID):
 		headerVersion = displayRevision(installedInfo.UpdatedAt)
 	case sourceIsWorkshop(svc, mod.SourceID) && !mod.UpdatedAt.IsZero():
 		// Not adopted: there is no installed row to carry External, and no
@@ -751,7 +748,10 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	if installedInfo != nil {
 		fmt.Println()
-		if installedInfo.External {
+		// #428: an item lmm downloaded from the Workshop itself is not
+		// external, and its Version is the same content id.
+		installedContentID := workshopVersioned(svc, installedInfo.External, mod.SourceID)
+		if installedContentID {
 			// #269: for an external mod the installed line is a DATE - the
 			// Version field holds Steam's 19-digit content id, which is the
 			// item's version identity and not a version anybody can read.
@@ -780,7 +780,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			// the run it recommends is one `profile apply` deliberately
 			// skips for this mod.
 			lockLine := "locked"
-			if target := displayLockTarget(installedInfo.External, installedInfo.LockedVersion); target != "" {
+			if target := displayLockTarget(installedContentID, installedInfo.LockedVersion); target != "" {
 				lockLine += " at " + target
 				// Locking is a metadata write, not a deploy (same #97 design
 				// decision doModLock's own convergence hint follows): only say
@@ -835,13 +835,7 @@ func runModConvert(cmd *cobra.Command, args []string) error {
 }
 
 func doModConvert(ctx context.Context, service *core.Service, game *domain.Game, modID string, convert bool) error {
-	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
-	if err != nil {
-		return err
-	}
-
-	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,19 @@
+{
+  "findings": [
+    {
+      "mod_id": "3617086610",
+      "mod_name": "ModMenu",
+      "status": "ok",
+      "note": "tracked from Steam - present on disk; Steam owns its files, so lmm checks only that they are there",
+      "external": true
+    }
+  ],
+  "issues": 0,
+  "warnings": 0,
+  "checked": 0,
+  "has_files": false,
+  "mods": 2,
+  "external": 1,
+  "unverified": 1,
+  "checked_at": "2026-08-27T12:00:00Z"
+}

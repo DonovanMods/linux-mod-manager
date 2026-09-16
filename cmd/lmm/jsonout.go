@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -55,9 +56,35 @@ func errorDetails(err error) any {
 // stdout and nothing else - and a nil sink is how core is told there is
 // nothing to report to, so the closure is never even installed rather than
 // installed and then ignored line by line.
+//
+// It also prints a download-time warning (core.DownloadWarning, #425)
+// itself, on stderr, and does not hand it on. Any command can download - a
+// deploy re-fetching a missing mod, a switch or an apply installing one -
+// and each closure switches on its own flow's phases, so a warning that
+// "lmm told you how to fix this" printed only for `lmm install`. Every
+// mutating command already passes its closure through here, which makes
+// this the one place that covers them all.
 func quietSink(sink core.EventSink) core.EventSink {
 	if jsonOutput {
 		return nil
 	}
-	return sink
+	return func(e core.Event) {
+		if w, ok := e.(core.WarningEvent); ok && w.Phase == core.DownloadWarning {
+			printDownloadWarning(w)
+			return
+		}
+		if sink != nil {
+			sink(e)
+		}
+	}
+}
+
+// printDownloadWarning renders one download-time warning, naming the mod it
+// is about when the flow's scope does - a batch or a deploy fetches several.
+func printDownloadWarning(w core.WarningEvent) {
+	if w.ModName != "" {
+		fmt.Fprintf(os.Stderr, "Warning: %s: %s\n", w.ModName, w.Message)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Warning: %s\n", w.Message)
 }

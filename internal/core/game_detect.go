@@ -345,6 +345,12 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		if prior := ConfiguredGameFor(existing, g); prior != nil {
 			var notice string
 			game, notice = repairedGame(prior, game)
+			// #427 review F1: the repair rewrites mod_path, which is exactly
+			// the move `lmm game edit --mod-path` refuses under a live
+			// deployment - the same check, before anything is written.
+			if err := s.refuseModPathMove(ctx, prior, game.ModPath); err != nil {
+				return fmt.Errorf("repairing %s from the catalog would move its mod_path: %w", prior.ID, err)
+			}
 			if notice != "" {
 				result.Warnings = append(result.Warnings, notice)
 			}
@@ -522,6 +528,10 @@ type GameDetectEntry struct {
 	// document must never renumber the ones a selection can name.
 	Index             int  `json:"index"`
 	AlreadyConfigured bool `json:"already_configured,omitzero"`
+	// ModPathError is the CONFIGURED game's GameListEntry.ModPathError,
+	// when this row is already configured and its mod_path needs attention
+	// (#427) - so a listing marks the game that needs repair.
+	ModPathError string `json:"mod_path_error,omitempty"`
 }
 
 // GameDetectListingOptions tunes the listing document (#206).
@@ -584,7 +594,13 @@ func (s *Service) GameDetectListing(ctx context.Context, games []domain.Detected
 		if g.Known {
 			index++
 		}
-		entry := GameDetectEntry{DetectedGame: g, AlreadyConfigured: ConfiguredGameFor(existing, g) != nil}
+		entry := GameDetectEntry{DetectedGame: g}
+		if configured := ConfiguredGameFor(existing, g); configured != nil {
+			entry.AlreadyConfigured = true
+			if entry.ModPathError, err = s.modPathError(ctx, configured); err != nil {
+				return nil, err
+			}
+		}
 		if g.Known {
 			entry.Index = index
 		}
