@@ -42,6 +42,14 @@ func TestPlanImportArchive_BepInEx_RefusesAGameWithNoLoader(t *testing.T) {
 	assert.Equal(t, game.ID, loaderErr.GameID)
 	require.NotEmpty(t, loaderErr.Setup, "the error carries the setup steps both frontends render")
 	assert.Contains(t, err.Error(), "BepInEx")
+
+	// The whole refusal is exactly what the constructor behind the
+	// loader_required_error golden builds (#413 review F10), so that golden
+	// pins the document this flow really sends rather than a constructor
+	// with no production caller.
+	assert.Equal(t,
+		core.NewLoaderRequirementForTest(game, "Skinwalkers-5.0.0", domain.LoaderKindBepInEx, "", "game-root-relative"),
+		loaderErr)
 }
 
 // The same archive into a game that DOES declare the loader plans normally -

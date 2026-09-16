@@ -1961,11 +1961,15 @@ func TestJSONGoldens(t *testing.T) {
 			// #359's plan-time precondition. The setup steps are DATA on the
 			// wire, which is what lets the web UI render the same sentences
 			// the terminal prints instead of carrying its own copy - so the
-			// golden records what newLoaderRequiredError actually produces,
+			// golden records what newLoaderRequirement actually produces for
+			// an archive-shape claim (no version: a shape cannot know one),
 			// not a hand-built stand-in of the same shape (review F12).
+			// TestPlanImportArchive_BepInEx_RefusesAGameWithNoLoader pins
+			// that the import flow builds exactly this.
 			"loader_required_error",
-			core.NewLoaderRequiredErrorForTest(
-				&domain.Game{ID: "lethal-company"}, "Skinwalkers", "game-root-relative"),
+			core.NewLoaderRequirementForTest(
+				&domain.Game{ID: "lethal-company"}, "Skinwalkers",
+				domain.LoaderKindBepInEx, "", "game-root-relative"),
 		},
 		{
 			// #409: the same refusal, reported by the SOURCE instead of

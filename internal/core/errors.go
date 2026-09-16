@@ -416,15 +416,11 @@ func loaderDisplayName(kind string) string {
 	return kind
 }
 
-// newLoaderRequiredError builds the refusal for game, naming the mod and the
-// archive shape the requirement was read off. The setup steps are written
-// once, here, so the CLI, the web UI and `--json` cannot drift about them.
-func newLoaderRequiredError(game *domain.Game, modName, layout string) *LoaderRequiredError {
-	return newLoaderRequirement(game, modName, domain.LoaderKindBepInEx, "", layout)
-}
-
-// newLoaderRequirement is newLoaderRequiredError with the two facts only a
-// SOURCE can supply (#409): which loader, and at which version.
+// newLoaderRequirement builds the refusal for game, naming the mod, the
+// loader kind, the version when whatever reported the requirement knew one
+// (only a SOURCE can, #409), and the evidence it was inferred from. The
+// setup steps are written once, here, so the CLI, the web UI and `--json`
+// cannot drift about them.
 //
 // ONE constructor for both halves, deliberately. #359 infers the
 // requirement from an archive's shape and #409's Thunderstore source reads

@@ -257,19 +257,13 @@ func (i *Importer) ImportForTest(ctx context.Context, archivePath string, game *
 	return i.importWithIdentity(ctx, archivePath, game, opts, resolveImportIdentity(filepath.Base(archivePath), opts))
 }
 
-// NewLoaderRequiredErrorForTest builds #359's refusal exactly as the flows
-// build it, so the JSON golden pins the sentences a USER actually reads
+// NewLoaderRequirementForTest builds #359's refusal exactly as the flows
+// build it, so the JSON goldens pin the sentences a USER actually reads
 // rather than a hand-typed stand-in that only happens to have the same
-// shape. A reader of that golden reasonably assumes it is the shipping copy;
-// this is what makes that true (review F12).
-func NewLoaderRequiredErrorForTest(game *domain.Game, modName, layout string) *LoaderRequiredError {
-	return newLoaderRequiredError(game, modName, layout)
-}
-
-// NewLoaderRequirementForTest is the same for the half a SOURCE reports
-// (#409): the kind and the version come from the package's own metadata
-// rather than from an archive's shape, and the golden built through this
-// is what pins the extra wire member and the version-aware first sentence.
+// shape (review F12). It is the ONE constructor both halves call: an
+// adapter's archive claim (no version - a shape cannot know one) and a
+// SOURCE's own report (#409), whose kind and version come from the
+// package's metadata.
 func NewLoaderRequirementForTest(game *domain.Game, modName, kind, version, evidence string) *LoaderRequiredError {
 	return newLoaderRequirement(game, modName, kind, version, evidence)
 }
