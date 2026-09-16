@@ -89,10 +89,8 @@ func (s *Source) CachedIndexes(ctx context.Context) ([]source.CachedIndex, error
 
 // inspect describes one community directory.
 func (s *Source) inspect(community string) source.CachedIndex {
-	ci := source.CachedIndex{GameID: community}
-	bytes, err := s.store.provablyIndex(community)
-	ci.Bytes = bytes
-	if err != nil {
+	ci := source.CachedIndex{GameID: community, Bytes: s.store.dirFootprint(community)}
+	if _, err := s.store.provablyIndex(community); err != nil {
 		ci.Reason = err.Error()
 	} else {
 		ci.Removable = true
@@ -256,6 +254,31 @@ func (st *store) provablyIndex(community string) (int64, error) {
 		total += fi.Size()
 	}
 	return total, nil
+}
+
+// dirFootprint is what a community directory costs on disk - every regular
+// file directly in it, whether or not lmm wrote it, because that is what a
+// user deciding whether to prune is weighing. Best-effort: an unreadable
+// entry contributes nothing.
+func (st *store) dirFootprint(community string) int64 {
+	dir := st.dir(community)
+	if dir == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		if info, err := e.Info(); err == nil {
+			total += info.Size()
+		}
+	}
+	return total
 }
 
 // rawWatermark reads a community's watermark whatever its schema: an index

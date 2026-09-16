@@ -159,6 +159,7 @@ func TestRemoveIndex_KeepsADirectoryHoldingAnythingElse(t *testing.T) {
 	ci := findIndex(t, list, testCommunity)
 	assert.False(t, ci.Removable)
 	assert.Contains(t, ci.Reason, "notes.txt")
+	assert.Positive(t, ci.Bytes, "a directory that cannot be removed still reports what it costs")
 
 	_, err = src.RemoveIndex(t.Context(), testCommunity)
 	require.Error(t, err)
