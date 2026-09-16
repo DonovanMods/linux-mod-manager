@@ -115,7 +115,11 @@ type ProfileSyncResult struct {
 // membership checks). Pre-Ruling-4, doProfileSync built all three buckets by
 // ranging those maps directly, so the order was whatever that run's Go map
 // iteration produced.
+//
+// Like PlanProfileApply, it settles #431's one-time backfill first while
+// that is still owed (settleOwedProfileBackfill).
 func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profileName string) (*ProfileSyncPlan, error) {
+	s.settleOwedProfileBackfill(ctx)
 	pm := s.NewProfileManager()
 
 	profile, err := pm.Get(ctx, game.ID, profileName)

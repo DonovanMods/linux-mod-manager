@@ -199,7 +199,10 @@ type ProfileApplyResult struct {
 // PlanProfileApply computes what it would take to make the mods installed
 // under profileName match the profile itself, without mutating anything (no
 // DB writes, no filesystem changes, no downloads) - callers may call it
-// speculatively, render it, and discard it.
+// speculatively, render it, and discard it. The one exception is #431's
+// one-time backfill: while that is still owed it is settled first
+// (settleOwedProfileBackfill), since the plan is decided from the very
+// markers it writes.
 //
 // The three buckets are built exactly as doProfileApply built them,
 // including their deterministic ordering (orderByProfile for the
@@ -209,6 +212,14 @@ type ProfileApplyResult struct {
 // than the plan, because doProfileApply printed those failures per mod,
 // inside its install loop, and carried on.
 func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profileName string) (*ProfileApplyPlan, error) {
+	s.settleOwedProfileBackfill(ctx)
+	return s.planProfileApply(ctx, game, profileName)
+}
+
+// planProfileApply is PlanProfileApply without the backfill settlement, for
+// a caller already inside the mutation slot (snapshot restore's converge
+// step), where beginOp has settled it.
+func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profileName string) (*ProfileApplyPlan, error) {
 	pm := s.NewProfileManager()
 
 	profile, err := pm.Get(ctx, game.ID, profileName)

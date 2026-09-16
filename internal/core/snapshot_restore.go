@@ -677,7 +677,7 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 	// is the profile file, and step 3 just rewrote it. Every decision the
 	// user approved is still the plan's - this only turns the approved
 	// target state into the concrete steps that reach it.
-	applyPlan, err := s.PlanProfileApply(ctx, game, plan.Profile)
+	applyPlan, err := s.planProfileApply(ctx, game, plan.Profile)
 	if err != nil {
 		return result, partial(fmt.Errorf("planning the convergence back to %s: %w", plan.Snapshot, err))
 	}

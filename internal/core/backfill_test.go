@@ -850,14 +850,38 @@ func TestBackfillProfileDisabledMarkers_AnEditorPanicSkipsTheProfile(t *testing.
 func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *testing.T) {
 	ctx := context.Background()
 
+	// A plan the markers decide first settles an owed backfill itself, as
+	// its Apply would, so the ordinary case never reaches the refusal.
+	t.Run("an apply or sync plan settles the backfill first", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		f.owe(t)
+
+		apply, err := f.svc.PlanProfileApply(ctx, f.game, "a")
+		require.NoError(t, err)
+		assert.Empty(t, apply.ToEnable)
+		assert.Contains(t, f.warnings.String(), "Mod off", "the plan discharged it and said so")
+		assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+		sync, err := f.svc.PlanProfileSync(ctx, f.game, "a")
+		require.NoError(t, err)
+		assert.Empty(t, sync.ToRemove)
+	})
+
+	// Another lmm holds the lock while the plan is made, so the plan goes
+	// ahead without waiting long; its Apply, which does wait, discharges
+	// the backfill and refuses the plan.
 	t.Run("profile apply", func(t *testing.T) {
 		f := newBackfillFixture(t)
 		f.row(t, "a", "off", false, false)
 		f.owe(t)
 
+		release := holdOpLock(t, f.lockPath)
+		started := time.Now()
 		plan, err := f.svc.PlanProfileApply(ctx, f.game, "a")
 		require.NoError(t, err)
+		assert.Less(t, time.Since(started), 1500*time.Millisecond, "a plan waits less than a mutation does")
 		require.Len(t, plan.ToEnable, 1, "planned before the marker existed")
+		release()
 
 		_, err = f.svc.ApplyProfileApply(ctx, f.game, plan, core.ProfileApplyOptions{}, nil)
 		require.ErrorIs(t, err, core.ErrStalePlan)
@@ -877,9 +901,11 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 		f.row(t, "a", "off", false, false)
 		f.owe(t)
 
+		release := holdOpLock(t, f.lockPath)
 		plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
 		require.NoError(t, err)
 		require.Len(t, plan.ToRemove, 1, "planned before the marker existed")
+		release()
 
 		_, err = f.svc.ApplyProfileSync(ctx, f.game, plan, nil)
 		require.ErrorIs(t, err, core.ErrStalePlan)

@@ -15,6 +15,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -198,6 +199,41 @@ func (s *Service) BackfillProfileDisabledMarkers(ctx context.Context) (*ProfileB
 	}
 	defer release()
 	return s.dischargeProfileBackfill(ctx)
+}
+
+// planSettleWait bounds how long a plan waits for the mutation lock to
+// settle an owed backfill (settleOwedProfileBackfill): ample for another
+// lmm to finish discharging it, which takes milliseconds, and short beside
+// the wait a mutation accepts, since a plan that goes ahead unsettled is
+// still refused by its Apply if a marker lands in between.
+const planSettleWait = 500 * time.Millisecond
+
+// settleOwedProfileBackfill discharges the one-time backfill, while it is
+// still owed, before a plan decided by the profile document's markers reads
+// that document: `profile apply` and `profile sync`. An open only ever
+// tries the lock (F5), so a command started beside another lmm can reach
+// its plan with the markers not yet written. Its Apply discharges the
+// backfill under the lock and then refuses the plan as stale (F2); settling
+// here is what keeps that refusal for the rare case. The wait is short, and
+// nothing here fails the plan.
+func (s *Service) settleOwedProfileBackfill(ctx context.Context) {
+	if !s.backfillPending.Load() {
+		return
+	}
+	if owed, err := s.db.GetMeta(ctx, db.MetaProfileDisabledBackfill); err != nil || owed == "" {
+		return
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, planSettleWait)
+	defer cancel()
+	release, err := s.acquireOpWithin(waitCtx, planSettleWait)
+	if err != nil {
+		s.logger().Debug("profile backfill: not settled before planning; the Apply will", "error", err)
+		return
+	}
+	defer release()
+	if _, err := s.dischargeProfileBackfill(ctx); err != nil {
+		s.logger().Debug("profile backfill: not settled before planning; the Apply will", "error", err)
+	}
 }
 
 // profileBackfillRecords returns the backfill's db_meta records - the
