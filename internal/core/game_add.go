@@ -601,16 +601,9 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 	// against install_path (the actual fault) and this branch is
 	// unreachable from AddGame - it stays because ResolveModPath owns the
 	// rule and this must not silently diverge from it if that ever changes.
-	resolved, err := config.ResolveModPath(installPath, modPath)
+	modPath, err := resolveModPathValue(installPath, modPath)
 	if err != nil {
-		return nil, &GameSpecError{Field: "mod_path", Value: modPath, Reason: err.Error(), Err: err}
-	}
-	modPath = resolved
-	// Absent is fine (deploy creates it); present-but-not-a-directory is
-	// not, and would otherwise fail every later deploy with a confusing
-	// link error.
-	if info, err := os.Stat(modPath); err == nil && !info.IsDir() {
-		return nil, newGameSpecError("mod_path", modPath, "path exists and is not a directory")
+		return nil, err
 	}
 
 	loader, err := spec.Loader.loader()

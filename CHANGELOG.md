@@ -62,6 +62,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The BepInEx/adapter contradiction warning printed at startup is one
+  line (#456).** A game that declares the BepInEx loader while its adapter
+  is another one was reported on stderr by **every** `lmm` command in a
+  ~900-character paragraph. That line now names the game, the contradiction
+  and where to read more — ``warning: game "human-host" declares the
+BepInEx loader, but lmm ignores it because its mod_path is not the game
+root; run `lmm game show human-host` for the fix``. The full explanation and both
+  remedies stay in `lmm game show`, `lmm verify`, the web loader panel and
+  the output of the `lmm game edit` that creates the contradiction, and the
+  "set its mod_path in games.yaml" step is now the command
+  `lmm game edit <id> --mod-path <path>`.
+
 - **An empty per-source game identifier is refused rather than guessed
   (#408, #409).** `sources: {<source>: ""}` in `games.yaml` used to fall back
   to lmm's own game id. That is a guess, and for a source that keeps a local
@@ -251,6 +263,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   progress for 2.0.
 
 ### Added
+
+- **`lmm game edit <id> --mod-path <path>` (#427, #456).** A game's
+  `mod_path` could only be changed by editing `games.yaml` by hand. It is
+  now a command, and `PUT /api/v1/games/{id}` takes a `mod_path` member for
+  the web UI. The value follows the rules `lmm game add` applies: a relative
+  path is relative to the install path, `~/` is your home directory, a file
+  is refused, and a directory that does not exist yet is accepted (a deploy
+  creates it). lmm records each deployed file relative to the mod path, so
+  the edit is **refused while files are deployed** — run `lmm purge --game
+<id>` first; the refusal says so, and is a 409 carrying
+  `{game_id, mod_path, deployed_files}` on the web. It is also refused when
+  it would leave a game every flow refuses (`adapter: bepinex` off the game
+  root), while a game already in that state can still be moved back.
+  `--mod-path` and `--adapter` can be passed together, and the mod path is
+  changed first, so the BepInEx fix is one command:
+  `lmm game edit <id> --mod-path <install path> --adapter bepinex`.
 
 - **A profile can say a mod is switched off (#431).** Mod references in a
   profile file gain an optional `disabled: true` key. Disabling a mod used
@@ -1471,6 +1499,22 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **A game whose `mod_path` no longer exists is flagged, with the repair
+  (#427).** `lmm game show` and `lmm status --game` print the problem under
+  the mod path; `lmm game list` marks the cell `(missing)` and `lmm status`
+  and `lmm game list` follow their tables with a `warning:` line on stderr;
+  `lmm game detect` marks such a configured row
+  ``[configured] [needs repair: see `lmm game show <id>`]`` rather than
+  suggesting a re-detect, which would reset the game's default profile. Each
+  names `lmm game edit <id> --mod-path <path>` — with the install path
+  filled in for a game that has BepInEx, whose mods deploy into the game
+  root. `lmm import`'s scan no longer fails with a bare "mod_path does not
+  exist": it refuses with the same sentence, and `--json` carries it as
+  `{game_id, mod_path, reason, suggested_mod_path}`. On the wire, the game
+  documents (`lmm game list/show --json`, `lmm status --json`,
+  `GET /api/v1/games`, `/games/{id}`, `/status`) and the detect listing gain
+  an optional `mod_path_error`.
 
 - **lmm processes starting together on a new installation no longer fail
   with "database is locked" (#453).** Switching a brand-new database file

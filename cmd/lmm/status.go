@@ -152,6 +152,11 @@ func doStatus(ctx context.Context, service *core.Service) error {
 	}
 	fmt.Println("† = mods in active profile")
 
+	// #427: a game whose mod_path is gone, and the command that repairs it.
+	for _, summary := range report.Games {
+		warnModPath(summary.ID, summary.ModPathError)
+	}
+
 	fmt.Printf("\nTotal: %d game(s), %d mod(s) installed\n", len(report.Games), totalMods)
 
 	return nil
@@ -188,6 +193,9 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 	fmt.Printf("  ID: %s\n", st.ID)
 	fmt.Printf("  Install Path: %s\n", st.InstallPath)
 	fmt.Printf("  Mod Path: %s\n", st.ModPath)
+	if st.ModPathError != "" {
+		fmt.Printf("    %s\n", colorRed(st.ModPathError))
+	}
 
 	// Show the effective link method for the active profile (the game's
 	// default profile - the one deploys target): per-profile > per-game >

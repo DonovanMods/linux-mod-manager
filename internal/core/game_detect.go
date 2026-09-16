@@ -522,6 +522,10 @@ type GameDetectEntry struct {
 	// document must never renumber the ones a selection can name.
 	Index             int  `json:"index"`
 	AlreadyConfigured bool `json:"already_configured,omitzero"`
+	// ModPathError is the CONFIGURED game's GameListEntry.ModPathError,
+	// when this row is already configured and its mod_path is not a
+	// directory (#427) - so a listing marks the game that needs repair.
+	ModPathError string `json:"mod_path_error,omitempty"`
 }
 
 // GameDetectListingOptions tunes the listing document (#206).
@@ -584,7 +588,11 @@ func (s *Service) GameDetectListing(ctx context.Context, games []domain.Detected
 		if g.Known {
 			index++
 		}
-		entry := GameDetectEntry{DetectedGame: g, AlreadyConfigured: ConfiguredGameFor(existing, g) != nil}
+		entry := GameDetectEntry{DetectedGame: g}
+		if configured := ConfiguredGameFor(existing, g); configured != nil {
+			entry.AlreadyConfigured = true
+			entry.ModPathError = modPathError(configured)
+		}
 		if g.Known {
 			entry.Index = index
 		}

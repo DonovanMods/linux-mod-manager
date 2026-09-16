@@ -661,8 +661,14 @@ func printDetectedGameRow(cmd *cobra.Command, n int, g domain.DetectedGame, exis
 	marker := ""
 	// Not existingGames[g.Slug]: the same install path under a DIFFERENT id
 	// is the same game (#406 review F1), and core owns that rule.
-	if core.ConfiguredGameFor(existingGames, g) != nil {
+	if configured := core.ConfiguredGameFor(existingGames, g); configured != nil {
 		marker = " " + colorGreen("[configured]")
+		// #427: a configured game whose mod_path is gone needs repair, and
+		// selecting the row here would reset its default profile's mods -
+		// so point at the game's own page, which names the safe repair.
+		if core.ModPathProblem(configured) != nil {
+			marker += " " + colorYellow(fmt.Sprintf("[needs repair: see `lmm game show %s`]", configured.ID))
+		}
 	}
 	appID := ""
 	if g.SteamAppID != "" {

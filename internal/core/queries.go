@@ -228,6 +228,8 @@ type GameSummary struct {
 	ModCount    int   `json:"mod_count"`
 	IsDefault   bool  `json:"is_default"`
 	ConvertPaks *bool `json:"convert_paks,omitzero"`
+	// ModPathError is GameListEntry.ModPathError, for the same game (#427).
+	ModPathError string `json:"mod_path_error,omitempty"`
 }
 
 // StatusReport is everything `lmm status` renders with no game named: every
@@ -293,6 +295,8 @@ type GameStatus struct {
 	LastDeploy         *time.Time `json:"last_deploy,omitempty"`
 	ConversionFailures int        `json:"conversion_failures"`
 	ConvertPaks        *bool      `json:"convert_paks,omitzero"`
+	// ModPathError is GameListEntry.ModPathError, for the same game (#427).
+	ModPathError string `json:"mod_path_error,omitempty"`
 }
 
 // Status summarizes every configured game, ordered by ID (ListGames').
@@ -337,11 +341,12 @@ func (s *Service) Status(ctx context.Context) (*StatusReport, error) {
 		}
 
 		summary := GameSummary{
-			Game:       *game,
-			LinkMethod: s.getGameLinkMethod(game),
-			Profiles:   names,
-			ModCount:   modCount,
-			IsDefault:  game.ID == defaultGame,
+			Game:         *game,
+			LinkMethod:   s.getGameLinkMethod(game),
+			Profiles:     names,
+			ModCount:     modCount,
+			IsDefault:    game.ID == defaultGame,
+			ModPathError: modPathError(game),
 		}
 		if game.DeployMode == domain.DeployCompile {
 			v := game.ConvertPaks
@@ -376,6 +381,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		LinkMethodSource:    "global",
 		ResolvedCachePath:   s.GetGameCachePath(game),
 		Profiles:            make([]ProfileSummary, len(profiles)),
+		ModPathError:        modPathError(game),
 	}
 	if game.LinkMethodExplicit {
 		status.LinkMethodSource = "game"
@@ -657,12 +663,18 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 // root). Such a game uses no adapter at all, so EffectiveAdapter is absent
 // and this names why (#413 re-review L2); it is absent for every game lmm
 // can act on.
+//
+// ModPathError is ModPathProblem's sentence for a mod_path that is not a
+// directory - one that does not exist, typically - naming the `lmm game
+// edit --mod-path` repair (#427). Absent for every game whose mod_path is
+// there.
 type GameListEntry struct {
 	domain.Game
 	Default          bool   `json:"default"`
 	ConvertPaks      *bool  `json:"convert_paks,omitzero"`
 	EffectiveAdapter string `json:"effective_adapter,omitempty"`
 	AdapterError     string `json:"adapter_error,omitempty"`
+	ModPathError     string `json:"mod_path_error,omitempty"`
 }
 
 // ListGameEntries returns every configured game, ordered by ID (ListGames'),
@@ -706,7 +718,17 @@ func (s *Service) newGameListEntry(game *domain.Game, defaultGameID string) Game
 		v := game.ConvertPaks
 		entry.ConvertPaks = &v
 	}
+	entry.ModPathError = modPathError(game)
 	return entry
+}
+
+// modPathError is ModPathProblem as the string every game document carries,
+// "" when there is nothing to say.
+func modPathError(game *domain.Game) string {
+	if err := ModPathProblem(game); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // VerifyReport is a VerifyResult plus the game/profile it describes - the

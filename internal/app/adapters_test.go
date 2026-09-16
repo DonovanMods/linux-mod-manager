@@ -126,7 +126,8 @@ func TestOpen_WarnsAboutALoaderBlockTheAdapterIgnores(t *testing.T) {
 
 	out := warn.String()
 	assert.Equal(t, 1, strings.Count(out, "declares the BepInEx loader"), "one warning, for the one bypassing game: %q", out)
-	assert.Contains(t, out, `warning: game "valheim" declares the BepInEx loader, but its adapter is "generic-files"`)
+	// #456: one short line per game, pointing at where the fix is.
+	assert.Equal(t, "warning: game \"valheim\" declares the BepInEx loader, but lmm ignores it because its adapter is \"generic-files\"; run `lmm game show valheim` for the fix\n", out)
 	assert.NotContains(t, out, `"lethal-company"`, "a game resolving to bepinex is configured correctly")
 
 	// #413 re-review M2: a caller that reports a game's warning itself

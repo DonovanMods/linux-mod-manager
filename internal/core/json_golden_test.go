@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"flag"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -146,7 +148,16 @@ func TestJSONGoldens_GameRowsAreWhatProductionEmits(t *testing.T) {
 			entries, err := svc.ListGameEntries(t.Context())
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
-			require.Equal(t, want, entries[0])
+			got := entries[0]
+			// The goldens' paths are placeholders no test machine has, so
+			// production flags each one as missing (#427). That flag is
+			// what the row must say about THIS machine; the rest of the row
+			// is what the golden pins.
+			if _, statErr := os.Stat(game.ModPath); errors.Is(statErr, fs.ErrNotExist) {
+				assert.Contains(t, got.ModPathError, game.ModPath+" does not exist")
+				got.ModPathError = ""
+			}
+			require.Equal(t, want, got)
 		})
 	}
 }
@@ -1683,6 +1694,29 @@ func TestJSONGoldens(t *testing.T) {
 			// UpdateGameSources was asked to drop from the map.
 			"game_source_in_use_error",
 			core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}},
+		},
+		{
+			// #427: a mod_path that is not a directory, with the repair a
+			// frontend can offer as a button - here the BepInEx game's root.
+			"mod_path_missing_error",
+			core.ModPathMissingError{
+				GameID: "human-host", ModPath: "/games/human-host/mods",
+				Reason: "does not exist", SuggestedModPath: "/games/human-host",
+			},
+		},
+		{
+			// #427/#456: SetGameModPath refusing to strand deployed files.
+			"game_mod_path_in_use_error",
+			core.GameModPathInUseError{GameID: "skyrim-se", ModPath: "/games/skyrim-se/Data", DeployedFiles: 12},
+		},
+		{
+			// #427: a game row whose mod_path is gone carries the sentence
+			// that repairs it.
+			"game_list_entry_mod_path_error",
+			core.GameListEntry{
+				Game:         jsonGoldenGame,
+				ModPathError: "mod_path /games/skyrim-se/Data does not exist yet (a deploy creates it); if the game loads mods from somewhere else, run `lmm game edit skyrim-se --mod-path <path>`",
+			},
 		},
 		{
 			// #373: a bare mod ID that matched more than one source. Caveat

@@ -32,6 +32,10 @@ var detailsCoverage = map[string]string{
 	"core.GameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
 	"core.GameSourceInUseError":   "TestReportError_JSON_GameSourceInUseError",
 	"core.GameSpecError":          "TestReportError_JSON_GameSpecError",
+	// #427: SetGameModPath's refusal to strand deployed files, and the
+	// missing-mod_path refusal with its repair, reach the envelope as data.
+	"core.GameModPathInUseError": "TestReportError_JSON_GameModPathInUseError",
+	"core.ModPathMissingError":   "TestReportError_JSON_ModPathMissingError",
 	// #359's plan-time loader precondition: the setup steps reach the
 	// envelope as DATA, so the web UI renders the same sentences the
 	// terminal prints instead of carrying its own copy in JavaScript.

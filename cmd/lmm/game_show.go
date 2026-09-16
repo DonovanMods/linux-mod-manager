@@ -70,7 +70,10 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 	}
 	fmt.Printf("  Install path: %s\n", detail.InstallPath)
 	fmt.Printf("  Mod path:     %s\n", detail.ModPath)
-	if detail.ModPath == detail.InstallPath {
+	if detail.ModPathError != "" {
+		// #427: the repair, where the user is looking at the path.
+		fmt.Printf("                %s\n", colorRed(detail.ModPathError))
+	} else if detail.ModPath == detail.InstallPath {
 		fmt.Printf("                %s\n", colorDim("mods deploy into the game root"))
 	}
 	fmt.Printf("  Link method:  %s\n", detail.LinkMethod)

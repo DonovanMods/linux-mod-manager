@@ -13,12 +13,17 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // UpdateGameSources replaces gameID's source map with sources and returns
@@ -144,6 +149,189 @@ func (s *Service) SetGameAdapter(ctx context.Context, gameID, name string) (*Gam
 	entry := s.newGameListEntry(&updated, defaultGame)
 	return &entry, nil
 }
+
+// SetGameModPath rewrites gameID's `mod_path:` and returns the game's own
+// `lmm game list --json` row, re-read after the write (#427, #456) - the
+// repair for a mod_path that no longer exists, and the command form of the
+// "set its mod_path" step the BepInEx remedies used to leave to a hand edit
+// of games.yaml.
+//
+// UpdateGameSources' sibling: a settings-class single-step write, gated for
+// the same reason, every check inside the gate. The value is resolved by
+// the rules `lmm game add` and the games.yaml loader apply
+// (resolveModPathValue), and refused as a GameSpecError on field
+// "mod_path" when it is empty or names something that is not a directory.
+// An absent directory is accepted, as AddGame accepts one: a deploy
+// creates it.
+//
+// Two refusals protect what is already on disk:
+//
+//   - GameModPathInUseError while any profile of the game has files
+//     deployed. lmm records a deployed file relative to the mod_path it was
+//     deployed under, so a move under a live deployment strands every file
+//   - live, unrecorded, and looked for in the wrong place by the next
+//     purge. The purge comes first.
+//   - A GameSpecError when the move would turn a game its adapter accepts
+//     into one AdapterFor refuses (`adapter: bepinex` off the game root). A
+//     game that is ALREADY refused may be moved, because that is how such a
+//     game is repaired.
+//
+// Setting the value the game already has writes nothing.
+func (s *Service) SetGameModPath(ctx context.Context, gameID, modPath string) (*GameListEntry, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	game, ok := s.game(gameID)
+	if !ok {
+		return nil, domain.ErrGameNotFound
+	}
+
+	raw := config.ExpandPath(strings.TrimSpace(modPath))
+	if raw == "" {
+		return nil, newGameSpecError("mod_path", "", "a mod path is required")
+	}
+	resolved, err := resolveModPathValue(game.InstallPath, raw)
+	if err != nil {
+		return nil, err
+	}
+
+	defaultGame, err := s.DefaultGame(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.Clean(resolved) == filepath.Clean(game.ModPath) {
+		entry := s.newGameListEntry(game, defaultGame)
+		return &entry, nil
+	}
+
+	deployed, err := s.db.CountDeployedFiles(ctx, game.ID)
+	if err != nil {
+		return nil, err
+	}
+	if deployed > 0 {
+		return nil, &GameModPathInUseError{GameID: game.ID, ModPath: game.ModPath, DeployedFiles: deployed}
+	}
+
+	// A COPY, for the reason UpdateGameSources documents.
+	updated := *game
+	updated.ModPath = resolved
+	if _, err := s.AdapterFor(game); err == nil {
+		if _, err := s.AdapterFor(&updated); err != nil {
+			return nil, &GameSpecError{Field: "mod_path", Value: resolved, Reason: err.Error(), Err: err}
+		}
+	}
+
+	if err := s.saveGame(ctx, &updated); err != nil {
+		return nil, err
+	}
+	entry := s.newGameListEntry(&updated, defaultGame)
+	return &entry, nil
+}
+
+// resolveModPathValue applies the loader's mod_path rule to an
+// already-expanded, non-empty value on the WRITE side (#363): a relative
+// value is relative to installPath, and what is written is the resolved
+// absolute path. A path that exists and is not a directory is refused -
+// every later deploy would fail on it with a confusing link error - while
+// an absent one is fine, because a deploy creates it. Shared by GameSpec
+// (`lmm game add`) and SetGameModPath, so the two cannot accept different
+// values.
+func resolveModPathValue(installPath, modPath string) (string, error) {
+	resolved, err := config.ResolveModPath(installPath, modPath)
+	if err != nil {
+		return "", &GameSpecError{Field: "mod_path", Value: modPath, Reason: err.Error(), Err: err}
+	}
+	if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
+		return "", newGameSpecError("mod_path", resolved, "path exists and is not a directory")
+	}
+	return resolved, nil
+}
+
+// ModPathProblem reports why game's mod_path cannot be deployed into as it
+// stands - a *ModPathMissingError - or nil when it is a directory (or no
+// mod_path is configured at all, which is a different complaint made
+// elsewhere). One stat.
+//
+// It is what every game document's mod_path_error says (GameListEntry,
+// GameSummary, GameStatus - `lmm game list/show`, `lmm status`, the web
+// Games rows) and what `lmm import`'s scan refuses with, so the flag and
+// the refusal name the same repair (#427).
+func ModPathProblem(game *domain.Game) error {
+	if game == nil || game.ModPath == "" {
+		return nil
+	}
+	info, err := os.Stat(game.ModPath)
+	var reason string
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		reason = "does not exist"
+	case err != nil:
+		reason = "cannot be read: " + err.Error()
+	case !info.IsDir():
+		reason = "is not a directory"
+	default:
+		return nil
+	}
+	e := &ModPathMissingError{GameID: game.ID, ModPath: game.ModPath, Reason: reason}
+	// A BepInEx layout is relative to the game root, so for a game that has
+	// BepInEx the right mod_path is not a guess.
+	if hasBepInEx(game) && filepath.Clean(game.ModPath) != filepath.Clean(game.InstallPath) {
+		e.SuggestedModPath = game.InstallPath
+	}
+	return e
+}
+
+// ModPathMissingError is ModPathProblem's answer: GameID's mod_path is not a
+// directory lmm can deploy into, and Error names the command that repairs
+// it. SuggestedModPath is the value lmm can recommend with confidence - the
+// install path, for a game that has BepInEx - and empty otherwise.
+type ModPathMissingError struct {
+	GameID  string `json:"game_id"`
+	ModPath string `json:"mod_path"`
+	// Reason is what is wrong with it: "does not exist", "is not a
+	// directory", or "cannot be read: <cause>".
+	Reason           string `json:"reason"`
+	SuggestedModPath string `json:"suggested_mod_path,omitempty"`
+}
+
+// Error implements error.
+func (e *ModPathMissingError) Error() string {
+	head := fmt.Sprintf("mod_path %s %s", e.ModPath, e.Reason)
+	if e.SuggestedModPath != "" {
+		return fmt.Sprintf("%s, and a BepInEx game deploys into its root: run `lmm game edit %s --mod-path %s`",
+			head, e.GameID, e.SuggestedModPath)
+	}
+	if e.Reason == "does not exist" {
+		head += " yet (a deploy creates it)"
+	}
+	return fmt.Sprintf("%s; if the game loads mods from somewhere else, run `lmm game edit %s --mod-path <path>`", head, e.GameID)
+}
+
+// Details returns the error itself for the --json error envelope's
+// "details" field (Ruling 3).
+func (e *ModPathMissingError) Details() any { return e }
+
+// GameModPathInUseError refuses SetGameModPath while GameID has files
+// deployed under ModPath - see SetGameModPath for why the purge comes
+// first.
+type GameModPathInUseError struct {
+	GameID        string `json:"game_id"`
+	ModPath       string `json:"mod_path"`
+	DeployedFiles int    `json:"deployed_files"`
+}
+
+// Error implements error.
+func (e *GameModPathInUseError) Error() string {
+	return fmt.Sprintf("%d file(s) are deployed under %s, and lmm records each one relative to the mod_path; run `lmm purge --game %s` first, then change the mod_path, then run `lmm deploy --game %s`",
+		e.DeployedFiles, e.ModPath, e.GameID, e.GameID)
+}
+
+// Details returns the error itself for the --json error envelope's
+// "details" field (Ruling 3).
+func (e *GameModPathInUseError) Details() any { return e }
 
 // validatedSourceMap trims and checks every entry of a proposed source
 // map, returning the map to persist. Each id must be non-empty and must

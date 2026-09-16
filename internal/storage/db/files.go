@@ -113,6 +113,17 @@ func (d *DB) AnyProfileOwnsFile(ctx context.Context, gameID, relativePath string
 	return true, nil
 }
 
+// CountDeployedFiles returns how many deployed_files rows gameID has across
+// every profile - the population a mod_path move would strand, since each
+// row is relative to the mod_path it was deployed under.
+func (d *DB) CountDeployedFiles(ctx context.Context, gameID string) (int, error) {
+	var n int
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployed_files WHERE game_id = ?`, gameID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting deployed files: %w", err)
+	}
+	return n, nil
+}
+
 // DeleteDeployedFiles removes all deployed file records for a specific mod.
 func (d *DB) DeleteDeployedFiles(ctx context.Context, gameID, profileName, sourceID, modID string) error {
 	_, err := d.ExecContext(ctx, `

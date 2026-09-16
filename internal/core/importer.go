@@ -646,9 +646,12 @@ func (i *Importer) scanModPath(ctx context.Context, game *domain.Game, installed
 		}
 	}
 
-	// Check if mod_path exists
-	if _, err := os.Stat(modPath); err != nil {
-		return nil, fmt.Errorf("mod_path does not exist: %s", modPath)
+	// A mod_path that is not a directory refuses with the repair (#427),
+	// not a bare "does not exist" the user has no next step from.
+	expanded := *game
+	expanded.ModPath = modPath
+	if err := ModPathProblem(&expanded); err != nil {
+		return nil, err
 	}
 
 	var results []ScanResult

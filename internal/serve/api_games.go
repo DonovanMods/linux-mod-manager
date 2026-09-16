@@ -238,8 +238,14 @@ type gameSourcesRequest struct {
 	// a string so an SPA that only edits the source map - every caller
 	// before #353 - cannot clear an adapter it never sent.
 	Adapter *string `json:"adapter,omitempty"`
+	// ModPath, when present, sets the game's `mod_path:` (#427, #456) - the
+	// repair for a mod_path that no longer exists - resolved and refused by
+	// the rules `lmm game edit --mod-path` applies. It is written before the
+	// adapter, because bepinex is refused off the game root, so one body can
+	// move a game to its root and onto bepinex.
+	ModPath *string `json:"mod_path,omitempty"`
 	// Loader is #359's declaration, additive: a body carrying it edits the
-	// LOADER instead of the source map or the adapter.
+	// LOADER instead of the source map, the mod path or the adapter.
 	//
 	// One request, one edit. Each is a complete statement on its own and
 	// each is its own gated write, so handling both in one request would
@@ -278,9 +284,9 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	editsLoader := req.Loader != nil || req.LoaderSet
-	if editsLoader && (len(req.Sources) > 0 || req.Adapter != nil) {
+	if editsLoader && (len(req.Sources) > 0 || req.Adapter != nil || req.ModPath != nil) {
 		s.writeAPIError(w, http.StatusBadRequest,
-			errors.New("edit the sources, the adapter and the loader in separate requests: send \"sources\", \"adapter\", or \"loader\", not more than one"))
+			errors.New("edit the loader in separate requests: send \"loader\" on its own, or \"sources\"/\"adapter\"/\"mod_path\" without it"))
 		return
 	}
 
@@ -294,23 +300,33 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// #353: the adapter is its own gated core write, taken FIRST so a
-	// request carrying both leaves both applied or fails before the source
-	// map moves - the same order `lmm game edit` uses.
-	if req.Adapter != nil {
-		entry, err := s.svc.SetGameAdapter(r.Context(), r.PathValue("id"), *req.Adapter)
-		if err != nil {
+	// Each edit is its own gated core write, in the order `lmm game edit`
+	// uses: the mod path (#427), then the adapter (#353), then the source
+	// map - so a body carrying several fails before the later ones move.
+	id := r.PathValue("id")
+	var entry *core.GameListEntry
+	var err error
+	if req.ModPath != nil {
+		if entry, err = s.svc.SetGameModPath(r.Context(), id, *req.ModPath); err != nil {
 			s.writeAPIError(w, gameSourcesErrorStatus(err), err)
 			return
 		}
-		if req.Sources == nil {
-			s.writeJSON(w, http.StatusOK, entry)
+	}
+	if req.Adapter != nil {
+		if entry, err = s.svc.SetGameAdapter(r.Context(), id, *req.Adapter); err != nil {
+			s.writeAPIError(w, gameSourcesErrorStatus(err), err)
 			return
 		}
 	}
+	// A body that edited something else and sent no source map leaves the
+	// map alone; one that sent nothing at all is UpdateGameSources' empty-map
+	// refusal, as it always was.
+	if entry != nil && req.Sources == nil {
+		s.writeJSON(w, http.StatusOK, entry)
+		return
+	}
 
-	entry, err := s.svc.UpdateGameSources(r.Context(), r.PathValue("id"), req.Sources)
-	if err != nil {
+	if entry, err = s.svc.UpdateGameSources(r.Context(), id, req.Sources); err != nil {
 		s.writeAPIError(w, gameSourcesErrorStatus(err), err)
 		return
 	}
@@ -349,12 +365,13 @@ func (s *Server) handleAPIGameDetail(w http.ResponseWriter, r *http.Request) {
 func gameSourcesErrorStatus(err error) int {
 	var specErr *core.GameSpecError
 	var inUseErr *core.GameSourceInUseError
+	var modPathInUseErr *core.GameModPathInUseError
 	switch {
 	case errors.Is(err, domain.ErrGameNotFound):
 		return http.StatusNotFound
 	case errors.As(err, &specErr):
 		return http.StatusBadRequest
-	case errors.As(err, &inUseErr):
+	case errors.As(err, &inUseErr), errors.As(err, &modPathInUseErr):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

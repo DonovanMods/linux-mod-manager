@@ -27,10 +27,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The two contradictions' openings, as the warning words them.
+// The contradictions' openings, as the warning words them: the whole
+// sentence's (game show, verify, an edit), and the load-time line's (#456).
 const (
 	valheimContradiction = `game "valheim" declares the BepInEx loader, but its adapter is "generic-files"`
-	lethalContradiction  = `game "lethal-company" declares the BepInEx loader, but its adapter is "generic-files"`
+	lethalLoadTime       = `game "lethal-company" declares the BepInEx loader, but lmm ignores it because its adapter is "generic-files"`
 )
 
 // setupAdapterWarningGames writes three BepInEx games through a production
@@ -118,7 +119,7 @@ func TestAdapterWarning_ACommandThatReportsItSaysItOnce(t *testing.T) {
 
 			assert.Equal(t, 1, strings.Count(stdout+stderr, valheimContradiction),
 				"the command reports valheim's warning itself, so the load-time copy is not printed too\nstdout: %s\nstderr: %s", stdout, stderr)
-			assert.Equal(t, 1, strings.Count(stderr, lethalContradiction),
+			assert.Equal(t, 1, strings.Count(stderr, lethalLoadTime),
 				"a game the command is not about is still warned about at load")
 		})
 	}

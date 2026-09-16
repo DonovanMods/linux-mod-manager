@@ -100,18 +100,20 @@ func TestDoGameEdit_ClearingTheAdapterNamesTheOneInUse(t *testing.T) {
 func TestJSONGolden_GameListEffectiveAdapter(t *testing.T) {
 	svc := setupGameAddTest(t)
 	app.RegisterAdapters(svc)
+	root := goldenGameRoot(t)
 	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
-		ID: "icarus", Name: "Icarus", InstallPath: "/games/icarus", ModPath: "/games/icarus/Mods",
+		ID: "icarus", Name: "Icarus", InstallPath: goldenGameDir(t, root, "icarus"), ModPath: goldenGameDir(t, root, "icarus/Mods"),
 		DeployMode: domain.DeployCompile, ConvertPaks: true,
 	}))
+	valheim := goldenGameDir(t, root, "valheim")
 	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
-		ID: "valheim", Name: "Valheim", InstallPath: "/games/valheim", ModPath: "/games/valheim",
+		ID: "valheim", Name: "Valheim", InstallPath: valheim, ModPath: valheim,
 		Adapter: "bepinex",
 	}))
 	withJSONOutput(t)
 
 	out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
-	assertJSONCLIGolden(t, "game_list_effective_adapter", out)
+	assertJSONCLIGolden(t, "game_list_effective_adapter", out, goldenGameSubs(root)...)
 }
 
 // A game every flow refuses says so in both renderings (#413 re-review L2),
