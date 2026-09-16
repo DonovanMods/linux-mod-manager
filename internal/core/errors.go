@@ -159,7 +159,9 @@ func classifyIndexError(sourceID, sourceGameID string, err error) error {
 	var later *source.RetryLaterError
 	if errors.As(err, &later) {
 		typed.Reason = later.Reason
-		typed.RetryAt = later.Until.UTC()
+		// Whole seconds, rounded UP: a client told "retry at" must never be
+		// told a moment before the one lmm will actually allow.
+		typed.RetryAt = later.Until.UTC().Add(time.Second - 1).Truncate(time.Second)
 	}
 	return typed
 }

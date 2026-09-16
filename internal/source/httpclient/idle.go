@@ -85,7 +85,7 @@ func (t *IdleTimeout) RoundTrip(req *http.Request) (*http.Response, error) {
 		stalled := errors.Is(context.Cause(ctx), ErrStalled)
 		cancel(nil)
 		if stalled {
-			return nil, fmt.Errorf("%w (%w)", stall, err)
+			return nil, stalledError(stall, err)
 		}
 		return nil, err
 	}
@@ -120,10 +120,20 @@ func (b *idleBody) Read(p []byte) (int, error) {
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		if cause := context.Cause(b.ctx); errors.Is(cause, ErrStalled) {
-			return n, fmt.Errorf("%w (%w)", cause, err)
+			return n, stalledError(cause, err)
 		}
 	}
 	return n, err
+}
+
+// stalledError reports a failure the stall window caused. net/http hands
+// back the cancellation cause itself on newer runtimes, and a wrapped
+// context error on older ones; either way the result names the stall once.
+func stalledError(stall, err error) error {
+	if errors.Is(err, ErrStalled) {
+		return err
+	}
+	return fmt.Errorf("%w (%w)", stall, err)
 }
 
 // Close stops the window and releases the request's context.

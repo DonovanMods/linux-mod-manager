@@ -139,6 +139,12 @@ func TestIndexUnavailableError_NamesTheIndexAndWhy(t *testing.T) {
 			wantReason: "rate limited by Thunderstore (HTTP 429) after 3 attempts",
 		},
 		{
+			name:        "host suspended until a fraction of a second",
+			cause:       &source.RetryLaterError{Source: "Thunderstore", Until: until.Add(-500 * time.Millisecond), Reason: "throttled"},
+			wantReason:  "throttled",
+			wantRetryAt: until, // whole seconds, rounded UP, never earlier than lmm allows
+		},
+		{
 			name:        "host suspended",
 			cause:       fmt.Errorf("fetching: %w", &source.RetryLaterError{Source: "Thunderstore", Until: until, Reason: "suspended after repeated failures"}),
 			wantReason:  "suspended after repeated failures",

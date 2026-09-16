@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -126,6 +127,7 @@ func TestIdleTimeout_AStoppedBodyFailsWithAStallError(t *testing.T) {
 	assert.Equal(t, 30*time.Second, stall.Timeout)
 	assert.ErrorIs(t, err, httpclient.ErrStalled)
 	assert.Contains(t, err.Error(), "no data received for 30s")
+	assert.Equal(t, 1, strings.Count(err.Error(), "stalled"), "the stall is named once: %v", err)
 }
 
 // TestIdleTimeout_AMovingBodyIsNeverCutOff is the other half: every read
