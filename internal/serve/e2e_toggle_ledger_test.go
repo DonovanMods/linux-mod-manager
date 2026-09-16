@@ -980,22 +980,43 @@ func TestE2E_ActivityGap_AJobKnownOnlyFromASnapshotEndsItsLateBinding(t *testing
 	}
 }
 
-// deadlineCompression is how much deadlineShimJS shrinks the page's request
-// deadlines by, so a scenario can wait one out in seconds.
+// deadlineCompression is how much deadlineShim shrinks the page's deadlines
+// by, so a scenario can wait one out in seconds.
 const deadlineCompression = 40
 
-// deadlineShimJS runs before the page's own scripts. It records every
-// deadline the page puts on a request (AbortSignal.timeout) and hands the
-// browser one deadlineCompression times shorter - the page's own value is
-// untouched, only how long the browser takes to reach it.
-const deadlineShimJS = `(() => {
+// deadlineShim runs before the page's own scripts. It records every deadline
+// the page sets (AbortSignal.timeout) and hands the browser one
+// deadlineCompression times shorter - the page's own value is untouched,
+// only how long the browser takes to reach it.
+//
+// The page sets two kinds, told apart by the module that asks: a request's
+// (api.js), recorded in __requestDeadlines, and a toggle request's settle
+// deadline (toggleack.js), recorded in __settleDeadlines. The second is
+// compressed only when compressSettle is set, so a scenario that holds a
+// settling read open on purpose can look behind it for as long as it needs.
+// __settleDeadlinesPassed counts the settle deadlines that have passed; the
+// shim hears each one before the page does, in the same event.
+func deadlineShim(compressSettle bool) string {
+	return fmt.Sprintf(`(() => {
 	const timeout = AbortSignal.timeout.bind(AbortSignal);
 	window.__requestDeadlines = [];
+	window.__settleDeadlines = [];
+	window.__settleDeadlinesPassed = 0;
 	AbortSignal.timeout = (ms) => {
-		window.__requestDeadlines.push(ms);
-		return timeout(ms / 40);
+		const caller = (new Error().stack ?? "").split("\n")[2] ?? "";
+		const settle = caller.includes("/toggleack.js");
+		(settle ? window.__settleDeadlines : window.__requestDeadlines).push(ms);
+		const signal = timeout(settle && !%t ? ms : ms / %d);
+		if (settle) {
+			signal.addEventListener("abort", () => { window.__settleDeadlinesPassed++; });
+		}
+		return signal;
 	};
-})()`
+})()`, compressSettle, deadlineCompression)
+}
+
+// deadlineShimJS compresses request deadlines only.
+var deadlineShimJS = deadlineShim(false)
 
 // watchForPendingJS records, from the moment it runs, whether any row goes
 // back to pending.
@@ -1273,6 +1294,196 @@ func TestE2E_LibraryToggle_ASupersededRereadSettlesNothing(t *testing.T) {
 			assert.Empty(t, f.BrowserErrors())
 		})
 	}
+}
+
+// TestE2E_LibraryToggle_ASettlingReadThatNeverLandsEndsAtItsDeadline is the
+// final review's R2: the read that would settle a request is never
+// answered - a hung server, whose reads hang with its writes. The request
+// used to wait on that read for good, so a row said "Disabling…" long after
+// its toast had claimed it showed what the server reports. The read now has
+// a deadline: once it passes, the row shows the last value the server
+// actually sent and a toast says the current state could not be read. When
+// the read does land, the row follows it.
+func TestE2E_LibraryToggle_ASettlingReadThatNeverLandsEndsAtItsDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// stall is the toggleWire stall mode: "" lets the start through, so
+		// the request settles through "confirming"; "answer" applies the
+		// change and never answers the start, so it settles through
+		// "unanswered".
+		stall string
+		// deadlines is how many compressed deadlines pass before the row
+		// can leave pending: the settle deadline, after the start's own.
+		deadlines int
+	}{
+		{name: "confirming", stall: "", deadlines: 1},
+		{name: "unanswered", stall: "answer", deadlines: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, wire := newToggleWireFixture(t, newFakeSource("fake"), 1<<30)
+			seedDeployableMods(t, f.Svc, f.Game)
+			wire.stall.Store(tc.stall)
+
+			f.runInBrowser(t,
+				chromedp.ActionFunc(func(ctx context.Context) error {
+					_, err := page.AddScriptToEvaluateOnNewDocument(deadlineShim(true)).Do(ctx)
+					return err
+				}),
+				chromedp.Navigate(f.HomePath()),
+				chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+				pollUntil(`document.querySelectorAll(".mod-row").length === 2`),
+				chromedp.Evaluate(recordRowStatesJS("fake:a"), nil),
+			)
+			// Every library read from here on hangs until the very end.
+			wire.holdMods.Store(true)
+
+			f.runInBrowser(t, chromedp.Evaluate(libraryToggleJS("Alpha Mod"), nil))
+			awaitToggleRequests(t, &wire.toggles, 1)
+			awaitJobsOver(t, f, wire, map[string]bool{"a": false})
+			awaitMods(t, wire, 1, 0)
+
+			var toasts []string
+			var row e2eRowToggleState
+			var changes []e2eRowStateChange
+			var settleDeadlines []float64
+			runWithin(t, f, 30*time.Second,
+				pollUntil(toastSaysJS("could not be read")),
+				pollUntil(noRowPendingJS),
+				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &row),
+				chromedp.Evaluate(toastTextsJS, &toasts),
+				chromedp.Evaluate(`window.__rowStates`, &changes),
+				chromedp.Evaluate(`window.__settleDeadlines`, &settleDeadlines),
+			)
+			assert.Zero(t, wire.modsAnswered.Load(), "no read was answered: the deadline, not a read, ended the wait")
+			assert.False(t, row.Pending, "the request is over (row: %+v)", row)
+			assert.True(t, row.Checked,
+				"and the box shows the last value the server sent - the library read before the job")
+			assert.False(t, row.Disabled, "with the control live again")
+			assert.Empty(t, row.Live)
+
+			require.NotEmpty(t, settleDeadlines, "the settling read has a deadline")
+			deadline := time.Duration(settleDeadlines[0]) * time.Millisecond
+			assert.GreaterOrEqual(t, deadline, 30*time.Second,
+				"the deadline comfortably exceeds a read queued behind a slow update check")
+			compressed := deadline / deadlineCompression
+			require.Equal(t, []string{"checked/settled", "unchecked/pending", "checked/settled"}, rowStateNames(changes),
+				"pending from the click to the deadline, then the last value the server sent")
+			left := time.Duration(changes[2].At-changes[1].At) * time.Millisecond
+			assert.GreaterOrEqual(t, left, time.Duration(tc.deadlines)*compressed,
+				"the row is held for the whole of its deadline")
+			assert.Less(t, left, time.Duration(tc.deadlines)*compressed+5*time.Second,
+				"and released promptly once it passes")
+
+			joined := strings.Join(toasts, " | ")
+			assert.Contains(t, joined, "could not be read", "a toast says the current state is unknown")
+			assert.Contains(t, joined, "Alpha Mod")
+			assert.NotContains(t, joined, "now shows what the server reports",
+				"no toast claims a read that never landed")
+			if tc.stall != "" {
+				assert.Contains(t, joined, "once it answers",
+					"the start's own toast promises the server's value only when there is one")
+			}
+
+			// The server answers at last, and the row follows it.
+			wire.releaseMods()
+			var after e2eRowToggleState
+			runWithin(t, f, 20*time.Second,
+				pollUntil(`(() => {
+					const row = document.querySelector('.mod-row[data-mod="fake:a"]');
+					return row !== null && !row.querySelector("td.col--enabled input").checked;
+				})()`),
+				settleEffects(),
+				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &after),
+			)
+			assert.False(t, after.Pending, "and is never pending again")
+			assert.False(t, after.Disabled)
+			wire.releaseStalled()
+			assert.Empty(t, uncaughtErrors(f))
+		})
+	}
+}
+
+// TestE2E_LibraryToggle_ASettleDeadlineOffScreenEndsNothing: the settle
+// deadline ends a hold only where its row can be seen. A request whose job
+// ends while the user is on another page has nothing on screen to be wrong
+// about, and a "could not be read" toast there would report a failure no
+// read ever had - that page never reads the library. The hold waits, and
+// the read that coming back starts is the one its deadline then bounds.
+func TestE2E_LibraryToggle_ASettleDeadlineOffScreenEndsNothing(t *testing.T) {
+	f, wire := newToggleWireFixture(t, newFakeSource("fake"), 0)
+	seedDeployableMods(t, f.Svc, f.Game)
+
+	f.runInBrowser(t,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			_, err := page.AddScriptToEvaluateOnNewDocument(deadlineShim(true)).Do(ctx)
+			return err
+		}),
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 2`),
+		chromedp.Evaluate(recordRowStatesJS("fake:a"), nil),
+		// The click, then the Setup page - which reads no library - before
+		// the job can end.
+		chromedp.Evaluate(libraryToggleJS("Alpha Mod"), nil),
+		chromedp.Evaluate(clientNavigateJS(f.SetupPath("")), nil),
+		waitGone(`.library__table`),
+	)
+	awaitToggleRequests(t, &wire.toggles, 1)
+	wire.holdMods.Store(true)
+	wire.releaseToggles()
+	awaitJobsOver(t, f, wire, map[string]bool{"a": false})
+
+	// The hold's deadline passes while the Setup page is on screen.
+	var toasts []string
+	runWithin(t, f, 20*time.Second,
+		pollUntil(`window.__settleDeadlinesPassed >= 1`),
+		settleEffects(),
+		chromedp.Evaluate(toastTextsJS, &toasts),
+	)
+	assert.NotContains(t, strings.Join(toasts, " | "), "could not be read",
+		"nothing on screen claims anything, so there is nothing to report")
+	assert.Zero(t, wire.modsHeld.Load(), "and nothing read the library")
+
+	// Back on the library: the row is still pending, its read begins, and
+	// that read - which never lands - is what the deadline now bounds.
+	var back, row e2eRowToggleState
+	var changes []e2eRowStateChange
+	var returnedAt float64
+	var settleDeadlines []float64
+	runWithin(t, f, 30*time.Second,
+		chromedp.Evaluate(`window.__returnedAt = performance.now() - window.__recordingSince;`+
+			clientNavigateJS(f.HomePath()), nil),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &back),
+		pollUntil(toastSaysJS("could not be read")),
+		pollUntil(noRowPendingJS),
+		chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &row),
+		chromedp.Evaluate(`window.__rowStates`, &changes),
+		chromedp.Evaluate(`window.__returnedAt`, &returnedAt),
+		chromedp.Evaluate(`window.__settleDeadlines`, &settleDeadlines),
+	)
+	assert.True(t, back.Pending, "the row comes back still pending (row: %+v)", back)
+	assert.Positive(t, wire.modsHeld.Load(), "coming back started a library read")
+	assert.Zero(t, wire.modsAnswered.Load(), "which never landed")
+	require.Equal(t, []string{"checked/settled", "unchecked/pending", "checked/settled"}, rowStateNames(changes),
+		"pending from the click, off screen and back, until the deadline on screen")
+	assert.True(t, row.Checked, "then the last value the server sent")
+	assert.False(t, row.Disabled)
+
+	require.GreaterOrEqual(t, len(settleDeadlines), 2, "coming back armed a new deadline")
+	compressed := time.Duration(settleDeadlines[1]) * time.Millisecond / deadlineCompression
+	held := time.Duration(changes[2].At-returnedAt) * time.Millisecond
+	assert.GreaterOrEqual(t, held, compressed, "a whole deadline from the read coming back began")
+	assert.Less(t, held, compressed+5*time.Second)
+
+	wire.releaseMods()
+	runWithin(t, f, 20*time.Second,
+		pollUntil(`(() => {
+			const row = document.querySelector('.mod-row[data-mod="fake:a"]');
+			return row !== null && !row.querySelector("td.col--enabled input").checked;
+		})()`),
+	)
+	assert.Empty(t, uncaughtErrors(f))
 }
 
 // TestE2E_LibraryBatch_AnUnansweredStartIsAnUnknownOutcome is the same

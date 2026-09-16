@@ -34,6 +34,14 @@
 // A read committed with an error settles the entry too, with a toast: the
 // current state could not be read.
 //
+// AND IT HAS A DEADLINE. A server that stops answering stops answering
+// reads as well, so a hold with no deadline is a row pending for good. The
+// hold ends settleDeadlineMillis after the newest read of the entry's
+// context began, with the same toast. The deadline does not end a hold
+// the user cannot see - another profile, the search page - since nothing
+// on screen claims anything there; the next read of that context starts it
+// again, which is exactly when the row can be seen once more.
+//
 // Transitions are driven by events (main.js), not by polling a render:
 //
 //   state       what it means                   leaves when                             to
@@ -63,8 +71,10 @@
 //               value until a read taken after    context; the control then shows it,
 //               that end lands                    whatever it says
 //                                               unread: that read was committed as an   (removed)
-//                                                 error; toasted as "could not be read",
-//                                                 and the control shows the last
+//                                                 error, or none was before the settle
+//                                                 deadline (settleDeadlineMillis) while
+//                                                 on screen; toasted as "could not be
+//                                                 read", and the control shows the last
 //                                                 document the server sent
 //   unanswered  its start was never answered,   read: as confirming, for a read issued  (removed)
 //               so nothing says whether the       after the start's deadline
@@ -97,15 +107,16 @@
 //     job the snapshot does not carry. A job the server cannot account for
 //     is lost. The stream always comes back: EventSource retries on its own,
 //     and sse.js#followActivity reopens it when the browser gives up.
-//   - confirming, unanswered: the ending (or the start's deadline) begins a
-//     read of the library, and a read written - a document or an error -
-//     ends the hold. A superseded read ends nothing: the read that
-//     superseded it was issued later still, so its commit is the one that
-//     counts.
+//   - confirming, unanswered: every hold is armed with a deadline, re-armed
+//     whenever a read of its context begins, and the deadline ends it
+//     whenever its row can be seen. A read that lands first - a document or
+//     an error - ends it sooner. A superseded read ends nothing: the read
+//     that superseded it was issued later still, so its commit is the one
+//     that counts, and the deadline covers it.
 //
 // An entry for a context nobody is looking at still settles on a read of
-// its own context; it simply is not rendered until that context is on
-// screen again.
+// its own context; it simply is not rendered, and its deadline does not
+// end it, until that context is on screen again.
 
 /** modToggleOrigin is the stable origin every enable/disable control for one
  * mod shares - "mod:{source}/{id}:toggle" (modrows.js#modOriginPattern).
@@ -141,6 +152,19 @@ function ledgerKey(context, modKey) {
   return JSON.stringify([context.game ?? "", context.profile ?? "", modKey]);
 }
 
+/** settleDeadlineMillis bounds how long a request waits for the read that
+ * settles it, from the moment that read begins (issue 432). The same
+ * budget as a job start's (api.js#jobStartDeadlineMillis), for the same
+ * reason: the library read is issued alongside the update check, which may
+ * spend tens of seconds on sources with nothing wrong, and its commit waits
+ * for it. */
+export const settleDeadlineMillis = 60_000;
+
+/** toggleViews are the views that render a toggle - the library and its
+ * slide-over, and the full mod page - and whose reads include the library
+ * document every toggle renders from. */
+const toggleViews = new Set(["home", "mod"]);
+
 /** toggleDocument is the store slice every toggle renders its value from. */
 const toggleDocument = "mods";
 
@@ -161,12 +185,16 @@ let requestSeq = 0;
 export function createToggleLedger(store, { endingOf, fence, onUnread }) {
   const entries = () => store.get().toggleRequests ?? {};
   // holds is every entry waiting on a read, by request: {entry, phase,
-  // after}. Kept here rather than in the store, because nothing renders
-  // it.
+  // after, deadline}. Kept here rather than in the store, because nothing
+  // renders it.
   const holds = new Map();
 
   const inContext = (entry, route) =>
     ledgerKey(route ?? {}, entry.modKey) === entry.key;
+  const onScreen = (entry) => {
+    const route = store.get().route ?? {};
+    return toggleViews.has(route.view) && inContext(entry, route);
+  };
 
   // lastRead is the newest library document written, and the context it
   // was read for: the route on screen when it was committed, which the
@@ -221,14 +249,33 @@ export function createToggleLedger(store, { endingOf, fence, onUnread }) {
 
   // hold moves entry to `phase` until a read stamped above `after` is
   // written for its context - or already has been, which a late binding
-  // finds.
+  // finds - or its deadline passes.
   function hold(entry, phase, after) {
     const held = update(entry, { phase });
     if (!held) return;
-    const waiting = { entry: held, phase, after };
+    const waiting = { entry: held, phase, after, deadline: null };
     holds.set(held.request, waiting);
-    if (lastRead?.stamp > after && inContext(held, lastRead.route))
+    if (lastRead?.stamp > after && inContext(held, lastRead.route)) {
       release(waiting, lastRead.error);
+      return;
+    }
+    arm(waiting);
+  }
+
+  // arm (re)starts waiting's deadline. A deadline that passes while the
+  // row cannot be seen leaves the hold unarmed until a read of its context
+  // begins (rereading).
+  function arm(waiting) {
+    // The signal is kept on the hold, and so alive until it fires.
+    const armed = { signal: AbortSignal.timeout(settleDeadlineMillis) };
+    armed.signal.addEventListener("abort", () => {
+      if (waiting.deadline !== armed) return;
+      waiting.deadline = null;
+      if (!onScreen(waiting.entry)) return;
+      const seconds = Math.round(settleDeadlineMillis / 1000);
+      release(waiting, `no answer within ${seconds} seconds`);
+    });
+    waiting.deadline = armed;
   }
 
   // release ends waiting's hold: the control shows the document from here
@@ -237,6 +284,7 @@ export function createToggleLedger(store, { endingOf, fence, onUnread }) {
     const { entry, phase } = waiting;
     if (holds.get(entry.request) !== waiting) return;
     holds.delete(entry.request);
+    waiting.deadline = null;
     if (current(entry)?.phase !== phase) return;
     remove(entry);
     if (error) onUnread(entry, error);
@@ -292,6 +340,15 @@ export function createToggleLedger(store, { endingOf, fence, onUnread }) {
     unanswered(entry, after) {
       if (current(entry)?.phase === "requested")
         hold(entry, "unanswered", after);
+    },
+
+    /** rereading restarts the deadline of every entry held in `route`'s
+     * context: a read that can settle them has just begun. */
+    rereading(route) {
+      if (!toggleViews.has(route.view)) return;
+      for (const waiting of holds.values()) {
+        if (inContext(waiting.entry, route)) arm(waiting);
+      }
     },
 
     /** ended applies a job's ending to every entry running on it, and

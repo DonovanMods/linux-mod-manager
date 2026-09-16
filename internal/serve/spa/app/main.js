@@ -179,6 +179,9 @@ function commitSlices(seq, claim, patch, errors) {
  */
 async function hydrate(route) {
   const seq = beginHydration();
+  // A read that can settle this context's toggle requests begins here - the
+  // status pair below is part of it (toggleack.js#rereading).
+  toggles.rereading(route);
 
   if (route.view === "chooser") {
     const claim = slices.claim(["status", "games"]);
@@ -1264,16 +1267,16 @@ function toggleUnanswered(entry, err) {
   pushToast({
     tone: "failure",
     title: "lmm serve did not answer",
-    detail: `${entry.want ? "Enable" : "Disable"} ${entry.name ?? entry.modKey}: the server did not answer within ${seconds} seconds, so the change may or may not have been applied. The row now shows what the server reports.`,
+    detail: `${entry.want ? "Enable" : "Disable"} ${entry.name ?? entry.modKey}: the server did not answer within ${seconds} seconds, so the change may or may not have been applied. The row will show what the server reports once it answers.`,
   });
 }
 
 /**
  * toggleUnread tells the user a toggle request ended without a read of what
  * its mod is now (toggleack.js's "unread"): the library read after it
- * failed. The row is showing the last library document the server sent,
- * which may be from before the change, and nothing on screen says so
- * except this.
+ * failed, or did not land before its deadline. The row is showing the last
+ * library document the server sent, which may be from before the change,
+ * and nothing on screen says so except this.
  */
 function toggleUnread(entry, reason) {
   const name = entry.name ?? entry.modKey;
