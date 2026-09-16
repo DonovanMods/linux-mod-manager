@@ -406,15 +406,20 @@ relative to the working directory. So:
   deploying into that directory exactly as packaged. Deriving bepinex there
   nested every plugin under `BepInEx/plugins/BepInEx/plugins/`, where
   nothing loads it. That game is a contradiction in the sense above, with
-  both remedies: move it to the game root (`lmm purge`, then `lmm game
-  edit <id> --mod-path <install path>`, then re-deploy, and `lmm verify
-  --fix` re-lays out what was already imported), or pin
+  both remedies: move it to the game root (`lmm purge --profile <name>`
+  for each profile with files deployed, then `lmm game edit <id>
+  --mod-path <install path>`, then re-deploy, and `lmm verify --fix`
+  re-lays out what was already imported), or pin
   `adapter: generic-files`;
 - `lmm game edit --mod-path` (and `PUT /api/v1/games/{id}`'s `mod_path`)
-  refuses to move a `mod_path` while anything is deployed under it — lmm
-  records deployed files relative to it, so the purge comes first — and
+  refuses to move a `mod_path` while any profile has files deployed under
+  it — lmm records deployed files relative to it, so the purge comes
+  first, and the refusal names every profile to purge. `lmm game detect`'s
+  repair of an already-configured game runs the same check. The edit also
   refuses a move that would leave an explicit `adapter: bepinex` off the
-  game root, while a game already refused can be moved back;
+  game root, while a game already refused can be moved back; `--adapter`
+  and `--mod-path` are checked together, so a game moves onto bepinex at
+  its root, or off it, in one command;
 - an **explicit** `adapter: bepinex` with any other `mod_path` is refused
   by name, like a compile game's non-compiling adapter, and `lmm game
   edit`/`lmm game add` cannot write it;
