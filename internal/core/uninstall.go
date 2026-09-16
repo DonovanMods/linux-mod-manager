@@ -121,7 +121,7 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 		// A removal: the adapter has no say (removalSnapshotOf).
 		snapshot: removalSnapshotOf(installed),
 	}
-	for _, f := range s.deployedPathsFor(ctx, game, profileName, mod) {
+	for _, f := range s.deployedPathsFor(ctx, s.getInstaller(game), game, profileName, mod) {
 		if isDeployedNow(game, f) {
 			plan.Files = append(plan.Files, f)
 		}

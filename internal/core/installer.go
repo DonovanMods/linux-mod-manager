@@ -39,6 +39,15 @@ type Installer struct {
 	// linker, exactly as lmm always did - and Service.newInstallerWithLinker
 	// replaces it with the game's resolved adapter.
 	adapter adapter.GameAdapter
+
+	// recordedOnly narrows every removal to the paths a deployed_files row
+	// names for the mod (#413 fix round 4, F2). Service.newInstallerWithLinker
+	// sets it when the game's adapter is refused: purge and uninstall still
+	// run then (removalSnapshotOf), but without the adapter's routing a
+	// path the cache entry merely NAMES - a seeded config the user has
+	// since replaced with a link of their own - is no proof lmm put what is
+	// there, and the linker removes any symlink it is pointed at.
+	recordedOnly bool
 }
 
 // NewInstaller creates a new installer
@@ -733,31 +742,9 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 // whole purge prunes ONCE, over its whole removal set, instead of per mod -
 // which is what its single trailing CleanupEmptyDirs has always been.
 func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]string, error) {
-	// Deliberately the full ListFiles union, not deployableFiles (#210):
-	// removal must cover anything that might ever have been linked, including
-	// stale unclaimed files a pre-fix deploy linked. Narrowing this would
-	// strand those links forever.
-	//
-	// An absent cache entry is not an error (#260): uninstall must stay
-	// idempotent when the entry is already gone - the steady state
-	// syncMergedPak's zero branch and purge --uninstall leave behind. The
-	// deployment can still be fully on disk, though (a copy/hardlink deploy
-	// owns real files, not links back into the cache), so fall back to the
-	// DB's tracked deployed paths rather than orphaning them while erasing
-	// the only record that they were ours. Ownership rows upsert on
-	// overwrite ("new mod takes ownership"), so the fallback never removes
-	// a path another mod has since claimed.
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := i.removalPaths(ctx, game, mod, profileName)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("listing cached files: %w", err)
-		}
-		files = nil
-		if i.db != nil {
-			if files, err = i.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
-				return nil, fmt.Errorf("listing tracked deployed files: %w", err)
-			}
-		}
+		return nil, err
 	}
 
 	// Undeploy each file
@@ -770,12 +757,6 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 		}
 
 		dstPath := filepath.Join(game.ModPath, file)
-
-		// #413: a member the adapter routed away from the linker was never
-		// deployed as mod content, so an uninstall does not remove it.
-		if i.notLinkerOwned(game, file) {
-			continue
-		}
 
 		// #350: never delete a file lmm does not own.
 		//
@@ -815,6 +796,83 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 	}
 
 	return removed, nil
+}
+
+// removalPaths lists the paths, relative to game.ModPath, an uninstall of
+// mod considers removing - the ONE list the removal loop walks and every
+// removal preview (PlanUninstall, PlanPurge's merged artifact, deploy
+// --purge) describes, so a dry run cannot name a file the real run leaves.
+//
+// It is the cache entry's full ListFiles union, not deployableFiles (#210):
+// removal must cover anything that might ever have been linked, including
+// stale unclaimed files a pre-fix deploy linked. Narrowing this would
+// strand those links forever.
+//
+// An absent cache entry is not an error (#260): uninstall must stay
+// idempotent when the entry is already gone - the steady state
+// syncMergedPak's zero branch and purge --uninstall leave behind. The
+// deployment can still be fully on disk, though (a copy/hardlink deploy
+// owns real files, not links back into the cache), so the DB's tracked
+// deployed paths stand in rather than orphaning them while erasing the only
+// record that they were ours. Ownership rows upsert on overwrite ("new mod
+// takes ownership"), so the fallback never names a path another mod has
+// since claimed.
+//
+// Two narrowings follow. A member the adapter routes away from the linker
+// is left out (notLinkerOwned). And when the game's adapter is refused
+// (recordedOnly), only a path this profile's deployed_files rows name for
+// the mod is kept: without the adapter, a listing is not proof.
+func (i *Installer) removalPaths(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]string, error) {
+	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	switch {
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("listing cached files: %w", err)
+	case err != nil:
+		files = nil
+		if i.db == nil {
+			break
+		}
+		if files, err = i.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+			return nil, fmt.Errorf("listing tracked deployed files: %w", err)
+		}
+	case i.recordedOnly:
+		if files, err = i.onlyRecorded(ctx, game, mod, profileName, files); err != nil {
+			return nil, err
+		}
+	}
+
+	kept := files[:0:0]
+	for _, file := range files {
+		// #413: a member the adapter routed away from the linker was never
+		// deployed as mod content, so an uninstall does not remove it.
+		if !i.notLinkerOwned(game, file) {
+			kept = append(kept, file)
+		}
+	}
+	return kept, nil
+}
+
+// onlyRecorded keeps the entries of files that profileName's deployed_files
+// rows name for mod. An Installer with no database has no proof of any.
+func (i *Installer) onlyRecorded(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, files []string) ([]string, error) {
+	if i.db == nil {
+		return nil, nil
+	}
+	rows, err := i.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID)
+	if err != nil {
+		return nil, fmt.Errorf("listing tracked deployed files: %w", err)
+	}
+	recorded := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		recorded[r] = true
+	}
+	var kept []string
+	for _, f := range files {
+		if recorded[filepath.ToSlash(f)] {
+			kept = append(kept, f)
+		}
+	}
+	return kept, nil
 }
 
 // IsInstalled checks if a mod is currently deployed. Returns true only if every

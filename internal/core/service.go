@@ -438,6 +438,12 @@ func hasLoader(game *domain.Game, kind string) bool {
 		regularFileAt(game.InstallPath, domain.BepInExPreloaderPath)
 }
 
+// bepinexOffRoot reports the refusal AdapterFor makes of an explicit
+// `adapter: bepinex` whose mod_path is not the game root.
+func bepinexOffRoot(game *domain.Game) bool {
+	return game.Adapter == bepinexAdapterID && !modPathIsGameRoot(game)
+}
+
 // icarusAdapterID and bepinexAdapterID are the adapters core's two
 // derivations migrate to. They are NAMES, not imports: core must never
 // depend on a concrete adapter package (design §4).
@@ -481,7 +487,7 @@ func (s *Service) adapterForName(game *domain.Game, name string) (adapter.GameAd
 				game.ID, game.Adapter, strings.Join(s.adapterRegistry().Names(), ", "))
 		}
 	}
-	if game.Adapter == bepinexAdapterID && !modPathIsGameRoot(game) {
+	if bepinexOffRoot(game) {
 		// Both ways out, each in the order that works: the purge that
 		// starts the first one is a removal, which this refusal does not
 		// block (removalSnapshotOf).
@@ -2205,10 +2211,24 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	// #353: and every Installer routes its deployable files through the
 	// game's adapter. A resolution failure is reported by the flow's own
 	// AdapterFor call (every flow that reaches an Installer makes one);
-	// keeping the identity here avoids a second, quieter failure channel
-	// for the same fault.
-	if a, err := s.AdapterFor(game); err == nil {
+	// nothing here is a second, quieter failure channel for the same fault.
+	a, err := s.AdapterFor(game)
+	if err == nil {
 		installer.setAdapter(a)
+		return installer
+	}
+	// The only flows that get this far with a refused adapter are the two
+	// removals (removalSnapshotOf), and a removal must then prove every
+	// path it takes (#413 fix round 4, F2): a row names it, or it stays.
+	// The routing is still the named adapter's where that adapter is what
+	// laid the game out - a refusal of how it composes with the rest of
+	// the entry (deploy_mode: compile) says nothing about where its files
+	// went - so its own never-remove rules (bepinex's BepInEx/config/**)
+	// still hold. A name that resolves nowhere, or bepinex off the game
+	// root, which never laid anything out, keeps the identity.
+	installer.recordedOnly = true
+	if named, rerr := s.adapterRegistry().Resolve(s.AdapterName(game)); rerr == nil && !bepinexOffRoot(game) {
+		installer.setAdapter(named)
 	}
 	return installer
 }
