@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // ParsedFilename contains extracted info from a NexusMods-style filename
@@ -52,7 +54,10 @@ func ParseNexusModsFilename(filename string) *ParsedFilename {
 	}
 }
 
-// DetectModName determines a display name for an imported mod.
+// DetectModName determines a display name for an imported mod. game
+// answers modNameFromMembers' "is this a BepInEx game" question for the
+// bare plugins/config/core-style loader-structure shapes (#450) - nil for a
+// caller with no game in hand.
 // It checks for a single top-level directory in the extracted content,
 // falling back to the archive basename if not found.
 //
@@ -60,7 +65,7 @@ func ParseNexusModsFilename(filename string) *ParsedFilename {
 // to answer the same question from an archive LISTING, before anything is
 // extracted, so this reads the tree and hands the entries to the one
 // implementation both sides share.
-func DetectModName(extractedPath, archiveFilename string) string {
+func DetectModName(game *domain.Game, extractedPath, archiveFilename string) string {
 	// If no extracted path provided, use archive basename
 	if extractedPath == "" {
 		return stripExtension(archiveFilename)
@@ -86,7 +91,7 @@ func DetectModName(extractedPath, archiveFilename string) string {
 	if err != nil {
 		return stripExtension(archiveFilename)
 	}
-	return modNameFromMembers(members, archiveFilename)
+	return modNameFromMembers(game, members, archiveFilename)
 }
 
 // stripExtension removes the file extension from a filename

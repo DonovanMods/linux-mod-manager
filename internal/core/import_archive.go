@@ -322,7 +322,7 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// rewrite, for the same reason the ingest derives it before normalising:
 	// a normalised shape-A BepInEx tree has BepInEx as its sole top-level
 	// directory, and naming the mod after that would be absurd.
-	modName := importedModName(kind, filename, ident.version, members)
+	modName := importedModName(game, kind, filename, ident.version, members)
 	files, err := importDeployablePaths(kind, filename, members)
 	if err != nil {
 		return nil, err

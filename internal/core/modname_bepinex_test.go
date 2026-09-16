@@ -60,6 +60,10 @@ var bepinexNamingCases = map[string]struct {
 }
 
 func TestDetectModName_BepInExIsStructureNotAName(t *testing.T) {
+	// A game that DECLARES the loader (#450): every case here relies on the
+	// bare plugins/patchers/config-style shapes counting as structure, which
+	// only holds for a game that actually loads mods through BepInEx.
+	game := &domain.Game{ID: "bepinex-game", Loader: &domain.GameLoader{Kind: domain.LoaderKindBepInEx}}
 	for name, tc := range bepinexNamingCases {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -68,7 +72,29 @@ func TestDetectModName_BepInExIsStructureNotAName(t *testing.T) {
 				require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
 				require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
 			}
-			assert.Equal(t, tc.want, core.DetectModName(dir, tc.archive))
+			assert.Equal(t, tc.want, core.DetectModName(game, dir, tc.archive))
+		})
+	}
+}
+
+// TestDetectModName_NonBepInExGame_BareStructureNamesDirsStillNameTheMod
+// (#450 nit): for a game with no BepInEx involved at all, "Core-1.0.zip"
+// containing "Core/..." is a real mod named "Core" - the bare-subdirectory
+// half of isLoaderStructure's rule never applies to it, so the old
+// sole-top-level-directory rule stands. (A literal top-level "BepInEx/" is
+// still always structure, whatever the game - that case is covered by
+// TestImportArchive_ABepInExRootedPackageIsNamedAfterItself's fixtures,
+// none of which use a non-BepInEx game.)
+func TestDetectModName_NonBepInExGame_BareStructureDirNamesTheMod(t *testing.T) {
+	for _, name := range []string{"Core", "Config", "Plugins"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, name, "file.dll")
+			require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+			require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
+
+			got := core.DetectModName(&domain.Game{ID: "no-loader"}, dir, name+"-1.0.zip")
+			assert.Equal(t, name, got, "a non-BepInEx game keeps the sole-top-level-directory rule")
 		})
 	}
 }
@@ -100,4 +126,27 @@ func TestImportArchive_ABepInExRootedPackageIsNamedAfterItself(t *testing.T) {
 			assert.Equal(t, tc.want, result.Mod.Name, "the recorded name")
 		})
 	}
+}
+
+// TestImportArchive_NonBepInExGame_SoleTopLevelDirectoryStillNamesTheMod
+// (#450): a game with no BepInEx declared, no BepInEx adapter, and no
+// BepInEx installed on disk applies the OLD sole-top-level-directory rule
+// unconditionally - a mod genuinely named "Core" ("Core-1.0.zip" containing
+// "Core/...") must import as "Core", not fall through to the archive's
+// whole filename the way a BepInEx game's structure-directory case does.
+func TestImportArchive_NonBepInExGame_SoleTopLevelDirectoryStillNamesTheMod(t *testing.T) {
+	svc, game := newBepInExGameRootService(t)
+	_, err := svc.NewProfileManager().CreateOrResetDefaultAfterGameSave(context.Background(), game.ID)
+	require.NoError(t, err)
+
+	archivePath := filepath.Join(t.TempDir(), "Core-1.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{"Core/mod.dll": "x"})
+
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath, core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "Core", plan.Mod.Name, "the plan's name")
+
+	result, err := svc.ApplyImportArchive(context.Background(), game, "default", plan, core.ImportArchiveOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Core", result.Mod.Name, "the recorded name")
 }
