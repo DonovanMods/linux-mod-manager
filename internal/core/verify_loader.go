@@ -103,11 +103,15 @@ func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
 	// mod_path is BepInEx/plugins records every plugin relative to that
 	// directory, so each one read as "outside BepInEx/" (#413 re-review
 	// P-b) - and the bypass row above already says why nothing is laid out.
+	// RESOLVES, not names: an explicit `adapter: bepinex` off the game root
+	// names it and every flow refuses it, so it has the same v1 rows and
+	// the same false "misplaced" reading (#413 final review F3); adapterPass
+	// already reports that refusal as its own row.
 	//
 	// Everything below it is about the DECLARATION, which a game that
 	// declares nothing has not made, so those checks still run only for a
 	// declaring game.
-	if r.svc.AdapterName(r.game) == bepinexAdapterID {
+	if r.svc.runsBepInEx(r.game) {
 		r.loaderMisplacedDeployCheck(installedMods)
 	}
 	if !r.game.DeclaresBepInEx() {

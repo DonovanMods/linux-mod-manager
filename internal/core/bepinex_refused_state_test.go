@@ -237,3 +237,28 @@ func TestRefusedBepInExGame_FollowingTheRefusalLeavesNothingBehind(t *testing.T)
 		})
 	}
 }
+
+// TestVerify_ARefusedBepInExGameReportsNoMisplacedPlugins: the
+// misplaced-deployment check asks where the bepinex adapter's layout puts
+// a file, so it runs only where that adapter RUNS. A game that merely
+// names it - and that every flow refuses - has every v1 plugin recorded
+// relative to BepInEx/plugins, and reading those rows as "outside
+// BepInEx/" reported three plugins BepInEx loads perfectly well as
+// misplaced (#413 final review F3).
+func TestVerify_ARefusedBepInExGameReportsNoMisplacedPlugins(t *testing.T) {
+	for name, loader := range map[string]*domain.GameLoader{
+		"installed, undeclared":  nil,
+		"installed and declared": {Kind: domain.LoaderKindBepInEx},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, game := newRefusedBepInExGame(t, loader)
+			for _, fix := range []bool{false, true} {
+				report, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Fix: fix, Force: true}, nil)
+				require.NoError(t, err)
+				assert.Nil(t, findingWithStatus(report.Result, "loader_deployed_outside_loader"),
+					"fix=%t statuses: %v", fix, findingStatuses(report.Result))
+				assert.Zero(t, report.Result.Issues, "fix=%t: nothing about the files is wrong", fix)
+			}
+		})
+	}
+}

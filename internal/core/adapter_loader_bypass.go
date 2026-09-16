@@ -85,6 +85,18 @@ func (s *Service) bepinexBypass(game *domain.Game) (loaderBypass, bool) {
 	return loaderBypass{game: game, adapterID: name, declared: game.DeclaresBepInEx()}, true
 }
 
+// runsBepInEx reports whether the bepinex adapter is the one lmm actually
+// runs for game: the name resolves to it AND AdapterFor accepts it. A game
+// that names bepinex where AdapterFor refuses it runs nothing at all, so
+// no question about the bepinex layout applies to it.
+func (s *Service) runsBepInEx(game *domain.Game) bool {
+	if s.AdapterName(game) != bepinexAdapterID {
+		return false
+	}
+	_, err := s.adapterForName(game, bepinexAdapterID)
+	return err == nil
+}
+
 // persistent reports whether the bypass is a contradiction the persistent
 // surfaces flag: the game declares the loader, or nobody chose its adapter.
 func (b loaderBypass) persistent() bool {
