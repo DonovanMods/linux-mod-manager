@@ -1491,9 +1491,14 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
     of what changed, and checks that the result reads back as the intended
     profile before writing it. A layout it cannot edit that way is
     rewritten whole, as before, but the file as you wrote it is kept beside
-    it as `<name>.yaml.bak`; a profile the YAML encoder cannot write so
-    that it reads back is refused rather than saved unreadable. A rename
-    keeps the file's text too.
+    it as `<name>.yaml.bak` — or `.bak.1`, `.bak.2`, …: an existing backup
+    is never replaced, and a `.bak` that is a link is never written through
+    — and lmm prints where it kept it; a profile the YAML encoder cannot
+    write so that it reads back is refused rather than saved unreadable. A
+    rename keeps the file's text too.
+  - A writable profile in a directory lmm cannot create files in is still
+    saved: in place, as before this change, with a warning that the save
+    was not atomic.
 
 - **A hand-edited config file can no longer crash lmm at startup (#452).**
   A `games.yaml`, `config.yaml` or source definition holding a construct the

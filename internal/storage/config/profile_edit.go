@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -541,24 +542,78 @@ func quotedEnd(data []byte, start int) (int, bool) {
 // dotfile manager that hard-links, rather than symlinks, into place), so it
 // is rewritten in place instead, trading atomicity for keeping the link.
 func writeFileAtomic(path string, data []byte) error {
+	_, err := writeFile(path, data, false)
+	return err
+}
+
+// writeFile is writeFileAtomic, and - with inPlaceFallback - also writes a
+// file whose directory refuses the temporary file in place, the way every
+// profile save did before #441 (review F10), reporting that it did.
+func writeFile(path string, data []byte, inPlaceFallback bool) (inPlace bool, err error) {
 	if err := checkWritable(path); err != nil {
-		return err
+		return false, err
 	}
 	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return fmt.Errorf("resolving profile path: %w", err)
+		return false, fmt.Errorf("resolving profile path: %w", err)
 	}
 	info, err := os.Stat(target)
 	if err != nil {
-		return fmt.Errorf("reading profile file mode: %w", err)
+		return false, fmt.Errorf("reading profile file mode: %w", err)
 	}
 	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
 		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
-			return fmt.Errorf("writing profile: %w", err)
+			return false, fmt.Errorf("writing profile: %w", err)
 		}
-		return nil
+		return false, nil
 	}
-	return renameIntoPlace(target, data, info.Mode().Perm())
+	err = renameIntoPlace(target, data, info.Mode().Perm())
+	var noTemp *tempFileError
+	if !inPlaceFallback || !errors.As(err, &noTemp) || !errors.Is(err, fs.ErrPermission) {
+		return false, err
+	}
+	if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
+		return false, fmt.Errorf("writing profile: %w", err)
+	}
+	return true, nil
+}
+
+// tempFileError is renameIntoPlace failing to create its temporary file -
+// the one failure writeFile's in-place fallback answers.
+type tempFileError struct{ err error }
+
+func (e *tempFileError) Error() string { return "writing profile: " + e.err.Error() }
+func (e *tempFileError) Unwrap() error { return e.err }
+
+// checkDirWritable refuses a directory lmm cannot create a file in.
+func checkDirWritable(dir string) error {
+	if err := syscall.Access(dir, accessWrite|accessSearch); err != nil {
+		return &os.PathError{Op: "access", Path: dir, Err: err}
+	}
+	return nil
+}
+
+// checkCreatable refuses a file path whose directory - or, when it does not
+// exist yet, the nearest existing directory above it, which MkdirAll would
+// create it in - lmm cannot create in.
+func checkCreatable(path string) error {
+	dir := filepath.Dir(path)
+	for {
+		info, err := os.Stat(dir)
+		switch {
+		case err == nil && !info.IsDir():
+			return &os.PathError{Op: "mkdir", Path: dir, Err: syscall.ENOTDIR}
+		case err == nil:
+			return checkDirWritable(dir)
+		case !errors.Is(err, fs.ErrNotExist):
+			return err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return err
+		}
+		dir = parent
+	}
 }
 
 // checkWritable refuses a profile file - through a symlink, its target -
@@ -580,7 +635,7 @@ func checkWritable(path string) error {
 func renameIntoPlace(target string, data []byte, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*.tmp")
 	if err != nil {
-		return fmt.Errorf("writing profile: %w", err)
+		return &tempFileError{err: err}
 	}
 	renamed := false
 	defer func() {
@@ -610,5 +665,8 @@ func renameIntoPlace(target string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-// accessWrite is access(2)'s W_OK.
-const accessWrite = 0x2
+// accessWrite and accessSearch are access(2)'s W_OK and X_OK.
+const (
+	accessWrite  = 0x2
+	accessSearch = 0x1
+)

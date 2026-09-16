@@ -2,13 +2,17 @@ package config
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
@@ -121,20 +125,51 @@ func overridesOf(profile *domain.Profile) map[string]string {
 // text must read back as exactly profile - and a layout it cannot edit that
 // way (a flow-style mods list, an alias, a block scalar where a value
 // changes) is rewritten whole instead, with the file as it was kept beside
-// it as <Name>.yaml.bak. A profile that has not changed is not written at
-// all.
+// it (keepBackup: <Name>.yaml.bak, or the first free .bak.N). A profile that
+// has not changed is not written at all.
 //
 // Every write replaces the file atomically - a temporary file beside it,
 // renamed over it - so a crash or a full disk never leaves half a profile;
 // a symlinked file's target is what changes, and a read-only file is
-// refused.
+// refused. A writable file in a directory that refuses the temporary file
+// is written in place instead, and the save says so (SaveReport.NotAtomic).
+//
+// SaveProfile is SaveProfileReporting for a caller with no one to tell.
 func SaveProfile(configDir string, profile *domain.Profile) error {
+	_, err := SaveProfileReporting(configDir, profile)
+	return err
+}
+
+// SaveProfileReporting is SaveProfile, also returning what the save did
+// that its caller owes the user a notice about (SaveReport.Notices).
+func SaveProfileReporting(configDir string, profile *domain.Profile) (SaveReport, error) {
+	path, err := ProfilePath(configDir, profile.GameID, profile.Name)
+	if err != nil {
+		return SaveReport{}, err
+	}
+	save, err := planProfileSave(path, path, profile)
+	if err != nil {
+		return SaveReport{Path: path}, err
+	}
+	return save.write()
+}
+
+// CheckProfileSave reports whether SaveProfile could write profile now:
+// nil when it could, or when there is nothing to write, and otherwise the
+// permission error the save would stop on. It decides exactly as the save
+// does - an in-place edit needs the file writable, a whole rewrite that
+// keeps a backup also needs the directory, a new file needs a directory it
+// can be created in - and writes nothing.
+func CheckProfileSave(configDir string, profile *domain.Profile) error {
 	path, err := ProfilePath(configDir, profile.GameID, profile.Name)
 	if err != nil {
 		return err
 	}
-	_, err = saveProfileFile(path, path, profile)
-	return err
+	save, err := planProfileSave(path, path, profile)
+	if err != nil {
+		return err
+	}
+	return save.check()
 }
 
 // SaveRenamedProfile writes profile, just renamed from oldName, to its new
@@ -142,57 +177,98 @@ func SaveProfile(configDir string, profile *domain.Profile) error {
 // and layout; the `name:` inside is updated when it named the old file. The
 // old file is left for the caller to remove.
 func SaveRenamedProfile(configDir string, profile *domain.Profile, oldName string) error {
-	from, err := ProfilePath(configDir, profile.GameID, oldName)
-	if err != nil {
-		return err
-	}
-	to, err := ProfilePath(configDir, profile.GameID, profile.Name)
-	if err != nil {
-		return err
-	}
-	_, err = saveProfileFile(from, to, profile)
+	_, err := SaveRenamedProfileReporting(configDir, profile, oldName)
 	return err
 }
 
-// saveOutcome is how saveProfileFile wrote a profile.
-type saveOutcome int
+// SaveRenamedProfileReporting is SaveRenamedProfile, also returning what
+// the save did (see SaveProfileReporting).
+func SaveRenamedProfileReporting(configDir string, profile *domain.Profile, oldName string) (SaveReport, error) {
+	from, err := ProfilePath(configDir, profile.GameID, oldName)
+	if err != nil {
+		return SaveReport{}, err
+	}
+	to, err := ProfilePath(configDir, profile.GameID, profile.Name)
+	if err != nil {
+		return SaveReport{}, err
+	}
+	save, err := planProfileSave(from, to, profile)
+	if err != nil {
+		return SaveReport{Path: to}, err
+	}
+	return save.write()
+}
 
-const (
-	// savedWhole: there was no file, so the document was written whole.
-	savedWhole saveOutcome = iota
-	// savedInPlace: the existing file was edited in place (or needed no
-	// edit at all).
-	savedInPlace
-	// savedRewritten: the existing file's layout could not be edited in
-	// place, so it was rewritten whole and its old text kept beside it.
-	savedRewritten
-)
+// SaveReport is what a profile save did beyond writing the document.
+type SaveReport struct {
+	// Path is the profile file written.
+	Path string
+	// Rewritten is set when the file's layout could not be edited in
+	// place, so it was written whole.
+	Rewritten bool
+	// Backup names the copy of the file as it was before a whole rewrite
+	// that would have lost something of it; "" when none was needed.
+	Backup string
+	// NotAtomic is set when the file was written in place because its
+	// directory refused the temporary file an atomic save writes first.
+	NotAtomic bool
+}
 
-// saveProfileFile writes profile to the file at to, editing the document at
-// from (to itself, except for a rename). See SaveProfile.
-func saveProfileFile(from, to string, profile *domain.Profile) (saveOutcome, error) {
+// Notices is what a user should be told about the save - nothing, for an
+// ordinary one.
+func (r SaveReport) Notices() []string {
+	var notices []string
+	if r.Backup != "" {
+		notices = append(notices, fmt.Sprintf(
+			"rewrote %s whole, since its layout could not be edited in place; the file as it was is kept as %s",
+			r.Path, r.Backup))
+	}
+	if r.NotAtomic {
+		notices = append(notices, fmt.Sprintf(
+			"saved %s in place, not atomically: lmm cannot create the temporary file an atomic save needs in %s, so an interrupted save could have left the file partly written",
+			r.Path, filepath.Dir(r.Path)))
+	}
+	return notices
+}
+
+// profileSave is one save, decided (planProfileSave) before anything is
+// written, so that CheckProfileSave and the save itself cannot disagree.
+type profileSave struct {
+	from, to string
+	// changed is set when there is anything to write at all.
+	changed bool
+	// data is the text to write - empty is a valid document.
+	data []byte
+	// create is set when there is no file at from, so to is a new file.
+	create bool
+	// rewrite is set when data is the whole document, not an edit.
+	rewrite bool
+	// backup, when set, is from's text, kept beside it before the rewrite.
+	backup []byte
+}
+
+// planProfileSave decides how profile is written to the file at to, editing
+// the document at from (to itself, except for a rename). See SaveProfile.
+func planProfileSave(from, to string, profile *domain.Profile) (profileSave, error) {
+	save := profileSave{from: from, to: to}
 	base, err := os.ReadFile(from)
 	if errors.Is(err, os.ErrNotExist) {
 		whole, err := wholeDocument(profile)
 		if err != nil {
-			return 0, err
+			return save, err
 		}
-		return savedWhole, createProfileFile(to, whole, 0o644)
+		save.data, save.create, save.changed = whole, true, true
+		return save, nil
 	}
 	if err != nil {
-		return 0, fmt.Errorf("reading profile: %w", err)
+		return save, fmt.Errorf("reading profile: %w", err)
 	}
 
 	fromName := strings.TrimSuffix(filepath.Base(from), ".yaml")
 	edited, editErr := editProfileDocument(base, fromName, profile)
 	if editErr == nil {
-		if from == to {
-			if bytes.Equal(edited, base) {
-				return savedInPlace, nil
-			}
-			return savedInPlace, writeFileAtomic(to, edited)
-		}
-		return savedInPlace, createProfileFileLike(from, to, edited)
+		save.data, save.changed = edited, from != to || !bytes.Equal(edited, base)
+		return save, nil
 	}
 
 	// The layout cannot be edited in place. Rewrite it whole - the save
@@ -200,20 +276,98 @@ func saveProfileFile(from, to string, profile *domain.Profile) (saveOutcome, err
 	// keep what the author wrote, unless a whole rewrite loses nothing.
 	whole, err := wholeDocument(profile)
 	if err != nil {
-		return 0, fmt.Errorf("%w (and the file's layout does not allow an in-place edit: %v)", err, editErr)
+		return save, fmt.Errorf("%w (and the file's layout does not allow an in-place edit: %v)", err, editErr)
 	}
-	if err := checkWritable(from); err != nil && from == to {
-		return 0, err
-	}
+	save.data, save.rewrite, save.changed = whole, true, true
 	if lossy(base, fromName, profile.GameID) {
-		if err := os.WriteFile(from+profileBackupSuffix, base, 0o600); err != nil {
-			return 0, fmt.Errorf("keeping a copy of %s before rewriting it: %w", from, err)
+		save.backup = base
+	}
+	return save, nil
+}
+
+// check is CheckProfileSave for a decided save.
+func (s profileSave) check() error {
+	var err error
+	switch {
+	case !s.changed:
+		return nil
+	case s.create || s.from != s.to:
+		err = checkCreatable(s.to)
+	default:
+		err = checkWritable(s.to)
+		if err == nil && s.backup != nil {
+			err = checkDirWritable(filepath.Dir(s.from))
 		}
 	}
-	if from == to {
-		return savedRewritten, writeFileAtomic(to, whole)
+	if err != nil {
+		return fmt.Errorf("profile %s cannot be saved: %w", s.to, err)
 	}
-	return savedRewritten, createProfileFileLike(from, to, whole)
+	return nil
+}
+
+// write carries the save out.
+func (s profileSave) write() (SaveReport, error) {
+	report := SaveReport{Path: s.to, Rewritten: s.rewrite}
+	switch {
+	case !s.changed:
+		return report, nil
+	case s.create:
+		return report, createProfileFile(s.to, s.data, 0o644)
+	}
+	if s.from == s.to {
+		// Refused before a backup is made: a file that will not be
+		// written needs no copy.
+		if err := checkWritable(s.to); err != nil {
+			return report, err
+		}
+	}
+	if s.backup != nil {
+		name, err := keepBackup(s.from, s.backup)
+		if err != nil {
+			return report, fmt.Errorf("keeping a copy of %s before rewriting it: %w", s.from, err)
+		}
+		report.Backup = name
+	}
+	if s.from != s.to {
+		return report, createProfileFileLike(s.from, s.to, s.data)
+	}
+	inPlace, err := writeFile(s.to, s.data, true)
+	report.NotAtomic = inPlace
+	return report, err
+}
+
+// maxBackups bounds keepBackup's search for a free name.
+const maxBackups = 1000
+
+// keepBackup writes data as a new file beside path - path.bak, or the
+// first of path.bak.1, path.bak.2, ... that does not exist - and returns its
+// name (#441 review F6). Each name is created exclusively, so an existing
+// backup is never replaced, and a name that is a symlink, dangling or not,
+// counts as taken: nothing is ever written through a link.
+func keepBackup(path string, data []byte) (string, error) {
+	for n := range maxBackups {
+		name := path + profileBackupSuffix
+		if n > 0 {
+			name += "." + strconv.Itoa(n)
+		}
+		file, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, werr := file.Write(data)
+		serr := file.Sync()
+		cerr := file.Close()
+		if err := cmp.Or(werr, serr, cerr); err != nil {
+			_ = os.Remove(name)
+			return "", err
+		}
+		return name, nil
+	}
+	return "", fmt.Errorf("%s%s and %d numbered copies after it already exist - remove the ones you no longer need",
+		path, profileBackupSuffix, maxBackups-1)
 }
 
 // ErrProfileUnwritable is returned when a profile cannot be written so that
