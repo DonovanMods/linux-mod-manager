@@ -75,7 +75,7 @@ type client struct {
 	baseURL string
 }
 
-func newClient(opts Options, now func() time.Time) *client {
+func newClient(opts Options, now func() time.Time, holds *holdStore) *client {
 	baseURL := opts.BaseURL
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
@@ -95,7 +95,7 @@ func newClient(opts Options, now func() time.Time) *client {
 		stall = stallTimeout
 	}
 	idle := &httpclient.IdleTimeout{Base: httpClient.Transport, Timeout: stall}
-	retry := newRetryTransport(idle, now)
+	retry := newRetryTransport(idle, now, holds)
 	retrying := *httpClient
 	retrying.Transport = retry
 	limit := opts.MaxIndexBytes
@@ -144,5 +144,17 @@ func newAPIClient(doer *http.Client, baseURL string, maxBytes int64) *apiClient 
 		AuthHeader:       "authorization",
 		AuthLabel:        "Thunderstore",
 		MaxResponseBytes: maxBytes,
+		ErrorMapper:      listingStatusError,
 	})
+}
+
+// listingStatusError marks a listing the host says does not exist as the
+// community's own failure (T3 review F9): a community slug that names
+// nothing is not the host being down. Every other status keeps the shared
+// client's mapping.
+func listingStatusError(status int, _ []byte, path string) error {
+	if status != http.StatusNotFound && status != http.StatusGone {
+		return nil
+	}
+	return &documentError{err: fmt.Errorf("%s has no package index at %s (HTTP %d)", serviceName, path, status)}
 }

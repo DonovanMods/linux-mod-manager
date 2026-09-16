@@ -19,7 +19,7 @@ import (
 func newTestTransport(t *testing.T, now func() time.Time) (*retryTransport, *[]time.Duration) {
 	t.Helper()
 	var waits []time.Duration
-	rt := newRetryTransport(http.DefaultTransport, now)
+	rt := newRetryTransport(http.DefaultTransport, now, nil)
 	rt.sleep = func(ctx context.Context, d time.Duration) error {
 		waits = append(waits, d)
 		return ctx.Err()
@@ -219,7 +219,7 @@ func TestRetryTransport_AWaitNamedOnTheLastAttemptIsStillHonoured(t *testing.T) 
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
-		w.Header().Set("Retry-After", "45")
+		w.Header().Set("Retry-After", "20")
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
@@ -233,23 +233,52 @@ func TestRetryTransport_AWaitNamedOnTheLastAttemptIsStillHonoured(t *testing.T) 
 	_, err = get(t, rt, srv.URL)
 	var later *source.RetryLaterError
 	require.ErrorAs(t, err, &later, "the next request is held until the server's time")
-	assert.Equal(t, clock.Add(45*time.Second), later.Until)
+	assert.Equal(t, clock.Add(20*time.Second), later.Until)
 	assert.Equal(t, maxAttempts, calls, "nothing was sent")
 
-	clock = clock.Add(46 * time.Second)
+	clock = clock.Add(21 * time.Second)
 	_, _ = get(t, rt, srv.URL)
 	assert.Greater(t, calls, maxAttempts)
+}
+
+// TestRetryTransport_TheOneMinuteWindowIsPerRequest is T3 review F8: two
+// answers of Retry-After: 60 held a cold search silent for two minutes,
+// because the minute lmm sits through applied to each wait. It bounds the
+// request's total: the second such answer is a hold, not another minute.
+func TestRetryTransport_TheOneMinuteWindowIsPerRequest(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	clock := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	rt, waits := newTestTransport(t, func() time.Time { return clock })
+	_, err := get(t, rt, srv.URL)
+	var later *source.RetryLaterError
+	require.ErrorAs(t, err, &later)
+	assert.Equal(t, 2, calls, "one wait of a minute, then the host is held")
+	require.Len(t, *waits, 1, "a minute was waited once, not twice")
+	assert.GreaterOrEqual(t, (*waits)[0], time.Minute)
+	assert.Equal(t, clock.Add(time.Minute), later.Until)
+	assert.Contains(t, later.Reason, "1m0s")
 }
 
 // TestRetryAfter_AnAbsurdValueIsClampedNotWrapped: a delay too large for a
 // time.Duration must not overflow into a negative (ignored) wait - it is a
 // very long wait, which the transport then refuses to sit through.
 func TestRetryAfter_AnAbsurdValueIsClampedNotWrapped(t *testing.T) {
-	resp := &http.Response{Header: http.Header{}}
-	resp.Header.Set("Retry-After", "99999999999999")
-	d := retryAfter(resp, time.Now())
-	assert.Positive(t, d)
-	assert.Greater(t, d, maxRetryAfter)
+	// Exact values (T3 review P4 B6/B11): "positive and large" also held
+	// for the wrapped value the clamp exists to prevent, and a 20-digit
+	// value used to skip the clamp entirely and read as no hint (F8).
+	now := time.Now()
+	for _, v := range []string{"99999999999999", "99999999999999999999", "9223372036854775807", "Mon, 01 Jan 2300 00:00:00 GMT"} {
+		resp := &http.Response{Header: http.Header{}}
+		resp.Header.Set("Retry-After", v)
+		assert.Equal(t, maxHold, retryAfter(resp, now), "Retry-After: %s", v)
+	}
 }
 
 func TestRetryTransport_RetriesA5xxAndGivesUpAfterThreeAttempts(t *testing.T) {
@@ -368,7 +397,7 @@ func TestRetryTransport_SuccessClearsTheFailureStreak(t *testing.T) {
 	// The streak restarted, so this failure alone must not trip the breaker.
 	_, err = get(t, rt, srv.URL)
 	require.Error(t, err)
-	_, _, open := rt.breakerOpen()
+	_, _, open := rt.holds.active("")
 	assert.False(t, open, "the breaker counts CONSECUTIVE failures")
 }
 
@@ -385,7 +414,7 @@ func TestRetryTransport_CancellingDuringBackoffReturnsPromptly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	rt := newRetryTransport(http.DefaultTransport, time.Now)
+	rt := newRetryTransport(http.DefaultTransport, time.Now, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
 	require.NoError(t, err)

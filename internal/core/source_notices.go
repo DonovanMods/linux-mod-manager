@@ -101,7 +101,11 @@ func noticeText(n source.Notice, now time.Time) string {
 		if wait >= 12*time.Hour || wait <= -12*time.Hour {
 			at = until.Format("2006-01-02 15:04:05")
 		}
-		return fmt.Sprintf("Not asking %s again until %s (in %s).", n.Source, at, humanWait(wait))
+		about := ""
+		if n.GameID != "" {
+			about = " about " + n.GameID
+		}
+		return fmt.Sprintf("Not asking %s%s again until %s (in %s).", n.Source, about, at, humanWait(wait))
 	case source.NoticeIndexBuilding:
 		return fmt.Sprintf("Building the %s index for %s (one-time)...", n.Source, n.GameID)
 	case source.NoticeIndexBuilt:

@@ -73,7 +73,10 @@ type Options struct {
 type Source struct {
 	client *client
 	store  *store
-	now    func() time.Time
+	// holds is when lmm will next ask the host, or a community on it
+	// (hold.go) - shared with the client's retry transport.
+	holds *holdStore
+	now   func() time.Time
 
 	// mu guards resident and locks below. Held only to look one up, never
 	// across a fetch or a decode.
@@ -98,6 +101,7 @@ var (
 	_ source.LocalIndexSource   = (*Source)(nil)
 
 	_ source.GameIdentifierValidator = (*Source)(nil)
+	_ source.HoldReporter            = (*Source)(nil)
 )
 
 // New constructs a Thunderstore source.
@@ -106,9 +110,12 @@ func New(opts Options) *Source {
 	if now == nil {
 		now = time.Now
 	}
+	store := newStore(opts.CacheDir)
+	holds := newHoldStore(store.root, now)
 	return &Source{
-		client:   newClient(opts, now),
-		store:    newStore(opts.CacheDir),
+		client:   newClient(opts, now, holds),
+		store:    store,
+		holds:    holds,
 		now:      now,
 		resident: make(map[string]*residentIndex),
 		locks:    make(map[string]*sync.Mutex),

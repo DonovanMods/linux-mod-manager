@@ -191,7 +191,34 @@ func (s *Source) ensureIndex(ctx context.Context, community string, force bool, 
 // asked for the build and reports it that way, so it is not announced
 // twice; a refresh over a usable index is a conditional request that costs
 // nothing worth explaining.
+//
+// A HELD host or community (hold.go) is refused here, before anything is
+// sent or announced - a "building the index" line followed at once by "not
+// asking" would be two lines for one refusal. The retry transport refuses a
+// held host too, for any request that does not come through here. What
+// this fetch finds out about the community itself - a 404, a document that
+// is not a package list - is recorded against it, and a good answer clears
+// it.
 func (s *Source) refresh(ctx context.Context, community string, current watermark, usable bool, progress source.IndexProgressFunc) (watermark, error) {
+	if held, scope, open := s.holds.active(community); open {
+		source.Notify(ctx, source.Notice{Kind: source.NoticeSuspended, Source: serviceName, GameID: scope, Until: held.Until})
+		return watermark{}, indexUnavailable(community, &source.RetryLaterError{
+			Source: serviceName, GameID: scope, Until: held.Until, Reason: held.Reason,
+		})
+	}
+	wm, err := s.fetchAndBuild(ctx, community, current, usable, progress)
+	var doc *documentError
+	switch {
+	case err == nil:
+		s.holds.succeeded(community)
+	case errors.As(err, &doc):
+		s.holds.failed(community, doc.Error())
+	}
+	return wm, err
+}
+
+// fetchAndBuild is refresh's request and rebuild.
+func (s *Source) fetchAndBuild(ctx context.Context, community string, current watermark, usable bool, progress source.IndexProgressFunc) (watermark, error) {
 	ifModifiedSince := ""
 	if usable {
 		ifModifiedSince = current.LastModified
@@ -252,7 +279,13 @@ func (s *Source) build(ctx context.Context, community string, resp *http.Respons
 	counter := &countingReader{r: resp.Body}
 	dec := json.NewDecoder(counter)
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
-		return watermark{}, indexUnavailable(community, fmt.Errorf("the package index is not a JSON array"))
+		if err != nil && !isDocumentFault(err) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return watermark{}, ctxErr
+			}
+			return watermark{}, indexUnavailable(community, fmt.Errorf("reading the package index: %w", err))
+		}
+		return watermark{}, indexUnavailable(community, &documentError{err: fmt.Errorf("the package index is not a JSON array")})
 	}
 	for n := 0; dec.More(); n++ {
 		// Checked per package rather than per read: a cancelled search or a
@@ -272,7 +305,11 @@ func (s *Source) build(ctx context.Context, community string, resp *http.Respons
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return watermark{}, ctxErr
 			}
-			return watermark{}, indexUnavailable(community, fmt.Errorf("decoding package %d: %w", n+1, err))
+			err = fmt.Errorf("decoding package %d: %w", n+1, err)
+			if isDocumentFault(err) {
+				err = &documentError{err: err}
+			}
+			return watermark{}, indexUnavailable(community, err)
 		}
 		rec, row := project(p)
 		if row.FullName == "" {
@@ -395,4 +432,22 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
 	c.n += int64(n)
 	return n, err
+}
+
+// documentError is a failure that belongs to one community's DOCUMENT - it
+// is missing, or it is not a package list - rather than to the host or the
+// transfer, and so holds only that community (T3 review F9).
+type documentError struct{ err error }
+
+func (e *documentError) Error() string { return e.err.Error() }
+func (e *documentError) Unwrap() error { return e.err }
+
+// isDocumentFault reports whether a decode failure is the document's own
+// shape. A read that failed - a stall, a dropped connection, a body cut
+// short - says nothing about the document, and neither does a document too
+// large to accept, which is lmm's own ceiling.
+func isDocumentFault(err error) bool {
+	var syntax *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	return errors.As(err, &syntax) || errors.As(err, &typ)
 }

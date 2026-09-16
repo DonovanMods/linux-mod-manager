@@ -17,8 +17,10 @@ const (
 	// server error, a dropped connection) and the source is waiting Wait
 	// before attempt Attempt of MaxAttempts.
 	NoticeRetry NoticeKind = "retry"
-	// NoticeSuspended: the source is refusing to send requests at all
-	// until Until - a circuit breaker holding off after repeated failures.
+	// NoticeSuspended: the source is refusing to send requests until
+	// Until - a circuit breaker holding off after repeated failures, or a
+	// wait the host named. GameID, when set, is the one part of the source
+	// being held (a Thunderstore community); empty holds all of it.
 	NoticeSuspended NoticeKind = "suspended"
 	// NoticeIndexBuilding: a source is building its local search index for
 	// GameID from nothing - the one-time wait of a few seconds (#360 §2.7).
@@ -115,6 +117,10 @@ func Notify(ctx context.Context, n Notice) {
 // refuses to be asked is, for now, a caller without an answer.
 type RetryLaterError struct {
 	Source string
+	// GameID, when set, is the one part of the service being held - a
+	// Thunderstore community whose own document failed - while the rest of
+	// it is still asked (T3 review F9). Empty holds the whole service.
+	GameID string
 	Until  time.Time
 	Reason string
 }
@@ -122,7 +128,11 @@ type RetryLaterError struct {
 // Error names the service, when it will be asked again - in local time,
 // which is the clock the reader has - and why not before.
 func (e *RetryLaterError) Error() string {
-	return fmt.Sprintf("not asking %s again until %s: %s", e.Source, clockTime(e.Until), e.Reason)
+	about := ""
+	if e.GameID != "" {
+		about = " about " + e.GameID
+	}
+	return fmt.Sprintf("not asking %s%s again until %s: %s", e.Source, about, clockTime(e.Until), e.Reason)
 }
 
 // clockTime renders a moment the way a person checks it against a clock:
@@ -138,3 +148,22 @@ func clockTime(t time.Time) string {
 
 // Is makes errors.Is(err, ErrIndexUnavailable) true.
 func (e *RetryLaterError) Is(target error) bool { return target == ErrIndexUnavailable }
+
+// Hold is one refusal a source has in force: it will not ask Source - or,
+// with GameID set, only that part of it - again before Until, for Reason
+// (#436, T3 review F10). It is what a frontend shows as "not asking
+// Thunderstore again until ..." without having to make a request to find
+// out.
+type Hold struct {
+	Source string
+	GameID string
+	Until  time.Time
+	Reason string
+}
+
+// HoldReporter is implemented by a source that holds requests off (a
+// persisted throttle or circuit breaker) and can say so. Optional, and
+// type-asserted like every other capability here.
+type HoldReporter interface {
+	Holds(ctx context.Context) []Hold
+}

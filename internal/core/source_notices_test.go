@@ -50,6 +50,12 @@ func TestNoticeText(t *testing.T) {
 			"Not asking Thunderstore again until 12:04:30 (in 4m30s).",
 		},
 		{
+			// T3 review F9: a hold on one community names it.
+			"one community suspended",
+			source.Notice{Kind: source.NoticeSuspended, Source: "Thunderstore", GameID: "broken-community", Until: now.Add(5 * time.Minute)},
+			"Not asking Thunderstore about broken-community again until 12:05:00 (in 5m0s).",
+		},
+		{
 			"suspended for a day",
 			source.Notice{Kind: source.NoticeSuspended, Source: "Thunderstore", Until: now.Add(26 * time.Hour)},
 			"Not asking Thunderstore again until " + now.Add(26*time.Hour).Format("2006-01-02 15:04:05") + " (in 26h0m0s).",
