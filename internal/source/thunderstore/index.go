@@ -236,6 +236,13 @@ func (s *Source) fetchAndBuild(ctx context.Context, community string, current wa
 
 	resp, err := s.client.fetchCommunity(ctx, community, ifModifiedSince)
 	if err != nil {
+		// A hold is its own sentence: the request plumbing around it
+		// ("fetching ...: executing request to ...") says nothing a user
+		// needs about a request lmm decided not to send.
+		var later *source.RetryLaterError
+		if errors.As(err, &later) {
+			err = later
+		}
 		return watermark{}, indexUnavailable(community, err)
 	}
 	defer func() { _ = resp.Body.Close() }()

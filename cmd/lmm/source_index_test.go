@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +17,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/thunderstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -264,26 +268,60 @@ func TestSourceIndexPrune_AllAsksFirst(t *testing.T) {
 	})
 }
 
-// TestReportError_JSON_IndexUnavailableError pins the envelope #410's
-// index failure produces: the sentence, and its facts as data.
+// TestReportError_JSON_IndexUnavailableError pins the envelope a host lmm
+// is holding off produces, built the way production builds it (T3 review
+// P4): the real Thunderstore source against a local server that answers
+// 429 with a ten-minute Retry-After, the real core classification, and the
+// real formatter. The sentence names the hold once, in local time, and
+// retry_at is the same moment to the second.
 func TestReportError_JSON_IndexUnavailableError(t *testing.T) {
-	withJSONOutput(t)
-	err := &core.IndexUnavailableError{
-		Source: "thunderstore", Game: "lethal-company",
-		Reason:  "suspended after repeated failures",
-		RetryAt: time.Date(2026, 9, 16, 12, 5, 0, 0, time.UTC),
-		Err:     errors.New(`source "thunderstore": the lethal-company index could not be built: not asking Thunderstore again until 2026-09-16 08:05:00: suspended after repeated failures`),
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "600")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(srv.Close)
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	cacheDir := t.TempDir()
+	svc.RegisterSource(thunderstore.New(thunderstore.Options{CacheDir: cacheDir, BaseURL: srv.URL}))
+	game := &domain.Game{
+		ID: "lethal", Name: "Lethal Company", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"thunderstore": "lethal-company"},
 	}
-	out := captureStdout(t, func() error { reportError(err); return nil })
-	assert.Equal(t, "{\n"+
-		"  \"error\": \"source \\\"thunderstore\\\": the lethal-company index could not be built: not asking Thunderstore again until 2026-09-16 08:05:00: suspended after repeated failures\",\n"+
-		"  \"details\": {\n"+
-		"    \"source\": \"thunderstore\",\n"+
-		"    \"game\": \"lethal-company\",\n"+
-		"    \"reason\": \"suspended after repeated failures\",\n"+
-		"    \"retry_at\": \"2026-09-16T12:05:00Z\"\n"+
-		"  }\n"+
-		"}\n", out)
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+	withSearchFlags(t, "thunderstore", 10)
+
+	searchErr := doSearch(t.Context(), svc, game, []string{"ship"})
+	var typed *core.IndexUnavailableError
+	require.ErrorAs(t, searchErr, &typed)
+
+	withJSONOutput(t)
+	out := captureStdout(t, func() error { reportError(searchErr); return nil })
+	var doc struct {
+		Error   string `json:"error"`
+		Details struct {
+			Source  string `json:"source"`
+			Game    string `json:"game"`
+			Reason  string `json:"reason"`
+			RetryAt string `json:"retry_at"`
+		} `json:"details"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &doc), out)
+	retryAt, err := time.Parse(time.RFC3339, doc.Details.RetryAt)
+	require.NoError(t, err, "retry_at is RFC 3339: %q", doc.Details.RetryAt)
+	assert.Equal(t, time.UTC, retryAt.Location(), "retry_at is UTC")
+	assert.WithinDuration(t, time.Now().Add(10*time.Minute), retryAt, 5*time.Second)
+
+	const reason = "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s"
+	assert.Equal(t, "thunderstore", doc.Details.Source)
+	assert.Equal(t, "lethal-company", doc.Details.Game)
+	assert.Equal(t, reason, doc.Details.Reason)
+	assert.Equal(t,
+		`search failed: source "thunderstore": the lethal-company index could not be built: not asking Thunderstore again until `+
+			retryAt.Local().Format("15:04:05")+": "+reason,
+		doc.Error, "the hold is named once, at the local clock time retry_at names")
+	assert.NotContains(t, doc.Error, "unavailable", "the sentinel's own words are not repeated into the sentence")
 }
 
 // TestReportError_JSON_GameIdentifierError pins the envelope a missing or
