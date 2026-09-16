@@ -128,4 +128,12 @@ func TestOpen_WarnsAboutALoaderBlockTheAdapterIgnores(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(out, "declares the BepInEx loader"), "one warning, for the one bypassing game: %q", out)
 	assert.Contains(t, out, `warning: game "valheim" declares the BepInEx loader, but its adapter is "generic-files"`)
 	assert.NotContains(t, out, `"lethal-company"`, "a game resolving to bepinex is configured correctly")
+
+	// #413 re-review M2: a caller that reports a game's warning itself
+	// names it, and Open leaves that game's copy out.
+	require.NoError(t, svc.Close())
+	warn.Reset()
+	svc, err = Open(t.Context(), Options{ConfigDir: cfgDir, DataDir: t.TempDir(), WarnWriter: &warn, OmitAdapterWarnings: []string{"valheim"}})
+	require.NoError(t, err)
+	assert.Empty(t, warn.String())
 }

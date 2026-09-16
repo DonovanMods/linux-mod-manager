@@ -254,7 +254,13 @@ func doGameAdd(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, se
 	if err != nil {
 		return err
 	}
-	return reportGameAdded(cmd, entry)
+	if err := reportGameAdded(cmd, entry); err != nil {
+		return err
+	}
+	// After the write, like `lmm game edit`: a game added in a state that
+	// contradicts itself is told so now (#413 re-review M2).
+	warnGameAdapterConfig(service, entry.ID)
+	return nil
 }
 
 // resolveGameAddIdentity fills spec.Identifier for the chosen source,

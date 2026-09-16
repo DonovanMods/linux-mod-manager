@@ -52,18 +52,19 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 		return nil, err
 	}
 	RegisterAdapters(svc)
-	warnAdapterConfig(svc, warnWriter(opts))
+	warnAdapterConfig(svc, warnWriter(opts), opts.OmitAdapterWarnings)
 	registerSources(ctx, svc, p, warnWriter(opts))
 	return svc, nil
 }
 
 // warnAdapterConfig prints design decision 11's load-time warning (#353,
 // #413 review F5): a game whose `loader:` block its adapter ignores. It runs
-// after registerAdapters because the answer depends on which adapters this
+// after RegisterAdapters because the answer depends on which adapters this
 // build ships, and it writes to the same channel the source warnings use so
-// it is visible at the CLI's default --log-level off.
-func warnAdapterConfig(svc *core.Service, warn io.Writer) {
-	for _, w := range svc.AdapterConfigWarnings() {
+// it is visible at the CLI's default --log-level off. The games in omit are
+// the caller's to report (Options.OmitAdapterWarnings).
+func warnAdapterConfig(svc *core.Service, warn io.Writer, omit []string) {
+	for _, w := range svc.AdapterConfigWarnings(omit...) {
 		_, _ = fmt.Fprintf(warn, "warning: %s\n", w) //nolint:errcheck // best-effort warning write
 	}
 }

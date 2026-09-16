@@ -88,7 +88,7 @@ func init() {
 
 func runGameEdit(cmd *cobra.Command, args []string) error {
 	adapterSet := cmd.Flags().Changed("adapter")
-	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+	return withGameWriteService(cmd, args[0], func(ctx context.Context, service *core.Service) error {
 		// Changed("loader") rather than a non-empty value, so `--loader ""`
 		// is an explicit "this game has no loader after all" and reaches
 		// core's nil rather than reading as "no loader flag was passed" -

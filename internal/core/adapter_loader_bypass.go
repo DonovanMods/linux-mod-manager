@@ -45,6 +45,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -92,17 +93,19 @@ func (b loaderBypass) persistent() bool {
 
 // AdapterConfigWarnings is design decision 11's load-time warning: one
 // sentence for every configured game whose `loader:` block its adapter
-// ignores. internal/app prints them when it opens a Service, except for the
-// games its caller says it reports itself.
+// ignores, except the games named in except. internal/app prints them when
+// it opens a Service, and except is how a command that reports a game's
+// warning itself - `lmm game show`, `lmm verify`, `lmm game edit` - keeps
+// the sentence from reaching the user twice (#413 re-review M2).
 //
 // It reads no disk, because it runs on every lmm invocation: the other
 // persistent case - an installed BepInEx an implicit adapter ignores - needs
 // a stat per game to find, and is flagged on the loader report and by
 // verify instead.
-func (s *Service) AdapterConfigWarnings() []string {
+func (s *Service) AdapterConfigWarnings(except ...string) []string {
 	var out []string
 	for _, game := range s.gamesSnapshot() {
-		if !game.DeclaresBepInEx() {
+		if !game.DeclaresBepInEx() || slices.Contains(except, game.ID) {
 			continue
 		}
 		if w := s.adapterConfigWarning(game); w != "" {

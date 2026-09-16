@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
@@ -42,7 +43,10 @@ func init() {
 }
 
 func runGameShow(cmd *cobra.Command, args []string) error {
-	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+	// The loader section (or, under --json, loader_status.warnings) carries
+	// this game's adapter warning, so the load-time copy is left out
+	// (#413 re-review M2).
+	return withServiceOpts(cmd, app.Options{OmitAdapterWarnings: []string{args[0]}}, func(ctx context.Context, service *core.Service) error {
 		return doGameShow(ctx, service, args[0])
 	})
 }

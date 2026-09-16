@@ -215,7 +215,7 @@ func init() {
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
-	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
+	return withGameReportService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
 		return doVerify(cmd, svc, game, args)
 	})
 }
