@@ -188,3 +188,26 @@ func TestServer_APIModDetail_UnknownMod_Renders404(t *testing.T) {
 	decodeStrict(t, rec.Body.Bytes(), &envelope)
 	assert.NotEmpty(t, envelope.Error)
 }
+
+// TestServer_APIModDetail_AnImportedMod (#447): GET
+// /api/v1/mods/local/{id} describes an imported mod from its installed row
+// instead of answering 404 for want of a `local` source.
+func TestServer_APIModDetail_AnImportedMod(t *testing.T) {
+	src := newFakeSource("fake")
+	svc, game := newFixtureServiceWithSource(t, src)
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "imp", SourceID: domain.SourceLocal, Name: "Imported", Version: "1.0", GameID: game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
+	}))
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/mods/local/imp", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var detail core.ModDetail
+	decodeStrict(t, rec.Body.Bytes(), &detail)
+	assert.Equal(t, "Imported", detail.Mod.Name)
+	require.NotNil(t, detail.Installed)
+}

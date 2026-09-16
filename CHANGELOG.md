@@ -1500,6 +1500,22 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Every `lmm mod` subcommand addresses an imported mod (#447).**
+  `lmm import` records a mod under the `local` source, which no game maps,
+  and `lmm mod lock`, `unlock`, `set-update`, `files`, `show` and `convert`
+  refused `--source local` as "not configured" — so an imported mod could be
+  enabled and disabled but not inspected, pinned or converted by source. All
+  of them now resolve their mod one way: `--source local` is accepted, and
+  with no `--source` the source is the one the installed mod carries (as
+  `lmm uninstall` and `lmm mod edit` already did), so `lmm mod enable <id>`
+  no longer needs `local` listed in the game's sources. An id installed
+  under two sources is refused with the flag that chooses, rather than
+  guessed at. `lmm mod lock` on an imported mod says it has no source to
+  resolve versions against and names `lmm mod set-update … --pin`, rather
+  than "source not found: local", and `lmm mod show` — like
+  `GET /api/v1/mods/local/{id}` — describes an imported mod from its
+  installed row instead of failing.
+
 - **A Steam Workshop item's version is its revision date on every CLI line
   (#428).** A Workshop item's version is its 19-digit content id, which no
   human-facing surface is meant to print, yet `lmm install` printed

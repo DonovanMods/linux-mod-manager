@@ -85,10 +85,24 @@ type InstalledDetail struct {
 // state exists for it in profile. The source fetch is a live network call for
 // remote sources (Service.GetMod does not cache), so callers on a UI thread
 // must run this off the render path.
+//
+// A mod whose source no registry answers for - an `lmm import`ed mod under
+// domain.SourceLocal, or one whose source has since been unregistered - is
+// described from its installed row (#447): that row is everything lmm knows
+// about it, and a detail view of an installed mod must not fail for want of
+// a catalog entry nobody can serve.
 func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sourceID, modID string) (*ModDetail, error) {
 	mod, err := s.GetMod(ctx, sourceID, game.ID, modID)
 	if err != nil {
-		return nil, fmt.Errorf("mod not found: %w", err)
+		if _, regErr := s.GetSource(sourceID); regErr == nil {
+			return nil, fmt.Errorf("mod not found: %w", err)
+		}
+		row, rowErr := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profile)
+		if rowErr != nil {
+			return nil, fmt.Errorf("mod not found: %w", err)
+		}
+		installedMod := row.Mod
+		mod = &installedMod
 	}
 	detail := &ModDetail{Mod: mod}
 	s.fillModDescription(ctx, sourceID, game, mod)
