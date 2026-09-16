@@ -348,9 +348,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then the mod path. `lmm purge` and `lmm uninstall` (and their
   `--dry-run`) are never refused by a game's adapter — they remove what lmm
   recorded deploying, and they are the first step out of every
-  configuration an adapter refuses. With the adapter refused they remove
-  only what a deployment record names, so a `BepInEx/config` file the user
-  replaced with a link of their own stays; and their `--dry-run` names
+  configuration an adapter refuses. With the adapter refused they — and
+  `lmm mod disable` — remove only what a deployment record names, so a
+  `BepInEx/config` file the user replaced with a link of their own stays;
+  and their `--dry-run` names
   exactly the files and the merged artifact the real run removes — no
   longer the seeded `BepInEx/config` files an uninstall never touches. A game that moved its mod path without
   purging first is caught too: `lmm verify` reports a `BepInEx/` directory
