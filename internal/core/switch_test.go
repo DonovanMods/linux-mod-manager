@@ -2443,3 +2443,49 @@ func TestApplyProfileSwitch_PinnedTargetReplacesTheLiveOutgoingVersion(t *testin
 	require.NoError(t, err)
 	assert.False(t, outgoing.Deployed)
 }
+
+// TestApplyProfileSwitch_ACacheMissReplacesTheLiveOutgoingVersion is R7's
+// third path (fix round 3, a surviving mutant): the target profile's row is
+// at another version than the live one, and that version's bytes are no
+// longer in the cache, so the switch reinstalls it. The reinstall must
+// replace the LIVE outgoing version - recorded in PriorVersions - or the
+// outgoing version's files stay beside it and its row goes on claiming them.
+func TestApplyProfileSwitch_ACacheMissReplacesTheLiveOutgoingVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+	for _, name := range []string{"default", "stable"} {
+		_, err := pm.Create(ctx, game.ID, name)
+		require.NoError(t, err)
+		require.NoError(t, pm.AddMod(ctx, game.ID, name, domain.ModReference{SourceID: "src", ModID: "mod1"}))
+	}
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "default"))
+	svc.RegisterSource(newTwoVersionSource(t))
+
+	// default's 1.0 is live.
+	seedInstalledModUnderProfile(t, svc, game, "default", "src", "mod1", "Test Mod", "1.0", true,
+		map[string][]byte{"mod1-old.esp": []byte("old-payload")})
+	require.NoError(t, svc.GetInstallerForTest(game).Install(ctx, game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+	require.NoError(t, svc.SetModDeployed(ctx, "src", "mod1", game.ID, "default", true))
+	// stable's own row is at 1.5, whose bytes are not in the cache.
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
+		ProfileName: "stable", UpdatePolicy: domain.UpdateNotify, Enabled: true, FileIDs: []string{"10"},
+	}))
+	require.False(t, svc.GetGameCache(game).Exists(game.ID, "src", "mod1", "1.5"))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "stable")
+	require.NoError(t, err)
+	require.Len(t, plan.ToInstall, 1, "a cache miss is a reinstall")
+	assert.Equal(t, "1.0", plan.PriorVersions[domain.ModKey("src", "mod1")].Version,
+		"the plan names the live version the reinstall replaces")
+
+	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "mod1-old.esp"), "the live 1.0 file must be replaced, not left beside 1.5")
+	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
+	outgoing, err := svc.GetInstalledMod(ctx, "src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, outgoing.Deployed, "default's row no longer claims the files that were replaced")
+}

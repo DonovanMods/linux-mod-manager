@@ -1830,6 +1830,15 @@ func TestService_DeployProfile_ALiveModTheDocumentSwitchedOffIsReported(t *testi
 		assert.Empty(t, plan.Mods[0].Link)
 	})
 
+	t.Run("the plan for a purge does not list it either", func(t *testing.T) {
+		svc, game, _ := setup(t)
+		plan, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{Purge: true})
+		require.NoError(t, err)
+		for _, m := range plan.Mods {
+			assert.NotEqual(t, core.DeployModOff, m.Class, "%s: the purge takes it down, as the deploy itself reports", m.Name)
+		}
+	})
+
 	t.Run("a targeted plan refuses it, as the targeted deploy does", func(t *testing.T) {
 		svc, game, _ := setup(t)
 		plan, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{SourceID: "src", ModID: "live"})

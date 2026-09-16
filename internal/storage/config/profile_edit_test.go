@@ -295,6 +295,12 @@ func TestMarkModsDisabled_RefusesWhatItCannotEditInPlace(t *testing.T) {
 			path := writeProfileFile(t, dir, "g", "p", content)
 			_, err := config.MarkModsDisabled(path, []domain.ModReference{ref("s", "m")})
 			require.ErrorIs(t, err, config.ErrProfileLayoutUnsupported)
+			if strings.Contains(name, "empty") {
+				// yaml.v3 places an empty value right after the colon, where
+				// `true` would read back as part of the key; the warning says
+				// what is actually wrong with the file.
+				require.ErrorContains(t, err, "its disabled value is empty")
+			}
 			got, readErr := os.ReadFile(path)
 			require.NoError(t, readErr)
 			assert.Equal(t, content, string(got))
@@ -344,13 +350,41 @@ func TestMarkModsDisabled_WritesThroughLinksAndKeepsTheMode(t *testing.T) {
 		path := writeProfileFile(t, dir, "g", "p", content)
 		other := filepath.Join(t.TempDir(), "p.yaml")
 		require.NoError(t, os.Link(path, other))
+		before, err := os.Stat(path)
+		require.NoError(t, err)
 
-		_, err := config.MarkModsDisabled(path, []domain.ModReference{ref("s", "m")})
+		_, err = config.MarkModsDisabled(path, []domain.ModReference{ref("s", "m")})
 		require.NoError(t, err)
 
 		got, err := os.ReadFile(other)
 		require.NoError(t, err)
 		assert.Equal(t, want, string(got), "the other name must see the same edit")
+		after, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.True(t, os.SameFile(before, after), "written in place, so the link is kept")
+	})
+
+	// Everything else is renamed into place, so no reader - lmm's own
+	// LoadProfile in another process included - ever sees half a document:
+	// the name ends up on a new file rather than on a rewritten one.
+	t.Run("plain file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := writeProfileFile(t, dir, "g", "p", content)
+		require.NoError(t, os.Chmod(path, 0o640))
+		before, err := os.Stat(path)
+		require.NoError(t, err)
+
+		_, err = config.MarkModsDisabled(path, []domain.ModReference{ref("s", "m")})
+		require.NoError(t, err)
+
+		after, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.False(t, os.SameFile(before, after), "a rename, not an in-place rewrite")
+		assert.Equal(t, os.FileMode(0o640), after.Mode().Perm())
+		assert.Equal(t, want, mustReadFile(t, path))
+		entries, err := os.ReadDir(filepath.Dir(path))
+		require.NoError(t, err)
+		assert.Len(t, entries, 1, "no temporary file left behind")
 	})
 }
 
