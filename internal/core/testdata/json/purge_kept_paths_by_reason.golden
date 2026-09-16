@@ -1,0 +1,20 @@
+[
+  {
+    "path": "Data/listed.esp",
+    "reason": "listed",
+    "profiles": [
+      "survival"
+    ]
+  },
+  {
+    "path": "Data/shared.esp",
+    "reason": "other_game",
+    "games": [
+      "skyrim-vr"
+    ]
+  },
+  {
+    "path": "BepInEx/config/m.cfg",
+    "reason": "user_file"
+  }
+]

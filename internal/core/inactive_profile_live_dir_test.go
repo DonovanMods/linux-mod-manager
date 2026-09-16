@@ -127,7 +127,7 @@ func TestPurge_ANonActiveProfileClearsOnlyWhatItRecorded(t *testing.T) {
 		assert.True(t, plan.RecordedOnly)
 		assert.Equal(t, "a", plan.ActiveProfile)
 		assert.Equal(t, []string{"bonly.esp"}, plan.Remove)
-		assert.Equal(t, []core.PurgeKeptPath{{Path: "shared.esp", Profiles: []string{"a"}}}, plan.Kept)
+		assert.Equal(t, []core.PurgeKeptPath{{Path: "shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"a"}}}, plan.Kept)
 		require.Len(t, plan.Mods, 1)
 		assert.Equal(t, "bonly", plan.Mods[0].ID)
 		assert.Empty(t, plan.Hooks, "a recorded-only purge runs no hooks")
@@ -147,7 +147,7 @@ func TestPurge_ANonActiveProfileClearsOnlyWhatItRecorded(t *testing.T) {
 		assert.FileExists(t, filepath.Join(f.gameDir, "aonly.esp"))
 		assert.Equal(t, 1, result.Purged)
 		assert.Equal(t, 1, result.RemovedPaths)
-		assert.Equal(t, []core.PurgeKeptPath{{Path: "shared.esp", Profiles: []string{"a"}}}, result.Kept)
+		assert.Equal(t, []core.PurgeKeptPath{{Path: "shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"a"}}}, result.Kept)
 
 		for profile, want := range map[string][]string{"b": {"shared.esp"}, "a": {"shared.esp"}} {
 			rows, err := f.svc.GetDeployedFilesForMod(ctx, f.game.ID, profile, "src", "shared")
@@ -206,7 +206,7 @@ func TestPurge_ANonActiveProfileClearsOnlyWhatItRecorded(t *testing.T) {
 		require.NoError(t, err)
 		assert.FileExists(t, filepath.Join(f.gameDir, "bonly.esp"))
 		assert.Zero(t, result.Purged)
-		assert.Contains(t, result.Kept, core.PurgeKeptPath{Path: "bonly.esp", Profiles: []string{"a"}})
+		assert.Contains(t, result.Kept, core.PurgeKeptPath{Path: "bonly.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"a"}})
 	})
 
 	t.Run("a profile that became active since is a stale plan", func(t *testing.T) {

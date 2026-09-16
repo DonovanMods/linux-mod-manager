@@ -352,7 +352,7 @@ func TestJSONGoldens(t *testing.T) {
 				RecordedOnly:  true,
 				ActiveProfile: "default",
 				Remove:        []string{"Data/alt.esp"},
-				Kept:          []core.PurgeKeptPath{{Path: "Data/shared.esp", Profiles: []string{"default"}}},
+				Kept:          []core.PurgeKeptPath{{Path: "Data/shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default"}}},
 			},
 		},
 		{
@@ -360,12 +360,21 @@ func TestJSONGoldens(t *testing.T) {
 			core.PurgeResult{
 				Purged:       1,
 				RemovedPaths: 1,
-				Kept:         []core.PurgeKeptPath{{Path: "Data/shared.esp", Profiles: []string{"default"}}},
+				Kept:         []core.PurgeKeptPath{{Path: "Data/shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default"}}},
 			},
 		},
 		{
 			"purge_kept_path",
-			core.PurgeKeptPath{Path: "Data/shared.esp", Profiles: []string{"default", "survival"}},
+			core.PurgeKeptPath{Path: "Data/shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default", "survival"}},
+		},
+		{
+			// #445 review F1, F3, F7: the other reasons a path is kept.
+			"purge_kept_paths_by_reason",
+			[]core.PurgeKeptPath{
+				{Path: "Data/listed.esp", Reason: core.PurgeKeptListed, Profiles: []string{"survival"}},
+				{Path: "Data/shared.esp", Reason: core.PurgeKeptOtherGame, Games: []string{"skyrim-vr"}},
+				{Path: "BepInEx/config/m.cfg", Reason: core.PurgeKeptUserFile},
+			},
 		},
 		{
 			"merged_artifact_effect",

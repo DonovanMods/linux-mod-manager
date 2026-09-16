@@ -89,7 +89,7 @@ func TestDoPurge_ANonActiveProfileClearsOnlyWhatItRecorded(t *testing.T) {
 	svc, game := mixedGameDir(t)
 	setFlag(t, &purgeProfile, "alt")
 	setFlag(t, &purgeYes, true)
-	header := "alt is not the active profile of Game (default is), so this purge only removes the files alt recorded as deployed that no other profile records:\n" +
+	header := "alt is not the active profile of Game (default is), so this purge only removes the files alt recorded as deployed that nothing else still claims:\n" +
 		"  - altonly.esp\n" +
 		"Left in place (also recorded by default): shared.esp\n" +
 		"Mod records and the profile are kept, and no hooks run.\n"
@@ -117,7 +117,7 @@ func TestDoPurge_ANonActiveProfileClearsOnlyWhatItRecorded(t *testing.T) {
 	stdout = captureStdout(t, func() error { return doPurge(ctx, svc, game) })
 	var result core.PurgeResult
 	require.NoError(t, json.Unmarshal([]byte(stdout), &result))
-	assert.Equal(t, []core.PurgeKeptPath{{Path: "shared.esp", Profiles: []string{"default"}}}, result.Kept)
+	assert.Equal(t, []core.PurgeKeptPath{{Path: "shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default"}}}, result.Kept)
 }
 
 // setFlag sets a command's package-level flag variable for one test.
@@ -126,4 +126,23 @@ func setFlag[T any](t *testing.T, flag *T, value T) {
 	old := *flag
 	*flag = value
 	t.Cleanup(func() { *flag = old })
+}
+
+// TestPrintKeptPaths_SaysWhyEachPathIsLeft pins the line a recorded-only
+// purge prints for each reason core.PurgeKeptReason names (#445 review F1,
+// F3, F7).
+func TestPrintKeptPaths_SaysWhyEachPathIsLeft(t *testing.T) {
+	stdout := captureStdout(t, func() error {
+		printKeptPaths([]core.PurgeKeptPath{
+			{Path: "Data/shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default", "survival"}},
+			{Path: "Data/a.esp", Reason: core.PurgeKeptListed, Profiles: []string{"alt"}},
+			{Path: "Data/b.esp", Reason: core.PurgeKeptOtherGame, Games: []string{"sky"}},
+			{Path: "BepInEx/config/m.cfg", Reason: core.PurgeKeptUserFile},
+		})
+		return nil
+	})
+	assert.Equal(t, "Left in place (also recorded by default, survival): Data/shared.esp\n"+
+		"Left in place (its mod is in the active profile alt): Data/a.esp\n"+
+		"Left in place (also recorded by game sky): Data/b.esp\n"+
+		"Left in place (the game hands this file to you after its first deploy): BepInEx/config/m.cfg\n", stdout)
 }

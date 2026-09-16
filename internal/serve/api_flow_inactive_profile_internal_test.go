@@ -93,7 +93,7 @@ func TestFlowInactiveProfile_PurgeClearsOnlyWhatItRecorded(t *testing.T) {
 	assert.True(t, resp.Plan.RecordedOnly)
 	assert.Equal(t, "default", resp.Plan.ActiveProfile)
 	assert.Equal(t, []string{altFile}, resp.Plan.Remove)
-	assert.Equal(t, []core.PurgeKeptPath{{Path: deployFixtureFile, Profiles: []string{"default"}}}, resp.Plan.Kept)
+	assert.Equal(t, []core.PurgeKeptPath{{Path: deployFixtureFile, Reason: core.PurgeKeptRecorded, Profiles: []string{"default"}}}, resp.Plan.Kept)
 	assert.FileExists(t, deployedPath(game, altFile), "planning changes nothing")
 
 	j := startFlowJob(t, s, resp.PlanID, "")

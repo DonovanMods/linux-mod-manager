@@ -199,14 +199,14 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 // doRecordedPurge is doPurge for a profile that is not the game's active
 // one (#445, core.PurgePlan.RecordedOnly): it says that only the files the
 // profile recorded as deployed are removed, lists them and the ones it
-// leaves because another profile records them too, confirms, and applies.
-// A dry run stops after the list.
+// leaves - each with why - confirms, and applies. A dry run stops after the
+// list.
 func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Game, plan *core.PurgePlan, opts core.PurgeOptions, progress func(core.Event)) error {
 	if !jsonOutput {
 		if purgeDryRun {
 			fmt.Printf("Purge plan for profile %q (dry run)\n\n", plan.Profile)
 		}
-		fmt.Printf("%s is not the active profile of %s (%s is), so this purge only removes the files %s recorded as deployed that no other profile records:\n",
+		fmt.Printf("%s is not the active profile of %s (%s is), so this purge only removes the files %s recorded as deployed that nothing else still claims:\n",
 			plan.Profile, game.Name, plan.ActiveProfile, plan.Profile)
 		for _, path := range plan.Remove {
 			fmt.Printf("  - %s\n", path)
@@ -261,10 +261,25 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 	return nil
 }
 
-// printKeptPaths lists the paths a recorded-only purge leaves in place.
+// printKeptPaths lists the paths a recorded-only purge leaves in place,
+// each with why.
 func printKeptPaths(kept []core.PurgeKeptPath) {
 	for _, k := range kept {
-		fmt.Printf("Left in place (also recorded by %s): %s\n", strings.Join(k.Profiles, ", "), k.Path)
+		fmt.Printf("Left in place (%s): %s\n", keptReason(k), k.Path)
+	}
+}
+
+// keptReason is why k was left, as printKeptPaths says it.
+func keptReason(k core.PurgeKeptPath) string {
+	switch k.Reason {
+	case core.PurgeKeptListed:
+		return "its mod is in the active profile " + strings.Join(k.Profiles, ", ")
+	case core.PurgeKeptOtherGame:
+		return "also recorded by game " + strings.Join(k.Games, ", ")
+	case core.PurgeKeptUserFile:
+		return "the game hands this file to you after its first deploy"
+	default:
+		return "also recorded by " + strings.Join(k.Profiles, ", ")
 	}
 }
 

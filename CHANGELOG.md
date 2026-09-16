@@ -1580,11 +1580,16 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links and
   `lmm profile switch`, which makes a profile active and deploys it.
   `lmm purge -p <other profile>` removed every file that profile's mods
   could have put there, including ones the active profile deployed. It now
-  removes only the files that profile recorded as deployed and no other
-  profile records — a file the active profile records too stays, and the
-  plan, `--dry-run` and the result all list it — so files a non-active
-  profile put into the game directory (an `lmm import -p`, or a deploy
-  before this fix) can still be cleared. Such a purge runs no hooks, keeps
+  removes only the files that profile recorded as deployed and nothing else
+  still claims, so files a non-active profile put into the game directory
+  (an `lmm import -p`, or a deploy before this fix) can still be cleared. A
+  file stays — and the plan, `--dry-run` and the result all list it, with
+  why — when another profile records it too; when the active profile lists
+  its mod, which covers the files a v1.30.1 switch between two profiles
+  sharing a mod left live with no record under the new profile; when
+  another game whose mod directory holds it records it; and when the game
+  hands it to you after its first deploy (a BepInEx config file, which
+  such a purge deleted even where an ordinary purge keeps it). Such a purge runs no hooks, keeps
   the mod records, and refuses `--uninstall`. The web UI's per-profile
   Purge does the same. A plan made before the active profile changed is
   refused when applied.

@@ -4,6 +4,7 @@
   "kept": [
     {
       "path": "Data/shared.esp",
+      "reason": "recorded",
       "profiles": [
         "default"
       ]
