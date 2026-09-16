@@ -203,11 +203,18 @@ func onDiskUnusable(ctx context.Context, svc *core.Service, sourceID string, sta
 		return nil
 	}
 	for i, e := range listing.Indexes {
-		if e.Game == status.Game && e.Cached {
+		if e.Game == status.Game && unusableOnDisk(e) {
 			return &listing.Indexes[i]
 		}
 	}
 	return nil
+}
+
+// unusableOnDisk reports a directory holding something that is not a usable
+// index. An empty one - all a failed cold build leaves is its lock file - is
+// no index at all, not a damaged one.
+func unusableOnDisk(e core.SourceIndexEntry) bool {
+	return e.Cached && !e.Present && e.Bytes > 0
 }
 
 // printIndexStatus is `lmm source index`'s plain-text view. unusable is the
@@ -310,9 +317,11 @@ func doSourceIndexList(ctx context.Context, svc *core.Service, sourceID string) 
 	now := time.Now()
 	for _, e := range listing.Indexes {
 		packages, size, updated := "-", "-", "not built yet"
-		if e.Cached {
+		// An empty directory - a failed cold build's lock file - is
+		// listed as what it is: not built yet.
+		if e.Cached && (e.Present || e.Bytes > 0) {
 			packages = fmt.Sprintf("%d", e.Packages)
-			if !e.Present {
+			if unusableOnDisk(e) {
 				// A directory with no index lmm can use (review F12).
 				packages = "unusable"
 			}

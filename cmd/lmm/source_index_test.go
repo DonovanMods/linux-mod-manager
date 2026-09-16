@@ -388,6 +388,21 @@ func TestSourceIndex_AnUnusableIndexOnDiskIsNotCalledMissing(t *testing.T) {
 	assert.Contains(t, out, "lmm source index --refresh")
 }
 
+// TestSourceIndex_AnEmptyDirectoryIsNoIndexYet: a cold build that failed
+// leaves only its lock file behind - nothing that was ever an index - and
+// the real-binary run of the T3 fix round showed it read as "an index lmm
+// cannot use (0 B)".
+func TestSourceIndex_AnEmptyDirectoryIsNoIndexYet(t *testing.T) {
+	svc, game, src := newSourceIndexService(t)
+	src.cached["lethal-company"] = source.CachedIndex{GameID: "lethal-company", Removable: true}
+	out := captureStdout(t, func() error { return doSourceIndex(t.Context(), svc, game, "", false) })
+	assert.Contains(t, out, "No Thunderstore index for lethal-company yet")
+	assert.NotContains(t, out, "cannot use")
+
+	out = captureStdout(t, func() error { return doSourceIndexList(t.Context(), svc, "") })
+	assert.NotContains(t, out, "unusable")
+}
+
 // TestSourceIndexPrune_AFailedRemovalExitsNonZero is review F11: a run in
 // which an index could not be removed exited 0.
 func TestSourceIndexPrune_AFailedRemovalExitsNonZero(t *testing.T) {
