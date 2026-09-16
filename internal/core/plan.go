@@ -128,6 +128,12 @@ func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (install
 // telling the user to run it. A precondition an adapter might one day
 // impose ("install the loader first") has the same shape: nothing about
 // removing lmm's own files depends on it.
+//
+// What it gives up is paid for elsewhere: the Installer those flows use
+// removes only recorded paths while the adapter is refused. And nothing
+// else may use it - TestOnlyTheRemovalFlowsSkipTheAdapterPrecondition
+// fails the build for any other function that references it or
+// checkRemovalPlanFresh (#413 fix round 4, F8).
 func removalSnapshotOf(mods []domain.InstalledMod) installedSnapshot {
 	snap := make(installedSnapshot, len(mods))
 	for _, m := range mods {
