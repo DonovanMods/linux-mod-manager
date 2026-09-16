@@ -868,7 +868,7 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 				case "sync":
 					plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
 					require.NoError(t, err)
-					assert.Empty(t, plan.ToRemove)
+					assert.Empty(t, plan.Warnings, "the marker settles what the row says")
 				}
 				assert.Contains(t, f.warnings.String(), "Mod off", "the plan discharged it and said so")
 				assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
@@ -913,7 +913,10 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 		release := holdOpLock(t, f.lockPath)
 		plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
 		require.NoError(t, err)
-		require.Len(t, plan.ToRemove, 1, "planned before the marker existed")
+		// #444: the sync keeps an unmarked disabled mod and warns - it used
+		// to plan its removal - so the warning is what was decided from the
+		// unmarked read.
+		require.Len(t, plan.Warnings, 1, "planned before the marker existed")
 		release()
 
 		_, err = f.svc.ApplyProfileSync(ctx, f.game, plan, nil)
@@ -922,7 +925,7 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 
 		plan, err = f.svc.PlanProfileSync(ctx, f.game, "a")
 		require.NoError(t, err)
-		assert.Empty(t, plan.ToRemove, "the re-plan reads the marker")
+		assert.Empty(t, plan.Warnings, "the re-plan reads the marker")
 	})
 
 	// Another lmm's discharge can write the marker between the document
@@ -954,7 +957,7 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 					case "sync":
 						plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
 						require.NoError(t, err)
-						require.Len(t, plan.ToRemove, 1, "decided from the unmarked read")
+						require.Len(t, plan.Warnings, 1, "decided from the unmarked read")
 						apply = func() error {
 							_, err := f.svc.ApplyProfileSync(ctx, f.game, plan, nil)
 							return err
@@ -995,7 +998,9 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 	t.Run("a marker in another profile leaves the plan fresh", func(t *testing.T) {
 		f := newBackfillFixture(t)
 		f.row(t, "a", "off", false, false)
-		f.row(t, "b", "y", false, false)
+		// A reference with no row at all: something for b's sync to do.
+		require.NoError(t, f.svc.NewProfileManager().AddMod(ctx, f.game.ID, "b",
+			domain.ModReference{SourceID: "src", ModID: "y", Version: "1.0"}))
 		f.owe(t)
 
 		plan, err := f.svc.PlanProfileSync(ctx, f.game, "b")
@@ -1451,8 +1456,8 @@ func (f *backfillFixture) refCount(t *testing.T, profile string) int {
 // sync` listed the unmarked copy for removal - through RemoveMod, which
 // removes every copy, the marked one and its marker with it. Every flow now
 // decides a listed-twice mod by its first reference, the backfill marks
-// every copy, and a sync never removes a marked copy of a mod that still
-// has a row.
+// every copy, and a sync never removes any copy of a mod that still has a
+// row (#444).
 func TestBackfillProfileDisabledMarkers_ADuplicatedReference(t *testing.T) {
 	ctx := context.Background()
 
@@ -1507,17 +1512,18 @@ func TestBackfillProfileDisabledMarkers_ADuplicatedReference(t *testing.T) {
 				assert.Len(t, apply.ToEnable, 1, "apply")
 				assert.Len(t, switchPlan.ToEnable, 1, "switch")
 				assert.Empty(t, switchPlan.ToDisable, "switch keeps b's live copy")
-				assert.Len(t, sync.ToRemove, 1, "sync lists the mod once")
+				// #444: a is not active, so its row's enabled = 0 is not a
+				// choice the sync may act on - the first copy says "on",
+				// and that is the profile's intent.
+				assert.True(t, sync.NoChanges, "sync keeps a mod a non-active profile lists")
 			}
 
-			// Either way the document ends the sync saying what the row
-			// says - off - and the marked copy is still there.
+			// Either way the sync leaves both copies, and the marked one
+			// keeps its marker.
 			_, err = f.svc.ApplyProfileSync(ctx, f.game, sync, nil)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
-			if !tc.off {
-				assert.Equal(t, 1, f.refCount(t, "a"), "only the unmarked copy was removed")
-			}
+			assert.Equal(t, 2, f.refCount(t, "a"), "no copy was removed")
 		})
 	}
 

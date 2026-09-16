@@ -1472,6 +1472,32 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A profile you are not using keeps its mods (#444).** Every `lmm profile
+switch` marks the profile you leave as having its mods switched off —
+  that is how it takes them out of the game directory — and three flows
+  read that as "the user turned these off":
+  - `lmm profile sync -p <other profile>` **deleted every such mod from the
+    profile file**, load-order position and pinned version included. A sync
+    now removes a reference only when the mod is not installed under that
+    profile at all. On the active profile, a mod whose row is disabled while
+    the file still lists it as enabled is kept too, with a warning naming
+    `lmm mod disable` and `lmm profile apply` as the two ways to settle it.
+    The plan's `--json` document and `/api/v1` carry the same warnings.
+  - `lmm verify --fix`, repairing a mod's recorded version, re-linked the
+    same mod in every other profile that claimed a deployment — putting a
+    profile you are not using into the game directory. It now re-links only
+    the active profile's enabled, not-switched-off copy, corrects the other
+    profiles' records without touching the game directory, and says so. The
+    BepInEx re-layout repair (#424) follows the same rule: another
+    profile's copy is taken down with the old layout and not put back.
+  - Restoring a snapshot of a profile that was not active when you took it
+    turned off every mod that profile had been switched away from. A
+    snapshot now records which profile was active, and a restore turns a
+    mod off only where the profile file says so, or where the snapshot's own
+    profile was the active one and the mod was neither enabled nor deployed.
+    For an older snapshot that does not say, the mods stay on and the
+    restore names each one it could not decide.
+
 - **lmm processes starting together on a new installation no longer fail
   with "database is locked" (#453).** Switching a brand-new database file
   into write-ahead-log mode needs the write lock, and SQLite refuses at

@@ -615,16 +615,46 @@ func firstRefs(refs []domain.ModReference) map[string]domain.ModReference {
 	return byKey
 }
 
-// RemoveMod removes a mod's references - every one of them - from a profile
-func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, sourceID, modID string) error {
-	return pm.removeMod(ctx, gameID, profileName, sourceID, modID, false)
+// liveProfile returns the profile whose mods gameID's game directory holds:
+// the one `lmm profile switch` last made active, as ProfileManager.
+// GetDefault resolves it (its first-profile fallback included), or
+// "default" for a game with no profile at all - the same answer both
+// frontends give when no profile is named (cmd/lmm's resolveProfile, lmm
+// serve's selection). A game has one directory and one deployed profile, so
+// a flow that writes into that directory acts for this profile or not at
+// all (#444, #445).
+func (s *Service) liveProfile(ctx context.Context, gameID string) (string, error) {
+	profile, err := s.NewProfileManager().GetDefault(ctx, gameID)
+	if errors.Is(err, domain.ErrProfileNotFound) {
+		return "default", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+	}
+	return profile.Name, nil
 }
 
-// removeMod is RemoveMod, sparing every reference that carries the
-// `disabled:` marker when keepMarked is set - `profile sync` removing the
-// unmarked copy of a mod listed twice, whose marked copy is the off intent
-// its installed row agrees with (#431).
-func (pm *ProfileManager) removeMod(ctx context.Context, gameID, profileName, sourceID, modID string, keepMarked bool) error {
+// flaggedActiveProfile returns gameID's one profile whose file says
+// `is_default: true`, by file name, or "" when none does, several do, or a
+// profile file cannot be read - the cases where "which profile is active?"
+// has no answer that is not a guess (BackfillProfileDisabledMarkers draws
+// the same line).
+//
+// It is the only profile whose installed rows' enabled flag says what the
+// user chose: every profile switch writes enabled = 0 onto the profile it
+// leaves, for mods the user wants on there (#444). A flow that would read
+// that flag as intent reads it for this profile alone, and takes every
+// other profile's intent from its document.
+func (s *Service) flaggedActiveProfile(gameID string) string {
+	flagged, unreadable, err := s.explicitDefaults(gameID)
+	if err != nil || len(unreadable) > 0 || len(flagged) != 1 {
+		return ""
+	}
+	return flagged[0]
+}
+
+// RemoveMod removes a mod's references - every one of them - from a profile
+func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, sourceID, modID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -637,7 +667,7 @@ func (pm *ProfileManager) removeMod(ctx context.Context, gameID, profileName, so
 	found := false
 	newMods := make([]domain.ModReference, 0, len(profile.Mods))
 	for _, m := range profile.Mods {
-		if m.SourceID == sourceID && m.ModID == modID && !(keepMarked && m.Disabled) {
+		if m.SourceID == sourceID && m.ModID == modID {
 			found = true
 			continue
 		}

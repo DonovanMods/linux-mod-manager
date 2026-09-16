@@ -143,6 +143,12 @@ var profileSyncCmd = &cobra.Command{
 	Short: "Sync profile to match installed mods",
 	Long: `Update the profile YAML to match currently installed/enabled mods in the database.
 
+Enabled mods the profile does not list are added, and entries for mods not
+installed under the profile at all are removed. An entry for a mod that is
+installed but switched off is always kept, with its load-order position and
+pinned version: on the active profile a warning says when the database and
+the file disagree about it.
+
 Use this if the profile got out of sync, or to migrate from pre-profile installs.
 If no name is given, uses the current/default profile. Prompts for
 confirmation before making any changes; pass -y/--yes to skip the prompt.
@@ -957,10 +963,12 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		}
 		if jsonOutput {
 			if result == nil {
-				result = &core.ProfileSyncResult{}
+				// #444: what the plan kept and why is the result's too.
+				result = &core.ProfileSyncResult{Warnings: plan.Warnings}
 			}
 			return emitJSON(result)
 		}
+		printSyncWarnings(plan.Warnings)
 		fmt.Printf("Profile %s is already in sync.\n", profileName)
 		return nil
 	}
@@ -1006,6 +1014,7 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 
 	// A dry run stops here: it has shown the plan and must change nothing.
 	if profileSyncDryRun {
+		printSyncWarnings(plan.Warnings)
 		return nil
 	}
 
@@ -1074,15 +1083,20 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 	}
 
 	// #197 postsmoke fix / #294 (Ruling 5): result.Warnings (unconditional
-	// stderr, unlike the --verbose-gated warnings above) - the toUpdate
-	// loop's refused UpsertMod (a LOCKED profile ref, #143), then a
-	// merged-pak sync failure for the profile.
-	for _, w := range result.Warnings {
-		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
-	}
+	// stderr, unlike the --verbose-gated warnings above) - the plan's kept
+	// mods (#444), the toUpdate loop's refused UpsertMod (a LOCKED profile
+	// ref, #143), then a merged-pak sync failure for the profile.
+	printSyncWarnings(result.Warnings)
 
 	fmt.Printf("✓ Synced profile: %s\n", profileName)
 	return nil
+}
+
+// printSyncWarnings writes each of a sync's warnings to stderr.
+func printSyncWarnings(warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
 }
 
 // profileSyncTarget resolves which profile `lmm profile sync` acts on: the

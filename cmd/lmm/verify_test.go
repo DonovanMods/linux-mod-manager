@@ -1222,6 +1222,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_LockedAndDeployed_WarnsDepl
 // row's would be, once the shared cache dir has actually moved.
 func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks(t *testing.T) {
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+	require.NoError(t, getProfileManager(svc).SetDefault(context.Background(), game.ID, "second"))
 
 	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - the
 	// latter's full-row upsert would wipe the checksum
@@ -1279,6 +1280,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_Clears
 		t.Skip("permission-based test is meaningless as root")
 	}
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+	require.NoError(t, getProfileManager(svc).SetDefault(context.Background(), game.ID, "second"))
 
 	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - see
 	// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks.
@@ -1337,6 +1339,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_JSONNo
 		t.Skip("permission-based test is meaningless as root")
 	}
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+	require.NoError(t, getProfileManager(svc).SetDefault(context.Background(), game.ID, "second"))
 
 	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - see
 	// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks.
@@ -2376,6 +2379,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinksWithProfileLinkMethod(t *t
 // resolving against p.Name can produce copy here).
 func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinksWithSiblingProfileLinkMethod(t *testing.T) {
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+	require.NoError(t, getProfileManager(svc).SetDefault(context.Background(), game.ID, "second"))
 	game.LinkMethod = domain.LinkSymlink
 	game.LinkMethodExplicit = true
 	setVerifyProfileLinkMethod(t, svc, game.ID, "second", domain.LinkCopy)

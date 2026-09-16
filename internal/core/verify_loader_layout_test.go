@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -207,6 +208,9 @@ func TestVerify_LoaderTier_ACorrectlyPlacedPluginIsNotAFinding(t *testing.T) {
 // linked to paths nothing provides any more.
 func TestVerify_LoaderTier_FixRelaysOutEveryProfileSharingTheCacheEntry(t *testing.T) {
 	svc, game, mod := stalePreFixJotunn(t, "default", "second")
+	// The sibling is the live profile, so its deployment is the one in the
+	// game directory (#444: no other profile's is put back).
+	require.NoError(t, svc.NewProfileManager().SetDefault(context.Background(), game.ID, "second"))
 
 	_, err := svc.VerifyReport(context.Background(), game, "default",
 		core.VerifyOptions{Fix: true, Force: true}, nil)
@@ -225,6 +229,42 @@ func TestVerify_LoaderTier_FixRelaysOutEveryProfileSharingTheCacheEntry(t *testi
 			"BepInEx/plugins/Jotunn/Jotunn.xml",
 		}, slashed, "profile %s must be re-linked, not left pointing at the old layout", profile)
 	}
+}
+
+// TestVerify_LoaderTier_FixDoesNotPutANonActiveSiblingBack is #444 for the
+// re-layout: a sibling that is not the live profile has no business in the
+// game directory, whatever its row claims, so the repair takes its files
+// down with the old layout and leaves them down - recording that - rather
+// than re-deploying a second profile's copy beside the active one's.
+func TestVerify_LoaderTier_FixDoesNotPutANonActiveSiblingBack(t *testing.T) {
+	svc, game, mod := stalePreFixJotunn(t, "default", "second")
+	ctx := context.Background()
+	require.NoError(t, svc.NewProfileManager().SetDefault(ctx, game.ID, "default"))
+
+	sink, events := core.RecordEvents()
+	_, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Fix: true, Force: true}, sink)
+	require.NoError(t, err)
+
+	rows, err := svc.GetDeployedFilesForMod(ctx, game.ID, "second", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "second has nothing in the game directory")
+	sibling, err := svc.GetInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, "second")
+	require.NoError(t, err)
+	assert.False(t, sibling.Deployed, "and its row says so")
+	assert.True(t, sibling.Enabled, "without deciding anything about whether it is wanted")
+
+	live, err := svc.GetDeployedFilesForMod(ctx, game.ID, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	assert.Len(t, live, 2, "the active profile is re-deployed")
+	tree := gameTreeForTest(t, game.InstallPath)
+	assert.Contains(t, tree, "BepInEx/plugins/Jotunn/Jotunn.dll")
+	assert.NotContains(t, tree, "Jotunn/Jotunn.dll", "nothing is left in the game root")
+
+	var noted bool
+	for _, e := range verifyEvents(*events) {
+		noted = noted || (e.Kind == core.VerifyEvRepairDetail && strings.Contains(e.Detail, "second") && strings.Contains(e.Detail, "not active"))
+	}
+	assert.True(t, noted, "the repair says why second was not put back")
 }
 
 // TestVerify_LoaderTier_ContentThatIsNotAPluginIsNotAFinding: for a BepInEx
