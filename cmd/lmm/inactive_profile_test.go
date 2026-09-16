@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -144,5 +147,63 @@ func TestPrintKeptPaths_SaysWhyEachPathIsLeft(t *testing.T) {
 	assert.Equal(t, "Left in place (also recorded by default, survival): Data/shared.esp\n"+
 		"Left in place (its mod is in the active profile alt): Data/a.esp\n"+
 		"Left in place (also recorded by game sky): Data/b.esp\n"+
-		"Left in place (the game hands this file to you after its first deploy): BepInEx/config/m.cfg\n", stdout)
+		"Kept your file; lmm no longer tracks it (the game hands it to you after its first deploy): BepInEx/config/m.cfg\n", stdout)
+}
+
+// TestDoPurge_AConfigOnlyProfileStopsTrackingIt: a non-active profile
+// whose only deployed-file record is a legacy BepInEx config (v2 never
+// records one) has nothing to remove, and the purge still runs - it drops
+// that record and keeps the file, as an ordinary purge does. Stopping at
+// "Nothing to remove." would leave the record, and with it the game's
+// mod_path locked (#427).
+func TestDoPurge_AConfigOnlyProfileStopsTrackingIt(t *testing.T) {
+	ctx := context.Background()
+	svc, game := setupDoProfileSwitchTest(t) // "default" is active
+	app.RegisterAdapters(svc)
+	game.InstallPath = game.ModPath // the bepinex adapter is derived
+	require.NoError(t, os.MkdirAll(filepath.Join(game.ModPath, "BepInEx", "core"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "BepInEx", "core", "BepInEx.Preloader.dll"), []byte("x"), 0o644))
+	cfg := filepath.Join(game.ModPath, "BepInEx", "config", "m.cfg")
+	require.NoError(t, os.MkdirAll(filepath.Dir(cfg), 0o755))
+	require.NoError(t, os.WriteFile(cfg, []byte("setting=USER-TUNED"), 0o644))
+	pm := getProfileManager(svc)
+	_, err := pm.Create(ctx, game.ID, "alt")
+	require.NoError(t, err)
+	seedSyncInstalledMod(t, svc, game, "src", "m", "Mod M", "1.0", "alt", true, nil)
+	require.NoError(t, svc.SetModDeployed(ctx, "src", "m", game.ID, "alt", true))
+	legacy, err := db.New(filepath.Join(dataDir, "lmm.db"))
+	require.NoError(t, err)
+	require.NoError(t, legacy.SaveDeployedFile(ctx, game.ID, "alt", "BepInEx/config/m.cfg", "src", "m"))
+	require.NoError(t, legacy.Close())
+	setFlag(t, &purgeProfile, "alt")
+	setFlag(t, &purgeYes, true)
+	header := "alt is not the active profile of Game (default is), so this purge only removes the files alt recorded as deployed that nothing else still claims:\n" +
+		"  (none)\n" +
+		"Kept your file; lmm no longer tracks it (the game hands it to you after its first deploy): BepInEx/config/m.cfg\n" +
+		"Mod records and the profile are kept, and no hooks run.\n"
+
+	setFlag(t, &purgeDryRun, true)
+	stdout := captureStdout(t, func() error { return doPurge(ctx, svc, game) })
+	assert.Equal(t, "Purge plan for profile \"alt\" (dry run)\n\n"+header+"\nWould remove: 0 file(s), and stop tracking 1 of yours\n", stdout)
+	recorded, err := svc.GetDeployedFilesForMod(ctx, game.ID, "alt", "src", "m")
+	require.NoError(t, err)
+	require.Len(t, recorded, 1, "a dry run changes nothing")
+
+	purgeDryRun = false
+	stdout = captureStdout(t, func() error { return doPurge(ctx, svc, game) })
+	assert.Equal(t, header+
+		"\nPurging mods from Game...\n\n"+
+		"  ✓ Mod M\n"+
+		"\nRemoved: 0 file(s); cleared: 1 mod(s)\n"+
+		"Kept your file; lmm no longer tracks it (the game hands it to you after its first deploy): BepInEx/config/m.cfg\n"+
+		"\nRun 'lmm profile switch alt' to deploy alt again.\n", stdout)
+	recorded, err = svc.GetDeployedFilesForMod(ctx, game.ID, "alt", "src", "m")
+	require.NoError(t, err)
+	assert.Empty(t, recorded)
+	data, err := os.ReadFile(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "setting=USER-TUNED", string(data))
+
+	stdout = captureStdout(t, func() error { return doPurge(ctx, svc, game) })
+	assert.Equal(t, strings.Replace(header, "Kept your file; lmm no longer tracks it (the game hands it to you after its first deploy): BepInEx/config/m.cfg\n", "", 1)+"\nNothing to remove.\n", stdout)
 }

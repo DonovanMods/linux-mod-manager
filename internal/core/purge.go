@@ -256,12 +256,13 @@ type PurgePlan struct {
 	// (#445). The game directory holds the active profile's mods, so such a
 	// purge is a cleanup of what Profile itself put there: it removes the
 	// paths in Remove - the ones Profile has a deployed-file record for and
-	// nothing else still claims - and nothing else. A path something else
-	// claims (PurgeKeptReason) is left, file and record, and listed in Kept.
-	// It runs no hooks, removes no records or profile entries (--uninstall
-	// is refused with ErrProfileNotActive), and leaves a merged artifact to
-	// the paths Profile recorded. Mods is then the installed mods with a path
-	// in Remove.
+	// nothing else still claims - and nothing else. A path it may not remove
+	// (PurgeKeptReason) is left and listed in Kept, with Profile's record of
+	// it - except a file the game hands to the user, whose record goes
+	// (PurgeKeptReason.DropsRecord). It runs no hooks, removes no mod records
+	// or profile entries (--uninstall is refused with ErrProfileNotActive),
+	// and leaves a merged artifact to the paths Profile recorded. Mods is
+	// then the installed mods with a path in Remove or a record that goes.
 	RecordedOnly bool `json:"recorded_only,omitzero"`
 	// ActiveProfile names the game's active profile when RecordedOnly is
 	// set.
@@ -277,9 +278,9 @@ type PurgePlan struct {
 	snapshot installedSnapshot `json:"-"`
 }
 
-// PurgeKeptPath is a path a recorded-only purge (#445) leaves in place -
-// its file and the purged profile's record of it - and the first reason it
-// found to (PurgeKeptReason).
+// PurgeKeptPath is a path a recorded-only purge (#445) leaves in place, and
+// the first reason it found to (PurgeKeptReason). The purged profile's
+// record of it stays too, unless Reason.DropsRecord.
 type PurgeKeptPath struct {
 	Path   string          `json:"path"`
 	Reason PurgeKeptReason `json:"reason"`
@@ -294,10 +295,20 @@ type PurgeKeptPath struct {
 // PurgeKeptReason is why a recorded-only purge left a path the purged
 // profile recorded. A path is removed only on proof that it is that
 // profile's and nothing else anyone wants live (#445 review), so each of
-// these keeps it.
+// these keeps it. They are listed in the order a path is tested.
 type PurgeKeptReason string
 
 const (
+	// PurgeKeptUserFile: the game's adapter hands the file to the user
+	// after its first deploy (adapter.RouteCopyOnce - BepInEx's config
+	// files) or never deploys it, so it is never lmm's to remove - the rule
+	// every other removal already follows (#413, review F1). Its record
+	// goes, as an ordinary purge's does: v2 never records such a file, so
+	// the record is a legacy one (a v1.30.1 deploy's), and keeping it would
+	// keep the game's mod_path locked (refuseModPathMove) with nothing a
+	// purge could clear. It is tested first, because it holds whoever else
+	// claims the file.
+	PurgeKeptUserFile PurgeKeptReason = "user_file"
 	// PurgeKeptRecorded: another profile of the game records the path too.
 	PurgeKeptRecorded PurgeKeptReason = "recorded"
 	// PurgeKeptListed: the active profile's document lists the path's mod,
@@ -308,12 +319,13 @@ const (
 	// PurgeKeptOtherGame: another game whose mod directory holds the path
 	// records it (review F7).
 	PurgeKeptOtherGame PurgeKeptReason = "other_game"
-	// PurgeKeptUserFile: the game's adapter hands the file to the user
-	// after its first deploy (adapter.RouteCopyOnce - BepInEx's config
-	// files) or never deploys it, so it is never lmm's to remove - the rule
-	// every other removal already follows (#413, review F1).
-	PurgeKeptUserFile PurgeKeptReason = "user_file"
 )
+
+// DropsRecord reports whether a recorded-only purge drops the purged
+// profile's record of a path it keeps for this reason, leaving the file
+// untracked: PurgeKeptUserFile alone. Every other reason is a file lmm may
+// still have to remove, so its record stays with it.
+func (r PurgeKeptReason) DropsRecord() bool { return r == PurgeKeptUserFile }
 
 // PlanPurge computes what PurgeProfile would do for game/profileName under
 // opts, without touching anything - including the installed-mods read the
@@ -441,11 +453,16 @@ func (s *Service) planRecordedPurge(ctx context.Context, game *domain.Game, prof
 		Mods:          []domain.InstalledMod{},
 		RecordedOnly:  true,
 		ActiveProfile: live,
-		Kept:          kept,
 	}
 	for _, row := range remove {
 		plan.Remove = append(plan.Remove, row.RelativePath)
 		withPaths[domain.ModKey(row.SourceID, row.ModID)] = true
+	}
+	for _, k := range kept {
+		plan.Kept = append(plan.Kept, k.PurgeKeptPath)
+		if k.Reason.DropsRecord() {
+			withPaths[domain.ModKey(k.row.SourceID, k.row.ModID)] = true
+		}
 	}
 	mods, external := partitionExternal(installed)
 	plan.External = external
@@ -457,14 +474,20 @@ func (s *Service) planRecordedPurge(ctx context.Context, game *domain.Game, prof
 	return plan, installed, nil
 }
 
+// keptRecord is a record recordedPaths keeps the path of, and why.
+type keptRecord struct {
+	PurgeKeptPath
+	row db.DeployedPath
+}
+
 // recordedPaths splits profileName's deployed-file records into the ones a
 // recorded-only purge may remove and the ones it keeps, each in path order.
 // live is the game's active profile. A path is kept - with the first reason
-// found, in PurgeKeptReason's order - when another profile records it, the
-// active profile lists its mod, another game whose mod directory holds it
-// records it, or the game's adapter does not let lmm remove it. Anything
+// found, in PurgeKeptReason's order - when the game's adapter does not let
+// lmm remove it, another profile records it, the active profile lists its
+// mod, or another game whose mod directory holds it records it. Anything
 // that cannot be read to decide that is an error: the purge fails closed.
-func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileName, live string) (remove []db.DeployedPath, kept []PurgeKeptPath, err error) {
+func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileName, live string) (remove []db.DeployedPath, kept []keptRecord, err error) {
 	rows, err := s.db.ListDeployedFiles(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing deployed files: %w", err)
@@ -485,7 +508,7 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 	installer := s.getInstaller(game)
 	for _, row := range rows {
 		if k, ok := keptPath(row, profileName, owners, listed, others, installer, game); ok {
-			kept = append(kept, k)
+			kept = append(kept, keptRecord{PurgeKeptPath: k, row: row})
 			continue
 		}
 		remove = append(remove, row)
@@ -496,6 +519,10 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 // keptPath is recordedPaths' decision for one row.
 func keptPath(row db.DeployedPath, profileName string, owners map[string][]string, listed map[string]string, others *otherGameRecords, installer *Installer, game *domain.Game) (PurgeKeptPath, bool) {
 	k := PurgeKeptPath{Path: row.RelativePath}
+	if installer.notLinkerOwned(game, row.RelativePath) {
+		k.Reason = PurgeKeptUserFile
+		return k, true
+	}
 	if profiles := slices.DeleteFunc(slices.Clone(owners[row.RelativePath]), func(p string) bool { return p == profileName }); len(profiles) > 0 {
 		k.Reason, k.Profiles = PurgeKeptRecorded, profiles
 		return k, true
@@ -506,10 +533,6 @@ func keptPath(row db.DeployedPath, profileName string, owners map[string][]strin
 	}
 	if games := others.recording(row.RelativePath); len(games) > 0 {
 		k.Reason, k.Games = PurgeKeptOtherGame, games
-		return k, true
-	}
-	if installer.notLinkerOwned(game, row.RelativePath) {
-		k.Reason = PurgeKeptUserFile
 		return k, true
 	}
 	return PurgeKeptPath{}, false
@@ -615,9 +638,11 @@ func relWithin(root, path string) (string, bool) {
 // are read again: a path is removed only when the plan named it and no
 // other profile records it NOW - one that another profile started
 // recording since the plan is kept and reported - and a path's record goes
-// only once its file has. A mod whose recorded paths all went is marked not
-// deployed; one with a path kept is reported as skipped, and stays as it
-// is. Removing a file puts back whatever it had replaced.
+// only once its file has, or, for a file the game hands to the user, when
+// the plan listed it as one (PurgeKeptReason.DropsRecord). A mod whose
+// recorded paths all went is marked not deployed; one with a record left
+// is reported as skipped, and stays as it is. Removing a file puts back
+// whatever it had replaced.
 func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *PurgePlan, sink EventSink) (*PurgeResult, error) {
 	result := &PurgeResult{}
 	emit := func(e Event) {
@@ -633,7 +658,9 @@ func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *Pu
 	if err != nil {
 		return result, err
 	}
-	result.Kept = kept
+	for _, k := range kept {
+		result.Kept = append(result.Kept, k.PurgeKeptPath)
+	}
 	installed, err := s.GetInstalledMods(ctx, game.ID, plan.Profile)
 	if err != nil {
 		return result, fmt.Errorf("getting installed mods: %w", err)
@@ -651,10 +678,27 @@ func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *Pu
 	for _, path := range plan.Remove {
 		approved[path] = true
 	}
-	left := make(map[string]int) // mod key -> recorded paths not removed
+	untrack := make(map[string]bool)
+	for _, k := range plan.Kept {
+		if k.Reason.DropsRecord() {
+			untrack[k.Path] = true
+		}
+	}
+	emitNote := func(msg string) {
+		result.Notes = append(result.Notes, msg)
+		emit(StepEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeNote, Detail: msg})
+	}
+	left := make(map[string]int) // mod key -> recorded paths not cleared
 	for _, k := range kept {
-		if owner, err := s.db.GetFileOwner(ctx, game.ID, plan.Profile, k.Path); err == nil && owner != nil {
-			left[domain.ModKey(owner.SourceID, owner.ModID)]++
+		key := domain.ModKey(k.row.SourceID, k.row.ModID)
+		// The file stays either way; only a record the plan said goes, goes.
+		if !k.Reason.DropsRecord() || !untrack[k.Path] {
+			left[key]++
+			continue
+		}
+		if err := s.db.DeleteDeployedFile(ctx, game.ID, plan.Profile, k.Path); err != nil {
+			left[key]++
+			emitNote(fmt.Sprintf("⚠ %s - %v", k.Path, err))
 		}
 	}
 	// A path this purge meant to remove and did not is a warning, not a
@@ -705,9 +749,7 @@ func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *Pu
 		}
 		if err := s.db.DeleteDeployedFile(ctx, game.ID, plan.Profile, row.RelativePath); err != nil {
 			left[key]++
-			msg := fmt.Sprintf("⚠ %s - %v", row.RelativePath, err)
-			result.Notes = append(result.Notes, msg)
-			emit(StepEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeNote, Detail: msg})
+			emitNote(fmt.Sprintf("⚠ %s - %v", row.RelativePath, err))
 			continue
 		}
 		removed = append(removed, row.RelativePath)

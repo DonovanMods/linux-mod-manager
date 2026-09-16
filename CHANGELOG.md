@@ -1629,7 +1629,12 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links and
   sharing a mod left live with no record under the new profile; when
   another game whose mod directory holds it records it; and when the game
   hands it to you after its first deploy (a BepInEx config file, which
-  such a purge deleted even where an ordinary purge keeps it). A file it
+  such a purge deleted even where an ordinary purge keeps it). Like an
+  ordinary purge, it keeps such a file and stops tracking it ("Kept your
+  file; lmm no longer tracks it"), whoever else lists or records it: lmm 2
+  never records one, so the record is an older lmm's, and keeping it would
+  keep `lmm game edit --mod-path` refused with nothing left to purge. A
+  profile whose only record is such a file is still purged. A file it
   could not check (in a directory it cannot read, say) keeps its record
   and is reported instead of being counted as removed, and a file it
   could not remove is a warning rather than a `--verbose` note. Such a purge runs no hooks, keeps

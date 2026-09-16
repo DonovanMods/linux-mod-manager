@@ -37,9 +37,10 @@ profile (-p/--profile) only clears what that profile put there: the files it
 recorded as deployed that nothing else still claims. A file is left in
 place, and listed with why, when another profile records it, the active
 profile lists its mod, another game sharing the directory records it, or
-the game hands it to you after its first deploy (a BepInEx config file). It
-runs no hooks, keeps the mod records, and refuses --uninstall ('lmm profile
-switch' to that profile first to remove its records too).
+the game hands it to you after its first deploy (a BepInEx config file) -
+a file lmm then stops tracking, as an ordinary purge does. It runs no
+hooks, keeps the mod records, and refuses --uninstall ('lmm profile switch'
+to that profile first to remove its records too).
 
 A game whose profile files do not say which one is active - one cannot be
 read, or none or several are marked - is not purged or deployed at all;
@@ -224,7 +225,16 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 		fmt.Println("Mod records and the profile are kept, and no hooks run.")
 	}
 
-	if len(plan.Remove) == 0 {
+	// A kept file whose record goes (a legacy BepInEx config) is still work
+	// to do: skipping it would leave that record, and with it the game's
+	// mod_path locked (#427).
+	untracked := 0
+	for _, k := range plan.Kept {
+		if k.Reason.DropsRecord() {
+			untracked++
+		}
+	}
+	if len(plan.Remove) == 0 && untracked == 0 {
 		if jsonOutput {
 			return emitJSON(&core.PurgeResult{Kept: plan.Kept})
 		}
@@ -232,7 +242,11 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 		return nil
 	}
 	if purgeDryRun {
-		fmt.Printf("\nWould remove: %d file(s)\n", len(plan.Remove))
+		fmt.Printf("\nWould remove: %d file(s)", len(plan.Remove))
+		if untracked > 0 {
+			fmt.Printf(", and stop tracking %d of yours", untracked)
+		}
+		fmt.Println()
 		return nil
 	}
 
@@ -268,9 +282,14 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 }
 
 // printKeptPaths lists the paths a recorded-only purge leaves in place,
-// each with why.
+// each with why - and, for a file the game hands to the user, that lmm
+// stops tracking it.
 func printKeptPaths(kept []core.PurgeKeptPath) {
 	for _, k := range kept {
+		if k.Reason.DropsRecord() {
+			fmt.Printf("Kept your file; lmm no longer tracks it (%s): %s\n", keptReason(k), k.Path)
+			continue
+		}
 		fmt.Printf("Left in place (%s): %s\n", keptReason(k), k.Path)
 	}
 }
@@ -283,7 +302,7 @@ func keptReason(k core.PurgeKeptPath) string {
 	case core.PurgeKeptOtherGame:
 		return "also recorded by game " + strings.Join(k.Games, ", ")
 	case core.PurgeKeptUserFile:
-		return "the game hands this file to you after its first deploy"
+		return "the game hands it to you after its first deploy"
 	default:
 		return "also recorded by " + strings.Join(k.Profiles, ", ")
 	}

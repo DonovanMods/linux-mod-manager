@@ -8,6 +8,9 @@ package core_test
 //   - F1: a file the game's adapter hands to the user after its first deploy
 //     (BepInEx/config/**, adapter.RouteCopyOnce) was removed. The ordinary
 //     purge never removes one; the recorded-only purge skipped that guard.
+//     Like the ordinary purge, it drops the record and keeps the file: v2
+//     never records such a file, so the row is a legacy one, and a kept row
+//     would keep the game's mod_path locked (#427) with nothing to clear it.
 //   - F3: a v1.30.1 switch between two profiles that share a mod left the
 //     new profile with no row for it while its files stayed live, so the
 //     purge of the old profile saw "no other profile records this" and
@@ -166,12 +169,19 @@ func TestRecordedPurge_AFileTheGameHandsToTheUserIsKept(t *testing.T) {
 			assert.Equal(t, before, readLive(t, cfg), "the user's config is exactly as it was")
 			assert.Equal(t, 1, result.RemovedPaths)
 			assert.Equal(t, plan.Kept, result.Kept)
-			assert.Equal(t, []string{"BepInEx/config/m.cfg"}, f.recorded(t, "default", "m"), "the config's record stays with the file")
+			assert.Empty(t, f.recorded(t, "default", "m"), "the config's record goes, as an ordinary purge's does")
+			assert.Equal(t, 1, result.Purged, "nothing of m is left recorded")
+			assert.Empty(t, result.Skipped)
+			row, err := f.svc.GetInstalledMod(context.Background(), "local", "m", f.game.ID, "default")
+			require.NoError(t, err)
+			assert.False(t, row.Deployed)
 		})
 	}
 
 	// The state the review reproduced it from: a v1.30.1 switch default ->
-	// alt, both listing m, then the user tunes the live config.
+	// alt, both listing m, then the user tunes the live config. The plugin
+	// is alt's live file (F3), so it stays with its record; the config is
+	// the user's whoever lists its mod, so only its record goes.
 	t.Run("the state a v1.30.1 switch leaves", func(t *testing.T) {
 		f := newLegacyFixture(t, bepinexGame(t, domain.LinkCopy))
 		f.profile(t, "default", false, "m")
@@ -181,10 +191,86 @@ func TestRecordedPurge_AFileTheGameHandsToTheUserIsKept(t *testing.T) {
 		plan, result := f.purge(t, "default")
 
 		assert.Empty(t, plan.Remove)
+		assert.Equal(t, []core.PurgeKeptPath{
+			{Path: "BepInEx/config/m.cfg", Reason: core.PurgeKeptUserFile},
+			{Path: "BepInEx/plugins/m.dll", Reason: core.PurgeKeptListed, Profiles: []string{"alt"}},
+		}, plan.Kept)
 		assert.Zero(t, result.RemovedPaths)
 		assert.Equal(t, "setting=USER-TUNED", readLive(t, filepath.Join(f.game.ModPath, "BepInEx", "config", "m.cfg")))
 		assert.Equal(t, "dll", readLive(t, filepath.Join(f.game.ModPath, "BepInEx", "plugins", "m.dll")), "alt's live plugin stays too (F3)")
+		assert.Equal(t, []string{"BepInEx/plugins/m.dll"}, f.recorded(t, "default", "m"))
+		assert.Zero(t, result.Purged, "m still has a recorded file")
+		require.Len(t, result.Skipped, 1)
 	})
+
+	// A config is the user's whoever else records it, so the purged
+	// profile's record goes even while another profile's stays - each
+	// profile's own purge clears its own.
+	t.Run("another profile's record of the config is no reason to keep this one", func(t *testing.T) {
+		f := newLegacyFixture(t, bepinexGame(t, domain.LinkCopy))
+		f.profile(t, "default", false, "m")
+		f.profile(t, "survival", false, "m")
+		f.profile(t, "alt", true)
+		f.deployed(t, "default", "m", domain.LinkCopy, map[string]string{"BepInEx/config/m.cfg": "setting=default"}, nil)
+		f.deployed(t, "survival", "m", domain.LinkCopy, map[string]string{"BepInEx/config/m.cfg": "setting=default"}, nil)
+
+		plan, _ := f.purge(t, "default")
+
+		assert.Equal(t, []core.PurgeKeptPath{{Path: "BepInEx/config/m.cfg", Reason: core.PurgeKeptUserFile}}, plan.Kept)
+		assert.Empty(t, f.recorded(t, "default", "m"))
+		assert.Equal(t, []string{"BepInEx/config/m.cfg"}, f.recorded(t, "survival", "m"), "only the purged profile's record goes")
+
+		f.purge(t, "survival")
+		assert.Empty(t, f.recorded(t, "survival", "m"))
+		assert.FileExists(t, filepath.Join(f.game.ModPath, "BepInEx", "config", "m.cfg"))
+	})
+
+	// A profile whose only record is a config has nothing to remove and a
+	// record to drop: the plan names its mod, and applying it clears it.
+	t.Run("a profile whose only record is a config", func(t *testing.T) {
+		f := newLegacyFixture(t, bepinexGame(t, domain.LinkCopy))
+		f.profile(t, "default", false, "m")
+		f.profile(t, "alt", true)
+		f.deployed(t, "default", "m", domain.LinkCopy, map[string]string{"BepInEx/config/m.cfg": "setting=default"}, nil)
+
+		plan, result := f.purge(t, "default")
+
+		assert.Empty(t, plan.Remove)
+		require.Len(t, plan.Mods, 1, "the plan names the mod it clears")
+		assert.Equal(t, "m", plan.Mods[0].ID)
+		assert.Equal(t, 1, result.Purged)
+		assert.Empty(t, f.recorded(t, "default", "m"))
+		assert.FileExists(t, filepath.Join(f.game.ModPath, "BepInEx", "config", "m.cfg"))
+	})
+
+	// The plan is the consent: a path it did not list as the user's keeps
+	// its record, even when the game's adapter says so by the time it runs.
+	t.Run("a config the plan did not list keeps its record", func(t *testing.T) {
+		f := newLegacyFixture(t, bepinexGame(t, domain.LinkCopy))
+		f.profile(t, "default", false, "m")
+		f.profile(t, "alt", true)
+		f.deployed(t, "default", "m", domain.LinkCopy, map[string]string{"BepInEx/config/m.cfg": "setting=default"}, nil)
+		ctx := context.Background()
+		plan, err := f.svc.PlanPurge(ctx, f.game, "default", core.PurgeOptions{})
+		require.NoError(t, err)
+		require.Len(t, plan.Kept, 1)
+		plan.Kept = nil
+
+		result, err := f.svc.ApplyPurge(ctx, f.game, plan, core.PurgeOptions{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"BepInEx/config/m.cfg"}, f.recorded(t, "default", "m"))
+		assert.Zero(t, result.Purged)
+	})
+}
+
+// TestPurgeKeptReason_OnlyAUserFileDropsItsRecord pins which kept paths
+// lose the purged profile's record: a file the game hands to the user,
+// alone. Every other reason is a file lmm may still have to remove.
+func TestPurgeKeptReason_OnlyAUserFileDropsItsRecord(t *testing.T) {
+	assert.True(t, core.PurgeKeptUserFile.DropsRecord())
+	for _, reason := range []core.PurgeKeptReason{core.PurgeKeptRecorded, core.PurgeKeptListed, core.PurgeKeptOtherGame} {
+		assert.False(t, reason.DropsRecord(), reason)
+	}
 }
 
 // l1Fixture is exactly what v1.30.1 leaves after `lmm profile switch alt`

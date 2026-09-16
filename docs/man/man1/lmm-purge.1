@@ -27,9 +27,10 @@ profile (-p/--profile) only clears what that profile put there: the files it
 recorded as deployed that nothing else still claims. A file is left in
 place, and listed with why, when another profile records it, the active
 profile lists its mod, another game sharing the directory records it, or
-the game hands it to you after its first deploy (a BepInEx config file). It
-runs no hooks, keeps the mod records, and refuses --uninstall ('lmm profile
-switch' to that profile first to remove its records too).
+the game hands it to you after its first deploy (a BepInEx config file) -
+a file lmm then stops tracking, as an ordinary purge does. It runs no
+hooks, keeps the mod records, and refuses --uninstall ('lmm profile switch'
+to that profile first to remove its records too).
 
 .PP
 A game whose profile files do not say which one is active - one cannot be
