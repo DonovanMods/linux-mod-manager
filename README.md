@@ -1318,7 +1318,9 @@ behind it runs; if the job fails the row goes back to what is actually true.
 A mod has one such change in flight at a time — the row, the slide-over and
 the full mod page all show it, and a batch leaves that mod out. If the
 page's live connection to `lmm serve` drops meanwhile, it catches up when
-the connection returns, and says so if the server no longer knows the job.
+the connection returns, and says so if the server no longer knows the job;
+a change the server takes and never answers is given up on after a minute,
+and the row shows whatever the server then reports.
 
 Filter (all/enabled/updatable/unhealthy) and sort (load order/name/recently
 installed) narrow it. The header checkbox selects **everything in view**

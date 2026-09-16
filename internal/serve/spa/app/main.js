@@ -30,6 +30,7 @@ import {
   getModVersions,
   search as apiSearch,
   ApiError,
+  NoAnswerError,
 } from "./api.js";
 import { resolveGamePath } from "./navigation.js";
 import {
@@ -1169,7 +1170,9 @@ function resolveWaiter(summary) {
  *
  * A job this page lost sight of (onJobLost) ends its wait like any other
  * ending, so the batch carries on - but it is tallied as an unknown
- * outcome, not a failure: the server may well have done it.
+ * outcome, not a failure: the server may well have done it. So is a start
+ * the server never answered (api.js#NoAnswerError), which `onBound` hears
+ * as `(item, null, err)`.
  */
 async function startSequencedBatch(
   items,
@@ -1184,9 +1187,10 @@ async function startSequencedBatch(
       let jobID;
       try {
         jobID = await run(item);
-      } catch {
-        onBound?.(item, null);
-        failed.push(labelOf(item));
+      } catch (err) {
+        onBound?.(item, null, err);
+        const tally = err instanceof NoAnswerError ? unknown : failed;
+        tally.push(labelOf(item));
         continue;
       }
       store.set({ origins: { ...store.get().origins, [origin]: jobID } });
@@ -1233,10 +1237,32 @@ async function startBatchToggle(action, mods) {
     originOf: (mod) => modToggleOrigin(mod.source_id, mod.id),
     labelOf: (mod) => mod.name ?? mod.key,
     verb: action === "enable" ? "Enabled" : "Disabled",
-    onBound: (mod, jobID) =>
-      jobID
-        ? toggles.bind(entryOf.get(mod.key), jobID)
-        : toggles.drop(entryOf.get(mod.key)),
+    onBound: (mod, jobID, err) => {
+      const entry = entryOf.get(mod.key);
+      if (jobID) toggles.bind(entry, jobID);
+      else if (err instanceof NoAnswerError) toggleUnanswered(entry, err);
+      else toggles.drop(entry);
+    },
+  });
+}
+
+/**
+ * toggleUnanswered ends a toggle request whose start the server never
+ * answered (api.js#jobStartDeadlineMillis). Nothing says whether the change
+ * happened - the start may never have left the browser, or the server may
+ * have acted on it and never said so - so nothing is reverted on the
+ * deadline alone: the library is re-read, the request holds its value until
+ * that read lands (toggleack.js's "unanswered"), and the control then shows
+ * the read. Toasted here, because no control has anything to show for a
+ * start that never produced a job.
+ */
+function toggleUnanswered(entry, err) {
+  toggles.unanswered(entry, hydrate(store.get().route));
+  const seconds = Math.round(err.deadlineMillis / 1000);
+  pushToast({
+    tone: "failure",
+    title: "lmm serve did not answer",
+    detail: `${entry.want ? "Enable" : "Disable"} ${entry.name ?? entry.modKey}: the server did not answer within ${seconds} seconds, so the change may or may not have been applied. The row now shows what the server reports.`,
   });
 }
 
@@ -1438,7 +1464,8 @@ async function retryInstallOverwrite(jobID) {
  * toggle ledger (issue 432) before the POST goes out, which is what every
  * control renders from in the same frame; a mod that already has a request
  * in flight is left alone. The entry is bound to the job the start answers
- * with, or dropped when the start made none.
+ * with, dropped when the start made none, and ended as unanswered when the
+ * start's deadline passes with no answer at all (toggleUnanswered).
  */
 async function startToggle(mod) {
   const context = routeContext();
@@ -1458,6 +1485,10 @@ async function startToggle(mod) {
       store.set({ origins: { ...store.get().origins, [origin]: jobID } });
       toggles.bind(entry, jobID);
     } catch (err) {
+      if (err instanceof NoAnswerError) {
+        toggleUnanswered(entry, err);
+        return;
+      }
       toggles.drop(entry);
       pushToast({
         tone: "failure",

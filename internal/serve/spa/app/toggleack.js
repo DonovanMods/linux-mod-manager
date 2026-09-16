@@ -29,10 +29,15 @@
 //   state       what it means                   leaves when                             to
 //   ----------  ------------------------------  --------------------------------------  ----------
 //   requested   the click is recorded; no job   bind: the start answered with a job id  running
-//               id yet - the start's POST is    drop: the start was refused or never    (removed)
-//               in flight, or a batch has not     answered (HTTP error, network); the
+//               id yet - the start's POST is    drop: the start was refused or failed   (removed)
+//               in flight, or a batch has not     (an HTTP error, a network error); the
 //               reached this row                  start's toast, or the batch's tally,
 //                                                 says so
+//                                               unanswered: the start's deadline        unanswered
+//                                                 (api.js#jobStartDeadlineMillis)
+//                                                 passed with no answer; toasted as "did
+//                                                 not answer - may or may not have been
+//                                                 applied"
 //   running     bound to its own job, whose     ended(failed): its job_done - live, or  (removed)
 //               end has not been heard            found by reconciliation; onJobDone
 //                                                 surfaces it (toast, or the inline
@@ -47,6 +52,19 @@
 //               lost; holding the asked-for       has finished - committed, failed or
 //               value until a read taken after    superseded; the control then shows
 //               that end lands                    the document, whatever it says
+//   unanswered  its start was never answered,   the re-read the deadline started has    (removed)
+//               so nothing says whether the       finished; the control then shows the
+//               change happened; holding the      document, whatever it says
+//               asked-for value until a read
+//               taken after the deadline lands
+//
+// Nothing but a start's own answer leaves requested, and that answer can
+// only arrive once: bind() and drop() act on a requested entry alone, and an
+// answer that comes after the deadline is never read at all (the request is
+// aborted). So a late answer can neither bring an unanswered entry back nor
+// settle it a second time. A job that late start did create is simply not
+// this entry's: its end re-reads the documents like any other job's, and
+// the control follows those.
 //
 // bind() on a job that has ALREADY ended applies that ending on the spot,
 // so the order the two arrive in never matters - whether the end came as a
@@ -55,16 +73,18 @@
 //
 // Why each state is left, by construction rather than by luck:
 //
-//   - requested: a start is one fetch, which resolves or rejects. A batch
-//     reaches every row because each row ahead of it resolves its wait on
-//     one of the three endings below.
+//   - requested: a start is one request, under a deadline, so it is
+//     answered, fails or is abandoned - there is no fourth outcome. A batch
+//     reaches every row because each row ahead of it ends its wait: on a
+//     failed or unanswered start, or on one of its job's endings below.
 //   - running: the job ends while the activity stream is connected
 //     (job_done), or while it is not - and then the reconnect's snapshot
 //     reconciles it (activity.js), asking GET /api/v1/jobs/{id} about any
 //     job the snapshot does not carry. A job the server cannot account for
 //     is lost. The stream always comes back: EventSource retries on its own,
 //     and sse.js#followActivity reopens it when the browser gives up.
-//   - confirming: the re-read is an ordinary hydrate, which settles.
+//   - confirming, unanswered: the re-read is an ordinary hydrate, which
+//     settles.
 //
 // An entry for a context nobody is looking at still settles the same way;
 // it simply is not rendered until that context is on screen again.
@@ -146,12 +166,18 @@ export function createToggleLedger(store, { endingOf }) {
       remove(entry);
       return;
     }
-    const confirming = update(entry, { phase: "confirming" });
-    if (!confirming) return;
+    holdUntil(entry, "confirming", ending.reread);
+  }
+
+  // holdUntil moves entry to `phase` and removes it once `reread` has
+  // finished, unless something else has moved it on by then.
+  function holdUntil(entry, phase, reread) {
+    const held = update(entry, { phase });
+    if (!held) return;
     const done = () => {
-      if (current(confirming)?.phase === "confirming") remove(confirming);
+      if (current(held)?.phase === phase) remove(held);
     };
-    Promise.resolve(ending.reread).then(done, done);
+    Promise.resolve(reread).then(done, done);
   }
 
   return {
@@ -195,6 +221,15 @@ export function createToggleLedger(store, { endingOf }) {
     /** drop removes a requested entry whose start made no job. */
     drop(entry) {
       if (current(entry)?.phase === "requested") remove(entry);
+    },
+
+    /** unanswered ends a requested entry whose start went unanswered past
+     * its deadline: nothing says whether the change happened, so the entry
+     * keeps what was asked until `reread` - a read issued after the
+     * deadline - has finished, and the control then shows that read. */
+    unanswered(entry, reread) {
+      if (current(entry)?.phase === "requested")
+        holdUntil(entry, "unanswered", reread);
     },
 
     /** ended applies a job's ending to every entry running on it, and

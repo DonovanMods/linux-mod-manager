@@ -34,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,7 +53,14 @@ import (
 //     closed with no answer at all);
 //   - while holdAnswers is set a start is FORWARDED at once but its answer
 //     is held until releaseAnswers - the job runs and ends before the page
-//     learns its id.
+//     learns its id;
+//   - stall makes a start go unanswered until releaseStalled, however long
+//     the page waits and even once it has hung up: "answer" forwards the
+//     start at once (the change happens, the answer never comes), "request"
+//     forwards it only when released (the change happens late). Either way
+//     the answer is then written to whatever is left of the connection, and
+//     lateAnswers counts it. stallMod, when set, confines the stall to that
+//     mod's start;
 //
 // GET /api/v1/mods is held while holdMods is set, until releaseMods.
 //
@@ -88,6 +96,12 @@ type toggleWire struct {
 	answers     chan struct{}
 	answersOnce sync.Once
 
+	stall       atomic.Value // string: "", "answer" or "request"
+	stallMod    atomic.Value // string
+	stalled     chan struct{}
+	stalledOnce sync.Once
+	lateAnswers atomic.Int64
+
 	holdMods atomic.Bool
 	modsGate chan struct{}
 	modsOnce sync.Once
@@ -108,6 +122,7 @@ type toggleWire struct {
 func (w *toggleWire) releaseToggles() { w.gateOnce.Do(func() { close(w.gate) }) }
 func (w *toggleWire) releaseAnswers() { w.answersOnce.Do(func() { close(w.answers) }) }
 func (w *toggleWire) releaseMods()    { w.modsOnce.Do(func() { close(w.modsGate) }) }
+func (w *toggleWire) releaseStalled() { w.stalledOnce.Do(func() { close(w.stalled) }) }
 
 // killStreams hangs up every activity stream open right now.
 func (w *toggleWire) killStreams() {
@@ -151,6 +166,12 @@ func (w *toggleWire) serveToggle(rw http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if mode, _ := w.stall.Load().(string); mode != "" {
+		if mod, _ := w.stallMod.Load().(string); mod == "" || mod == r.PathValue("id") {
+			w.serveStalled(rw, r, mode)
+			return
+		}
+	}
 	if !w.holdAnswers.Load() {
 		w.proxy.ServeHTTP(rw, r)
 		return
@@ -162,6 +183,27 @@ func (w *toggleWire) serveToggle(rw http.ResponseWriter, r *http.Request) {
 	case <-r.Context().Done():
 		return
 	}
+	for name, values := range answer.Header() {
+		rw.Header()[name] = values
+	}
+	rw.WriteHeader(answer.Code)
+	_, _ = rw.Write(answer.Body.Bytes())
+}
+
+// serveStalled is the stall lever: the start reaches the backend on a
+// context the page's hang-up cannot cancel, and its answer waits for
+// releaseStalled.
+func (w *toggleWire) serveStalled(rw http.ResponseWriter, r *http.Request, mode string) {
+	detached := r.WithContext(context.WithoutCancel(r.Context()))
+	answer := httptest.NewRecorder()
+	if mode == "answer" {
+		w.proxy.ServeHTTP(answer, detached)
+	}
+	<-w.stalled
+	if mode == "request" {
+		w.proxy.ServeHTTP(answer, detached)
+	}
+	w.lateAnswers.Add(1)
 	for name, values := range answer.Header() {
 		rw.Header()[name] = values
 	}
@@ -308,6 +350,7 @@ func newToggleWireFixture(t *testing.T, src *fakeSource, pass int64) (e2eFixture
 		pass:     pass,
 		gate:     make(chan struct{}),
 		answers:  make(chan struct{}),
+		stalled:  make(chan struct{}),
 		modsGate: make(chan struct{}),
 		proxy: &httputil.ReverseProxy{
 			Transport: transport,
@@ -322,6 +365,8 @@ func newToggleWireFixture(t *testing.T, src *fakeSource, pass int64) (e2eFixture
 	}
 	w.faultMod.Store("")
 	w.faultKind.Store("")
+	w.stall.Store("")
+	w.stallMod.Store("")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/mods/{source}/{id}/{action}", w.serveToggle)
@@ -339,6 +384,7 @@ func newToggleWireFixture(t *testing.T, src *fakeSource, pass int64) (e2eFixture
 		w.releaseToggles()
 		w.releaseAnswers()
 		w.releaseMods()
+		w.releaseStalled()
 		w.killStreams()
 		_ = server.Close()
 		if err := <-served; err != nil && err != http.ErrServerClosed {
@@ -892,6 +938,204 @@ func TestE2E_ActivityGap_AJobKnownOnlyFromASnapshotEndsItsLateBinding(t *testing
 			assert.Empty(t, f.BrowserErrors())
 		})
 	}
+}
+
+// deadlineCompression is how much deadlineShimJS shrinks the page's request
+// deadlines by, so a scenario can wait one out in seconds.
+const deadlineCompression = 40
+
+// deadlineShimJS runs before the page's own scripts. It records every
+// deadline the page puts on a request (AbortSignal.timeout) and hands the
+// browser one deadlineCompression times shorter - the page's own value is
+// untouched, only how long the browser takes to reach it.
+const deadlineShimJS = `(() => {
+	const timeout = AbortSignal.timeout.bind(AbortSignal);
+	window.__requestDeadlines = [];
+	AbortSignal.timeout = (ms) => {
+		window.__requestDeadlines.push(ms);
+		return timeout(ms / 40);
+	};
+})()`
+
+// watchForPendingJS records, from the moment it runs, whether any row goes
+// back to pending.
+const watchForPendingJS = `(() => {
+	window.__pendingAgain = false;
+	new MutationObserver(() => {
+		if (document.querySelector('.mod-row--pending, [data-testid="toggle-pending"]')) {
+			window.__pendingAgain = true;
+		}
+	}).observe(document.body, {subtree: true, childList: true, attributes: true, attributeFilter: ["class"]});
+})()`
+
+// toastTextsJS reads every toast's text.
+const toastTextsJS = `Array.from(document.querySelectorAll(".toast")).map((t) => t.textContent.trim())`
+
+// TestE2E_LibraryToggle_AStartTheServerNeverAnswersSettlesAtTheDeadline is
+// the requested -> unanswered -> removed path: the server takes the start
+// and never answers it. Browsers put no deadline on a request of their own,
+// so without one the row said "Disabling…" for as long as the connection
+// stayed open. At the start's deadline the request is over: the row says
+// the server did not answer and that the change may or may not have
+// happened, keeps what was asked until a fresh read lands rather than
+// guessing, and then shows that read. The answer, when it finally comes,
+// changes nothing.
+func TestE2E_LibraryToggle_AStartTheServerNeverAnswersSettlesAtTheDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stall string
+		// applied is whether the change has happened by the time the
+		// deadline passes.
+		applied bool
+	}{
+		{name: "applied, never answered", stall: "answer", applied: true},
+		{name: "not yet applied", stall: "request", applied: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, wire := newToggleWireFixture(t, newFakeSource("fake"), 1<<30)
+			seedDeployableMods(t, f.Svc, f.Game)
+			wire.stall.Store(tc.stall)
+
+			f.runInBrowser(t,
+				chromedp.ActionFunc(func(ctx context.Context) error {
+					_, err := page.AddScriptToEvaluateOnNewDocument(deadlineShimJS).Do(ctx)
+					return err
+				}),
+				chromedp.Navigate(f.HomePath()),
+				chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+				pollUntil(`document.querySelectorAll(".mod-row").length === 2`),
+			)
+			// Every read from here on waits for the scenario, so the one the
+			// deadline starts can be held open and looked behind.
+			wire.holdMods.Store(true)
+
+			clicked := time.Now()
+			var during e2eRowToggleState
+			f.runInBrowser(t,
+				chromedp.Evaluate(libraryToggleJS("Alpha Mod"), nil),
+				pollUntil(`document.querySelectorAll(".mod-row--pending").length === 1`),
+				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &during),
+			)
+			awaitToggleRequests(t, &wire.toggles, 1)
+			if tc.applied {
+				awaitJobsOver(t, f, wire, map[string]bool{"a": false})
+			}
+			assert.True(t, during.Pending, "the unanswered start is pending while its deadline runs (row: %+v)", during)
+			assert.True(t, during.Disabled)
+
+			var asked []float64
+			f.runInBrowser(t, chromedp.Evaluate(`window.__requestDeadlines`, &asked))
+			require.Len(t, asked, 1, "the start, and only the start, carries a deadline")
+			deadline := time.Duration(asked[0]) * time.Millisecond
+			compressed := deadline / deadlineCompression
+			t.Logf("the start's deadline is %v (%v in this scenario)", deadline, compressed)
+			assert.GreaterOrEqual(t, deadline, 30*time.Second,
+				"the deadline comfortably exceeds a start queued behind slow reads on a busy machine")
+
+			var toasts []string
+			var held e2eRowToggleState
+			runWithin(t, f, compressed+15*time.Second,
+				pollUntil(toastSaysJS("did not answer")),
+				chromedp.Evaluate(toastTextsJS, &toasts),
+				settleEffects(),
+				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &held),
+			)
+			toldAt := time.Since(clicked)
+			assert.GreaterOrEqual(t, toldAt, compressed, "the request is given its whole deadline")
+			assert.Less(t, toldAt, compressed+5*time.Second, "and is over promptly once the deadline passes")
+			assert.Contains(t, strings.Join(toasts, " | "), "may or may not have been applied")
+			assert.True(t, held.Pending,
+				"the deadline alone reverts nothing: the row keeps what was asked until a fresh read lands (row: %+v)", held)
+			assert.False(t, held.Checked)
+
+			wire.holdMods.Store(false)
+			wire.releaseMods()
+			var settled e2eRowToggleState
+			runWithin(t, f, 15*time.Second,
+				pollUntil(noRowPendingJS),
+				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &settled),
+				chromedp.Evaluate(watchForPendingJS, nil),
+			)
+			assert.Less(t, time.Since(clicked), compressed+10*time.Second, "the row leaves pending once that read lands")
+			assert.Equal(t, !tc.applied, settled.Checked, "and shows what the server reports")
+			assert.False(t, settled.Disabled, "with the control live again")
+
+			// The answer finally comes - and, for the late start, the change
+			// with it.
+			wire.releaseStalled()
+			require.Eventually(t, func() bool { return wire.lateAnswers.Load() == 1 },
+				15*time.Second, 20*time.Millisecond)
+			awaitJobsOver(t, f, wire, map[string]bool{"a": false})
+
+			var after e2eRowToggleState
+			var pendingAgain bool
+			runWithin(t, f, 20*time.Second,
+				// The row follows the documents the server sends, not the
+				// answer: the late job's own end re-reads the library.
+				pollUntil(`(() => {
+					const row = document.querySelector('.mod-row[data-mod="fake:a"]');
+					return row !== null && !row.querySelector("td.col--enabled input").checked;
+				})()`),
+				settleEffects(),
+				chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &after),
+				chromedp.Evaluate(`window.__pendingAgain`, &pendingAgain),
+				chromedp.Evaluate(toastTextsJS, &toasts),
+			)
+			assert.False(t, pendingAgain, "the late answer never brought the request back")
+			assert.False(t, after.Pending)
+			assert.False(t, after.Disabled)
+			assert.EqualValues(t, 1, wire.toggles.Load(), "and nothing was sent again")
+			unanswered := 0
+			for _, toast := range toasts {
+				if strings.Contains(toast, "did not answer") {
+					unanswered++
+				}
+				assert.NotContains(t, toast, "disable failed", "the request is never also settled as a refused start")
+			}
+			assert.Equal(t, 1, unanswered, "the request was settled once: %q", toasts)
+			assert.Empty(t, uncaughtErrors(f))
+		})
+	}
+}
+
+// TestE2E_LibraryBatch_AnUnansweredStartIsAnUnknownOutcome is the same
+// deadline on a batch row: the batch does not wait on the unanswered start
+// past its deadline, carries on with the next row, and tallies the
+// unanswered one as an unknown outcome rather than a failure - the server
+// may well have done it, and here it did.
+func TestE2E_LibraryBatch_AnUnansweredStartIsAnUnknownOutcome(t *testing.T) {
+	f, wire := newToggleWireFixture(t, newFakeSource("fake"), 1<<30)
+	seedDeployableMods(t, f.Svc, f.Game)
+	wire.stall.Store("answer")
+	wire.stallMod.Store("a")
+
+	var alpha, beta e2eRowToggleState
+	runWithin(t, f, 30*time.Second,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			_, err := page.AddScriptToEvaluateOnNewDocument(deadlineShimJS).Do(ctx)
+			return err
+		}),
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 2`),
+		chromedp.Evaluate(selectLibraryRowJS("Alpha Mod"), nil),
+		chromedp.Evaluate(selectLibraryRowJS("Beta Mod"), nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery),
+		pollUntil(toastSaysJS("did not answer")),
+		pollUntil(toastSaysJS("Disabled 1/2")),
+		pollUntil(toastSaysJS("Outcome unknown: Alpha Mod")),
+		pollUntil(noRowPendingJS),
+		chromedp.Evaluate(libraryRowStateJS("Alpha Mod"), &alpha),
+		chromedp.Evaluate(libraryRowStateJS("Beta Mod"), &beta),
+	)
+	awaitJobsOver(t, f, wire, map[string]bool{"a": false, "b": false})
+	assert.EqualValues(t, 2, wire.toggles.Load(), "the batch moved on to Beta")
+	assert.False(t, alpha.Checked, "Alpha shows the read the deadline started, and the disable did happen")
+	assert.False(t, alpha.Disabled)
+	assert.False(t, beta.Checked)
+	wire.releaseStalled()
+	assert.Empty(t, uncaughtErrors(f))
 }
 
 // TestE2E_LibraryToggle_AStartThatMadeNoJobHandsTheControlBack is the

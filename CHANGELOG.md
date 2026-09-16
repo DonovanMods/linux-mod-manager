@@ -1273,7 +1273,10 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   row once the connection is back, and a batch carries on rather than
   stalling; a job `lmm serve` no longer knows about (it restarted, say) is
   reported as **Lost track of a job**, the page re-reads what is true, and
-  the batch's tally lists it as an unknown outcome rather than a failure.
+  the batch's tally lists it as an unknown outcome rather than a failure. A
+  request `lmm serve` takes and never answers is given up on after a minute:
+  the page says the server did not answer and that the change may or may
+  not have been applied, re-reads, and shows what the server reports.
   The in-flight row is marked with an accent bar rather than dimmed, so its
   text keeps its contrast in both themes.
 
