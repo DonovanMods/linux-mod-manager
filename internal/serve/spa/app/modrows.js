@@ -17,6 +17,18 @@ export function modKey(mod) {
   return `${mod.source_id}:${mod.id}`;
 }
 
+/** countOf is "12 mods"/"1 mod" - a count and its noun, agreeing (issue
+ * 434: every select-all surface has to state the size of what it is about
+ * to take, and each one was spelling the agreement by hand).
+ *
+ * Built as ONE string rather than adjacent interpolations for the reason
+ * lockedNote below documents: htm collapses the whitespace between those,
+ * so a caller assembling it in a template would fuse the number to the
+ * noun. */
+export function countOf(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 /** lockedNote is how a row that will be REFUSED says so, in the two places
  * a user meets it before the outcome does: the Updates card's own list and
  * the confirm modal's (plan_updates.js reads the same field off the same

@@ -8,7 +8,12 @@
 import { html, useState } from "../render.js";
 import { findingLabel } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
-import { EXTERNAL_UPDATE_NOTE, lockedNote, modKey } from "../modrows.js";
+import {
+  EXTERNAL_UPDATE_NOTE,
+  countOf,
+  lockedNote,
+  modKey,
+} from "../modrows.js";
 import { displayVersion, displayUpdateTarget } from "../version.js";
 import { relativeTime } from "../relativetime.js";
 import { conflictLabel } from "../conflicts.js";
@@ -152,12 +157,26 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
     });
   }
 
+  // issue 434: the rows this card's select-all can take. An EXTERNAL row is
+  // excluded for the same reason it is given no checkbox of its own
+  // (issue 269 - ApplyUpdateBatch declines it outright and nothing in this UI
+  // changes that), which is also what makes the two consistent: select-all
+  // can only ever tick boxes that exist.
+  const applicable = rows.filter((u) => !u.installed_mod.external);
+  const applicableKeys = applicable.map((u) => modKey(u.installed_mod));
+  const takenCount = applicableKeys.filter((key) => selected.has(key)).length;
+  const allTaken = applicable.length > 0 && takenCount === applicable.length;
+
+  function toggleSelectAll() {
+    setSelected(() => (allTaken ? new Set() : new Set(applicableKeys)));
+  }
+
   function updateSelected() {
     if (selected.size === 0) return;
     actions.openPlan({
       kind: "updates",
       origin: UPDATES_BATCH_ORIGIN,
-      title: `Update ${selected.size} mod${selected.size === 1 ? "" : "s"}`,
+      title: `Update ${countOf(selected.size, "mod")}`,
       confirmLabel: "Update",
       options: { mods: [...selected] },
     });
@@ -174,6 +193,24 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
               onRetry=${onRetry}
             />`
           : html`
+              <div class="card__toolbar">
+                <label class="card__select-all">
+                  <input
+                    type="checkbox"
+                    data-testid="select-all"
+                    checked=${allTaken}
+                    indeterminate=${takenCount > 0 && !allTaken}
+                    disabled=${applicable.length === 0}
+                    aria-label=${
+                      allTaken
+                        ? `Clear the selection of ${countOf(applicable.length, "mod")}`
+                        : `Select all ${countOf(applicable.length, "mod")} with an update lmm can apply`
+                    }
+                    onChange=${toggleSelectAll}
+                  />
+                  Select all
+                </label>
+              </div>
               <ul class="card__list">
                 ${rows.map((u) => {
                   const key = modKey(u.installed_mod);
@@ -256,7 +293,13 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
                     disabled=${selected.size === 0}
                     onClick=${updateSelected}
                   >
-                    Update selected
+                    ${
+                      // issue 434: the count, so the size of the batch is
+                      // known before the confirm modal states it.
+                      selected.size === 0
+                        ? "Update selected"
+                        : `Update ${countOf(selected.size, "mod")}`
+                    }
                   </button>
                 <//>
               </div>

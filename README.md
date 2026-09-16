@@ -1438,6 +1438,7 @@ a visible ring in both themes.
 | `Enter`                    | omnibar                                      | search the game's sources for what you typed                                                                   |
 | `Esc`                      | omnibar                                      | clear the search and return to your plain library                                                              |
 | `Esc`                      | any modal, the slide-over, any open dropdown | close it and return focus to whatever opened it                                                                |
+| `a`                        | the library, outside a text field            | select every mod in view, or clear the selection                                                               |
 | `←` / `→`                  | the slide-over                               | step to the previous/next mod in the library's current order                                                   |
 | `←` / `→` / `Home` / `End` | the Setup page's section tabs                | move between sections                                                                                          |
 

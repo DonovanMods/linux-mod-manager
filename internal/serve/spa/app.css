@@ -697,6 +697,24 @@ select {
   font-size: 0.85em;
 }
 
+/* The card's own select-all row (issue 434), between the title and the
+ * list it takes. A <label> around the box, so the words are part of the
+ * target rather than a caption beside it. */
+.card__toolbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.card__select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  cursor: pointer;
+}
+
 /* The card's list takes the slack so every card in the row ends its
  * actions at the same height (issue 334's density pass): without it a
  * three-finding Health card and a one-row Updates card put their buttons
@@ -987,6 +1005,21 @@ select {
   white-space: nowrap;
 }
 
+/* The select-all box shares its heading cell with the word that names the
+ * column (issue 434): the heading owner demo 1 asked for is kept, and it
+ * becomes the box's own click target rather than a caption beside it. The
+ * accessible name is set on the input and overrides the word, because
+ * "Select" says nothing about what one press is about to take. */
+.library__select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
 .mod-row:hover {
   background: var(--surface-sunken);
 }
@@ -1014,6 +1047,13 @@ select {
 
 .mod-row__badges {
   white-space: nowrap;
+}
+
+/* The batch bar's own live count (issue 434): what is selected, out of what
+ * is in view. Weighted so the number reads first - it is the size of what
+ * every button beside it is about to do. */
+.batch-bar__count {
+  font-weight: 600;
 }
 
 .batch-bar {

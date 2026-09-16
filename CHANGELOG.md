@@ -252,6 +252,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Select all, on the library and the Updates card (#434).** Both
+  multi-select surfaces made you tick every row by hand. Each now has a
+  header checkbox that takes everything **currently in view** — after the
+  filter and whatever the omnibar is narrowing by, not the whole library —
+  and reads back as checked, empty, or a partial selection. It skips the
+  rows the actions cannot apply to rather than selecting them and having the
+  buttons refuse: a Steam-managed row has no enable/disable at all, and an
+  update lmm cannot apply has no checkbox of its own. The batch bar says
+  **“3 of 12 selected”**, every batch button carries the number it is about
+  to act on — **Update (3)** — and pressing **a** anywhere in the library,
+  outside a text field, selects everything in view or clears it.
+
 - **The game-adapter seam: one `adapter:` key in `games.yaml` (#353, #411).**
   What a game does with mod content — how an archive's files are laid out,
   which of them are configuration rather than mod content, whether its mods

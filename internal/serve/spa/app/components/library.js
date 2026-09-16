@@ -17,6 +17,7 @@ import { ApiError } from "../api.js";
 import {
   formatDate,
   countExternal,
+  countOf,
   modKey,
   FILTER_NAMES,
   SORT_NAMES,
@@ -91,6 +92,37 @@ function modOrigin(row, action) {
   return `mod:${row.source_id}/${row.id}:${action}`;
 }
 
+// nonTextInputTypes are the <input> types that take no typing: a keystroke
+// aimed at one of these is a command, not a character.
+const nonTextInputTypes = new Set([
+  "checkbox",
+  "radio",
+  "button",
+  "submit",
+  "reset",
+  "range",
+  "color",
+  "file",
+]);
+
+/** isTypingTarget reports whether a keystroke aimed at el is somebody
+ * TYPING - in which case a single-letter binding must keep its hands off it
+ * (issue 434's "a").
+ *
+ * Finer-grained than app.js's own list for the `?` binding, and it has to
+ * be: the control that most often holds focus when this binding is pressed
+ * is the select-all CHECKBOX the user just clicked, which is an <input> and
+ * takes no text at all. A <select> counts as typing even though it does
+ * not: a letter pressed on a focused one jumps to the option starting with
+ * it, which is a browser behaviour worth more than a shortcut. */
+function isTypingTarget(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
+  if (el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+  if (el.tagName !== "INPUT") return false;
+  return !nonTextInputTypes.has((el.type || "text").toLowerCase());
+}
+
 export function Library({
   state,
   mods,
@@ -150,6 +182,61 @@ export function Library({
       return next;
     });
   }
+
+  // issue 434: the rows select-all actually takes. "Everything currently
+  // visible" is the filter's and the omnibar's answer, not the library's -
+  // the same `visible` selectedRows() already measures against - minus the
+  // rows no batch action can act on. An EXTERNAL row is the one such case
+  // today: core refuses enable/disable for a Steam Workshop item outright
+  // (issue 379, which is why the row's own enabled checkbox is disabled), so
+  // sweeping it in would hand the batch bar a selection its two main
+  // buttons then have to refuse. Its own checkbox stays live - a user who
+  // means that row can still tick it - it is only never taken in bulk.
+  function selectableRows() {
+    return visible.filter((r) => !r.isExternal);
+  }
+
+  const selectable = selectableRows();
+  const takenCount = selectable.filter((r) => selected.has(r.key)).length;
+  const allTaken = selectable.length > 0 && takenCount === selectable.length;
+
+  function toggleSelectAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allTaken) {
+        // Clears what is IN VIEW, not the whole set: a row selected under a
+        // different filter is not something this press was about.
+        for (const row of visible) next.delete(row.key);
+        return next;
+      }
+      for (const row of selectable) next.add(row.key);
+      return next;
+    });
+  }
+
+  // "a" selects everything in view, or clears it (issue 434, shortcuts.js).
+  // Scoped to this component rather than app.js's own global `?` handler
+  // because it is scoped to this SURFACE: the library is the only screen
+  // with a selection to take.
+  //
+  // Ignored while a text field has focus - "a" is a character someone is
+  // entitled to type into the omnibar - and while a modal is open, for the
+  // reason app.js states: modals stack at most one deep, and reaching past
+  // one to change the page underneath is not something a keystroke should
+  // do. Re-attached whenever what it would select changes, so the handler
+  // never closes over a stale `visible`.
+  const modalOpen = Boolean(state.modal);
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.key !== "a" || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (modalOpen) return;
+      if (isTypingTarget(e.target)) return;
+      e.preventDefault();
+      toggleSelectAll();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  });
 
   // A plain (pushed) navigation, not a replace: opening the slide-over is a
   // new place in history on purpose, so Back closes it (router.js's own
@@ -470,6 +557,22 @@ export function Library({
   // reads its own "mods" member.
   const externalCount = countExternal(mods?.mods);
 
+  // issue 434: what the select-all box is about to do, counted. The
+  // accessible name says the NUMBER because that is the surprise the issue
+  // is about - "Update 40 mods" should never be the first time you learn
+  // there were forty - and it names the direction, because the same control
+  // clears the selection once it is full.
+  const selectAllLabel = allTaken
+    ? `Clear the selection of ${countOf(selectable.length, "mod")}`
+    : `Select all ${countOf(selectable.length, "mod")} in view`;
+  // The one thing the count alone cannot explain: rows that are on screen
+  // and deliberately not taken.
+  const skipped = visible.length - selectable.length;
+  const selectAllTitle =
+    skipped > 0
+      ? `${countOf(skipped, "row")} managed by Steam ${skipped === 1 ? "is" : "are"} not included — lmm cannot enable or disable ${skipped === 1 ? "it" : "them"}`
+      : undefined;
+
   return html`
     <section class="library">
       <div class="library__toolbar">
@@ -530,7 +633,30 @@ export function Library({
               <table class="library__table">
                 <thead>
                   <tr>
-                    <th class="col--select">Select</th>
+                    <th class="col--select">
+                      ${
+                        // issue 434: the select-all, wrapped in the column's
+                        // own heading so the word still labels the column
+                        // (owner demo 1 asked for a real heading here) and
+                        // doubles as the box's click target. aria-label
+                        // overrides that word for the accessible name,
+                        // because "Select" says nothing about what this one
+                        // press is about to take.
+                        ""
+                      }
+                      <label class="library__select-all">
+                        <input
+                          type="checkbox"
+                          data-testid="select-all"
+                          checked=${allTaken}
+                          indeterminate=${takenCount > 0 && !allTaken}
+                          aria-label=${selectAllLabel}
+                          title=${selectAllTitle}
+                          onChange=${toggleSelectAll}
+                        />
+                        Select
+                      </label>
+                    </th>
                     <th class="col--enabled">Enabled</th>
                     <th class="col--name">Name</th>
                     <th class="col--version">Version</th>
@@ -738,7 +864,9 @@ export function Library({
         selected.size > 0 &&
         html`
           <div class="batch-bar">
-            <span>${selected.size} selected</span>
+            <span class="batch-bar__count"
+              >${`${selectedRows().length} of ${visible.length} selected`}</span
+            >
             <button
               type="button"
               class="button"
@@ -747,7 +875,7 @@ export function Library({
               title=${steamRefusalTitle("enable")}
               onClick=${() => batchEnable("enable")}
             >
-              Enable
+              ${`Enable (${togglableSelectedRows().length})`}
             </button>
             <button
               type="button"
@@ -757,7 +885,7 @@ export function Library({
               title=${steamRefusalTitle("disable")}
               onClick=${() => batchEnable("disable")}
             >
-              Disable
+              ${`Disable (${togglableSelectedRows().length})`}
             </button>
             <button
               type="button"
@@ -771,7 +899,7 @@ export function Library({
               }
               onClick=${batchUpdate}
             >
-              Update
+              ${`Update (${updatableSelectedRows().length})`}
             </button>
             <button
               type="button"
@@ -779,7 +907,7 @@ export function Library({
               data-action="batch-uninstall"
               onClick=${batchUninstall}
             >
-              Uninstall
+              ${`Uninstall (${selectedRows().length})`}
             </button>
           </div>
         `
