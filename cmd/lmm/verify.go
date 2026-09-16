@@ -162,19 +162,30 @@ being silently folded into the OK case - this is never counted in issues
 or warnings.
 
 --json emits {game_id, profile, result: {findings: [{mod_id, mod_name,
-file_id, status, note, recorded, effective, version}], issues, warnings,
-checked, has_files}}; each finding key is omitted when unset (a row only
-carries the fields its status needs - e.g. "version_mismatch" carries
-recorded/effective, "missing" carries version, most statuses carry
-neither). checked is the number of files/mods verify walked (feeds the
-"No files found for mod X" text-mode message); has_files is false only
-for the #217 empty-profile path, where no checksummed files exist so no
-findings/issues are possible and only whatever the deploy-convergence
-sweep found appears. status is one of "ok", "missing", "no_checksum",
+file_id, status, note, recorded, effective, version, external}], issues,
+warnings, checked, has_files, mods, external, unverified}}; each finding
+key is omitted when unset (a row only carries the fields its status needs -
+e.g. "version_mismatch" carries recorded/effective, "missing" carries
+version, most statuses carry neither). checked is the number of files/mods
+verify walked (feeds the "No files found for mod X" text-mode message
+alongside mods, since a mod-filter run that matched an external or
+otherwise-unverified mod leaves checked at 0 too but did find that mod, #429);
+has_files is false when no installed mod has recorded files, so no
+per-file checks run - the game-level checks (Steam Workshop presence, the
+adapter's, the loader's) and the deploy-convergence sweep still do. mods
+counts the installed mods the run covered (absent for an empty profile -
+the only case text mode says "No installed mods to verify."), external the
+Steam Workshop items among them - each checked for presence and named by
+a row: "ok" with external true while Steam still has it, "external_missing"
+once it does not - and unverified the others lmm has no recorded files for
+(a mod imported from disk), which it cannot compare against anything.
+status is one of "ok", "missing", "no_checksum",
 "file_count_mismatch", "skipped", "version_mismatch",
 "version_unverifiable", "stale_compile", "stale_deployment",
 "fixed_stale_deployment", "conversion_failed", "needs_reingest",
-"fixed_needs_reingest", or one of the loader tier's own rows -
+"fixed_needs_reingest", "external_missing", "mod_path_missing" (the
+game's mod_path is not a directory while it has mods to deploy - a
+warning whose note names the repair), or one of the loader tier's own rows -
 "loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
 "loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
 "fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",
@@ -279,21 +290,38 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 	}
 
 	if !result.HasFiles {
-		// #217: the empty-profile path runs no per-file checks, but the
+		// #217: the no-files path runs no per-file checks, but the
 		// game-level tiers (external presence, adapter, loader) and the
 		// deploy-convergence sweep still can find something - an issue
 		// as much as a warning (#413 re-review P-a) - so the tally is the
-		// result's own, and a quiet run stays quiet.
-		if result.Issues > 0 || result.Warnings > 0 {
+		// result's own. A truly empty profile stays quiet; one whose mods
+		// lmm simply has no checksums for says what it checked (#429).
+		if result.Mods > 0 {
 			fmt.Println()
+			printUnverified(result)
+		}
+		if result.Issues > 0 || result.Warnings > 0 {
+			if result.Mods == 0 {
+				fmt.Println()
+			}
 			printVerifyTally(result, fixHintFor(result))
+		} else if result.Mods > 0 {
+			fmt.Println(colorGreen("Nothing to report."))
 		}
 		return nil
 	}
 
 	fmt.Println()
+	printUnverified(result)
 
-	if result.Checked == 0 && modFilter != "" {
+	if result.Checked == 0 && modFilter != "" && result.Mods == 0 {
+		// #429: Checked stays 0 for a filter that matched an external
+		// (Steam Workshop) or otherwise-unverified mod too - neither
+		// externalPresencePass nor the unverified case increments it - but
+		// the filter DID match a mod, and its own row (the "tracked from
+		// Steam" line, or printUnverified's count above) already said so.
+		// "No files found" is reserved for a filter that matched nothing at
+		// all installed (Mods == 0).
 		fmt.Printf("No files found for mod %s\n", modFilter)
 		return nil
 	}
@@ -305,6 +333,15 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 	}
 
 	return nil
+}
+
+// printUnverified says how many of the run's mods lmm had nothing recorded
+// to compare against (#429) - a mod imported from disk, typically - so a
+// clean run is not read as "every mod was checked".
+func printUnverified(result *core.VerifyResult) {
+	if result.Unverified > 0 {
+		fmt.Printf("%d mod(s) have no recorded files for lmm to check (imported from disk, or installed before lmm recorded them)\n", result.Unverified)
+	}
 }
 
 // printVerifyTally prints a run's issue/warning counts, then fixHint when a
@@ -378,10 +415,17 @@ func fixHintFor(result *core.VerifyResult) string {
 func renderVerifyEvent(ev core.VerifyEvent) {
 	switch ev.Kind {
 	case core.VerifyEvBegin:
-		if ev.HasFiles {
+		switch {
+		case ev.HasFiles:
 			fmt.Println("Verifying cached mods...")
 			fmt.Println()
-		} else {
+		case ev.Mods > 0:
+			// #429: installed mods with nothing checksummed - Workshop
+			// items, checksum-less imports - are still verified for what
+			// can be verified about them, and the game's loader with them.
+			fmt.Printf("Verifying %d installed mod(s)...\n", ev.Mods)
+			fmt.Println()
+		default:
 			fmt.Println("No installed mods to verify.")
 		}
 
@@ -440,6 +484,11 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 
 	case "ok":
 		switch {
+		case f.External:
+			// #429: a Workshop item lmm tracks - present, and not lmm's to
+			// checksum. Before the lock-pending arm below, which would
+			// otherwise claim a Note-bearing row with no FileID.
+			fmt.Printf("%s %s - %s\n", colorGreen("+"), f.ModName, f.Note)
 		case ev.ChecksumPopulated:
 			// #164: only printed when a checksum was actually written by a
 			// --fix redownload.
@@ -474,6 +523,18 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		// #168/#212 - FileID carries the deployed path (convergeDeployedFiles
 		// reports per-path, not per-mod-file).
 		fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("?"), f.FileID, f.Note)
+
+	case "mod_path_missing":
+		// #427: the game's mod_path is gone; the note names the repair.
+		fmt.Printf("%s mod_path - %s\n", colorYellow("?"), f.Note)
+
+	case "external_missing":
+		// #269/#429: counted as an issue, and until this arm printed
+		// nothing - "1 issue(s)" with no line saying which item.
+		fmt.Printf("%s %s - %s\n", colorRed("X"), f.ModName, f.Note)
+		if f.FixableReason != "" {
+			fmt.Printf("  %s\n", f.FixableReason)
+		}
 
 	case "fixed_stale_deployment":
 		// The WHOLE line is green, keyed on this Status alone (no event

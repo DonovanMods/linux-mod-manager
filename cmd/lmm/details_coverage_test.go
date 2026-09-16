@@ -24,6 +24,9 @@ var detailsCoverage = map[string]string{
 	// #353's adapter refusal: the game, the adapter and the remedy reach
 	// the envelope as data, so a frontend can act on the remedy.
 	"core.AdapterPreconditionError": "TestReportError_JSON_AdapterPreconditionError",
+	// #455: a game whose adapter is refused - the game and the adapter
+	// reach the envelope as data.
+	"core.AdapterRefusedError": "TestReportError_JSON_AdapterRefusedError",
 	// #373's ambiguous bare mod ID: the candidate sources reach the
 	// envelope as data, not only as the sentence.
 	"core.AmbiguousModError":      "TestReportError_JSON_AmbiguousModError",
@@ -39,6 +42,10 @@ var detailsCoverage = map[string]string{
 	// #410: no local index and no way to build one - the community, the
 	// reason and, when a host is refusing to be asked, when it will be.
 	"core.IndexUnavailableError": "TestReportError_JSON_IndexUnavailableError",
+	// #427: SetGameModPath's refusal to strand deployed files, and the
+	// missing-mod_path refusal with its repair, reach the envelope as data.
+	"core.GameModPathInUseError": "TestReportError_JSON_GameModPathInUseError",
+	"core.ModPathMissingError":   "TestReportError_JSON_ModPathMissingError",
 	// #359's plan-time loader precondition: the setup steps reach the
 	// envelope as DATA, so the web UI renders the same sentences the
 	// terminal prints instead of carrying its own copy in JavaScript.

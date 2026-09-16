@@ -291,7 +291,8 @@ func TestGameShowDefault_NoDefault_NoSideEffects(t *testing.T) {
 func TestDoGameShowDefault_JSON(t *testing.T) {
 	t.Run("set", func(t *testing.T) {
 		svc := setupGameAddTest(t)
-		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame("skyrim-se", "Skyrim SE")))
+		root := goldenGameRoot(t)
+		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame(t, root, "skyrim-se", "Skyrim SE")))
 		require.NoError(t, svc.SetDefaultGame(context.Background(), "skyrim-se"))
 		info, err := svc.DefaultGameInfo(context.Background())
 		require.NoError(t, err)
@@ -303,7 +304,7 @@ func TestDoGameShowDefault_JSON(t *testing.T) {
 		})
 		var got core.DefaultGame
 		decodeStrict(t, out, &got)
-		assertJSONCLIGolden(t, "game_show_default_set", out)
+		assertJSONCLIGolden(t, "game_show_default_set", out, goldenGameSubs(root)...)
 	})
 
 	t.Run("none", func(t *testing.T) {

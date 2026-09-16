@@ -62,6 +62,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The BepInEx/adapter contradiction warning printed at startup is one
+  line (#456).** A game that declares the BepInEx loader while its adapter
+  is another one was reported on stderr by **every** `lmm` command in a
+  ~900-character paragraph. That line now names the game, the contradiction
+  and where to read more — ``warning: game "human-host" declares the
+BepInEx loader, but lmm ignores it because its mod_path is not the game
+root; run `lmm game show human-host` for the fix``. The full explanation and both
+  remedies stay in `lmm game show`, `lmm verify`, the web loader panel and
+  the output of the `lmm game edit` that creates the contradiction. The
+  "set its mod_path in games.yaml" step is now the command
+  `lmm game edit <id> --mod-path <path>` (with `--adapter bepinex` in the
+  same command where the adapter changes too), and the purge before it is
+  `lmm purge --game <id> --profile <name>` for each profile with files
+  deployed, because a purge of the active profile alone left the move
+  refused.
+
 - **An empty per-source game identifier is refused rather than guessed
   (#408, #409).** `sources: {<source>: ""}` in `games.yaml` used to fall back
   to lmm's own game id. That is a guess, and for a source that keeps a local
@@ -251,6 +267,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   progress for 2.0.
 
 ### Added
+
+- **`lmm game edit <id> --mod-path <path>` (#427, #456).** A game's
+  `mod_path` could only be changed by editing `games.yaml` by hand. It is
+  now a command, and `PUT /api/v1/games/{id}` takes a `mod_path` member for
+  the web UI. The value follows the rules `lmm game add` applies: a relative
+  path is relative to the install path, `~/` is your home directory, a file
+  is refused, and a directory that does not exist yet is accepted (a deploy
+  creates it). lmm records each deployed file relative to the mod path, so
+  the edit is **refused while any profile has files deployed**. The refusal
+  names every such profile with its purge
+  (`lmm purge --game <id> --profile <name>`) and says what the `lmm deploy`
+  after the move does: it deploys the active profile, and any other profile
+  is deployed into the new directory when you next switch to it. On the web
+  it is a 409 carrying
+  `{game_id, mod_path, new_mod_path, deployed_files, profiles[], active_profile}`.
+  `lmm game detect`'s repair of an already-configured game, which rewrites
+  `mod_path` from the catalog, is refused the same way (a 409 from
+  `POST /api/v1/games/detect`) and writes nothing. The edit is also refused
+  when it would leave a game every flow refuses (`adapter: bepinex` off the
+  game root), while a game already in that state can still be moved back.
+  `--source`, `--remove-source`, `--adapter` and `--mod-path` are **one
+  edit**: every change is checked before any is written, so a run applies
+  all of them or none, and the adapter and the mod path move together in
+  either direction — `lmm game edit <id> --mod-path <install path> --adapter
+bepinex` onto BepInEx, `lmm game edit <id> --adapter generic-files
+--mod-path <dir>` off it. `PUT /api/v1/games/{id}` checks its body the
+  same way.
 
 - **A profile can say a mod is switched off (#431).** Mod references in a
   profile file gain an optional `disabled: true` key. Disabling a mod used
@@ -1584,6 +1627,125 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   dialog and on a failed job, instead of one line and a key/value dump. The
   plan request answers that refusal with HTTP 409 and the steps in its
   details, where it used to answer 500.
+
+- **A warning only a download can raise now reaches you whichever command
+  downloaded (#425).** #424's "BepInEx found in <path>; declare it with
+  `lmm game edit <id> --loader bepinex`" and #358's "layout lmm cannot
+  place" are only knowable once an archive is extracted, and every flow's
+  download step dropped them — `lmm install`'s too — while an archive from a
+  directory source, or a Steam Workshop item fetched with steamcmd, raised
+  them with nowhere to go but the log (off by default). They now reach the
+  terminal as `Warning: <mod>: <message>` on stderr from `lmm install`,
+  `update`, `deploy`, `profile switch`/`apply`/`import`, `snapshot restore`
+  and `import`, as a `Warning:` sub-line under the row it belongs to in
+  `lmm verify --fix`, and in the web UI's job activity, a health repair's
+  included. On the wire they are ordinary `warning` events with the new
+  phase `download_warning`.
+
+- **`lmm verify` no longer says "No installed mods to verify." about mods it
+  simply has no checksums for (#429).** A game whose mods were all tracked
+  from Steam, or all imported from disk, read as empty: the run began with
+  that line because nothing was checksummed, and an item Steam no longer
+  had was counted as an issue with no line saying which. The run now begins
+  `Verifying N installed mod(s)...`, names each Steam Workshop item —
+  `+ ModMenu - tracked from Steam - present on disk; …`, or
+  `X Unsubscribed - Steam no longer has this item on disk …` — says how many
+  mods lmm has no recorded files for, and still runs the game's adapter and
+  loader checks, as it always did; only a profile with nothing installed
+  says "No installed mods to verify." `--json` is additive: the result
+  gains `mods`, `external` and `unverified` counts (absent when zero), and a
+  row about a Workshop item carries `external: true` — the present item's
+  row is an `ok` row, so the web Health card, which lists only rows that
+  are not `ok`, does not count it as a finding.
+
+- **Every `lmm mod` subcommand addresses an imported mod (#447).**
+  `lmm import` records a mod under the `local` source, which no game maps,
+  and `lmm mod lock`, `unlock`, `set-update`, `files`, `show` and `convert`
+  refused `--source local` as "not configured" — so an imported mod could be
+  enabled and disabled but not inspected, pinned or converted by source. All
+  of them now resolve their mod one way: `--source local` is accepted, and
+  with no `--source` the source is the one the installed mod carries (as
+  `lmm uninstall` and `lmm mod edit` already did), so `lmm mod enable <id>`
+  no longer needs `local` listed in the game's sources. An id installed
+  under two sources is refused with the flag that chooses, rather than
+  guessed at. `lmm mod lock` on an imported mod says it has no source to
+  resolve versions against and names `lmm mod set-update … --pin`, rather
+  than "source not found: local", and `lmm mod show` — like
+  `GET /api/v1/mods/local/{id}` — describes an imported mod from its
+  installed row instead of failing.
+
+- **A Steam Workshop item's version is its revision date in `lmm install`,
+  `lmm update` and the other commands that print it (#428).** A Workshop
+  item's version is its 19-digit content id, which no human-facing surface
+  is meant to print, yet `lmm install` printed
+  `Selected: ModMenu v493958101155293591` while `lmm list` showed a date. The
+  search listing, `Selected:`, the dependency tree, the per-mod
+  `Installing:` lines and `✓ Installed:` now say `(revision of <date>)`, and
+  so do `lmm update`'s lines — the dry run, the changelog header, "Update
+  available", "Updating", "✓ Updated", "pinned at" and "already up to date"
+  — and `lmm update rollback`'s. The rule also covers an item lmm
+  **downloaded itself** (`lmm install`'s steamcmd path): it is not tracked
+  from Steam, but its version is the same content id, and `lmm list`,
+  `lmm mod show`, `lmm mod lock`/`set-update --pin`, the `lmm update` table
+  and the `lmm snapshot restore` preview printed it. A few surfaces still
+  print the id and are tracked in #458: the web UI, `lmm profile
+import`/`apply`/`switch` plan lines, verify's cache-missing row and a
+  locked item's update refusal. The refusal to install an lmm copy of an item Steam already
+  loads now ends with the exact command that clears the way, e.g.
+  ``(`lmm uninstall 3617086610 --source steamworkshop --game human-host --profile default`)``.
+
+- **`lmm import` no longer names every BepInEx-rooted plugin package
+  "BepInEx" (#450).** An archive whose only top-level entry is `BepInEx/`
+  took the loader's own directory as the mod's name, so every such plugin
+  imported as `BepInEx` and the imports were indistinguishable in `lmm list`.
+  `BepInEx/` and its well-known subdirectories (`plugins/`, `patchers/`,
+  `monomod/`, `config/`, `core/`) are now structure, not a name: the mod is
+  named after the one plugin folder beneath them
+  (`BepInEx/plugins/CoolFolder/…` imports as `CoolFolder`, whatever sits in
+  `BepInEx/config/`), and after the archive itself otherwise
+  (`Rooted-400.zip` holding `BepInEx/plugins/Rooted.dll` imports as
+  `Rooted-400`; a NexusMods-style `Jotunn-1138-2-12-1-1700000000.zip` as
+  `Jotunn`). The subdirectories count as structure at the archive's root
+  only for a game that has BepInEx, so another game's `Core-1.0.zip`
+  holding `Core/…` still imports as `Core`. The import plan and the import
+  agree on the name, as before.
+
+- **`GET /api/v1/conflicts` no longer answers 500 for a game whose adapter
+  is refused (#455).** An unknown `adapter:` name, a compile game's adapter
+  that cannot compile, or `adapter: bepinex` off the game root is a known
+  state, not a server failure: the route now answers **409** with the
+  refusal itself and `details: {game_id, adapter}`, which the web UI's
+  conflicts card already renders as "Couldn't check for conflicts: …".
+  `lmm conflicts` agrees — it prints the refusal as it is, rather than
+  wrapped in "getting conflicts:", and `--json` carries the same details.
+  Every flow's adapter refusal is now the typed `core.AdapterRefusedError`;
+  its sentence is unchanged.
+
+- **A game whose `mod_path` no longer exists is flagged, with the repair
+  (#427).** A mod directory that is not there yet is how every new game
+  starts — the first deploy creates it — so it is flagged only when that is
+  not what is going on: lmm recorded files deployed under it (they are
+  gone), the install path is gone too, or the mod path lies outside the
+  install path. A path that is a file, or cannot be read, is always
+  flagged. `lmm game show` and `lmm status --game` print the problem under
+  the mod path (`lmm game show` notes a merely absent one quietly, as "not
+  created yet"); `lmm game list` marks the cell `(needs repair)` and
+  `lmm status` and `lmm game list` follow their tables with a `warning:`
+  line on stderr; `lmm game detect` marks such a configured row
+  ``[configured] [needs repair: see `lmm game show <id>`]`` rather than
+  suggesting a re-detect, which would reset the game's default profile. Each
+  names the repair: `lmm deploy` to put lmm's files back, or
+  `lmm game edit <id> --mod-path <path>` — with the install path filled in
+  for a game that has BepInEx, whose mods deploy into the game root.
+  `lmm import`'s scan no longer fails with a bare "mod_path does not
+  exist": it refuses with the same kind of sentence, and `--json` carries it
+  as `{game_id, mod_path, reason, deployed_files, install_path,
+install_path_missing, outside_install_path, suggested_mod_path}` (each
+  after `reason` only when it applies). On the wire, the game documents
+  (`lmm game list/show --json`, `lmm status --json`, `GET /api/v1/games`,
+  `/games/{id}`, `/status`) and the detect listing gain an optional
+  `mod_path_error`. `lmm verify` (and the web Health card) reports a
+  `mod_path_missing` warning with the same sentence under the same rule.
 
 - **lmm processes starting together on a new installation no longer fail
   with "database is locked" (#453).** Switching a brand-new database file

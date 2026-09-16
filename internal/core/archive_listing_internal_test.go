@@ -157,29 +157,41 @@ func TestImportDeployablePaths(t *testing.T) {
 
 func TestImportedModName(t *testing.T) {
 	t.Run("extract folds a sole top-level directory", func(t *testing.T) {
-		name := importedModName(importKindExtract, "mymod-1.0.zip", "1.0", []archiveMember{
+		name := importedModName(nil, importKindExtract, "mymod-1.0.zip", "1.0", []archiveMember{
 			{Path: "MyMod/", Dir: true}, {Path: "MyMod/a.esp"},
 		})
 		assert.Equal(t, "MyMod", name)
 	})
 
 	t.Run("extract falls back to the archive name", func(t *testing.T) {
-		name := importedModName(importKindExtract, "mymod-1.0.zip", "1.0", []archiveMember{
+		name := importedModName(nil, importKindExtract, "mymod-1.0.zip", "1.0", []archiveMember{
 			{Path: "a.esp"}, {Path: "b.esp"},
 		})
 		assert.Equal(t, "mymod-1.0", name)
 	})
 
 	t.Run("extract falls back for an empty archive", func(t *testing.T) {
-		assert.Equal(t, "mymod-1.0", importedModName(importKindExtract, "mymod-1.0.zip", "1.0", nil))
+		assert.Equal(t, "mymod-1.0", importedModName(nil, importKindExtract, "mymod-1.0.zip", "1.0", nil))
 	})
 
 	t.Run("copy trims the version suffix", func(t *testing.T) {
-		assert.Equal(t, "mymod", importedModName(importKindCopy, "mymod-1.0.zip", "1.0", nil))
+		assert.Equal(t, "mymod", importedModName(nil, importKindCopy, "mymod-1.0.zip", "1.0", nil))
 	})
 
 	t.Run("copy keeps an unknown version's whole base name", func(t *testing.T) {
-		assert.Equal(t, "mymod", importedModName(importKindCopy, "mymod.zip", "unknown", nil))
+		assert.Equal(t, "mymod", importedModName(nil, importKindCopy, "mymod.zip", "unknown", nil))
+	})
+
+	// #450: a loose plugin under BepInEx/plugins/ has nothing beneath it to
+	// name the mod, so the fallback tries a NexusMods-style parse of the
+	// archive's own filename before falling all the way back to the raw
+	// basename - "Jotunn" out of the download manager's full
+	// "Jotunn-1138-2-12-1-1700000000.zip", not that whole string.
+	t.Run("extract's loader-structure fallback prefers a NexusMods-style base name", func(t *testing.T) {
+		name := importedModName(nil, importKindExtract, "Jotunn-1138-2-12-1-1700000000.zip", "2.12.1", []archiveMember{
+			{Path: "BepInEx/plugins/Jotunn.dll"},
+		})
+		assert.Equal(t, "Jotunn", name)
 	})
 }
 

@@ -104,11 +104,18 @@ func (b loaderBypass) persistent() bool {
 }
 
 // AdapterConfigWarnings is design decision 11's load-time warning: one
-// sentence for every configured game whose `loader:` block its adapter
+// line for every configured game whose `loader:` block its adapter
 // ignores, except the games named in except. internal/app prints them when
 // it opens a Service, and except is how a command that reports a game's
 // warning itself - `lmm game show`, `lmm verify`, `lmm game edit` - keeps
-// the sentence from reaching the user twice (#413 re-review M2).
+// the game from being warned about twice (#413 re-review M2).
+//
+// The line is SHORT (#456): it is printed by every command until the
+// configuration is fixed, and a paragraph repeated on every run is how a
+// user learns to stop reading warnings. It names the game, the
+// contradiction and `lmm game show <id>`, where the whole sentence - both
+// remedies included - is (AdapterConfigWarning, LoaderStatus.Warnings,
+// verify's loader_adapter_ignored row).
 //
 // It reads no disk, because it runs on every lmm invocation: the other
 // persistent case - an installed BepInEx an implicit adapter ignores - needs
@@ -120,8 +127,8 @@ func (s *Service) AdapterConfigWarnings(except ...string) []string {
 		if !game.DeclaresBepInEx() || slices.Contains(except, game.ID) {
 			continue
 		}
-		if w := s.adapterConfigWarning(game); w != "" {
-			out = append(out, w)
+		if b, ok := s.bepinexBypass(game); ok && b.persistent() {
+			out = append(out, b.loadTimeWarning())
 		}
 	}
 	return out
@@ -185,6 +192,22 @@ func (b loaderBypass) configWarning() string {
 			b.game.ID, b.adapterPhrase("its adapter"))
 	}
 	return fmt.Sprintf("%s: %s %s; %s.", opening, b.consequence(), b.enableRemedy(), b.acknowledgement())
+}
+
+// loadTimeWarning is AdapterConfigWarnings' one line for a game that
+// DECLARES the loader (the only games that list holds).
+func (b loaderBypass) loadTimeWarning() string {
+	var why string
+	switch {
+	case b.game.Adapter != "":
+		why = fmt.Sprintf("its adapter is %q", b.adapterID)
+	case b.game.DeployMode == domain.DeployCompile:
+		why = fmt.Sprintf("`deploy_mode: compile` selects the %q adapter", b.adapterID)
+	default:
+		why = "its mod_path is not the game root"
+	}
+	return fmt.Sprintf("game %q declares the BepInEx loader, but lmm ignores it because %s; run `lmm game show %s` for the fix",
+		b.game.ID, why, b.game.ID)
 }
 
 // adapterPhrase says "<subject> is <adapter>", and why when games.yaml does
@@ -256,27 +279,28 @@ func bepinexEnableSteps(game *domain.Game) []string {
 
 	var steps []string
 	if !gameRoot {
-		steps = append(steps, fmt.Sprintf("run `lmm purge --game %s`", id))
+		// A mod_path edit is refused while ANY profile has files deployed
+		// under it, for this same reason, and each profile is purged on its
+		// own (#427 review F2) - so the step names the flag, and the edit
+		// that follows names every profile it still finds.
+		steps = append(steps, fmt.Sprintf("run `lmm purge --game %s --profile <name>` for each profile with files deployed (the next step names any it finds)", id))
 	}
-	var yamlEdits []string
 	if compile {
 		drop := "remove `deploy_mode: compile`"
 		if explicit {
 			drop += " and the `adapter:` key"
 		}
-		yamlEdits = append(yamlEdits, drop)
+		steps = append(steps, drop+" from games.yaml")
 	}
-	where := " from games.yaml"
-	if !gameRoot {
-		yamlEdits = append(yamlEdits, fmt.Sprintf("set its mod_path to %s", game.InstallPath))
-		where = " in games.yaml"
-	}
-	if len(yamlEdits) > 0 {
-		steps = append(steps, strings.Join(yamlEdits, " and ")+where)
-	}
-	if !compile && explicit && game.Adapter != bepinexAdapterID {
-		// After the mod_path edit: AdapterFor refuses bepinex off the game
-		// root, so the other order fails.
+	// One command since #456 (and in either order since the edit is
+	// checked as a whole, #427 review F5), rather than a hand edit of
+	// games.yaml.
+	switch setAdapter := !compile && explicit && game.Adapter != bepinexAdapterID; {
+	case !gameRoot && setAdapter:
+		steps = append(steps, fmt.Sprintf("run `lmm game edit %s --mod-path %s --adapter bepinex`", id, game.InstallPath))
+	case !gameRoot:
+		steps = append(steps, fmt.Sprintf("run `lmm game edit %s --mod-path %s`", id, game.InstallPath))
+	case setAdapter:
 		steps = append(steps, fmt.Sprintf("run `lmm game edit %s --adapter bepinex`", id))
 	}
 	if !gameRoot {

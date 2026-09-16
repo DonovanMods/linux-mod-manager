@@ -510,23 +510,28 @@ func (s *Service) AdapterFor(game *domain.Game) (adapter.GameAdapter, error) {
 
 // adapterForName is AdapterFor for a name the caller has already derived,
 // so a caller that needs both does not pay AdapterName's stat twice.
+//
+// Every refusal is an *AdapterRefusedError (#455).
 func (s *Service) adapterForName(game *domain.Game, name string) (adapter.GameAdapter, error) {
+	refuse := func(err error) error {
+		return &AdapterRefusedError{GameID: game.ID, Adapter: name, Err: err}
+	}
 	a, err := s.adapterRegistry().Resolve(name)
 	if err != nil {
-		return nil, fmt.Errorf("game %q: %w", game.ID, err)
+		return nil, refuse(fmt.Errorf("game %q: %w", game.ID, err))
 	}
 	if game.Adapter != "" && game.DeployMode == domain.DeployCompile {
 		if _, ok := adapter.Compiler(a); !ok {
-			return nil, fmt.Errorf("game %q sets deploy_mode: compile but adapter %q cannot compile; set an adapter that can (%s) or drop deploy_mode: compile",
-				game.ID, game.Adapter, strings.Join(s.adapterRegistry().Names(), ", "))
+			return nil, refuse(fmt.Errorf("game %q sets deploy_mode: compile but adapter %q cannot compile; set an adapter that can (%s) or drop deploy_mode: compile",
+				game.ID, game.Adapter, strings.Join(s.adapterRegistry().Names(), ", ")))
 		}
 	}
 	if bepinexOffRoot(game) {
 		// Both ways out, each in the order that works: the purge that
 		// starts the first one is a removal, which this refusal does not
 		// block (removalSnapshotOf).
-		return nil, fmt.Errorf("game %q sets adapter: bepinex but its mod_path (%s) is not its install path, and a BepInEx layout is relative to the game root. %s%s; or, to deploy archives into %s exactly as packaged, run `lmm game edit %s --adapter generic-files`",
-			game.ID, game.ModPath, bepinexEnableLead, strings.Join(bepinexEnableSteps(game), ", then "), game.ModPath, game.ID)
+		return nil, refuse(fmt.Errorf("game %q sets adapter: bepinex but its mod_path (%s) is not its install path, and a BepInEx layout is relative to the game root. %s%s; or, to deploy archives into %s exactly as packaged, run `lmm game edit %s --adapter generic-files`",
+			game.ID, game.ModPath, bepinexEnableLead, strings.Join(bepinexEnableSteps(game), ", then "), game.ModPath, game.ID))
 	}
 	return a, nil
 }
@@ -1364,7 +1369,7 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 		if !servesLocal || !lfs.ServesLocalFiles() {
 			return nil, fmt.Errorf("source %q returned a local file:// URL but is not a directory source", sourceID)
 		}
-		return s.ingestLocalToCache(ctx, gameCache, game, mod, file, localPath)
+		return s.ingestLocalToCache(ctx, gameCache, game, mod, file, localPath, sink)
 	}
 
 	// Stage the download under the data dir, not $TMPDIR — see newStagingDir.
@@ -1551,7 +1556,10 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 // install/verify --fix converge instead of looping on NO CHECKSUM. A
 // directory with no regular files yields an empty checksum - nothing to
 // fingerprint - and callers must report that honestly.
-func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string) (*DownloadModResult, error) {
+//
+// sink receives the archive's download-time warnings (#425) - the same
+// DownloadWarning events a fetched archive raises - and may be nil.
+func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string, sink EventSink) (*DownloadModResult, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
 		return nil, fmt.Errorf("local mod path: %w", err)
@@ -1627,7 +1635,7 @@ func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache
 			return nil, fmt.Errorf("hashing local mod file: %w", err)
 		}
 	default:
-		if members, err = s.extractIntoStaging(ctx, game, mod, localPath, cachePath, stagePath, nil); err != nil {
+		if members, err = s.extractIntoStaging(ctx, game, mod, localPath, cachePath, stagePath, sink); err != nil {
 			return nil, fmt.Errorf("extracting mod: %w", err)
 		}
 		if checksum, err = md5File(localPath); err != nil {
@@ -1851,14 +1859,15 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 	// A download has no plan to carry the adapter's warnings: its shape is
 	// not knowable until it is extracted, which is this function. So they
 	// ride the flow's own event sink as ordinary WarningEvents - the wire
-	// type every warning in every flow already uses - and the log keeps the
+	// type every warning in every flow already uses - under the one phase
+	// every flow forwards (DownloadWarning, #425), and the log keeps the
 	// record for a caller that passed no sink.
 	for _, w := range layout.Warnings {
 		s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
 		if sink != nil {
 			sink(WarningEvent{
 				Scope:   Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}},
-				Phase:   InstallWarning,
+				Phase:   DownloadWarning,
 				Message: w,
 			})
 		}

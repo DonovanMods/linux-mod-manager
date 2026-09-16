@@ -175,7 +175,8 @@ func TestRunImportScan_ScanFailure_StillPrintsTheLeadingNotices(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mod_path does not exist")
+	assert.Contains(t, err.Error(), game.ModPath+" does not exist")
+	assert.Contains(t, err.Error(), "lmm game edit "+game.ID+" --mod-path", "the refusal names the repair (#427)")
 	expected := "Note: Scan import for extract- and compile-mode games tracks mods in-place without caching.\n" +
 		"      Uninstall will only remove the database entry, not the files.\n" +
 		"\n" +

@@ -122,13 +122,34 @@ func TestJSONGolden_List(t *testing.T) {
 
 // --- status ---
 
-// goldenStatusGame is a fully-populated game whose every path is a literal,
-// so a status golden never has to scrub one.
-func goldenStatusGame(id, name string) *domain.Game {
+// goldenGameRoot is the directory a golden fixture's games are installed
+// under. It is real, because production flags a game whose mod_path does not
+// exist (#427) and a golden must pin an ordinary row, and it is scrubbed back
+// to "/games" (goldenGameSubs) so the recorded documents stay byte-stable.
+func goldenGameRoot(t *testing.T) string {
+	t.Helper()
+	return t.TempDir()
+}
+
+// goldenGameSubs is the scrubJSON pair that turns root back into "/games".
+func goldenGameSubs(root string) []string { return []string{root, "/games"} }
+
+// goldenGameDir creates root/rel and returns it.
+func goldenGameDir(t *testing.T, root, rel string) string {
+	t.Helper()
+	dir := filepath.Join(root, filepath.FromSlash(rel))
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	return dir
+}
+
+// goldenStatusGame is a fully-populated game whose every path is a literal
+// once root is scrubbed, so status goldens are stable across machines.
+func goldenStatusGame(t *testing.T, root, id, name string) *domain.Game {
+	t.Helper()
 	return &domain.Game{
 		ID: id, Name: name,
-		InstallPath: "/games/" + id,
-		ModPath:     "/games/" + id + "/Mods",
+		InstallPath: goldenGameDir(t, root, id),
+		ModPath:     goldenGameDir(t, root, id+"/Mods"),
 		CachePath:   "/cache/" + id,
 		LinkMethod:  domain.LinkSymlink,
 		SourceIDs:   map[string]string{"src": id},
@@ -146,14 +167,15 @@ func TestJSONGolden_Status(t *testing.T) {
 	t.Run("summary", func(t *testing.T) {
 		svc := setupGameAddTest(t)
 		withStatusFlags(t, "")
-		for _, g := range []*domain.Game{goldenStatusGame("zulu", "Zulu"), goldenStatusGame("alpha", "Alpha")} {
+		root := goldenGameRoot(t)
+		for _, g := range []*domain.Game{goldenStatusGame(t, root, "zulu", "Zulu"), goldenStatusGame(t, root, "alpha", "Alpha")} {
 			require.NoError(t, svc.SaveGame(context.Background(), g))
 			_, err := svc.NewProfileManager().Create(context.Background(), g.ID, "default")
 			require.NoError(t, err)
 		}
 
 		out := captureStdout(t, func() error { return doStatus(context.Background(), svc) })
-		assertJSONCLIGolden(t, "status_summary", out)
+		assertJSONCLIGolden(t, "status_summary", out, goldenGameSubs(root)...)
 	})
 
 	t.Run("no_games", func(t *testing.T) {
@@ -167,7 +189,8 @@ func TestJSONGolden_Status(t *testing.T) {
 	t.Run("game_detail", func(t *testing.T) {
 		svc := setupGameAddTest(t)
 		withStatusFlags(t, "alpha")
-		game := goldenStatusGame("alpha", "Alpha")
+		root := goldenGameRoot(t)
+		game := goldenStatusGame(t, root, "alpha", "Alpha")
 		require.NoError(t, svc.SaveGame(context.Background(), game))
 		pm := svc.NewProfileManager()
 		_, err := pm.Create(context.Background(), game.ID, "default")
@@ -178,7 +201,7 @@ func TestJSONGolden_Status(t *testing.T) {
 		out := captureStdout(t, func() error {
 			return showGameStatusJSON(context.Background(), svc, game.ID)
 		})
-		assertJSONCLIGolden(t, "status_game_detail", out)
+		assertJSONCLIGolden(t, "status_game_detail", out, goldenGameSubs(root)...)
 	})
 }
 
@@ -414,24 +437,25 @@ func TestJSONGolden_GameList(t *testing.T) {
 		// one production writes - effective_adapter included (#413
 		// re-review L3; the golden pinned a row without it).
 		app.RegisterAdapters(svc)
-		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame("skyrim-se", "Skyrim SE")))
+		root := goldenGameRoot(t)
+		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame(t, root, "skyrim-se", "Skyrim SE")))
 		require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
-			ID: "icarus", Name: "Icarus", InstallPath: "/games/icarus", ModPath: "/games/icarus/Mods",
+			ID: "icarus", Name: "Icarus", InstallPath: goldenGameDir(t, root, "icarus"), ModPath: goldenGameDir(t, root, "icarus/Mods"),
 			DeployMode: domain.DeployCompile, ConvertPaks: true,
 		}))
 		cfg := &config.Config{DefaultGame: "skyrim-se"}
 		require.NoError(t, cfg.Save(svc.ConfigDir()))
 		withJSONOutput(t)
 
-		out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
-		assertJSONCLIGolden(t, "game_list_populated", out)
+		out := captureStdout(t, func() error { return doGameList(commandWithContext(), svc) })
+		assertJSONCLIGolden(t, "game_list_populated", out, goldenGameSubs(root)...)
 	})
 
 	t.Run("empty", func(t *testing.T) {
 		svc := setupGameAddTest(t)
 		withJSONOutput(t)
 
-		out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
+		out := captureStdout(t, func() error { return doGameList(commandWithContext(), svc) })
 		assertJSONCLIGolden(t, "game_list_empty", out)
 	})
 }

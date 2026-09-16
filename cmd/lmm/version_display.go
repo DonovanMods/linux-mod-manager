@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
@@ -89,6 +90,31 @@ func displayUpdateTarget(external bool, newVersion string) string {
 	return newVersion
 }
 
+// displayVersionAt renders a CURRENTLY INSTALLED version for a line that
+// embeds a literal "v" itself - "is pinned at v1.2.3", "up to date (v1.2.3)"
+// - rather than through a table column: "v1.2.3" for an ordinary mod,
+// "revision of <date>" for a Workshop item (#428), mirroring
+// displayModVersion but with the "v" baked into the ordinary branch so
+// these callers never print "v" in front of a date.
+func displayVersionAt(workshop bool, version string, updatedAt time.Time) string {
+	if workshop {
+		return displayRevision(updatedAt)
+	}
+	return "v" + version
+}
+
+// displayRollbackTarget is displayUpdateTarget's rollback twin: the version
+// a rollback moves TO. Unlike a forward update, lmm keeps no date for the
+// version being rolled back to (domain.InstalledMod has no
+// PreviousUpdatedAt), so "previous revision" is the honest analogue of
+// displayUpdateTarget's "newer" (#428).
+func displayRollbackTarget(workshop bool, toVersion string) string {
+	if workshop {
+		return "previous revision"
+	}
+	return toVersion
+}
+
 // displayLockTarget renders a lock or pin TARGET as a human reads it: "v1.2.3"
 // for an ordinary mod, and the EMPTY STRING for an external one.
 //
@@ -119,6 +145,56 @@ func sourceIsWorkshop(svc *core.Service, sourceID string) bool {
 	}
 	_, ok := src.(source.WorkshopScanner)
 	return ok
+}
+
+// workshopVersioned reports whether a mod's Version is a Steam Workshop
+// content id rather than a version a person reads: an EXTERNAL row (Tier 1),
+// or any mod from the workshop-capable source (#428) - an item lmm
+// downloaded itself (Tier 3) is an ordinary, non-external mod whose Version
+// is the very same content id, and `lmm list` printed it as one. svc may be
+// nil, which answers from external alone.
+func workshopVersioned(svc *core.Service, external bool, sourceID string) bool {
+	return external || (svc != nil && sourceIsWorkshop(svc, sourceID))
+}
+
+// modVersionLabels renders the version part of a line that NAMES a mod -
+// "Selected: X v1.2", "[1/3] Installing: X v1.2" - by the Workshop rule
+// (#428): " v<version>" for an ordinary mod, " (revision of <date>)" for a
+// Workshop item, in `lmm mod show`'s words.
+//
+// A progress event names its mod and carries its version, but not its
+// date, so the labels are built with the mods a run is about and look the
+// date up by key.
+type modVersionLabels struct {
+	svc   *core.Service
+	dates map[string]time.Time
+}
+
+// newModVersionLabels builds labels for a run over mods.
+func newModVersionLabels(svc *core.Service, mods ...*domain.Mod) modVersionLabels {
+	l := modVersionLabels{svc: svc, dates: make(map[string]time.Time, len(mods))}
+	for _, m := range mods {
+		if m != nil {
+			l.dates[domain.ModKey(m.SourceID, m.ID)] = m.UpdatedAt
+		}
+	}
+	return l
+}
+
+// suffix is the label for m.
+func (l modVersionLabels) suffix(m *domain.Mod) string {
+	if workshopVersioned(l.svc, false, m.SourceID) {
+		return " (" + displayRevision(m.UpdatedAt) + ")"
+	}
+	return displayVersionSuffix(m.Version)
+}
+
+// eventSuffix is the label for the mod a progress event names.
+func (l modVersionLabels) eventSuffix(p flowLine) string {
+	if workshopVersioned(l.svc, false, p.SourceID) {
+		return " (" + displayRevision(l.dates[domain.ModKey(p.SourceID, p.ModID)]) + ")"
+	}
+	return displayVersionSuffix(p.ModVersion)
 }
 
 // displayVersionSuffix renders " v<version>" for a line that appends a

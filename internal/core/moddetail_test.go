@@ -368,3 +368,36 @@ func TestModDetail_DescriptionTextAbsentWithoutADescription(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, detail.DescriptionText)
 }
+
+// TestModDetail_AnImportedModIsDescribedFromItsRow (#447): no registry
+// source answers for `local`, so an imported mod's detail is its installed
+// row - where it used to fail with "source not found: local".
+func TestModDetail_AnImportedModIsDescribedFromItsRow(t *testing.T) {
+	svc, game, _ := newModDetailTestService(t)
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "imp", SourceID: domain.SourceLocal, Name: "Imported", Version: "1.0", GameID: game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdatePinned, Enabled: true,
+	}))
+
+	detail, err := svc.ModDetail(context.Background(), game, "default", domain.SourceLocal, "imp")
+	require.NoError(t, err)
+	assert.Equal(t, "Imported", detail.Mod.Name)
+	require.NotNil(t, detail.Installed)
+	assert.Equal(t, "1.0", detail.Installed.Version)
+	assert.Equal(t, domain.UpdatePinned, detail.Installed.UpdatePolicy)
+
+	_, err = svc.ModDetail(context.Background(), game, "default", domain.SourceLocal, "never-imported")
+	assert.Error(t, err, "a local id with no installed row is still not found")
+}
+
+// TestModDetail_ARegisteredSourcesFailureStillFails: the installed-row
+// fallback is for a source nothing can serve, never a way to hide a real
+// source's error behind stale data.
+func TestModDetail_ARegisteredSourcesFailureStillFails(t *testing.T) {
+	svc, game, _ := newModDetailTestService(t)
+	seedModDetailInstalled(t, svc, game, "gone", "1.0") // installed, but src has no such mod
+
+	_, err := svc.ModDetail(context.Background(), game, "default", "src", "gone")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mod not found")
+}

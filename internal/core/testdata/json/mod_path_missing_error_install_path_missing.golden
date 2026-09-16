@@ -1,0 +1,7 @@
+{
+  "game_id": "skyrim-se",
+  "mod_path": "/games/skyrim-se/Data",
+  "reason": "does not exist",
+  "install_path": "/games/skyrim-se",
+  "install_path_missing": true
+}

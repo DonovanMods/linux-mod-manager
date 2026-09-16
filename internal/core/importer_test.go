@@ -41,8 +41,11 @@ func TestScanModPath_NonExistentPath(t *testing.T) {
 	importer := core.NewImporter(nil)
 	_, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "mod_path does not exist")
+	// #427: the typed refusal, which names the repair.
+	var missing *core.ModPathMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Contains(t, err.Error(), "mod_path /nonexistent/path/that/does/not/exist does not exist")
+	assert.Contains(t, err.Error(), "lmm game edit test-game --mod-path")
 }
 
 func TestScanModPath_NoModPathConfigured(t *testing.T) {

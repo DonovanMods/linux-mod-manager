@@ -180,6 +180,12 @@ type VerifyFinding struct {
 	// beside a missing row that offers Repair; the refusal for the second
 	// one arrives on the repaired document, as note "locked".
 	FixableReason string `json:"fixable_reason,omitzero"`
+
+	// External marks a row about a Steam Workshop item lmm tracks but never
+	// deployed (#429): an "ok" row naming a present item, which the
+	// presence check is ALL lmm can verify about it, or its
+	// "external_missing" row. omitzero, so every other row is unchanged.
+	External bool `json:"external,omitzero"`
 }
 
 // notFixableLocal is the reason shared by every repair gated on
@@ -223,7 +229,20 @@ type VerifyResult struct {
 	Issues   int             `json:"issues"`
 	Warnings int             `json:"warnings"`
 	Checked  int             `json:"checked"`   // feeds the CLI's "No files found for mod X" gate
-	HasFiles bool            `json:"has_files"` // false = the #217 empty-profile path ran
+	HasFiles bool            `json:"has_files"` // false = no installed mod has recorded files (the #217 path)
+
+	// Mods is how many installed mods the run covered - every installed mod
+	// of the profile, or the one ModFilter names (#429). HasFiles says
+	// whether any of them has files to checksum; this says whether there
+	// was anything to verify at all, which is what "no installed mods"
+	// means. External counts the Steam Workshop items among them, each
+	// checked for presence and named by a row; Unverified counts the others
+	// with no recorded files - a mod imported from disk, typically - which
+	// lmm has nothing to compare against. All three are omitzero: an empty
+	// profile's document is unchanged.
+	Mods       int `json:"mods,omitzero"`
+	External   int `json:"external,omitzero"`
+	Unverified int `json:"unverified,omitzero"`
 
 	// CheckedAt is when the run began, in UTC (#334) - so a surface that
 	// renders a stored or cached result ("last verified 2 hours ago") reads
@@ -258,7 +277,7 @@ type VerifyEventKind int
 // -v-gated respectively). The trailing comment on each names which
 // VerifyEvent field the kind's extra data lives in.
 const (
-	VerifyEvBegin        VerifyEventKind = iota // HasFiles
+	VerifyEvBegin        VerifyEventKind = iota // HasFiles, Mods
 	VerifyEvFinding                             // Finding + extras; row was appended to Findings
 	VerifyEvRepairDetail                        // indented sub-line; Detail pre-formatted, Fixed tone flag
 	VerifyEvSyncWarning                         // stderr-bound merged-pak sync warning (Detail)
@@ -304,7 +323,8 @@ type VerifyEvent struct {
 	Scope
 	Kind     VerifyEventKind `json:"kind"`
 	HasFiles bool            `json:"has_files,omitempty"`
-	Finding  VerifyFinding   `json:"finding"` // valid for VerifyEvFinding
+	Mods     int             `json:"mods,omitempty"` // VerifyEvBegin: VerifyResult.Mods (#429)
+	Finding  VerifyFinding   `json:"finding"`        // valid for VerifyEvFinding
 
 	// Main-line extras the CLI needs beyond the finding row itself:
 	Recorded          string `json:"recorded,omitempty"`           // version_mismatch / missing
@@ -339,6 +359,23 @@ type verifyRun struct {
 	// adapter lets a --fix repair deploy, asked at most once per run.
 	refusalAsked bool
 	refusal      error
+
+	// held, while set, collects the repair sub-lines downloadWarningSink
+	// would emit, for an arm whose row is not out yet (holdDetails).
+	held *[]VerifyEvent
+}
+
+// holdDetails makes the repair sub-lines downloadWarningSink emits wait
+// until the returned func is called, which stops holding and returns them -
+// for a repair that runs BEFORE the row it belongs to is emitted, so its
+// sub-lines can follow the row as they do everywhere else (#427 review F7).
+func (r *verifyRun) holdDetails() func() []VerifyEvent {
+	var held []VerifyEvent
+	r.held = &held
+	return func() []VerifyEvent {
+		r.held = nil
+		return held
+	}
 }
 
 // repairRefusal reports why no --fix repair that DEPLOYS may run on this
@@ -600,19 +637,23 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	if err != nil {
 		return nil, fmt.Errorf("getting files: %w", err)
 	}
+	installedMods, err := s.GetInstalledMods(ctx, game.ID, profile)
+	if err != nil {
+		return nil, fmt.Errorf("getting installed mods: %w", err)
+	}
 
 	result.HasFiles = len(files) > 0
-	r.emitEv(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles})
+	result.Mods, result.Unverified = verifyScope(installedMods, files, opts.ModFilter)
+	r.emitEv(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles, Mods: result.Mods})
+	if err := r.modPathPass(); err != nil {
+		return result, err
+	}
 
 	if !result.HasFiles {
 		// #269: an all-external profile has no checksummed files at all, so
 		// its presence tier has to run on this branch too - otherwise a
 		// profile of nothing but Steam Workshop items would verify as
 		// "nothing to check" and never notice an unsubscribed one.
-		installedMods, err := s.GetInstalledMods(ctx, game.ID, profile)
-		if err != nil {
-			return nil, fmt.Errorf("getting installed mods: %w", err)
-		}
 		if err := r.externalPresencePass(installedMods); err != nil {
 			return result, err
 		}
@@ -650,11 +691,6 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	// safe behavior on a nil *domain.Profile does the right thing here
 	// without an extra guard.
 	prof, _ := config.LoadProfile(s.ConfigDir(), game.ID, profile)
-
-	installedMods, err := s.GetInstalledMods(ctx, game.ID, profile)
-	if err != nil {
-		return nil, fmt.Errorf("getting installed mods: %w", err)
-	}
 
 	if err := r.externalPresencePass(installedMods); err != nil {
 		// Cancelled mid-pass: return the partial result already
@@ -771,17 +807,67 @@ func (r *verifyRun) externalPresencePass(installedMods []domain.InstalledMod) er
 		if r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter {
 			continue
 		}
+		r.result.External++
 		if externalContentPresent(mod.ExternalPath) {
+			// #429: named, not skipped - "tracked, present, and not lmm's
+			// to verify" is the whole report for this item, and silence
+			// read as "not checked at all". An "ok" row, so no surface
+			// counts it as a problem.
+			r.finding(VerifyFinding{
+				ModID: mod.ID, ModName: mod.Name, Status: "ok", External: true,
+				Note: "tracked from Steam - present on disk; Steam owns its files, so lmm checks only that they are there",
+			}, VerifyEvent{})
 			continue
 		}
 		r.result.Issues++
 		r.finding(VerifyFinding{
-			ModID: mod.ID, ModName: mod.Name, Status: "external_missing",
+			ModID: mod.ID, ModName: mod.Name, Status: "external_missing", External: true,
 			Note:          "Steam no longer has this item on disk - it may have been unsubscribed",
 			FixableReason: "lmm does not own this item's files, so there is nothing for --fix to redownload - resubscribe in the Steam client, or uninstall it from lmm",
 		}, VerifyEvent{})
 	}
 	return nil
+}
+
+// modPathPass reports a mod_path that needs attention (#427): the rows that
+// missing directory causes do not say what is wrong, and ModPathProblem's
+// sentence names the repair. ModPathProblem is also what decides it, so the
+// row and every game document agree - an absent directory nobody has
+// deployed into is where a new game starts, and a deploy creates it. --fix
+// does not move a mod_path, so the row is never fixable.
+func (r *verifyRun) modPathPass() error {
+	problem, err := r.svc.ModPathProblem(r.ctx, r.game)
+	if err != nil || problem == nil {
+		return err
+	}
+	r.result.Warnings++
+	r.finding(VerifyFinding{
+		Status:        "mod_path_missing",
+		Note:          problem.Error(),
+		FixableReason: "--fix does not move a mod_path - the note names the command that does",
+	}, VerifyEvent{})
+	return nil
+}
+
+// verifyScope counts the installed mods a run covers (those ModFilter
+// names, or all of them) and, of those, the ones that are neither external
+// nor have a single recorded file - what VerifyResult.Mods and .Unverified
+// report (#429).
+func verifyScope(installedMods []domain.InstalledMod, files []DeployedFile, modFilter string) (mods, unverified int) {
+	withFiles := make(map[string]bool, len(files))
+	for _, f := range files {
+		withFiles[domain.ModKey(f.SourceID, f.ModID)] = true
+	}
+	for _, mod := range installedMods {
+		if modFilter != "" && mod.ID != modFilter {
+			continue
+		}
+		mods++
+		if !mod.External && !withFiles[domain.ModKey(mod.SourceID, mod.ID)] {
+			unverified++
+		}
+	}
+	return mods, unverified
 }
 
 // externalContentPresent reports whether path is a directory with at least
@@ -1086,7 +1172,15 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 			// verbatim from doVerify (originally lines 804-846), including
 			// the "ok"+ChecksumPopulated main-line emission on success.
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
+				// The row waits for the re-download's outcome, so the
+				// re-download's own sub-lines wait for the row.
+				release := r.holdDetails()
 				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
+				held := release()
+
+				row := VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"}
+				var extras VerifyEvent
+				var detail string
 				switch {
 				case errors.Is(err, ErrModLocked):
 					// #325 (review I2): refused, not failed - see the
@@ -1095,22 +1189,26 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 					// machine-checkable note; the sentence is the text
 					// surface.
 					r.result.Warnings++
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: "locked"}, VerifyEvent{})
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(err)})
+					row.Note, detail = "locked", lockedSkipDetail(err)
 				case err != nil:
 					r.result.Warnings++
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: err.Error()}, VerifyEvent{})
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download to populate checksum failed: %v", err)})
+					row.Note, detail = err.Error(), fmt.Sprintf("Re-download to populate checksum failed: %v", err)
 				case persisted:
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"}, VerifyEvent{ChecksumPopulated: true})
+					row.Status, extras.ChecksumPopulated = "ok", true
 				default:
 					// The download succeeded but produced no checksum to
 					// store - nothing was written, so the warning stands
 					// with an honest reason (#164: "checksum populated" was
 					// a lie here, and the summary lied with it).
 					r.result.Warnings++
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: "re-downloaded, but no checksum was available to store"}, VerifyEvent{})
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store"})
+					row.Note, detail = "re-downloaded, but no checksum was available to store", "Re-downloaded, but no checksum was available to store"
+				}
+				r.finding(row, extras)
+				for _, ev := range held {
+					r.emitEv(ev)
+				}
+				if detail != "" {
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: detail})
 				}
 				continue
 			}

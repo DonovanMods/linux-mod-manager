@@ -537,7 +537,15 @@ func (s *Server) handleAPIConflicts(w http.ResponseWriter, r *http.Request) {
 
 	conflicts, err := s.svc.GetProfileConflictsForOrder(r.Context(), sel.Game, sel.Profile, order)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, err)
+		status := http.StatusInternalServerError
+		// #455: a game whose adapter is refused is a known state, not a
+		// server failure - the refusal is the answer, and the conflicts
+		// card renders it.
+		var refused *core.AdapterRefusedError
+		if errors.As(err, &refused) {
+			status = http.StatusConflict
+		}
+		s.writeAPIError(w, status, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, &core.ConflictReport{GameID: sel.Game.ID, Profile: sel.Profile, Conflicts: conflicts})

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -78,8 +79,12 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 				convertPaksStr = "on"
 			}
 		}
+		modPath := g.ModPath
+		if g.ModPathError != "" {
+			modPath += " (needs repair)"
+		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, g.Name, g.InstallPath, g.ModPath, formatGameAdapter(g), g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
+			id, g.Name, g.InstallPath, modPath, formatGameAdapter(g), g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}
@@ -87,7 +92,29 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 		return fmt.Errorf("flushing output: %w", err)
 	}
 
-	return printTable(&buf, 2, nil)
+	if err := printTable(&buf, 2, nil); err != nil {
+		return err
+	}
+	printModPathProblems(games)
+	return nil
+}
+
+// printModPathProblems follows a game table with the repair for each game
+// whose mod_path needs attention (#427): the table cell can only say
+// "(needs repair)", and a flag with no next step is the complaint #427 was
+// filed about. On stderr, in the load-time warnings' format, so the table on
+// stdout stays exactly one table.
+func printModPathProblems(games []core.GameListEntry) {
+	for _, g := range games {
+		warnModPath(g.ID, g.ModPathError)
+	}
+}
+
+// warnModPath prints one game's mod_path problem, if it has one.
+func warnModPath(gameID, problem string) {
+	if problem != "" {
+		fmt.Fprintf(os.Stderr, "warning: %s: %s\n", gameID, problem)
+	}
 }
 
 // formatGameAdapter renders a game's adapter for a table cell or a detail

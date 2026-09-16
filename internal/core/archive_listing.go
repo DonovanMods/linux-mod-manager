@@ -151,16 +151,18 @@ func importDeployablePaths(kind importArchiveKind, filename string, members []ar
 
 // importedModName is the mod name an import records for archivePath's
 // filename - the value both importWithIdentity and PlanImportArchive use, so a
-// plan's readout names the mod the ingest will actually record.
+// plan's readout names the mod the ingest will actually record. game answers
+// isLoaderStructure's "is this game a BepInEx one" question (#450) - nil for
+// a caller (a bare listing test) that has none.
 //
 // An extract-mode import takes the name from the archive's CONTENT (a sole
 // top-level directory names the mod; anything else falls back to the archive
 // base name), which is what DetectModName reads off the extracted tree and
 // what modNameFromMembers derives from the listing. Every other kind names
 // the mod after the archive file with its version suffix trimmed.
-func importedModName(kind importArchiveKind, filename, version string, members []archiveMember) string {
+func importedModName(game *domain.Game, kind importArchiveKind, filename, version string, members []archiveMember) string {
 	if kind == importKindExtract {
-		return modNameFromMembers(members, filename)
+		return modNameFromMembers(game, members, filename)
 	}
 	return trimVersionSuffix(filename, version)
 }
@@ -169,21 +171,130 @@ func importedModName(kind importArchiveKind, filename, version string, members [
 // an extracted directory: exactly one top-level entry, and that entry a
 // directory, names the mod; anything else (several entries, a single
 // top-level file, an empty archive) falls back to the archive's base name.
-func modNameFromMembers(members []archiveMember, archiveFilename string) string {
-	var top []archiveMember
-	seen := map[string]bool{}
-	for _, m := range members {
-		name, rest, nested := strings.Cut(filepath.ToSlash(filepath.Clean(m.Path)), "/")
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		top = append(top, archiveMember{Path: name, Dir: m.Dir || (nested && rest != "")})
+//
+// A sole top-level BepInEx/ is not a name (#450): every BepInEx-rooted
+// plugin package would import as "BepInEx". Its well-known subdirectories -
+// plugins/, patchers/, monomod/, config/, core/ - sitting bare at the root
+// are structure too, but ONLY for a game that actually loads mods through
+// BepInEx (isLoaderStructure) - a mod genuinely named "Core" or "Plugins"
+// for a game with no BepInEx involved keeps that name, the old rule. The
+// rule then looks beneath the structure (payloadName), and falls back to
+// the archive's base name when that says nothing.
+func modNameFromMembers(game *domain.Game, members []archiveMember, archiveFilename string) string {
+	top := topLevelEntries(members)
+	if len(top) != 1 || !top[0].Dir {
+		return stripExtension(archiveFilename)
 	}
-	if len(top) == 1 && top[0].Dir {
+	if !isLoaderStructure(game, top[0].Path) {
 		return top[0].Path
 	}
+	if name, ok := payloadName(members); ok {
+		return name
+	}
+	return archiveBaseName(archiveFilename)
+}
+
+// archiveBaseName is modNameFromMembers' loader-structure fallback when
+// nothing beneath the structure names the mod (a loose plugin file, or more
+// than one payload folder): a NexusMods-style filename's own BaseName -
+// "Jotunn" out of "Jotunn-1138-2-12-1-1700000000.zip" - is a real mod name,
+// where the whole download-manager filename is not (#450). Anything else
+// keeps the plain archive basename, unchanged from before.
+func archiveBaseName(archiveFilename string) string {
+	if parsed := ParseNexusModsFilename(archiveFilename); parsed != nil {
+		return parsed.BaseName
+	}
 	return stripExtension(archiveFilename)
+}
+
+// topLevelEntries is members' distinct first path segments, each marked a
+// directory when any member lies beneath it.
+func topLevelEntries(members []archiveMember) []archiveMember {
+	var top []archiveMember
+	index := map[string]int{}
+	for _, m := range members {
+		name, rest, nested := strings.Cut(filepath.ToSlash(filepath.Clean(m.Path)), "/")
+		dir := m.Dir || (nested && rest != "")
+		if i, ok := index[name]; ok {
+			top[i].Dir = top[i].Dir || dir
+			continue
+		}
+		index[name] = len(top)
+		top = append(top, archiveMember{Path: name, Dir: dir})
+	}
+	return top
+}
+
+// bepinexLoaderDir is BepInEx's own directory at the game root.
+const bepinexLoaderDir = "bepinex"
+
+// bepinexPayloadDirs are the BepInEx subdirectories a package drops its
+// plugins into; bepinexStructureDirs adds the ones that hold anything else.
+// Matched case-insensitively, as a Linux game directory built by hand often
+// differs from the loader's own capitalisation.
+var (
+	bepinexPayloadDirs   = []string{"plugins", "patchers", "monomod"}
+	bepinexStructureDirs = append([]string{"config", "core"}, bepinexPayloadDirs...)
+)
+
+// isLoaderStructure reports whether a sole top-level directory is the
+// loader's structure rather than a mod's own folder.
+//
+// A literal BepInEx/ is ALWAYS structure, whatever the game: nothing else
+// plausibly ships a top-level directory by that exact name. Its bare
+// subdirectories (plugins/, patchers/, monomod/, config/, core/) are far
+// more ambiguous - "Core-1.0.zip" containing "Core/..." is a real mod name
+// for a game that has nothing to do with BepInEx - so those count as
+// structure only for a game gameLoadsBepInEx says actually is one (#450).
+func isLoaderStructure(game *domain.Game, name string) bool {
+	name = strings.ToLower(name)
+	if name == bepinexLoaderDir {
+		return true
+	}
+	return gameLoadsBepInEx(game) && slices.Contains(bepinexStructureDirs, name)
+}
+
+// gameLoadsBepInEx reports whether game is a BepInEx game for the purpose of
+// isLoaderStructure's bare-subdirectory rule (#450): hasBepInEx's own
+// declared-or-installed test, widened by an explicit `adapter: bepinex` -
+// a choice the user has typed but that neither declares the loader block
+// nor (yet) has BepInEx laid out on disk. Not folded into hasBepInEx itself:
+// that helper's contract elsewhere (the derivation, the verify/bypass
+// checks) is deliberately declared-or-installed only, and widening it would
+// change those call sites' meaning along with this one.
+func gameLoadsBepInEx(game *domain.Game) bool {
+	return hasBepInEx(game) || (game != nil && game.Adapter == bepinexAdapterID)
+}
+
+// payloadName is the one plugin directory beneath the loader's structure -
+// BepInEx/plugins/<Name>/..., plugins/<Name>/..., and the patchers/ and
+// monomod/ equivalents - or false when there is not exactly one, or when a
+// plugin file sits loose beside it. Settings under config/ and the loader's
+// own core/ are not a payload and never decide the name: a package's
+// BepInEx/config/<guid>.cfg sits beside its plugin folder as a matter of
+// course.
+func payloadName(members []archiveMember) (string, bool) {
+	var names []string
+	for _, m := range members {
+		parts := strings.Split(filepath.ToSlash(filepath.Clean(m.Path)), "/")
+		if len(parts) > 0 && strings.EqualFold(parts[0], bepinexLoaderDir) {
+			parts = parts[1:]
+		}
+		if len(parts) < 2 || !slices.Contains(bepinexPayloadDirs, strings.ToLower(parts[0])) {
+			continue
+		}
+		rest := parts[1:]
+		if len(rest) == 1 && !m.Dir {
+			return "", false // a loose plugin file: nothing beneath names the mod
+		}
+		if !slices.Contains(names, rest[0]) {
+			names = append(names, rest[0])
+		}
+	}
+	if len(names) != 1 {
+		return "", false
+	}
+	return names[0], true
 }
 
 // trimVersionSuffix drops filename's extension and, when version is a real

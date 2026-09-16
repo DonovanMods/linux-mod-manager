@@ -313,25 +313,27 @@ func TestJSONGolden_ModEdit(t *testing.T) {
 func TestJSONGolden_GameSettings(t *testing.T) {
 	t.Run("set_default", func(t *testing.T) {
 		svc := setupGameAddTest(t)
-		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame("skyrim-se", "Skyrim SE")))
+		root := goldenGameRoot(t)
+		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame(t, root, "skyrim-se", "Skyrim SE")))
 		cmd := &cobra.Command{}
 		cmd.SetContext(context.Background())
 
 		out := runJSONCommand(t, func() error {
 			return doGameSetDefault(cmd, svc, "skyrim-se")
 		})
-		assertJSONCLIGolden(t, "game_set_default_result", out)
+		assertJSONCLIGolden(t, "game_set_default_result", out, goldenGameSubs(root)...)
 	})
 
 	t.Run("clear_default", func(t *testing.T) {
 		svc := setupGameAddTest(t)
-		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame("skyrim-se", "Skyrim SE")))
+		root := goldenGameRoot(t)
+		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame(t, root, "skyrim-se", "Skyrim SE")))
 		require.NoError(t, svc.SetDefaultGame(context.Background(), "skyrim-se"))
 		cmd := &cobra.Command{}
 		cmd.SetContext(context.Background())
 
 		out := runJSONCommand(t, func() error { return runGameClearDefault(cmd, nil) })
-		assertJSONCLIGolden(t, "game_clear_default_result", out)
+		assertJSONCLIGolden(t, "game_clear_default_result", out, goldenGameSubs(root)...)
 	})
 }
 

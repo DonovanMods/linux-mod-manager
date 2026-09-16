@@ -410,7 +410,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	if !jsonOutput {
-		if err := printUpdateTable(updates, autoUpdates); err != nil {
+		if err := printUpdateTable(service, updates, autoUpdates); err != nil {
 			return err
 		}
 
@@ -419,14 +419,20 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Println()
 			printSkipped(skips)
 		}
-		printUpdateChangelogs(updates)
+		printUpdateChangelogs(service, updates)
 
 		// Dry run mode - just show what would happen
 		if updateDryRun {
 			if len(autoUpdates) > 0 {
 				fmt.Printf("\nWould auto-update %d mod(s):\n", len(autoUpdates))
 				for _, u := range autoUpdates {
-					fmt.Printf("  - %s %s → %s\n", u.InstalledMod.Name, u.InstalledMod.Version, u.NewVersion)
+					// #428: the same Workshop-revision-date rule
+					// printUpdateTable applies to the CURRENT/AVAILABLE
+					// columns.
+					wv := workshopVersioned(service, u.InstalledMod.External, u.InstalledMod.SourceID)
+					fmt.Printf("  - %s %s → %s\n", u.InstalledMod.Name,
+						displayModVersion(wv, u.InstalledMod.Version, u.InstalledMod.UpdatedAt),
+						displayUpdateTarget(wv, u.NewVersion))
 				}
 			}
 			fmt.Println("\nUse without --dry-run to apply updates.")
@@ -503,7 +509,7 @@ func printBatchSkips(skipped []core.UpdateApplyResult) {
 // run will apply" (computed for both output modes) from "what the human
 // sees" (printed only when there is a human). autoUpdates is the set the
 // ✓ marker names.
-func printUpdateTable(updates, autoUpdates []domain.Update) error {
+func printUpdateTable(service *core.Service, updates, autoUpdates []domain.Update) error {
 	auto := make(map[string]bool, len(autoUpdates))
 	for _, u := range autoUpdates {
 		auto[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)] = true
@@ -554,9 +560,11 @@ func printUpdateTable(updates, autoUpdates []domain.Update) error {
 		// something to print as a version (the design's approval note): the
 		// table shows the revision date, and "newer" for a target lmm has no
 		// date for at all (version_display.go).
-		external := update.InstalledMod.External
-		current := displayModVersion(external, update.InstalledMod.Version, update.InstalledMod.UpdatedAt)
-		available := displayUpdateTarget(external, update.NewVersion)
+		// #428: an item lmm downloaded from the Workshop itself is not
+		// external, and both of its versions are content ids too.
+		contentID := workshopVersioned(service, update.InstalledMod.External, update.InstalledMod.SourceID)
+		current := displayModVersion(contentID, update.InstalledMod.Version, update.InstalledMod.UpdatedAt)
+		available := displayUpdateTarget(contentID, update.NewVersion)
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			truncate(update.InstalledMod.Name, 40),
 			current,
@@ -591,7 +599,7 @@ func printExternalUpdateSummary(updates []domain.Update) {
 // printUpdateChangelogs prints the changelog block the bulk check shows -
 // lifted out of doUpdate unchanged by #324, for the same reason
 // printUpdateTable was.
-func printUpdateChangelogs(updates []domain.Update) {
+func printUpdateChangelogs(service *core.Service, updates []domain.Update) {
 	var withChangelog []domain.Update
 	for _, u := range updates {
 		if u.Changelog != "" {
@@ -608,7 +616,12 @@ func printUpdateChangelogs(updates []domain.Update) {
 		if len(cl) > maxChangelog {
 			cl = cl[:maxChangelog] + "\n..."
 		}
-		fmt.Printf("\n  %s (%s → %s):\n", u.InstalledMod.Name, u.InstalledMod.Version, u.NewVersion)
+		// #428: same Workshop-revision-date rule as printUpdateTable's
+		// CURRENT/AVAILABLE columns.
+		wv := workshopVersioned(service, u.InstalledMod.External, u.InstalledMod.SourceID)
+		fmt.Printf("\n  %s (%s → %s):\n", u.InstalledMod.Name,
+			displayModVersion(wv, u.InstalledMod.Version, u.InstalledMod.UpdatedAt),
+			displayUpdateTarget(wv, u.NewVersion))
 		for _, line := range strings.Split(strings.TrimSpace(cl), "\n") {
 			fmt.Printf("    %s\n", line)
 		}
@@ -640,7 +653,7 @@ func applyUpdateBatch(ctx context.Context, service *core.Service, game *domain.G
 	}
 
 	opts := core.UpdateBatchOptions{Force: updateForce, SkipHooks: noHooks}
-	return service.ApplyUpdateBatch(ctx, game, plan, opts, quietSink(batchProgress(updates)))
+	return service.ApplyUpdateBatch(ctx, game, plan, opts, quietSink(batchProgress(service, updates)))
 }
 
 // batchProgress renders a batch run's events: the per-item bracket #324
@@ -656,7 +669,7 @@ func applyUpdateBatch(ctx context.Context, service *core.Service, game *domain.G
 // event, preserving applyBulkUpdate's deliberate choice: the two are the
 // same mod moments apart, and printing from the original avoids depending
 // on a race-free re-check.
-func batchProgress(updates []domain.Update) func(core.Event) {
+func batchProgress(service *core.Service, updates []domain.Update) func(core.Event) {
 	byKey := make(map[string]domain.Update, len(updates))
 	for _, u := range updates {
 		byKey[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)] = u
@@ -669,7 +682,12 @@ func batchProgress(updates []domain.Update) func(core.Event) {
 		switch p.Phase {
 		case core.UpdateBatchItemApplied:
 			u := byKey[domain.ModKey(p.SourceID, p.ModID)]
-			fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), p.ModName, u.InstalledMod.Version, u.NewVersion)
+			// #428: same Workshop-revision-date rule as printUpdateTable's
+			// CURRENT/AVAILABLE columns.
+			wv := workshopVersioned(service, u.InstalledMod.External, u.InstalledMod.SourceID)
+			fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), p.ModName,
+				displayModVersion(wv, u.InstalledMod.Version, u.InstalledMod.UpdatedAt),
+				displayUpdateTarget(wv, u.NewVersion))
 		case core.UpdateBatchItemFailed:
 			fmt.Printf("  %s %s: %s\n", colorRed("✗"), p.ModName, p.Detail)
 		case core.UpdateDownloading:
@@ -725,7 +743,11 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		if plan.Locked {
 			lockedSuffix = " (also locked)"
 		}
-		fmt.Printf("%s is pinned at v%s and was not checked%s.\n", plan.Mod.Name, plan.Mod.Version, lockedSuffix)
+		// #428: plan.Mod.Version is a Steam Workshop content id for a
+		// Tier-1 (External) or Tier-3 (lmm-downloaded) Workshop item -
+		// displayVersionAt substitutes its revision date instead.
+		wv := workshopVersioned(service, plan.Mod.External, plan.Mod.SourceID)
+		fmt.Printf("%s is pinned at %s and was not checked%s.\n", plan.Mod.Name, displayVersionAt(wv, plan.Mod.Version, plan.Mod.UpdatedAt), lockedSuffix)
 		// #142 round 5: -s/-p, same reasoning as the locked-refusal
 		// remedies below - set-update is profile-scoped (SetModUpdatePolicy
 		// takes profileName) and the mod ID may exist under more than one
@@ -737,7 +759,10 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		if jsonOutput {
 			return emitJSON(planUpdateResult(plan, "", core.UpdateUpToDate, ""))
 		}
-		fmt.Printf("%s is already up to date (v%s).\n", plan.Mod.Name, plan.Mod.Version)
+		// #428: same content-id-vs-revision-date substitution as the
+		// pinned branch above.
+		fmt.Printf("%s is already up to date (%s).\n", plan.Mod.Name,
+			displayVersionAt(workshopVersioned(service, plan.Mod.External, plan.Mod.SourceID), plan.Mod.Version, plan.Mod.UpdatedAt))
 		return nil
 
 	case plan.RecompileNeeded:
@@ -793,6 +818,12 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	default:
 		oldVersion := plan.Mod.Version
 		newVersion := plan.Update.NewVersion
+		// #428: oldVersion/newVersion stay the raw content id for the
+		// --json documents below (planUpdateResult, applyUpdate's result) -
+		// oldDisplay/newDisplay are for the human-facing lines only.
+		wv := workshopVersioned(service, plan.Mod.External, plan.Mod.SourceID)
+		oldDisplay := displayModVersion(wv, oldVersion, plan.Mod.UpdatedAt)
+		newDisplay := displayUpdateTarget(wv, newVersion)
 
 		// #97: refuse up front - the core gate (Service.ApplyUpdate)
 		// backstops this regardless, but checking here avoids ever printing
@@ -813,13 +844,13 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 			if jsonOutput {
 				return emitJSON(planUpdateResult(plan, newVersion, core.UpdateSkipped, "locked"))
 			}
-			fmt.Printf("Update available: %s → %s\n", oldVersion, newVersion)
+			fmt.Printf("Update available: %s → %s\n", oldDisplay, newDisplay)
 			fmt.Println(plan.Refusal)
 			return nil
 		}
 
 		if !jsonOutput {
-			fmt.Printf("Updating %s %s → %s...\n", plan.Mod.Name, oldVersion, newVersion)
+			fmt.Printf("Updating %s %s → %s...\n", plan.Mod.Name, oldDisplay, newDisplay)
 			if plan.Update.Changelog != "" {
 				cl := plan.Changelog
 				const maxChangelog = 500
@@ -860,7 +891,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 			return emitJSON(result)
 		}
 
-		fmt.Printf("\n%s Updated: %s %s → %s\n", colorGreen("✓"), plan.Mod.Name, oldVersion, newVersion)
+		fmt.Printf("\n%s Updated: %s %s → %s\n", colorGreen("✓"), plan.Mod.Name, oldDisplay, newDisplay)
 		fmt.Println("  Previous version preserved for rollback")
 		return nil
 	}
@@ -990,7 +1021,15 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		return err
 	}
 
+	// #428: plan.Mod.External/SourceID never change between here and the
+	// final report below - a rollback moves the SAME mod's version, never
+	// its source - so this is computed once and reused throughout.
+	wv := workshopVersioned(service, plan.Mod.External, plan.Mod.SourceID)
+
 	if plan.CacheMissing {
+		if wv {
+			return errors.New("previous revision not found in cache")
+		}
 		return fmt.Errorf("previous version %s not found in cache", plan.ToVersion)
 	}
 
@@ -1033,13 +1072,15 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		// could resolve against the wrong profile or an ambiguous source),
 		// and names unlocking only (unit Q review, I1: ApplyRollback
 		// refuses on the lock alone).
-		fmt.Printf("Rollback available: %s → %s\n", plan.FromVersion, plan.ToVersion)
+		fmt.Printf("Rollback available: %s → %s\n",
+			displayModVersion(wv, plan.FromVersion, plan.Mod.UpdatedAt), displayRollbackTarget(wv, plan.ToVersion))
 		fmt.Println(plan.Refusal)
 		return ErrReported
 	}
 
 	if !jsonOutput {
-		fmt.Printf("Rolling back %s %s → %s...\n", plan.Mod.Name, plan.FromVersion, plan.ToVersion)
+		fmt.Printf("Rolling back %s %s → %s...\n", plan.Mod.Name,
+			displayModVersion(wv, plan.FromVersion, plan.Mod.UpdatedAt), displayRollbackTarget(wv, plan.ToVersion))
 	}
 
 	opts := core.RollbackOptions{
@@ -1071,7 +1112,8 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		return emitJSON(result)
 	}
 
-	fmt.Printf("\n%s Rolled back: %s %s → %s\n", colorGreen("✓"), result.ModName, result.FromVersion, result.ToVersion)
+	fmt.Printf("\n%s Rolled back: %s %s → %s\n", colorGreen("✓"), result.ModName,
+		displayModVersion(wv, result.FromVersion, plan.Mod.UpdatedAt), displayRollbackTarget(wv, result.ToVersion))
 	return nil
 }
 

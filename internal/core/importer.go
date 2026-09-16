@@ -249,7 +249,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			return nil, fmt.Errorf("validating %s: %w", filename, err)
 		}
 
-		modName = importedModName(kind, filename, version, nil)
+		modName = importedModName(game, kind, filename, version, nil)
 
 		cacheMod := &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID}
 		cachePath, stagePath, err := prepareUnseededStaging(i.cache, game, cacheMod)
@@ -283,7 +283,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		retainedFileID = filename
 	case importKindCopy:
 		// Copy mode: just copy the file as-is to cache (don't extract)
-		modName = importedModName(kind, filename, version, nil)
+		modName = importedModName(game, kind, filename, version, nil)
 
 		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
 
@@ -334,7 +334,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// tree has BepInEx as its sole top-level directory, and
 		// DetectModName's "one top-level directory names the mod" rule
 		// would otherwise name every plugin "BepInEx".
-		modName = DetectModName(extractedPath, filename)
+		modName = DetectModName(game, extractedPath, filename)
 
 		// #353: the game's adapter lays the extracted tree out. It runs
 		// against the PRISTINE extracted tree - this staging directory
@@ -646,9 +646,14 @@ func (i *Importer) scanModPath(ctx context.Context, game *domain.Game, installed
 		}
 	}
 
-	// Check if mod_path exists
-	if _, err := os.Stat(modPath); err != nil {
-		return nil, fmt.Errorf("mod_path does not exist: %s", modPath)
+	// A mod_path that is not a directory refuses with the repair (#427),
+	// not a bare "does not exist" the user has no next step from. Absent
+	// counts here even for a game nobody has deployed to: there is nothing
+	// to scan.
+	expanded := *game
+	expanded.ModPath = modPath
+	if problem := modPathStatProblem(&expanded); problem != nil {
+		return nil, problem
 	}
 
 	var results []ScanResult

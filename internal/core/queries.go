@@ -228,6 +228,8 @@ type GameSummary struct {
 	ModCount    int   `json:"mod_count"`
 	IsDefault   bool  `json:"is_default"`
 	ConvertPaks *bool `json:"convert_paks,omitzero"`
+	// ModPathError is GameListEntry.ModPathError, for the same game (#427).
+	ModPathError string `json:"mod_path_error,omitempty"`
 }
 
 // StatusReport is everything `lmm status` renders with no game named: every
@@ -293,6 +295,8 @@ type GameStatus struct {
 	LastDeploy         *time.Time `json:"last_deploy,omitempty"`
 	ConversionFailures int        `json:"conversion_failures"`
 	ConvertPaks        *bool      `json:"convert_paks,omitzero"`
+	// ModPathError is GameListEntry.ModPathError, for the same game (#427).
+	ModPathError string `json:"mod_path_error,omitempty"`
 }
 
 // Status summarizes every configured game, ordered by ID (ListGames').
@@ -336,12 +340,19 @@ func (s *Service) Status(ctx context.Context) (*StatusReport, error) {
 			return nil, cerr
 		}
 
+		// A failed check leaves the row thin, like the mod count above.
+		modPathErr, err := s.modPathError(ctx, game)
+		if cerr := ctx.Err(); err != nil && cerr != nil {
+			return nil, cerr
+		}
+
 		summary := GameSummary{
-			Game:       *game,
-			LinkMethod: s.getGameLinkMethod(game),
-			Profiles:   names,
-			ModCount:   modCount,
-			IsDefault:  game.ID == defaultGame,
+			Game:         *game,
+			LinkMethod:   s.getGameLinkMethod(game),
+			Profiles:     names,
+			ModCount:     modCount,
+			IsDefault:    game.ID == defaultGame,
+			ModPathError: modPathErr,
 		}
 		if game.DeployMode == domain.DeployCompile {
 			v := game.ConvertPaks
@@ -368,6 +379,11 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		return nil, err
 	}
 
+	modPathErr, err := s.modPathError(ctx, game)
+	if err != nil {
+		return nil, err
+	}
+
 	linkMethod := s.getGameLinkMethod(game)
 	status := &GameStatus{
 		Game:                *game,
@@ -376,6 +392,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		LinkMethodSource:    "global",
 		ResolvedCachePath:   s.GetGameCachePath(game),
 		Profiles:            make([]ProfileSummary, len(profiles)),
+		ModPathError:        modPathErr,
 	}
 	if game.LinkMethodExplicit {
 		status.LinkMethodSource = "game"
@@ -658,12 +675,18 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 // root). Such a game uses no adapter at all, so EffectiveAdapter is absent
 // and this names why (#413 re-review L2); it is absent for every game lmm
 // can act on.
+//
+// ModPathError is ModPathProblem's sentence for a mod_path that needs the
+// user's attention - one lmm deployed into that has since gone, typically -
+// naming the repair (#427). Absent for every game whose mod_path is there,
+// and for one nobody has deployed to yet, whose first deploy creates it.
 type GameListEntry struct {
 	domain.Game
 	Default          bool   `json:"default"`
 	ConvertPaks      *bool  `json:"convert_paks,omitzero"`
 	EffectiveAdapter string `json:"effective_adapter,omitempty"`
 	AdapterError     string `json:"adapter_error,omitempty"`
+	ModPathError     string `json:"mod_path_error,omitempty"`
 }
 
 // ListGameEntries returns every configured game, ordered by ID (ListGames'),
@@ -679,7 +702,9 @@ func (s *Service) ListGameEntries(ctx context.Context) ([]GameListEntry, error) 
 	games := s.ListGames()
 	entries := make([]GameListEntry, len(games))
 	for i, game := range games {
-		entries[i] = s.newGameListEntry(game, defaultGame)
+		if entries[i], err = s.newGameListEntry(ctx, game, defaultGame); err != nil {
+			return nil, err
+		}
 	}
 	return entries, nil
 }
@@ -693,8 +718,10 @@ func (s *Service) ListGameEntries(ctx context.Context) ([]GameListEntry, error) 
 //
 // Resolving the adapter can cost one stat per game (the BepInEx
 // derivation's preloader test), which is the price of the row telling the
-// truth about a game with BepInEx installed but not declared.
-func (s *Service) newGameListEntry(game *domain.Game, defaultGameID string) GameListEntry {
+// truth about a game with BepInEx installed but not declared. ModPathError
+// costs the same again plus one DB read (ModPathProblem), and its failure
+// is the entry's.
+func (s *Service) newGameListEntry(ctx context.Context, game *domain.Game, defaultGameID string) (GameListEntry, error) {
 	entry := GameListEntry{Game: *game, Default: game.ID == defaultGameID}
 	name := s.AdapterName(game)
 	switch _, err := s.adapterForName(game, name); {
@@ -707,7 +734,21 @@ func (s *Service) newGameListEntry(game *domain.Game, defaultGameID string) Game
 		v := game.ConvertPaks
 		entry.ConvertPaks = &v
 	}
-	return entry
+	var err error
+	if entry.ModPathError, err = s.modPathError(ctx, game); err != nil {
+		return GameListEntry{}, err
+	}
+	return entry, nil
+}
+
+// modPathError is ModPathProblem as the string every game document carries,
+// "" when there is nothing to say.
+func (s *Service) modPathError(ctx context.Context, game *domain.Game) (string, error) {
+	problem, err := s.ModPathProblem(ctx, game)
+	if err != nil || problem == nil {
+		return "", err
+	}
+	return problem.Error(), nil
 }
 
 // VerifyReport is a VerifyResult plus the game/profile it describes - the
