@@ -113,6 +113,11 @@ func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
 	// declaring game.
 	if r.svc.runsBepInEx(r.game) {
 		r.loaderMisplacedDeployCheck(installedMods)
+		// The same gate for the same reason: "nested inside
+		// BepInEx/plugins/" is a statement about the game-root layout, and
+		// under a mod_path of BepInEx/plugins it is a v1 game's own
+		// deployment of a BepInEx/-rooted archive (verify_loader_nested.go).
+		r.loaderNestedTreeCheck()
 	}
 	if !r.game.DeclaresBepInEx() {
 		return

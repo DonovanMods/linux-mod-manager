@@ -29,6 +29,10 @@ func TestRenderVerifyFinding_LoaderTierRowsArePrinted(t *testing.T) {
 		{status: "loader_adapter_ignored", want: "loader - game \"valheim\" declares the BepInEx loader, but its adapter is \"generic-files\""},
 		{status: "loader_deployed_outside_loader", modName: "Jotunn", want: "Jotunn - 2 file(s) sit outside BepInEx/, including an assembly"},
 		{status: "fixed_loader_deployed_outside_loader", modName: "Jotunn", want: "Fixed: Jotunn - re-laid out 2 file(s)"},
+		// #413 final review F4: a BepInEx/ tree nested inside BepInEx/plugins/.
+		{status: "loader_nested_tree", want: "X loader - BepInEx/plugins/BepInEx/ is a BepInEx/ tree nested inside BepInEx/plugins/"},
+		{status: "loader_foreign_nested_tree", want: "? loader - BepInEx/plugins/Hand/BepInEx/ is a BepInEx/ tree nested inside BepInEx/plugins/"},
+		{status: "fixed_loader_nested_tree", want: "Fixed: loader - removed 2 untracked link(s) from BepInEx/plugins/BepInEx/"},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
 			note := strings.TrimPrefix(strings.SplitN(tc.want, " - ", 2)[1], "Fixed: ")

@@ -124,7 +124,12 @@ type VerifyFinding struct {
 	//	                      the BepInEx normaliser rewrites under
 	//	                      BepInEx/ - otherwise a re-deploy would put
 	//	                      the files straight back (#424)
+	//	loader_nested_tree    always, on a plain run: --fix removes the
+	//	                      untracked links into lmm's cache that make
+	//	                      up the nested BepInEx/ tree (#413)
 	//	everything else       never - ok, skipped, file_count_mismatch,
+	//	                      loader_foreign_nested_tree (lmm cannot prove
+	//	                      the files are its own),
 	//	                      version_unverifiable (nothing to repair it
 	//	                      with) and conversion_failed (a conversion is
 	//	                      retried only when a merge INPUT changes, which

@@ -189,8 +189,12 @@ sweep found appears. status is one of "ok", "missing", "no_checksum",
 "loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
 "loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
 "fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",
-"fixed_loader_deployed_outside_loader" and "loader_adapter_ignored" (a game
-with BepInEx whose adapter is another one), each of which carries its
+"fixed_loader_deployed_outside_loader", "loader_adapter_ignored" (a game
+with BepInEx whose adapter is another one), "loader_nested_tree" and
+"fixed_loader_nested_tree" (a BepInEx/ directory inside BepInEx/plugins/
+holding links lmm left there and no longer records, which --fix removes)
+and "loader_foreign_nested_tree" (one holding files lmm cannot prove it
+placed, a warning --fix leaves alone), each of which carries its
 whole sentence in note; note adds detail where there's something extra to
 say - a blocked cache rename, sibling-repair results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no

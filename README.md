@@ -2477,8 +2477,8 @@ With `--fix`, verify also REMOVES stale lmm-deployed files and dangling lmm-cach
 - **? ModName - VERSION UNVERIFIABLE** - None of the recorded file ID(s) are listed by the source anymore; not repaired by `--fix` (reinstall the mod instead).
 
 For a game with a `loader:` block (see [BepInEx (Unity
-games)](#bepinex-unity-games)), verify adds a loader tier — six checks,
-reporting seven statuses:
+games)](#bepinex-unity-games)), verify adds a loader tier — seven checks,
+reporting nine statuses:
 
 - **LOADER MISSING** — the game declares a loader and its preloader
   (`BepInEx/core/BepInEx.Preloader.dll`) is not in the install directory.
@@ -2515,9 +2515,22 @@ reporting seven statuses:
   from. Every other check above is about the DECLARATION, so they run only
   for a game that made one.
 
-Only the last two are `--fix`-able: lmm does not install the loader or
-write Steam launch options, so the remedy for the others is the setup `lmm
-game show` prints.
+- **LOADER NESTED TREE** — a `BepInEx/` directory sits inside
+  `BepInEx/plugins/`. BepInEx loads every plugin anywhere under `plugins/`,
+  so a plugin in it loads a second time beside the copy deployed where it
+  belongs, and BepInEx reads no config in it. It is what a
+  `BepInEx/`-rooted archive leaves behind when a game that deployed into
+  `BepInEx/plugins` moves its `mod_path` to the game root without a purge
+  first. When every file in it is a link into lmm's own mod cache that no
+  profile records, `--fix` removes it; anything else is reported as
+  **LOADER FOREIGN NESTED TREE**, a warning `--fix` leaves alone, since lmm
+  cannot tell it from an archive you extracted there yourself. Like the
+  check above, it runs for a game that has BepInEx installed without
+  declaring it.
+
+Only UNLINKED, DEPLOYED OUTSIDE LOADER and NESTED TREE are `--fix`-able:
+lmm does not install the loader or write Steam launch options, so the
+remedy for the others is the setup `lmm game show` prints.
 
 A locked mod's VERSION MISMATCH is still reported, but `--fix` refuses to
 rewrite a locked mod's record (other, unlocked mods in the same run are
