@@ -167,7 +167,9 @@ warnings, checked, has_files, mods, external, unverified}}; each finding
 key is omitted when unset (a row only carries the fields its status needs -
 e.g. "version_mismatch" carries recorded/effective, "missing" carries
 version, most statuses carry neither). checked is the number of files/mods
-verify walked (feeds the "No files found for mod X" text-mode message);
+verify walked (feeds the "No files found for mod X" text-mode message
+alongside mods, since a mod-filter run that matched an external or
+otherwise-unverified mod leaves checked at 0 too but did find that mod, #429);
 has_files is false when no installed mod has recorded files, so no
 per-file checks run - the game-level checks (Steam Workshop presence, the
 adapter's, the loader's) and the deploy-convergence sweep still do. mods
@@ -309,7 +311,14 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	fmt.Println()
 	printUnverified(result)
 
-	if result.Checked == 0 && modFilter != "" {
+	if result.Checked == 0 && modFilter != "" && result.Mods == 0 {
+		// #429: Checked stays 0 for a filter that matched an external
+		// (Steam Workshop) or otherwise-unverified mod too - neither
+		// externalPresencePass nor the unverified case increments it - but
+		// the filter DID match a mod, and its own row (the "tracked from
+		// Steam" line, or printUnverified's count above) already said so.
+		// "No files found" is reserved for a filter that matched nothing at
+		// all installed (Mods == 0).
 		fmt.Printf("No files found for mod %s\n", modFilter)
 		return nil
 	}

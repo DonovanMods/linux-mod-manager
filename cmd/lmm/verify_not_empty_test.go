@@ -77,3 +77,32 @@ func TestDoVerify_AnEmptyProfileStillSaysSo(t *testing.T) {
 	assert.Contains(t, out, "No installed mods to verify.")
 	assert.Zero(t, result.Mods)
 }
+
+// TestDoVerify_FilteredWorkshopModOnAChecksummedProfileIsNotNoFilesFound
+// (#429): a `lmm verify <workshop-id>` filter naming a tracked Steam
+// item, on a profile that ALSO has a checksummed mod (so HasFiles is true
+// and the branch with files runs), printed the "+ ... tracked from Steam -
+// present on disk" row and then, wrongly, "No files found for mod <id>" -
+// Checked stays 0 for an external row (externalPresencePass never
+// increments it), but the filter DID match a mod. "No files found" is for a
+// filter that matched nothing at all.
+func TestDoVerify_FilteredWorkshopModOnAChecksummedProfileIsNotNoFilesFound(t *testing.T) {
+	cmd, svc, game := setupVerifySummaryGame(t, "")
+	seedVerifySummaryMod(t, svc, game)
+	seedVerifyExternal(t, svc, game, "3000000001", "ModMenu")
+
+	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, []string{"3000000001"}) })
+	assert.Contains(t, out, "tracked from Steam - present on disk")
+	assert.NotContains(t, out, "No files found for mod", "the filter matched ModMenu; this message is for a filter that matched nothing")
+}
+
+// TestDoVerify_AFilterMatchingNothingStillSaysNoFilesFound is the other
+// half of the same rule: a mod-id filter that matches NO installed mod at
+// all (Mods stays 0) still gets the "No files found" message.
+func TestDoVerify_AFilterMatchingNothingStillSaysNoFilesFound(t *testing.T) {
+	cmd, svc, game := setupVerifySummaryGame(t, "")
+	seedVerifySummaryMod(t, svc, game)
+
+	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, []string{"does-not-exist"}) })
+	assert.Contains(t, out, "No files found for mod does-not-exist")
+}
