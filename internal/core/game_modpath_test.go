@@ -301,7 +301,8 @@ func TestSetGameModPath_RefusesWhileFilesAreDeployed(t *testing.T) {
 	require.ErrorAs(t, err, &inUse)
 	assert.Equal(t, 1, inUse.DeployedFiles)
 	assert.Equal(t, game.ModPath, inUse.ModPath)
-	assert.Contains(t, err.Error(), "lmm purge --game g1", "the refusal names the step that clears it")
+	assert.Equal(t, game.InstallPath, inUse.NewModPath)
+	assert.Contains(t, err.Error(), "lmm purge --game g1 --profile default", "the refusal names the step that clears it")
 	assert.Same(t, inUse, inUse.Details())
 
 	reloaded, err := svc.GetGame(game.ID)
@@ -328,7 +329,12 @@ func TestSetGameModPath_RefusesToCreateAnAdapterRefusal(t *testing.T) {
 	var specErr *core.GameSpecError
 	require.ErrorAs(t, err, &specErr)
 	assert.Equal(t, "mod_path", specErr.Field)
-	assert.Contains(t, err.Error(), "not its install path")
+	// #427 review F5: the sentence describes the edit that was asked for -
+	// the saved mod_path is still the root - and its way out is the
+	// adapter, in the same command, not a purge and a no-op edit.
+	assert.Equal(t, "mod_path: game \"valheim\" sets adapter: bepinex, which deploys into the game root ("+root+
+		"), so its mod_path cannot move to "+plugins+"; to deploy archives there exactly as packaged, change the adapter in the same command: `lmm game edit valheim --adapter generic-files --mod-path "+plugins+"`", err.Error())
+	assert.NotContains(t, err.Error(), "lmm purge")
 
 	// The refused state (bepinex off the root) is exactly what the edit
 	// repairs.
@@ -345,8 +351,121 @@ func TestSetGameModPath_RefusesToCreateAnAdapterRefusal(t *testing.T) {
 }
 
 func TestGameModPathInUseError_Wire(t *testing.T) {
-	err := &core.GameModPathInUseError{GameID: "g1", ModPath: "/games/g1/mods", DeployedFiles: 3}
-	assert.Equal(t, "3 file(s) are deployed under /games/g1/mods, and lmm records each one relative to the mod_path; run `lmm purge --game g1` first, then change the mod_path, then run `lmm deploy --game g1`", err.Error())
+	err := &core.GameModPathInUseError{
+		GameID: "g1", ModPath: "/games/g1/mods", NewModPath: "/games/g1", DeployedFiles: 3,
+		Profiles:      []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 2}, {Profile: "second", DeployedFiles: 1}},
+		ActiveProfile: "default",
+	}
+	assert.Equal(t, "3 file(s) are deployed under /games/g1/mods (2 by profile default, 1 by profile second), "+
+		"and lmm records each one relative to the mod_path, so moving it to /games/g1 would strand them; "+
+		"purge them first - run `lmm purge --game g1 --profile default`, then `lmm purge --game g1 --profile second` - "+
+		"then change the mod_path, then run `lmm deploy --game g1`, which deploys the active profile (default) into the new one; "+
+		"profile second is deployed there when you next switch to it (`lmm profile switch second --game g1`)", err.Error())
+
+	only := &core.GameModPathInUseError{
+		GameID: "g1", ModPath: "/games/g1/mods", NewModPath: "/games/g1", DeployedFiles: 1,
+		Profiles: []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}}, ActiveProfile: "default",
+	}
+	assert.Equal(t, "1 file(s) are deployed under /games/g1/mods (1 by profile default), "+
+		"and lmm records each one relative to the mod_path, so moving it to /games/g1 would strand them; "+
+		"purge them first - run `lmm purge --game g1 --profile default` - "+
+		"then change the mod_path, then run `lmm deploy --game g1`, which deploys the active profile (default) into the new one", only.Error())
+}
+
+// TestSetGameModPath_NamesEveryProfileThatHasFilesDeployed (#427 review
+// F2): the refusal counted every profile's rows but told the user to purge
+// the ACTIVE one, so a non-active profile with files deployed made it
+// permanent - following it verbatim changed nothing. It names each profile,
+// and purging each one it names is what lets the edit through.
+func TestSetGameModPath_NamesEveryProfileThatHasFilesDeployed(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := seedModPathGame(t, svc, true)
+	_, err := svc.NewProfileManager().Create(t.Context(), game.ID, "second")
+	require.NoError(t, err)
+	deployOneFile(t, svc, game, "default", "m1")
+	deployOneFile(t, svc, game, "second", "m2")
+	deployOneFile(t, svc, game, "second", "m3")
+
+	_, err = svc.SetGameModPath(t.Context(), game.ID, game.InstallPath)
+	var inUse *core.GameModPathInUseError
+	require.ErrorAs(t, err, &inUse)
+	assert.Equal(t, 3, inUse.DeployedFiles)
+	assert.Equal(t, []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}, {Profile: "second", DeployedFiles: 2}}, inUse.Profiles)
+	assert.Equal(t, "default", inUse.ActiveProfile)
+	assert.Contains(t, err.Error(), "`lmm purge --game g1 --profile second`", "the non-active profile is named")
+	assert.Contains(t, err.Error(), "`lmm purge --game g1 --profile default`")
+
+	// Purging exactly what it names (recorded rows only, which is what a
+	// non-active profile's purge is) clears the refusal.
+	for _, p := range inUse.Profiles {
+		for _, id := range []string{"m1", "m2", "m3"} {
+			require.NoError(t, svc.ExecForTest(t.Context(), `DELETE FROM deployed_files WHERE game_id = ? AND profile_name = ? AND mod_id = ?`, game.ID, p.Profile, id))
+		}
+	}
+	_, err = svc.SetGameModPath(t.Context(), game.ID, game.InstallPath)
+	require.NoError(t, err)
+}
+
+// TestEditGame_AdapterAndModPathInOneCommand (#427 review F5): the two keys
+// are validated together, as the game they leave behind, so either
+// direction works in one edit - onto bepinex at the root, and off bepinex
+// to a subdirectory.
+func TestEditGame_AdapterAndModPathInOneCommand(t *testing.T) {
+	svc := newFlowsTestService(t)
+	root := t.TempDir()
+	game := &domain.Game{
+		ID: "valheim", Name: "Valheim", InstallPath: root, ModPath: filepath.Join(root, "mods"),
+		SourceIDs: map[string]string{"nexusmods": "valheim"},
+	}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+
+	onto := "bepinex"
+	entry, err := svc.EditGame(t.Context(), game.ID, core.GameEdit{Adapter: &onto, ModPath: &root})
+	require.NoError(t, err)
+	assert.Equal(t, root, entry.ModPath)
+	assert.Equal(t, "bepinex", entry.Adapter)
+
+	off, sub := "generic-files", "mods"
+	entry, err = svc.EditGame(t.Context(), game.ID, core.GameEdit{Adapter: &off, ModPath: &sub})
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "mods"), entry.ModPath)
+	assert.Equal(t, "generic-files", entry.Adapter)
+
+	// Asking for bepinex off the root in one edit is refused on the
+	// adapter, and names the mod_path it would need.
+	_, err = svc.EditGame(t.Context(), game.ID, core.GameEdit{Adapter: &onto})
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "adapter", specErr.Field)
+	assert.Contains(t, err.Error(), "--adapter bepinex --mod-path "+root)
+}
+
+// TestEditGame_WritesAllOrNothing (#427 review F6): every requested change
+// is checked before any is written, so a bad source map cannot leave the
+// mod_path moved behind a failed command.
+func TestEditGame_WritesAllOrNothing(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := seedModPathGame(t, svc, false)
+	data := "Data"
+	bogus := "no-such-adapter"
+
+	for name, edit := range map[string]core.GameEdit{
+		"an unregistered source": {ModPath: &data, Sources: map[string]string{"no-such-source": "x"}},
+		"an empty source map":    {ModPath: &data, Sources: map[string]string{}},
+		"an unknown adapter":     {ModPath: &data, Adapter: &bogus},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.EditGame(t.Context(), game.ID, edit)
+			require.Error(t, err)
+
+			reloaded, err := svc.GetGame(game.ID)
+			require.NoError(t, err)
+			assert.Equal(t, game.ModPath, reloaded.ModPath, "nothing was written")
+			onDisk, err := config.LoadGames(svc.ConfigDir())
+			require.NoError(t, err)
+			assert.Equal(t, game.ModPath, onDisk[game.ID].ModPath)
+		})
+	}
 }
 
 // TestVerify_AMissingModPathUnderDeployedModsIsAWarning: a game whose

@@ -279,9 +279,11 @@ func bepinexEnableSteps(game *domain.Game) []string {
 
 	var steps []string
 	if !gameRoot {
-		// SetGameModPath refuses to move a mod_path with files deployed
-		// under it, for this same reason.
-		steps = append(steps, fmt.Sprintf("run `lmm purge --game %s`", id))
+		// A mod_path edit is refused while ANY profile has files deployed
+		// under it, for this same reason, and each profile is purged on its
+		// own (#427 review F2) - so the step names the flag, and the edit
+		// that follows names every profile it still finds.
+		steps = append(steps, fmt.Sprintf("run `lmm purge --game %s --profile <name>` for each profile with files deployed (the next step names any it finds)", id))
 	}
 	if compile {
 		drop := "remove `deploy_mode: compile`"
@@ -290,13 +292,15 @@ func bepinexEnableSteps(game *domain.Game) []string {
 		}
 		steps = append(steps, drop+" from games.yaml")
 	}
-	if !gameRoot {
-		// A command since #456, rather than a hand edit of games.yaml.
+	// One command since #456 (and in either order since the edit is
+	// checked as a whole, #427 review F5), rather than a hand edit of
+	// games.yaml.
+	switch setAdapter := !compile && explicit && game.Adapter != bepinexAdapterID; {
+	case !gameRoot && setAdapter:
+		steps = append(steps, fmt.Sprintf("run `lmm game edit %s --mod-path %s --adapter bepinex`", id, game.InstallPath))
+	case !gameRoot:
 		steps = append(steps, fmt.Sprintf("run `lmm game edit %s --mod-path %s`", id, game.InstallPath))
-	}
-	if !compile && explicit && game.Adapter != bepinexAdapterID {
-		// After the mod_path edit: AdapterFor refuses bepinex off the game
-		// root, so the other order fails.
+	case setAdapter:
 		steps = append(steps, fmt.Sprintf("run `lmm game edit %s --adapter bepinex`", id))
 	}
 	if !gameRoot {

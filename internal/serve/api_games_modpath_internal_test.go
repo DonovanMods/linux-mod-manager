@@ -84,9 +84,9 @@ func TestAPIGameSources_ModPathRepairsTheGame(t *testing.T) {
 	assert.Contains(t, gamesYAML(t, s), "mod_path: "+game.InstallPath)
 }
 
-// TestAPIGameSources_ModPathThenAdapter pins the order: the mod_path is
-// written first, because bepinex is refused off the game root, so one body
-// can move a game to its root and onto bepinex.
+// TestAPIGameSources_ModPathThenAdapter: the body is checked as a whole,
+// so it can move a game to its root and onto bepinex - which neither edit
+// could do alone.
 func TestAPIGameSources_ModPathThenAdapter(t *testing.T) {
 	s, game := newMissingModPathServer(t)
 	app.RegisterAdapters(s.svc) // what the real binary resolves against
@@ -129,7 +129,8 @@ func TestAPIGameSources_ModPathRefusals(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
 		assert.Equal(t, 1, env.Details.DeployedFiles)
-		assert.Contains(t, env.Error, "lmm purge --game skyrim-se")
+		assert.Equal(t, []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}}, env.Details.Profiles)
+		assert.Contains(t, env.Error, "lmm purge --game skyrim-se --profile default")
 
 		reloaded, err := s.svc.GetGame("skyrim-se")
 		require.NoError(t, err)
@@ -148,6 +149,74 @@ func TestAPIGameSources_ModPathRefusals(t *testing.T) {
 		rec := doAPI(s, http.MethodPut, "/api/v1/games/nope", `{"mod_path":`+jsonString(game.InstallPath)+`}`)
 		require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
 	})
+}
+
+// TestAPIGameSources_OffBepInExInOneBody (#427 review F5): the reverse of
+// ModPathThenAdapter - a bepinex game moved off its root and onto
+// generic-files - in one body, which the fixed mod-path-first order refused.
+func TestAPIGameSources_OffBepInExInOneBody(t *testing.T) {
+	s, game := newMissingModPathServer(t)
+	app.RegisterAdapters(s.svc)
+	rec := doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se",
+		`{"mod_path":`+jsonString(game.InstallPath)+`,"adapter":"bepinex"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	rec = doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se", `{"mod_path":"Data"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "--adapter generic-files --mod-path")
+
+	rec = doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se", `{"adapter":"generic-files","mod_path":"Data"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var entry core.GameListEntry
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &entry, json.RejectUnknownMembers(true)))
+	assert.Equal(t, game.ModPath, entry.ModPath)
+	assert.Equal(t, "generic-files", entry.Adapter)
+}
+
+// TestAPIGameSources_WritesAllOrNothing (#427 review F6): a body whose
+// source map is refused leaves the mod_path where it was.
+func TestAPIGameSources_WritesAllOrNothing(t *testing.T) {
+	s, game := newMissingModPathServer(t)
+
+	rec := doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se",
+		`{"mod_path":`+jsonString(game.InstallPath)+`,"sources":{"no-such-source":"x"}}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+
+	reloaded, err := s.svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, game.ModPath, reloaded.ModPath)
+	assert.NotContains(t, gamesYAML(t, s), "mod_path: "+game.InstallPath+"\n")
+}
+
+// TestAPIGameDetectApply_RefusesToMoveAModPathWithFilesDeployed (#427
+// review F1): selecting an already-configured row is detection's repair,
+// and it rewrites mod_path - so it is refused, 409 as on PUT, while files
+// are deployed under the old one, and it writes nothing.
+func TestAPIGameDetectApply_RefusesToMoveAModPathWithFilesDeployed(t *testing.T) {
+	s := newGamesServer(t)
+	install := fakeSteamApp(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
+	game := &domain.Game{
+		ID: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: install,
+		ModPath: filepath.Join(install, "mods"), SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"},
+	}
+	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+	require.NoError(t, s.svc.SaveGame(t.Context(), game))
+	deployOneModFile(t, s.svc, game)
+
+	rec := doAPI(s, http.MethodPost, "/api/v1/games/detect", `{"select":["1"]}`)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+	var env struct {
+		Error string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	assert.Contains(t, env.Error, "lmm purge --game skyrim-se --profile default")
+
+	reloaded, err := s.svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, game.ModPath, reloaded.ModPath)
+	profile, err := s.svc.NewProfileManager().Get(t.Context(), "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Len(t, profile.Mods, 1, "the default profile was not reset either")
 }
 
 // deployOneModFile deploys one cached file for game through the real

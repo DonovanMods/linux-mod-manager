@@ -111,14 +111,18 @@ var (
 		},
 	}
 	remedyMoveToGameRoot = bypassRemedy{
-		offers: "run `lmm purge --game lethal-company`, then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`", perArchive: true,
+		offers: "run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`", perArchive: true,
 		apply: func(t *testing.T, svc *core.Service, id string) { setModPathToRoot(t, svc, id) },
 	}
 	remedyMoveToGameRootAndBepInEx = bypassRemedy{
-		offers: "run `lmm purge --game lethal-company`, then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm game edit lethal-company --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`", perArchive: true,
+		offers: "run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`", perArchive: true,
+		// One edit, as the step says (#427 review F5).
 		apply: func(t *testing.T, svc *core.Service, id string) {
-			setModPathToRoot(t, svc, id)
-			setAdapter(t, svc, id, "bepinex")
+			game, err := svc.GetGame(id)
+			require.NoError(t, err)
+			bepinex := "bepinex"
+			_, err = svc.EditGame(context.Background(), id, core.GameEdit{ModPath: &game.InstallPath, Adapter: &bepinex})
+			require.NoError(t, err)
 		},
 	}
 )
@@ -282,9 +286,9 @@ var bypassCases = map[string]bypassCase{
 		adapterID: "generic-files",
 		setup:     func(t *testing.T, _ *core.Service, g *domain.Game) { install(t, g); pluginsModPath(g) },
 		persistent: fmt.Sprintf(installedOpening, `its adapter is "generic-files"`+nonRootWhy) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, to keep this game on \"generic-files\", pin the adapter (`lmm game edit lethal-company --adapter generic-files`).",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, to keep this game on \"generic-files\", pin the adapter (`lmm game edit lethal-company --adapter generic-files`).",
 		archive: fmt.Sprintf(archiveOpening, `game "lethal-company"'s adapter is "generic-files"`+nonRootWhy) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
 		remedies: []bypassRemedy{remedyMoveToGameRoot, remedyPin("generic-files", false)},
 	},
 	"declared, mod_path in BepInEx/plugins": {
@@ -292,9 +296,9 @@ var bypassCases = map[string]bypassCase{
 		adapterID: "generic-files",
 		setup:     func(t *testing.T, _ *core.Service, g *domain.Game) { declare(g); pluginsModPath(g) },
 		persistent: fmt.Sprintf(declaredOpening, `its adapter is "generic-files"`+nonRootWhy) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, to keep this game on \"generic-files\", remove the `loader:` block (`lmm game edit lethal-company --loader \"\"`) and pin the adapter (`lmm game edit lethal-company --adapter generic-files`).",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, to keep this game on \"generic-files\", remove the `loader:` block (`lmm game edit lethal-company --loader \"\"`) and pin the adapter (`lmm game edit lethal-company --adapter generic-files`).",
 		archive: fmt.Sprintf(archiveOpening, `game "lethal-company"'s adapter is "generic-files"`+nonRootWhy) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
 		remedies: []bypassRemedy{remedyMoveToGameRoot, remedyPin("generic-files", true)},
 	},
 	"declared and installed, explicit generic-files, mod_path in BepInEx/plugins": {
@@ -307,9 +311,9 @@ var bypassCases = map[string]bypassCase{
 			g.Adapter = "generic-files"
 		},
 		persistent: fmt.Sprintf(declaredOpening, `its adapter is "generic-files"`) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm game edit lethal-company --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, if \"generic-files\" is the adapter you meant, remove the `loader:` block (`lmm game edit lethal-company --loader \"\"`).",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/; or, if \"generic-files\" is the adapter you meant, remove the `loader:` block (`lmm game edit lethal-company --loader \"\"`).",
 		archive: fmt.Sprintf(archiveOpening, `game "lethal-company"'s adapter is "generic-files"`) + nonRootConsequence +
-			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company`, then run `lmm game edit lethal-company --mod-path %[1]s`, then run `lmm game edit lethal-company --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
+			" To have lmm lay BepInEx archives out, run `lmm purge --game lethal-company --profile <name>` for each profile with files deployed (the next step names any it finds), then run `lmm game edit lethal-company --mod-path %[1]s --adapter bepinex`, then run `lmm deploy --game lethal-company` and `lmm verify --fix --game lethal-company`, which moves what is already imported under BepInEx/.",
 		remedies: []bypassRemedy{remedyMoveToGameRootAndBepInEx, remedyUnloadExplicit},
 	},
 }

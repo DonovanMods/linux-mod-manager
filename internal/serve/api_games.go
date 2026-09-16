@@ -240,9 +240,10 @@ type gameSourcesRequest struct {
 	Adapter *string `json:"adapter,omitempty"`
 	// ModPath, when present, sets the game's `mod_path:` (#427, #456) - the
 	// repair for a mod_path that no longer exists - resolved and refused by
-	// the rules `lmm game edit --mod-path` applies. It is written before the
-	// adapter, because bepinex is refused off the game root, so one body can
-	// move a game to its root and onto bepinex.
+	// the rules `lmm game edit --mod-path` applies. It is checked together
+	// with the adapter and the source map, and nothing is written unless all
+	// of them pass (core.Service.EditGame), so one body can move a game onto
+	// bepinex at its root, or off it.
 	ModPath *string `json:"mod_path,omitempty"`
 	// Loader is #359's declaration, additive: a body carrying it edits the
 	// LOADER instead of the source map, the mod path or the adapter.
@@ -271,8 +272,8 @@ type gameSourcesRequest struct {
 // the file by hand.
 //
 // Like the lock/policy routes it is a SINGLE-STEP mutation rather than a
-// job: core.Service.UpdateGameSources is one gated write with nothing to
-// preview and no progress to report (mod_settings.go's own rule for the
+// job: core.Service.EditGame is one gated write with nothing to preview and
+// no progress to report (mod_settings.go's own rule for the
 // settings class). An unregistered source id is 400 carrying
 // core.GameSpecError's {field, value, reason} - field "sources" - so the
 // form marks the offending row; an unknown game id is 404.
@@ -300,33 +301,18 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Each edit is its own gated core write, in the order `lmm game edit`
-	// uses: the mod path (#427), then the adapter (#353), then the source
-	// map - so a body carrying several fails before the later ones move.
-	id := r.PathValue("id")
-	var entry *core.GameListEntry
-	var err error
-	if req.ModPath != nil {
-		if entry, err = s.svc.SetGameModPath(r.Context(), id, *req.ModPath); err != nil {
-			s.writeAPIError(w, gameSourcesErrorStatus(err), err)
-			return
-		}
+	// ONE core edit (#427 review F6): every member is checked, against the
+	// game the whole body leaves, before any is written - so a bad map
+	// cannot leave the mod_path moved, and the adapter and the mod_path
+	// compose in either direction. A body with no sources leaves the map
+	// alone, unless it carries nothing at all, which is the empty-map
+	// refusal it always was.
+	edit := core.GameEdit{Sources: req.Sources, Adapter: req.Adapter, ModPath: req.ModPath}
+	if edit.Sources == nil && edit.Adapter == nil && edit.ModPath == nil {
+		edit.Sources = map[string]string{}
 	}
-	if req.Adapter != nil {
-		if entry, err = s.svc.SetGameAdapter(r.Context(), id, *req.Adapter); err != nil {
-			s.writeAPIError(w, gameSourcesErrorStatus(err), err)
-			return
-		}
-	}
-	// A body that edited something else and sent no source map leaves the
-	// map alone; one that sent nothing at all is UpdateGameSources' empty-map
-	// refusal, as it always was.
-	if entry != nil && req.Sources == nil {
-		s.writeJSON(w, http.StatusOK, entry)
-		return
-	}
-
-	if entry, err = s.svc.UpdateGameSources(r.Context(), id, req.Sources); err != nil {
+	entry, err := s.svc.EditGame(r.Context(), r.PathValue("id"), edit)
+	if err != nil {
 		s.writeAPIError(w, gameSourcesErrorStatus(err), err)
 		return
 	}
@@ -355,7 +341,7 @@ func (s *Server) handleAPIGameDetail(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, detail)
 }
 
-// gameSourcesErrorStatus classifies an UpdateGameSources failure: an
+// gameSourcesErrorStatus classifies an EditGame (or UpdateGameLoader) failure: an
 // unknown game is 404, a rejected map is the caller's input (400), a
 // removal a game's own installed mods still depend on is a 409 collision
 // with state the caller could not have known about from the map alone
@@ -513,11 +499,14 @@ func (s *Server) handleAPIGameDetectApply(w http.ResponseWriter, r *http.Request
 }
 
 // gameDetectApplyErrorStatus classifies an ApplyDetectSelection failure: a
-// taken game id is a collision (409, matching POST /api/v1/games), and
-// anything else is a real write failure (500). A REJECTED selector never
-// reaches here - SelectDetectedGames answered 400 above.
+// taken game id is a collision (409, matching POST /api/v1/games), and so is
+// a repair that would move the mod_path of a game with files deployed
+// (core.GameModPathInUseError, 409 as on PUT /api/v1/games/{id}, #427
+// review F1); anything else is a real write failure (500). A REJECTED
+// selector never reaches here - SelectDetectedGames answered 400 above.
 func gameDetectApplyErrorStatus(err error) int {
-	if errors.Is(err, core.ErrGameExists) {
+	var modPathInUse *core.GameModPathInUseError
+	if errors.Is(err, core.ErrGameExists) || errors.As(err, &modPathInUse) {
 		return http.StatusConflict
 	}
 	return http.StatusInternalServerError

@@ -1,5 +1,17 @@
 {
   "game_id": "skyrim-se",
   "mod_path": "/games/skyrim-se/Data",
-  "deployed_files": 12
+  "new_mod_path": "/games/skyrim-se/Mods",
+  "deployed_files": 12,
+  "profiles": [
+    {
+      "profile": "default",
+      "deployed_files": 10
+    },
+    {
+      "profile": "survival",
+      "deployed_files": 2
+    }
+  ],
+  "active_profile": "default"
 }

@@ -53,11 +53,17 @@ mod_path that no longer exists, which 'lmm game show' and 'lmm status'
 flag. A relative path is relative to the game's install path, and "~/"
 is your home directory. The directory does not have to exist yet (a
 deploy creates it), but a file is refused. lmm records every deployed
-file relative to the mod_path, so the edit is refused while files are
-deployed: run 'lmm purge --game <id>' first, then this, then 'lmm
-deploy'. A BepInEx game deploys into its install path, so that is its
-mod path; --mod-path and --adapter bepinex can be passed together, and
-the mod path is changed first.
+file relative to the mod_path, so the edit is refused while any profile
+has files deployed; the refusal names each one. Purge each with 'lmm
+purge --game <id> --profile <name>', run this, then 'lmm deploy', which
+deploys the active profile into the new directory; any other profile is
+deployed there when you next switch to it. A BepInEx game deploys into
+its install path, so that is its mod path.
+
+--source, --remove-source, --adapter and --mod-path are one edit: every
+change is checked before any is written, so a run applies all of them or
+none. That is also what lets --mod-path and --adapter move a game onto
+bepinex, or off it, in one run.
 
 Sources and the loader are separate edits: pass one or the other.
 
@@ -66,6 +72,7 @@ Examples:
   lmm game edit icarus --source local-mods= --remove-source nexusmods
   lmm game edit human-host --mod-path "~/.steam/steam/steamapps/common/Human Host"
   lmm game edit valheim --mod-path /games/valheim --adapter bepinex
+  lmm game edit valheim --adapter generic-files --mod-path BepInEx/plugins
   lmm game edit valheim --loader bepinex --loader-version 5.4.23.5 --loader-bootstrap proton
   lmm game edit valheim --loader ""
   lmm game edit skyrim-se --source nexusmods=skyrimspecialedition --json`,
@@ -163,12 +170,15 @@ func doGameEditLoader(ctx context.Context, service *core.Service, gameID string,
 	return nil
 }
 
-// doGameEdit applies the non-loader flags, each through its own gated core
-// write, in the only order that always works: the mod path, then the
-// adapter (bepinex is refused off the game root, so a run moving a game to
-// its root and onto bepinex must move it first), then the source map. A
-// failure stops the run with what came before it already written, and says
-// which edit failed.
+// doGameEdit applies the non-loader flags as ONE core.Service.EditGame call,
+// which checks every requested change against the game they leave behind
+// before it writes any of them (#427 review F6): a run either applies all of
+// its flags or none of them, and --mod-path and --adapter compose in either
+// direction.
+//
+// Everything the command can check on its own - the --source syntax, a
+// --remove-source the game does not map, an unregistered --adapter - is
+// checked first, so it is reported the way it always was.
 //
 // The source flags are a DELTA against what the game currently maps - which
 // is what a command line wants - while core's seam is a replacement, which
@@ -186,18 +196,40 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	var (
-		entry *core.GameListEntry
-		lines []string
-	)
-
+	var edit core.GameEdit
+	if editsSources {
+		if edit.Sources, err = sourceMapFromFlags(game); err != nil {
+			return err
+		}
+	}
+	// #353: core owns the registry check and the composition rules; this
+	// one names what IS registered.
+	if adapterSet {
+		if err := validateAdapterFlag(service, gameEditAdapter); err != nil {
+			return err
+		}
+		edit.Adapter = &gameEditAdapter
+	}
 	// #427/#456: the repair for a mod_path that no longer exists, and the
 	// command form of the BepInEx remedies' mod_path step.
 	if gameEditModPathSet {
-		entry, err = service.SetGameModPath(ctx, gameID, gameEditModPath)
-		if err != nil {
-			return err
-		}
+		edit.ModPath = &gameEditModPath
+	}
+
+	entry, err := service.EditGame(ctx, gameID, edit)
+	if err != nil {
+		return err
+	}
+
+	// Ruling 15: the GameListEntry document - the same row `lmm game list
+	// --json` emits for this game, re-read after the write - in place of the
+	// console lines.
+	if jsonOutput {
+		return emitJSON(entry)
+	}
+
+	var lines []string
+	if gameEditModPathSet {
 		lines = append(lines, "mod path set to "+entry.ModPath)
 		if entry.ModPathError != "" {
 			lines = append(lines, "  "+colorYellow("!")+" "+entry.ModPathError)
@@ -205,18 +237,7 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 			lines = append(lines, "  "+colorDim("not created yet - the first deploy creates it"))
 		}
 	}
-
-	// #353: the adapter edit is its own single-step write
-	// (core.SetGameAdapter), which owns the registry check and the
-	// deploy_mode: compile composition rule.
 	if adapterSet {
-		if err := validateAdapterFlag(service, gameEditAdapter); err != nil {
-			return err
-		}
-		entry, err = service.SetGameAdapter(ctx, gameID, gameEditAdapter)
-		if err != nil {
-			return err
-		}
 		// #426: clearing the key hands the game back to whatever lmm
 		// derives for it, which is not always generic-files - so say
 		// which adapter is now in use.
@@ -226,24 +247,8 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 			lines = append(lines, "adapter set to "+formatAdapterName(entry.Adapter))
 		}
 	}
-
 	if editsSources {
-		sources, err := sourceMapFromFlags(game)
-		if err != nil {
-			return err
-		}
-		entry, err = service.UpdateGameSources(ctx, gameID, sources)
-		if err != nil {
-			return err
-		}
 		lines = append(lines, "sources updated: "+formatGameSources(entry.SourceIDs))
-	}
-
-	// Ruling 15: the GameListEntry document - the same row `lmm game list
-	// --json` emits for this game, as the last write left it - in place of
-	// the console lines.
-	if jsonOutput {
-		return emitJSON(entry)
 	}
 	for _, line := range lines {
 		if strings.HasPrefix(line, "  ") {

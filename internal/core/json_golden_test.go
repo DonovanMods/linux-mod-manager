@@ -1736,9 +1736,23 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
-			// #427/#456: SetGameModPath refusing to strand deployed files.
+			// #427/#456: a mod_path move refused because it would strand
+			// deployed files, naming every profile that has them (#427
+			// review F2).
 			"game_mod_path_in_use_error",
-			core.GameModPathInUseError{GameID: "skyrim-se", ModPath: "/games/skyrim-se/Data", DeployedFiles: 12},
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/skyrim-se/Data", NewModPath: "/games/skyrim-se/Mods",
+				DeployedFiles: 12, ActiveProfile: "default",
+				Profiles: []core.ProfileDeployedFiles{
+					{Profile: "default", DeployedFiles: 10},
+					{Profile: "survival", DeployedFiles: 2},
+				},
+			},
+		},
+		{
+			// One profile's share of game_mod_path_in_use_error.
+			"profile_deployed_files",
+			core.ProfileDeployedFiles{Profile: "survival", DeployedFiles: 2},
 		},
 		{
 			// #427: a game row whose mod_path is gone carries the sentence

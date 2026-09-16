@@ -345,6 +345,12 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		if prior := ConfiguredGameFor(existing, g); prior != nil {
 			var notice string
 			game, notice = repairedGame(prior, game)
+			// #427 review F1: the repair rewrites mod_path, which is exactly
+			// the move `lmm game edit --mod-path` refuses under a live
+			// deployment - the same check, before anything is written.
+			if err := s.refuseModPathMove(ctx, prior, game.ModPath); err != nil {
+				return fmt.Errorf("repairing %s from the catalog would move its mod_path: %w", prior.ID, err)
+			}
 			if notice != "" {
 				result.Warnings = append(result.Warnings, notice)
 			}

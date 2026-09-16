@@ -26,16 +26,38 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
-// UpdateGameSources replaces gameID's source map with sources and returns
-// the game's own `lmm game list --json` row (GameListEntry), re-read after
-// the write, so a caller never needs a follow-up request to see what it
-// changed.
+// GameEdit is one edit of a configured game's games.yaml entry - what `lmm
+// game edit` and `PUT /api/v1/games/{id}` send (#326, #353, #427). A nil
+// member leaves its key alone.
 //
-// REPLACE, not merge: the map handed over is the map the game ends up
-// with. A frontend editing one entry sends the whole map back, which is
-// what makes "remove this source" expressible at all - `lmm game edit`'s
-// --source/--remove-source flags are a delta the CLI resolves against the
-// current map before calling this.
+// The loader is not here: it is its own edit (UpdateGameLoader), and both
+// frontends refuse a request that combines it with these.
+type GameEdit struct {
+	// Sources, when non-nil, REPLACES the game's source map - the map
+	// handed over is the map the game ends up with, which is what makes
+	// "remove this source" expressible at all. `lmm game edit`'s
+	// --source/--remove-source flags are a delta the CLI resolves against
+	// the current map first. An empty map is refused.
+	Sources map[string]string
+	// Adapter, when non-nil, sets the `adapter:` key; "" clears it, handing
+	// the game back to the adapter Service.AdapterName derives for it.
+	Adapter *string
+	// ModPath, when non-nil, sets `mod_path:`, resolved by the rules `lmm
+	// game add` applies (relative to install_path, "~/" expanded).
+	ModPath *string
+}
+
+// EditGame applies edit to gameID's games.yaml entry and returns the game's
+// own `lmm game list --json` row (GameListEntry), re-read after the write,
+// so a caller never needs a follow-up request to see what it changed.
+//
+// ALL OR NOTHING (#427 review F6): every requested change is checked, as
+// part of the game the whole edit leaves behind, before any of it is
+// written - and it is written once. So the adapter and the mod_path are
+// validated together and can move in one edit in either direction (onto
+// bepinex at the game root, or off bepinex into a subdirectory, #427 review
+// F5), and a bad source map cannot leave the mod_path moved behind a failed
+// command.
 //
 // Gated (beginOp) for AddGame's reason: it is a games.yaml write that must
 // not interleave with a deploy job running on `lmm serve`'s own goroutine.
@@ -44,20 +66,27 @@ import (
 // between the check and the write cannot be mapped anyway
 // (UnregisterSourceIfUnused takes the same gate).
 //
-// Rejections are GameSpecError with Field "sources", the wire key PUT
-// /api/v1/games/{id} takes, so an SPA marks the offending input rather
-// than parsing an English sentence; Value names the offending source id.
-// An unknown game is domain.ErrGameNotFound, the 404 every other
-// game-scoped route already answers with.
+// Refusals:
 //
-// An EMPTY map is refused: a game that maps no source can neither search
-// nor install, and the only way to reach that state is to remove the last
-// entry - a footgun, not a use case. An empty IDENTIFIER is refused for
-// any source that says it needs one, and accepted for the sources that say
-// they do not (a directory source keyed by nothing else is exactly how the
-// fixtures and several custom sources are configured); either way it is
-// trimmed, like the id.
-func (s *Service) UpdateGameSources(ctx context.Context, gameID string, sources map[string]string) (*GameListEntry, error) {
+//   - domain.ErrGameNotFound for an unknown game - the 404 every other
+//     game-scoped route already answers with.
+//   - GameSpecError, whose Field is the wire key PUT /api/v1/games/{id}
+//     takes ("sources", "adapter", "mod_path"), so an SPA marks the
+//     offending input rather than parsing a sentence. See validatedSourceMap
+//     for the source map's rules. An adapter must be registered, and must
+//     compose with the rest of the entry the edit leaves (AdapterFor: a
+//     `deploy_mode: compile` game's adapter must compile, and bepinex needs
+//     the game root). A mod_path must be non-empty and must not name a file;
+//     an absent directory is fine, because a deploy creates it.
+//   - GameSourceInUseError when a removed source still has installed mods.
+//   - GameModPathInUseError when the mod_path would move while any profile
+//     has files deployed under it (refuseModPathMove).
+//
+// A mod_path move that would turn a game its adapter accepts into one
+// AdapterFor refuses (`adapter: bepinex` off the game root) is refused on
+// "mod_path"; a game that is ALREADY refused may be moved, because that is
+// how such a game is repaired.
+func (s *Service) EditGame(ctx context.Context, gameID string, edit GameEdit) (*GameListEntry, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return nil, err
@@ -69,182 +98,198 @@ func (s *Service) UpdateGameSources(ctx context.Context, gameID string, sources 
 		return nil, domain.ErrGameNotFound
 	}
 
-	cleaned, err := s.validatedSourceMap(sources)
+	updated, changed, err := s.editedGame(ctx, game, edit)
 	if err != nil {
 		return nil, err
 	}
-
-	if err := s.refuseRemovingReferencedSources(ctx, game, cleaned); err != nil {
-		return nil, err
-	}
-
-	// A COPY: s.game returns the pointer the in-memory set holds, which
-	// concurrent readers (GetGame, ListGames, SourcesForGame) are walking
-	// right now. Mutating its map in place would be a data race no lock
-	// here could close; saveGame publishes the replacement atomically.
-	updated := *game
-	updated.SourceIDs = cleaned
-	if err := s.saveGame(ctx, &updated); err != nil {
-		return nil, err
-	}
-
-	defaultGame, err := s.DefaultGame(ctx)
-	if err != nil {
-		return nil, err
-	}
-	entry, err := s.newGameListEntry(ctx, &updated, defaultGame)
-	if err != nil {
-		return nil, err
-	}
-	return &entry, nil
-}
-
-// SetGameAdapter rewrites gameID's `adapter:` key and returns the game's
-// own `lmm game list --json` row, re-read after the write (#353).
-//
-// It is UpdateGameSources' sibling in every respect - a settings-class
-// single-step write, gated for the same reason, with every check inside
-// the gate - and it is the ONLY way a frontend changes the key, so the
-// rules below cannot be bypassed by one of them.
-//
-// An EMPTY name clears the key, which hands the game back to the adapter
-// Service.AdapterName derives for it - icarus for `deploy_mode: compile`,
-// bepinex for a game-root game with BepInEx, generic-files otherwise - and
-// the returned row's EffectiveAdapter names which. Any other name must be
-// registered: an unregistered one is a GameSpecError on field "adapter", so
-// an SPA marks the input rather than parsing a sentence, and the message
-// names what IS registered. The composition rules AdapterFor enforces are
-// refused the same way, for the same reason: a `deploy_mode: compile` game
-// may only be given an adapter that can compile (design §2), and bepinex
-// only a game whose mod_path is its install path (#413 re-review P-b).
-func (s *Service) SetGameAdapter(ctx context.Context, gameID, name string) (*GameListEntry, error) {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
-	game, ok := s.game(gameID)
-	if !ok {
-		return nil, domain.ErrGameNotFound
-	}
-
-	// A COPY, for the reason UpdateGameSources documents: s.game returns
-	// the pointer concurrent readers are walking right now.
-	updated := *game
-	updated.Adapter = strings.TrimSpace(name)
-
-	if _, err := s.AdapterFor(&updated); err != nil {
-		return nil, &GameSpecError{
-			Field: "adapter", Value: updated.Adapter,
-			Reason: err.Error(), Err: err,
-		}
-	}
-
-	if err := s.saveGame(ctx, &updated); err != nil {
-		return nil, err
-	}
-
-	defaultGame, err := s.DefaultGame(ctx)
-	if err != nil {
-		return nil, err
-	}
-	entry, err := s.newGameListEntry(ctx, &updated, defaultGame)
-	if err != nil {
-		return nil, err
-	}
-	return &entry, nil
-}
-
-// SetGameModPath rewrites gameID's `mod_path:` and returns the game's own
-// `lmm game list --json` row, re-read after the write (#427, #456) - the
-// repair for a mod_path that no longer exists, and the command form of the
-// "set its mod_path" step the BepInEx remedies used to leave to a hand edit
-// of games.yaml.
-//
-// UpdateGameSources' sibling: a settings-class single-step write, gated for
-// the same reason, every check inside the gate. The value is resolved by
-// the rules `lmm game add` and the games.yaml loader apply
-// (resolveModPathValue), and refused as a GameSpecError on field
-// "mod_path" when it is empty or names something that is not a directory.
-// An absent directory is accepted, as AddGame accepts one: a deploy
-// creates it.
-//
-// Two refusals protect what is already on disk:
-//
-//   - GameModPathInUseError while any profile of the game has files
-//     deployed. lmm records a deployed file relative to the mod_path it was
-//     deployed under, so a move under a live deployment strands every
-//     file: still live, no longer recorded, and looked for in the wrong
-//     place by the next purge. The purge comes first.
-//   - A GameSpecError when the move would turn a game its adapter accepts
-//     into one AdapterFor refuses (`adapter: bepinex` off the game root). A
-//     game that is ALREADY refused may be moved, because that is how such a
-//     game is repaired.
-//
-// Setting the value the game already has writes nothing.
-func (s *Service) SetGameModPath(ctx context.Context, gameID, modPath string) (*GameListEntry, error) {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
-	game, ok := s.game(gameID)
-	if !ok {
-		return nil, domain.ErrGameNotFound
-	}
-
-	raw := config.ExpandPath(strings.TrimSpace(modPath))
-	if raw == "" {
-		return nil, newGameSpecError("mod_path", "", "a mod path is required")
-	}
-	resolved, err := resolveModPathValue(game.InstallPath, raw)
-	if err != nil {
-		return nil, err
-	}
-
-	defaultGame, err := s.DefaultGame(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if filepath.Clean(resolved) == filepath.Clean(game.ModPath) {
-		entry, err := s.newGameListEntry(ctx, game, defaultGame)
-		if err != nil {
+	if changed {
+		if err := s.saveGame(ctx, updated); err != nil {
 			return nil, err
 		}
-		return &entry, nil
 	}
 
-	counts, err := s.db.DeployedFileCounts(ctx, game.ID)
+	defaultGame, err := s.DefaultGame(ctx)
 	if err != nil {
 		return nil, err
 	}
-	deployed := 0
-	for _, n := range counts {
-		deployed += n
-	}
-	if deployed > 0 {
-		return nil, &GameModPathInUseError{GameID: game.ID, ModPath: game.ModPath, DeployedFiles: deployed}
-	}
-
-	// A COPY, for the reason UpdateGameSources documents.
-	updated := *game
-	updated.ModPath = resolved
-	if _, err := s.AdapterFor(game); err == nil {
-		if _, err := s.AdapterFor(&updated); err != nil {
-			return nil, &GameSpecError{Field: "mod_path", Value: resolved, Reason: err.Error(), Err: err}
-		}
-	}
-
-	if err := s.saveGame(ctx, &updated); err != nil {
-		return nil, err
-	}
-	entry, err := s.newGameListEntry(ctx, &updated, defaultGame)
+	entry, err := s.newGameListEntry(ctx, updated, defaultGame)
 	if err != nil {
 		return nil, err
 	}
 	return &entry, nil
+}
+
+// editedGame is EditGame's checks: the game edit leaves, and whether it
+// differs from game enough to write. It writes nothing.
+func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEdit) (*domain.Game, bool, error) {
+	// A COPY: s.game returns the pointer the in-memory set holds, which
+	// concurrent readers (GetGame, ListGames, SourcesForGame) are walking
+	// right now. Mutating it in place would be a data race no lock here
+	// could close; saveGame publishes the replacement atomically.
+	updated := *game
+	changed := false
+
+	if edit.Sources != nil {
+		cleaned, err := s.validatedSourceMap(edit.Sources)
+		if err != nil {
+			return nil, false, err
+		}
+		if err := s.refuseRemovingReferencedSources(ctx, game, cleaned); err != nil {
+			return nil, false, err
+		}
+		updated.SourceIDs = cleaned
+		changed = true
+	}
+
+	if edit.Adapter != nil {
+		updated.Adapter = strings.TrimSpace(*edit.Adapter)
+		changed = true
+	}
+
+	moved := false
+	if edit.ModPath != nil {
+		raw := config.ExpandPath(strings.TrimSpace(*edit.ModPath))
+		if raw == "" {
+			return nil, false, newGameSpecError("mod_path", "", "a mod path is required")
+		}
+		resolved, err := resolveModPathValue(game.InstallPath, raw)
+		if err != nil {
+			return nil, false, err
+		}
+		// Setting the value the game already has - in any spelling of it -
+		// moves nothing.
+		if !samePath(resolved, game.ModPath) {
+			updated.ModPath = resolved
+			moved, changed = true, true
+		}
+	}
+
+	if err := s.refuseAdapterComposition(game, &updated, edit.Adapter != nil, moved); err != nil {
+		return nil, false, err
+	}
+	if moved {
+		if err := s.refuseModPathMove(ctx, game, updated.ModPath); err != nil {
+			return nil, false, err
+		}
+	}
+	return &updated, changed, nil
+}
+
+// refuseAdapterComposition is EditGame's AdapterFor check on the game the
+// edit leaves (updated), blamed on the key the user asked to change.
+//
+// An adapter edit must leave a game AdapterFor accepts. A mod_path move
+// alone must not turn an accepted game into a refused one - but may move a
+// refused game, since that is its repair. bepinex off the game root gets a
+// sentence about THIS edit rather than AdapterFor's own, which describes a
+// game already saved that way and whose remedy (purge, then move the
+// mod_path to where it already is) would be a no-op here.
+func (s *Service) refuseAdapterComposition(game, updated *domain.Game, adapterSet, moved bool) error {
+	switch {
+	case adapterSet:
+		if _, err := s.AdapterFor(updated); err != nil {
+			reason := err.Error()
+			if bepinexOffRoot(updated) {
+				reason = fmt.Sprintf("adapter bepinex deploys into the game root (%s), and this edit leaves mod_path at %s; set both in one command: `lmm game edit %s --adapter bepinex --mod-path %s`",
+					updated.InstallPath, updated.ModPath, updated.ID, updated.InstallPath)
+			}
+			return &GameSpecError{Field: "adapter", Value: updated.Adapter, Reason: reason, Err: err}
+		}
+	case moved:
+		if _, err := s.AdapterFor(game); err != nil {
+			return nil
+		}
+		if _, err := s.AdapterFor(updated); err != nil {
+			reason := err.Error()
+			if bepinexOffRoot(updated) {
+				reason = fmt.Sprintf("game %q sets adapter: bepinex, which deploys into the game root (%s), so its mod_path cannot move to %s; to deploy archives there exactly as packaged, change the adapter in the same command: `lmm game edit %s --adapter generic-files --mod-path %s`",
+					updated.ID, updated.InstallPath, updated.ModPath, updated.ID, updated.ModPath)
+			}
+			return &GameSpecError{Field: "mod_path", Value: updated.ModPath, Reason: reason, Err: err}
+		}
+	}
+	return nil
+}
+
+// UpdateGameSources is EditGame with only a source map: it REPLACES
+// gameID's map with sources (nil is the empty map, which is refused).
+func (s *Service) UpdateGameSources(ctx context.Context, gameID string, sources map[string]string) (*GameListEntry, error) {
+	if sources == nil {
+		sources = map[string]string{}
+	}
+	return s.EditGame(ctx, gameID, GameEdit{Sources: sources})
+}
+
+// SetGameAdapter is EditGame with only an adapter (#353): name sets the
+// `adapter:` key, and "" clears it - the returned row's EffectiveAdapter
+// then names the adapter lmm derives (icarus for `deploy_mode: compile`,
+// bepinex for a game-root game with BepInEx, generic-files otherwise).
+func (s *Service) SetGameAdapter(ctx context.Context, gameID, name string) (*GameListEntry, error) {
+	return s.EditGame(ctx, gameID, GameEdit{Adapter: &name})
+}
+
+// SetGameModPath is EditGame with only a mod_path (#427, #456): the repair
+// for a mod_path that is gone, and the command form of the "set its
+// mod_path" step the BepInEx remedies used to leave to a hand edit of
+// games.yaml.
+func (s *Service) SetGameModPath(ctx context.Context, gameID, modPath string) (*GameListEntry, error) {
+	return s.EditGame(ctx, gameID, GameEdit{ModPath: &modPath})
+}
+
+// refuseModPathMove is THE in-use check (#427 review F1): every path that
+// can change a configured game's mod_path runs it before writing - EditGame,
+// and the `lmm game detect` repair of an already-configured game
+// (applyGameDetectLocked, which `lmm init`, `lmm game detect` and POST
+// /api/v1/games/detect all reach). AddGame cannot change one: it refuses an
+// id that is already configured.
+//
+// It refuses with a GameModPathInUseError while any profile of game has
+// files deployed and to is a different directory. lmm records a deployed
+// file relative to the mod_path it was deployed under, so a move under a
+// live deployment strands every file: still live, no longer recorded, and
+// looked for in the wrong place by the next purge. The purge comes first.
+func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to string) error {
+	if samePath(game.ModPath, to) {
+		return nil
+	}
+	counts, err := s.db.DeployedFileCounts(ctx, game.ID)
+	if err != nil {
+		return err
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+
+	inUse := &GameModPathInUseError{GameID: game.ID, ModPath: game.ModPath, NewModPath: to}
+	for _, profile := range slices.Sorted(maps.Keys(counts)) {
+		inUse.Profiles = append(inUse.Profiles, ProfileDeployedFiles{Profile: profile, DeployedFiles: counts[profile]})
+		inUse.DeployedFiles += counts[profile]
+	}
+	if inUse.ActiveProfile, err = s.activeProfileName(ctx, game.ID); err != nil {
+		return err
+	}
+	return inUse
+}
+
+// activeProfileName is the profile a command without --profile acts on:
+// the game's default profile, or "default" when it has none marked - the
+// rule `lmm deploy` and `lmm purge` resolve by.
+func (s *Service) activeProfileName(ctx context.Context, gameID string) (string, error) {
+	profile, err := s.NewProfileManager().GetDefault(ctx, gameID)
+	if errors.Is(err, domain.ErrProfileNotFound) {
+		return "default", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+	}
+	return profile.Name, nil
+}
+
+// samePath reports whether a and b name the same directory: equal once
+// cleaned, or equal once symlinks are resolved (resolvedPath) - a detected
+// install path can be another spelling of the configured one.
+func samePath(a, b string) bool {
+	return filepath.Clean(a) == filepath.Clean(b) || resolvedPath(a) == resolvedPath(b)
 }
 
 // resolveModPathValue applies the loader's mod_path rule to an
@@ -253,8 +298,7 @@ func (s *Service) SetGameModPath(ctx context.Context, gameID, modPath string) (*
 // absolute path. A path that exists and is not a directory is refused -
 // every later deploy would fail on it with a confusing link error - while
 // an absent one is fine, because a deploy creates it. Shared by GameSpec
-// (`lmm game add`) and SetGameModPath, so the two cannot accept different
-// values.
+// (`lmm game add`) and EditGame, so the two cannot accept different values.
 func resolveModPathValue(installPath, modPath string) (string, error) {
 	resolved, err := config.ResolveModPath(installPath, modPath)
 	if err != nil {
@@ -437,19 +481,47 @@ func (e *ModPathMissingError) Error() string {
 // "details" field (Ruling 3).
 func (e *ModPathMissingError) Details() any { return e }
 
-// GameModPathInUseError refuses SetGameModPath while GameID has files
-// deployed under ModPath - see SetGameModPath for why the purge comes
-// first.
+// GameModPathInUseError refuses a mod_path move (refuseModPathMove) while
+// GameID has files deployed under ModPath. Profiles names each profile that
+// has them, because each is purged on its own (`lmm purge --profile`), and
+// ActiveProfile is the one `lmm deploy` redeploys afterwards.
 type GameModPathInUseError struct {
-	GameID        string `json:"game_id"`
-	ModPath       string `json:"mod_path"`
+	GameID  string `json:"game_id"`
+	ModPath string `json:"mod_path"`
+	// NewModPath is where the refused edit would have moved it.
+	NewModPath    string                 `json:"new_mod_path"`
+	DeployedFiles int                    `json:"deployed_files"`
+	Profiles      []ProfileDeployedFiles `json:"profiles"`
+	ActiveProfile string                 `json:"active_profile"`
+}
+
+// ProfileDeployedFiles is one profile's share of a GameModPathInUseError.
+type ProfileDeployedFiles struct {
+	Profile       string `json:"profile"`
 	DeployedFiles int    `json:"deployed_files"`
 }
 
 // Error implements error.
 func (e *GameModPathInUseError) Error() string {
-	return fmt.Sprintf("%d file(s) are deployed under %s, and lmm records each one relative to the mod_path; run `lmm purge --game %s` first, then change the mod_path, then run `lmm deploy --game %s`",
-		e.DeployedFiles, e.ModPath, e.GameID, e.GameID)
+	shares := make([]string, len(e.Profiles))
+	purges := make([]string, len(e.Profiles))
+	var others []string
+	for i, p := range e.Profiles {
+		shares[i] = fmt.Sprintf("%d by profile %s", p.DeployedFiles, p.Profile)
+		purges[i] = fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, p.Profile)
+		if p.Profile != e.ActiveProfile {
+			others = append(others, p.Profile)
+		}
+	}
+
+	msg := fmt.Sprintf("%d file(s) are deployed under %s (%s), and lmm records each one relative to the mod_path, so moving it to %s would strand them; purge them first - run %s - then change the mod_path, then run `lmm deploy --game %s`, which deploys the active profile (%s) into the new one",
+		e.DeployedFiles, e.ModPath, strings.Join(shares, ", "), e.NewModPath,
+		strings.Join(purges, ", then "), e.GameID, e.ActiveProfile)
+	for _, profile := range others {
+		msg += fmt.Sprintf("; profile %s is deployed there when you next switch to it (`lmm profile switch %s --game %s`)",
+			profile, profile, e.GameID)
+	}
+	return msg
 }
 
 // Details returns the error itself for the --json error envelope's

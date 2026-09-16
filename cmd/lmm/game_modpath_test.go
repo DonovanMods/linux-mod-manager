@@ -6,6 +6,7 @@ package main
 // commands.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -173,6 +175,127 @@ func TestFreshGame_NoCommandSaysItIsBroken(t *testing.T) {
 	assert.NotContains(t, stdout, "mod_path_error")
 }
 
+// TestDoGameDetect_SelectRefusesToMoveAModPathWithFilesDeployed (#427
+// review F1): `lmm game detect --select` on a configured game is a repair
+// that rewrites mod_path - the move `lmm game edit --mod-path` refuses
+// under a live deployment. It is refused the same way, and writes nothing.
+func TestDoGameDetect_SelectRefusesToMoveAModPathWithFilesDeployed(t *testing.T) {
+	configDir = t.TempDir()
+	svc := newGameDetectTestService(t)
+	install := t.TempDir()
+	game := &domain.Game{
+		ID: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: install,
+		ModPath: filepath.Join(install, "mods"), SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"},
+	}
+	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	_, err := svc.NewProfileManager().CreateOrResetDefaultAfterGameSave(context.Background(), game.ID)
+	require.NoError(t, err)
+	deployOneFileForTest(t, svc, game, "default", "m1")
+
+	oldSelect := gameDetectSelect
+	gameDetectSelect = "1"
+	t.Cleanup(func() { gameDetectSelect = oldSelect })
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	detected := []domain.DetectedGame{{
+		Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: install,
+		ModPath: filepath.Join(install, "Data"), NexusID: "skyrimspecialedition", Known: true,
+	}}
+
+	err = doGameDetect(context.Background(), cmd, bufio.NewReader(strings.NewReader("")), svc, detected, nil)
+	var inUse *core.GameModPathInUseError
+	require.ErrorAs(t, err, &inUse)
+	assert.Contains(t, err.Error(), "`lmm purge --game skyrim-se --profile default`")
+	assert.NotContains(t, buf.String(), "Added:")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.Equal(t, game.ModPath, saved["skyrim-se"].ModPath, "games.yaml is untouched")
+	profile, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Len(t, profile.Mods, 1, "and so is the default profile")
+}
+
+// TestDoGameEdit_ModPathNamesEveryProfileToPurge (#427 review F2): a
+// non-active profile with files deployed used to make the refusal
+// permanent, because its remedy purged only the active profile.
+func TestDoGameEdit_ModPathNamesEveryProfileToPurge(t *testing.T) {
+	svc, game := setupFreshModPathGame(t)
+	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "second")
+	require.NoError(t, err)
+	deployOneFileForTest(t, svc, game, "second", "m2")
+	gameEditModPath, gameEditModPathSet = game.InstallPath, true
+
+	err = doGameEdit(context.Background(), svc, game.ID, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "(1 by profile second)")
+	assert.Contains(t, err.Error(), "run `lmm purge --game human-host --profile second`")
+	assert.Contains(t, err.Error(), "which deploys the active profile (default) into the new one")
+	assert.Contains(t, err.Error(), "profile second is deployed there when you next switch to it (`lmm profile switch second --game human-host`)")
+}
+
+// TestDoGameEdit_WritesAllOrNothing (#427 review F6): a --source or
+// --remove-source mistake used to fail AFTER --mod-path had been written,
+// and the error said nothing about it.
+func TestDoGameEdit_WritesAllOrNothing(t *testing.T) {
+	for name, flags := range map[string]func(){
+		"a --source with no =":       func() { gameEditSources = []string{"badformat"} },
+		"a --remove-source it lacks": func() { gameEditRemove = []string{"curseforge"} },
+		"an unregistered --source":   func() { gameEditSources = []string{"no-such-source=x"} },
+		"removing the last source":   func() { gameEditRemove = []string{"nexusmods"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, game := setupFreshModPathGame(t)
+			gameEditModPath, gameEditModPathSet = "Data", true
+			flags()
+
+			require.Error(t, doGameEdit(context.Background(), svc, game.ID, false))
+			reloaded, err := svc.GetGame(game.ID)
+			require.NoError(t, err)
+			assert.Equal(t, game.ModPath, reloaded.ModPath, "nothing was written")
+			onDisk, err := config.LoadGames(svc.ConfigDir())
+			require.NoError(t, err)
+			assert.Equal(t, game.ModPath, onDisk[game.ID].ModPath)
+		})
+	}
+}
+
+// TestGameEdit_AdapterAndModPathInEitherDirection (#427 review F5): moving
+// a bepinex game off its root used to be refused with a sentence claiming
+// the saved mod_path was already off the root, recommending a purge and a
+// no-op edit - and `--adapter generic-files --mod-path <dir>` failed the
+// same way, because the mod_path was always written first.
+func TestGameEdit_AdapterAndModPathInEitherDirection(t *testing.T) {
+	setupAdapterWarningGames(t)
+	svc, err := app.Open(context.Background(), app.Options{ConfigDir: configDir, DataDir: dataDir, WarnWriter: &strings.Builder{}})
+	require.NoError(t, err)
+	game, err := svc.GetGame("valheim")
+	require.NoError(t, err)
+	root := game.InstallPath
+	_, err = svc.SetGameAdapter(context.Background(), "valheim", "bepinex")
+	require.NoError(t, err)
+	require.NoError(t, svc.Close())
+
+	resetChangedFlags(rootCmd)
+	rootCmd.SetArgs([]string{"game", "edit", "valheim", "--mod-path", "mods"})
+	_, _, err = captureStdoutAndStderr(t, func() error { return rootCmd.ExecuteContext(context.Background()) })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "`lmm game edit valheim --adapter generic-files --mod-path "+filepath.Join(root, "mods")+"`")
+	assert.NotContains(t, err.Error(), "lmm purge", "nothing needs purging to change the adapter")
+
+	stdout, _ := runLMM(t, "game", "edit", "valheim", "--mod-path", "mods", "--adapter", "generic-files")
+	assert.Contains(t, stdout, "Valheim mod path set to "+filepath.Join(root, "mods"))
+	assert.Contains(t, stdout, "Valheim adapter set to generic-files")
+
+	stdout, _ = runLMM(t, "game", "edit", "valheim", "--adapter", "bepinex", "--mod-path", root)
+	assert.Contains(t, stdout, "Valheim mod path set to "+root)
+	assert.Contains(t, stdout, "Valheim adapter set to bepinex")
+}
+
 func TestDoGameEdit_ModPathRepairsTheGame(t *testing.T) {
 	svc, game := setupFreshModPathGame(t)
 	gameEditModPath, gameEditModPathSet = game.InstallPath, true
@@ -211,8 +334,8 @@ func TestDoGameEdit_ModPathJSONEmitsTheGameListRow(t *testing.T) {
 }
 
 // TestGameEdit_ModPathThenAdapterInOneRun is #456's first remedy as ONE
-// command: the adapter edit runs after the mod_path edit, because bepinex
-// is refused off the game root.
+// command: the edit is checked as a whole, so bepinex at the new root is
+// accepted even though the saved mod_path is not the root.
 func TestGameEdit_ModPathThenAdapterInOneRun(t *testing.T) {
 	setupAdapterWarningGames(t)
 	svc, err := app.Open(context.Background(), app.Options{ConfigDir: configDir, DataDir: dataDir, WarnWriter: &strings.Builder{}})
@@ -253,15 +376,26 @@ func TestReportError_JSON_ModPathMissingError(t *testing.T) {
 func TestReportError_JSON_GameModPathInUseError(t *testing.T) {
 	withJSONOutput(t)
 
-	err := &core.GameModPathInUseError{GameID: "g1", ModPath: "/g/mods", DeployedFiles: 2}
+	err := &core.GameModPathInUseError{
+		GameID: "g1", ModPath: "/g/mods", NewModPath: "/g", DeployedFiles: 2,
+		Profiles: []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 2}}, ActiveProfile: "default",
+	}
 	out := captureStdout(t, func() error { reportError(err); return nil })
 
 	assert.Equal(t, "{\n"+
-		"  \"error\": \"2 file(s) are deployed under /g/mods, and lmm records each one relative to the mod_path; run `lmm purge --game g1` first, then change the mod_path, then run `lmm deploy --game g1`\",\n"+
+		"  \"error\": \"2 file(s) are deployed under /g/mods (2 by profile default), and lmm records each one relative to the mod_path, so moving it to /g would strand them; purge them first - run `lmm purge --game g1 --profile default` - then change the mod_path, then run `lmm deploy --game g1`, which deploys the active profile (default) into the new one\",\n"+
 		"  \"details\": {\n"+
 		"    \"game_id\": \"g1\",\n"+
 		"    \"mod_path\": \"/g/mods\",\n"+
-		"    \"deployed_files\": 2\n"+
+		"    \"new_mod_path\": \"/g\",\n"+
+		"    \"deployed_files\": 2,\n"+
+		"    \"profiles\": [\n"+
+		"      {\n"+
+		"        \"profile\": \"default\",\n"+
+		"        \"deployed_files\": 2\n"+
+		"      }\n"+
+		"    ],\n"+
+		"    \"active_profile\": \"default\"\n"+
 		"  }\n"+
 		"}\n", out)
 }
