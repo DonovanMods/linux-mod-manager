@@ -29,8 +29,9 @@ var sourceIndexFetchedAt = time.Date(2026, 9, 16, 9, 0, 0, 0, time.UTC)
 // inventoryIndexSource is coldIndexSource with directories on "disk".
 type inventoryIndexSource struct {
 	*coldIndexSource
-	cached  map[string]source.CachedIndex
-	removed []string
+	cached    map[string]source.CachedIndex
+	removed   []string
+	removeErr map[string]error
 }
 
 func (s *inventoryIndexSource) IndexStatus(_ context.Context, id string) (source.IndexStatus, error) {
@@ -51,6 +52,9 @@ func (s *inventoryIndexSource) CachedIndexes(context.Context) ([]source.CachedIn
 }
 
 func (s *inventoryIndexSource) RemoveIndex(_ context.Context, id string, _ time.Time) (int64, error) {
+	if err := s.removeErr[id]; err != nil {
+		return 0, err
+	}
 	ci, ok := s.cached[id]
 	if !ok {
 		return 0, nil
@@ -299,4 +303,89 @@ func TestReportError_JSON_GameIdentifierError(t *testing.T) {
 		"    \"value\": \"\"\n"+
 		"  }\n"+
 		"}\n", out)
+}
+
+// heldInventorySource is inventoryIndexSource while the host is holding
+// requests off.
+type heldInventorySource struct {
+	*inventoryIndexSource
+	holds []source.Hold
+}
+
+func (s *heldInventorySource) Holds(context.Context) []source.Hold { return s.holds }
+
+// TestSourceIndex_SaysWhenLmmWillAskAgain: a hold another lmm process
+// recorded is shown before anyone searches into it (T3 review F3/F10).
+func TestSourceIndex_SaysWhenLmmWillAskAgain(t *testing.T) {
+	at := time.Now().Add(9*time.Minute + 30*time.Second).Truncate(time.Second)
+	src := &heldInventorySource{
+		inventoryIndexSource: &inventoryIndexSource{coldIndexSource: &coldIndexSource{id: "thunderstore"}, cached: map[string]source.CachedIndex{
+			"lethal-company":  {GameID: "lethal-company", Present: true, Packages: 50707, Bytes: 239075328, FetchedAt: sourceIndexFetchedAt, Removable: true},
+			"content-warning": {GameID: "content-warning", Bytes: 5120, Reason: "the content-warning index directory holds notes.txt, which is not part of an index"},
+		}},
+		holds: []source.Hold{{Source: "Thunderstore", Until: at, Reason: "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s"}},
+	}
+	svc, game := newColdIndexService(t, src)
+
+	out := captureStdout(t, func() error { return doSourceIndex(t.Context(), svc, game, "", false) })
+	assert.Contains(t, out, "Not asking Thunderstore again until "+at.Local().Format("15:04:05"))
+	assert.Contains(t, out, "rate limited by Thunderstore (HTTP 429)")
+
+	out = captureStdout(t, func() error { return doSourceIndexList(t.Context(), svc, "") })
+	assert.Contains(t, out, "Not asking Thunderstore again until "+at.Local().Format("15:04:05"))
+	assert.Contains(t, out, "prune keeps it: the content-warning index directory holds notes.txt", "a row a prune would keep says why")
+	assert.Contains(t, out, "unusable", "a directory with no usable index is not listed like one")
+}
+
+// TestSourceIndex_AnUnusableIndexOnDiskIsNotCalledMissing is review F12: an
+// index an older lmm wrote was "No ... index yet" here and a sized row in
+// --all.
+func TestSourceIndex_AnUnusableIndexOnDiskIsNotCalledMissing(t *testing.T) {
+	svc, game, src := newSourceIndexService(t)
+	src.cached["lethal-company"] = source.CachedIndex{GameID: "lethal-company", Packages: 50000, Bytes: 200000000, FetchedAt: sourceIndexFetchedAt, Removable: true}
+	out := captureStdout(t, func() error { return doSourceIndex(t.Context(), svc, game, "", false) })
+	assert.NotContains(t, out, "yet")
+	assert.Contains(t, out, "cannot use")
+	assert.Contains(t, out, "190.7 MB")
+	assert.Contains(t, out, "lmm source index --refresh")
+}
+
+// TestSourceIndexPrune_AFailedRemovalExitsNonZero is review F11: a run in
+// which an index could not be removed exited 0.
+func TestSourceIndexPrune_AFailedRemovalExitsNonZero(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		svc, _, src := newSourceIndexService(t)
+		src.removeErr = map[string]error{"content-warning": errors.New("permission denied")}
+		if asJSON {
+			withJSON(t)
+		}
+		var err error
+		out := captureStdout(t, func() error {
+			err = doSourceIndexPrune(t.Context(), svc, core.IndexPruneOptions{}, false)
+			return nil
+		})
+		require.Error(t, err, "json=%v", asJSON)
+		assert.ErrorIs(t, err, ErrReported, "the report already said it: nothing is printed twice")
+		assert.Equal(t, exitError, exitCodeFor(err))
+		assert.Contains(t, out, "permission denied")
+		if asJSON {
+			assert.Equal(t, 1, strings.Count(out, "\"entries\""), "one document on stdout")
+		}
+	}
+}
+
+// TestSourceIndexPrune_TheAllPromptDoesNotSayNothingWasRemoved: the preview
+// --all shows before asking is not a finished dry run (review F11).
+func TestSourceIndexPrune_TheAllPromptDoesNotSayNothingWasRemoved(t *testing.T) {
+	svc, _, _ := newSourceIndexService(t)
+	var out string
+	withStdin(t, "n\n", func() {
+		out = captureStdout(t, func() error {
+			_ = doSourceIndexPrune(t.Context(), svc, core.IndexPruneOptions{All: true}, false)
+			return nil
+		})
+	})
+	assert.NotContains(t, out, "dry run")
+	assert.NotContains(t, out, "Nothing was removed")
+	assert.Contains(t, out, "Remove 2 index(es), 231.9 MB?")
 }

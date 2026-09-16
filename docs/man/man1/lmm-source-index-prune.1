@@ -21,12 +21,16 @@ searched.
 
 .PP
 Pruning is fail-closed: nothing is removed if games.yaml cannot be read,
-and only --all removes anything when there is no games.yaml at all; no
-unused index is removed while a game maps the source to an identifier lmm
-cannot use; an index refreshed after the prune decided to remove it is
-kept; and a directory is only removed when it holds nothing but the index
-files lmm wrote - never through a symbolic link. --dry-run lists exactly
-what a real run would remove, and removes nothing.
+and only --all removes anything when games.yaml is missing, empty, or holds
+anything lmm cannot read as a game (a mistyped key, a game indented out of
+its block, a game whose profiles exist but which the file does not list);
+no unused index is removed while a game maps the source to an identifier
+lmm cannot use; an index refreshed after the prune decided to remove it is
+kept; and a directory is only removed when it holds nothing but files lmm
+provably wrote - never through a symbolic link, and never one lmm has no
+permission to remove. --dry-run lists exactly what a real run would
+remove, and removes nothing. A run that could not remove an index it set
+out to exits 1.
 
 .PP
 Examples:
