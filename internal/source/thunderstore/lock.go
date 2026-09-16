@@ -48,42 +48,76 @@ const (
 // directory and returns the release. With no cache root configured there
 // is no directory to lock and nothing to serialise: the release is a no-op
 // and the caller fails a few lines later on the real problem.
+//
+// A lock is only a lock on the file that is AT the path (#410): a prune
+// removes the lock file while holding it, and a waiter that then won the
+// flock on the removed inode would hold nothing a newcomer could see. So
+// the path is re-checked after every acquisition, and a lock on a file that
+// is no longer there is dropped and taken again on the one that is.
 func (st *store) lockCommunity(ctx context.Context, community string) (func(), error) {
 	dir := st.dir(community)
 	if dir == "" {
 		return func() {}, nil
 	}
+	deadline := time.Now().Add(indexLockWait)
+	for {
+		release, current, err := st.tryLockCommunity(ctx, community, deadline)
+		if err != nil || current {
+			return release, err
+		}
+		release()
+	}
+}
+
+// tryLockCommunity takes the flock on whatever file is at the lock path
+// when it is opened, and reports whether that file is still the one at the
+// path once the lock is held.
+func (st *store) tryLockCommunity(ctx context.Context, community string, deadline time.Time) (func(), bool, error) {
+	dir := st.dir(community)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating %s: %w", dir, err)
+		return nil, false, fmt.Errorf("creating %s: %w", dir, err)
 	}
 	path := filepath.Join(dir, lockFileName)
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("opening the index lock: %w", err)
+		return nil, false, fmt.Errorf("opening the index lock: %w", err)
 	}
 
-	deadline := time.Now().Add(indexLockWait)
 	for {
 		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
-			return func() {
+			release := func() {
 				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 				_ = file.Close()
-			}, nil
+			}
+			return release, sameFileAtPath(file, path), nil
 		}
 		if err != syscall.EWOULDBLOCK { //nolint:errorlint // Flock returns a bare syscall.Errno
 			_ = file.Close()
-			return nil, fmt.Errorf("locking %s: %w", path, err)
+			return nil, false, fmt.Errorf("locking %s: %w", path, err)
 		}
 		if time.Now().After(deadline) {
 			_ = file.Close()
-			return nil, fmt.Errorf("another lmm process has been building the %s index for over %s", community, indexLockWait)
+			return nil, false, fmt.Errorf("another lmm process has been building the %s index for over %s", community, indexLockWait)
 		}
 		select {
 		case <-ctx.Done():
 			_ = file.Close()
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		case <-time.After(indexLockPoll):
 		}
 	}
+}
+
+// sameFileAtPath reports whether the open file is still the one path names.
+func sameFileAtPath(file *os.File, path string) bool {
+	held, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	now, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(held, now)
 }

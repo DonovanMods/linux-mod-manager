@@ -448,6 +448,36 @@ type LocalIndexSource interface {
 	RefreshIndex(ctx context.Context, sourceGameID string, force bool, progress IndexProgressFunc) (IndexStatus, error)
 }
 
+// CachedIndex is one index directory a LocalIndexSource keeps on disk,
+// usable or not (#410) - what `lmm source index --all` lists and what
+// `lmm source index prune` may remove.
+type CachedIndex struct {
+	GameID    string    // the source's own game id the directory is named for
+	Present   bool      // a usable index of the current format
+	Packages  int       // what its watermark says it holds (0 when unreadable)
+	FetchedAt time.Time // when it was last confirmed current; zero when unknown
+	Bytes     int64     // everything in the directory
+	// Removable reports whether the directory is PROVABLY this source's
+	// index and nothing else - the only thing a prune may delete. Reason
+	// says why not when it is false.
+	Removable bool
+	Reason    string
+}
+
+// IndexInventory is implemented by a LocalIndexSource that can enumerate
+// and delete its own index directories (#410).
+//
+// Deletion is FAIL-CLOSED by contract: RemoveIndex removes a directory only
+// when it can prove, at the moment of removal, that everything in it is
+// this source's own index - never following a symbolic link, never
+// removing anything it did not write - and refuses otherwise with nothing
+// removed. The POLICY of which indexes to remove (unused ones, old ones)
+// is core's; this is only the safe mechanism.
+type IndexInventory interface {
+	CachedIndexes(ctx context.Context) ([]CachedIndex, error)
+	RemoveIndex(ctx context.Context, sourceGameID string) (freed int64, err error)
+}
+
 // LoaderRequirer is implemented by sources whose package metadata SAYS a
 // mod needs a mod LOADER in the game root - today, a Thunderstore package
 // declaring a dependency on a BepInExPack (#360 §3.4).
