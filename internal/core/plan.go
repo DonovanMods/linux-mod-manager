@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // ErrStalePlan is returned by every Apply whose plan was computed against an
@@ -18,13 +19,14 @@ var ErrStalePlan = errors.New("plan is stale: installed mods changed since it wa
 
 // installedSnapshot is the precondition a Plan records and an Apply
 // re-derives: the set of (source_id, mod_id, version, enabled) for the
-// profile at plan time. Unexported, json:"-" wherever a Plan embeds one.
-type installedSnapshot map[string]string // key "source:id" -> "version|enabled"
+// profile at plan time, and whether the profile document marks each of
+// those mods disabled. Unexported, json:"-" wherever a Plan embeds one.
+type installedSnapshot map[string]string // key "source:id" -> "version|enabled", plus "|off" when the document marks it
 
 // currentInstalledSnapshot builds gameID/profileName's current installed-mod
 // snapshot, keyed by domain.ModKey (source:id), so a later checkPlanFresh
-// can detect any version, enabled-state, addition, or removal since a Plan
-// was computed.
+// can detect any version, enabled-state, marker, addition, or removal since
+// a Plan was computed.
 func (s *Service) currentInstalledSnapshot(ctx context.Context, gameID, profileName string) (installedSnapshot, error) {
 	mods, err := s.GetInstalledMods(ctx, gameID, profileName)
 	if err != nil {
@@ -106,15 +108,53 @@ func (s *Service) checkAdapterPreconditions(gameID string, mods []domain.Install
 //
 // An adapter with no Preconditioner - every adapter U1 ships - makes the
 // check a nil return.
+//
+// #431 (fix round 3, F2): each entry also records whether the mod's profile
+// document marks it `disabled: true`. Every converge plan reads that
+// marker, so a plan computed before it was written - the one-time backfill
+// beginOp runs inside the Apply's own slot writes it, and so can another
+// lmm process - must not be applied as if it had been: `profile apply`
+// would switch the mod straight back on, and `profile sync` would delete
+// its reference.
 func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (installedSnapshot, error) {
 	if err := s.checkAdapterPreconditions(gameID, mods); err != nil {
 		return nil, err
 	}
+	markers := make(map[string]map[string]bool) // by profile
 	snap := make(installedSnapshot, len(mods))
 	for _, m := range mods {
-		snap[domain.ModKey(m.SourceID, m.ID)] = fmt.Sprintf("%s|%t", m.Version, m.Enabled)
+		disabled, ok := markers[m.ProfileName]
+		if !ok {
+			disabled = s.documentDisabledKeys(gameID, m.ProfileName)
+			markers[m.ProfileName] = disabled
+		}
+		key := domain.ModKey(m.SourceID, m.ID)
+		entry := fmt.Sprintf("%s|%t", m.Version, m.Enabled)
+		if disabled[key] {
+			entry += "|off"
+		}
+		snap[key] = entry
 	}
 	return snap, nil
+}
+
+// documentDisabledKeys is the set of mods gameID/profileName's document
+// marks disabled, or nil when there is no document to read.
+func (s *Service) documentDisabledKeys(gameID, profileName string) map[string]bool {
+	profile, err := config.LoadProfile(s.configDir, gameID, profileName)
+	if err != nil {
+		return nil
+	}
+	var disabled map[string]bool
+	for _, ref := range profile.Mods {
+		if ref.Disabled {
+			if disabled == nil {
+				disabled = make(map[string]bool)
+			}
+			disabled[domain.ModKey(ref.SourceID, ref.ModID)] = true
+		}
+	}
+	return disabled
 }
 
 // checkPlanFresh re-derives gameID/profileName's CURRENT installed-mod

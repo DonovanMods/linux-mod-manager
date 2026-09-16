@@ -659,8 +659,13 @@ func TestBackfillProfileDisabledMarkers_AMutationDischargesItFirst(t *testing.T)
 	plan, err := f.svc.PlanPurge(ctx, f.game, "a", core.PurgeOptions{})
 	require.NoError(t, err)
 	_, err = f.svc.ApplyPurge(ctx, f.game, plan, core.PurgeOptions{}, nil)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, core.ErrStalePlan, "the plan predates the marker the slot just wrote (F2)")
 	assert.Contains(t, f.warnings.String(), "Mod off", "the mutation printed the notice")
+
+	plan, err = f.svc.PlanPurge(ctx, f.game, "a", core.PurgeOptions{})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyPurge(ctx, f.game, plan, core.PurgeOptions{}, nil)
+	require.NoError(t, err)
 
 	report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
 	require.NoError(t, err)
@@ -806,6 +811,72 @@ func TestBackfillProfileDisabledMarkers_AnEditorPanicSkipsTheProfile(t *testing.
 	require.NoError(t, err)
 	require.Len(t, report.Marked, 1)
 	assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+}
+
+// TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale is
+// fix round 3's F2. A plan computed while the backfill was still owed (the
+// open could not take the lock) was applied unchecked after beginOp
+// discharged it: `profile apply` re-enabled, and `profile sync` deleted the
+// reference of, the very mod the notice had just recorded as disabled. The
+// marker is part of what a plan was computed from, so a changed one makes
+// the plan stale.
+func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("profile apply", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		f.owe(t)
+
+		plan, err := f.svc.PlanProfileApply(ctx, f.game, "a")
+		require.NoError(t, err)
+		require.Len(t, plan.ToEnable, 1, "planned before the marker existed")
+
+		_, err = f.svc.ApplyProfileApply(ctx, f.game, plan, core.ProfileApplyOptions{}, nil)
+		require.ErrorIs(t, err, core.ErrStalePlan)
+		assert.Contains(t, f.warnings.String(), "Mod off", "the mutation's slot discharged the backfill")
+		assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+		row, err := f.svc.GetInstalledMod(ctx, "src", "off", f.game.ID, "a")
+		require.NoError(t, err)
+		assert.False(t, row.Enabled, "the stale plan did not switch it back on")
+
+		plan, err = f.svc.PlanProfileApply(ctx, f.game, "a")
+		require.NoError(t, err)
+		assert.Empty(t, plan.ToEnable, "the re-plan reads the marker")
+	})
+
+	t.Run("profile sync", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		f.owe(t)
+
+		plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
+		require.NoError(t, err)
+		require.Len(t, plan.ToRemove, 1, "planned before the marker existed")
+
+		_, err = f.svc.ApplyProfileSync(ctx, f.game, plan, nil)
+		require.ErrorIs(t, err, core.ErrStalePlan)
+		assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"), "the reference and its marker survive")
+
+		plan, err = f.svc.PlanProfileSync(ctx, f.game, "a")
+		require.NoError(t, err)
+		assert.Empty(t, plan.ToRemove, "the re-plan reads the marker")
+	})
+
+	t.Run("a marker in another profile leaves the plan fresh", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		f.row(t, "b", "y", false, false)
+		f.owe(t)
+
+		plan, err := f.svc.PlanProfileSync(ctx, f.game, "b")
+		require.NoError(t, err)
+		require.Len(t, plan.ToRemove, 1)
+
+		_, err = f.svc.ApplyProfileSync(ctx, f.game, plan, nil)
+		require.NoError(t, err, "only profile a was marked")
+		assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+	})
 }
 
 // TestBackfillProfileDisabledMarkers_ABadRowIsSkippedNotFatal is fix round
