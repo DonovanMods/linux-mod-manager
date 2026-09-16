@@ -348,12 +348,11 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	// preview reported locked:false for every locked mod while
 	// GET /api/v1/mods reported the same mod as locked. Read once here; a
 	// profile that will not load simply stamps nothing, exactly as the purge
-	// pass below treats one.
+	// pass below treats one. A mod listed twice is stamped from its first
+	// copy, the one the update gate enforces (#457).
 	profileRefs := map[string]domain.ModReference{}
 	if profile, perr := config.LoadProfile(s.configDir, game.ID, profileName); perr == nil {
-		for _, ref := range profile.Mods {
-			profileRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref
-		}
+		profileRefs = firstRefs(profile.Mods)
 	}
 	// stampLock marks ref locked when the profile says so. Version is
 	// deliberately left as the installed row's: it is what this deploy will

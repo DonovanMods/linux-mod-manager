@@ -79,12 +79,14 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 	}
 
 	// One precomputed map rather than a FindRef scan per mod: this loops
-	// over every installed mod.
+	// over every installed mod. A mod listed twice is read by its first
+	// copy, the one the update gate enforces (#457) - firstRefs is FindRef's
+	// map form.
 	lockedByKey := map[string]domain.ModReference{}
 	if profile != nil {
-		for _, ref := range profile.Mods {
+		for key, ref := range firstRefs(profile.Mods) {
 			if ref.Locked {
-				lockedByKey[domain.ModKey(ref.SourceID, ref.ModID)] = ref
+				lockedByKey[key] = ref
 			}
 		}
 	}

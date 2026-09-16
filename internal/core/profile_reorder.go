@@ -96,14 +96,22 @@ func (s *Service) ResolveReorder(ctx context.Context, game *domain.Game, profile
 	installed, _ := s.GetInstalledMods(ctx, game.ID, profileName)
 	external := externalKeys(installed)
 
-	// Key by sourceID:modID so mods from different sources with the same ModID are not overwritten.
+	// Key by sourceID:modID so mods from different sources with the same
+	// ModID are not overwritten. A mod listed twice (a hand edit) moves by
+	// its FIRST copy - the one every flow decides it by (#457); moving the
+	// last one instead could unlock, lock or switch the mod back on.
 	byKey := make(map[string]domain.ModReference)
-	for _, ref := range profile.Mods {
+	firstIndex := make(map[string]int)
+	for i, ref := range profile.Mods {
 		key := ref.SourceID + ":" + ref.ModID
 		if external[key] {
 			continue
 		}
+		if _, dup := byKey[key]; dup {
+			continue
+		}
 		byKey[key] = ref
+		firstIndex[key] = i
 	}
 
 	var newRefs []domain.ModReference
@@ -148,10 +156,11 @@ func (s *Service) ResolveReorder(ctx context.Context, game *domain.Game, profile
 	// Append mods not mentioned in ids (unchanged relative order). An
 	// external mod's ref stays in the profile YAML - it is still an
 	// installed mod - it simply never participates in ordering, so it is
-	// appended here like any unmentioned ref.
-	for _, ref := range profile.Mods {
+	// appended here like any unmentioned ref. So is every later copy of a
+	// mod listed twice: a reorder moves the first copy and deletes none.
+	for i, ref := range profile.Mods {
 		key := ref.SourceID + ":" + ref.ModID
-		if !seen[key] {
+		if !seen[key] || firstIndex[key] != i {
 			newRefs = append(newRefs, ref)
 		}
 	}

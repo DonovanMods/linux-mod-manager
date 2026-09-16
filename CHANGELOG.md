@@ -1472,6 +1472,18 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A mod listed twice in a profile reads the same everywhere (#457).** lmm
+  never writes a duplicate, but a hand edit can, and every command already
+  decided such a mod by its **first** entry — `lmm update`'s lock check
+  included. The deploy preview reported the lock from the last entry and
+  `lmm list` (and the web UI's library) from any entry, so a mod could be
+  shown as locked while `lmm update` treated it as unlocked, or the other
+  way round. Both now read the first entry. `lmm deploy` also deployed such
+  a mod once per entry, and a load-order change moved the **last** entry
+  and dropped the others — which could unlock, lock or switch the mod back
+  on. A deploy now handles it once, and a reorder moves the first entry and
+  keeps the rest.
+
 - **A game always has exactly one active profile (#446).** `lmm profile
 import --force` over the active profile's name cleared its
   `is_default: true`, leaving the game with no active profile, so every

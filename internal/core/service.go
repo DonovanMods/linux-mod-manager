@@ -2126,6 +2126,8 @@ func (s *Service) GetInstalledMods(ctx context.Context, gameID, profileName stri
 
 // GetInstalledModsInProfileOrder returns installed mods in profile load order (first = lowest priority).
 // Mods not present in the profile are omitted. Use this for deploy/switch so deployment order matches load order.
+// A mod the profile lists twice (a hand edit) is returned once, at its first
+// reference's position - the copy every flow decides it by (#457).
 //
 // No cmd/app caller today (deploy/merged-pak call it internally); kept
 // exported as a serve-facing query (Phase 3 Ruling 10) - a frontend
@@ -2148,6 +2150,7 @@ func (s *Service) GetInstalledModsInProfileOrder(ctx context.Context, gameID, pr
 		key := domain.ModKey(ref.SourceID, ref.ModID)
 		if m, ok := byKey[key]; ok {
 			ordered = append(ordered, *m)
+			delete(byKey, key)
 		}
 	}
 	return ordered, nil
