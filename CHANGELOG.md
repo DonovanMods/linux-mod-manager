@@ -1196,6 +1196,21 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The web UI's enable/disable checkbox acknowledges the click straight
+  away (#432).** Enabling a mod deploys its files, which for a large mod is
+  seconds of real work — and for all of it the library row looked exactly as
+  it had before the click: the box kept its old value, greyed itself out,
+  and only moved once the job had finished and the library had reloaded.
+  Nothing said the click had landed, so people clicked again, and the
+  `disabled` that was the only visible change swallowed those clicks too.
+  The box now moves to what you asked for in the same frame, the row says
+  **Enabling…**/**Disabling…** beside the mod's name with a spinner next to
+  the box, and if the job fails the row goes back to what is actually true.
+  The slide-over's and the full mod page's own Enable/Disable buttons do the
+  same, and so does the batch bar: selecting forty mods and pressing
+  **Disable** now moves all forty at once, rather than one row at a time as
+  the sequenced batch reaches it.
+
 - **A NexusMods plugin folder installs into `BepInEx/plugins/`, not into the
   game root (#424).** Jotunn 2.30.0 from NexusMods extracts to a single
   top-level directory — `Jotunn/Jotunn.dll` plus its `.pdb`, `.xml` and the

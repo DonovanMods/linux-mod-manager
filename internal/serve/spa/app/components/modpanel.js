@@ -20,6 +20,7 @@ import { exitMillis } from "../motion.js";
 import { navigate } from "../router.js";
 import { getModDetail, ApiError } from "../api.js";
 import { findingLabel } from "../verify.js";
+import { pendingToggleLabel, usePendingToggles } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { InlineJob } from "./jobprogress.js";
 
@@ -91,6 +92,13 @@ export function ModPanel({
     index >= 0 && index < (visible?.length ?? 0) - 1
       ? visible[index + 1]
       : null;
+
+  // issue 432: this panel's own Enable/Disable acknowledges the click in the
+  // frame it was made in, exactly as the library row's checkbox does - the
+  // InlineJob below only morphs once a job id has come back, and the whole
+  // complaint was about the window before that. Called unconditionally, with
+  // every other hook, since the render below has early returns.
+  const toggles = usePendingToggles(state, actions, () => row?.enabled);
 
   // The exit animation (issue 334, owner demo 1: "mild UI animations for the
   // slide-over"). Preact would unmount this whole subtree the instant the
@@ -323,6 +331,8 @@ export function ModPanel({
   const findings = findingsFor(state.health, row.id);
   const conflicts = conflictsFor(state.conflicts, row.key);
   const origin = (action) => `mod:${row.source_id}/${row.id}:${action}`;
+  // issue 432: what this mod's toggle was asked for and has not got yet.
+  const toggleRequested = toggles.requestedFor(row.key);
 
   return html`
     <div
@@ -424,15 +434,18 @@ export function ModPanel({
               <button
                 type="button"
                 class="button"
-                onClick=${() =>
-                  actions.startToggle({
-                    action: row.enabled ? "disable" : "enable",
-                    sourceID: row.source_id,
-                    modID: row.id,
-                    origin: origin("toggle"),
-                  })}
+                data-action="toggle"
+                disabled=${toggleRequested !== undefined}
+                aria-busy=${toggleRequested !== undefined ? "true" : null}
+                onClick=${() => toggles.start(row)}
               >
-                ${row.enabled ? "Disable" : "Enable"}
+                ${
+                  toggleRequested === undefined
+                    ? row.enabled
+                      ? "Disable"
+                      : "Enable"
+                    : pendingToggleLabel(toggleRequested.want)
+                }
               </button>
             <//>`
           }

@@ -1047,15 +1047,19 @@ if (typeof window !== "undefined") {
   window.__lmmOpenPlan = (spec) => actions.openPlan(spec);
 }
 
-/** startBinding runs work (an async fn returning nothing) as origin's
- * binding: recorded in bindingJobs until it settles, keyed so a concurrent
- * binding for a DIFFERENT origin is never disturbed. Shared by confirmPlan
- * and startToggle - the two entry points that write into state.origins. */
+/** startBinding runs work as origin's binding: recorded in bindingJobs
+ * until it settles, keyed so a concurrent binding for a DIFFERENT origin is
+ * never disturbed. Shared by confirmPlan and startToggle - the two entry
+ * points that write into state.origins.
+ *
+ * work's own value comes back out (issue 432): startToggle answers its
+ * caller with the job id it bound, so a control that acknowledged the click
+ * optimistically can tell a start that never happened from one that did. */
 async function startBinding(origin, work) {
   const promise = work();
   bindingJobs.set(origin, promise);
   try {
-    await promise;
+    return await promise;
   } finally {
     if (bindingJobs.get(origin) === promise) bindingJobs.delete(origin);
   }
@@ -1111,6 +1115,11 @@ function waitForJobDone(jobID) {
  * `run(item)` starts one item's job and returns its job id; `labelOf(item)`
  * names it for the failure list; `verb` is the toast's own past-tense word
  * ("Enabled", "Disabled", "Uninstalled").
+ *
+ * The ITEMS that did not finish come back to the caller (issue 432), not
+ * just their labels: a batch toggle's own optimistic acknowledgment has to
+ * be able to put those rows back, and only their identity - not the
+ * sentence in the toast - can say which rows those are.
  */
 async function startSequencedBatch(
   items,
@@ -1125,9 +1134,9 @@ async function startSequencedBatch(
         const jobID = await run(item);
         store.set({ origins: { ...store.get().origins, [origin]: jobID } });
         const summary = await waitForJobDone(jobID);
-        if (summary.state === "failed") failed.push(labelOf(item));
+        if (summary.state === "failed") failed.push(item);
       } catch (err) {
-        failed.push(labelOf(item));
+        failed.push(item);
       }
     }
   } finally {
@@ -1137,21 +1146,26 @@ async function startSequencedBatch(
   pushToast({
     tone: failed.length > 0 ? "failure" : "success",
     title: `${verb} ${ok}/${items.length} mod${items.length === 1 ? "" : "s"}`,
-    detail: failed.length > 0 ? `Failed: ${failed.join(", ")}` : "",
+    detail:
+      failed.length > 0 ? `Failed: ${failed.map(labelOf).join(", ")}` : "",
   });
+  return failed;
 }
 
 /** startBatchToggle sequences an enable/disable job per mod (the library
  * batch bar's Enable/Disable, issue 332) - the same per-mod origin
  * ("mod:{source}/{id}:toggle") the row's own toggle and the slide-over's
  * Enable/Disable button already use (modrows.js#modOriginPattern), so a
- * visible row shows the SAME inline progress whichever control started it. */
+ * visible row shows the SAME inline progress whichever control started it.
+ *
+ * Answers with the mods whose own job never succeeded, which is what the
+ * batch bar's optimistic acknowledgment puts back (issue 432). */
 async function startBatchToggle(action, mods) {
   const context = {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
-  await startSequencedBatch(mods, {
+  return startSequencedBatch(mods, {
     run: (mod) =>
       startToggleJob(action, mod.source_id, mod.id, context).then((r) => r.id),
     originOf: (mod) => `mod:${mod.source_id}/${mod.id}:toggle`,
@@ -1343,13 +1357,18 @@ async function retryInstallOverwrite(jobID) {
  * other mutation in this application, a toggle has no Plan step at all - so
  * it becomes a toast instead, the same "the origin isn't on screen to say
  * so" surface every other unseen outcome already uses.
+ *
+ * It answers with the job id it bound, or null when the start failed (issue
+ * 432): toggleack.js#usePendingToggles has drawn the requested state on the
+ * control already, and a start that bound no job leaves nothing behind that
+ * could ever tell it the request is over.
  */
 async function startToggle({ action, sourceID, modID, origin }) {
   const context = {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
-  await startBinding(origin, async () => {
+  return startBinding(origin, async () => {
     try {
       const { id: jobID } = await startToggleJob(
         action,
@@ -1358,12 +1377,14 @@ async function startToggle({ action, sourceID, modID, origin }) {
         context,
       );
       store.set({ origins: { ...store.get().origins, [origin]: jobID } });
+      return jobID;
     } catch (err) {
       pushToast({
         tone: "failure",
         title: `${action} failed`,
         detail: err instanceof ApiError ? err.message : String(err),
       });
+      return null;
     }
   });
 }

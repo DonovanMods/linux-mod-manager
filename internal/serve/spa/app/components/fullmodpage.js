@@ -54,6 +54,7 @@ import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
 import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
+import { pendingToggleLabel, usePendingToggles } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import {
   ModSettingsControls,
@@ -68,6 +69,19 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   const home = contextPath(route.game, route.profile);
   const modPage = state.modPage;
   const key = `${route.sourceID}/${route.modID}`;
+
+  // issue 432: this page's Enable/Disable acknowledges the click in the same
+  // frame, the same way the library row and the slide-over now do. Called
+  // FIRST, above every early return below, because it is a hook - and read
+  // straight off the store rather than off the `installedMod` derived a
+  // hundred lines down, which does not exist yet at this point in the render
+  // and (being re-hydrated by main.js#hydrateModPage) is a different
+  // document from the library's own listing anyway.
+  const toggles = usePendingToggles(state, actions, () =>
+    state.modPage?.key === key
+      ? state.modPage?.filesReport?.mod?.enabled
+      : undefined,
+  );
 
   const header = html`
     <${AwayBar}
@@ -128,6 +142,8 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   const sourceID = route.sourceID;
   const modID = route.modID;
   const origin = (action) => `mod:${sourceID}/${modID}:${action}`;
+  // issue 432: what this mod's toggle was asked for and has not got yet.
+  const toggleRequested = toggles.requestedFor(`${sourceID}:${modID}`);
 
   // The lock/policy pair reads the LIBRARY listing first and the live
   // ModDetail only as a fallback (I-5): core.ModListing carries locked,
@@ -211,15 +227,24 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             <button
               type="button"
               class="button"
+              data-action="toggle"
+              disabled=${toggleRequested !== undefined}
+              aria-busy=${toggleRequested !== undefined ? "true" : null}
               onClick=${() =>
-                actions.startToggle({
-                  action: installedMod.enabled ? "disable" : "enable",
-                  sourceID,
-                  modID,
-                  origin: origin("toggle"),
+                toggles.start({
+                  key: `${sourceID}:${modID}`,
+                  source_id: sourceID,
+                  id: modID,
+                  enabled: installedMod.enabled,
                 })}
             >
-              ${installedMod.enabled ? "Disable" : "Enable"}
+              ${
+                toggleRequested === undefined
+                  ? installedMod.enabled
+                    ? "Disable"
+                    : "Enable"
+                  : pendingToggleLabel(toggleRequested.want)
+              }
             </button>
           <//>`
         }

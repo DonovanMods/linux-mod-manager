@@ -17,10 +17,12 @@ import { ApiError } from "../api.js";
 import {
   formatDate,
   countExternal,
+  modKey,
   FILTER_NAMES,
   SORT_NAMES,
 } from "../modrows.js";
 import { mutationLabel, progressText } from "../progress.js";
+import { pendingToggleLabel, usePendingToggles } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { AddModsMenu } from "./addmodsmenu.js";
 
@@ -106,7 +108,17 @@ export function Library({
 }) {
   const [selected, setSelected] = useState(() => new Set());
   const [menuKey, setMenuKey] = useState(null);
-  const [togglingKey, setTogglingKey] = useState(null);
+
+  // issue 432: the requested enable/disable state of every row whose toggle
+  // is still in flight. Resolved against the WHOLE mods document rather than
+  // the `visible` rows this component renders - a filter (or a search) can
+  // hide the very row that is mid-toggle, and an entry with nothing left on
+  // screen to settle it against would stay pending for the rest of the
+  // session.
+  const toggles = usePendingToggles(state, actions, (key) => {
+    const mod = (mods?.mods ?? []).find((m) => modKey(m) === key);
+    return mod ? Boolean(mod.enabled) : undefined;
+  });
 
   // m2, unit 6 fix wave: the ⋯ row menu used to close only by re-clicking
   // ⋯, which left it sitting open over the rest of the page once the user
@@ -167,18 +179,13 @@ export function Library({
     return `Steam manages the selected items — lmm cannot ${action} them`;
   }
 
-  async function toggleEnabled(row) {
-    setTogglingKey(row.key);
-    try {
-      await actions.startToggle({
-        action: row.enabled ? "disable" : "enable",
-        sourceID: row.source_id,
-        modID: row.id,
-        origin: modOrigin(row, "toggle"),
-      });
-    } finally {
-      setTogglingKey(null);
-    }
+  // issue 432: the click is acknowledged by toggleack.js in the same frame -
+  // the box moves to what was asked for and the row says what it is doing -
+  // rather than sitting on the old value, greyed, until the deploy behind it
+  // finishes. Nothing is awaited here: the pending state IS the feedback,
+  // and the outcome lands through the row's own live line.
+  function toggleEnabled(row) {
+    toggles.start(row);
   }
 
   // toggleLock is the ⋯ menu's own Lock/Unlock (I1, unit 6 fix wave): the
@@ -238,9 +245,18 @@ export function Library({
     const rows = togglableSelectedRows();
     if (rows.length === 0) return;
     setSelected(new Set());
-    actions.startBatchToggle(
+    // issue 432: every row in the batch acknowledges at once, on the click -
+    // the batch itself runs strictly one job at a time (main.js#
+    // startBatchToggle), so without this the last row of a long selection
+    // sat visually untouched for the whole run.
+    toggles.startBatch(
       action,
-      rows.map((r) => ({ source_id: r.source_id, id: r.id, name: r.name })),
+      rows.map((r) => ({
+        key: r.key,
+        source_id: r.source_id,
+        id: r.id,
+        name: r.name,
+      })),
     );
   }
 
@@ -535,11 +551,18 @@ export function Library({
                     // "source:id" way modKey() is) shows its own live text
                     // here instead of the library's shared header line.
                     const mutation = mutations?.get(row.key);
+                    // issue 432: what the user asked this row's toggle for
+                    // and has not got yet (toggleack.js). While it is set the
+                    // box renders the REQUESTED value rather than the
+                    // server's, so the click lands visibly in the frame it
+                    // was made in.
+                    const requested = toggles.requestedFor(row.key);
+                    const togglePending = requested !== undefined;
                     return html`
                       <tr
                         key=${row.key}
                         data-mod=${row.key}
-                        class="mod-row ${selected.has(row.key) ? "mod-row--selected" : ""}"
+                        class="mod-row ${selected.has(row.key) ? "mod-row--selected" : ""} ${togglePending ? "mod-row--pending" : ""}"
                       >
                         <td class="col--select">
                           <input
@@ -562,7 +585,7 @@ export function Library({
                                 ? `${row.name} is managed by Steam`
                                 : `${row.enabled ? "Disable" : "Enable"} ${row.name}`
                             }
-                            checked=${row.enabled}
+                            checked=${togglePending ? requested.want : row.enabled}
                             disabled=${
                               // issue 379: EXTERNAL rows are gated here too,
                               // matching updatableSelectedRows and the row
@@ -573,10 +596,19 @@ export function Library({
                               // fails, which is the same defect the deploy
                               // dry run had. Disabled-with-a-reason is the
                               // full mod page's rollback pattern.
+                              //
+                              // issue 432: the box is still frozen while the
+                              // request is in flight - a second, contrary
+                              // job over the same mod is not a thing to
+                              // offer - but it is now frozen HOLDING THE
+                              // REQUESTED VALUE, with the row saying what is
+                              // happening, instead of frozen on the old one
+                              // saying nothing at all.
                               Boolean(mutation) ||
-                              togglingKey === row.key ||
+                              togglePending ||
                               row.isExternal
                             }
+                            aria-busy=${togglePending ? "true" : null}
                             title=${
                               row.isExternal
                                 ? "Steam manages this item — unsubscribe in Steam, or use the game's own mod menu"
@@ -585,6 +617,13 @@ export function Library({
                             onClick=${(e) => e.stopPropagation()}
                             onChange=${() => toggleEnabled(row)}
                           />
+                          ${
+                            togglePending &&
+                            html`<span
+                              class="toggle-pending"
+                              aria-hidden="true"
+                            ></span>`
+                          }
                         </td>
                         <td class="col--name">
                           <button
@@ -595,15 +634,27 @@ export function Library({
                             ${row.name}
                           </button>
                           ${
-                            mutation &&
-                            html`<span class="mod-row__live" role="status">
-                              ${[
-                                mutationLabel(mutation.summary.kind),
-                                progressText(mutation.frame),
-                              ]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </span>`
+                            // The row's own live line: the running job's
+                            // words once there IS a job, and - issue 432 -
+                            // the requested change's own words for the
+                            // window before that, which is exactly the
+                            // window the user was clicking into.
+                            mutation
+                              ? html`<span class="mod-row__live" role="status">
+                                  ${[
+                                    mutationLabel(mutation.summary.kind),
+                                    progressText(mutation.frame),
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </span>`
+                              : togglePending &&
+                                html`<span
+                                  class="mod-row__live"
+                                  role="status"
+                                  data-testid="toggle-pending"
+                                  >${pendingToggleLabel(requested.want)}</span
+                                >`
                           }
                         </td>
                         <td class="col--version mono">
