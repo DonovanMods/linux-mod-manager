@@ -637,3 +637,28 @@ func TestE2E_SearchPage_AnIndexFailureShowsWhenToRetry(t *testing.T) {
 		assert.Contains(t, e, "502", "the only browser error is the refused request itself: %s", e)
 	}
 }
+
+// TestE2E_SetupSources_AnEmptyOrUnusableIndexSaysSo: a directory a failed
+// cold build left empty is "not built yet", and one holding an index lmm
+// cannot use (an older lmm's, or a damaged one) says so - the CLI's two
+// readings of the same rows (T3 review F12, and the fix round's
+// real-binary run).
+func TestE2E_SetupSources_AnEmptyOrUnusableIndexSaysSo(t *testing.T) {
+	f, _ := newE2EIndexFixture(t, func(s *e2eIndexSource) {
+		s.cached["empty-dir"] = source.CachedIndex{GameID: "empty-dir", Removable: true}
+		s.cached["old-format"] = source.CachedIndex{GameID: "old-format", Packages: 12, Bytes: 5000, Removable: true}
+	})
+
+	var emptyUpdated, emptyPackages, oldPackages string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/setup?section=sources"),
+		chromedp.WaitVisible(indexRow("old-format"), chromedp.ByQuery),
+		textContent(indexRow("empty-dir")+` [data-testid="index-updated"]`, &emptyUpdated),
+		textContent(indexRow("empty-dir")+` [data-testid="index-packages"]`, &emptyPackages),
+		textContent(indexRow("old-format")+` [data-testid="index-packages"]`, &oldPackages),
+	)
+	assert.Contains(t, emptyUpdated, "not built yet")
+	assert.Equal(t, "—", strings.TrimSpace(emptyPackages))
+	assert.Contains(t, oldPackages, "unusable")
+	assert.Empty(t, f.BrowserErrors())
+}

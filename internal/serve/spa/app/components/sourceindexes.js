@@ -212,7 +212,12 @@ function IndexRow({ entry, hold, onChanged }) {
     }
   }
 
-  const updated = entry.cached ? relativeTime(entry.fetched_at) : "";
+  // An empty directory - all a failed cold build leaves - is not an
+  // index yet; one holding something lmm cannot use says so. The CLI
+  // reads the same rows the same way.
+  const built = entry.cached && (entry.present || entry.bytes > 0);
+  const unusable = built && !entry.present;
+  const updated = built ? relativeTime(entry.fetched_at) : "";
   return html`
     <tr
       data-index=${entry.game}
@@ -222,13 +227,13 @@ function IndexRow({ entry, hold, onChanged }) {
       <td class="mono">${entry.source}</td>
       <td class="mono">${entry.game}</td>
       <td data-testid="index-packages">
-        ${entry.cached ? String(entry.packages) : "—"}
+        ${unusable ? "unusable" : built ? String(entry.packages) : "—"}
       </td>
       <td data-testid="index-size">
-        ${entry.cached ? formatBytes(entry.bytes) || "0 B" : "—"}
+        ${built ? formatBytes(entry.bytes) || "0 B" : "—"}
       </td>
       <td data-testid="index-updated">
-        ${entry.cached ? updated || "unknown" : "not built yet"}
+        ${built ? updated || "unknown" : "not built yet"}
         ${
           hold &&
           html`
