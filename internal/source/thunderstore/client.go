@@ -90,7 +90,11 @@ func newClient(opts Options, now func() time.Time) *client {
 	//
 	// The stall guard sits BELOW the retries: an attempt that never
 	// answers is one more failed attempt, and each gets its own window.
-	idle := &httpclient.IdleTimeout{Base: httpClient.Transport, Timeout: stallTimeout}
+	stall := opts.StallTimeout
+	if stall <= 0 {
+		stall = stallTimeout
+	}
+	idle := &httpclient.IdleTimeout{Base: httpClient.Transport, Timeout: stall}
 	retry := newRetryTransport(idle, now)
 	retrying := *httpClient
 	retrying.Transport = retry

@@ -126,14 +126,26 @@ func (b *idleBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// stalledError reports a failure the stall window caused. net/http hands
-// back the cancellation cause itself on newer runtimes, and a wrapped
-// context error on older ones; either way the result names the stall once.
+// stalledError reports a failure the stall window caused, as the stall and
+// nothing else a caller could branch on.
+//
+// What net/http hands back for the cancellation that window made depends
+// on the protocol (T3 review F1): the HTTP/1 transport returns the
+// cancellation CAUSE - the stall itself, already - while the HTTP/2
+// transport, which is what thunderstore.io speaks, returns a bare
+// context.Canceled. Wrapping that with %w put context.Canceled in the
+// chain, and the CLI read a stalled transfer as the user's own Ctrl-C:
+// "Cancelled.", exit 2, and no --json document at all. So the transport's
+// error is kept as TEXT only (%v), and not even that when it is just the
+// cancellation the stall caused, which says nothing the stall does not.
 func stalledError(stall, err error) error {
-	if errors.Is(err, ErrStalled) {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return stall
+	case errors.Is(err, ErrStalled):
 		return err
 	}
-	return fmt.Errorf("%w (%w)", stall, err)
+	return fmt.Errorf("%w (%v)", stall, err) //nolint:errorlint // deliberately text: the transport error must not be matchable (see above)
 }
 
 // Close stops the window and releases the request's context.

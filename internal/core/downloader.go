@@ -179,6 +179,9 @@ func (d *Downloader) DownloadWithHeaders(ctx context.Context, url, destPath stri
 			return nil, err
 		} else {
 			retry.Reason = source.RetryNetworkError
+			if errors.Is(err, httpclient.ErrStalled) {
+				retry.Reason = source.RetryStalled
+			}
 		}
 
 		d.log.Debug("download attempt failed; retrying", "attempt", attempt, "backoff", retry.Wait, "err", err)

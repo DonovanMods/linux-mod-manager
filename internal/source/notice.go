@@ -32,6 +32,10 @@ const (
 	RetryRateLimited  = "rate_limited"
 	RetryServerError  = "server_error"
 	RetryNetworkError = "network_error"
+	// RetryStalled: the host answered and then stopped sending (#436, T3
+	// review F1) - reached, so not a network error a user would read as
+	// "could not reach".
+	RetryStalled = "stalled"
 )
 
 // Notice is one thing a source wants the user to know while a call waits on

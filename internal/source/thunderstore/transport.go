@@ -41,6 +41,7 @@ package thunderstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
@@ -49,6 +50,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 )
 
 // serviceName is how a notice or an error names the host being waited on.
@@ -139,6 +141,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			lastErr = err
 			retry.Reason, retry.Err = source.RetryNetworkError, err
+			if errors.Is(err, httpclient.ErrStalled) {
+				retry.Reason = source.RetryStalled
+			}
 		case retryableStatus(resp.StatusCode):
 			lastErr = statusFailure(resp.StatusCode)
 			retry.Reason, retry.Status, retry.Err = retryReason(resp.StatusCode), resp.StatusCode, lastErr

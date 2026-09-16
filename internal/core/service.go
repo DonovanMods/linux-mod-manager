@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -74,6 +75,14 @@ type ServiceConfig struct {
 	// The composition root (internal/app) registers only NAMED adapters on
 	// top of that default; core never imports a concrete adapter package.
 	Adapters *adapter.Registry
+
+	// DownloadClient is the HTTP client file downloads use. Nil builds the
+	// default: http.DefaultTransport under a guard that fails a transfer
+	// once it stops delivering bytes for a minute (#436). A caller that
+	// supplies its own client supplies its own stall guard with it - a
+	// test does, to prove over a real HTTP/2 server that a stalled
+	// download is reported as a failure, in well under a minute.
+	DownloadClient *http.Client
 }
 
 // DownloadModResult contains the outcome of downloading a mod file
@@ -235,7 +244,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 
 	modCache := cache.New(cfg.CacheDir)
 	modCache.SetLogger(log)
-	downloader := NewDownloader(nil)
+	downloader := NewDownloader(cfg.DownloadClient)
 	downloader.SetLogger(log)
 
 	svc := &Service{

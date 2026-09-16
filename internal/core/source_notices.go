@@ -87,6 +87,8 @@ func noticeText(n source.Notice, now time.Time) string {
 			return fmt.Sprintf("Rate limited by %s; %s", n.Source, attempt)
 		case source.RetryServerError:
 			return fmt.Sprintf("%s answered HTTP %d; %s", n.Source, n.Status, attempt)
+		case source.RetryStalled:
+			return fmt.Sprintf("The transfer from %s stalled; %s", n.Source, attempt)
 		default:
 			return fmt.Sprintf("Could not reach %s; %s", n.Source, attempt)
 		}

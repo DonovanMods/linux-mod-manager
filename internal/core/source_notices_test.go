@@ -38,6 +38,13 @@ func TestNoticeText(t *testing.T) {
 			"Could not reach gcdn.thunderstore.io; retrying in 300ms (attempt 2 of 3).",
 		},
 		{
+			// T3 review F1: a stalled transfer REACHED the host, so it is
+			// not "could not reach" it.
+			"stalled",
+			source.Notice{Kind: source.NoticeRetry, Source: "Thunderstore", Reason: source.RetryStalled, Attempt: 2, MaxAttempts: 3, Wait: 700 * time.Millisecond},
+			"The transfer from Thunderstore stalled; retrying in 700ms (attempt 2 of 3).",
+		},
+		{
 			"suspended",
 			source.Notice{Kind: source.NoticeSuspended, Source: "Thunderstore", Until: now.Add(4*time.Minute + 30*time.Second)},
 			"Not asking Thunderstore again until 12:04:30 (in 4m30s).",

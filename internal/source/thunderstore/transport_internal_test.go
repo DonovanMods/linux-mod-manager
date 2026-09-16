@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,7 +150,26 @@ func TestRetryTransport_NoticesNameTheReason(t *testing.T) {
 		assert.Zero(t, (*notices)[0].Status)
 		assert.Error(t, (*notices)[0].Err)
 	})
+
+	// T3 review F1: a stalled attempt reached the host and then heard
+	// nothing, which is not "could not reach" it.
+	t.Run("stalled", func(t *testing.T) {
+		rt, _ := newTestTransport(t, time.Now)
+		rt.base = roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, &httpclient.StallError{Timeout: stallTimeout}
+		})
+		ctx, notices := recordNotices(t)
+		_, err := getCtx(t, ctx, rt, "http://127.0.0.1:9/")
+		require.ErrorIs(t, err, httpclient.ErrStalled)
+		require.Len(t, *notices, maxAttempts-1)
+		assert.Equal(t, source.RetryStalled, (*notices)[0].Reason)
+	})
 }
+
+// roundTripFunc is an http.RoundTripper made of a function.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // TestRetryTransport_ARetryAfterPastTheCeilingIsNotWaitedOut: a throttle
 // that asks for longer than maxRetryAfter is not slept through - a search

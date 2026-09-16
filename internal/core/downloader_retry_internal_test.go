@@ -206,6 +206,6 @@ func TestDownloader_AStalledBodyIsRetried(t *testing.T) {
 	assert.Len(t, *waits, 1)
 	got := notices()
 	require.Len(t, got, 1)
-	assert.Equal(t, source.RetryNetworkError, got[0].Reason)
+	assert.Equal(t, source.RetryStalled, got[0].Reason, "a stall reached the host: it is not a network failure")
 	assert.ErrorIs(t, got[0].Err, httpclient.ErrStalled)
 }

@@ -58,6 +58,11 @@ type Options struct {
 	// the only value production ever wants; a test sets it small so that
 	// proving the ceiling works does not mean serving half a gigabyte.
 	MaxIndexBytes int64
+	// StallTimeout is how long one listing attempt may go without a byte
+	// before it fails as stalled. 0 uses stallTimeout, which is the only
+	// value production wants; a test sets it small so that proving a stall
+	// is reported correctly does not mean waiting thirty seconds for one.
+	StallTimeout time.Duration
 }
 
 // Source is the Thunderstore ModSource (#360).
