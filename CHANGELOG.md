@@ -252,6 +252,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lmm serve` has a tab icon (#435).** The shell declared no icon, so the
+  tab showed the browser's generic page glyph and every page load fired a
+  `GET /favicon.ico` the server had no route for. An SVG mark now ships
+  embedded in the binary like every other asset — no CDN, no build step —
+  served both at `/static/favicon.svg`, which the shell names, and at
+  `/favicon.ico`, which browsers ask for on their own. It is one drawing
+  rather than a size per platform, and it is a filled tile so it reads on a
+  light and a dark tab strip alike.
+
 - **Select all, on the library and the Updates card (#434).** Both
   multi-select surfaces made you tick every row by hand. Each now has a
   header checkbox that takes everything **currently in view** — after the

@@ -25,7 +25,7 @@ import (
 	"strings"
 )
 
-//go:embed spa/index.html spa/app.css spa/app/*.js spa/app/components/*.js
+//go:embed spa/index.html spa/app.css spa/favicon.svg spa/app/*.js spa/app/components/*.js
 var spaFS embed.FS
 
 //go:embed vendor/*.js
@@ -99,6 +99,48 @@ func buildContentSecurityPolicy() string {
 	return "default-src 'self'; script-src 'self' 'sha256-" +
 		base64.StdEncoding.EncodeToString(sum[:]) + "'" +
 		"; base-uri 'self'; form-action 'self'"
+}
+
+// faviconPath is the embedded mark's path inside spaFS, and faviconBytes is
+// the mark itself - read once at startup, like the shell's own template,
+// because a broken embed is a build defect rather than a runtime condition
+// to recover from (issue 435).
+const faviconPath = "spa/favicon.svg"
+
+var faviconBytes = mustReadEmbedded(spaFS, faviconPath)
+
+// mustReadEmbedded reads one file out of an embedded tree or panics. See
+// assetHandler for the same reasoning applied to a whole tree.
+func mustReadEmbedded(embedded fs.FS, name string) []byte {
+	data, err := fs.ReadFile(embedded, name)
+	if err != nil {
+		panic(fmt.Errorf("serve: reading embedded asset %q: %w", name, err))
+	}
+	return data
+}
+
+// handleFavicon answers GET /favicon.ico with the SAME embedded mark the
+// shell's <link rel="icon"> names at /static/favicon.svg - one asset, so the
+// tab icon and the fallback can never drift apart.
+//
+// The route exists at all because spaRoutes registers no bare "/" catch-all
+// (see its doc comment), so the request every browser makes for this path
+// when a page declares no icon - and in any context where the <link> is not
+// consulted - had nothing to answer it.
+//
+// It is answered as image/svg+xml despite the .ico spelling, which is what
+// the content type is FOR: a browser dispatches on the header, not on the
+// path, and shipping a second, redundant raster copy of the same mark to
+// satisfy the extension would be a byte-for-byte drift risk for no benefit.
+// SVG favicons are supported by every browser this local UI targets.
+func (s *Server) handleFavicon(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	// no-cache (revalidate, don't re-download), matching assetHandler: the
+	// mark only ever changes with the binary.
+	w.Header().Set("Cache-Control", "no-cache")
+	if _, err := w.Write(faviconBytes); err != nil {
+		s.log.Debug("writing the favicon", "err", err)
+	}
 }
 
 // handleShell serves the SPA shell. Cache-Control is no-store rather than
@@ -182,6 +224,12 @@ func (s *Server) spaContextPath(r *http.Request) string {
 func (s *Server) spaRoutes() {
 	s.mux.Handle("GET /{$}", s.wrap(s.handleShell))
 	s.mux.Handle("GET /g/", s.wrap(s.handleShell))
+
+	// The tab icon (issue 435). Registered beside the asset trees and, like
+	// them, NOT through wrap: it carries no user data and accepts no
+	// state-changing method. The shell's own <link rel="icon"> names the
+	// /static/ copy; this is the path a browser asks for on its own.
+	s.mux.Handle("GET /favicon.ico", http.HandlerFunc(s.handleFavicon))
 
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", assetHandler(spaFS, "spa")))
 	s.mux.Handle("GET /vendor/", http.StripPrefix("/vendor/", assetHandler(vendorFS, "vendor")))
