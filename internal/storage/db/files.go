@@ -113,6 +113,36 @@ func (d *DB) AnyProfileOwnsFile(ctx context.Context, gameID, relativePath string
 	return true, nil
 }
 
+// DeployedPathProfiles returns, for every path any profile of gameID has a
+// deployed-file record for, the profiles that record it, each list sorted.
+// A purge of a profile that is not active (#445) removes only the paths no
+// other profile records.
+func (d *DB) DeployedPathProfiles(ctx context.Context, gameID string) (profiles map[string][]string, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT relative_path, profile_name FROM deployed_files
+		WHERE game_id = ?
+		ORDER BY relative_path, profile_name
+	`, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("querying deployed files: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+
+	profiles = make(map[string][]string)
+	for rows.Next() {
+		var path, profile string
+		if err := rows.Scan(&path, &profile); err != nil {
+			return nil, fmt.Errorf("scanning deployed file: %w", err)
+		}
+		profiles[path] = append(profiles[path], profile)
+	}
+	return profiles, rows.Err()
+}
+
 // DeleteDeployedFiles removes all deployed file records for a specific mod.
 func (d *DB) DeleteDeployedFiles(ctx context.Context, gameID, profileName, sourceID, modID string) error {
 	_, err := d.ExecContext(ctx, `

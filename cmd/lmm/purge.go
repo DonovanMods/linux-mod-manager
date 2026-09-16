@@ -32,9 +32,12 @@ want to start fresh.
 Mod records are preserved in the database, so you can deploy them later
 with 'lmm deploy'. Use --uninstall to also remove the database records.
 
-The game directory holds the active profile's mods, so a purge acts for the
-active profile only: -p/--profile naming any other profile is refused. Make
-that profile active first with 'lmm profile switch'.
+The game directory holds the active profile's mods. A purge of any other
+profile (-p/--profile) only clears what that profile put there: the files it
+recorded as deployed that no other profile records - a file the active
+profile records too is left in place, and listed. It runs no hooks, keeps
+the mod records, and refuses --uninstall ('lmm profile switch' to that
+profile first to remove its records too).
 
 Use --dry-run to print what the purge would do - which mods would be
 undeployed and what happens to their records - without changing anything
@@ -49,7 +52,7 @@ Examples:
 }
 
 func init() {
-	purgeCmd.Flags().StringVarP(&purgeProfile, "profile", "p", "", "profile to purge; only the active profile can be purged (default: active profile)")
+	purgeCmd.Flags().StringVarP(&purgeProfile, "profile", "p", "", "profile to purge; for a profile that is not active, only the files it recorded as deployed are removed (default: active profile)")
 	purgeCmd.Flags().BoolVar(&purgeUninstall, "uninstall", false, "also remove mod records from database (like uninstalling each mod)")
 	purgeCmd.Flags().BoolVarP(&purgeYes, "yes", "y", false, "skip confirmation prompt")
 	purgeCmd.Flags().BoolVarP(&purgeForce, "force", "f", false, "continue even if hooks fail")
@@ -95,17 +98,6 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 		return emitJSON(plan)
 	}
 
-	if len(mods) == 0 {
-		// Ruling 15: nothing to purge is not an error, and a --json caller
-		// is still owed a document - the Result a purge of nothing
-		// produces, rather than the console sentence.
-		if jsonOutput {
-			return emitJSON(&core.PurgeResult{})
-		}
-		fmt.Printf("No mods installed for %s (profile: %s)\n", game.Name, profileName)
-		return nil
-	}
-
 	// progress prints every diagnostic and per-mod line at its exact point
 	// of occurrence, driven entirely by core.ApplyPurge's events (the
 	// same adapter pattern as doDeploy's). Entries that also land in
@@ -132,6 +124,21 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 		case core.PurgeWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		}
+	}
+
+	if plan.RecordedOnly {
+		return doRecordedPurge(ctx, service, game, plan, opts, progress)
+	}
+
+	if len(mods) == 0 {
+		// Ruling 15: nothing to purge is not an error, and a --json caller
+		// is still owed a document - the Result a purge of nothing
+		// produces, rather than the console sentence.
+		if jsonOutput {
+			return emitJSON(&core.PurgeResult{})
+		}
+		fmt.Printf("No mods installed for %s (profile: %s)\n", game.Name, profileName)
+		return nil
 	}
 
 	if purgeDryRun {
@@ -187,6 +194,78 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	}
 
 	return nil
+}
+
+// doRecordedPurge is doPurge for a profile that is not the game's active
+// one (#445, core.PurgePlan.RecordedOnly): it says that only the files the
+// profile recorded as deployed are removed, lists them and the ones it
+// leaves because another profile records them too, confirms, and applies.
+// A dry run stops after the list.
+func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Game, plan *core.PurgePlan, opts core.PurgeOptions, progress func(core.Event)) error {
+	if !jsonOutput {
+		if purgeDryRun {
+			fmt.Printf("Purge plan for profile %q (dry run)\n\n", plan.Profile)
+		}
+		fmt.Printf("%s is not the active profile of %s (%s is), so this purge only removes the files %s recorded as deployed that no other profile records:\n",
+			plan.Profile, game.Name, plan.ActiveProfile, plan.Profile)
+		for _, path := range plan.Remove {
+			fmt.Printf("  - %s\n", path)
+		}
+		if len(plan.Remove) == 0 {
+			fmt.Println("  (none)")
+		}
+		printKeptPaths(plan.Kept)
+		fmt.Println("Mod records and the profile are kept, and no hooks run.")
+	}
+
+	if len(plan.Remove) == 0 {
+		if jsonOutput {
+			return emitJSON(&core.PurgeResult{Kept: plan.Kept})
+		}
+		fmt.Println("\nNothing to remove.")
+		return nil
+	}
+	if purgeDryRun {
+		fmt.Printf("\nWould remove: %d file(s)\n", len(plan.Remove))
+		return nil
+	}
+
+	if !purgeYes {
+		if !jsonOutput {
+			fmt.Print("\nContinue? [y/N] ")
+		}
+		response, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if response != "y" && response != "yes" {
+			return ErrCancelled
+		}
+	}
+
+	result, err := service.ApplyPurge(ctx, game, plan, opts, quietSink(progress))
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	fmt.Printf("\nRemoved: %d file(s); cleared: %d mod(s)", result.RemovedPaths, result.Purged)
+	if kept := len(result.Skipped); kept > 0 {
+		fmt.Printf(", left in place: %d", kept)
+	}
+	fmt.Println()
+	printKeptPaths(result.Kept)
+	fmt.Printf("\nRun 'lmm profile switch %s' to deploy %s again.\n", plan.Profile, plan.Profile)
+	return nil
+}
+
+// printKeptPaths lists the paths a recorded-only purge leaves in place.
+func printKeptPaths(kept []core.PurgeKeptPath) {
+	for _, k := range kept {
+		fmt.Printf("Left in place (also recorded by %s): %s\n", strings.Join(k.Profiles, ", "), k.Path)
+	}
 }
 
 // renderPurgePlan prints a core.PurgePlan under a "(dry run)" header, in the

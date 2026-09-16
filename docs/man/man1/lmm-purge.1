@@ -22,9 +22,12 @@ Mod records are preserved in the database, so you can deploy them later
 with 'lmm deploy'. Use --uninstall to also remove the database records.
 
 .PP
-The game directory holds the active profile's mods, so a purge acts for the
-active profile only: -p/--profile naming any other profile is refused. Make
-that profile active first with 'lmm profile switch'.
+The game directory holds the active profile's mods. A purge of any other
+profile (-p/--profile) only clears what that profile put there: the files it
+recorded as deployed that no other profile records - a file the active
+profile records too is left in place, and listed. It runs no hooks, keeps
+the mod records, and refuses --uninstall ('lmm profile switch' to that
+profile first to remove its records too).
 
 .PP
 Use --dry-run to print what the purge would do - which mods would be
@@ -53,7 +56,7 @@ Examples:
 
 .PP
 \fB-p\fP, \fB--profile\fP=""
-	profile to purge; only the active profile can be purged (default: active profile)
+	profile to purge; for a profile that is not active, only the files it recorded as deployed are removed (default: active profile)
 
 .PP
 \fB--uninstall\fP[=false]

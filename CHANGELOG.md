@@ -1547,14 +1547,22 @@ import --force` over the active profile's name cleared its
   `lmm profile list` on stderr (and in its `--json` document's
   `warnings`), naming the profile lmm is treating as active.
 
-- **`lmm deploy` and `lmm purge` act for the active profile only (#445).**
-  A game has one game directory, and it holds the active profile's mods.
-  `lmm deploy -p <other profile>` deployed that profile's mods beside them,
-  and `lmm purge -p <other profile>` removed files that profile did not
-  own. Both — and the web UI's Deploy and per-profile Purge, which answer
-  `409` — now refuse any profile but the active one, name the active
-  profile, and point at `lmm profile switch`, which makes a profile active
-  and deploys it. A plan made before another profile became active is
+- **`lmm deploy` acts for the active profile only, and `lmm purge` of
+  another profile removes only what that profile put there (#445).** A game
+  has one game directory, and it holds the active profile's mods.
+  `lmm deploy -p <other profile>` deployed that profile's mods beside them;
+  it — and the web UI's Deploy, which answers `409` — now refuses any
+  profile but the active one, names the active profile and points at
+  `lmm profile switch`, which makes a profile active and deploys it.
+  `lmm purge -p <other profile>` removed every file that profile's mods
+  could have put there, including ones the active profile deployed. It now
+  removes only the files that profile recorded as deployed and no other
+  profile records — a file the active profile records too stays, and the
+  plan, `--dry-run` and the result all list it — so files a non-active
+  profile put into the game directory (an `lmm import -p`, or a deploy
+  before this fix) can still be cleared. Such a purge runs no hooks, keeps
+  the mod records, and refuses `--uninstall`. The web UI's per-profile
+  Purge does the same. A plan made before the active profile changed is
   refused when applied.
 
 - **A profile you are not using keeps its mods (#444).** Every `lmm profile

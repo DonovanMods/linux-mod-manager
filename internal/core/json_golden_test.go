@@ -343,6 +343,31 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #445: a purge of a profile that is not active clears only the
+			// paths it recorded, and says which it leaves.
+			"purge_plan_recorded_only",
+			core.PurgePlan{
+				Profile:       "alt",
+				Mods:          []domain.InstalledMod{},
+				RecordedOnly:  true,
+				ActiveProfile: "default",
+				Remove:        []string{"Data/alt.esp"},
+				Kept:          []core.PurgeKeptPath{{Path: "Data/shared.esp", Profiles: []string{"default"}}},
+			},
+		},
+		{
+			"purge_result_recorded_only",
+			core.PurgeResult{
+				Purged:       1,
+				RemovedPaths: 1,
+				Kept:         []core.PurgeKeptPath{{Path: "Data/shared.esp", Profiles: []string{"default"}}},
+			},
+		},
+		{
+			"purge_kept_path",
+			core.PurgeKeptPath{Path: "Data/shared.esp", Profiles: []string{"default", "survival"}},
+		},
+		{
 			"merged_artifact_effect",
 			core.MergedArtifactEffect{Action: core.MergedArtifactResync, Path: "zzz_LMM_Merged_P.pak"},
 		},

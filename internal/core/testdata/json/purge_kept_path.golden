@@ -1,0 +1,7 @@
+{
+  "path": "Data/shared.esp",
+  "profiles": [
+    "default",
+    "survival"
+  ]
+}

@@ -142,13 +142,13 @@ func (e *GameDetectPartialError) Details() any { return e.Result }
 // frontend's 409 never depends on an untyped error's wording (#332 M6).
 var ErrProfileExists = errors.New("profile already exists")
 
-// ErrProfileNotActive is returned when a flow that writes into a game's
-// directory - deploy, purge (#445) - is asked to act for a profile that is
-// not the game's active one. A game has one directory, holding the active
-// profile's deployment: deploying another profile there mixes two
-// profiles' mods, and purging one removes files it does not own. The error
-// names the active profile and `lmm profile switch`, the way to make
-// another profile live.
+// ErrProfileNotActive is returned when a deploy - or a purge --uninstall -
+// is asked to act for a profile that is not the game's active one (#445). A
+// game has one directory, holding the active profile's deployment:
+// deploying another profile there mixes two profiles' mods. (A plain purge
+// of such a profile is allowed, as the recorded-only cleanup
+// PurgePlan.RecordedOnly describes.) The error names the active profile and
+// `lmm profile switch`, the way to make another profile live.
 var ErrProfileNotActive = errors.New("profile is not active")
 
 // ErrProfileActive is returned when deleting the game's active profile
