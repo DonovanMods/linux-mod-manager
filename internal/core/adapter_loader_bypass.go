@@ -2,35 +2,50 @@
 // review F5) - a game that HAS BepInEx but resolves to a different adapter.
 //
 // `loader:` describes the installation and `adapter:` decides what lmm does
-// about an archive, so a game can legitimately carry both with the adapter
-// pointing elsewhere: an explicit `adapter: generic-files`, or a
-// `deploy_mode: compile` that selects icarus. The design keeps that a
-// WARNING rather than an error, because a half-configured game is a real
-// state. What it may not be is silent: the BepInEx rules never run for such
-// a game, so a Thunderstore package's manifest.json and icon.png deploy into
-// the game directory, its plugins stay wherever the archive put them, and
-// its BepInEx/config files are linked from the shared mod cache instead of
-// copied once.
+// about an archive, so a game can carry both with the adapter pointing
+// elsewhere: an explicit `adapter: generic-files`, a `deploy_mode: compile`
+// that selects icarus, or a mod_path off the game root that keeps the
+// identity (modPathIsGameRoot). The design keeps that a WARNING rather than
+// an error, because a half-configured game is a real state. What it may not
+// be is silent: the BepInEx rules never run for such a game, so a
+// Thunderstore package's manifest.json and icon.png deploy with its plugins,
+// its plugins stay wherever the archive put them, and its BepInEx/config
+// files are linked from the shared mod cache instead of copied once.
 //
-// The warning is said in three places, each where a user can act on it:
+// WHERE it is said follows one rule (#413 re-review M1): a warning must be
+// silenceable by the fix it suggests, and a persistent flag is for a
+// contradiction, not for a deliberate choice.
 //
-//	at load (AdapterConfigWarnings, printed by internal/app on every open)
-//	for a game whose `loader:` block is the thing being ignored;
+//	PER ARCHIVE (loaderBypassNote, on archiveLayout's answer): in every
+//	bypass case, for an archive the BepInEx rules would actually have laid
+//	out - exactly where the harm happens. It reaches the import plan both
+//	frontends show before committing, and a download's event stream. Its
+//	remedy is only the one that makes lmm lay such an archive out, because
+//	that is the only thing that silences it.
 //
-//	on the loader report (LoaderStatus.Warnings) that `lmm game show`, GET
-//	/api/v1/games/{id} and the web loader panel render;
+//	PERSISTENTLY - at load (AdapterConfigWarnings), on the loader report
+//	(LoaderStatus.Warnings: `lmm game show`, GET /api/v1/games/{id}, the web
+//	loader panel), after a game edit (AdapterConfigWarning) and as verify's
+//	loader_adapter_ignored WARNING row, which the web Health count includes -
+//	only for a CONTRADICTION: a `loader:` block the adapter ignores, or an
+//	installed BepInEx that an IMPLICIT adapter ignores. Its remedies are
+//	both ways out: lay BepInEx archives out, or state the choice.
 //
-//	on the archive's own layout (archiveLayout), for an archive the BepInEx
-//	rules would actually have laid out - so it reaches the import plan both
-//	frontends show before committing, and a download's event stream.
+//	NOWHERE persistent for an explicit `adapter:` on a game whose BepInEx is
+//	merely installed: the key IS the user's acknowledged choice, and a flag
+//	nobody can clear is the kind that teaches users to ignore warnings.
+//	verify reports no row for it at all, rather than a note-severity one -
+//	the web Health card lists every non-ok row, so a note would be the same
+//	permanent entry under another name.
 //
-// "Has BepInEx" is hasBepInEx, the same declared-or-installed test that
-// resolves the bepinex adapter when nothing overrides it, so the warning and
-// the derivation cannot disagree about which games are loader games.
+// "Has BepInEx" is hasBepInEx, the same declared-or-installed test the
+// bepinex derivation makes, so the warning and the derivation cannot
+// disagree about which games are loader games.
 package core
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -48,10 +63,13 @@ type loaderBypass struct {
 
 // bepinexBypass reports whether game has BepInEx - declared, or installed -
 // while resolving to an adapter other than bepinex. It is false in a build
-// that ships no bepinex adapter: there is nothing such a game is missing.
+// that ships no bepinex adapter (there is nothing such a game is missing),
+// and for a game every flow refuses (#413 re-review L2): "lmm deploys BepInEx
+// archives exactly as packaged" is false for a game lmm deploys nothing to,
+// and AdapterFor's refusal already names the fix.
 //
-// Reads disk only for a game that neither declares the loader nor resolves
-// to bepinex, and then one stat.
+// Reads disk only for a game that declares neither the loader nor an
+// adapter that settles the question, and then one stat.
 func (s *Service) bepinexBypass(game *domain.Game) (loaderBypass, bool) {
 	if game == nil || !s.adapterRegistry().Has(bepinexAdapterID) {
 		return loaderBypass{}, false
@@ -60,28 +78,61 @@ func (s *Service) bepinexBypass(game *domain.Game) (loaderBypass, bool) {
 	if name == bepinexAdapterID || !hasBepInEx(game) {
 		return loaderBypass{}, false
 	}
+	if _, err := s.AdapterFor(game); err != nil {
+		return loaderBypass{}, false
+	}
 	return loaderBypass{game: game, adapterID: name, declared: game.DeclaresBepInEx()}, true
+}
+
+// persistent reports whether the bypass is a contradiction the persistent
+// surfaces flag: the game declares the loader, or nobody chose its adapter.
+func (b loaderBypass) persistent() bool {
+	return b.declared || b.game.Adapter == ""
 }
 
 // AdapterConfigWarnings is design decision 11's load-time warning: one
 // sentence for every configured game whose `loader:` block its adapter
-// ignores. internal/app prints them when it opens a Service.
+// ignores. internal/app prints them when it opens a Service, except for the
+// games its caller says it reports itself.
 //
-// It reads no disk, because it runs on every lmm invocation: a game with
-// BepInEx installed but not declared has no loader block to ignore, and is
-// told at the two places where it matters instead - the loader report and
-// the archive's own layout.
+// It reads no disk, because it runs on every lmm invocation: the other
+// persistent case - an installed BepInEx an implicit adapter ignores - needs
+// a stat per game to find, and is flagged on the loader report and by
+// verify instead.
 func (s *Service) AdapterConfigWarnings() []string {
 	var out []string
 	for _, game := range s.gamesSnapshot() {
 		if !game.DeclaresBepInEx() {
 			continue
 		}
-		if b, ok := s.bepinexBypass(game); ok {
-			out = append(out, b.configWarning())
+		if w := s.adapterConfigWarning(game); w != "" {
+			out = append(out, w)
 		}
 	}
 	return out
+}
+
+// AdapterConfigWarning is the persistent warning for one game, or "" when
+// its configuration contradicts nothing - the sentence a frontend prints
+// after writing a game, so the edit that creates a contradiction says so at
+// that moment and the edit that removes one says nothing. Unlike
+// AdapterConfigWarnings it reads the game's install directory, so it covers
+// an installed-but-undeclared BepInEx too.
+func (s *Service) AdapterConfigWarning(gameID string) string {
+	game, ok := s.game(gameID)
+	if !ok {
+		return ""
+	}
+	return s.adapterConfigWarning(game)
+}
+
+// adapterConfigWarning is AdapterConfigWarning for a resolved game.
+func (s *Service) adapterConfigWarning(game *domain.Game) string {
+	b, ok := s.bepinexBypass(game)
+	if !ok || !b.persistent() {
+		return ""
+	}
+	return b.configWarning()
 }
 
 // loaderBypassNote returns the per-archive warning for members, or "" when
@@ -105,54 +156,120 @@ func (s *Service) loaderBypassNote(game *domain.Game, modName string, members []
 	if err != nil || !would.Applies() {
 		return ""
 	}
-	return fmt.Sprintf("this archive is laid out for BepInEx (%s), but game %q %s, so lmm deploys it exactly as packaged: %s %s",
-		would.Kind, game.ID, b.adapterPhrase(), bypassConsequence, b.remedy())
+	subject := fmt.Sprintf("game %q's adapter", game.ID)
+	return fmt.Sprintf("this archive is laid out for BepInEx (%s), but %s, so lmm deploys it exactly as packaged: %s %s.",
+		would.Kind, b.adapterPhrase(subject), b.consequence(), b.enableRemedy())
 }
 
-// configWarning is the game-level sentence: the load-time warning and the
-// loader report's.
+// configWarning is the game-level sentence the persistent surfaces say.
 func (b loaderBypass) configWarning() string {
+	opening := fmt.Sprintf("BepInEx is installed in game %q's directory, but %s, so lmm does not act on it and deploys BepInEx archives exactly as packaged",
+		b.game.ID, b.adapterPhrase("its adapter"))
 	if b.declared {
-		return fmt.Sprintf("game %q declares the BepInEx loader, but %s, so lmm ignores the loader block and deploys BepInEx archives exactly as packaged: %s %s",
-			b.game.ID, b.adapterPhrase(), bypassConsequence, b.remedy())
+		opening = fmt.Sprintf("game %q declares the BepInEx loader, but %s, so lmm ignores the loader block and deploys BepInEx archives exactly as packaged",
+			b.game.ID, b.adapterPhrase("its adapter"))
 	}
-	return fmt.Sprintf("BepInEx is installed in game %q's directory, but %s, so lmm does not act on it and deploys BepInEx archives exactly as packaged: %s %s",
-		b.game.ID, b.adapterPhrase(), bypassConsequence, b.remedy())
+	return fmt.Sprintf("%s: %s %s; %s.", opening, b.consequence(), b.enableRemedy(), b.acknowledgement())
 }
 
-// bypassConsequence is what "exactly as packaged" costs, in the terms a
-// user can check in their game directory.
-const bypassConsequence = "package metadata such as manifest.json lands in the game directory, a plugin is not moved under BepInEx/, and a BepInEx/config file is linked from the shared mod cache instead of copied once, so editing it edits every profile's copy."
-
-// adapterPhrase names the adapter the game resolves to, and why when games.yaml
-// does not say so itself.
-func (b loaderBypass) adapterPhrase() string {
-	if b.game.Adapter == "" {
-		return fmt.Sprintf("its adapter is %q, which `deploy_mode: compile` selects", b.adapterID)
+// adapterPhrase says "<subject> is <adapter>", and why when games.yaml does
+// not name it: subject is "its adapter" inside a sentence already about the
+// game, or "game X's adapter" in one about an archive.
+func (b loaderBypass) adapterPhrase(subject string) string {
+	phrase := fmt.Sprintf("%s is %q", subject, b.adapterID)
+	switch {
+	case b.game.Adapter != "":
+		return phrase
+	case b.game.DeployMode == domain.DeployCompile:
+		return phrase + ", which `deploy_mode: compile` selects"
+	default:
+		// The one other way a loader game misses the derivation.
+		return phrase + fmt.Sprintf(", because its mod_path (%s) is not its install path and a BepInEx layout is relative to the game root", b.game.ModPath)
 	}
-	return fmt.Sprintf("its adapter is %q", b.adapterID)
 }
 
-// remedy is the fix that applies to this configuration. A compile game
-// cannot simply switch to bepinex - `deploy_mode: compile` needs an adapter
-// that compiles, and AdapterFor refuses one that does not - so its fix is
-// one key or the other.
-func (b loaderBypass) remedy() string {
+// consequence is what "exactly as packaged" costs, in the terms a user can
+// check in their game directory. The second form is for a mod_path off the
+// game root, where an archive's own BepInEx/ tree is the thing misplaced.
+func (b loaderBypass) consequence() string {
+	if modPathIsGameRoot(b.game) {
+		return "package metadata such as manifest.json lands in the game directory, a plugin is not moved under BepInEx/, and a BepInEx/config file is linked from the shared mod cache instead of copied once, so editing it edits every profile's copy."
+	}
+	return fmt.Sprintf("every path in an archive is joined onto %s, so package metadata such as manifest.json lands there too, and an archive's own BepInEx/ tree - its BepInEx/config files included - is nested under it, where BepInEx does not read it.", b.game.ModPath)
+}
+
+// enableRemedy is the fix that makes lmm lay BepInEx archives out for this
+// game - the only fix that silences the per-archive warning, so the only one
+// that warning offers. It is every change between this configuration and
+// one the bepinex derivation selects, in the order they can be made.
+//
+// A compile game cannot simply switch to bepinex - `deploy_mode: compile`
+// needs an adapter that compiles, and AdapterFor refuses one that does not -
+// so its remedy is conditional on the game not compiling its mods.
+func (b loaderBypass) enableRemedy() string {
 	id := b.game.ID
-	if b.game.DeployMode == domain.DeployCompile {
+	compile := b.game.DeployMode == domain.DeployCompile
+	explicit := b.game.Adapter != ""
+	gameRoot := modPathIsGameRoot(b.game)
+
+	if gameRoot && explicit && !compile {
+		return fmt.Sprintf("Run `lmm game edit %s --adapter bepinex` to have lmm lay BepInEx archives out", id)
+	}
+
+	var steps []string
+	if !gameRoot {
+		// Before the mod_path moves, so nothing stays deployed under the
+		// old one with no row left pointing at it.
+		steps = append(steps, fmt.Sprintf("run `lmm purge --game %s`", id))
+	}
+	var yamlEdits []string
+	if compile {
 		drop := "remove `deploy_mode: compile`"
-		if b.game.Adapter != "" {
+		if explicit {
 			drop += " and the `adapter:` key"
 		}
-		msg := fmt.Sprintf("A `deploy_mode: compile` game needs an adapter that compiles, which bepinex is not: if %s does not compile its mods, %s", id, drop)
-		if b.declared {
-			msg += "; if it does, remove the `loader:` block"
-		}
-		return msg + "."
+		yamlEdits = append(yamlEdits, drop)
 	}
-	msg := fmt.Sprintf("Run `lmm game edit %s --adapter bepinex` to have lmm lay BepInEx archives out", id)
-	if b.declared {
-		msg += fmt.Sprintf(", or remove the `loader:` block if %q is the adapter you meant", b.adapterID)
+	where := " from games.yaml"
+	if !gameRoot {
+		yamlEdits = append(yamlEdits, fmt.Sprintf("set its mod_path to %s", b.game.InstallPath))
+		where = " in games.yaml"
 	}
-	return msg + "."
+	steps = append(steps, strings.Join(yamlEdits, " and ")+where)
+	if !compile && explicit {
+		// After the mod_path edit: AdapterFor refuses bepinex off the game
+		// root, so the other order fails.
+		steps = append(steps, fmt.Sprintf("run `lmm game edit %s --adapter bepinex`", id))
+	}
+	if !gameRoot {
+		// What was imported for the old mod_path is cached exactly as
+		// packaged; verify's misplaced-deployment repair re-lays it out
+		// once the game resolves to bepinex.
+		steps = append(steps, fmt.Sprintf("run `lmm deploy --game %s` and `lmm verify --fix --game %s`, which moves what is already imported under BepInEx/", id, id))
+	}
+
+	lead := "To have lmm lay BepInEx archives out, "
+	if compile {
+		lead = fmt.Sprintf("`deploy_mode: compile` needs an adapter that compiles, which bepinex is not; if %s does not compile its mods, then to have lmm lay BepInEx archives out, ", id)
+	}
+	return lead + strings.Join(steps, ", then ")
+}
+
+// acknowledgement is the other way out of a contradiction: keep the game on
+// its adapter and say so, which is an explicit `adapter:` key and no
+// `loader:` block - the one bypass the persistent surfaces do not flag.
+// It does not silence the per-archive warning, so only the persistent
+// sentence offers it.
+func (b loaderBypass) acknowledgement() string {
+	id := b.game.ID
+	unload := fmt.Sprintf("remove the `loader:` block (`lmm game edit %s --loader \"\"`)", id)
+	pin := fmt.Sprintf("pin the adapter (`lmm game edit %s --adapter %s`)", id, b.adapterID)
+	switch {
+	case b.game.Adapter != "":
+		return fmt.Sprintf("or, if %q is the adapter you meant, %s", b.adapterID, unload)
+	case b.declared:
+		return fmt.Sprintf("or, to keep this game on %q, %s and %s", b.adapterID, unload, pin)
+	default:
+		return fmt.Sprintf("or, to keep this game on %q, %s", b.adapterID, pin)
+	}
 }

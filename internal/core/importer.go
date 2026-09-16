@@ -85,10 +85,6 @@ type Importer struct {
 	// it nil and makes no such refusal, exactly as it makes none of the
 	// other Service-scoped checks.
 	claimArchive func(game *domain.Game, modName string, members []string) error
-	// bypassNote is design decision 11's per-archive warning
-	// (Service.loaderBypassNote), a func field for the same reason
-	// claimArchive is one: it asks the registry. Nil makes no note.
-	bypassNote func(game *domain.Game, modName string, members []string) string
 }
 
 // NewImporter creates a new Importer that stages extraction in the OS temp
@@ -113,7 +109,6 @@ func (s *Service) newImporter(game *domain.Game) *Importer {
 	imp.stagingRoot = s.stagingRoot()
 	imp.resolveMergeCompiler = s.adapterCompiler
 	imp.claimArchive = s.requireAdapterClaim
-	imp.bypassNote = s.loaderBypassNote
 	imp.log = s.logger()
 	// #353: a resolution failure here (a games.yaml naming an adapter this
 	// build does not ship) is reported by the flow's own AdapterFor call,

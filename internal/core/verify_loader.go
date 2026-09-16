@@ -78,14 +78,17 @@ func (r *verifyRun) loaderPass(installedMods []domain.InstalledMod) {
 	// adapter is another one gets none of the adapter's rules or checks,
 	// and verify is where a user looks to find out why. A WARNING - the
 	// state is allowed - and not fixable, because the fix is a games.yaml
-	// edit lmm does not make on the user's behalf. The rest of the tier
+	// edit lmm does not make on the user's behalf. Only for a
+	// contradiction: an explicit adapter on a game whose BepInEx is merely
+	// installed is the user's choice, and gets no row at all
+	// (adapter_loader_bypass.go says why not a note). The rest of the tier
 	// still runs: the loader is there, so whether it ran is still worth
 	// asking.
-	if b, ok := r.svc.bepinexBypass(r.game); ok {
+	if w := r.svc.adapterConfigWarning(r.game); w != "" {
 		r.result.Warnings++
 		r.finding(VerifyFinding{
 			Status:        "loader_adapter_ignored",
-			Note:          b.configWarning(),
+			Note:          w,
 			FixableReason: "the fix is an edit to this game's configuration, which --fix does not make",
 		}, VerifyEvent{})
 	}

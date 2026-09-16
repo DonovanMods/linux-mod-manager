@@ -561,14 +561,15 @@ func (i *Importer) layoutExtracted(game *domain.Game, modName, root string) (ada
 			return adapter.Layout{}, err
 		}
 	}
+	// Design decision 11's per-archive warning is NOT added here (#413
+	// re-review L7). This ingest's one production caller is
+	// ApplyImportArchive, whose plan already carries the warning
+	// (archiveLayout) and copies it into the result and the event stream;
+	// a second copy here reached only the log, and said the same thing
+	// twice to anyone reading both.
 	layout, err := i.adapter.NormalizeArchive(adapter.NormalizeRequest{Game: game, ModName: modName, Members: members})
 	if err != nil {
 		return adapter.Layout{}, fmt.Errorf("laying out %s: %w", modName, err)
-	}
-	if i.bypassNote != nil {
-		if note := i.bypassNote(game, modName, members); note != "" {
-			layout.Warnings = append(layout.Warnings, note)
-		}
 	}
 	if !layout.Applies() {
 		return layout, nil
