@@ -72,7 +72,7 @@ func MarkModsDisabled(path string, mods []domain.ModReference) ([]domain.ModRefe
 		return nil, fmt.Errorf("%w: %s: %v", ErrProfileLayoutUnsupported, path, err)
 	}
 	var after ProfileConfig
-	if err := yaml.Unmarshal(edited, &after); err != nil || !reflect.DeepEqual(expected, after) {
+	if err := unmarshalYAML(edited, &after); err != nil || !reflect.DeepEqual(expected, after) {
 		return nil, fmt.Errorf("%w: %s: the edited text would not read back as the same profile", ErrProfileLayoutUnsupported, path)
 	}
 
@@ -87,11 +87,11 @@ func MarkModsDisabled(path string, mods []domain.ModReference) ([]domain.ModRefe
 // edits, and the references they mark, in file order.
 func planMarkers(path string, data []byte, mods []domain.ModReference) (ProfileConfig, []textEdit, []domain.ModReference, error) {
 	var before ProfileConfig
-	if err := yaml.Unmarshal(data, &before); err != nil {
+	if err := unmarshalYAML(data, &before); err != nil {
 		return ProfileConfig{}, nil, nil, fmt.Errorf("parsing profile: %w", err)
 	}
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := unmarshalYAML(data, &doc); err != nil {
 		return ProfileConfig{}, nil, nil, fmt.Errorf("parsing profile: %w", err)
 	}
 	if len(before.Mods) == 0 {

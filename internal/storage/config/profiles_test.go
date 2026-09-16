@@ -77,6 +77,36 @@ func TestSaveProfile_RejectsInvalidName(t *testing.T) {
 	}
 }
 
+// TestProfileDecoding_ADecoderPanicIsAnError: gopkg.in/yaml.v3 v3.0.1
+// panics on some malformed input rather than returning an error - this one
+// is a merge key over a mapping keyed by a mapping, found by fix round 3's
+// FuzzMarkModsDisabled. A profile is read at the start of nearly every
+// command, #431's upgrade step included, so such a file must read as
+// unparseable, not take lmm down.
+func TestProfileDecoding_ADecoderPanicIsAnError(t *testing.T) {
+	const content = "<<:\n? 0:"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "games", "g", "profiles", "p.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	require.NotPanics(t, func() {
+		_, err := LoadProfile(dir, "g", "p")
+		require.ErrorContains(t, err, "parsing profile")
+	})
+	require.NotPanics(t, func() {
+		_, err := ImportProfile([]byte(content))
+		require.ErrorContains(t, err, "parsing exported profile")
+	})
+	require.NotPanics(t, func() {
+		_, err := MarkModsDisabled(path, []domain.ModReference{{SourceID: "s", ModID: "m"}})
+		require.ErrorContains(t, err, "parsing profile")
+	})
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, content, string(data))
+}
+
 func TestLoadProfile_RejectsInvalidName(t *testing.T) {
 	for label, makeName := range invalidProfileNames {
 		t.Run(label, func(t *testing.T) {

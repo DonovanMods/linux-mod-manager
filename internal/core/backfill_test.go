@@ -606,6 +606,9 @@ func TestBackfillProfileDisabledMarkers_ABrokenProfileDoesNotStopTheOthers(t *te
 	}))
 	broken := filepath.Join(filepath.Dir(f.profilePath("a")), "0broken.yaml")
 	require.NoError(t, os.WriteFile(broken, []byte("name: 0broken\nmods: [this is: : not yaml\n"), 0o644))
+	// One the YAML decoder itself panics on (fix round 3's fuzzing found it).
+	panics := filepath.Join(filepath.Dir(f.profilePath("a")), "1panics.yaml")
+	require.NoError(t, os.WriteFile(panics, []byte("<<:\n? 0:"), 0o644))
 	f.owe(t)
 
 	report, err := f.svc.BackfillProfileDisabledMarkers(ctx)

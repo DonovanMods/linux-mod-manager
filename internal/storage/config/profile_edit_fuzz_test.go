@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // markerFuzzSeeds is the final review's editor corpus (fix round 3), every
@@ -113,7 +112,7 @@ func FuzzMarkModsDisabled(f *testing.F) {
 		require.NoError(t, os.WriteFile(path, data, 0o644))
 
 		var before ProfileConfig
-		parsed := yaml.Unmarshal(data, &before) == nil
+		parsed := unmarshalYAML(data, &before) == nil
 		var mods []domain.ModReference
 		var keys []string
 		for _, ref := range before.Mods {
@@ -167,7 +166,7 @@ func FuzzMarkModsDisabled(f *testing.F) {
 		}
 
 		var got ProfileConfig
-		require.NoError(t, yaml.Unmarshal(after, &got))
+		require.NoError(t, unmarshalYAML(after, &got))
 		require.Equal(t, want, got)
 
 		// Byte level: the file is the input with the planned edits applied,
