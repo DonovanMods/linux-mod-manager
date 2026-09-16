@@ -12,6 +12,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -100,4 +103,60 @@ func TestFlowInactiveProfile_PurgeClearsOnlyWhatItRecorded(t *testing.T) {
 	rows, err := svc.GetInstalledMods(t.Context(), game.ID, "alt")
 	require.NoError(t, err)
 	assert.Len(t, rows, 2, "alt's records are kept")
+}
+
+// TestFlowSwitch_WithNoSingleActiveProfileOnlyMarksTheTarget is #445 review
+// F2 over /api/v1: with no profile marked active, a deploy or a profile
+// delete answers 409 naming `lmm profile list`, and a switch - the way out -
+// only marks its target, with the notice on the plan, on the job's event
+// stream and on its stored result.
+func TestFlowSwitch_WithNoSingleActiveProfileOnlyMarksTheTarget(t *testing.T) {
+	s, svc, game := mixedFlowServer(t)
+	path := filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles", "default.yaml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte(strings.ReplaceAll(string(data), "is_default: true\n", "")), 0o644))
+
+	requireUnknown := func(rec *httptest.ResponseRecorder) {
+		t.Helper()
+		require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+		var envelope apiErrorEnvelope
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+		assert.Contains(t, envelope.Error, core.ErrActiveProfileUnknown.Error())
+		assert.Contains(t, envelope.Error, "lmm profile list")
+	}
+	requireUnknown(doAPI(s, http.MethodPost, "/api/v1/plans/deploy?"+gameParam+"="+url.QueryEscape(game.ID)+"&"+profileParam+"=default", ""))
+	requireUnknown(doAPI(s, http.MethodDelete, "/api/v1/profiles/alt?"+gameParam+"="+url.QueryEscape(game.ID), ""))
+
+	id, raw := planFlow(t, s, game, "switch", `{"profile":"alt"}`)
+	var resp struct {
+		Plan core.SwitchPlan `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	assert.True(t, resp.Plan.FlagOnly)
+	require.Len(t, resp.Plan.Warnings, 1)
+	assert.Contains(t, resp.Plan.Warnings[0], "only marks alt as the active profile")
+
+	j := startFlowJob(t, s, id, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	result, ok := j.status().Result.(*core.SwitchResult)
+	require.True(t, ok)
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "alt is now the active profile")
+	assert.Contains(t, result.Warnings[0], "`lmm verify`")
+	var streamed bool
+	replay, _, cancel := j.subscribe(1)
+	cancel()
+	for _, e := range replay {
+		if w, ok := e.(core.WarningEvent); ok && w.Message == result.Warnings[0] {
+			streamed = true
+		}
+	}
+	assert.True(t, streamed, "the notice is on the job's event stream")
+
+	active, err := svc.NewProfileManager().GetDefault(t.Context(), game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "alt", active.Name)
+	assert.FileExists(t, deployedPath(game, altFile), "nothing was removed")
+	assert.FileExists(t, deployedFixturePath(game))
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -80,6 +81,19 @@ type SwitchPlan struct {
 	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise; only SetDefault is needed
 	AlreadyActive bool `json:"already_active"` // To is already the active default profile; nothing to plan
 
+	// FlagOnly is set when no single profile of the game is marked active
+	// (#445 review F2, ruling C): none of several profile files says
+	// `is_default: true`, or several do. lmm then cannot tell whose mods the
+	// game directory holds, so there is no From to take down and nothing to
+	// diff against: the switch deploys and removes nothing and only marks
+	// To as the active profile - the way out of the refusal every deploy
+	// and purge gives in that state. From is empty and the three lists are
+	// too; Warnings says so.
+	FlagOnly bool `json:"flag_only,omitzero"`
+	// Warnings is what a frontend shows before the switch is confirmed:
+	// today only a FlagOnly plan's explanation.
+	Warnings []string `json:"warnings,omitempty"`
+
 	// snapshot is From's installed-mod set this plan was computed against
 	// (Ruling 5): ApplyProfileSwitch re-derives it under beginOp and returns
 	// ErrStalePlan when it no longer matches, so a plan a frontend held while
@@ -118,12 +132,32 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		return nil, fmt.Errorf("profile not found: %s", target)
 	}
 
-	currentProfile, err := pm.GetDefault(ctx, game.ID)
-	var currentName string
+	// The profile switched away from is the active one, decided the way
+	// every deploy and purge decides it (#445 review F2): an unreadable
+	// profile file refuses the switch, and a game with no single profile
+	// marked active gets a switch that only marks the target.
+	flags, err := readProfileFlags(s.configDir, game.ID)
 	if err != nil {
-		currentName = "default"
-	} else {
-		currentName = currentProfile.Name
+		return nil, fmt.Errorf("resolving the active profile for %s: %w", game.ID, err)
+	}
+	if len(flags.unreadable) > 0 {
+		return nil, flags.unknown()
+	}
+	if flags.ambiguous() {
+		return &SwitchPlan{
+			GameID: game.ID, To: target, FlagOnly: true,
+			Warnings: []string{flagOnlyPlanNotice(flags, target)},
+		}, nil
+	}
+	currentName, err := flags.active()
+	if err != nil {
+		return nil, err
+	}
+	// The outgoing document orders the plan; flags just read every file,
+	// so a failure here is a file that vanished since (nil orders by key).
+	currentProfile, err := pm.Get(ctx, game.ID, currentName)
+	if err != nil {
+		currentProfile = nil
 	}
 
 	if currentName == target {
@@ -504,6 +538,20 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 	}
 
+	if plan.FlagOnly {
+		return s.applyFlagOnlySwitch(ctx, game, plan, emit)
+	}
+	// #445 review F2: the profile this plan takes down must still be the
+	// active one - an unreadable or re-flagged profile file since the plan
+	// refuses it before anything moves.
+	live, err := s.liveProfile(ctx, game.ID)
+	if err != nil {
+		return result, err
+	}
+	if live != plan.From {
+		return result, fmt.Errorf("%w: %s is no longer the active profile of %s (%s is); plan the switch again", ErrStalePlan, plan.From, game.ID, live)
+	}
+
 	// Ruling 5: the plan is a contract about a world that may have moved.
 	// First statement inside the op (ApplyProfileSwitch took beginOp just
 	// above), so nothing this call does can race the re-derivation - a stale
@@ -863,5 +911,48 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
 
+	return result, nil
+}
+
+// flagOnlyPlanNotice is a FlagOnly plan's Warnings entry: why the switch
+// can only mark target, and that it does nothing else.
+func flagOnlyPlanNotice(flags profileFlags, target string) string {
+	why := fmt.Sprintf("none of %s is", strings.Join(flags.names, ", "))
+	if len(flags.flagged) > 1 {
+		why = fmt.Sprintf("%s all are", strings.Join(flags.flagged, ", "))
+	}
+	return fmt.Sprintf("no single profile of %s is marked active (%s), so lmm cannot tell whose mods the game directory holds: this switch only marks %s as the active profile - nothing is deployed or removed",
+		flags.gameID, why, target)
+}
+
+// flagOnlyResultNotice is what a FlagOnly switch reports once it has marked
+// target: the game directory is as it was, which is not the same as clean.
+func flagOnlyResultNotice(gameID, target string) string {
+	return fmt.Sprintf("%s is now the active profile of %s, but nothing was deployed or removed: the game directory may still hold files another profile deployed, and `lmm deploy` removes nothing - run `lmm deploy` to deploy %s's mods, then `lmm verify`, which reports what is live but not recorded",
+		target, gameID, target)
+}
+
+// applyFlagOnlySwitch carries out a FlagOnly plan: it marks plan.To as the
+// active profile and nothing else. A game whose profile files name one
+// active profile again, or cannot all be read, refuses the plan - the first
+// as stale, since a real switch is possible now.
+func (s *Service) applyFlagOnlySwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, emit func(Event)) (*SwitchResult, error) {
+	result := &SwitchResult{}
+	flags, err := readProfileFlags(s.configDir, game.ID)
+	if err != nil {
+		return result, fmt.Errorf("resolving the active profile for %s: %w", game.ID, err)
+	}
+	if len(flags.unreadable) > 0 {
+		return result, flags.unknown()
+	}
+	if !flags.ambiguous() {
+		return result, fmt.Errorf("%w: the profiles of %s mark one active profile again; plan the switch again", ErrStalePlan, game.ID)
+	}
+	if err := s.NewProfileManager().SetDefault(ctx, game.ID, plan.To); err != nil {
+		return result, fmt.Errorf("setting default profile: %w", err)
+	}
+	msg := flagOnlyResultNotice(game.ID, plan.To)
+	result.Warnings = append(result.Warnings, msg)
+	emit(WarningEvent{Scope: Scope{Op: OpSwitch}, Phase: SwitchFlagOnly, Message: msg})
 	return result, nil
 }

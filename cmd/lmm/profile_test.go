@@ -145,7 +145,7 @@ func TestDoProfileList_WarnsWithoutExactlyOneActiveProfile(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "NAME      MODS  DEFAULT\n----      ----  -------\ndefault   0     *\nsurvival  0     *\n", stdout)
-	assert.Equal(t, "Warning: profiles default, survival of g1 are all marked active (is_default: true), so lmm treats \"default\" as active - run `lmm profile switch <name>` to keep one\n", stderr)
+	assert.Equal(t, "Warning: profiles default, survival of g1 are all marked active (is_default: true), so lmm will not deploy or purge its files until one is - run `lmm profile switch <name>` to keep one\n", stderr)
 }
 
 // TestDoProfileList_JSON pins the ProfileListing document's framing (one

@@ -1550,9 +1550,23 @@ import --force` over the active profile's name cleared its
     unmarking the old one, so a failed write never leaves none, and one
     that leaves two says so.
 
-  A game a hand edit left with none or several is reported by
+  A game's first profile is now created active, whether by `lmm profile
+create`, `lmm profile import` or an install that makes it.
+
+  A game a hand edit left with none marked, or several - or with a profile
+  file lmm cannot read, which could be the active one - is reported by
   `lmm profile list` on stderr (and in its `--json` document's
-  `warnings`), naming the profile lmm is treating as active.
+  `warnings`). lmm no longer guesses which profile is active there: `lmm
+deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links and
+  the web UI's equivalents (`409`) refuse, name the cause and point at
+  `lmm profile list`. A guess is what let a typo in the active profile's
+  file turn `lmm purge -p <other>` into a full purge that deleted the
+  active profile's files. A game with a single profile file counts that
+  profile as active, marked or not. `lmm profile switch <name>` is the way
+  out: an unreadable profile file refuses it too, but with none or several
+  marked it only marks `<name>` active — nothing is deployed or removed —
+  and says that the game directory may still hold another profile's files,
+  so run `lmm deploy` and then `lmm verify`.
 
 - **`lmm deploy` acts for the active profile only, and `lmm purge` of
   another profile removes only what that profile put there (#445).** A game

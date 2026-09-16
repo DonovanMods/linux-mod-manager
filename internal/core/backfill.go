@@ -414,23 +414,11 @@ func reportUnnamedRow(report *ProfileBackfillReport, row db.DisabledModRow, caus
 // every row and every load uses - whose file says `is_default: true`, and
 // why each file that could not be read at all could not be.
 func (s *Service) explicitDefaults(gameID string) (flagged []string, unreadable map[string]error, err error) {
-	names, err := config.ListProfiles(s.configDir, gameID)
+	flags, err := readProfileFlags(s.configDir, gameID)
 	if err != nil {
 		return nil, nil, err
 	}
-	slices.Sort(names)
-	unreadable = make(map[string]error)
-	for _, name := range names {
-		profile, err := config.LoadProfile(s.configDir, gameID, name)
-		if err != nil {
-			unreadable[name] = err
-			continue
-		}
-		if profile.IsDefault {
-			flagged = append(flagged, name)
-		}
-	}
-	return flagged, unreadable, nil
+	return flags.flagged, flags.unreadable, nil
 }
 
 // retryPendingProfile retries one kept profile if its file has changed since

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -175,11 +176,17 @@ func TestListProfiles_ReportsAGameWithoutExactlyOneActiveProfile(t *testing.T) {
 		_, err := pm.Create(ctx, "g1", name)
 		require.NoError(t, err)
 	}
+	// The first profile is created marked (#445 review F2, ruling B); a hand
+	// edit is what takes the marker off.
+	xPath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "x.yaml")
+	data, err := os.ReadFile(xPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(xPath, []byte(strings.ReplaceAll(string(data), "is_default: true\n", "")), 0o644))
 	listing, err = svc.ListProfiles(ctx, "g1")
 	require.NoError(t, err)
 	require.Len(t, listing.Warnings, 1)
 	assert.Contains(t, listing.Warnings[0], "no profile")
-	assert.Contains(t, listing.Warnings[0], `"x"`, "it names the profile lmm is treating as active")
+	assert.Contains(t, listing.Warnings[0], "will not deploy or purge", "it says what the ambiguity stops")
 	assert.Contains(t, listing.Warnings[0], "lmm profile switch")
 
 	require.NoError(t, pm.SetDefault(ctx, "g1", "y"))

@@ -900,6 +900,11 @@ const (
 	// (fix round 2, R9); the mod is also a DeployResult.Skipped entry.
 	// Detail is the reason, naming the command that takes it down.
 	DeployOffStillDeployed
+	// SwitchFlagOnly: a switch in a game with no single profile marked
+	// active (#445 review F2) only marked the target active. Message says
+	// that nothing was deployed or removed and what to run next; it is also
+	// the SwitchResult's Warnings entry.
+	SwitchFlagOnly
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -954,6 +959,8 @@ var deployPhaseNames = [...]string{
 	IndexRefreshDone: "index_refresh_done",
 
 	DeployOffStillDeployed: "deploy_off_still_deployed",
+
+	SwitchFlagOnly: "switch_flag_only",
 }
 
 // String returns the phase's wire name.

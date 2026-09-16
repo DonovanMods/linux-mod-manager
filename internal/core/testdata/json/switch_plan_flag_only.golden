@@ -1,0 +1,14 @@
+{
+  "game_id": "skyrim-se",
+  "from": "",
+  "to": "hardcore",
+  "to_enable": [],
+  "to_disable": [],
+  "to_install": [],
+  "no_changes": false,
+  "already_active": false,
+  "flag_only": true,
+  "warnings": [
+    "no single profile of skyrim-se is marked active (none of default, hardcore is), so lmm cannot tell whose mods the game directory holds: this switch only marks hardcore as the active profile - nothing is deployed or removed"
+  ]
+}

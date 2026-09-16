@@ -79,7 +79,8 @@ func (pm *ProfileManager) report(report config.SaveReport) {
 	}
 }
 
-// Create creates a new profile for a game
+// Create creates a new profile for a game. A game's first profile is
+// written marked active (isFirstProfile).
 func (pm *ProfileManager) Create(ctx context.Context, gameID, name string) (*domain.Profile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -99,10 +100,15 @@ func (pm *ProfileManager) Create(ctx context.Context, gameID, name string) (*dom
 		return nil, fmt.Errorf("checking profile: %w", err)
 	}
 
+	first, err := pm.isFirstProfile(gameID)
+	if err != nil {
+		return nil, err
+	}
 	profile := &domain.Profile{
-		Name:   name,
-		GameID: gameID,
-		Mods:   []domain.ModReference{},
+		Name:      name,
+		GameID:    gameID,
+		Mods:      []domain.ModReference{},
+		IsDefault: first,
 	}
 
 	if err := pm.save(profile); err != nil {
@@ -110,6 +116,19 @@ func (pm *ProfileManager) Create(ctx context.Context, gameID, name string) (*dom
 	}
 
 	return profile, nil
+}
+
+// isFirstProfile reports whether gameID has no profile file yet, so the one
+// about to be written is its only profile - and, marked `is_default: true`,
+// its active one (#445 review F2, ruling B). Without the marker a second
+// profile would leave the game with none marked, which every flow that
+// deploys or removes files refuses as ambiguous.
+func (pm *ProfileManager) isFirstProfile(gameID string) (bool, error) {
+	names, err := config.ListProfiles(pm.configDir, gameID)
+	if err != nil {
+		return false, fmt.Errorf("listing profiles: %w", err)
+	}
+	return len(names) == 0, nil
 }
 
 // CreateOrResetDefault creates gameID's "default" profile, or resets it to
@@ -265,14 +284,14 @@ func (pm *ProfileManager) refuseDeletingActive(ctx context.Context, gameID, name
 // liveProfile is Service.liveProfile for a caller holding only a
 // ProfileManager.
 func (pm *ProfileManager) liveProfile(ctx context.Context, gameID string) (string, error) {
-	profile, err := pm.GetDefault(ctx, gameID)
-	if errors.Is(err, domain.ErrProfileNotFound) {
-		return "default", nil
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
+	flags, err := readProfileFlags(pm.configDir, gameID)
 	if err != nil {
 		return "", fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
 	}
-	return profile.Name, nil
+	return flags.active()
 }
 
 // Rename renames gameID's profile oldName to newName, moving everything
@@ -709,13 +728,18 @@ func firstRefs(refs []domain.ModReference) map[string]domain.ModReference {
 }
 
 // liveProfile returns the profile whose mods gameID's game directory holds:
-// the one `lmm profile switch` last made active, as ProfileManager.
-// GetDefault resolves it (its first-profile fallback included), or
-// "default" for a game with no profile at all - the same answer both
-// frontends give when no profile is named (cmd/lmm's resolveProfile, lmm
-// serve's selection). A game has one directory and one deployed profile, so
-// a flow that writes into that directory acts for this profile or not at
-// all (#444, #445).
+// the one profile file that says `is_default: true` - what `lmm profile
+// switch` last wrote - or the game's only profile file, or "default" for a
+// game with no profile file at all (the profile both frontends resolve for
+// it). A game has one directory and one deployed profile, so a flow that
+// writes into that directory acts for this profile or not at all (#444,
+// #445).
+//
+// Anything else is ErrActiveProfileUnknown (#445 review F2): a profile file
+// that cannot be read, several marked, or none marked among several.
+// GetDefault answers those with a guess - it skips an unreadable file and
+// falls back to the first readable profile - which is fine for choosing
+// what to display and wrong for deciding what to remove.
 func (s *Service) liveProfile(ctx context.Context, gameID string) (string, error) {
 	return s.NewProfileManager().liveProfile(ctx, gameID)
 }
@@ -870,6 +894,12 @@ func (pm *ProfileManager) ImportWithOptions(ctx context.Context, data []byte, fo
 	// the active profile must not leave the game with none.
 	if existErr == nil {
 		profile.IsDefault = existing.IsDefault
+	} else {
+		first, err := pm.isFirstProfile(profile.GameID)
+		if err != nil {
+			return nil, err
+		}
+		profile.IsDefault = first
 	}
 
 	if err := pm.save(profile); err != nil {

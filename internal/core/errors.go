@@ -151,6 +151,16 @@ var ErrProfileExists = errors.New("profile already exists")
 // `lmm profile switch`, the way to make another profile live.
 var ErrProfileNotActive = errors.New("profile is not active")
 
+// ErrActiveProfileUnknown is returned when a flow that deploys into a game
+// directory, removes from it, or switches which profile it holds cannot
+// tell which of the game's profiles is active (#445 review F2): a profile
+// file cannot be read, several say `is_default: true`, or none does while
+// several exist. Any answer would be a guess - GetDefault's first-profile
+// fallback is one - and a guess turned a recorded-only purge into a full
+// one, so every such decision fails closed instead. The error names the
+// cause and `lmm profile list`.
+var ErrActiveProfileUnknown = errors.New("cannot tell which profile is active")
+
 // ErrProfileActive is returned when deleting the game's active profile
 // (#446): its mods are the ones in the game directory, and deleting its
 // file would leave them there with no profile claiming them and the game

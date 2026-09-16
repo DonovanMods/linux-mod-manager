@@ -372,6 +372,15 @@ func TestJSONGoldens(t *testing.T) {
 			core.MergedArtifactEffect{Action: core.MergedArtifactResync, Path: "zzz_LMM_Merged_P.pak"},
 		},
 		{
+			// #445 review F2: a game with no single profile marked active
+			// gets a switch that only marks its target.
+			"switch_plan_flag_only",
+			core.SwitchPlan{
+				GameID: "skyrim-se", To: "hardcore", FlagOnly: true,
+				Warnings: []string{"no single profile of skyrim-se is marked active (none of default, hardcore is), so lmm cannot tell whose mods the game directory holds: this switch only marks hardcore as the active profile - nothing is deployed or removed"},
+			},
+		},
+		{
 			// ToDisable is deliberately left nil (no `omitempty` on the tag)
 			// to pin that a nil slice marshals as "[]", not "null".
 			"switch_plan",

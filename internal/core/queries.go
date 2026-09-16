@@ -16,6 +16,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -157,12 +159,8 @@ func (s *Service) ListProfiles(ctx context.Context, gameID string) (*ProfileList
 		return nil, err
 	}
 	listing := &ProfileListing{GameID: gameID}
-	var flagged []string
 	for _, p := range profiles {
 		listing.Profiles = append(listing.Profiles, ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault})
-		if p.IsDefault {
-			flagged = append(flagged, p.Name)
-		}
 	}
 	// #441: a profile is known by its file name. A hand-copied file whose
 	// `name:` still names another profile is read - and written - as the
@@ -175,16 +173,29 @@ func (s *Service) ListProfiles(ctx context.Context, gameID string) (*ProfileList
 				p.Name, gameID, declared, p.Name, p.Name))
 		}
 	}
-	switch {
-	case len(profiles) == 0 || len(flagged) == 1:
-	case len(flagged) == 0:
+	// #445 review F2: the listing is where every refusal of an ambiguous
+	// active profile sends the user, so it says what the refusal saw - by
+	// the same reading of the files (readProfileFlags).
+	flags, err := readProfileFlags(s.configDir, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("listing profiles: %w", err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(flags.unreadable)) {
+		path, _ := config.ProfilePath(s.configDir, gameID, name)
 		listing.Warnings = append(listing.Warnings, fmt.Sprintf(
-			"no profile of %s is marked active (is_default: true), so lmm treats %q as active - run `lmm profile switch <name>` to choose one",
-			gameID, profiles[0].Name))
+			"profile file %s of %s cannot be read, so it is not listed: %v - until it is fixed or removed, lmm will not deploy, purge or switch %s, since it could be the active profile",
+			path, gameID, flags.unreadable[name], gameID))
+	}
+	switch {
+	case len(flags.unreadable) > 0 || !flags.ambiguous():
+	case len(flags.flagged) == 0:
+		listing.Warnings = append(listing.Warnings, fmt.Sprintf(
+			"no profile of %s is marked active (is_default: true), so lmm will not deploy or purge its files until one is - run `lmm profile switch <name>` to mark the one whose mods the game directory holds",
+			gameID))
 	default:
 		listing.Warnings = append(listing.Warnings, fmt.Sprintf(
-			"profiles %s of %s are all marked active (is_default: true), so lmm treats %q as active - run `lmm profile switch <name>` to keep one",
-			strings.Join(flagged, ", "), gameID, flagged[0]))
+			"profiles %s of %s are all marked active (is_default: true), so lmm will not deploy or purge its files until one is - run `lmm profile switch <name>` to keep one",
+			strings.Join(flags.flagged, ", "), gameID))
 	}
 	return listing, nil
 }

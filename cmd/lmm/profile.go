@@ -449,6 +449,15 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		} else {
 			fmt.Printf("Switching to profile: %s\n\n", targetName)
 		}
+		// #445 review F2: a FlagOnly plan says why it can only mark the
+		// target - before the prompt, since that is what is being asked.
+		for _, w := range plan.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+
+	if plan.FlagOnly {
+		return applyFlagOnlySwitch(ctx, service, game, plan)
 	}
 
 	// progress prints every diagnostic and per-mod status line at its exact
@@ -610,6 +619,41 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	fmt.Printf("\n✓ Switched to profile: %s\n", targetName)
+	return nil
+}
+
+// applyFlagOnlySwitch is doProfileSwitch for a core.SwitchPlan with
+// FlagOnly set (#445 review F2): there is nothing to preview but the plan's
+// warning, already printed, so it confirms, marks the target and reports
+// the result's warning - that nothing was deployed or removed, and what to
+// run next.
+func applyFlagOnlySwitch(ctx context.Context, service *core.Service, game *domain.Game, plan *core.SwitchPlan) error {
+	if profileSwitchDryRun {
+		return nil
+	}
+	if !profileSwitchYes {
+		if !jsonOutput {
+			fmt.Printf("Mark %s as the active profile? [Y/n]: ", plan.To)
+		}
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if input != "" && input != "y" && input != "yes" {
+			return ErrCancelled
+		}
+	}
+	result, err := service.ApplyProfileSwitch(ctx, game, plan, nil)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(result)
+	}
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+	fmt.Printf("✓ Marked %s as the active profile of %s\n", plan.To, game.ID)
 	return nil
 }
 

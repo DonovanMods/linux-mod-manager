@@ -136,12 +136,14 @@ var errBadPlanRequest = errors.New("invalid plan request")
 // A deploy asked for a profile that is not the game's active one, or a
 // purge --uninstall of one (#445), answers 409: the request is well-formed
 // and the profile exists, but the game's state - which profile is live -
-// refuses it until a switch.
+// refuses it until a switch. So does any deploy, purge or switch in a game
+// whose profile files do not say which profile is active (#445 review F2):
+// the files have to be fixed first.
 func planErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, errBadPlanRequest):
 		return http.StatusBadRequest
-	case errors.Is(err, core.ErrProfileNotActive):
+	case errors.Is(err, core.ErrProfileNotActive), errors.Is(err, core.ErrActiveProfileUnknown):
 		return http.StatusConflict
 	case errors.Is(err, domain.ErrModNotFound),
 		errors.Is(err, domain.ErrGameNotFound),
