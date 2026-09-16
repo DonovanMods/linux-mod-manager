@@ -702,11 +702,14 @@ game edit`) prints it once.
   these under an `lmm cache` command lmm does not have; they live beside the
   index instead.
 
-  Pruning is fail-closed: nothing is removed if `games.yaml` cannot be read;
-  no unused index is removed while a game maps Thunderstore to an identifier
-  lmm cannot use; and a directory is removed only when it holds nothing but
-  the files lmm wrote there, never through a symbolic link - a symlinked
-  `_thunderstore` root refuses the whole prune. Every index is a copy of a
+  Pruning is fail-closed: nothing is removed if `games.yaml` cannot be read,
+  and only `--all` removes anything when there is no `games.yaml` at all; no
+  unused index is removed while a game maps Thunderstore to an identifier
+  lmm cannot use; an index refreshed after the prune decided to remove it is
+  kept; and a directory is removed only when it holds nothing but the files
+  lmm wrote there, checked and removed through a directory handle, never
+  through a symbolic link - a symlinked `_thunderstore` root refuses the
+  whole prune. The web UI shows any index a prune could not remove, and why. Every index is a copy of a
   public catalogue, so anything removed is rebuilt by the next search.
 
   The web UI's Setup page (the tab is now "Sources") lists the same indexes
@@ -1530,9 +1533,11 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   In the web UI the same sentence is the progress text of the job that is
   waiting. A server's `Retry-After` is now honoured as the least lmm waits
   (it was jittered below it, so a throttled request came back early), in
-  either of its two forms; a wait longer than a minute is not slept through
-  but refused at once, naming when lmm will ask again, and nothing is sent
-  to that host before then. A transfer that stops delivering bytes now fails
+  either of its two forms, including on the last attempt. For the
+  Thunderstore index, a wait longer than a minute is not slept through but
+  refused at once, naming when lmm will ask again, and nothing is sent to
+  Thunderstore before then; a mod download told to wait that long fails at
+  once, naming the wait. A transfer that stops delivering bytes now fails
   as stalled - after 30 seconds for the Thunderstore index, a minute for a
   mod download - instead of holding for the index's ten-minute ceiling, or,
   for a download, forever: the download client had no timeout at all. A

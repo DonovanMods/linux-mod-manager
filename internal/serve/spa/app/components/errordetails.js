@@ -34,10 +34,15 @@ export function ErrorDetails({ details }) {
 
   const retry = retryAtFor(details);
   if (retry) {
+    // A clock time for today's resumption, the date too for a later one -
+    // "at 09:00" is wrong by a day otherwise.
+    const far = Math.abs(retry.at.getTime() - Date.now()) >= 12 * 3_600_000;
+    const when = far
+      ? retry.at.toLocaleString()
+      : retry.at.toLocaleTimeString();
     return html`
       <p class="error-details__retry" data-testid="retry-at">
-        lmm will ask ${retry.source} again at
-        ${" "}${retry.at.toLocaleTimeString()}.
+        lmm will ask ${retry.source} again at ${" "}${when}.
       </p>
     `;
   }

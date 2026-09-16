@@ -83,10 +83,12 @@ public catalogue, so anything removed is rebuilt the next time it is
 searched.
 
 Pruning is fail-closed: nothing is removed if games.yaml cannot be read,
-no unused index is removed while a game maps the source to an identifier
-lmm cannot use, and a directory is only removed when it holds nothing but
-the index files lmm wrote - never through a symbolic link. --dry-run lists
-exactly what a real run would remove, and removes nothing.
+and only --all removes anything when there is no games.yaml at all; no
+unused index is removed while a game maps the source to an identifier lmm
+cannot use; an index refreshed after the prune decided to remove it is
+kept; and a directory is only removed when it holds nothing but the index
+files lmm wrote - never through a symbolic link. --dry-run lists exactly
+what a real run would remove, and removes nothing.
 
 Examples:
   lmm source index prune --dry-run

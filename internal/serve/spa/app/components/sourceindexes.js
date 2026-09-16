@@ -245,6 +245,9 @@ function PrunePanel({ onChanged }) {
     try {
       setResult(await pruneSourceIndexes({ all, only }));
       setPreview(null);
+      // The next prune starts from the safe default again: "also remove
+      // indexes a game uses" is a decision for one prune, not a setting.
+      setAll(false);
       await onChanged();
     } catch (err) {
       setError(describeError(err).message);
@@ -274,6 +277,7 @@ function PrunePanel({ onChanged }) {
         }
         ${error && html`<span class="modal__error">${error}</span>`}
       </div>
+      <${PruneProblems} report=${result} />
     `;
   }
 
@@ -348,12 +352,48 @@ function PrunePanel({ onChanged }) {
           class="button button--small"
           data-action="cancel-prune"
           disabled=${busy}
-          onClick=${() => setPreview(null)}
+          onClick=${() => {
+            setPreview(null);
+            setAll(false);
+          }}
         >
           Cancel
         </button>
       </div>
       ${error && html`<p class="modal__error">${error}</p>`}
+    </div>
+  `;
+}
+
+/**
+ * PruneProblems is what a finished prune could NOT do: every entry the
+ * source refused or failed to remove, with its reason, and every source it
+ * could not list at all. A prune that removed nothing because of these
+ * must never read as a prune that simply had nothing to do.
+ */
+function PruneProblems({ report }) {
+  if (!report) return null;
+  const failed = (report.entries ?? []).filter((e) => e.action === "failed");
+  const warnings = report.warnings ?? [];
+  if (failed.length === 0 && warnings.length === 0) return null;
+  return html`
+    <div class="modal__error" data-testid="prune-problems">
+      ${
+        failed.length > 0 &&
+        html`
+          <p>Not removed:</p>
+          <ul class="source-indexes__preview-list">
+            ${failed.map(
+              (e) => html`
+                <li key=${`${e.source}/${e.game}`} data-failed=${e.game}>
+                  <span class="mono">${e.game}</span> — ${e.reason}
+                </li>
+              `,
+            )}
+          </ul>
+        `
+      }
+      ${warnings.map((w) => html`<p key=${w}>${w}</p>`)}
     </div>
   `;
 }

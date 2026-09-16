@@ -554,13 +554,16 @@ names.
   `POST /api/v1/indexes/prune`, and the Setup page's index section (whose tab
   is now "Sources").
 - **Prune is fail-closed** (the coordinator's conditions): games.yaml is
-  re-read and an unreadable one removes nothing, even with `--all`; a game
+  re-read and an unreadable one removes nothing, even with `--all`, while a
+  missing one removes nothing without `--all`; a game
   that maps the source to an empty or malformed identifier keeps every
   unused index; a source that cannot list its indexes is a warning; the
   source removes a directory only when every entry is a regular file it
   wrote (`index.json`, `packages.jsonl`, `watermark.json`, `.lock`, staging
-  files), file by file and then a plain rmdir, under both build locks, and
-  never through a symbolic link - a symlinked `_thunderstore` root refuses
+  files), file by file and then a plain rmdir, under both build locks,
+  through directory handles (`os.Root`) proved to be the directories that
+  were inspected, and never through a symbolic link; a removal decided on an
+  index's age carries that age as a precondition re-checked under the lock - a symlinked `_thunderstore` root refuses
   everything, while a symlinked cache directory above it is allowed. A dry
   run's removal keys (`IndexPruneOptions.Only`) bound the confirmed run, so
   `--dry-run` lists exactly what the real run removes. `--all` removes a
