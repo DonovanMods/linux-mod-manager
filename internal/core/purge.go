@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -661,6 +662,13 @@ func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *Pu
 			left[domain.ModKey(owner.SourceID, owner.ModID)]++
 		}
 	}
+	// A path this purge meant to remove and did not is a warning, not a
+	// --verbose note: the plan the user confirmed said it would go.
+	warn := func(path string, err error, what string) {
+		msg := fmt.Sprintf("%s was left in place, with its record: %s: %v", path, what, err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(WarningEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeWarning, Message: msg})
+	}
 
 	emit(StepEvent{Scope: Scope{Op: OpPurge, Total: len(plan.Mods)}, Phase: DeployPurging})
 	installers := make(map[domain.LinkMethod]*Installer)
@@ -684,15 +692,21 @@ func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *Pu
 			installers[method] = installer
 		}
 		dst := filepath.Join(game.ModPath, filepath.FromSlash(row.RelativePath))
-		if _, err := os.Lstat(dst); err == nil {
+		_, err := os.Lstat(dst)
+		switch {
+		case err == nil:
 			if err := installer.linker.Undeploy(dst); err != nil {
 				left[key]++
-				msg := fmt.Sprintf("⚠ %s - %v", row.RelativePath, err)
-				result.Notes = append(result.Notes, msg)
-				emit(StepEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeNote, Detail: msg})
+				warn(row.RelativePath, err, "it could not be removed")
 				continue
 			}
 			installer.restoreReplacedOriginal(row.RelativePath, dst)
+		case !errors.Is(err, fs.ErrNotExist):
+			// Only "not there" lets the record go without the file
+			// (review F4): anything else means it was not checked.
+			left[key]++
+			warn(row.RelativePath, err, "it could not be checked")
+			continue
 		}
 		if err := s.db.DeleteDeployedFile(ctx, game.ID, plan.Profile, row.RelativePath); err != nil {
 			left[key]++
@@ -757,7 +771,8 @@ type PurgeOptions struct {
 // Purged and len(Skipped).
 //
 // A recorded-only purge (#445, PurgePlan.RecordedOnly) also reports how
-// many recorded paths it removed and which it kept, and why.
+// many recorded paths it removed and which it kept, and why; a path it
+// meant to remove and could not remove, or check, is a Warnings entry.
 type PurgeResult struct {
 	Purged   int            `json:"purged"`
 	Skipped  []InstalledRef `json:"skipped,omitempty"`

@@ -1589,7 +1589,10 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links and
   sharing a mod left live with no record under the new profile; when
   another game whose mod directory holds it records it; and when the game
   hands it to you after its first deploy (a BepInEx config file, which
-  such a purge deleted even where an ordinary purge keeps it). Such a purge runs no hooks, keeps
+  such a purge deleted even where an ordinary purge keeps it). A file it
+  could not check (in a directory it cannot read, say) keeps its record
+  and is reported instead of being counted as removed, and a file it
+  could not remove is a warning rather than a `--verbose` note. Such a purge runs no hooks, keeps
   the mod records, and refuses `--uninstall`. The web UI's per-profile
   Purge does the same. A plan made before the active profile changed is
   refused when applied.

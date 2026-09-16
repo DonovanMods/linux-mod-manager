@@ -13,6 +13,8 @@ package core_test
 //     purge of the old profile saw "no other profile records this" and
 //     deleted the active profile's live files. A path whose mod the active
 //     profile's document lists, and does not mark off, is kept.
+//   - F4: a path whose Lstat failed for any reason but "not there" was
+//     treated as gone: its record was deleted and it was reported removed.
 //   - F7: a path another game records, in a mod directory both games
 //     share, was removed.
 //
@@ -267,6 +269,43 @@ func TestRecordedPurge_AModTheActiveProfileListsIsKept(t *testing.T) {
 		assert.FileExists(t, aLive(f))
 		assert.Zero(t, result.RemovedPaths)
 		assert.Contains(t, result.Kept, core.PurgeKeptPath{Path: "Data/a.esp", Reason: core.PurgeKeptListed, Profiles: []string{"alt"}})
+	})
+}
+
+func TestRecordedPurge_APathThatCannotBeCheckedKeepsItsRecord(t *testing.T) {
+	skipAsRoot(t)
+	f := l1Fixture(t)
+	f.profile(t, "alt", true) // alt no longer lists a, so a.esp is default's to remove
+	ctx := context.Background()
+	plan, err := f.svc.PlanPurge(ctx, f.game, "default", core.PurgeOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"Data/a.esp"}, plan.Remove)
+
+	data := filepath.Join(f.game.ModPath, "Data")
+	require.NoError(t, os.Chmod(data, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(data, 0o755) })
+	result, err := f.svc.ApplyPurge(ctx, f.game, plan, core.PurgeOptions{}, nil)
+	require.NoError(t, os.Chmod(data, 0o755))
+	require.NoError(t, err)
+
+	assert.Zero(t, result.RemovedPaths, "nothing was removed")
+	assert.Zero(t, result.Purged)
+	require.Len(t, result.Skipped, 1)
+	require.Len(t, result.Warnings, 1, "said unconditionally, not as a --verbose note")
+	assert.Contains(t, result.Warnings[0], "Data/a.esp")
+	assert.Contains(t, result.Warnings[0], "permission denied")
+	assert.Equal(t, []string{"Data/a.esp"}, f.recorded(t, "default", "a"), "the record stays with the file")
+	assert.FileExists(t, filepath.Join(data, "a.esp"))
+	row, err := f.svc.GetInstalledMod(ctx, "local", "a", "sky", "default")
+	require.NoError(t, err)
+	assert.True(t, row.Deployed, "a mod with a file left is not marked undeployed")
+
+	t.Run("a path that is already gone loses its record", func(t *testing.T) {
+		require.NoError(t, os.Remove(filepath.Join(data, "a.esp")))
+		_, result := f.purge(t, "default")
+		assert.Equal(t, 1, result.RemovedPaths)
+		assert.Empty(t, result.Warnings)
+		assert.Empty(t, f.recorded(t, "default", "a"))
 	})
 }
 
