@@ -416,3 +416,62 @@ func TestDoModEnable_ErrorPath_NilResultDoesNotPanic(t *testing.T) {
 	assert.Contains(t, cmdErr.Error(), "failed to update mod status")
 	assert.Empty(t, out, "EnableResult carries no Notes on any error path today, so nothing should print")
 }
+
+// TestDoModEnableDisable_AcceptAnImportedModsLocalSource: an imported mod's
+// source is "local", which no game configures, and `lmm mod enable`/`disable`
+// refused `--source local` - so the recovery command #431's one-time upgrade
+// notice prints (and the `lmm mod disable` its docs recommend) could not
+// reach the mods most often imported by hand. They accept it now, as `lmm
+// uninstall` already did.
+func TestDoModEnableDisable_AcceptAnImportedModsLocalSource(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"nexusmods": "g1"},
+	}
+	ctx := context.Background()
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, domain.SourceLocal, "imp", "1.0", "imported.esp", []byte("data")))
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "imp", SourceID: domain.SourceLocal, Name: "Imported Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "imp", SourceID: domain.SourceLocal, Version: "1.0", GameID: "g1"}, "default")
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(ctx, "g1", "default", domain.ModReference{SourceID: domain.SourceLocal, ModID: "imp"}))
+
+	oldSource, oldProfile := modSource, modProfile
+	t.Cleanup(func() { modSource, modProfile = oldSource, oldProfile })
+
+	modSource, modProfile = domain.SourceLocal, "default"
+	captureStdout(t, func() error { return doModDisable(ctx, svc, game, "imp") })
+	profile, err := pm.Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	assert.True(t, profile.Mods[0].Disabled)
+	assert.NoFileExists(t, filepath.Join(gameDir, "imported.esp"))
+
+	modSource, modProfile = domain.SourceLocal, "default"
+	captureStdout(t, func() error { return doModEnable(ctx, svc, game, "imp") })
+	profile, err = pm.Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, profile.Mods[0].Disabled)
+	assert.FileExists(t, filepath.Join(gameDir, "imported.esp"))
+
+	// A source the game does not configure is still refused.
+	modSource = "curseforge"
+	err = doModEnable(ctx, svc, game, "imp")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `source "curseforge" is not configured`)
+}
