@@ -371,7 +371,7 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 		s.resolveProfileApplyInstall(ctx, game, &plan.ToInstall[i])
 	}
 
-	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
+	snapshot, err := s.currentMarkedSnapshot(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, err
 	}

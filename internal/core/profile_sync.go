@@ -219,7 +219,7 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 
 	plan.NoChanges = len(plan.ToAdd) == 0 && len(plan.ToRemove) == 0 && len(plan.ToUpdate) == 0
 
-	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
+	snapshot, err := s.currentMarkedSnapshot(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, err
 	}

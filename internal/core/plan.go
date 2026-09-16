@@ -18,20 +18,36 @@ var ErrStalePlan = errors.New("plan is stale: installed mods changed since it wa
 
 // installedSnapshot is the precondition a Plan records and an Apply
 // re-derives: the set of (source_id, mod_id, version, enabled) for the
-// profile at plan time, and whether the profile document marks each of
-// those mods disabled. Unexported, json:"-" wherever a Plan embeds one.
-type installedSnapshot map[string]string // key "source:id" -> "version|enabled", plus "|off" when the document marks it
+// profile at plan time - and, for a plan the profile document's `disabled:`
+// markers decide (markedSnapshotOf), each of those markers too. Unexported,
+// json:"-" wherever a Plan embeds one.
+type installedSnapshot map[string]string // key "source:id" -> "version|enabled", plus "|off" in a marked snapshot when the document marks it
+
+// snapshotMarkersKey is a marked snapshot's one entry that is not a mod:
+// its presence tells checkPlanFresh to compare markers too. A ModKey always
+// contains ':', so it cannot collide with one.
+const snapshotMarkersKey = "#431 disabled markers"
 
 // currentInstalledSnapshot builds gameID/profileName's current installed-mod
 // snapshot, keyed by domain.ModKey (source:id), so a later checkPlanFresh
-// can detect any version, enabled-state, marker, addition, or removal since
-// a Plan was computed.
+// can detect any version, enabled-state, addition, or removal since a Plan
+// was computed.
 func (s *Service) currentInstalledSnapshot(ctx context.Context, gameID, profileName string) (installedSnapshot, error) {
 	mods, err := s.GetInstalledMods(ctx, gameID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading installed mods: %w", err)
 	}
 	return s.snapshotOf(gameID, mods)
+}
+
+// currentMarkedSnapshot is currentInstalledSnapshot for a plan the profile
+// document's markers decide (see markedSnapshotOf).
+func (s *Service) currentMarkedSnapshot(ctx context.Context, gameID, profileName string) (installedSnapshot, error) {
+	mods, err := s.GetInstalledMods(ctx, gameID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("loading installed mods: %w", err)
+	}
+	return s.markedSnapshotOf(gameID, mods)
 }
 
 // AdapterPreconditionError is the typed error a frontend branches on when a
@@ -107,34 +123,53 @@ func (s *Service) checkAdapterPreconditions(gameID string, mods []domain.Install
 //
 // An adapter with no Preconditioner - every adapter U1 ships - makes the
 // check a nil return.
-//
-// #431 (fix round 3, F2): each entry also records whether the mod's profile
-// document marks it `disabled: true`. Every converge plan reads that
-// marker, so a plan computed before it was written - the one-time backfill
-// beginOp runs inside the Apply's own slot writes it, and so can another
-// lmm process - must not be applied as if it had been: `profile apply`
-// would switch the mod straight back on, and `profile sync` would delete
-// its reference.
 func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (installedSnapshot, error) {
 	if err := s.checkAdapterPreconditions(gameID, mods); err != nil {
 		return nil, err
 	}
-	markers := make(map[string]map[string]bool) // by profile
 	snap := make(installedSnapshot, len(mods))
+	for _, m := range mods {
+		snap[domain.ModKey(m.SourceID, m.ID)] = fmt.Sprintf("%s|%t", m.Version, m.Enabled)
+	}
+	return snap, nil
+}
+
+// markedSnapshotOf is snapshotOf for a plan the profile document's
+// `disabled:` markers decide on a DISABLED row - `profile apply`, which
+// re-enables an unmarked one, and `profile sync`, which drops its
+// reference. Each entry also records whether the document marks the mod.
+//
+// #431 (fix round 3, F2): the one-time backfill writes exactly that marker,
+// and it can land between such a plan and its Apply - inside the Apply's
+// own slot (beginOp), or from another lmm process. Applied anyway, the
+// plan would switch the mod straight back on, or delete its reference.
+// Every other plan leaves a disabled row alone whether it is marked or not,
+// so its snapshot leaves markers out: a `lmm deploy` planned beside another
+// lmm's first open must not be refused over one it cannot act on.
+func (s *Service) markedSnapshotOf(gameID string, mods []domain.InstalledMod) (installedSnapshot, error) {
+	snap, err := s.snapshotOf(gameID, mods)
+	if err != nil {
+		return nil, err
+	}
+	s.recordDocumentMarkers(snap, gameID, mods)
+	return snap, nil
+}
+
+// recordDocumentMarkers adds each of mods' document markers to snap, and
+// the key that says snap carries them.
+func (s *Service) recordDocumentMarkers(snap installedSnapshot, gameID string, mods []domain.InstalledMod) {
+	markers := make(map[string]map[string]bool) // by profile
 	for _, m := range mods {
 		disabled, ok := markers[m.ProfileName]
 		if !ok {
 			disabled = s.documentDisabledKeys(gameID, m.ProfileName)
 			markers[m.ProfileName] = disabled
 		}
-		key := domain.ModKey(m.SourceID, m.ID)
-		entry := fmt.Sprintf("%s|%t", m.Version, m.Enabled)
-		if disabled[key] {
-			entry += "|off"
+		if key := domain.ModKey(m.SourceID, m.ID); disabled[key] {
+			snap[key] += "|off"
 		}
-		snap[key] = entry
 	}
-	return snap, nil
+	snap[snapshotMarkersKey] = ""
 }
 
 // checkPlanFresh re-derives gameID/profileName's CURRENT installed-mod
@@ -142,7 +177,11 @@ func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (install
 // returning nil when they match and a wrapped ErrStalePlan otherwise. Called
 // as the first statement inside each Apply's private twin, after beginOp.
 func (s *Service) checkPlanFresh(ctx context.Context, gameID, profileName string, want installedSnapshot) error {
-	got, err := s.currentInstalledSnapshot(ctx, gameID, profileName)
+	current := s.currentInstalledSnapshot
+	if _, marked := want[snapshotMarkersKey]; marked {
+		current = s.currentMarkedSnapshot
+	}
+	got, err := current(ctx, gameID, profileName)
 	if err != nil {
 		return err
 	}

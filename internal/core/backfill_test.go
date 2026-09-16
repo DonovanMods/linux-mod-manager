@@ -691,13 +691,8 @@ func TestBackfillProfileDisabledMarkers_AMutationDischargesItFirst(t *testing.T)
 	plan, err := f.svc.PlanPurge(ctx, f.game, "a", core.PurgeOptions{})
 	require.NoError(t, err)
 	_, err = f.svc.ApplyPurge(ctx, f.game, plan, core.PurgeOptions{}, nil)
-	require.ErrorIs(t, err, core.ErrStalePlan, "the plan predates the marker the slot just wrote (F2)")
+	require.NoError(t, err)
 	assert.Contains(t, f.warnings.String(), "Mod off", "the mutation printed the notice")
-
-	plan, err = f.svc.PlanPurge(ctx, f.game, "a", core.PurgeOptions{})
-	require.NoError(t, err)
-	_, err = f.svc.ApplyPurge(ctx, f.game, plan, core.PurgeOptions{}, nil)
-	require.NoError(t, err)
 
 	report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
 	require.NoError(t, err)
@@ -893,6 +888,31 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 		plan, err = f.svc.PlanProfileSync(ctx, f.game, "a")
 		require.NoError(t, err)
 		assert.Empty(t, plan.ToRemove, "the re-plan reads the marker")
+	})
+
+	// Only a plan the marker can change is refused. A deploy never enables a
+	// disabled row, and the backfill marks nothing else, so a deploy (or a
+	// purge) planned across the discharge still applies. Refusing it made a
+	// `lmm deploy` started beside another lmm's first open fail once in a
+	// while with "plan is stale" for nothing.
+	t.Run("a plan the marker cannot change stays fresh", func(t *testing.T) {
+		f := newBackfillFixture(t)
+		f.row(t, "a", "off", false, false)
+		f.row(t, "a", "on", true, false)
+		f.owe(t)
+
+		deploy, err := f.svc.PlanDeploy(ctx, f.game, "a", core.DeployOptions{})
+		require.NoError(t, err)
+		purge, err := f.svc.PlanPurge(ctx, f.game, "a", core.PurgeOptions{})
+		require.NoError(t, err)
+
+		_, err = f.svc.ApplyDeploy(ctx, f.game, deploy, core.DeployOptions{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"), "the deploy's slot discharged the backfill")
+		assert.FileExists(t, filepath.Join(f.gameDir, "on.esp"))
+		assert.NoFileExists(t, filepath.Join(f.gameDir, "off.esp"))
+		_, err = f.svc.ApplyPurge(ctx, f.game, purge, core.PurgeOptions{}, nil)
+		require.NoError(t, err)
 	})
 
 	t.Run("a marker in another profile leaves the plan fresh", func(t *testing.T) {
