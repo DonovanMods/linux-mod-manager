@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -198,6 +201,8 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 		lines = append(lines, "mod path set to "+entry.ModPath)
 		if entry.ModPathError != "" {
 			lines = append(lines, "  "+colorYellow("!")+" "+entry.ModPathError)
+		} else if _, err := os.Stat(entry.ModPath); errors.Is(err, fs.ErrNotExist) {
+			lines = append(lines, "  "+colorDim("not created yet - the first deploy creates it"))
 		}
 	}
 

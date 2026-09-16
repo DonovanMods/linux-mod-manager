@@ -39,16 +39,45 @@ func seedModPathGame(t *testing.T, svc *core.Service, exists bool) *domain.Game 
 	return game
 }
 
+// deployOneFile installs one mod file into profile's deployment of game -
+// a real deployed_files row, relative to the game's current mod_path.
+func deployOneFile(t *testing.T, svc *core.Service, game *domain.Game, profile, modID string) {
+	t.Helper()
+	seedInstalledModUnderProfile(t, svc, game, profile, "src", modID, "Mod "+modID, "1.0", true,
+		map[string][]byte{modID + ".dll": []byte("x")})
+	require.NoError(t, svc.GetInstallerForTest(game).Install(context.Background(), game,
+		&domain.Mod{ID: modID, SourceID: "src", Version: "1.0", GameID: game.ID}, profile))
+}
+
+// seedStaleModPathGame is the owner's #427 case: an install that still
+// exists, and a mod_path under it that lmm deployed into and that has since
+// gone - so lmm's own records point at files that are not there.
+func seedStaleModPathGame(t *testing.T, svc *core.Service) *domain.Game {
+	t.Helper()
+	game := seedModPathGame(t, svc, true)
+	deployOneFile(t, svc, game, "default", "m1")
+	require.NoError(t, os.RemoveAll(game.ModPath))
+	return game
+}
+
+func modPathProblem(t *testing.T, svc *core.Service, game *domain.Game) *core.ModPathMissingError {
+	t.Helper()
+	problem, err := svc.ModPathProblem(t.Context(), game)
+	require.NoError(t, err)
+	return problem
+}
+
 func TestGameDocuments_FlagAMissingModPath(t *testing.T) {
 	svc := newFlowsTestService(t)
-	game := seedModPathGame(t, svc, false)
+	game := seedStaleModPathGame(t, svc)
 
 	entries, err := svc.ListGameEntries(t.Context())
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	flag := entries[0].ModPathError
-	assert.Contains(t, flag, game.ModPath+" does not exist")
-	assert.Contains(t, flag, "lmm game edit g1 --mod-path <path>", "the flag names the command that repairs it")
+	assert.Contains(t, flag, game.ModPath+" does not exist, but lmm recorded 1 deployed file(s) under it")
+	assert.Contains(t, flag, "lmm deploy --game g1", "the flag names the command that puts the files back")
+	assert.Contains(t, flag, "lmm game edit g1 --mod-path <path>", "and the one that points lmm elsewhere")
 
 	detail, err := svc.GameDetail(t.Context(), game.ID)
 	require.NoError(t, err)
@@ -71,33 +100,116 @@ func TestGameDocuments_SayNothingAboutAModPathThatExists(t *testing.T) {
 	entries, err := svc.ListGameEntries(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, entries[0].ModPathError)
-	assert.NoError(t, core.ModPathProblem(game))
+	assert.Nil(t, modPathProblem(t, svc, game))
+}
+
+// TestGameDocuments_AFreshGameIsNotFlagged (#427 review F3): a game nobody
+// has deployed to yet has no mod directory - `lmm game add` and detection
+// both leave it to the first deploy, which creates it - so every freshly
+// added or detected game read as broken until then. Nothing is wrong with
+// it, and no document says otherwise.
+func TestGameDocuments_AFreshGameIsNotFlagged(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := seedModPathGame(t, svc, false)
+	// A deeper mod_path, as the curated UE entries have
+	// (Meteorite/Content/Paks/~mods): only the install path exists.
+	deep := *game
+	deep.ID, deep.ModPath = "g2", filepath.Join(game.InstallPath, "Game", "Content", "Paks", "~mods")
+	require.NoError(t, svc.SaveGame(t.Context(), &deep))
+
+	assert.Nil(t, modPathProblem(t, svc, game))
+	assert.Nil(t, modPathProblem(t, svc, &deep))
+
+	entries, err := svc.ListGameEntries(t.Context())
+	require.NoError(t, err)
+	for _, entry := range entries {
+		assert.Empty(t, entry.ModPathError, entry.ID)
+	}
+	detail, err := svc.GameDetail(t.Context(), game.ID)
+	require.NoError(t, err)
+	assert.Empty(t, detail.ModPathError)
+	status, err := svc.GameStatus(t.Context(), game)
+	require.NoError(t, err)
+	assert.Empty(t, status.ModPathError)
+	report, err := svc.Status(t.Context())
+	require.NoError(t, err)
+	for _, summary := range report.Games {
+		assert.Empty(t, summary.ModPathError, summary.Game.ID)
+	}
+
+	listing, err := svc.GameDetectListing(t.Context(), []domain.DetectedGame{{
+		Slug: game.ID, Name: game.Name, InstallPath: game.InstallPath, ModPath: game.ModPath, Known: true,
+	}}, nil, core.GameDetectListingOptions{})
+	require.NoError(t, err)
+	require.Len(t, listing.Games, 1)
+	assert.True(t, listing.Games[0].AlreadyConfigured)
+	assert.Empty(t, listing.Games[0].ModPathError, "a configured game exactly as the catalog says is not 'needs repair'")
+}
+
+// TestModPathProblem_ADeployCannotCreateIt: an absent mod_path is only the
+// ordinary pre-deploy state when a deploy could create it - inside an
+// install that is still there.
+func TestModPathProblem_ADeployCannotCreateIt(t *testing.T) {
+	svc := newFlowsTestService(t)
+
+	t.Run("the install path is gone", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "Game")
+		game := &domain.Game{ID: "g1", InstallPath: root, ModPath: filepath.Join(root, "mods")}
+		problem := modPathProblem(t, svc, game)
+		require.NotNil(t, problem)
+		assert.True(t, problem.InstallPathMissing)
+		assert.Equal(t, root, problem.InstallPath)
+		assert.Contains(t, problem.Error(), "mod_path "+game.ModPath+" does not exist, and neither does the install path "+root)
+	})
+
+	t.Run("the mod_path is outside the install path", func(t *testing.T) {
+		root := t.TempDir()
+		elsewhere := filepath.Join(t.TempDir(), "old-library", "Game", "mods")
+		game := &domain.Game{ID: "g1", InstallPath: root, ModPath: elsewhere}
+		problem := modPathProblem(t, svc, game)
+		require.NotNil(t, problem)
+		assert.True(t, problem.OutsideInstallPath)
+		assert.Contains(t, problem.Error(), "does not exist, and is outside the install path "+root)
+		assert.Contains(t, problem.Error(), "lmm game edit g1 --mod-path <path>")
+	})
+
+	t.Run("a symlinked spelling of the install path is still inside it", func(t *testing.T) {
+		root := t.TempDir()
+		link := filepath.Join(t.TempDir(), "link")
+		require.NoError(t, os.Symlink(root, link))
+		game := &domain.Game{ID: "g1", InstallPath: link, ModPath: filepath.Join(root, "Content", "mods")}
+		assert.Nil(t, modPathProblem(t, svc, game))
+	})
 }
 
 // TestModPathProblem_ABepInExGameIsPointedAtItsRoot: a BepInEx layout is
 // relative to the game root, so for a game that has BepInEx the repair is
 // not "some path" - it is the install path, and the flag says so exactly.
 func TestModPathProblem_ABepInExGameIsPointedAtItsRoot(t *testing.T) {
-	root := t.TempDir()
-	game := &domain.Game{
-		ID: "human-host", InstallPath: root, ModPath: filepath.Join(root, "mods"),
-		Loader: &domain.GameLoader{Kind: domain.LoaderKindBepInEx},
-	}
-	err := core.ModPathProblem(game)
-	var missing *core.ModPathMissingError
-	require.ErrorAs(t, err, &missing)
-	assert.Equal(t, root, missing.SuggestedModPath)
-	assert.Contains(t, err.Error(), "lmm game edit human-host --mod-path "+root)
+	svc := newFlowsTestService(t)
+	game := seedStaleModPathGame(t, svc)
+	game.ID = "human-host"
+	game.Loader = &domain.GameLoader{Kind: domain.LoaderKindBepInEx}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+	deployOneFile(t, svc, game, "default", "m1")
+	require.NoError(t, os.RemoveAll(game.ModPath))
+
+	problem := modPathProblem(t, svc, game)
+	require.NotNil(t, problem)
+	assert.Equal(t, game.InstallPath, problem.SuggestedModPath)
+	assert.Equal(t, "mod_path "+game.ModPath+" does not exist, but lmm recorded 1 deployed file(s) under it; "+
+		"a BepInEx game deploys into its root: purge them, then run `lmm game edit human-host --mod-path "+game.InstallPath+
+		"`, which names the purge each profile needs", problem.Error())
 }
 
 func TestModPathProblem_AFileIsNotAModPath(t *testing.T) {
+	svc := newFlowsTestService(t)
 	root := t.TempDir()
 	file := filepath.Join(root, "mods")
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
-	err := core.ModPathProblem(&domain.Game{ID: "g1", InstallPath: root, ModPath: file})
-	var missing *core.ModPathMissingError
-	require.ErrorAs(t, err, &missing)
-	assert.Contains(t, err.Error(), file+" is not a directory")
+	problem := modPathProblem(t, svc, &domain.Game{ID: "g1", InstallPath: root, ModPath: file})
+	require.NotNil(t, problem, "a file is flagged whether or not anything was deployed")
+	assert.Contains(t, problem.Error(), file+" is not a directory")
 }
 
 func TestScanLocal_AMissingModPathIsTheTypedRefusal(t *testing.T) {
@@ -250,12 +362,50 @@ func TestVerify_AMissingModPathUnderDeployedModsIsAWarning(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, findingWithStatus(report.Result, "mod_path_missing"), "nothing installed, nothing to say")
 
+	// Enabled but never deployed: the first deploy creates the directory.
 	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{"plugin.dll": []byte("x")})
+	report, err = svc.VerifyReport(t.Context(), game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(report.Result, "mod_path_missing"), "%v", findingStatuses(report.Result))
+
+	// Deployed, then the directory went away: lmm's own files are gone.
+	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+	require.NoError(t, svc.GetInstallerForTest(game).Install(context.Background(), game,
+		&domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+	require.NoError(t, os.RemoveAll(game.ModPath))
 	report, err = svc.VerifyReport(t.Context(), game, "default", core.VerifyOptions{Force: true}, nil)
 	require.NoError(t, err)
 	row := findingWithStatus(report.Result, "mod_path_missing")
 	require.NotNil(t, row, "%v", findingStatuses(report.Result))
-	assert.Equal(t, core.ModPathProblem(game).Error(), row.Note)
+	assert.Equal(t, modPathProblem(t, svc, game).Error(), row.Note)
 	assert.False(t, row.Fixable)
 	assert.GreaterOrEqual(t, report.Result.Warnings, 1)
+}
+
+// TestVerifyMemo_SeesTheModPathItReports (#427 review F9): the memo's
+// fingerprint read an absent mod directory as an empty tree, and did not
+// include the mod_path at all, so a repaired mod_path went on being
+// reported from the memo - and a moved one went on reading clean.
+func TestVerifyMemo_SeesTheModPathItReports(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := seedStaleModPathGame(t, svc)
+	memo := core.VerifyOptions{Tier: core.VerifyLocal}
+
+	report, err := svc.VerifyReport(t.Context(), game, "default", memo, nil)
+	require.NoError(t, err)
+	require.NotNil(t, findingWithStatus(report.Result, "mod_path_missing"), "fixture: the row is memoised")
+
+	// Recreated by hand, empty: the tree walk sees nothing new.
+	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+	report, err = svc.VerifyReport(t.Context(), game, "default", memo, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(report.Result, "mod_path_missing"), "the repaired mod_path is not reported from the memo")
+
+	// The game read with another mod_path (an out-of-process games.yaml
+	// edit): a different question.
+	moved := *game
+	moved.ModPath = filepath.Join(game.InstallPath, "elsewhere")
+	report, err = svc.VerifyReport(t.Context(), &moved, "default", memo, nil)
+	require.NoError(t, err)
+	assert.NotNil(t, findingWithStatus(report.Result, "mod_path_missing"), "the moved mod_path is not answered from the old one's memo")
 }

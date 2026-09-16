@@ -21,7 +21,8 @@ import (
 )
 
 // newMissingModPathServer is newGameSourcesServer's game with a mod_path
-// nobody created.
+// nobody created - where a new game starts, since the first deploy creates
+// it.
 func newMissingModPathServer(t *testing.T) (*Server, *domain.Game) {
 	t.Helper()
 	s := newGameSourcesServer(t)
@@ -34,23 +35,38 @@ func newMissingModPathServer(t *testing.T) (*Server, *domain.Game) {
 }
 
 // TestAPIGames_RowsFlagAMissingModPath: the Games rows (GET /api/v1/games)
-// and the game page (GET /api/v1/games/{id}) carry the repair.
+// and the game page (GET /api/v1/games/{id}) carry the repair - for a
+// mod_path lmm deployed into that has since gone, and not for one nobody
+// has deployed to yet (#427 review F3).
 func TestAPIGames_RowsFlagAMissingModPath(t *testing.T) {
 	s, game := newMissingModPathServer(t)
 
+	listed := getGameRows(t, s)
+	assert.Empty(t, listed[0].ModPathError, "a game nobody has deployed to is not broken")
+
+	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+	deployOneModFile(t, s.svc, game)
+	require.NoError(t, os.RemoveAll(game.ModPath))
+
+	listed = getGameRows(t, s)
+	assert.Contains(t, listed[0].ModPathError, game.ModPath+" does not exist, but lmm recorded 1 deployed file(s) under it")
+	assert.Contains(t, listed[0].ModPathError, "lmm game edit skyrim-se --mod-path")
+
+	rec := doAPI(s, http.MethodGet, "/api/v1/games/skyrim-se", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var detail core.GameDetail
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &detail))
+	assert.Equal(t, listed[0].ModPathError, detail.ModPathError)
+}
+
+func getGameRows(t *testing.T, s *Server) []core.GameListEntry {
+	t.Helper()
 	rec := doAPI(s, http.MethodGet, "/api/v1/games", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var listed []core.GameListEntry
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &listed))
 	require.Len(t, listed, 1)
-	assert.Contains(t, listed[0].ModPathError, game.ModPath+" does not exist")
-	assert.Contains(t, listed[0].ModPathError, "lmm game edit skyrim-se --mod-path")
-
-	rec = doAPI(s, http.MethodGet, "/api/v1/games/skyrim-se", "")
-	require.Equal(t, http.StatusOK, rec.Code)
-	var detail core.GameDetail
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &detail))
-	assert.Equal(t, listed[0].ModPathError, detail.ModPathError)
+	return listed
 }
 
 func TestAPIGameSources_ModPathRepairsTheGame(t *testing.T) {

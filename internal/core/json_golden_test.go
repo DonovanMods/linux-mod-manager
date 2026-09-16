@@ -1709,12 +1709,30 @@ func TestJSONGoldens(t *testing.T) {
 			core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}},
 		},
 		{
-			// #427: a mod_path that is not a directory, with the repair a
-			// frontend can offer as a button - here the BepInEx game's root.
+			// #427: a mod_path lmm deployed into that has gone, with the
+			// repair a frontend can offer as a button - here the BepInEx
+			// game's root.
 			"mod_path_missing_error",
 			core.ModPathMissingError{
 				GameID: "human-host", ModPath: "/games/human-host/mods",
-				Reason: "does not exist", SuggestedModPath: "/games/human-host",
+				Reason: "does not exist", DeployedFiles: 4, SuggestedModPath: "/games/human-host",
+			},
+		},
+		{
+			// #427 review F3: an absent mod_path a deploy could not create -
+			// the install path is gone too.
+			"mod_path_missing_error_install_path_missing",
+			core.ModPathMissingError{
+				GameID: "skyrim-se", ModPath: "/games/skyrim-se/Data", Reason: "does not exist",
+				InstallPath: "/games/skyrim-se", InstallPathMissing: true,
+			},
+		},
+		{
+			// #427 review F3: an absent mod_path outside the install path.
+			"mod_path_missing_error_outside_install_path",
+			core.ModPathMissingError{
+				GameID: "skyrim-se", ModPath: "/old-library/skyrim-se/Data", Reason: "does not exist",
+				InstallPath: "/games/skyrim-se", OutsideInstallPath: true,
 			},
 		},
 		{
@@ -1728,7 +1746,7 @@ func TestJSONGoldens(t *testing.T) {
 			"game_list_entry_mod_path_error",
 			core.GameListEntry{
 				Game:         jsonGoldenGame,
-				ModPathError: "mod_path /games/skyrim-se/Data does not exist yet (a deploy creates it); if the game loads mods from somewhere else, run `lmm game edit skyrim-se --mod-path <path>`",
+				ModPathError: "mod_path /games/skyrim-se/Data does not exist, but lmm recorded 4 deployed file(s) under it; if the game still loads mods from there, run `lmm deploy --game skyrim-se` to put the active profile's back, or, if it loads them from somewhere else, purge them and run `lmm game edit skyrim-se --mod-path <path>`, which names the purge each profile needs",
 			},
 		},
 		{

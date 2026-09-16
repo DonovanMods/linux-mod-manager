@@ -92,7 +92,10 @@ func (s *Service) UpdateGameSources(ctx context.Context, gameID string, sources 
 	if err != nil {
 		return nil, err
 	}
-	entry := s.newGameListEntry(&updated, defaultGame)
+	entry, err := s.newGameListEntry(ctx, &updated, defaultGame)
+	if err != nil {
+		return nil, err
+	}
 	return &entry, nil
 }
 
@@ -146,7 +149,10 @@ func (s *Service) SetGameAdapter(ctx context.Context, gameID, name string) (*Gam
 	if err != nil {
 		return nil, err
 	}
-	entry := s.newGameListEntry(&updated, defaultGame)
+	entry, err := s.newGameListEntry(ctx, &updated, defaultGame)
+	if err != nil {
+		return nil, err
+	}
 	return &entry, nil
 }
 
@@ -203,13 +209,20 @@ func (s *Service) SetGameModPath(ctx context.Context, gameID, modPath string) (*
 		return nil, err
 	}
 	if filepath.Clean(resolved) == filepath.Clean(game.ModPath) {
-		entry := s.newGameListEntry(game, defaultGame)
+		entry, err := s.newGameListEntry(ctx, game, defaultGame)
+		if err != nil {
+			return nil, err
+		}
 		return &entry, nil
 	}
 
-	deployed, err := s.db.CountDeployedFiles(ctx, game.ID)
+	counts, err := s.db.DeployedFileCounts(ctx, game.ID)
 	if err != nil {
 		return nil, err
+	}
+	deployed := 0
+	for _, n := range counts {
+		deployed += n
 	}
 	if deployed > 0 {
 		return nil, &GameModPathInUseError{GameID: game.ID, ModPath: game.ModPath, DeployedFiles: deployed}
@@ -227,7 +240,10 @@ func (s *Service) SetGameModPath(ctx context.Context, gameID, modPath string) (*
 	if err := s.saveGame(ctx, &updated); err != nil {
 		return nil, err
 	}
-	entry := s.newGameListEntry(&updated, defaultGame)
+	entry, err := s.newGameListEntry(ctx, &updated, defaultGame)
+	if err != nil {
+		return nil, err
+	}
 	return &entry, nil
 }
 
@@ -250,24 +266,66 @@ func resolveModPathValue(installPath, modPath string) (string, error) {
 	return resolved, nil
 }
 
-// ModPathProblem reports why game's mod_path cannot be deployed into as it
-// stands - a *ModPathMissingError - or nil when it is a directory (or no
-// mod_path is configured at all, which is a different complaint made
-// elsewhere). One stat.
+// modPathReasonAbsent is ModPathMissingError.Reason for a mod_path that is
+// not there at all - the one reason that is not always a problem.
+const modPathReasonAbsent = "does not exist"
+
+// ModPathProblem reports whether game's mod_path needs the user's attention
+// - a *ModPathMissingError - or nil when it does not. It is what every game
+// document's mod_path_error says (GameListEntry, GameSummary, GameStatus,
+// GameDetectEntry - `lmm game list/show`, `lmm status`, `lmm game detect`,
+// the web Games rows) and what `lmm verify`'s mod_path_missing row reports
+// (#427).
 //
-// It is what every game document's mod_path_error says (GameListEntry,
-// GameSummary, GameStatus - `lmm game list/show`, `lmm status`, the web
-// Games rows) and what `lmm import`'s scan refuses with, so the flag and
-// the refusal name the same repair (#427).
-func ModPathProblem(game *domain.Game) error {
+// A mod_path that is not a directory, or cannot be read, is always a
+// problem. An ABSENT one is the ordinary state of a game nobody has deployed
+// to yet - `lmm game add` and detection both leave it to the first deploy,
+// which creates it - so it is flagged only when that is not what is going
+// on (#427 review F3):
+//
+//   - lmm recorded files deployed under it, for any profile: its own files
+//     are gone (the owner's #427 case), or
+//   - a deploy could not create it: the install path is gone too, or the
+//     nearest part of the mod_path that exists is outside the install path.
+//
+// A game with no mod_path configured is a different complaint, made
+// elsewhere, and answers nil.
+func (s *Service) ModPathProblem(ctx context.Context, game *domain.Game) (*ModPathMissingError, error) {
+	problem := modPathStatProblem(game)
+	if problem == nil || problem.Reason != modPathReasonAbsent {
+		return problem, nil
+	}
+
+	counts, err := s.db.DeployedFileCounts(ctx, game.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range counts {
+		problem.DeployedFiles += n
+	}
+	problem.InstallPathMissing, problem.OutsideInstallPath = modPathUncreatable(game)
+	if problem.InstallPathMissing || problem.OutsideInstallPath {
+		problem.InstallPath = game.InstallPath
+	}
+	if problem.DeployedFiles == 0 && problem.InstallPath == "" {
+		return nil, nil
+	}
+	return problem, nil
+}
+
+// modPathStatProblem is the stat half of ModPathProblem, with no judgement
+// about an absent directory: `lmm import`'s scan has nothing to scan either
+// way, so it refuses on this alone. One stat.
+func modPathStatProblem(game *domain.Game) *ModPathMissingError {
 	if game == nil || game.ModPath == "" {
 		return nil
 	}
-	info, err := os.Stat(game.ModPath)
+	modPath := config.ExpandPath(game.ModPath)
+	info, err := os.Stat(modPath)
 	var reason string
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		reason = "does not exist"
+		reason = modPathReasonAbsent
 	case err != nil:
 		reason = "cannot be read: " + err.Error()
 	case !info.IsDir():
@@ -284,30 +342,95 @@ func ModPathProblem(game *domain.Game) error {
 	return e
 }
 
+// modPathUncreatable reports why a deploy could not create game's absent
+// mod_path where the user expects it: the install path is gone
+// (installMissing), or the nearest existing ancestor of the mod_path lies
+// outside the install path (outside) - so the mod_path is not somewhere in
+// the game at all. A game with no install path has nothing to compare
+// against, and answers neither.
+func modPathUncreatable(game *domain.Game) (installMissing, outside bool) {
+	if game.InstallPath == "" {
+		return false, false
+	}
+	install := config.ExpandPath(game.InstallPath)
+	if _, err := os.Stat(install); errors.Is(err, fs.ErrNotExist) {
+		return true, false
+	}
+	ancestor := filepath.Clean(config.ExpandPath(game.ModPath))
+	for {
+		if _, err := os.Stat(ancestor); err == nil {
+			break
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			break
+		}
+		ancestor = parent
+	}
+	return false, !pathWithin(resolvedPath(ancestor), resolvedPath(install))
+}
+
+// pathWithin reports whether path is root or lies beneath it; both are
+// cleaned, absolute paths.
+func pathWithin(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // ModPathMissingError is ModPathProblem's answer: GameID's mod_path is not a
-// directory lmm can deploy into, and Error names the command that repairs
-// it. SuggestedModPath is the value lmm can recommend with confidence - the
-// install path, for a game that has BepInEx - and empty otherwise.
+// directory lmm can deploy into as things stand, and Error names the
+// command that repairs it.
 type ModPathMissingError struct {
 	GameID  string `json:"game_id"`
 	ModPath string `json:"mod_path"`
 	// Reason is what is wrong with it: "does not exist", "is not a
 	// directory", or "cannot be read: <cause>".
-	Reason           string `json:"reason"`
+	Reason string `json:"reason"`
+	// DeployedFiles is how many deployed files lmm has recorded under the
+	// absent mod_path, across every profile - the reason an absent
+	// directory is a problem rather than a game nobody has deployed to.
+	DeployedFiles int `json:"deployed_files,omitzero"`
+	// InstallPath is the game's install path, present when it is part of
+	// the problem: InstallPathMissing (it is gone as well) or
+	// OutsideInstallPath (the absent mod_path is not inside it).
+	InstallPath        string `json:"install_path,omitempty"`
+	InstallPathMissing bool   `json:"install_path_missing,omitzero"`
+	OutsideInstallPath bool   `json:"outside_install_path,omitzero"`
+	// SuggestedModPath is the value lmm can recommend with confidence - the
+	// install path, for a game that has BepInEx - and empty otherwise.
 	SuggestedModPath string `json:"suggested_mod_path,omitempty"`
 }
 
 // Error implements error.
 func (e *ModPathMissingError) Error() string {
 	head := fmt.Sprintf("mod_path %s %s", e.ModPath, e.Reason)
-	if e.SuggestedModPath != "" {
-		return fmt.Sprintf("%s, and a BepInEx game deploys into its root: run `lmm game edit %s --mod-path %s`",
-			head, e.GameID, e.SuggestedModPath)
-	}
-	if e.Reason == "does not exist" {
+	switch {
+	case e.DeployedFiles > 0:
+		head += fmt.Sprintf(", but lmm recorded %d deployed file(s) under it", e.DeployedFiles)
+		if e.InstallPathMissing {
+			head += fmt.Sprintf(", and the install path %s does not exist either", e.InstallPath)
+		}
+	case e.InstallPathMissing:
+		head += ", and neither does the install path " + e.InstallPath
+	case e.OutsideInstallPath:
+		head += ", and is outside the install path " + e.InstallPath
+	case e.Reason == modPathReasonAbsent:
 		head += " yet (a deploy creates it)"
 	}
-	return fmt.Sprintf("%s; if the game loads mods from somewhere else, run `lmm game edit %s --mod-path <path>`", head, e.GameID)
+
+	switch {
+	case e.DeployedFiles > 0 && e.SuggestedModPath != "":
+		return fmt.Sprintf("%s; a BepInEx game deploys into its root: purge them, then run `lmm game edit %s --mod-path %s`, which names the purge each profile needs",
+			head, e.GameID, e.SuggestedModPath)
+	case e.DeployedFiles > 0:
+		return fmt.Sprintf("%s; if the game still loads mods from there, run `lmm deploy --game %s` to put the active profile's back, or, if it loads them from somewhere else, purge them and run `lmm game edit %s --mod-path <path>`, which names the purge each profile needs",
+			head, e.GameID, e.GameID)
+	case e.SuggestedModPath != "":
+		return fmt.Sprintf("%s; a BepInEx game deploys into its root: run `lmm game edit %s --mod-path %s`",
+			head, e.GameID, e.SuggestedModPath)
+	default:
+		return fmt.Sprintf("%s; if the game loads mods from somewhere else, run `lmm game edit %s --mod-path <path>`", head, e.GameID)
+	}
 }
 
 // Details returns the error itself for the --json error envelope's

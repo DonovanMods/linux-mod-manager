@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,7 +89,7 @@ func TestDoGameList_RowArityMatchesHeader(t *testing.T) {
 	}))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	header, rows := gameListCells(t, out)

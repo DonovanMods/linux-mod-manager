@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -646,7 +645,9 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	result.HasFiles = len(files) > 0
 	result.Mods, result.Unverified = verifyScope(installedMods, files, opts.ModFilter)
 	r.emitEv(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles, Mods: result.Mods})
-	r.modPathPass(installedMods)
+	if err := r.modPathPass(); err != nil {
+		return result, err
+	}
 
 	if !result.HasFiles {
 		// #269: an all-external profile has no checksummed files at all, so
@@ -828,20 +829,16 @@ func (r *verifyRun) externalPresencePass(installedMods []domain.InstalledMod) er
 	return nil
 }
 
-// modPathPass reports a mod_path that is not a directory while the profile
-// has enabled mods lmm deploys there (#427): the rows that missing
-// directory causes do not say what is wrong, and ModPathProblem's sentence
-// names the repair. A profile with nothing to deploy says nothing - an
-// absent directory is where a never-deployed game starts, and a deploy
-// creates it - and --fix does not move a mod_path, so the row is never
-// fixable.
-func (r *verifyRun) modPathPass(installedMods []domain.InstalledMod) {
-	if !slices.ContainsFunc(installedMods, func(m domain.InstalledMod) bool { return m.Enabled && !m.External }) {
-		return
-	}
-	problem := ModPathProblem(r.game)
-	if problem == nil {
-		return
+// modPathPass reports a mod_path that needs attention (#427): the rows that
+// missing directory causes do not say what is wrong, and ModPathProblem's
+// sentence names the repair. ModPathProblem is also what decides it, so the
+// row and every game document agree - an absent directory nobody has
+// deployed into is where a new game starts, and a deploy creates it. --fix
+// does not move a mod_path, so the row is never fixable.
+func (r *verifyRun) modPathPass() error {
+	problem, err := r.svc.ModPathProblem(r.ctx, r.game)
+	if err != nil || problem == nil {
+		return err
 	}
 	r.result.Warnings++
 	r.finding(VerifyFinding{
@@ -849,6 +846,7 @@ func (r *verifyRun) modPathPass(installedMods []domain.InstalledMod) {
 		Note:          problem.Error(),
 		FixableReason: "--fix does not move a mod_path - the note names the command that does",
 	}, VerifyEvent{})
+	return nil
 }
 
 // verifyScope counts the installed mods a run covers (those ModFilter

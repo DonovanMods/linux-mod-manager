@@ -15,5 +15,5 @@
   "deploy_mode": "extract",
   "convert_paks_explicit": false,
   "default": false,
-  "mod_path_error": "mod_path /games/skyrim-se/Data does not exist yet (a deploy creates it); if the game loads mods from somewhere else, run `lmm game edit skyrim-se --mod-path <path>`"
+  "mod_path_error": "mod_path /games/skyrim-se/Data does not exist, but lmm recorded 4 deployed file(s) under it; if the game still loads mods from there, run `lmm deploy --game skyrim-se` to put the active profile's back, or, if it loads them from somewhere else, purge them and run `lmm game edit skyrim-se --mod-path <path>`, which names the purge each profile needs"
 }

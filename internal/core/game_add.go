@@ -392,7 +392,10 @@ func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEn
 	if err != nil {
 		return nil, err
 	}
-	entry := s.newGameListEntry(game, defaultGame)
+	entry, err := s.newGameListEntry(ctx, game, defaultGame)
+	if err != nil {
+		return nil, err
+	}
 	return &entry, nil
 }
 

@@ -374,7 +374,11 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	// prompt (Ruling 2 decides the selection from --all/--select or fails)
 	// and no console text may sit beside the document.
 	if !jsonOutput {
-		printDetectedGames(cmd, listed, curatedCount, existingGames)
+		needsRepair, err := gamesNeedingRepair(ctx, service, existingGames)
+		if err != nil {
+			return err
+		}
+		printDetectedGames(cmd, listed, curatedCount, existingGames, needsRepair)
 	}
 
 	// A row nothing can configure without asking more of the user is
@@ -612,7 +616,7 @@ func countUnaddable(games []domain.DetectedGame) int {
 // that flow is the only way to configure a row detection found no source
 // for, and it is also what a user wants when the mod path or source needs
 // correcting.
-func printDetectedGames(cmd *cobra.Command, listed []domain.DetectedGame, curatedCount int, existingGames map[string]*domain.Game) {
+func printDetectedGames(cmd *cobra.Command, listed []domain.DetectedGame, curatedCount int, existingGames map[string]*domain.Game, needsRepair map[string]bool) {
 	if len(listed) == 0 {
 		return
 	}
@@ -624,8 +628,26 @@ func printDetectedGames(cmd *cobra.Command, listed []domain.DetectedGame, curate
 			}
 			cmd.Printf("Installed but not in the known-games list - pick one by number or app id here, or add it with `lmm game add --from-detected <app-id>`:\n")
 		}
-		printDetectedGameRow(cmd, i+1, g, existingGames)
+		printDetectedGameRow(cmd, i+1, g, existingGames, needsRepair)
 	}
+}
+
+// gamesNeedingRepair is the set of configured game ids whose mod_path needs
+// attention by core.Service.ModPathProblem - the rule every game document's
+// mod_path_error follows (#427 review F3), so the listing's marker agrees
+// with `lmm game show`.
+func gamesNeedingRepair(ctx context.Context, service *core.Service, games map[string]*domain.Game) (map[string]bool, error) {
+	needsRepair := map[string]bool{}
+	for id, game := range games {
+		problem, err := service.ModPathProblem(ctx, game)
+		if err != nil {
+			return nil, err
+		}
+		if problem != nil {
+			needsRepair[id] = true
+		}
+	}
+	return needsRepair, nil
 }
 
 // detectedGamesNoun is what the listing's count is a count OF (#368 review
@@ -657,7 +679,7 @@ func detectedGamesNoun(listed []domain.DetectedGame) string {
 // id could be named in a refusal ("also the Steam app id of row 3") for
 // something that appeared nowhere on screen, and "a Steam app id from the
 // list above" was not literally true for every spelling the selector takes.
-func printDetectedGameRow(cmd *cobra.Command, n int, g domain.DetectedGame, existingGames map[string]*domain.Game) {
+func printDetectedGameRow(cmd *cobra.Command, n int, g domain.DetectedGame, existingGames map[string]*domain.Game, needsRepair map[string]bool) {
 	marker := ""
 	// Not existingGames[g.Slug]: the same install path under a DIFFERENT id
 	// is the same game (#406 review F1), and core owns that rule.
@@ -666,7 +688,7 @@ func printDetectedGameRow(cmd *cobra.Command, n int, g domain.DetectedGame, exis
 		// #427: a configured game whose mod_path is gone needs repair, and
 		// selecting the row here would reset its default profile's mods -
 		// so point at the game's own page, which names the safe repair.
-		if core.ModPathProblem(configured) != nil {
+		if needsRepair[configured.ID] {
 			marker += " " + colorYellow(fmt.Sprintf("[needs repair: see `lmm game show %s`]", configured.ID))
 		}
 	}

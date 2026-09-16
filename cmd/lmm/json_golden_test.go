@@ -447,7 +447,7 @@ func TestJSONGolden_GameList(t *testing.T) {
 		require.NoError(t, cfg.Save(svc.ConfigDir()))
 		withJSONOutput(t)
 
-		out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
+		out := captureStdout(t, func() error { return doGameList(commandWithContext(), svc) })
 		assertJSONCLIGolden(t, "game_list_populated", out, goldenGameSubs(root)...)
 	})
 
@@ -455,7 +455,7 @@ func TestJSONGolden_GameList(t *testing.T) {
 		svc := setupGameAddTest(t)
 		withJSONOutput(t)
 
-		out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
+		out := captureStdout(t, func() error { return doGameList(commandWithContext(), svc) })
 		assertJSONCLIGolden(t, "game_list_empty", out)
 	})
 }

@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -75,6 +78,10 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 		fmt.Printf("                %s\n", colorRed(detail.ModPathError))
 	} else if detail.ModPath == detail.InstallPath {
 		fmt.Printf("                %s\n", colorDim("mods deploy into the game root"))
+	} else if _, err := os.Stat(detail.ModPath); errors.Is(err, fs.ErrNotExist) {
+		// #427 review F3: where every new game starts - quiet, because
+		// nothing is wrong.
+		fmt.Printf("                %s\n", colorDim("not created yet - the first deploy creates it"))
 	}
 	fmt.Printf("  Link method:  %s\n", detail.LinkMethod)
 	fmt.Printf("  Deploy mode:  %s\n", detail.DeployMode)

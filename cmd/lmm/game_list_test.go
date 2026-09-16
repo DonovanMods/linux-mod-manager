@@ -9,7 +9,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +26,7 @@ func TestDoGameList_EmptyState(t *testing.T) {
 	svc := setupGameAddTest(t)
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	assert.Contains(t, out, "game add")
@@ -48,7 +47,7 @@ func TestDoGameList_ShowsConfiguredGames(t *testing.T) {
 	}))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	assert.Contains(t, out, "ID")
@@ -85,7 +84,7 @@ func TestDoGameList_ConvertPaksColumnUsesOnOff(t *testing.T) {
 	}))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	onLine := lineContaining(out, "icarus-convert-on")
@@ -113,7 +112,7 @@ func TestDoGameList_MarksDefaultGame(t *testing.T) {
 	require.NoError(t, cfg.Save(svc.ConfigDir()))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	starLine := lineContaining(out, "starrupture")
@@ -136,7 +135,7 @@ func TestDoGameList_MultipleSourcesCompactKV(t *testing.T) {
 	}))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	line := lineContaining(out, "icarus")
@@ -151,7 +150,7 @@ func TestDoGameList_NoSourcesShowsPlaceholder(t *testing.T) {
 	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: "bare-game", Name: "Bare Game"}))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	line := lineContaining(out, "bare-game")
@@ -177,7 +176,7 @@ func TestDoGameList_JSONOutput(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	var rows []core.GameListEntry
@@ -198,7 +197,7 @@ func TestDoGameList_JSONOutput_EmptyIsArrayNotNull(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	assert.Equal(t, "[]", strings.TrimSpace(out))
@@ -221,7 +220,7 @@ func TestDoGameList_JSONOutput_NoSourcesEmitsEmptyObject(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	var rows []core.GameListEntry

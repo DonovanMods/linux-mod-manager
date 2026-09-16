@@ -16,7 +16,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,7 +52,7 @@ func setupEffectiveAdapterGames(t *testing.T) *core.Service {
 func TestDoGameList_NamesTheEffectiveAdapter(t *testing.T) {
 	svc := setupEffectiveAdapterGames(t)
 
-	out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
+	out := captureStdout(t, func() error { return doGameList(commandWithContext(), svc) })
 	header, rows := gameListCells(t, out)
 	require.Equal(t, "ADAPTER", header[4])
 
@@ -112,7 +111,7 @@ func TestJSONGolden_GameListEffectiveAdapter(t *testing.T) {
 	}))
 	withJSONOutput(t)
 
-	out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
+	out := captureStdout(t, func() error { return doGameList(commandWithContext(), svc) })
 	assertJSONCLIGolden(t, "game_list_effective_adapter", out, goldenGameSubs(root)...)
 }
 
@@ -125,7 +124,7 @@ func TestDoGameListAndShow_SayWhenTheAdapterIsRefused(t *testing.T) {
 		Adapter: "bepinx",
 	}))
 
-	out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
+	out := captureStdout(t, func() error { return doGameList(commandWithContext(), svc) })
 	_, rows := gameListCells(t, out)
 	byID := map[string]string{}
 	for _, row := range rows {

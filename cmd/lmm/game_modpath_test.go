@@ -22,9 +22,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupMissingModPathGame is setupGameEditTest plus a game whose mod_path is
-// <install>/mods, a directory nobody created.
-func setupMissingModPathGame(t *testing.T) (*core.Service, *domain.Game) {
+// setupFreshModPathGame is setupGameEditTest plus a game whose mod_path is
+// <install>/mods, a directory nobody created - where every newly added game
+// starts, since the first deploy creates it.
+func setupFreshModPathGame(t *testing.T) (*core.Service, *domain.Game) {
 	t.Helper()
 	svc := setupGameEditTest(t)
 	root := t.TempDir()
@@ -37,6 +38,45 @@ func setupMissingModPathGame(t *testing.T) (*core.Service, *domain.Game) {
 	_, err := svc.NewProfileManager().CreateOrResetDefaultAfterGameSave(context.Background(), game.ID)
 	require.NoError(t, err)
 	return svc, game
+}
+
+// setupMissingModPathGame is the owner's #427 case: setupFreshModPathGame's
+// game, deployed into, and then its mod directory gone - lmm's records
+// point at files that are not there.
+func setupMissingModPathGame(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := setupFreshModPathGame(t)
+	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+	deployOneFileForTest(t, svc, game, "default", "m1")
+	require.NoError(t, os.RemoveAll(game.ModPath))
+	return svc, game
+}
+
+// deployOneFileForTest deploys one cached file for game's profile through
+// core's own deploy, so deployed_files holds a row under its mod_path.
+func deployOneFileForTest(t *testing.T, svc *core.Service, game *domain.Game, profile, modID string) {
+	t.Helper()
+	ctx := context.Background()
+	mod := &domain.Mod{ID: modID, SourceID: "nexusmods", Name: "Mod " + modID, Version: "1.0", GameID: game.ID}
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, mod.SourceID, mod.ID, mod.Version, modID+".esp", []byte("x")))
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod: *mod, ProfileName: profile, UpdatePolicy: domain.UpdateNotify, Enabled: true,
+	}))
+	require.NoError(t, svc.NewProfileManager().AddMod(ctx, game.ID, profile,
+		domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}))
+	_, err := svc.DeployProfile(ctx, game, profile, core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	_, err = os.Lstat(filepath.Join(game.ModPath, modID+".esp"))
+	require.NoError(t, err, "fixture: the file is deployed")
+}
+
+// commandWithContext is a bare command carrying the context cobra's
+// ExecuteContext gives every real one - a game list reads the database
+// since #427 (review F3), and a nil context is a panic there.
+func commandWithContext() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	return cmd
 }
 
 const missingModPathRepair = "lmm game edit human-host --mod-path <path>"
@@ -52,11 +92,11 @@ func TestDoGameShow_FlagsAMissingModPath(t *testing.T) {
 
 func TestDoGameList_FlagsAMissingModPath(t *testing.T) {
 	svc, game := setupMissingModPathGame(t)
-	out, stderr, err := captureStdoutAndStderr(t, func() error { return doGameList(&cobra.Command{}, svc) })
+	out, stderr, err := captureStdoutAndStderr(t, func() error { return doGameList(commandWithContext(), svc) })
 	require.NoError(t, err)
 
-	assert.Contains(t, lineContaining(out, "human-host"), game.ModPath+" (missing)")
-	assert.NotContains(t, lineContaining(out, "skyrim-se"), "(missing)", "a game whose mod_path exists is not flagged")
+	assert.Contains(t, lineContaining(out, "human-host"), game.ModPath+" (needs repair)")
+	assert.NotContains(t, lineContaining(out, "skyrim-se"), "(needs repair)", "a game whose mod_path exists is not flagged")
 	assert.Contains(t, lineContaining(stderr, "warning: human-host:"), missingModPathRepair,
 		"the table is followed by the repair, on stderr so stdout stays one table")
 	assert.NotContains(t, stderr, "skyrim-se")
@@ -79,25 +119,62 @@ func TestDoStatus_FlagsAMissingModPath(t *testing.T) {
 }
 
 func TestPrintDetectedGameRow_MarksAConfiguredGameWhoseModPathIsMissing(t *testing.T) {
-	_, game := setupMissingModPathGame(t)
+	svc, game := setupMissingModPathGame(t)
 	var buf bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
+	existing := map[string]*domain.Game{game.ID: game}
 
 	detected := domain.DetectedGame{Slug: game.ID, Name: game.Name, InstallPath: game.InstallPath, Known: true}
-	printDetectedGameRow(cmd, 1, detected, map[string]*domain.Game{game.ID: game})
+	needsRepair, err := gamesNeedingRepair(context.Background(), svc, existing)
+	require.NoError(t, err)
+	printDetectedGameRow(cmd, 1, detected, existing, needsRepair)
 	assert.Contains(t, buf.String(), "[configured] [needs repair: see `lmm game show human-host`]")
 
 	buf.Reset()
 	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
-	printDetectedGameRow(cmd, 1, detected, map[string]*domain.Game{game.ID: game})
+	needsRepair, err = gamesNeedingRepair(context.Background(), svc, existing)
+	require.NoError(t, err)
+	printDetectedGameRow(cmd, 1, detected, existing, needsRepair)
 	assert.Contains(t, buf.String(), "[configured]")
 	assert.NotContains(t, buf.String(), "needs repair")
 }
 
+// TestFreshGame_NoCommandSaysItIsBroken (#427 review F3): a game nobody has
+// deployed to has no mod directory yet - `lmm game add` leaves it to the
+// first deploy - and every surface used to call it broken: "(missing)" in
+// `game list`, a stderr warning from `game list` and `status`, a red line
+// in `game show`, and "[needs repair]" in `game detect`. Nothing is wrong,
+// so nothing says otherwise; `game show` notes it quietly.
+func TestFreshGame_NoCommandSaysItIsBroken(t *testing.T) {
+	setupAdapterWarningGames(t)
+	install := t.TempDir()
+	_, stderr := runLMM(t, "game", "add", "--source", "thunderstore", "--id", "valheim",
+		"--game-id", "fresh", "--name", "Fresh Game", "--path", install)
+	assert.NotContains(t, stderr, "does not exist")
+	modPath := filepath.Join(install, "mods")
+	_, err := os.Stat(modPath)
+	require.ErrorIs(t, err, os.ErrNotExist, "fixture: game add leaves the mod directory to the first deploy")
+
+	stdout, stderr := runLMM(t, "game", "list")
+	assert.Contains(t, lineContaining(stdout, "fresh"), modPath)
+	assert.NotContains(t, stdout, "needs repair")
+	assert.NotContains(t, stderr, "fresh")
+
+	stdout, stderr = runLMM(t, "status")
+	assert.NotContains(t, stdout+stderr, "does not exist")
+
+	stdout, stderr = runLMM(t, "game", "show", "fresh")
+	assert.NotContains(t, stdout+stderr, "does not exist")
+	assert.Contains(t, stdout, "not created yet - the first deploy creates it")
+
+	stdout, _ = runLMM(t, "game", "list", "--json")
+	assert.NotContains(t, stdout, "mod_path_error")
+}
+
 func TestDoGameEdit_ModPathRepairsTheGame(t *testing.T) {
-	svc, game := setupMissingModPathGame(t)
+	svc, game := setupFreshModPathGame(t)
 	gameEditModPath, gameEditModPathSet = game.InstallPath, true
 
 	out := captureStdout(t, func() error { return doGameEdit(context.Background(), svc, game.ID, false) })
@@ -110,20 +187,21 @@ func TestDoGameEdit_ModPathRepairsTheGame(t *testing.T) {
 }
 
 // TestDoGameEdit_ModPathSaysWhenTheDirectoryIsNotThereYet: an absent
-// directory is accepted (a deploy creates it), and the run says so rather
-// than leaving the user to find out from `lmm game show`.
+// directory is accepted (a deploy creates it), and the run says so, quietly,
+// rather than leaving the user to wonder where it is.
 func TestDoGameEdit_ModPathSaysWhenTheDirectoryIsNotThereYet(t *testing.T) {
-	svc, game := setupMissingModPathGame(t)
+	svc, game := setupFreshModPathGame(t)
 	target := filepath.Join(game.InstallPath, "BepInEx", "plugins")
 	gameEditModPath, gameEditModPathSet = target, true
 
 	out := captureStdout(t, func() error { return doGameEdit(context.Background(), svc, game.ID, false) })
 	assert.Contains(t, out, "mod path set to "+target)
-	assert.Contains(t, out, target+" does not exist yet")
+	assert.Contains(t, out, "not created yet - the first deploy creates it")
+	assert.NotContains(t, out, "does not exist", "nothing is wrong with it")
 }
 
 func TestDoGameEdit_ModPathJSONEmitsTheGameListRow(t *testing.T) {
-	svc, game := setupMissingModPathGame(t)
+	svc, game := setupFreshModPathGame(t)
 	withJSONOutput(t)
 	gameEditModPath, gameEditModPathSet = game.InstallPath, true
 
@@ -157,15 +235,16 @@ func TestGameEdit_ModPathThenAdapterInOneRun(t *testing.T) {
 func TestReportError_JSON_ModPathMissingError(t *testing.T) {
 	withJSONOutput(t)
 
-	err := &core.ModPathMissingError{GameID: "human-host", ModPath: "/g/mods", Reason: "does not exist", SuggestedModPath: "/g"}
+	err := &core.ModPathMissingError{GameID: "human-host", ModPath: "/g/mods", Reason: "does not exist", DeployedFiles: 2, SuggestedModPath: "/g"}
 	out := captureStdout(t, func() error { reportError(err); return nil })
 
 	assert.Equal(t, "{\n"+
-		"  \"error\": \"mod_path /g/mods does not exist, and a BepInEx game deploys into its root: run `lmm game edit human-host --mod-path /g`\",\n"+
+		"  \"error\": \"mod_path /g/mods does not exist, but lmm recorded 2 deployed file(s) under it; a BepInEx game deploys into its root: purge them, then run `lmm game edit human-host --mod-path /g`, which names the purge each profile needs\",\n"+
 		"  \"details\": {\n"+
 		"    \"game_id\": \"human-host\",\n"+
 		"    \"mod_path\": \"/g/mods\",\n"+
 		"    \"reason\": \"does not exist\",\n"+
+		"    \"deployed_files\": 2,\n"+
 		"    \"suggested_mod_path\": \"/g\"\n"+
 		"  }\n"+
 		"}\n", out)
@@ -205,13 +284,9 @@ func TestAdapterWarning_TheLoadTimeLineIsShort(t *testing.T) {
 }
 
 // TestDoVerify_SaysTheModPathIsMissing: verify names the missing mod_path
-// and its repair, once the game has a mod to deploy there (#427).
+// and its repair once lmm has deployed there (#427).
 func TestDoVerify_SaysTheModPathIsMissing(t *testing.T) {
 	svc, game := setupMissingModPathGame(t)
-	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
-		Mod:         domain.Mod{ID: "m1", SourceID: "nexusmods", Name: "Mod One", Version: "1.0", GameID: game.ID},
-		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
-	}))
 	oldProfile, oldFix := verifyProfile, verifyFix
 	verifyProfile, verifyFix = "default", false
 	t.Cleanup(func() { verifyProfile, verifyFix = oldProfile, oldFix })
