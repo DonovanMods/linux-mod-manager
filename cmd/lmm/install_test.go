@@ -592,6 +592,11 @@ type fakeInstallSource struct {
 	// calls SetChangelog is unaffected.
 	changelogs   map[string]string
 	changelogErr error
+
+	// notice, when set, is raised on the call's context by GetDownloadURL -
+	// the observable form of "this command handed the
+	// source the context it was given" (T3 review F2).
+	notice *source.Notice
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
@@ -650,6 +655,9 @@ func (s *fakeInstallSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([
 }
 func (s *fakeInstallSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	s.receivedGameDownloadIDs = append(s.receivedGameDownloadIDs, mod.GameID)
+	if s.notice != nil {
+		source.Notify(ctx, *s.notice)
+	}
 	return s.srv.URL + "/" + fileID, nil
 }
 func (s *fakeInstallSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {

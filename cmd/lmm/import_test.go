@@ -65,6 +65,8 @@ type fakeMatchSource struct {
 	mods       map[string]*domain.Mod
 	files      []domain.DownloadableFile // returned verbatim by GetModFiles
 	filesErr   error
+	// notice, when set, is raised on Search's context (T3 review F2).
+	notice *source.Notice
 }
 
 func newFakeMatchSource(id string) *fakeMatchSource {
@@ -83,6 +85,9 @@ func (s *fakeMatchSource) ExchangeToken(ctx context.Context, code string) (*sour
 	return nil, nil
 }
 func (s *fakeMatchSource) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
+	if s.notice != nil {
+		source.Notify(ctx, *s.notice)
+	}
 	if s.searchErr != nil {
 		return source.SearchResult{}, s.searchErr
 	}
@@ -140,7 +145,7 @@ func TestRunImportScan_SummaryTag_NoMatch_ShowsPlainLocalNotLocalHash(t *testing
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	out, err := captureStdoutErr(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 
 	require.NoError(t, err)
@@ -166,7 +171,7 @@ func TestRunImportScan_ScanFailure_StillPrintsTheLeadingNotices(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	out, err := captureStdoutErr(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 
 	require.Error(t, err)
@@ -232,7 +237,7 @@ func TestRunImportScan_CancellationAtCompletingProfileWrite_EndsFatallyNoSuccess
 	cmd.SetContext(ctx)
 
 	out, err := captureStdoutErr(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 
 	require.Error(t, err, "the run must end fatally, not exit 0")
@@ -615,7 +620,7 @@ func TestRunImportScan_MatchedSource_ResolvesFileIDAndStampsMarker(t *testing.T)
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	_, err := captureStdoutErr(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 	require.NoError(t, err)
 

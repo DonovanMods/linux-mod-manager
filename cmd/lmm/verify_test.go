@@ -104,7 +104,7 @@ func TestDoVerify_VersionMismatch_ReportedAsIssue(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "1.5", "text must show the recorded version")
 	assert.Contains(t, out, "1.0", "text must show the source-reported (effective) version")
@@ -113,7 +113,7 @@ func TestDoVerify_VersionMismatch_ReportedAsIssue(t *testing.T) {
 
 	jsonOutput = true
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -147,13 +147,13 @@ func TestDoVerify_VersionUnverifiable_ReportedAsWarning(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "1 warning(s)")
 
 	jsonOutput = true
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -189,7 +189,7 @@ func TestDoVerify_VersionCheck_SourceUnreachable_JSONNotesReason(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -240,7 +240,7 @@ func TestDoVerify_VersionCheck_MapsGameIDPerSourceMapping(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	require.Len(t, src.receivedGameFileIDs, 1, "GetModFiles must have been called exactly once for mod1's version check")
@@ -264,7 +264,7 @@ func TestDoVerify_VersionCheck_EmptySourceMapping_KeepsLMMGameID(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	require.Len(t, src.receivedGameFileIDs, 1)
@@ -302,7 +302,7 @@ func TestDoVerify_FileCountPrePass_ListFilesFails_SurfacedAsWarning(t *testing.T
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "could not check cached file count", "a real ListFiles error must be surfaced, not silently swallowed")
 	// #168/#212: the same permission-denied cache dir also breaks
@@ -371,7 +371,7 @@ func TestDoVerify_Fix_VersionMismatch_NotDeployed_RepairsRecord(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	var resultDoc core.VerifyReport
@@ -422,7 +422,7 @@ func TestDoVerify_Fix_VersionMismatch_NotDeployed_PrintsRepairedLine(t *testing.
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	assert.Contains(t, out, "Repaired")
@@ -453,7 +453,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinksSymlink(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	var resultDoc core.VerifyReport
@@ -494,7 +494,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_StillFixesDB(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	assert.Contains(t, out, "Note", "a note must be emitted when the rename is blocked")
@@ -526,7 +526,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_JSONExposesNote(t *testing.T
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	var resultDoc core.VerifyReport
@@ -576,7 +576,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_Deployed_LeavesWorkingSymlin
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Note")
 
@@ -622,7 +622,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag(t 
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Repair failed", "the re-link failure must be surfaced, not silently swallowed")
 
@@ -655,7 +655,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag(t 
 	// attention (e.g. via a subsequent `lmm deploy`, which redeploys every
 	// enabled mod regardless of its recorded Deployed value).
 	out2 := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.NotContains(t, out2, "VERSION MISMATCH", "the version is already corrected - a second run must not re-report it")
 
@@ -703,7 +703,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameFails_LeavesRecordUnchanged(t *testi
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	var resultDoc core.VerifyReport
@@ -758,7 +758,7 @@ func TestDoVerify_Fix_VersionMismatch_PreservesFileChecksum(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	require.Contains(t, out, "Repaired", "sanity: the repair must have actually run")
 
@@ -780,7 +780,7 @@ func TestDoVerify_Fix_VersionMismatch_PreservesFileChecksum(t *testing.T) {
 	// have made this exact second run hit NO CHECKSUM and a failing
 	// redownload attempt, not a clean pass.
 	out2 := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out2, "All files verified OK.", "the second run must be clean, with no new issues or warnings introduced by the repair")
 }
@@ -809,7 +809,7 @@ func TestDoVerify_Fix_VersionMismatch_RetryAfterPartialFailure_StillRepairsSibli
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
@@ -844,7 +844,7 @@ func TestDoVerify_Fix_VersionMismatch_UpsertModFailsBeforeDBWrite_ConvergesOnRet
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out1 := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out1, "Repair failed", "run 1 must fail visibly, not silently")
 
@@ -853,7 +853,7 @@ func TestDoVerify_Fix_VersionMismatch_UpsertModFailsBeforeDBWrite_ConvergesOnRet
 	assert.Equal(t, "1.5", mod.Version, "the DB must NOT have been written when the profile upsert (which now runs first) fails")
 
 	out2 := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out2, "VERSION MISMATCH", "run 2 must still detect the mismatch - the DB was never corrupted into a false 'already fixed' state")
 }
@@ -884,7 +884,7 @@ func TestDoVerify_Fix_VersionMismatch_OldPathStatErrorBlocksRepair(t *testing.T)
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
@@ -973,7 +973,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotInstalled_SkippedSilentl
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	assert.NotContains(t, out, "fourth", "a profile that never had the mod must be a silent skip - no warning, no mention at all")
@@ -996,7 +996,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotDeployed_RepairsRecord(t
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	var resultDoc core.VerifyReport
@@ -1055,7 +1055,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_PrintsRepairedLine(t *testi
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	assert.Contains(t, out, "Repaired")
@@ -1078,7 +1078,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_SiblingsUntouched(t *testing
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Note")
 
@@ -1118,7 +1118,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_DifferentFileIDs_NotAutoRep
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "differs", "a warning must identify the profile whose file selection differs")
 	assert.Contains(t, out, "file selection", "the warning must explain why this sibling wasn't auto-repaired")
@@ -1166,7 +1166,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite(t *t
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Mod One is locked at v1.5 in profile second", "the warning must name the MOD (not the profile) as locked, and say which profile")
 	assert.Contains(t, out, "lmm mod lock -s test-src -p second mod1", "the lock remedy must be flagged with -s/-p <sibling> - unflagged would target the wrong (active) profile/an ambiguous source")
@@ -1206,7 +1206,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_LockedAndDeployed_WarnsDepl
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Mod One is locked at v1.5 in profile second")
 	assert.Contains(t, out, "its deployment may be broken until the lock is moved or cleared", "a Deployed locked sibling's warning must flag the now-broken deployment")
@@ -1235,7 +1235,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks(t *testing
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -1293,7 +1293,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_Clears
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	// This run only checks the "default" profile, so "NO CHECKSUM" in its
@@ -1351,7 +1351,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_JSONNo
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -1419,7 +1419,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_UpsertModFails_WarnsInTextM
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Warning", "an UpsertMod failure for a sibling must be surfaced, not swallowed")
 	assert.Contains(t, out, "second", "the warning must identify which sibling profile failed")
@@ -1454,7 +1454,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_UpsertModFails_JSONNotesFai
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -1500,7 +1500,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_ListFails_WarnsOnce(t *test
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Equal(t, 1, strings.Count(out, "Warning"), "the pm.List failure must be surfaced exactly once, not once per (nonexistent) sibling")
 
@@ -1548,7 +1548,7 @@ func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNot
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -1611,7 +1611,7 @@ func TestDoVerify_VersionUnverifiable_WithModFilter_ChecksumRowsAlwaysExist(t *t
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, []string{"mod1"})
+		return doVerify(cmd.Context(), svc, game, []string{"mod1"})
 	})
 
 	assert.Contains(t, out, "VERSION UNVERIFIABLE", "sanity: the scenario Claim 1 hypothesizes must actually be reached")
@@ -1633,7 +1633,7 @@ func TestDoVerify_VersionUnverifiable_HintMentionsUpdateRemedy(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, []string{"mod1"})
+		return doVerify(cmd.Context(), svc, game, []string{"mod1"})
 	})
 
 	assert.Contains(t, out, "VERSION UNVERIFIABLE")
@@ -1687,7 +1687,7 @@ func TestDoVerify_Fix_Missing_JSONNotesRedownloadFailure(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -1728,7 +1728,7 @@ func TestDoVerify_Fix_Redownload_MapsGameIDPerSourceMapping(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	// Call 1 is the version-record pre-pass (already mapped, d1c0e0f);
@@ -1756,7 +1756,7 @@ func TestDoVerify_Fix_Redownload_MapsGameIDForDownloadURL(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	require.Len(t, src.receivedGameDownloadIDs, 1, "expected GetDownloadURL exactly once, for the MISSING file's repair")
@@ -1777,7 +1777,7 @@ func TestDoVerify_Fix_Redownload_EmptyMappingKeepsLMMGameIDForDownloadURL(t *tes
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	require.Len(t, src.receivedGameDownloadIDs, 1)
@@ -1800,7 +1800,7 @@ func TestDoVerify_Fix_NoChecksum_JSONNotesRedownloadFailure(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -1920,7 +1920,7 @@ func TestDoVerify_Fix_DirectorySource_PersistsChecksum_SecondRunClean(t *testing
 		"fixture must start with a NULL checksum")
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "checksum populated")
 
@@ -1928,7 +1928,7 @@ func TestDoVerify_Fix_DirectorySource_PersistsChecksum_SecondRunClean(t *testing
 		"--fix claimed 'checksum populated', so a checksum must actually be in the DB")
 
 	secondRun := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.NotContains(t, secondRun, "NO CHECKSUM", "the fix must converge - no permanent NO CHECKSUM loop")
 	assert.Contains(t, secondRun, "All files verified OK.")
@@ -1955,7 +1955,7 @@ func TestDoVerify_Fix_DirectorySource_ReingestDropsRemovedMember(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(modDir, "stale.txt")))
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "checksum populated")
 
@@ -1964,7 +1964,7 @@ func TestDoVerify_Fix_DirectorySource_ReingestDropsRemovedMember(t *testing.T) {
 	assert.NotContains(t, files, "stale.txt", "#166: the re-ingest must drop the member deleted from the source")
 
 	secondRun := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, secondRun, "All files verified OK.")
 }
@@ -1977,7 +1977,7 @@ func TestDoVerify_Fix_NoChecksum_NotPersisted_HonestWarning(t *testing.T) {
 	cmd, svc, game, _, _ := setupDoVerifyDirectorySourceTest(t, "EmptyMod-1.0", nil, true)
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	assert.NotContains(t, out, "checksum populated", "no write happened - claiming success is the #164 lie")
@@ -2000,7 +2000,7 @@ func TestDoVerify_Fix_NoChecksum_NotPersisted_JSONStaysNoChecksum(t *testing.T) 
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -2033,7 +2033,7 @@ func TestDoVerify_Fix_Missing_NotPersisted_JSONStaysNoChecksum(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -2060,7 +2060,7 @@ func TestDoVerify_Fix_Missing_DirectorySource_RedownloadPersistsChecksum(t *test
 		map[string]string{"ModInfo.xml": `<?xml version="1.0"?><xml><Name value="BiggerBackpack"/><Version value="1.2.0"/></xml>`}, false)
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "MISSING")
 	assert.Contains(t, out, "Re-downloaded OK")
@@ -2069,7 +2069,7 @@ func TestDoVerify_Fix_Missing_DirectorySource_RedownloadPersistsChecksum(t *test
 		"a MISSING repair for a directory mod must persist the checksum too")
 
 	secondRun := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, secondRun, "All files verified OK.")
 }
@@ -2103,7 +2103,7 @@ func TestDoVerify_Fix_VersionMismatchLocked_RefusesRepair(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	assert.Contains(t, out, "1 issue(s)", "a locked mod's version mismatch must still be reported and counted as an issue")
@@ -2147,7 +2147,7 @@ func TestDoVerify_Fix_VersionMismatchLocked_JSONKeepsStatusAndNotesLocked(t *tes
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	var resultDoc core.VerifyReport
@@ -2178,7 +2178,7 @@ func TestDoVerify_Fix_VersionMismatchUnlocked_StillRepairs(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	var resultDoc core.VerifyReport
@@ -2228,7 +2228,7 @@ func TestDoVerify_LockedDrift_PrintsInformationalNote(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	assert.Contains(t, out, "Mod One — lock pending convergence (installed v1.5, locked v2.0)", "the informational line must name the mod and both versions")
@@ -2246,7 +2246,7 @@ func TestDoVerify_LockedDrift_JSONNotCountedAsIssue(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	var resultDoc core.VerifyReport
@@ -2289,14 +2289,14 @@ func TestDoVerify_LockedConverged_NoNote(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.NotContains(t, out, "lock pending convergence", "a converged lock must not print the pending-convergence note")
 	assert.NotContains(t, out, "1 issue(s)")
 
 	jsonOutput = true
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -2349,7 +2349,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinksWithProfileLinkMethod(t *t
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	require.Contains(t, out, "Repaired", "sanity: the repair must have actually run")
 
@@ -2391,7 +2391,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinksWithSibling
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	require.Contains(t, out, "Repaired (profile second)", "sanity: the sibling repair must have actually run")
 
@@ -2434,7 +2434,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_UndeployWarning_JSONNotesIt(t *te
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	var resultDoc core.VerifyReport

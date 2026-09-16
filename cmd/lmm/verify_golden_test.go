@@ -52,7 +52,7 @@ func runVerifyGolden(t *testing.T, name string, fixture func(*testing.T) (*cobra
 	verifyFix, jsonOutput = fix, json
 	t.Cleanup(func() { verifyFix, jsonOutput = oldFix, oldJSON })
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	if json {
 		// #334: core.VerifyResult now carries checked_at, which is a real
 		// clock reading and so would make every --json golden here churn on

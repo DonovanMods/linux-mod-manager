@@ -1,0 +1,107 @@
+package main
+
+// T3 review F2: `lmm import`'s scan mode and `lmm verify --fix` ran on
+// cmd.Context() rather than the context withServiceOpts hands a command -
+// the one that prints what a source is waiting on - so a throttled,
+// suspended or cold index lookup during either was silent. These tests hand
+// each command a context that prints notices and a cobra command whose own
+// context does not, which is exactly the difference a regression would
+// fall into.
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// throttleNotice is the notice both fakes raise.
+var throttleNotice = source.Notice{
+	Kind: source.NoticeRetry, Source: "Thunderstore", Reason: source.RetryRateLimited,
+	Attempt: 2, MaxAttempts: 3, Wait: 12 * time.Second,
+}
+
+const throttleLine = "Rate limited by Thunderstore; retrying in 12s (attempt 2 of 3)."
+
+// bareCommand is a cobra command whose own context prints nothing.
+func bareCommand() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	return cmd
+}
+
+func TestImportScan_SaysWhatTheLookupIsWaitingOn(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	game.DeployMode = domain.DeployCopy
+	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "AcmeMod-1.0.zip"), []byte("payload"), 0o644))
+
+	src := newFakeMatchSource("acme-source")
+	src.notice = &throttleNotice
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	importSkipMatch = false
+	importDryRun = true
+
+	var err error
+	stderr := captureStderr(t, func() {
+		_ = captureStdout(t, func() error {
+			err = doImport(withSourceNotices(context.Background()), bareCommand(), svc, game, nil)
+			return nil
+		})
+	})
+	require.NoError(t, err)
+	assert.Contains(t, stderr, throttleLine, "the scan's lookup runs on the command's context")
+}
+
+// TestImportScan_ALookupThatFailedSaysSo: every source failing to answer
+// used to be a --verbose line, so the mods just read "local" with nothing
+// saying lmm never got to ask (review F2's second half).
+func TestImportScan_ALookupThatFailedSaysSo(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	game.DeployMode = domain.DeployCopy
+	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "AcmeMod-1.0.zip"), []byte("payload"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "OtherMod-2.0.zip"), []byte("payload"), 0o644))
+
+	src := newFakeMatchSource("acme-source")
+	src.searchErr = &source.RetryLaterError{Source: "Thunderstore", Until: time.Now().Add(5 * time.Minute), Reason: "suspended after repeated failures"}
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	importSkipMatch = false
+	importDryRun = true
+	verbose = false
+
+	out, err := captureStdoutErr(t, func() error {
+		return doImport(withSourceNotices(context.Background()), bareCommand(), svc, game, nil)
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "AcmeMod-1.0.zip -> local (lookup failed)")
+	assert.Contains(t, out, "OtherMod-2.0.zip -> local (lookup failed)")
+	assert.Equal(t, 1, strings.Count(out, "not asking Thunderstore again until"),
+		"the reason is said once, not once per mod: %q", out)
+}
+
+func TestVerifyFix_SaysWhatTheRedownloadIsWaitingOn(t *testing.T) {
+	_, svc, game, src := setupDoVerifyRedownloadTest(t)
+	src.notice = &throttleNotice
+
+	var err error
+	stderr := captureStderr(t, func() {
+		_ = captureStdout(t, func() error {
+			err = doVerify(withSourceNotices(context.Background()), svc, game, nil)
+			return nil
+		})
+	})
+	_ = err // the redownload itself fails (the fixture serves no file); the notice is the point
+	assert.Contains(t, stderr, throttleLine, "verify --fix repairs on the command's context")
+}

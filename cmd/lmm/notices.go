@@ -21,7 +21,10 @@ import (
 // withServiceOpts installs it for every command, so a notice reaches the
 // terminal from whichever command triggered it - `lmm import`'s scan-mode
 // matching building a cold Thunderstore index gets the same line
-// `lmm search` does (T1 review #8) without a line of its own.
+// `lmm search` does (T1 review #8) without a line of its own. Execute
+// installs it on the root context as well (T3 review F2), so a call made on
+// cmd.Context() - which `lmm import`'s scan and `lmm verify --fix` both
+// were - is not silent either.
 func withSourceNotices(ctx context.Context) context.Context {
 	return core.WithSourceNotices(ctx, printSourceNotice)
 }

@@ -282,7 +282,7 @@ func TestJSONGolden_Verify(t *testing.T) {
 		})
 		withJSONOutput(t)
 
-		out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+		out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 		assertJSONCLIGolden(t, "verify_version_mismatch", out, game.ModPath, "<GAME-DIR>")
 	})
 
@@ -292,7 +292,7 @@ func TestJSONGolden_Verify(t *testing.T) {
 		})
 		withJSONOutput(t)
 
-		out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+		out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 		assertJSONCLIGolden(t, "verify_clean", out, game.ModPath, "<GAME-DIR>")
 	})
 }

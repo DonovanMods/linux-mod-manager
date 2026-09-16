@@ -877,7 +877,7 @@ func TestJSONGolden_ImportScan(t *testing.T) {
 		cmd.SetContext(context.Background())
 
 		out := runJSONCommand(t, func() error {
-			return runImportScan(cmd, game, svc, "default")
+			return runImportScan(cmd.Context(), game, svc, "default")
 		})
 		assertJSONCLIGolden(t, "import_scan_result", out)
 	})
@@ -891,7 +891,7 @@ func TestJSONGolden_ImportScan(t *testing.T) {
 		cmd.SetContext(context.Background())
 
 		out := runJSONCommand(t, func() error {
-			return runImportScan(cmd, game, svc, "default")
+			return runImportScan(cmd.Context(), game, svc, "default")
 		})
 		assertJSONCLIGolden(t, "import_scan_dry_run", out, game.ModPath, "<GAME-DIR>")
 	})

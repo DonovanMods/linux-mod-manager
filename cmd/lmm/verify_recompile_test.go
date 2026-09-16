@@ -33,7 +33,7 @@ func TestDoVerify_StaleCompile_ReportedAsWarning(t *testing.T) {
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	err := doVerify(cmd, svc, game, nil)
+	err := doVerify(cmd.Context(), svc, game, nil)
 	_ = w.Close()
 	os.Stdout = oldStdout
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestDoVerify_StaleCompile_NotDeployed_ReasonSaysSo(t *testing.T) {
 	cmd.SetContext(context.Background())
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	assert.Contains(t, out, "RECOMPILE NEEDED")
@@ -92,7 +92,7 @@ func TestDoVerify_StaleCompile_JSON(t *testing.T) {
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	err := doVerify(cmd, svc, game, nil)
+	err := doVerify(cmd.Context(), svc, game, nil)
 	_ = w.Close()
 	os.Stdout = oldStdout
 	require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestDoVerify_HealthyExmodzMod_NoFileCountMismatch(t *testing.T) {
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	err = doVerify(cmd, svc, game, nil)
+	err = doVerify(cmd.Context(), svc, game, nil)
 	_ = w.Close()
 	os.Stdout = oldStdout
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestDoVerify_Fix_SyncsMergedPak(t *testing.T) {
 	cmd.SetContext(context.Background())
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	_, err = os.Stat(deployedPath)

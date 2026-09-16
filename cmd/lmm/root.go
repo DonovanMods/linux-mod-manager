@@ -314,6 +314,10 @@ func printTableTo(out io.Writer, buf *bytes.Buffer, headerLines int, rowColor fu
 func Execute() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Every command's context prints what a source is waiting on, so a
+	// command that hands cmd.Context() to a call rather than the context
+	// withServiceOpts gave it still says why it is slow (T3 review F2).
+	ctx = withSourceNotices(ctx)
 
 	rawArgs = os.Args[1:]
 	if err := runRoot(ctx); err != nil {

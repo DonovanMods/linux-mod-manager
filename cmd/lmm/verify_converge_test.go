@@ -98,7 +98,7 @@ func TestDoVerify_StaleDeployment_ReportedAsWarning(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "gone.esp - STALE DEPLOYMENT")
 	assert.Contains(t, out, "stray.pak - STALE DEPLOYMENT")
@@ -106,7 +106,7 @@ func TestDoVerify_StaleDeployment_ReportedAsWarning(t *testing.T) {
 
 	jsonOutput = true
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -147,7 +147,7 @@ func TestDoVerify_Fix_StaleDeployment_RemovesAndReports(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Fixed: removed gone.esp")
 	assert.Contains(t, out, "Fixed: removed stray.pak")
@@ -176,7 +176,7 @@ func TestDoVerify_Fix_StaleDeployment_JSONReportsFixed(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -206,11 +206,11 @@ func TestDoVerify_Fix_StaleDeployment_SecondRunClean(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	out2 := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.NotContains(t, out2, "STALE DEPLOYMENT", "a second --fix run must not re-report anything")
 	assert.Contains(t, out2, "All files verified OK.", "a second --fix run must be genuinely clean")
@@ -258,7 +258,7 @@ func TestDoVerify_EmptyProfile_ConvergenceStillRuns(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "No installed mods to verify.")
 	assert.Contains(t, out, "stray.pak - STALE DEPLOYMENT")
@@ -270,7 +270,7 @@ func TestDoVerify_EmptyProfile_ConvergenceStillRuns(t *testing.T) {
 
 	jsonOutput = true
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
@@ -294,7 +294,7 @@ func TestDoVerify_Fix_EmptyProfile_SweepsDanglingLink(t *testing.T) {
 	t.Cleanup(func() { jsonOutput, verifyFix = oldJSON, oldFix })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Fixed: removed stray.pak")
 
@@ -303,7 +303,7 @@ func TestDoVerify_Fix_EmptyProfile_SweepsDanglingLink(t *testing.T) {
 
 	// Second run: converged, nothing to report beyond the no-mods line.
 	out2 := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out2, "No installed mods to verify.")
 	assert.NotContains(t, out2, "STALE DEPLOYMENT")

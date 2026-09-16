@@ -129,7 +129,7 @@ func TestDeclinedConfirmationsAllExitTwo(t *testing.T) {
 			importDryRun = false
 			cmd := &cobra.Command{}
 			cmd.SetContext(context.Background())
-			return runImportScan(cmd, game, svc, "default")
+			return runImportScan(cmd.Context(), game, svc, "default")
 		}},
 	}
 
