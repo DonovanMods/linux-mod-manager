@@ -1092,3 +1092,33 @@ func TestProfileManager_UpsertMod_PreservesDisabledMarker(t *testing.T) {
 	assert.Equal(t, "2.0.0", profile.Mods[0].Version)
 	assert.Equal(t, []string{"9"}, profile.Mods[0].FileIDs)
 }
+
+// TestResolveReorder_PreservesTheDisabledMarker pins the invariant that
+// keeps `lmm profile reorder` (and the web UI's reorder modal, which drives
+// the same seam) from wiping #431's marker: ReorderMods replaces the
+// profile's whole mod list, so the order it is handed has to carry the
+// refs' own fields, not just their identities.
+func TestResolveReorder_PreservesTheDisabledMarker(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "first", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "second", Version: "2.0"}))
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "default", "src", "second", true))
+
+	order, err := svc.ResolveReorder(ctx, game, "default", []string{"second"})
+	require.NoError(t, err)
+	require.NoError(t, svc.ReorderProfileMods(ctx, game.ID, "default", order))
+
+	profile, err := pm.Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 2)
+	assert.Equal(t, "second", profile.Mods[0].ModID, "the named mod moves to the front")
+	assert.True(t, profile.Mods[0].Disabled, "and keeps its off marker")
+	assert.Equal(t, "2.0", profile.Mods[0].Version)
+	assert.False(t, profile.Mods[1].Disabled)
+}
