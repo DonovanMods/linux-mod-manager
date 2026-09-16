@@ -312,7 +312,7 @@ A mod listed twice in one profile (lmm never writes that, but a hand edit can) i
 
 Three things clear the marker, and each is a request for that mod:
 
-- `lmm mod enable`. It clears the marker even when the database already said the mod was enabled, so a document and a database that disagree can always be brought back into line.
+- `lmm mod enable`. It clears the marker even when the database already said the mod was enabled, so a document and a database that disagree can always be brought back into line. The one exception is a game whose adapter lmm refuses (see [Adapter](#adapter-gamesyaml)): enabling deploys, so there it is refused like every deploy and leaves the marker, the database and the game directory exactly as they were. `lmm mod disable` still works on such a game and still writes the marker.
 - `lmm install` of the same mod. Asking for a mod by name is a request to have it, so the install does not leave behind a mod the next converge run would switch straight back off.
 - Installing a mod that **depends** on it. You did not name the dependency, so lmm says so before asking to proceed and again afterwards: the dependency is switched back on in that profile, because the mod you asked for cannot work without it.
 

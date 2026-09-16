@@ -277,7 +277,9 @@ deploy --all`, which exists to deploy switched-off mods, still deploys it,
 
   - `lmm mod enable`, which clears it even when the database already said
     the mod was enabled, so a document and a database that disagree can
-    always be brought back into line;
+    always be brought back into line — except on a game whose adapter lmm
+    refuses (#413), where enabling is refused like every deploy and leaves
+    the marker where it is (`lmm mod disable` still writes it there);
   - `lmm install` of the same mod, because asking for a mod by name is a
     request to have it, not something the next converge run should undo;
   - installing a mod that depends on it. The user did not name the
