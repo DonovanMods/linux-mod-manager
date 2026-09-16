@@ -218,6 +218,17 @@ lock and policy), and `restore` is the `snapshot_restore` plan kind behind Missi
 Snapshots card. `--dry-run` is the plan document the confirm modal renders;
 `--no-safety-snapshot`, `--force` and `--no-hooks` are its Advanced controls.
 
+**Bidirectional since #410** - `lmm source index` is on both sides too. The
+read (`lmm source index`) is `GET /api/v1/sources/{id}/index`, `--refresh`
+is the `POST` to the same path (the Setup page's **Refresh index** button,
+which is also the web's answer to `lmm search --refresh`), `--all` is
+`GET /api/v1/indexes` (the Setup page's index rows), and
+`lmm source index prune` with `--dry-run` and `--all` is
+`POST /api/v1/indexes/prune` behind the **Prune unused indexes** preview and
+its "also remove indexes a game uses" control; `-y` has no browser meaning,
+since the preview IS the confirmation. The Setup section that holds them is
+now titled "Sources".
+
 The epic re-review's own N-7 named two further omissions — `--version` and `lmm game add
 --game-id` — that the polish wave closed rather than left as exceptions (#326): the running
 server's display version now rides the SPA shell itself (a `<meta name="lmm-version">`, surfaced
