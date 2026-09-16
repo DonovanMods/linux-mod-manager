@@ -8,10 +8,12 @@ package serve_test
 // can show whether a partial selection reads as one.
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // e2eSelectAllState is what selectAllStateJS reads back.
@@ -240,5 +242,111 @@ func TestE2E_UpdatesCardSelectAll_SkipsTheRowsWithNoCheckbox(t *testing.T) {
 	assert.Contains(t, state.Label, "1")
 	assert.Contains(t, state.Button, "1",
 		"the button states how many mods it is about to update")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// updatesCardStateJS reads the Updates card's selection surfaces together:
+// which rows are ticked, and what the batch button says and allows.
+const updatesCardStateJS = `(() => {
+	const card = document.querySelector(".card--updates");
+	if (!card) return null;
+	const button = card.querySelector('[data-action="update-selected"]');
+	return {
+		rows: card.querySelectorAll(".card__row").length,
+		ticked: Array.from(card.querySelectorAll(".card__row input[type=checkbox]:checked"))
+			.map((b) => b.closest(".card__row").querySelector(".card__row-name").textContent.trim()),
+		button: button ? button.textContent.trim() : "",
+		disabled: button ? button.disabled : null,
+	};
+})()`
+
+// e2eUpdatesCardState is updatesCardStateJS's shape.
+type e2eUpdatesCardState struct {
+	Rows     int      `json:"rows"`
+	Ticked   []string `json:"ticked"`
+	Button   string   `json:"button"`
+	Disabled *bool    `json:"disabled"`
+}
+
+// TestE2E_UpdatesCardSelection_FollowsTheRowsItWasMadeFrom is issue 434's
+// count held to the rows it counts. The card's selection is kept as mod
+// keys, and a key outlives its row: update a ticked mod from anywhere else
+// and the card loses the row at its next refresh, but the key stayed - so the
+// button kept counting it ("Update 2 mods" over one row) and the batch
+// planned a mod with nothing left to update.
+func TestE2E_UpdatesCardSelection_FollowsTheRowsItWasMadeFrom(t *testing.T) {
+	f := newE2EFixtureWithALockedAndAnUnlockedUpdate(t)
+
+	var both e2eUpdatesCardState
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".card--updates .card__row").length === 2`),
+		chromedp.Evaluate(`document.querySelector('.card--updates [data-testid="select-all"]').click()`, nil),
+		settleEffects(),
+		chromedp.Evaluate(updatesCardStateJS, &both),
+	)
+	require.Equal(t, "Update 2 mods", both.Button)
+
+	// Great Gloves is updated from its LIBRARY row, not from the card.
+	var after e2eUpdatesCardState
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector('.mod-row[data-mod="fake:gloves"] [data-action="row-update"]').click()`, nil),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+		chromedp.Click(`.modal[data-kind="updates"] [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+		pollUntil(`document.querySelectorAll(".card--updates .card__row").length === 1`),
+		settleEffects(),
+		chromedp.Evaluate(updatesCardStateJS, &after),
+	)
+	assert.Equal(t, []string{"Better Boots"}, after.Ticked, "the row that is left keeps its tick")
+	assert.Equal(t, "Update 1 mod", after.Button,
+		"the button counts the ticked rows on the card, not a key whose row has gone")
+
+	// And the plan it opens is for that one mod only.
+	var title, body string
+	f.runInBrowser(t,
+		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="updates"] .modal__title`, &title),
+		textContent(`.modal[data-kind="updates"]`, &body),
+		chromedp.Click(`.modal [data-action="cancel"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+	)
+	assert.Equal(t, "Update 1 mod", strings.TrimSpace(title))
+	assert.NotContains(t, body, "Great Gloves", "the updated mod is not planned again")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_UpdatesCardSelection_ClearsOnceTheBatchIsConfirmed mirrors the
+// library's batch bar: a confirmed batch has used its selection. The locked
+// row is what makes this observable - the batch skips it, so it is still on
+// the card afterwards, and it must not still be ticked with the button
+// offering to update it again.
+func TestE2E_UpdatesCardSelection_ClearsOnceTheBatchIsConfirmed(t *testing.T) {
+	f := newE2EFixtureWithALockedAndAnUnlockedUpdate(t)
+
+	var after e2eUpdatesCardState
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".card--updates .card__row").length === 2`),
+		chromedp.Evaluate(`document.querySelector('.card--updates [data-testid="select-all"]').click()`, nil),
+		settleEffects(),
+		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+		chromedp.Click(`.modal[data-kind="updates"] [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+		// The batch's own outcome holds the button's place for a few seconds
+		// after it succeeds (main.js#releaseSucceededOrigin), then hands it
+		// back.
+		pollUntil(`document.querySelectorAll(".card--updates .card__row").length === 1`),
+		pollUntil(`document.querySelector('.card--updates [data-action="update-selected"]') !== null`),
+		chromedp.Evaluate(updatesCardStateJS, &after),
+	)
+	assert.Empty(t, after.Ticked, "the skipped row is still listed, but no longer selected")
+	assert.Equal(t, "Update selected", after.Button)
+	require.NotNil(t, after.Disabled)
+	assert.True(t, *after.Disabled, "with nothing selected there is nothing to update")
 	assert.Empty(t, f.BrowserErrors())
 }

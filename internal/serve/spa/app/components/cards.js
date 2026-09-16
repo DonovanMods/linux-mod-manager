@@ -170,21 +170,30 @@ function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
   // can only ever tick boxes that exist.
   const applicable = rows.filter((u) => !u.installed_mod.external);
   const applicableKeys = applicable.map((u) => modKey(u.installed_mod));
-  const takenCount = applicableKeys.filter((key) => selected.has(key)).length;
-  const allTaken = applicable.length > 0 && takenCount === applicable.length;
+  // `taken` is the selection as it stands against the rows on screen NOW,
+  // and it is the only thing any count or plan below reads. `selected` holds
+  // raw keys and outlives the rows it was made from: an update applied from
+  // anywhere (this card, the library, another client) takes its row off the
+  // card at the next refresh, and a key left behind would otherwise keep
+  // counting on the button and be planned as a mod with nothing to update.
+  const taken = applicableKeys.filter((key) => selected.has(key));
+  const allTaken = applicable.length > 0 && taken.length === applicable.length;
 
   function toggleSelectAll() {
     setSelected(() => (allTaken ? new Set() : new Set(applicableKeys)));
   }
 
   function updateSelected() {
-    if (selected.size === 0) return;
+    if (taken.length === 0) return;
     actions.openPlan({
       kind: "updates",
       origin: UPDATES_BATCH_ORIGIN,
-      title: `Update ${countOf(selected.size, "mod")}`,
+      title: `Update ${countOf(taken.length, "mod")}`,
       confirmLabel: "Update",
-      options: { mods: [...selected] },
+      options: { mods: taken },
+      // Cleared once the batch is confirmed, as the library's batch bar is:
+      // a Cancel keeps the selection, a confirmed batch has used it.
+      onConfirmed: () => setSelected(new Set()),
     });
   }
 
@@ -220,7 +229,7 @@ function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
                     type="checkbox"
                     data-testid="select-all"
                     checked=${allTaken}
-                    indeterminate=${takenCount > 0 && !allTaken}
+                    indeterminate=${taken.length > 0 && !allTaken}
                     disabled=${applicable.length === 0}
                     aria-label=${
                       allTaken
@@ -334,15 +343,15 @@ function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
                     type="button"
                     class="button"
                     data-action="update-selected"
-                    disabled=${selected.size === 0}
+                    disabled=${taken.length === 0}
                     onClick=${updateSelected}
                   >
                     ${
                       // issue 434: the count, so the size of the batch is
                       // known before the confirm modal states it.
-                      selected.size === 0
+                      taken.length === 0
                         ? "Update selected"
-                        : `Update ${countOf(selected.size, "mod")}`
+                        : `Update ${countOf(taken.length, "mod")}`
                     }
                   </button>
                 <//>
