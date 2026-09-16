@@ -853,18 +853,26 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 	// A plan the markers decide first settles an owed backfill itself, as
 	// its Apply would, so the ordinary case never reaches the refusal.
 	t.Run("an apply or sync plan settles the backfill first", func(t *testing.T) {
-		f := newBackfillFixture(t)
-		f.row(t, "a", "off", false, false)
-		f.owe(t)
+		for _, flow := range []string{"apply", "sync"} {
+			t.Run(flow, func(t *testing.T) {
+				f := newBackfillFixture(t)
+				f.row(t, "a", "off", false, false)
+				f.owe(t)
 
-		apply, err := f.svc.PlanProfileApply(ctx, f.game, "a")
-		require.NoError(t, err)
-		assert.Empty(t, apply.ToEnable)
-		assert.Contains(t, f.warnings.String(), "Mod off", "the plan discharged it and said so")
-		assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
-		sync, err := f.svc.PlanProfileSync(ctx, f.game, "a")
-		require.NoError(t, err)
-		assert.Empty(t, sync.ToRemove)
+				switch flow {
+				case "apply":
+					plan, err := f.svc.PlanProfileApply(ctx, f.game, "a")
+					require.NoError(t, err)
+					assert.Empty(t, plan.ToEnable)
+				case "sync":
+					plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
+					require.NoError(t, err)
+					assert.Empty(t, plan.ToRemove)
+				}
+				assert.Contains(t, f.warnings.String(), "Mod off", "the plan discharged it and said so")
+				assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
+			})
+		}
 	})
 
 	// Another lmm holds the lock while the plan is made, so the plan goes
