@@ -1114,16 +1114,14 @@ function waitForJobDone(jobID) {
  *
  * `run(item)` starts one item's job and returns its job id; `labelOf(item)`
  * names it for the failure list; `verb` is the toast's own past-tense word
- * ("Enabled", "Disabled", "Uninstalled").
- *
- * The ITEMS that did not finish come back to the caller (issue 432), not
- * just their labels: a batch toggle's own optimistic acknowledgment has to
- * be able to put those rows back, and only their identity - not the
- * sentence in the toast - can say which rows those are.
+ * ("Enabled", "Disabled", "Uninstalled"). The optional `onBound(item,
+ * jobID)` hears each item's binding the moment it is made - or `null` when
+ * that item's start failed - which is how a batch toggle's per-row
+ * acknowledgment learns which job is its own (issue 432).
  */
 async function startSequencedBatch(
   items,
-  { run, originOf: itemOrigin, labelOf, verb },
+  { run, originOf: itemOrigin, labelOf, verb, onBound },
 ) {
   const unregisters = items.map((item) => registerOrigin(itemOrigin(item)));
   const failed = [];
@@ -1133,10 +1131,12 @@ async function startSequencedBatch(
       try {
         const jobID = await run(item);
         store.set({ origins: { ...store.get().origins, [origin]: jobID } });
+        onBound?.(item, jobID);
         const summary = await waitForJobDone(jobID);
-        if (summary.state === "failed") failed.push(item);
+        if (summary.state === "failed") failed.push(labelOf(item));
       } catch (err) {
-        failed.push(item);
+        onBound?.(item, null);
+        failed.push(labelOf(item));
       }
     }
   } finally {
@@ -1146,10 +1146,8 @@ async function startSequencedBatch(
   pushToast({
     tone: failed.length > 0 ? "failure" : "success",
     title: `${verb} ${ok}/${items.length} mod${items.length === 1 ? "" : "s"}`,
-    detail:
-      failed.length > 0 ? `Failed: ${failed.map(labelOf).join(", ")}` : "",
+    detail: failed.length > 0 ? `Failed: ${failed.join(", ")}` : "",
   });
-  return failed;
 }
 
 /** startBatchToggle sequences an enable/disable job per mod (the library
@@ -1158,19 +1156,21 @@ async function startSequencedBatch(
  * Enable/Disable button already use (modrows.js#modOriginPattern), so a
  * visible row shows the SAME inline progress whichever control started it.
  *
- * Answers with the mods whose own job never succeeded, which is what the
- * batch bar's optimistic acknowledgment puts back (issue 432). */
-async function startBatchToggle(action, mods) {
+ * `onBound(mod, jobID)` hears each mod's job as it is bound (null for a
+ * start that failed): the batch bar's optimistic acknowledgment settles
+ * each row against its own job and no other (issue 432). */
+async function startBatchToggle(action, mods, onBound) {
   const context = {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
-  return startSequencedBatch(mods, {
+  await startSequencedBatch(mods, {
     run: (mod) =>
       startToggleJob(action, mod.source_id, mod.id, context).then((r) => r.id),
     originOf: (mod) => `mod:${mod.source_id}/${mod.id}:toggle`,
     labelOf: (mod) => mod.name ?? `${mod.source_id}:${mod.id}`,
     verb: action === "enable" ? "Enabled" : "Disabled",
+    onBound,
   });
 }
 

@@ -21,8 +21,18 @@
 //     and the mod now reads the way it was asked to. The ordinary ending,
 //     and the one that makes the hand-off seamless: the requested value and
 //     the real value are the same pixel, so nothing flickers.
-//   - the job bound to that control FAILED, so what was asked for is not
+//   - the job started FOR THAT REQUEST failed, so what was asked for is not
 //     going to happen. The control goes back to what is actually true.
+//
+// "For that request" is load-bearing. Every entry records the id of its own
+// job once one is bound, and only that job can settle it. The control's
+// origin is no substitute: it is stable across the toggle's direction (see
+// modToggleOrigin) and a failed job's binding is never released, so an
+// origin still names the PREVIOUS job for as long as a new request's own
+// start is in flight - and for a sequenced batch, for as long as the rows
+// ahead of it are running. Settling against the origin meant a retry after
+// a failure was settled by that failure on the frame it was made in, and the
+// click it was supposed to acknowledge showed nothing at all.
 //
 // Neither ending toasts from here, deliberately. A failure already has a
 // surface: a control wrapped in InlineJob (the slide-over, the full mod
@@ -102,13 +112,34 @@ export function usePendingToggles(state, actions, enabledOf) {
     });
   }
 
-  function forget(keys) {
-    if (keys.length === 0) return;
+  // bind and forget both act on one REQUEST, not on whatever is stored
+  // under its key: a later request for the same mod (a batch taking a row
+  // whose own toggle is still in flight) replaces the entry, and news about
+  // the earlier request must not land on the later one.
+  function bind(key, entry, jobID) {
     setPending((prev) => {
+      if (prev.get(key)?.request !== entry.request) return prev;
+      return new Map(prev).set(key, { ...prev.get(key), jobID });
+    });
+  }
+
+  function forget(key, entry) {
+    setPending((prev) => {
+      if (prev.get(key)?.request !== entry.request) return prev;
       const next = new Map(prev);
-      for (const key of keys) next.delete(key);
+      next.delete(key);
       return next;
     });
+  }
+
+  /** settleBound is what a start reports back per mod: the job it bound, or
+   * null when the start never happened (main.js#startToggle turns a failure
+   * to START - a 409 over the queue-depth cap, a network error - into a
+   * toast and binds no job, so there is nothing hasSettled could ever find
+   * and the entry is dropped here instead). */
+  function settleBound(key, entry, jobID) {
+    if (jobID) bind(key, entry, jobID);
+    else forget(key, entry);
   }
 
   return {
@@ -122,19 +153,15 @@ export function usePendingToggles(state, actions, enabledOf) {
     async start(mod) {
       const want = !mod.enabled;
       const origin = modToggleOrigin(mod.source_id, mod.id);
-      remember([[mod.key, { want, origin }]]);
+      const entry = newRequest(want);
+      remember([[mod.key, entry]]);
       const jobID = await actions.startToggle({
         action: want ? "enable" : "disable",
         sourceID: mod.source_id,
         modID: mod.id,
         origin,
       });
-      // main.js#startToggle turns a failure to START (a 409 over the
-      // queue-depth cap, a network error) into a toast and binds no job at
-      // all, so there is nothing for hasSettled to ever find. Dropped here
-      // instead, which is the only place that knows the start returned
-      // nothing.
-      if (!jobID) forget([mod.key]);
+      settleBound(mod.key, entry, jobID);
     },
 
     /** startBatch acknowledges a whole multi-select at once - every row
@@ -144,25 +171,34 @@ export function usePendingToggles(state, actions, enabledOf) {
      * whole batch). */
     async startBatch(action, mods) {
       const want = action === "enable";
-      remember(
-        mods.map((mod) => [
-          mod.key,
-          { want, origin: modToggleOrigin(mod.source_id, mod.id) },
-        ]),
+      const entries = new Map(mods.map((mod) => [mod.key, newRequest(want)]));
+      remember(entries);
+      // Each row's job is bound as the batch reaches it, one at a time, so a
+      // row further down stays pending - on the click, not on its turn -
+      // until its OWN job exists and ends.
+      await actions.startBatchToggle(action, mods, (mod, jobID) =>
+        settleBound(mod.key, entries.get(mod.key), jobID),
       );
-      const unstarted = (await actions.startBatchToggle(action, mods)) ?? [];
-      forget(unstarted.map((mod) => mod.key));
     },
   };
 }
 
+let requestSeq = 0;
+
+/** newRequest is one pending entry: what was asked for, the identity of
+ * this particular asking (so a newer request for the same mod is never
+ * mistaken for it), and the job bound to it once there is one. */
+function newRequest(want) {
+  return { want, request: ++requestSeq, jobID: null };
+}
+
 /** hasSettled reports whether a pending request has reached either of its
- * two endings: the server now agrees with it, or the job carrying it has
- * failed and it is not going to happen. See the module comment. */
+ * two endings: the server now agrees with it, or the job started for it has
+ * failed and it is not going to happen. A request with no job of its own
+ * yet cannot have failed. See the module comment. */
 function hasSettled(state, entry, actual) {
   if (actual === entry.want) return true;
-  const jobID = state.origins?.[entry.origin];
-  if (!jobID) return false;
-  const summary = (state.jobsIndex ?? []).find((job) => job.id === jobID);
+  if (!entry.jobID) return false;
+  const summary = (state.jobsIndex ?? []).find((job) => job.id === entry.jobID);
   return summary?.state === "failed";
 }
