@@ -282,7 +282,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		// result's own, and a quiet run stays quiet.
 		if result.Issues > 0 || result.Warnings > 0 {
 			fmt.Println()
-			printVerifyTally(result, "Run with --fix to remove stale lmm-deployed files.")
+			printVerifyTally(result, fixHintFor(result))
 		}
 		return nil
 	}
@@ -321,6 +321,47 @@ func printVerifyTally(result *core.VerifyResult, fixHint string) {
 			fmt.Println(fixHint)
 			return
 		}
+	}
+}
+
+// fixRepairs is what --fix does about each status it repairs, in the words
+// the empty-profile branch's hint strings together. The branch with files
+// keeps its historical fixed sentence (its golden pins it); this one used to
+// name a single repair - removing stale files - whatever the fixable row
+// was (#413 final review F6).
+var fixRepairs = map[string]string{
+	"stale_deployment":               "remove stale lmm-deployed files",
+	"loader_plugin_unlinked":         "re-deploy plugins missing from the game directory",
+	"loader_deployed_outside_loader": "move plugins deployed outside BepInEx/ under it",
+	"loader_nested_tree":             "remove the links lmm left in a nested BepInEx/ directory",
+}
+
+// fixHintFor names what --fix would do about result's fixable rows, each
+// repair once, in the order the rows came. A fixable status the table does
+// not know still gets a hint, in general terms.
+func fixHintFor(result *core.VerifyResult) string {
+	var repairs []string
+	seen := map[string]bool{}
+	for _, f := range result.Findings {
+		if !f.Fixable {
+			continue
+		}
+		repair, known := fixRepairs[f.Status]
+		if !known {
+			repair = "repair the other rows it can"
+		}
+		if !seen[repair] {
+			seen[repair] = true
+			repairs = append(repairs, repair)
+		}
+	}
+	switch len(repairs) {
+	case 0:
+		return ""
+	case 1:
+		return "Run with --fix to " + repairs[0] + "."
+	default:
+		return "Run with --fix to " + strings.Join(repairs[:len(repairs)-1], ", ") + " and " + repairs[len(repairs)-1] + "."
 	}
 }
 

@@ -93,6 +93,41 @@ func TestDoVerify_EmptyProfile_SummaryCountsWhatWasFound(t *testing.T) {
 	})
 }
 
+// TestDoVerify_EmptyProfile_FixHintSaysWhatFixWouldDo: the empty-profile
+// branch's hint named one repair - "remove stale lmm-deployed files" -
+// whatever the fixable row actually was, so a misplaced plugin, which
+// --fix re-lays out, was offered a removal (#413 final review F6). The hint
+// is built from the fixable rows the run found.
+func TestDoVerify_EmptyProfile_FixHintSaysWhatFixWouldDo(t *testing.T) {
+	cmd, svc, game := setupVerifySummaryGame(t, "")
+	ctx := context.Background()
+
+	// A locally imported loose plugin, deployed into the game root where
+	// BepInEx never loads it: rows, but no checksums, so verify takes the
+	// empty-profile branch.
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, domain.SourceLocal, "loose", "1.0", "Loose.dll", []byte("dll")))
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "loose", SourceID: domain.SourceLocal, Name: "Loose", Version: "1.0", GameID: game.ID},
+		ProfileName: "default", Enabled: true,
+	}))
+	require.NoError(t, svc.NewProfileManager().AddMod(ctx, game.ID, "default",
+		domain.ModReference{SourceID: domain.SourceLocal, ModID: "loose", Version: "1.0"}))
+	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	// And a link lmm left inside a nested BepInEx/ directory.
+	stray := filepath.Join(game.ModPath, "BepInEx", "plugins", "BepInEx", "plugins", "Stray.dll")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stray), 0o755))
+	require.NoError(t, os.Symlink(svc.GetGameCache(game).GetFilePath(game.ID, domain.SourceLocal, "loose", "1.0", "Loose.dll"), stray))
+
+	text, result := verifyTally(t, cmd, svc, game)
+	require.False(t, result.HasFiles, "fixture: the empty-profile branch; findings %v", result.Findings)
+	require.NotNil(t, findingByStatus(result, "loader_deployed_outside_loader"), "findings %v", result.Findings)
+	require.NotNil(t, findingByStatus(result, "loader_nested_tree"), "findings %v", result.Findings)
+	assert.Contains(t, text, fmt.Sprintf("%d issue(s), %d warning(s) found.\n", result.Issues, result.Warnings)+
+		"Run with --fix to move plugins deployed outside BepInEx/ under it and remove the links lmm left in a nested BepInEx/ directory.\n")
+}
+
 // TestDoVerify_SuggestsFixOnlyForAFixableFinding is the same rule on the
 // branch with files: a run whose only findings are ones --fix does not
 // repair is not told to run it.
