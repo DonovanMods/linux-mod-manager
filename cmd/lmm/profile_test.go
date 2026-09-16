@@ -209,10 +209,11 @@ func TestDoProfileSwitch_AlreadyActive_PrintsMessageAndReturnsNil(t *testing.T) 
 
 // TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting guards
 // doProfileSwitch's fast path: when the target profile's mod set already
-// matches, the CLI switches the default without ever prompting (no stdin
-// interaction needed) and prints the plan header immediately followed by
-// the short "✓ Switched" message - no leading blank line, unlike the
-// mutation path's final message (see the happy-path test below).
+// matches AND is already live under the target's own rows (#430), the CLI
+// switches the default without ever prompting (no stdin interaction
+// needed) and prints the plan header immediately followed by the short
+// "✓ Switched" message - no leading blank line, unlike the mutation
+// path's final message (see the happy-path test below).
 func TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
@@ -220,6 +221,7 @@ func TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting(t *testing.T)
 	require.NoError(t, err)
 
 	seedDeployableMod(t, svc, game, "shared", "Shared Mod", "shared.esp")
+	seedLiveRowUnderProfile(t, svc, game, "other", "shared", "Shared Mod")
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
 
 	out := captureStdout(t, func() error {

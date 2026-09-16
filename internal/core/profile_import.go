@@ -224,6 +224,16 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	for _, ref := range profile.Mods {
 		key := domain.ModKey(ref.SourceID, ref.ModID)
 
+		if ref.Disabled {
+			// #431: the document says this mod belongs to the profile but
+			// is switched off. It keeps its place and its pinned version in
+			// the imported document (ImportWithOptions writes the document
+			// verbatim), and it reaches none of the four buckets below, so
+			// the import neither fetches nor deploys a mod the profile says
+			// is off. Enabling it later is what fetches it.
+			continue
+		}
+
 		if im, inTarget := targetRows[key]; inTarget {
 			switch {
 			case im.External:

@@ -252,6 +252,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A profile can say a mod is switched off (#431).** Mod references in a
+  profile file gain an optional `disabled: true` key. Disabling a mod used
+  to flip one column in the database and nothing else, so the profile
+  document — the desired state `lmm profile apply` converges to — had
+  nowhere to record it, and the intent survived nothing: a profile switch
+  overwrote the row, an export never carried it, and a rebuilt database
+  lost it. The marker is written by `lmm mod disable` and cleared by `lmm
+mod enable`, it keeps the mod's load-order position and its pinned
+  version, and it travels through `lmm profile export`/`import` and `lmm
+profile sync`. A mod marked this way is never downloaded or deployed by a
+  converge run, and a mod newly added to a profile still defaults to
+  enabled.
+
+  The key is additive in both directions. **A missing `disabled` key means
+  enabled**, which is what every profile file written by an earlier lmm
+  already says, so nothing needs migrating and nothing is rewritten on
+  read; and the key is omitted whenever it would be false, so a profile
+  file, an export and every `--json` document that carries a mod reference
+  are byte-identical to what they were before this existed until you
+  actually disable something. Editing it by hand is supported — see
+  [docs/configuration.md](docs/configuration.md#per-mod-keys).
+
 - **The game-adapter seam: one `adapter:` key in `games.yaml` (#353, #411).**
   What a game does with mod content — how an archive's files are laid out,
   which of them are configuration rather than mod content, whether its mods
@@ -1195,6 +1217,31 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **A mod two profiles share is no longer disabled by switching between
+  them (#430).** `lmm profile switch` (and the web UI's "Switch and
+  deploy…") worked out what to enable by merging the two profiles'
+  installed rows and then asking whether the mod had been enabled under the
+  profile it was switching **away from**. For a mod both profiles list the
+  answer was yes, so the switch classified it as no work at all: the
+  profile you switched **to** never got a row of its own, and the mod
+  showed as disabled — or vanished from `lmm list` entirely — while its
+  files sat deployed in the game directory. The question is now asked of
+  the target profile: a mod is enabled and deployed under the profile you
+  switched to unless that profile's own row already says both.
+
+- **A mod you disabled stays disabled across a profile switch or apply
+  (#431).** Disable a mod under one profile, switch away, switch back, and
+  it was enabled and deployed again — `lmm profile apply` and `lmm profile
+sync` each undid the intent in their own way too, sync by deleting the
+  mod's reference from the profile outright, load-order position and pinned
+  version included. All three now read the profile document's new
+  `disabled:` marker (see Added): a switch or an apply converges **to** the
+  document rather than over it, an apply undeploys a mod the document
+  turned off while the database still says otherwise, and a sync treats a
+  marked reference as intent rather than as a leftover. `lmm profile
+import` brings the marker in with the rest of the document and does not
+  download or deploy a mod it marks off.
 
 - **A NexusMods plugin folder installs into `BepInEx/plugins/`, not into the
   game root (#424).** Jotunn 2.30.0 from NexusMods extracts to a single

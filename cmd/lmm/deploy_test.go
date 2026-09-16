@@ -143,6 +143,24 @@ func seedDeployableMod(t *testing.T, svc *core.Service, game *domain.Game, modID
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
 }
 
+// seedLiveRowUnderProfile records an installed row that is already enabled
+// AND deployed under profileName, without touching the cache (the bytes are
+// usually already there under another profile). It is what "this mod is
+// already live under the target profile" looks like in the DB - the state
+// #430 made PlanProfileSwitch ask about, instead of reading the outgoing
+// profile's row and assuming it answers for the target's.
+func seedLiveRowUnderProfile(t *testing.T, svc *core.Service, game *domain.Game, profileName, modID, name string) {
+	t.Helper()
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
+		ProfileName:  profileName,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+	}))
+}
+
 // TestDoDeploy_Verbose_HappyPath_PrintsExpectedOutput guards doDeploy's
 // normal multi-mod console output end to end: the "Deploying N mod(s)
 // using METHOD..." header, one "  ✓ Name" line per mod in profile order,
