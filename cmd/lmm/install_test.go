@@ -592,6 +592,10 @@ type fakeInstallSource struct {
 	// calls SetChangelog is unaffected.
 	changelogs   map[string]string
 	changelogErr error
+
+	// beforeDownload, when set, runs as a download URL is handed out - a
+	// test's way to change the world in the middle of a flow.
+	beforeDownload func()
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
@@ -649,6 +653,9 @@ func (s *fakeInstallSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([
 	return s.files[mod.ID], nil
 }
 func (s *fakeInstallSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	if s.beforeDownload != nil {
+		s.beforeDownload()
+	}
 	s.receivedGameDownloadIDs = append(s.receivedGameDownloadIDs, mod.GameID)
 	return s.srv.URL + "/" + fileID, nil
 }

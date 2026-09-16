@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // SwitchPlan is the pure, displayable diff between the currently-active
@@ -144,6 +145,9 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		return nil, flags.unknown()
 	}
 	if flags.ambiguous() {
+		if err := s.checkActiveMarkWritable(game.ID, target, flags); err != nil {
+			return nil, err
+		}
 		return &SwitchPlan{
 			GameID: game.ID, To: target, FlagOnly: true,
 			Warnings: []string{flagOnlyPlanNotice(flags, target)},
@@ -162,6 +166,9 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 
 	if currentName == target {
 		return &SwitchPlan{GameID: game.ID, From: currentName, To: target, AlreadyActive: true}, nil
+	}
+	if err := s.checkActiveMarkWritable(game.ID, target, flags); err != nil {
+		return nil, err
 	}
 
 	// currentMods/allMods errors are ignored, matching doProfileSwitch
@@ -565,6 +572,12 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.To, plan.targetSnapshot); err != nil {
 		return result, err
 	}
+	// #445 review F5: and the profile files the switch ends by writing
+	// must still be writable, or it would leave To's files live with From
+	// still marked active.
+	if err := s.checkSwitchMarkWritable(game.ID, plan.To); err != nil {
+		return result, err
+	}
 
 	// #350's opt-in auto-snapshot, of the profile being switched AWAY from
 	// - that is the state a user would want back. After the freshness
@@ -948,6 +961,9 @@ func (s *Service) applyFlagOnlySwitch(ctx context.Context, game *domain.Game, pl
 	if !flags.ambiguous() {
 		return result, fmt.Errorf("%w: the profiles of %s mark one active profile again; plan the switch again", ErrStalePlan, game.ID)
 	}
+	if err := s.checkActiveMarkWritable(game.ID, plan.To, flags); err != nil {
+		return result, err
+	}
 	if err := s.NewProfileManager().SetDefault(ctx, game.ID, plan.To); err != nil {
 		return result, fmt.Errorf("setting default profile: %w", err)
 	}
@@ -955,4 +971,41 @@ func (s *Service) applyFlagOnlySwitch(ctx context.Context, game *domain.Game, pl
 	result.Warnings = append(result.Warnings, msg)
 	emit(WarningEvent{Scope: Scope{Op: OpSwitch}, Phase: SwitchFlagOnly, Message: msg})
 	return result, nil
+}
+
+// checkSwitchMarkWritable is checkActiveMarkWritable for the profile files
+// as they are now.
+func (s *Service) checkSwitchMarkWritable(gameID, target string) error {
+	flags, err := readProfileFlags(s.configDir, gameID)
+	if err != nil {
+		return fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+	}
+	return s.checkActiveMarkWritable(gameID, target, flags)
+}
+
+// checkActiveMarkWritable refuses a switch to target, before it changes
+// anything, when SetDefault could not then record target as the active
+// profile (#445 review F5): target's file must take `is_default: true`, and
+// every other marked profile's file must lose it. A switch that deployed
+// target and then failed that write would leave target's files live with
+// another profile still marked active - the state every guard then reads
+// wrong.
+func (s *Service) checkActiveMarkWritable(gameID, target string, flags profileFlags) error {
+	names := []string{target}
+	for _, name := range flags.flagged {
+		if name != target {
+			names = append(names, name)
+		}
+	}
+	for _, name := range names {
+		profile, err := config.LoadProfile(s.configDir, gameID, name)
+		if err != nil {
+			return err
+		}
+		profile.IsDefault = name == target
+		if err := config.CheckProfileSave(s.configDir, profile); err != nil {
+			return fmt.Errorf("cannot switch %s to %s, so nothing was changed: lmm could not record which profile is active afterwards - %w", gameID, target, err)
+		}
+	}
+	return nil
 }

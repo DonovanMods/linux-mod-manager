@@ -414,9 +414,9 @@ func TestApplyProfileSwitch_StalePlan_ReturnsErrStalePlan(t *testing.T) {
 // error-path convention: SetDefault's own failure must not discard the
 // Disabled/Enabled/Installed accounting from everything that already ran
 // before it, and must leave the previous default profile in place. The
-// target profile is deliberately never created, so both the install loop's
-// UpsertMod call and the final SetDefault call fail deterministically
-// (ErrProfileNotFound) - UpsertMod's failure is expected and non-fatal (see
+// target profile's file is made unwritable once the install loop starts, so
+// both the install loop's UpsertMod call and the final SetDefault call fail
+// deterministically - UpsertMod's failure is expected and non-fatal (see
 // TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnostics_ReturnsPartialResult
 // for a dedicated, isolated test of that same convention).
 func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefaultLastAndUnchangedOnFailure(t *testing.T) {
@@ -428,6 +428,15 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	if os.Geteuid() == 0 {
+		t.Skip("root writes a read-only file anyway")
+	}
+	// Unwritable DURING the switch: one that already is is refused before
+	// anything changes (#445 review F5).
+	targetPath := filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles", "target.yaml")
+	t.Cleanup(func() { _ = os.Chmod(targetPath, 0o644) })
 
 	seedNamedInstalledMod(t, svc, game, "src", "disable-me", "Disable Me", "1.0", true, map[string][]byte{"disable.esp": []byte("d")})
 	installer := svc.GetInstallerForTest(game)
@@ -456,16 +465,22 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "install-me", Version: "1.0"}},
 	})
 
-	sink, seen := core.RecordEvents()
+	record, seen := core.RecordEvents()
+	sink := func(e core.Event) {
+		if p, ok := e.(core.ModEvent); ok && p.Phase == core.SwitchInstallingMod {
+			require.NoError(t, os.Chmod(targetPath, 0o444))
+		}
+		record(e)
+	}
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
-	require.Error(t, err, "SetDefault must fail deterministically: target profile was never created")
+	require.Error(t, err, "SetDefault must fail deterministically: target's file became unwritable")
 	assert.Contains(t, err.Error(), "setting default profile")
 	require.NotNil(t, result, "counts/diagnostics accumulated before the fatal SetDefault error must not be discarded")
 	assert.Equal(t, 1, result.Disabled)
 	assert.Equal(t, 1, result.Enabled)
 	assert.Equal(t, 1, result.Installed)
 	assert.Empty(t, result.Notes, "#294 (Ruling 5's class extension, Task 13b): the install loop's UpsertMod failure is no longer a --verbose-only note")
-	require.Len(t, result.Warnings, 1, "the install loop's UpsertMod failure (target profile doesn't exist) must be recorded")
+	require.Len(t, result.Warnings, 1, "the install loop's UpsertMod failure (target's file is unwritable) must be recorded")
 	assert.Contains(t, result.Warnings[0], "could not update profile")
 
 	var disabledIdx, enabledIdx, installingIdx = -1, -1, -1
@@ -1756,8 +1771,22 @@ func TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnost
 	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
-	// "target" is never created, so both UpsertMod and the final SetDefault
-	// fail deterministically.
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	if os.Geteuid() == 0 {
+		t.Skip("root writes a read-only file anyway")
+	}
+	// "target" becomes unwritable once its install has started, so both
+	// UpsertMod and the final SetDefault fail deterministically. It has to
+	// happen DURING the switch: one that already is unwritable is refused
+	// before anything changes (#445 review F5).
+	targetPath := filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles", "target.yaml")
+	t.Cleanup(func() { _ = os.Chmod(targetPath, 0o644) })
+	sink := func(e core.Event) {
+		if p, ok := e.(core.ModEvent); ok && p.Phase == core.SwitchInstallingMod {
+			require.NoError(t, os.Chmod(targetPath, 0o444))
+		}
+	}
 
 	mock := newMockSourceWithDownloads("src")
 	defer mock.Close()
@@ -1774,7 +1803,7 @@ func TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnost
 		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
 	}
 
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "setting default profile")
 	require.NotNil(t, result, "the result accumulated before the fatal error must not be discarded")
@@ -1835,6 +1864,8 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenDisableLoopMods_Retur
 	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
 
 	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{"a.esp": []byte("a")})
 	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "1.0", true, map[string][]byte{"b.esp": []byte("b")})

@@ -1548,7 +1548,10 @@ import --force` over the active profile's name cleared its
     installed; switch to another profile first;
   - `lmm profile switch` and set-default mark the new profile before
     unmarking the old one, so a failed write never leaves none, and one
-    that leaves two says so.
+    that leaves two says so. A switch also checks, before it deploys
+    anything, that it can write both profile files: one it could not write
+    used to leave the new profile's files live with the old profile still
+    marked active.
 
   A game's first profile is now created active, whether by `lmm profile
 create`, `lmm profile import` or an install that makes it.
