@@ -900,6 +900,17 @@ const (
 	// (fix round 2, R9); the mod is also a DeployResult.Skipped entry.
 	// Detail is the reason, naming the command that takes it down.
 	DeployOffStillDeployed
+
+	// SourceRetrying (#436): a network request failed in a way worth
+	// retrying - a throttle, a server error, no answer - and lmm is waiting
+	// before the next attempt. The event's message is the sentence both
+	// frontends print ("Rate limited by Thunderstore; retrying in 12s
+	// (attempt 2 of 3).").
+	SourceRetrying
+	// SourceSuspended (#436): lmm is refusing to ask a host anything until
+	// a stated time - a circuit breaker after repeated failures, or a
+	// throttle that asked for a longer wait than lmm sits through.
+	SourceSuspended
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -954,6 +965,8 @@ var deployPhaseNames = [...]string{
 	IndexRefreshDone: "index_refresh_done",
 
 	DeployOffStillDeployed: "deploy_off_still_deployed",
+
+	SourceRetrying: "source_retrying", SourceSuspended: "source_suspended",
 }
 
 // String returns the phase's wire name.

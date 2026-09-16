@@ -57,6 +57,10 @@ type Notice struct {
 	Attempt     int
 	MaxAttempts int
 	Wait        time.Duration
+	// Download is set when the wait is for a FILE download rather than for
+	// a source's own metadata, so a frontend can file it under the right
+	// operation.
+	Download bool
 	// Err is the failure being retried, for a log line.
 	Err error
 

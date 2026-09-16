@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
@@ -319,4 +321,10 @@ func (s *Service) SetNestedTreeHookForTest(fn func(stage string)) {
 func (s *Service) ExecForTest(ctx context.Context, query string, args ...any) error {
 	_, err := s.db.ExecContext(ctx, query, args...)
 	return err
+}
+
+// NoticeTextAtForTest exposes noticeText with a fixed clock, so the
+// suspension sentence's "in 4m30s" is asserted rather than approximated.
+func NoticeTextAtForTest(n source.Notice, now time.Time) string {
+	return noticeText(n, now)
 }

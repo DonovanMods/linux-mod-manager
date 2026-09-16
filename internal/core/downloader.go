@@ -14,13 +14,31 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 )
 
 const (
 	defaultMaxAttempts       = 3
 	defaultInitialBackoff    = time.Second
 	defaultBackoffMultiplier = 2
+
+	// downloadMaxRetryAfter is the longest server-named wait a download
+	// sits through (#436). A throttle that asks for longer fails the
+	// download NOW, naming the wait, rather than holding a job silent for
+	// however long a CDN chose; the thunderstore source's maxRetryAfter,
+	// and its reasoning, is the same number.
+	downloadMaxRetryAfter = time.Minute
+	// downloadStallTimeout is how long a download may go without receiving
+	// a byte before its attempt fails as stalled (#436). The default
+	// client had NO timeout at all, so a body that stopped arriving held a
+	// job forever. A minute, not the index's thirty seconds: a mod archive
+	// comes from whichever CDN its source uses, some of which pause while
+	// they fetch the object from their origin.
+	downloadStallTimeout = time.Minute
 )
 
 // DownloadResult contains the outcome of a download
@@ -35,17 +53,40 @@ type DownloadResult struct {
 type Downloader struct {
 	httpClient *http.Client
 	log        *slog.Logger
+	// sleep waits out one backoff, or returns ctx's error the moment the
+	// caller gives up. A field so a test asserts the policy without
+	// spending it.
+	sleep func(context.Context, time.Duration) error
+	now   func() time.Time
 }
 
-// NewDownloader creates a new Downloader with the given HTTP client
-// If httpClient is nil, http.DefaultClient is used
+// NewDownloader creates a new Downloader with the given HTTP client. If
+// httpClient is nil, the downloader uses a client whose transport fails a
+// transfer that stops delivering bytes for downloadStallTimeout (#436),
+// over http.DefaultTransport.
 func NewDownloader(httpClient *http.Client) *Downloader {
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Transport: &httpclient.IdleTimeout{
+			Base: http.DefaultTransport, Timeout: downloadStallTimeout,
+		}}
 	}
 	return &Downloader{
 		httpClient: httpClient,
 		log:        slog.New(slog.DiscardHandler),
+		sleep:      sleepOrDone,
+		now:        time.Now,
+	}
+}
+
+// sleepOrDone waits out d, or returns ctx's error as soon as it is done.
+func sleepOrDone(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -70,6 +111,12 @@ func isRetryableHTTP(statusCode int) bool {
 func isRetryableNet(err error) bool {
 	if err == nil {
 		return false
+	}
+	// A stalled transfer is transient, and is checked FIRST: the stall
+	// guard cancels the request to unblock its read, so the error also
+	// carries a context cancellation that is not the caller's.
+	if errors.Is(err, httpclient.ErrStalled) {
+		return true
 	}
 	// Do not retry on context cancellation or deadline
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -108,24 +155,38 @@ func (d *Downloader) DownloadWithHeaders(ctx context.Context, url, destPath stri
 		}
 
 		// Check if error is retryable (including HTTP status from our wrapped error)
+		retry := source.Notice{
+			Kind: source.NoticeRetry, Source: hostOf(url), Download: true,
+			Attempt: attempt + 1, MaxAttempts: defaultMaxAttempts, Wait: backoff, Err: err,
+		}
 		var httpErr *httpStatusError
 		if errors.As(err, &httpErr) {
 			if !isRetryableHTTP(httpErr.code) {
 				return nil, err
 			}
+			retry.Status = httpErr.code
+			retry.Reason = source.RetryServerError
+			if httpErr.code == http.StatusTooManyRequests {
+				retry.Reason = source.RetryRateLimited
+			}
+			// A server-named wait is a FLOOR: coming back sooner is how a
+			// throttled client is throttled again.
+			if httpErr.retryAfter > downloadMaxRetryAfter {
+				return nil, fmt.Errorf("%w: the server asked lmm to wait %s before trying again", err, httpErr.retryAfter)
+			}
+			retry.Wait = max(retry.Wait, httpErr.retryAfter)
 		} else if ctx.Err() != nil || !isRetryableNet(err) {
 			return nil, err
+		} else {
+			retry.Reason = source.RetryNetworkError
 		}
 
-		d.log.Debug("download attempt failed; retrying", "attempt", attempt, "backoff", backoff, "err", err)
+		d.log.Debug("download attempt failed; retrying", "attempt", attempt, "backoff", retry.Wait, "err", err)
+		source.Notify(ctx, retry)
 
 		// Sleep with backoff; respect context
-		timer := time.NewTimer(backoff)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, fmt.Errorf("download: %w", ctx.Err())
-		case <-timer.C:
+		if err := d.sleep(ctx, retry.Wait); err != nil {
+			return nil, fmt.Errorf("download: %w", err)
 		}
 		backoff *= defaultBackoffMultiplier
 	}
@@ -133,10 +194,12 @@ func (d *Downloader) DownloadWithHeaders(ctx context.Context, url, destPath stri
 	return nil, lastErr
 }
 
-// httpStatusError carries an HTTP status code for retry decisions.
+// httpStatusError carries an HTTP status code for retry decisions, and the
+// wait the response asked for, if any.
 type httpStatusError struct {
-	code int
-	msg  string
+	code       int
+	msg        string
+	retryAfter time.Duration
 }
 
 // Error implements the error interface, returning the message the HTTP
@@ -220,7 +283,10 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, hea
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		httpErr := &httpStatusError{code: resp.StatusCode, msg: fmt.Sprintf("HTTP error: %d %s", resp.StatusCode, resp.Status)}
+		httpErr := &httpStatusError{
+			code: resp.StatusCode, msg: fmt.Sprintf("HTTP error: %d %s", resp.StatusCode, resp.Status),
+			retryAfter: retryAfterOf(resp.Header.Get("Retry-After"), d.now()),
+		}
 		return nil, httpErr
 	}
 
@@ -307,4 +373,31 @@ func (r *progressReader) Read(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// retryAfterOf reads a Retry-After value in either RFC 9110 form -
+// delay-seconds, or an HTTP-date judged against now. Anything unparseable,
+// negative or past is 0.
+func retryAfterOf(v string, now time.Time) time.Duration {
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		return time.Duration(max(secs, 0)) * time.Second
+	}
+	at, err := http.ParseTime(v)
+	if err != nil {
+		return 0
+	}
+	return max(at.Sub(now), 0)
+}
+
+// hostOf names the server a download is waiting on - the host, never the
+// full URL, which for an authenticated custom source carries a key.
+func hostOf(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "the download server"
+	}
+	return u.Host
 }
