@@ -266,6 +266,13 @@ func (s *Service) retainedMergeFiles(ctx context.Context, game *domain.Game, pro
 // already-absent path, matching every other uninstall in this codebase),
 // so calling it unconditionally here is safe even when no pak was ever
 // generated.
+//
+// Every branch that DEPLOYS - the rebuild, the fast path's redeploy of a
+// missing artifact, reconcile's raw-pak fallback - first asks the game's
+// adapter (deployRefusal), because the resync ends every mutation that
+// touches a merge input, including the single-step ones no Plan gates
+// (#413). A refusal comes back as this call's error and the artifact is left
+// exactly as it is; the uninstall-to-zero removal still runs.
 func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileName string) (warnings []string, err error) {
 	if game.DeployMode != domain.DeployCompile {
 		return nil, nil
@@ -330,6 +337,9 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 			// (self-healing) rather than re-merging - the inputs haven't
 			// changed, so there is nothing new to compute.
 			if _, statErr := os.Stat(deployedPath); statErr != nil {
+				if err := s.deployRefusal(ctx, game, profileName); err != nil {
+					return nil, err
+				}
 				if err := installer.Install(ctx, game, syntheticMod, profileName); err != nil {
 					return nil, fmt.Errorf("redeploying merged pak: %w", err)
 				}
@@ -357,6 +367,12 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 			}
 			return reconWarnings, nil
 		}
+	}
+
+	// A rebuild ends in a deploy: the adapter has its say before anything
+	// is compiled or committed.
+	if err := s.deployRefusal(ctx, game, profileName); err != nil {
+		return nil, err
 	}
 
 	stagePath := cachePath + ".staging"
@@ -578,6 +594,13 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				// reconcile pass retries instead of masking it.
 				if recorded && len(members) > 0 && sameMemberSet(currentMembers, members) && allMembersDeployed(game.ModPath, currentMembers) {
 					continue // already converged (raw)
+				}
+				// The raw fallback deploys: the adapter has its say before
+				// the manifest is flipped (#413), so a refusal leaves both
+				// the manifest and the game directory as they were. Rare
+				// enough - a mod falling back to raw - to ask each time.
+				if err := s.deployRefusal(ctx, game, profileName); err != nil {
+					return warnings, err
 				}
 				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, members); werr != nil {
 					return warnings, fmt.Errorf("flipping %s to raw-deploy: %w", ref, werr)
@@ -1180,6 +1203,12 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 		return s.mergedArtifactEffectWithoutCompiler(ctx, game, profileName, mod)
 	}
 	name := mc.MergedArtifactName()
+	resync := &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+	// syncMergedPak asks the adapter before it rebuilds (#413): where the
+	// adapter refuses, a resync leaves the artifact exactly as it is.
+	if s.deployRefusal(ctx, game, profileName) != nil {
+		resync = nil
+	}
 
 	sources, err := s.enabledMergeSources(ctx, game, profileName)
 	if err != nil {
@@ -1187,7 +1216,7 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 		// in hand, so answer in the safe direction (unit Q review, M6).
 		s.logger().Warn("listing enabled merge sources failed while planning an uninstall",
 			"game_id", game.ID, "profile", profileName, "err", err)
-		return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+		return resync
 	}
 	ref := mod.SourceID + ":" + mod.ID
 	contributes, remaining := false, 0
@@ -1207,7 +1236,7 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 		}
 		return nil
 	case contributes, !deployed:
-		return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+		return resync
 	default:
 		// The mod isn't itself a merge source, so removing it leaves the
 		// merge INPUTS unchanged - but syncMergedPak's fast path also needs
@@ -1217,7 +1246,7 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 		cachePath := s.GetGameCache(game).ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
 		stored, ok := readMergedFingerprint(cachePath)
 		if !ok {
-			return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+			return resync
 		}
 		current, _, cerr := s.currentMergedFingerprint(ctx, game, profileName)
 		if cerr != nil {
@@ -1226,10 +1255,10 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 			// M6): resync, never silence.
 			s.logger().Warn("computing current merge fingerprint failed while planning an uninstall",
 				"game_id", game.ID, "profile", profileName, "err", cerr)
-			return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+			return resync
 		}
 		if eq, eqErr := mergedFingerprintsEqual(current, stored, mc.ClassifyMergeSource); eqErr != nil || !eq {
-			return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+			return resync
 		}
 		return nil
 	}

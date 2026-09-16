@@ -204,3 +204,140 @@ func TestVerifyFix_TheLoaderRedeployRefusesWhereTheAdapterIsRefused(t *testing.T
 
 // refusableCompileAdapter is a compile adapter with a precondition that can
 // be switched on - the one refusal a compile game's merged-artifact resync
+// could otherwise walk past, since it resolves the compiler just fine.
+type refusableCompileAdapter struct {
+	testCompileAdapter
+	refuse *atomic.Bool
+}
+
+// CheckPreconditions implements adapter.Preconditioner.
+func (a refusableCompileAdapter) CheckPreconditions(*domain.Game, []domain.InstalledMod) error {
+	if a.refuse.Load() {
+		return errLoaderMissing
+	}
+	return nil
+}
+
+// newRefusableCompileGame is newMergedPakTestGame with the given exmodz
+// mods, their merged artifact built and deployed, and the compile adapter
+// replaced by one whose precondition the returned flag switches on.
+func newRefusableCompileGame(t *testing.T, mods ...string) (*core.Service, *domain.Game, *atomic.Bool) {
+	t.Helper()
+	ctx := context.Background()
+	svc, game, _ := newMergedPakTestGame(t)
+	for _, id := range mods {
+		seedEnabledExmodzMod(t, svc, game, "fake-compiler", id, "1.0", id+"-file", []byte(id))
+	}
+	base, err := svc.AdapterFor(game)
+	require.NoError(t, err)
+	mc, ok := adapter.Compiler(base)
+	require.True(t, ok)
+	refuse := &atomic.Bool{}
+	svc.RegisterAdapter(refusableCompileAdapter{testCompileAdapter: testCompileAdapter{MergeCompiler: mc}, refuse: refuse})
+	_, err = svc.SyncMergedPak(ctx, game, "default")
+	require.NoError(t, err)
+	requireArtifactDeployed(t, game)
+	return svc, game, refuse
+}
+
+// artifactBytes reads game's deployed merged artifact.
+func artifactBytes(t *testing.T, game *domain.Game) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(game.ModPath, mergedArtifactName))
+	require.NoError(t, err)
+	return data
+}
+
+// TestMergedArtifact_ARefusedAdapterIsNeverRebuilt: every mutation that
+// changes a merge input ends with a resync, and a resync DEPLOYS. On a
+// game whose adapter refuses, the artifact stays exactly as it was and the
+// flow says why - while removing it, which is what uninstalling the last
+// source does, still happens.
+func TestMergedArtifact_ARefusedAdapterIsNeverRebuilt(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("disable", func(t *testing.T) {
+		svc, game, refuse := newRefusableCompileGame(t, "bear-mount", "wolf-mount")
+		was := artifactBytes(t, game)
+		refuse.Store(true)
+		res, err := svc.DisableMod(ctx, game, "default", "fake-compiler", "wolf-mount")
+		require.NoError(t, err)
+		assert.Equal(t, was, artifactBytes(t, game), "the artifact was not rebuilt")
+		assert.Contains(t, joinNotes(res.Notes, res.Warnings), "install the loader first")
+	})
+
+	t.Run("reorder", func(t *testing.T) {
+		svc, game, refuse := newRefusableCompileGame(t, "bear-mount", "wolf-mount")
+		was := artifactBytes(t, game)
+		refuse.Store(true)
+		err := svc.ReorderProfileMods(ctx, game.ID, "default", []domain.ModReference{
+			{SourceID: "fake-compiler", ModID: "wolf-mount", Version: "1.0"},
+			{SourceID: "fake-compiler", ModID: "bear-mount", Version: "1.0"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, was, artifactBytes(t, game), "the artifact was not rebuilt")
+	})
+
+	t.Run("uninstall with a source left", func(t *testing.T) {
+		svc, game, refuse := newRefusableCompileGame(t, "bear-mount", "wolf-mount")
+		was := artifactBytes(t, game)
+		refuse.Store(true)
+		plan, err := svc.PlanUninstall(ctx, game, "default", "fake-compiler", "wolf-mount", core.UninstallOptions{})
+		require.NoError(t, err)
+		assert.Nil(t, plan.MergedArtifact, "the dry run says nothing happens to the artifact - the resync is refused")
+		res, err := svc.ApplyUninstall(ctx, game, plan, core.UninstallOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, was, artifactBytes(t, game))
+		assert.Contains(t, joinNotes(res.Notes, res.Warnings), "install the loader first")
+	})
+
+	t.Run("uninstall the last source", func(t *testing.T) {
+		svc, game, refuse := newRefusableCompileGame(t, "bear-mount")
+		refuse.Store(true)
+		plan, err := svc.PlanUninstall(ctx, game, "default", "fake-compiler", "bear-mount", core.UninstallOptions{})
+		require.NoError(t, err)
+		require.NotNil(t, plan.MergedArtifact)
+		assert.Equal(t, core.MergedArtifactRemove, plan.MergedArtifact.Action)
+		_, err = svc.ApplyUninstall(ctx, game, plan, core.UninstallOptions{})
+		require.NoError(t, err)
+		assert.False(t, artifactOnDisk(game), "a removal still runs")
+	})
+
+	t.Run("a missing artifact is not put back", func(t *testing.T) {
+		svc, game, refuse := newRefusableCompileGame(t, "bear-mount")
+		require.NoError(t, os.Remove(filepath.Join(game.ModPath, mergedArtifactName)))
+		refuse.Store(true)
+		_, err := svc.SyncMergedPak(ctx, game, "default")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, adapter.ErrPreconditionUnmet)
+		assert.False(t, artifactOnDisk(game), "the fast path's redeploy is a deploy too")
+	})
+
+	t.Run("verify --fix", func(t *testing.T) {
+		svc, game, refuse := newRefusableCompileGame(t, "bear-mount", "wolf-mount")
+		was := artifactBytes(t, game)
+		// Change a merge input behind lmm's back, so the artifact is stale.
+		require.NoError(t, svc.SetModEnabledForTest(ctx, "fake-compiler", "wolf-mount", game.ID, "default", false))
+		refuse.Store(true)
+		for _, fix := range []bool{false, true} {
+			report, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Fix: fix, Force: true}, nil)
+			require.NoError(t, err)
+			row := findingWithStatus(report.Result, "stale_compile")
+			require.NotNil(t, row, "fix=%t statuses: %v", fix, findingStatuses(report.Result))
+			assert.False(t, row.Fixable, "fix=%t", fix)
+			assert.Contains(t, row.FixableReason, "install the loader first", "fix=%t", fix)
+		}
+		assert.Equal(t, was, artifactBytes(t, game))
+	})
+}
+
+// joinNotes flattens a flow's diagnostics for a substring assertion.
+func joinNotes(groups ...[]string) string {
+	var out string
+	for _, g := range groups {
+		for _, s := range g {
+			out += s + "\n"
+		}
+	}
+	return out
+}
