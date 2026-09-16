@@ -232,8 +232,13 @@ function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
                     indeterminate=${taken.length > 0 && !allTaken}
                     disabled=${applicable.length === 0}
                     aria-label=${
+                      // Both names START with the visible "Select all"
+                      // (WCAG 2.5.3, label in name): someone who says what
+                      // they see must be able to reach the box. The checked
+                      // state already says the selection is full; the rest
+                      // says what a press does from here.
                       allTaken
-                        ? `Clear the selection of ${countOf(applicable.length, "mod")}`
+                        ? `Select all: all ${countOf(applicable.length, "mod")} selected, press to clear`
                         : `Select all ${countOf(applicable.length, "mod")} with an update lmm can apply`
                     }
                     onChange=${toggleSelectAll}

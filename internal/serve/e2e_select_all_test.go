@@ -69,6 +69,10 @@ func TestE2E_LibrarySelectAll_TakesTheWholeTableAndReadsPartialSelections(t *tes
 	assert.Equal(t, 3, all.Selected)
 	assert.True(t, all.Checked)
 	assert.False(t, all.Indeterminate)
+	for _, label := range []string{empty.Label, all.Label} {
+		assert.True(t, strings.HasPrefix(label, "Select"),
+			"the accessible name starts with the word the box shows, in either state (WCAG 2.5.3): %q", label)
+	}
 	assert.Contains(t, all.BatchText, "3 of 3 selected",
 		"the batch bar states the size of what is about to happen, so \"Update 40 mods\" is never a surprise")
 
@@ -241,6 +245,8 @@ func TestE2E_UpdatesCardSelectAll_SkipsTheRowsWithNoCheckbox(t *testing.T) {
 	assert.Equal(t, 1, state.Boxes, "only one of them is applicable, so only one has a checkbox")
 	assert.Equal(t, 1, state.Selected, "and select-all takes exactly that one")
 	assert.Contains(t, state.Label, "1")
+	assert.True(t, strings.HasPrefix(state.Label, "Select all"),
+		"with every applicable row taken, the name still starts with the visible \"Select all\" (WCAG 2.5.3): %q", state.Label)
 	assert.Contains(t, state.Button, "1",
 		"the button states how many mods it is about to update")
 	assert.Empty(t, f.BrowserErrors())

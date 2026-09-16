@@ -693,9 +693,10 @@ export function Library({
   // accessible name says the NUMBER because that is the surprise the issue
   // is about - "Update 40 mods" should never be the first time you learn
   // there were forty - and it names the direction, because the same control
-  // clears the selection once it is full.
+  // clears the selection once it is full. Both start with the visible word
+  // (WCAG 2.5.3, label in name), as the Updates card's box does.
   const selectAllLabel = allTaken
-    ? `Clear the selection of ${countOf(selectable.length, "mod")}`
+    ? `Select all: all ${countOf(selectable.length, "mod")} in view selected, press to clear`
     : `Select all ${countOf(selectable.length, "mod")} in view`;
   // The one thing the count alone cannot explain: rows that are on screen
   // and deliberately not taken.
