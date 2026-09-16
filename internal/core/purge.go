@@ -268,17 +268,14 @@ func (s *Service) PlanPurge(ctx context.Context, game *domain.Game, profileName 
 	// staleness precondition is about the profile changing underneath the
 	// plan, which an external mod appearing or vanishing absolutely is.
 	mods, external := partitionExternal(installed)
-	snapshot, err := s.snapshotOf(game.ID, installed)
-	if err != nil {
-		return nil, err
-	}
 	plan := &PurgePlan{
 		Profile:        profileName,
 		Mods:           mods,
 		External:       external,
 		Uninstall:      opts.Uninstall,
 		MergedArtifact: s.mergedArtifactEffectForPurge(game),
-		snapshot:       snapshot,
+		// A removal: the adapter has no say (removalSnapshotOf).
+		snapshot: removalSnapshotOf(installed),
 	}
 	if len(mods) > 0 {
 		plan.Hooks = uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)
@@ -304,7 +301,7 @@ func (s *Service) ApplyPurge(ctx context.Context, game *domain.Game, plan *Purge
 	if plan == nil {
 		return &PurgeResult{}, errors.New("purge plan is nil: call PlanPurge first")
 	}
-	if err := s.checkPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
+	if err := s.checkRemovalPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
 		return &PurgeResult{}, err
 	}
 	return s.purgeProfile(ctx, game, plan.Profile, plan.Mods, opts, sink)

@@ -98,9 +98,10 @@ func (s *Service) checkAdapterPreconditions(gameID string, mods []domain.Install
 // #353: it is ALSO where the game adapter's precondition is checked, which
 // is why it is a method taking a gameID rather than a free function. Every
 // installedSnapshot in core is built here - by currentInstalledSnapshot for
-// the Plans that re-read the set, and directly by the eight that already
+// the Plans that re-read the set, and directly by the ones that already
 // hold it - so a Plan cannot acquire its freshness precondition without the
-// adapter having had its say. Checking in only one of the two constructors
+// adapter having had its say. The two removal flows are the one deliberate
+// exception, and removalSnapshotOf says why. Checking in only one of the two constructors
 // is exactly the bug this shape closes (I4): `lmm deploy` used to render a
 // clean plan that its own Apply then refused.
 //
@@ -110,11 +111,29 @@ func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (install
 	if err := s.checkAdapterPreconditions(gameID, mods); err != nil {
 		return nil, err
 	}
+	return removalSnapshotOf(mods), nil
+}
+
+// removalSnapshotOf is snapshotOf WITHOUT the adapter's say, for the two
+// flows that only take things away: `lmm purge` and `lmm uninstall`
+// (#413 final review F4).
+//
+// A removal undoes what lmm recorded deploying - the cache entry's
+// listing, or the deployed_files rows - and needs no layout to do it: the
+// Installer they use already falls back to plain removal when the adapter
+// will not resolve. Asking the adapter anyway made its refusal a trap. A
+// game every deploy-direction flow refuses (an explicit `adapter: bepinex`
+// off the game root, an unknown adapter) is exactly the game whose way
+// out starts with a purge, and the purge was refused with the very message
+// telling the user to run it. A precondition an adapter might one day
+// impose ("install the loader first") has the same shape: nothing about
+// removing lmm's own files depends on it.
+func removalSnapshotOf(mods []domain.InstalledMod) installedSnapshot {
 	snap := make(installedSnapshot, len(mods))
 	for _, m := range mods {
 		snap[domain.ModKey(m.SourceID, m.ID)] = fmt.Sprintf("%s|%t", m.Version, m.Enabled)
 	}
-	return snap, nil
+	return snap
 }
 
 // checkPlanFresh re-derives gameID/profileName's CURRENT installed-mod
@@ -126,6 +145,22 @@ func (s *Service) checkPlanFresh(ctx context.Context, gameID, profileName string
 	if err != nil {
 		return err
 	}
+	return staleUnless(got, want, gameID, profileName)
+}
+
+// checkRemovalPlanFresh is checkPlanFresh for a plan built by
+// removalSnapshotOf: the same comparison, and the same freedom from the
+// adapter's refusal the plan had.
+func (s *Service) checkRemovalPlanFresh(ctx context.Context, gameID, profileName string, want installedSnapshot) error {
+	mods, err := s.GetInstalledMods(ctx, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("loading installed mods: %w", err)
+	}
+	return staleUnless(removalSnapshotOf(mods), want, gameID, profileName)
+}
+
+// staleUnless is the freshness verdict both checks share.
+func staleUnless(got, want installedSnapshot, gameID, profileName string) error {
 	if !maps.Equal(got, want) {
 		return fmt.Errorf("%w: %s/%s", ErrStalePlan, gameID, profileName)
 	}

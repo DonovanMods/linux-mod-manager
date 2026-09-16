@@ -451,8 +451,11 @@ func (s *Service) adapterForName(game *domain.Game, name string) (adapter.GameAd
 		}
 	}
 	if game.Adapter == bepinexAdapterID && !modPathIsGameRoot(game) {
-		return nil, fmt.Errorf("game %q sets adapter: bepinex but its mod_path (%s) is not its install path; BepInEx archives are laid out relative to the game root, so set mod_path to %s or choose another adapter",
-			game.ID, game.ModPath, game.InstallPath)
+		// Both ways out, each in the order that works: the purge that
+		// starts the first one is a removal, which this refusal does not
+		// block (removalSnapshotOf).
+		return nil, fmt.Errorf("game %q sets adapter: bepinex but its mod_path (%s) is not its install path, and a BepInEx layout is relative to the game root. %s%s; or, to deploy archives into %s exactly as packaged, run `lmm game edit %s --adapter generic-files`",
+			game.ID, game.ModPath, bepinexEnableLead, strings.Join(bepinexEnableSteps(game), ", then "), game.ModPath, game.ID)
 	}
 	return a, nil
 }

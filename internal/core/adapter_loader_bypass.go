@@ -211,18 +211,39 @@ func (b loaderBypass) consequence() string {
 // so its remedy is conditional on the game not compiling its mods.
 func (b loaderBypass) enableRemedy() string {
 	id := b.game.ID
-	compile := b.game.DeployMode == domain.DeployCompile
-	explicit := b.game.Adapter != ""
-	gameRoot := modPathIsGameRoot(b.game)
-
-	if gameRoot && explicit && !compile {
+	if modPathIsGameRoot(b.game) && b.game.Adapter != "" && b.game.DeployMode != domain.DeployCompile {
 		return fmt.Sprintf("Run `lmm game edit %s --adapter bepinex` to have lmm lay BepInEx archives out", id)
 	}
+	lead := bepinexEnableLead
+	if b.game.DeployMode == domain.DeployCompile {
+		lead = fmt.Sprintf("`deploy_mode: compile` needs an adapter that compiles, which bepinex is not; if %s does not compile its mods, then to have lmm lay BepInEx archives out, ", id)
+	}
+	return lead + strings.Join(bepinexEnableSteps(b.game), ", then ")
+}
+
+// bepinexEnableLead opens a remedy built from bepinexEnableSteps.
+const bepinexEnableLead = "To have lmm lay BepInEx archives out, "
+
+// bepinexEnableSteps lists, in the only order that works, the changes that
+// take game to a configuration the bepinex adapter lays out: the steps
+// enableRemedy offers, and the ones AdapterFor's refusal of an explicit
+// `adapter: bepinex` off the game root gives (#413 final review F4) - one
+// list, so the two can never disagree about the order.
+//
+// The purge comes FIRST whenever the mod_path moves. lmm records a
+// deployed file relative to the mod_path it was deployed under, so a purge
+// after the move looks for every file in the wrong place and leaves the
+// real ones behind, live and unrecorded - and a BepInEx/-rooted archive's
+// copy under the old mod_path is a second, nested BepInEx/ tree that
+// BepInEx scans for plugins.
+func bepinexEnableSteps(game *domain.Game) []string {
+	id := game.ID
+	compile := game.DeployMode == domain.DeployCompile
+	explicit := game.Adapter != ""
+	gameRoot := modPathIsGameRoot(game)
 
 	var steps []string
 	if !gameRoot {
-		// Before the mod_path moves, so nothing stays deployed under the
-		// old one with no row left pointing at it.
 		steps = append(steps, fmt.Sprintf("run `lmm purge --game %s`", id))
 	}
 	var yamlEdits []string
@@ -235,11 +256,13 @@ func (b loaderBypass) enableRemedy() string {
 	}
 	where := " from games.yaml"
 	if !gameRoot {
-		yamlEdits = append(yamlEdits, fmt.Sprintf("set its mod_path to %s", b.game.InstallPath))
+		yamlEdits = append(yamlEdits, fmt.Sprintf("set its mod_path to %s", game.InstallPath))
 		where = " in games.yaml"
 	}
-	steps = append(steps, strings.Join(yamlEdits, " and ")+where)
-	if !compile && explicit {
+	if len(yamlEdits) > 0 {
+		steps = append(steps, strings.Join(yamlEdits, " and ")+where)
+	}
+	if !compile && explicit && game.Adapter != bepinexAdapterID {
 		// After the mod_path edit: AdapterFor refuses bepinex off the game
 		// root, so the other order fails.
 		steps = append(steps, fmt.Sprintf("run `lmm game edit %s --adapter bepinex`", id))
@@ -250,12 +273,7 @@ func (b loaderBypass) enableRemedy() string {
 		// once the game resolves to bepinex.
 		steps = append(steps, fmt.Sprintf("run `lmm deploy --game %s` and `lmm verify --fix --game %s`, which moves what is already imported under BepInEx/", id, id))
 	}
-
-	lead := "To have lmm lay BepInEx archives out, "
-	if compile {
-		lead = fmt.Sprintf("`deploy_mode: compile` needs an adapter that compiles, which bepinex is not; if %s does not compile its mods, then to have lmm lay BepInEx archives out, ", id)
-	}
-	return lead + strings.Join(steps, ", then ")
+	return steps
 }
 
 // acknowledgement is the other way out of a contradiction: keep the game on

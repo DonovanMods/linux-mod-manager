@@ -8,6 +8,12 @@ package core_test
 // snapshot with the free function snapshotOf and skipped it entirely. So
 // `lmm deploy` rendered a clean plan for a game whose loader was missing
 // and its own Apply then refused - the single most-used flow.
+//
+// The two REMOVAL flows are the deliberate exception (#413 final review
+// F4): purge and uninstall take away what lmm recorded deploying, which no
+// adapter fact can make unsafe, and they are the first step out of every
+// state an adapter refuses. TestRemovalPlansIgnoreTheAdapterPrecondition
+// pins that half.
 
 import (
 	"context"
@@ -74,10 +80,6 @@ func TestEveryPlanChecksTheAdapterPrecondition(t *testing.T) {
 			_, err := svc.PlanSnapshotRestore(context.Background(), g, fx.snapshotName)
 			return err
 		}},
-		{"PlanPurge", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanPurge(context.Background(), g, "default", core.PurgeOptions{})
-			return err
-		}},
 		{"PlanInstall", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 			_, err := svc.PlanInstall(context.Background(), g, "default", "acme", "m2", false)
 			return err
@@ -97,10 +99,6 @@ func TestEveryPlanChecksTheAdapterPrecondition(t *testing.T) {
 		}},
 		{"PlanImport", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 			_, err := svc.PlanImport(context.Background(), g, fx.profileDoc)
-			return err
-		}},
-		{"PlanUninstall", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
-			_, err := svc.PlanUninstall(context.Background(), g, "default", "acme", "m1", core.UninstallOptions{})
 			return err
 		}},
 		{"PlanUpdate", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
@@ -142,6 +140,34 @@ func TestEveryPlanChecksTheAdapterPrecondition(t *testing.T) {
 			assert.Contains(t, typed.Reason, "install the loader first")
 		})
 	}
+}
+
+// TestRemovalPlansIgnoreTheAdapterPrecondition: a purge or an uninstall
+// under the same refusing adapter plans AND applies, and removes what was
+// deployed. A refusal here would leave the user no lmm command that
+// undoes a deployment before they change the configuration the adapter
+// objects to.
+func TestRemovalPlansIgnoreTheAdapterPrecondition(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("purge", func(t *testing.T) {
+		svc, game, _ := newPreconditionFixture(t)
+		plan, err := svc.PlanPurge(ctx, game, "default", core.PurgeOptions{})
+		require.NoError(t, err)
+		res, err := svc.ApplyPurge(ctx, game, plan, core.PurgeOptions{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.Purged)
+	})
+
+	t.Run("uninstall", func(t *testing.T) {
+		svc, game, _ := newPreconditionFixture(t)
+		plan, err := svc.PlanUninstall(ctx, game, "default", "acme", "m1", core.UninstallOptions{})
+		require.NoError(t, err)
+		_, err = svc.ApplyUninstall(ctx, game, plan, core.UninstallOptions{})
+		require.NoError(t, err)
+		_, err = svc.GetInstalledMod(ctx, "acme", "m1", game.ID, "default")
+		assert.Error(t, err, "the record is gone")
+	})
 }
 
 type planFixture struct {
