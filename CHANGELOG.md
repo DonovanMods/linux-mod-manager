@@ -261,6 +261,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than a size per platform, and it is a filled tile so it reads on a
   light and a dark tab strip alike.
 
+- **Every mod says whether it has been verified, and Verify is on screen
+  (#418).** A library row carried a ⚠ when something was wrong and nothing
+  at all otherwise — so "checked, fine" and "never checked" looked the same,
+  which are opposite things to be told about your install. Each row now
+  carries its own health badge in all three states (verified and clean, _N_
+  findings, not verified yet), the slide-over states the same thing in
+  words, and **Verify** sits in the library header — where it is reachable
+  on a healthy profile, which is exactly when the Health card is not there
+  to ask. A row's ⋯ menu offers **Verify** and, for a mod with findings,
+  **Repair…** scoped to that mod.
+
 - **Updating a mod — or all of them — is something you can see (#417).** The
   web UI could already do both, and neither read as _the_ update action: the
   Updates card needed rows ticked first, the batch bar only exists once they

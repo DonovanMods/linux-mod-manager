@@ -1301,6 +1301,19 @@ select {
   color: var(--accent);
 }
 
+/* The slide-over's own health line (issue 418). Muted by default - a mod
+ * that is fine, or that nothing has checked yet, is not news - and coloured
+ * only for the state that is. */
+.slide-over__health {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.slide-over__health[data-health="issues"] {
+  color: var(--warn);
+}
+
 .mod-row__live {
   display: block;
   color: var(--accent);

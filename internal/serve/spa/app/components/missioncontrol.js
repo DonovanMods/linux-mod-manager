@@ -61,6 +61,11 @@ export function MissionControl({ state, onThemeChange, actions }) {
         updates?.updates ?? [],
         health?.result?.findings ?? [],
         conflicts?.conflicts ?? [],
+        // issue 418: whether the verify has actually run. A failed or
+        // not-yet-landed /api/v1/health read leaves findings empty, which is
+        // indistinguishable from a clean bill of health unless the rows are
+        // told which it is.
+        Boolean(health?.result),
       ),
     [mods, updates, health, conflicts],
   );

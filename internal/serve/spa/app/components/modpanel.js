@@ -20,6 +20,7 @@ import { exitMillis } from "../motion.js";
 import { navigate } from "../router.js";
 import { getModDetail, ApiError } from "../api.js";
 import { findingLabel } from "../verify.js";
+import { healthLabel } from "../modrows.js";
 import { pendingToggleLabel, usePendingToggles } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { InlineJob } from "./jobprogress.js";
@@ -388,6 +389,22 @@ export function ModPanel({
         </p>
 
         ${row.external && html`<${ManagedBySteam} row=${row} />`}
+        ${
+          // issue 418: this mod's health, in every state rather than only
+          // the bad one. The Findings section below renders when there ARE
+          // findings; until this line there was no way to tell a mod that
+          // had been checked and was fine from one nothing had looked at -
+          // both rendered as the absence of a section. Built as ONE string,
+          // since htm collapses the whitespace between adjacent
+          // interpolations (modrows.js#lockedNote documents the trap).
+          html`<p
+            class="slide-over__health"
+            data-testid="mod-health"
+            data-health=${row.healthState}
+          >
+            ${`Health: ${healthLabel(row)}`}
+          </p>`
+        }
 
         <${ModSettingsControls}
           row=${row}

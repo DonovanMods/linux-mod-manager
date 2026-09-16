@@ -18,6 +18,8 @@ import {
   formatDate,
   countExternal,
   countOf,
+  healthBadge,
+  healthLabel,
   modKey,
   FILTER_NAMES,
   SORT_NAMES,
@@ -99,6 +101,16 @@ function modOrigin(row, action) {
 // can plan different sets must not share one origin, or one of them morphs
 // into a job it did not start.
 const UPDATE_ALL_ORIGIN = "library:update-all";
+
+// healthBadgeTone maps issue 418's three health states onto the badge
+// classes that already exist. "unknown" takes the plain badge deliberately:
+// not having looked yet is not a warning, and colouring it as one would
+// make a fresh page load read as a problem.
+function healthBadgeTone(row) {
+  if (row.healthState === "issues") return "badge--warn";
+  if (row.healthState === "ok") return "badge--good";
+  return "";
+}
 
 // nonTextInputTypes are the <input> types that take no typing: a keystroke
 // aimed at one of these is a command, not a character.
@@ -356,11 +368,13 @@ export function Library({
     });
   }
 
-  // checking is this control's own acknowledgment (the lesson of issue 432,
-  // applied where it is needed next): an update check is a live source read
-  // per mod, so a button that did nothing visible until the whole fan-out
-  // came back would read as a button that did nothing.
+  // checking/verifying are these controls' own acknowledgment (the lesson of
+  // issue 432, applied where it is needed next): an update check is a live
+  // source read per mod and a full verify walks every deployed file, so a
+  // button that did nothing visible until the whole thing came back would
+  // read as a button that did nothing.
   const [checking, setChecking] = useState(false);
+  const [verifying, setVerifying] = useState(false);
 
   async function checkForUpdates() {
     setChecking(true);
@@ -368,6 +382,22 @@ export function Library({
       await actions.refreshUpdates();
     } finally {
       setChecking(false);
+    }
+  }
+
+  // issue 418: the library header's Verify. It is the SAME whole-profile
+  // check the Health card's own button runs (actions.reloadHealth sends
+  // ?force=1, opting out of core's unchanged-installation memo) - the
+  // difference is that this one is on screen even when there is nothing
+  // wrong, which is precisely when "is my install OK?" has no other answer:
+  // an attention card renders only when it has something to say, so a
+  // healthy profile had no verify control anywhere.
+  async function verifyAll() {
+    setVerifying(true);
+    try {
+      await actions.reloadHealth();
+    } finally {
+      setVerifying(false);
     }
   }
 
@@ -487,6 +517,49 @@ export function Library({
         >
           ${row.locked ? "Unlock" : "Lock"}
         </button>
+        ${
+          // issue 418: the per-row half of "is this mod OK?". Verify is the
+          // whole-profile check - lmm has no per-mod verify, and the title
+          // says so rather than letting the menu imply one - but it is
+          // offered from the row because the row is where the question gets
+          // asked, and the row's own badge is what answers it.
+          html`<button
+            type="button"
+            class="row-menu__item"
+            data-action="row-verify"
+            title="Re-checks every mod in this profile — lmm verifies a profile as a whole"
+            onClick=${() => {
+              setMenuKey(null);
+              verifyAll();
+            }}
+          >
+            Verify
+          </button>`
+        }
+        ${
+          // Repair, on the other hand, IS per-mod: verify_fix takes a
+          // mod_filter, which is the same plan the Health card's own
+          // per-finding Repair opens - and the same origin, so whichever
+          // surface is on screen shows the job.
+          row.hasHealthIssue &&
+          html`<button
+            type="button"
+            class="row-menu__item"
+            data-action="row-repair"
+            onClick=${() => {
+              setMenuKey(null);
+              actions.openPlan({
+                kind: "verify_fix",
+                origin: `health:${row.id}:repair`,
+                title: `Repair ${row.name}`,
+                confirmLabel: "Repair",
+                options: { mod_filter: row.id },
+              });
+            }}
+          >
+            Repair…
+          </button>`
+        }
         ${
           row.convert_paks !== null &&
           row.convert_paks !== undefined &&
@@ -694,6 +767,16 @@ export function Library({
         <button
           type="button"
           class="button button--small"
+          data-action="verify"
+          disabled=${verifying}
+          aria-busy=${verifying ? "true" : null}
+          onClick=${verifyAll}
+        >
+          ${verifying ? "Verifying…" : "Verify"}
+        </button>
+        <button
+          type="button"
+          class="button button--small"
           data-action="reorder"
           onClick=${openReorder}
         >
@@ -881,11 +964,18 @@ export function Library({
                             >`
                           }
                           ${
-                            row.hasHealthIssue &&
+                            // issue 418: the row says its health state
+                            // WHICHEVER state it is in. It used to carry a
+                            // ⚠ when something was wrong and nothing at all
+                            // otherwise - so "no badge" meant both "checked,
+                            // fine" and "never checked", which are opposite
+                            // things to tell someone about their install.
                             html`<span
-                              class="badge badge--warn"
-                              title="Health issue"
-                              >⚠</span
+                              class="badge ${healthBadgeTone(row)}"
+                              data-testid="row-health"
+                              data-health=${row.healthState}
+                              title=${healthLabel(row)}
+                              >${healthBadge(row)}</span
                             >`
                           }
                           ${

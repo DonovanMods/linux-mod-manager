@@ -17,6 +17,37 @@ export function modKey(mod) {
   return `${mod.source_id}:${mod.id}`;
 }
 
+/** healthStateLabels is what each of buildRows' healthState values says
+ * (issue 418), as {badge, text}: the badge is what fits in the library's
+ * badge column, the text is the sentence the slide-over and the badge's own
+ * title use. One table, because the row and the panel saying this
+ * differently is the drift verify.js#findingLabel already exists to prevent
+ * one level down. */
+const healthStateLabels = {
+  ok: { badge: "✓", text: "Verified — no issues found" },
+  issues: { badge: "⚠", text: "health findings" },
+  unknown: { badge: "?", text: "Not verified yet" },
+};
+
+/** healthLabel is one row's health state in words: the count is folded in
+ * for the "issues" state, since "2 health findings" is the whole of what
+ * that state means to a reader. */
+export function healthLabel(row) {
+  const entry =
+    healthStateLabels[row?.healthState] ?? healthStateLabels.unknown;
+  if (row?.healthState === "issues") {
+    return countOf(row.findingCount, "health finding");
+  }
+  return entry.text;
+}
+
+/** healthBadge is the same state as the one glyph the library's badge column
+ * has room for. */
+export function healthBadge(row) {
+  return (healthStateLabels[row?.healthState] ?? healthStateLabels.unknown)
+    .badge;
+}
+
 /** countOf is "12 mods"/"1 mod" - a count and its noun, agreeing (issue
  * 434: every select-all surface has to state the size of what it is about
  * to take, and each one was spelling the agreement by hand).
@@ -82,14 +113,21 @@ export const EXTERNAL_UPDATE_NOTE = "Steam applies this itself";
  *     assumption the finding itself already makes.
  *   - conflicts: core.ConflictReport's "conflicts" array (core.
  *     ProfileConflict), matched by the owner/also_in ConflictModRef keys.
+ *   - verified: whether a core.VerifyResult exists at all (issue 418).
+ *     Without it "no findings for this mod" is ambiguous between "checked,
+ *     nothing wrong" and "never checked", and those are opposite things to
+ *     tell someone about their install. An absent or failed /api/v1/health
+ *     read is the second.
  */
-export function buildRows(mods, updates, findings, conflicts) {
+export function buildRows(mods, updates, findings, conflicts, verified) {
   const updateByKey = new Map(
     (updates ?? []).map((u) => [modKey(u.installed_mod), u]),
   );
-  const unhealthyIDs = new Set(
-    (findings ?? []).filter((f) => f.status !== "ok").map((f) => f.mod_id),
-  );
+  const problems = new Map();
+  for (const f of findings ?? []) {
+    if (f.status === "ok") continue;
+    problems.set(f.mod_id, (problems.get(f.mod_id) ?? 0) + 1);
+  }
   const conflictKeys = new Set();
   for (const c of conflicts ?? []) {
     conflictKeys.add(c.owner.key);
@@ -119,7 +157,16 @@ export function buildRows(mods, updates, findings, conflicts) {
       // the flag verbatim from domain.InstalledMod so the badge, the hidden
       // actions and the deployable counts all read one fact.
       isExternal: Boolean(mod.external),
-      hasHealthIssue: unhealthyIDs.has(mod.id),
+      hasHealthIssue: problems.has(mod.id),
+      // issue 418: the three states a reader needs to tell apart, plus the
+      // number behind the middle one. "unknown" is NOT a failure - it is the
+      // honest answer before the first verify of a session has landed.
+      healthState: !verified
+        ? "unknown"
+        : problems.has(mod.id)
+          ? "issues"
+          : "ok",
+      findingCount: problems.get(mod.id) ?? 0,
       hasConflict: conflictKeys.has(key),
     };
   });
