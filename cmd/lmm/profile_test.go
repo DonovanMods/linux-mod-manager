@@ -127,6 +127,27 @@ func TestDoProfileList_PlainTable(t *testing.T) {
 	assert.Equal(t, "NAME      MODS  DEFAULT\n----      ----  -------\ndefault   1     *\nsurvival  0     \n", out)
 }
 
+// TestDoProfileList_WarnsWithoutExactlyOneActiveProfile is #446: a game
+// whose profile files mark none of them active (or several) is reported on
+// stderr, and the table itself is unchanged.
+func TestDoProfileList_WarnsWithoutExactlyOneActiveProfile(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+	path := filepath.Join(configDir, "games", game.ID, "profiles", "survival.yaml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, append(data, []byte("is_default: true\n")...), 0o644))
+
+	stdout, stderr, err := captureStdoutAndStderr(t, func() error {
+		return doProfileList(context.Background(), svc, game)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "NAME      MODS  DEFAULT\n----      ----  -------\ndefault   0     *\nsurvival  0     *\n", stdout)
+	assert.Equal(t, "Warning: profiles default, survival of g1 are all marked active (is_default: true), so lmm treats \"default\" as active - run `lmm profile switch <name>` to keep one\n", stderr)
+}
+
 // TestDoProfileList_JSON pins the ProfileListing document's framing (one
 // document, empty stderr) and its recorded golden.
 func TestDoProfileList_JSON(t *testing.T) {

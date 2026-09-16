@@ -151,6 +151,12 @@ var ErrProfileExists = errors.New("profile already exists")
 // another profile live.
 var ErrProfileNotActive = errors.New("profile is not active")
 
+// ErrProfileActive is returned when deleting the game's active profile
+// (#446): its mods are the ones in the game directory, and deleting its
+// file would leave them there with no profile claiming them and the game
+// with no active profile. The error names `lmm profile switch`.
+var ErrProfileActive = errors.New("profile is active")
+
 // ErrConfirmationRequired is returned by a frontend-facing entry point that
 // would have to prompt but cannot - the CLI's --json mode, which never reads
 // stdin (Ruling 2). The decision must come from a flag instead.

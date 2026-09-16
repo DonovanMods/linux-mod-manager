@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -136,6 +137,12 @@ func (s *Service) ListProfileNames(ctx context.Context, gameID string) (*Profile
 type ProfileListing struct {
 	GameID   string           `json:"game_id"`
 	Profiles []ProfileSummary `json:"profiles"`
+	// Warnings reports a game whose profiles do not mark exactly one of
+	// them active (`is_default: true`) - none, or several, which only a
+	// hand edit or a failed write leaves (#446). Every flow then treats the
+	// first such profile (or the first profile) as active; the warning
+	// names it and the command that settles it. No entry carries a prefix.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ListProfiles returns gameID's profiles as ProfileSummary rows, in
@@ -148,8 +155,23 @@ func (s *Service) ListProfiles(ctx context.Context, gameID string) (*ProfileList
 		return nil, err
 	}
 	listing := &ProfileListing{GameID: gameID}
+	var flagged []string
 	for _, p := range profiles {
 		listing.Profiles = append(listing.Profiles, ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault})
+		if p.IsDefault {
+			flagged = append(flagged, p.Name)
+		}
+	}
+	switch {
+	case len(profiles) == 0 || len(flagged) == 1:
+	case len(flagged) == 0:
+		listing.Warnings = append(listing.Warnings, fmt.Sprintf(
+			"no profile of %s is marked active (is_default: true), so lmm treats %q as active - run `lmm profile switch <name>` to choose one",
+			gameID, profiles[0].Name))
+	default:
+		listing.Warnings = append(listing.Warnings, fmt.Sprintf(
+			"profiles %s of %s are all marked active (is_default: true), so lmm treats %q as active - run `lmm profile switch <name>` to keep one",
+			strings.Join(flagged, ", "), gameID, flagged[0]))
 	}
 	return listing, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -90,15 +91,28 @@ func (pm *ProfileManager) Create(ctx context.Context, gameID, name string) (*dom
 // existence check on purpose: Create's "profile already exists" error is
 // right for standalone profile creation, but wrong for a
 // create-or-repair call site.
+//
+// The reset profile is the game's active one unless another profile
+// already is (#446): re-configuring a game whose user has switched to
+// another profile must not leave two profiles marked `is_default`.
 func (pm *ProfileManager) CreateOrResetDefault(ctx context.Context, gameID string) (*domain.Profile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
+	// The path is checked first, so an unusable game id reads as exactly
+	// that rather than as a listing failure.
+	if _, err := config.ProfilePath(pm.configDir, gameID, "default"); err != nil {
+		return nil, err
+	}
+	others, err := pm.List(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
 	profile := &domain.Profile{
 		Name:      "default",
 		GameID:    gameID,
-		IsDefault: true,
+		IsDefault: !slices.ContainsFunc(others, func(p *domain.Profile) bool { return p.IsDefault && p.Name != "default" }),
 	}
 	if err := config.SaveProfile(pm.configDir, profile); err != nil {
 		return nil, err
@@ -181,13 +195,53 @@ func (pm *ProfileManager) Get(ctx context.Context, gameID, name string) (*domain
 	return loadProfile(pm.configDir, gameID, name)
 }
 
-// Delete removes a profile
+// Delete removes a profile. The game's active profile is refused with
+// ErrProfileActive (#446) - its mods are the ones in the game directory, and
+// without its file the game has no active profile - unless it is the game's
+// only profile and nothing is installed under it.
 func (pm *ProfileManager) Delete(ctx context.Context, gameID, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
+	if err := pm.refuseDeletingActive(ctx, gameID, name); err != nil {
+		return err
+	}
 	return config.DeleteProfile(pm.configDir, gameID, name)
+}
+
+// refuseDeletingActive is Delete's #446 guard.
+func (pm *ProfileManager) refuseDeletingActive(ctx context.Context, gameID, name string) error {
+	live, err := pm.liveProfile(ctx, gameID)
+	if err != nil || live != name {
+		return err
+	}
+	names, err := config.ListProfiles(pm.configDir, gameID)
+	if err != nil {
+		return err
+	}
+	installed, err := pm.db.GetInstalledMods(ctx, gameID, name)
+	if err != nil {
+		return err
+	}
+	if len(names) <= 1 && len(installed) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %q is the active profile of %s, and its mods are the ones in the game directory - switch to another profile first (`lmm profile switch <name>`), then delete it",
+		ErrProfileActive, name, gameID)
+}
+
+// liveProfile is Service.liveProfile for a caller holding only a
+// ProfileManager.
+func (pm *ProfileManager) liveProfile(ctx context.Context, gameID string) (string, error) {
+	profile, err := pm.GetDefault(ctx, gameID)
+	if errors.Is(err, domain.ErrProfileNotFound) {
+		return "default", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+	}
+	return profile.Name, nil
 }
 
 // Rename renames gameID's profile oldName to newName, moving everything
@@ -302,7 +356,12 @@ func (pm *ProfileManager) refuseOccupiedName(ctx context.Context, gameID, name s
 	return nil
 }
 
-// SetDefault sets a profile as the default for a game
+// SetDefault makes name gameID's active profile: its file says
+// `is_default: true`, and no other profile's does.
+//
+// name is marked FIRST (#446), so a write that fails leaves the game with
+// the active profile it had rather than with none. A profile that then
+// cannot be unmarked leaves two, and the error names it.
 func (pm *ProfileManager) SetDefault(ctx context.Context, gameID, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -313,25 +372,28 @@ func (pm *ProfileManager) SetDefault(ctx context.Context, gameID, name string) e
 	if err != nil {
 		return err
 	}
-
-	// Clear default flag on all other profiles
 	profiles, err := pm.List(ctx, gameID)
 	if err != nil {
 		return err
+	}
+
+	if !profile.IsDefault {
+		profile.IsDefault = true
+		if err := config.SaveProfile(pm.configDir, profile); err != nil {
+			return err
+		}
 	}
 
 	for _, p := range profiles {
 		if p.IsDefault && p.Name != name {
 			p.IsDefault = false
 			if err := config.SaveProfile(pm.configDir, p); err != nil {
-				return fmt.Errorf("clearing default on %s: %w", p.Name, err)
+				return fmt.Errorf("made %q the active profile, but could not clear is_default on %q, so both are marked active - fix or remove %q's is_default by hand: %w",
+					name, p.Name, p.Name, err)
 			}
 		}
 	}
-
-	// Set this profile as default
-	profile.IsDefault = true
-	return config.SaveProfile(pm.configDir, profile)
+	return nil
 }
 
 // GetDefault returns the default profile for a game
@@ -624,14 +686,7 @@ func firstRefs(refs []domain.ModReference) map[string]domain.ModReference {
 // a flow that writes into that directory acts for this profile or not at
 // all (#444, #445).
 func (s *Service) liveProfile(ctx context.Context, gameID string) (string, error) {
-	profile, err := s.NewProfileManager().GetDefault(ctx, gameID)
-	if errors.Is(err, domain.ErrProfileNotFound) {
-		return "default", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
-	}
-	return profile.Name, nil
+	return s.NewProfileManager().liveProfile(ctx, gameID)
 }
 
 // refuseInactive refuses verb for profileName unless it is gameID's live
@@ -775,9 +830,15 @@ func (pm *ProfileManager) ImportWithOptions(ctx context.Context, data []byte, fo
 	}
 
 	// Check if profile already exists
-	_, existErr := config.LoadProfile(pm.configDir, profile.GameID, profile.Name)
+	existing, existErr := config.LoadProfile(pm.configDir, profile.GameID, profile.Name)
 	if existErr == nil && !force {
 		return nil, fmt.Errorf("profile already exists: %s (use --force to overwrite)", profile.Name)
+	}
+	// An exported document carries no is_default - which profile is active
+	// is local state - so a replaced profile keeps its own (#446): replacing
+	// the active profile must not leave the game with none.
+	if existErr == nil {
+		profile.IsDefault = existing.IsDefault
 	}
 
 	if err := config.SaveProfile(pm.configDir, profile); err != nil {

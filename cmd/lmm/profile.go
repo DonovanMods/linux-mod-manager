@@ -52,6 +52,10 @@ var profileDeleteCmd = &cobra.Command{
 
 Note: This does not remove the installed mods, only the profile configuration.
 
+The active profile cannot be deleted - its mods are the ones in the game
+directory - unless it is the game's only profile and has nothing installed.
+Switch to another profile first ('lmm profile switch').
+
 Examples:
   lmm profile delete old-profile --game skyrim-se`,
 	Args: cobra.ExactArgs(1),
@@ -284,6 +288,11 @@ func doProfileList(ctx context.Context, service *core.Service, game *domain.Game
 
 	if jsonOutput {
 		return emitJSON(listing)
+	}
+
+	// #446: a game without exactly one active profile is said out loud.
+	for _, w := range listing.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
 	if len(listing.Profiles) == 0 {

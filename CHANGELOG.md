@@ -1472,6 +1472,26 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A game always has exactly one active profile (#446).** `lmm profile
+import --force` over the active profile's name cleared its
+  `is_default: true`, leaving the game with no active profile, so every
+  command that asks which profile is live fell back to a guess. An import
+  that replaces a profile now keeps its active flag. The other ways lmm
+  could leave a game with none, or two, are closed too:
+  - re-running `lmm game add` or `lmm game detect` on a game whose active
+    profile is not `default` resets `default` without marking it active;
+  - `lmm profile delete` (and the web UI's Delete, which answers `409`)
+    refuses the active profile — its mods are the ones in the game
+    directory — unless it is the game's only profile and has nothing
+    installed; switch to another profile first;
+  - `lmm profile switch` and set-default mark the new profile before
+    unmarking the old one, so a failed write never leaves none, and one
+    that leaves two says so.
+
+  A game a hand edit left with none or several is reported by
+  `lmm profile list` on stderr (and in its `--json` document's
+  `warnings`), naming the profile lmm is treating as active.
+
 - **`lmm deploy` and `lmm purge` act for the active profile only (#445).**
   A game has one game directory, and it holds the active profile's mods.
   `lmm deploy -p <other profile>` deployed that profile's mods beside them,
