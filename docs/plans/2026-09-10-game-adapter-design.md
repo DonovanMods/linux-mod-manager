@@ -614,3 +614,37 @@ resolves to `icarus` but renders an empty ADAPTER cell. It is a display gap rath
 behaviour one, it belongs with U4's frontend pass, and doing it in U2 would have moved
 `cmd/lmm/testdata/json_golden/game_list_populated.golden` — the one thing U2 is not allowed
 to do.
+
+### Amendment — U3/U4 review fix round (2026-09-16)
+
+Four decisions the U3/U4 review forced, recorded so a later unit does not have to
+re-derive them.
+
+First, **decision 11's warning exists, and a warning is all it is.** A game that has
+BepInEx (declared, or installed where lmm can see it) but resolves to another adapter
+(an explicit `adapter:`, or the `deploy_mode: compile` ⇒ `icarus` derivation) keeps
+working with no BepInEx rules, as §2 says, but is told so in four places: once when
+`app.Open` loads a `games.yaml` whose `loader:` block is ignored
+(`Service.AdapterConfigWarnings`, no disk reads); on `LoaderStatus.Warnings`; as a
+`loader_adapter_ignored` warning row in `lmm verify`; and on `Layout.Warnings` for any
+archive the bepinex rules WOULD have laid out, so it reaches the import plan and a
+download's event stream. Refusing was considered and rejected: §2 calls the state real,
+and every flow on such a game would have failed until the file was edited.
+
+Second, **"has the loader" is one predicate** (`hasLoader`: declared, or — for BepInEx —
+installed). Adapter resolution already used it; the source's loader precondition (#409)
+and the archive claim now do too, so a game with BepInEx installed but undeclared is no
+longer told to install it.
+
+Third, **the effective adapter is on the game document** (#426, deferred by the U2
+amendment): `GameListEntry.EffectiveAdapter`, `json:"effective_adapter,omitempty"`,
+omitted when it is `generic-files` — the same "absent means the identity" rule
+`adapter` has, which is why no existing golden moved. `adapter` stays the configured
+value. `lmm game list`, `lmm game show`, `lmm game edit --adapter` and the web Games
+table render the effective one.
+
+Fourth, **`Guide` is implemented by `bepinex` but rendered nowhere.** §5's guidance
+surfaces (`lmm game list --json`, after `lmm verify`'s summary, the web game card) have
+to land in both frontends at once, and BepInEx's setup advice already reaches users
+through `LoaderStatus`, which U3 deliberately left in core. The docs say so rather than
+claiming a surface that does not exist; wiring it is §5's frontend pass.
