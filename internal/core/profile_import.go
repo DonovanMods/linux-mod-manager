@@ -221,8 +221,25 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	pickedElsewhere := make(map[string]domain.InstalledMod)
 	var priorVersions map[string]domain.InstalledMod // #138 - see ImportPlan.priorVersions
 	gameCache := s.GetGameCache(game)
+	// seen: a mod listed twice is decided by its first reference, as every
+	// other flow decides it (firstRefs), and lands in one bucket at most.
+	seen := make(map[string]bool, len(profile.Mods))
 	for _, ref := range profile.Mods {
 		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		if ref.Disabled {
+			// #431: the document says this mod belongs to the profile but
+			// is switched off. It keeps its place and its pinned version in
+			// the imported document (ImportWithOptions writes the document
+			// verbatim), and it reaches none of the four buckets below, so
+			// the import neither fetches nor deploys a mod the profile says
+			// is off. Enabling it later is what fetches it.
+			continue
+		}
 
 		if im, inTarget := targetRows[key]; inTarget {
 			switch {

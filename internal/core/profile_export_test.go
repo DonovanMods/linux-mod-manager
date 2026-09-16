@@ -24,3 +24,21 @@ func CountProfileLoadsForTest(fn func()) int {
 	fn()
 	return count
 }
+
+// AfterProfileLoadForTest runs fn with after called straight after every
+// profile load (loadProfile), given the number of loads so far - so a test
+// can change a profile file between the read a Plan decides from and
+// anything that Plan reads later (#431 fix round 3).
+func AfterProfileLoadForTest(after func(loads int), fn func()) {
+	orig := loadProfile
+	loads := 0
+	loadProfile = func(configDir, gameID, name string) (*domain.Profile, error) {
+		p, err := orig(configDir, gameID, name)
+		loads++
+		after(loads)
+		return p, err
+	}
+	defer func() { loadProfile = orig }()
+
+	fn()
+}

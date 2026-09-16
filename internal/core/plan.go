@@ -7,19 +7,30 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// ErrStalePlan is returned by every Apply whose plan was computed against an
-// installed-mod set that has since changed. The frontend re-plans.
-var ErrStalePlan = errors.New("plan is stale: installed mods changed since it was computed")
+// ErrStalePlan is returned by every Apply whose plan was computed against
+// state that has since changed - the installed-mod set, a profile's
+// `disabled:` markers, an archive. The error wrapping it says which. The
+// frontend re-plans.
+var ErrStalePlan = errors.New("plan is stale")
 
 // installedSnapshot is the precondition a Plan records and an Apply
 // re-derives: the set of (source_id, mod_id, version, enabled) for the
-// profile at plan time. Unexported, json:"-" wherever a Plan embeds one.
-type installedSnapshot map[string]string // key "source:id" -> "version|enabled"
+// profile at plan time - and, for a plan the profile document's `disabled:`
+// markers decide (markedSnapshotOf), each of those markers too. Unexported,
+// json:"-" wherever a Plan embeds one.
+type installedSnapshot map[string]string // key "source:id" -> "version|enabled", plus "|off" in a marked snapshot when the document marks it
+
+// snapshotMarkersKey is a marked snapshot's one entry that is not a mod:
+// its presence tells checkPlanFresh to compare markers too. A ModKey always
+// contains ':', so it cannot collide with one.
+const snapshotMarkersKey = "#431 disabled markers"
 
 // currentInstalledSnapshot builds gameID/profileName's current installed-mod
 // snapshot, keyed by domain.ModKey (source:id), so a later checkPlanFresh
@@ -31,6 +42,17 @@ func (s *Service) currentInstalledSnapshot(ctx context.Context, gameID, profileN
 		return nil, fmt.Errorf("loading installed mods: %w", err)
 	}
 	return s.snapshotOf(gameID, mods)
+}
+
+// currentMarkedSnapshot is currentInstalledSnapshot for a plan the profile
+// document's markers decide (see markedSnapshotOf), reading the document as
+// it is now.
+func (s *Service) currentMarkedSnapshot(ctx context.Context, gameID, profileName string) (installedSnapshot, error) {
+	mods, err := s.GetInstalledMods(ctx, gameID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("loading installed mods: %w", err)
+	}
+	return s.markedSnapshotOf(gameID, mods, s.documentDisabledKeys(gameID, profileName))
 }
 
 // AdapterPreconditionError is the typed error a frontend branches on when a
@@ -164,12 +186,54 @@ func removalSnapshotOf(mods []domain.InstalledMod) installedSnapshot {
 	return snap
 }
 
+// markedSnapshotOf is snapshotOf for a plan the profile document's
+// `disabled:` markers decide on a DISABLED row - `profile apply` and
+// `profile switch` (for its target profile), which re-enable an unmarked
+// one, and `profile sync`, which drops its reference. Each of mods' entries
+// also records whether disabled (the document's markers, disabledKeysOf)
+// holds it.
+//
+// #431 (fix round 3, F2): the one-time backfill writes exactly that marker,
+// and it can land between such a plan and its Apply - inside the Apply's
+// own slot (beginOp), or from another lmm process. Applied anyway, the
+// plan would switch the mod straight back on, or delete its reference.
+// Every other plan leaves a disabled row alone whether it is marked or not,
+// so its snapshot leaves markers out: a `lmm deploy` planned beside another
+// lmm's first open must not be refused over one it cannot act on.
+//
+// A plan passes the rows and the markers it decided from - never a second
+// read, which another process's marker could slip in front of, leaving a
+// snapshot that already agrees with an Apply the marker has overruled.
+func (s *Service) markedSnapshotOf(gameID string, mods []domain.InstalledMod, disabled map[string]bool) (installedSnapshot, error) {
+	snap, err := s.snapshotOf(gameID, mods)
+	if err != nil {
+		return nil, err
+	}
+	for key := range snap {
+		if disabled[key] {
+			snap[key] += "|off"
+		}
+	}
+	snap[snapshotMarkersKey] = ""
+	return snap, nil
+}
+
 // checkPlanFresh re-derives gameID/profileName's CURRENT installed-mod
 // snapshot and compares it against want (a Plan's recorded precondition),
 // returning nil when they match and a wrapped ErrStalePlan otherwise. Called
 // as the first statement inside each Apply's private twin, after beginOp.
+//
+// Both snapshot builders are called directly, never through a func value:
+// TestEveryDeployGateAsksTheAdapter reads this body to prove the check
+// reaches the adapter, and a method value is invisible to that walk.
 func (s *Service) checkPlanFresh(ctx context.Context, gameID, profileName string, want installedSnapshot) error {
-	got, err := s.currentInstalledSnapshot(ctx, gameID, profileName)
+	var got installedSnapshot
+	var err error
+	if _, marked := want[snapshotMarkersKey]; marked {
+		got, err = s.currentMarkedSnapshot(ctx, gameID, profileName)
+	} else {
+		got, err = s.currentInstalledSnapshot(ctx, gameID, profileName)
+	}
 	if err != nil {
 		return err
 	}
@@ -190,9 +254,52 @@ func (s *Service) checkRemovalPlanFresh(ctx context.Context, gameID, profileName
 // staleUnless is the freshness verdict both checks share.
 func staleUnless(got, want installedSnapshot, gameID, profileName string) error {
 	if !maps.Equal(got, want) {
-		return fmt.Errorf("%w: %s/%s", ErrStalePlan, gameID, profileName)
+		return staleSnapshotError(gameID, profileName, got, want)
 	}
 	return nil
+}
+
+// staleSnapshotError says what moved between want, a plan's snapshot, and
+// got, the current one: an installed mod or, when every row is still as the
+// plan saw it, only the document's `disabled:` markers - named, since "the
+// installed mods changed" would send the user looking for a change that
+// never happened (merge gate Q1).
+func staleSnapshotError(gameID, profileName string, got, want installedSnapshot) error {
+	rowsChanged := fmt.Errorf("%w: installed mods changed since it was computed: %s/%s", ErrStalePlan, gameID, profileName)
+	if len(got) != len(want) {
+		return rowsChanged
+	}
+	var marked, unmarked []string
+	for key, w := range want {
+		g, ok := got[key]
+		if !ok {
+			return rowsChanged
+		}
+		gotRow, gotOff := strings.CutSuffix(g, "|off")
+		wantRow, wantOff := strings.CutSuffix(w, "|off")
+		switch {
+		case gotRow != wantRow:
+			return rowsChanged
+		case gotOff && !wantOff:
+			marked = append(marked, key)
+		case wantOff && !gotOff:
+			unmarked = append(unmarked, key)
+		}
+	}
+	var changes []string
+	if len(marked) > 0 {
+		slices.Sort(marked)
+		changes = append(changes, "now marked: "+strings.Join(marked, ", "))
+	}
+	if len(unmarked) > 0 {
+		slices.Sort(unmarked)
+		changes = append(changes, "no longer marked: "+strings.Join(unmarked, ", "))
+	}
+	if len(changes) == 0 {
+		return rowsChanged
+	}
+	return fmt.Errorf("%w: the disabled markers in profile %s/%s changed since it was computed (%s)",
+		ErrStalePlan, gameID, profileName, strings.Join(changes, "; "))
 }
 
 // isDeployedNow reports whether the game-dir-relative path f currently

@@ -432,6 +432,14 @@ func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName str
 			profile.Mods[i].FileIDs = mod.FileIDs
 			// Preserve Locked marker on in-place update (#97: survives UpsertMod).
 			// Do not modify Locked; it is only changed via explicit lock/unlock operations.
+			//
+			// Disabled (#431) follows the identical rule and for the
+			// identical reason: it is the user's per-profile off intent,
+			// set and cleared only by DisableMod/EnableMod. Every
+			// install/update/converge caller builds a fresh ModReference
+			// with Disabled false, so copying mod.Disabled here would let a
+			// reinstall or a version convergence silently switch a mod the
+			// user turned off back on - the very thing #431 exists to stop.
 			found = true
 			break
 		}
@@ -501,8 +509,122 @@ func (pm *ProfileManager) ClearModLock(ctx context.Context, gameID, profileName,
 	return fmt.Errorf("mod %s:%s not found in profile %q", sourceID, modID, profileName)
 }
 
-// RemoveMod removes a mod reference from a profile
+// SetModDisabled records #431's per-profile off intent on the profile ref
+// for sourceID/modID: disabled true writes the `disabled: true` marker,
+// false clears it (and, because the field is `omitempty`, removes the key
+// entirely, so a profile whose mods are all enabled again is byte-identical
+// to one that never had the marker at all).
+//
+// Mirrors SetModLock/ClearModLock's load -> mutate-in-place -> save shape
+// and, like them, touches nothing else on the ref: the load-order position
+// and the pinned Version are exactly what a disable must NOT throw away.
+//
+// A mod listed more than once (a hand edit) has every copy written, so the
+// document never ends up with copies that disagree (see firstRefs).
+//
+// A mod the profile does not list returns domain.ErrModNotFound, so the
+// caller can tell "nothing to record here" apart from a real write failure.
+// That is not an error condition for disable/enable: an installed row whose
+// profile never listed it has no desired-state entry to mark, and no
+// converge pass will consult one.
+func (pm *ProfileManager) SetModDisabled(ctx context.Context, gameID, profileName, sourceID, modID string, disabled bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
+	if err != nil {
+		return err
+	}
+
+	found, changed := false, false
+	for i := range profile.Mods {
+		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID {
+			found = true
+			changed = changed || profile.Mods[i].Disabled != disabled
+			profile.Mods[i].Disabled = disabled
+		}
+	}
+	switch {
+	case !found:
+		return domain.ErrModNotFound
+	case !changed:
+		// Already what it should be - don't rewrite the file. A hand-edited
+		// profile stays byte-for-byte as its author left it whenever the
+		// intent already matches.
+		return nil
+	}
+	return config.SaveProfile(pm.configDir, profile)
+}
+
+// profileDisabledKeys is which of gameID/profileName's mod references carry
+// #431's `disabled:` marker, keyed by domain.ModKey - the document's own
+// answer to "is this mod switched off?", for a flow that selects mods from
+// the database and has to honour the desired state as well.
+//
+// A profile that cannot be loaded (none exists yet, or it is unreadable)
+// returns an empty set, which is exactly "the document marks nothing off":
+// the callers all have DB rows to work from either way, and a converge or
+// deploy pass must not fail over a missing desired-state document it is
+// only consulting.
+func (s *Service) profileDisabledKeys(ctx context.Context, gameID, profileName string) map[string]bool {
+	if ctx.Err() != nil {
+		return nil
+	}
+	return s.documentDisabledKeys(gameID, profileName)
+}
+
+// documentDisabledKeys is profileDisabledKeys for a caller with no ctx to
+// check - the plan snapshot (snapshotOf) - reading the same file the same
+// way.
+func (s *Service) documentDisabledKeys(gameID, profileName string) map[string]bool {
+	profile, err := loadProfile(s.configDir, gameID, profileName)
+	if err != nil {
+		return nil
+	}
+	return disabledKeysOf(profile)
+}
+
+// disabledKeysOf is which of profile's mods the document marks
+// `disabled:`, keyed by domain.ModKey - each decided by its first
+// reference (firstRefs).
+func disabledKeysOf(profile *domain.Profile) map[string]bool {
+	disabled := make(map[string]bool)
+	for key, ref := range firstRefs(profile.Mods) {
+		if ref.Disabled {
+			disabled[key] = true
+		}
+	}
+	return disabled
+}
+
+// firstRefs keys refs by domain.ModKey, keeping each mod's FIRST reference.
+// lmm never lists a mod twice, but a hand edit can, and the copies can
+// disagree about the `disabled:` marker (#431). Every flow decides such a
+// mod by its first copy - the one domain.Profile.FindRef and a profile's
+// load order already name - so no two flows disagree about whether it is
+// switched off.
+func firstRefs(refs []domain.ModReference) map[string]domain.ModReference {
+	byKey := make(map[string]domain.ModReference, len(refs))
+	for _, ref := range refs {
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if _, seen := byKey[key]; !seen {
+			byKey[key] = ref
+		}
+	}
+	return byKey
+}
+
+// RemoveMod removes a mod's references - every one of them - from a profile
 func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, sourceID, modID string) error {
+	return pm.removeMod(ctx, gameID, profileName, sourceID, modID, false)
+}
+
+// removeMod is RemoveMod, sparing every reference that carries the
+// `disabled:` marker when keepMarked is set - `profile sync` removing the
+// unmarked copy of a mod listed twice, whose marked copy is the off intent
+// its installed row agrees with (#431).
+func (pm *ProfileManager) removeMod(ctx context.Context, gameID, profileName, sourceID, modID string, keepMarked bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -515,7 +637,7 @@ func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, so
 	found := false
 	newMods := make([]domain.ModReference, 0, len(profile.Mods))
 	for _, m := range profile.Mods {
-		if m.SourceID == sourceID && m.ModID == modID {
+		if m.SourceID == sourceID && m.ModID == modID && !(keepMarked && m.Disabled) {
 			found = true
 			continue
 		}

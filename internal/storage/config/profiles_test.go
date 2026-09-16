@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // fixedName adapts a constant payload to invalidProfileNames' shape.
@@ -74,6 +75,36 @@ func TestSaveProfile_RejectsInvalidName(t *testing.T) {
 			assert.Empty(t, listRegularFiles(t, tempDir), "no file may be written for an invalid profile name")
 		})
 	}
+}
+
+// TestProfileDecoding_ADecoderPanicIsAnError: gopkg.in/yaml.v3 v3.0.1
+// panics on some malformed input rather than returning an error - this one
+// is a merge key over a mapping keyed by a mapping, found by fix round 3's
+// FuzzMarkModsDisabled. A profile is read at the start of nearly every
+// command, #431's upgrade step included, so such a file must read as
+// unparseable, not take lmm down.
+func TestProfileDecoding_ADecoderPanicIsAnError(t *testing.T) {
+	const content = "<<:\n? 0:"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "games", "g", "profiles", "p.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	require.NotPanics(t, func() {
+		_, err := LoadProfile(dir, "g", "p")
+		require.ErrorContains(t, err, "parsing profile")
+	})
+	require.NotPanics(t, func() {
+		_, err := ImportProfile([]byte(content))
+		require.ErrorContains(t, err, "parsing exported profile")
+	})
+	require.NotPanics(t, func() {
+		_, err := MarkModsDisabled(path, []domain.ModReference{{SourceID: "s", ModID: "m"}})
+		require.ErrorContains(t, err, "parsing profile")
+	})
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, content, string(data))
 }
 
 func TestLoadProfile_RejectsInvalidName(t *testing.T) {
@@ -587,4 +618,137 @@ func TestProfileFromExported_AnImplicitLinkMethodStaysImplicit(t *testing.T) {
 
 func TestProfileFromExported_NilIsNil(t *testing.T) {
 	assert.Nil(t, ProfileFromExported(nil))
+}
+
+// --- #431: the per-mod disabled marker ---
+
+// TestSaveProfile_PreservesDisabledMarker mirrors the locked-marker guard
+// above for #431's `disabled:` key, including the invariant the whole design
+// rests on: omitempty must drop the key entirely for an enabled mod, so a
+// profile whose mods are all enabled writes exactly the bytes it wrote
+// before the marker existed.
+func TestSaveProfile_PreservesDisabledMarker(t *testing.T) {
+	configDir := t.TempDir()
+
+	profile := &domain.Profile{
+		Name:   "default",
+		GameID: "skyrim-se",
+		Mods: []domain.ModReference{
+			{SourceID: "nexusmods", ModID: "123", Version: "1.0.0", Disabled: true},
+			{SourceID: "nexusmods", ModID: "456", Version: "2.0.0"},
+		},
+	}
+
+	require.NoError(t, SaveProfile(configDir, profile))
+
+	yaml := profileYAML(t, configDir, "skyrim-se", "default")
+	assert.Contains(t, yaml, "disabled: true", "the disabled mod should carry disabled: true")
+	assert.Equal(t, 1, strings.Count(yaml, "disabled:"), "only the disabled mod may carry a disabled key")
+	assert.NotContains(t, yaml, "disabled: false", "omitempty must drop the key entirely, never write disabled: false")
+}
+
+// TestSaveProfile_AllEnabledIsByteIdenticalToPreMarkerOutput is the
+// backward-compatibility invariant stated as a test: a profile with nothing
+// disabled must serialise to exactly the bytes a pre-#431 lmm wrote, which
+// is what makes the field additive rather than a config migration.
+func TestSaveProfile_AllEnabledIsByteIdenticalToPreMarkerOutput(t *testing.T) {
+	configDir := t.TempDir()
+
+	profile := &domain.Profile{
+		Name:   "default",
+		GameID: "skyrim-se",
+		Mods: []domain.ModReference{
+			{SourceID: "nexusmods", ModID: "123", Version: "1.0.0", FileIDs: []string{"1"}},
+			{SourceID: "curseforge", ModID: "456", Version: "2.0.0", Locked: true},
+		},
+	}
+	require.NoError(t, SaveProfile(configDir, profile))
+
+	// The pre-marker bytes: the identical document serialised through a DTO
+	// that has no disabled field at all.
+	type preMarkerRef struct {
+		SourceID string   `yaml:"source_id"`
+		ModID    string   `yaml:"mod_id"`
+		Version  string   `yaml:"version,omitempty"`
+		FileIDs  []string `yaml:"file_ids,omitempty"`
+		Locked   bool     `yaml:"locked,omitempty"`
+	}
+	type preMarkerProfile struct {
+		Name       string           `yaml:"name"`
+		GameID     string           `yaml:"game_id"`
+		Mods       []preMarkerRef   `yaml:"mods"`
+		LinkMethod string           `yaml:"link_method,omitempty"`
+		IsDefault  bool             `yaml:"is_default,omitempty"`
+		Hooks      ProfileHooksYAML `yaml:"hooks,omitempty"`
+		Overrides  map[string]string
+	}
+	want, err := yaml.Marshal(&preMarkerProfile{
+		Name:   "default",
+		GameID: "skyrim-se",
+		Mods: []preMarkerRef{
+			{SourceID: "nexusmods", ModID: "123", Version: "1.0.0", FileIDs: []string{"1"}},
+			{SourceID: "curseforge", ModID: "456", Version: "2.0.0", Locked: true},
+		},
+		Hooks: serializeProfileHooks(domain.GameHooks{}, domain.GameHooksExplicit{}),
+	})
+	require.NoError(t, err)
+
+	// Overrides has no yaml tag above (it never reaches the wire for this
+	// fixture); strip the key the anonymous DTO's default naming adds.
+	wantYAML := strings.ReplaceAll(string(want), "overrides: {}\n", "")
+	assert.Equal(t, wantYAML, profileYAML(t, configDir, "skyrim-se", "default"))
+}
+
+// TestLoadProfile_PreservesDisabledMarker pins "absent means enabled": a
+// profile file written by an older lmm has no disabled key and must decode
+// to an enabled ref, with no migration step.
+func TestLoadProfile_PreservesDisabledMarker(t *testing.T) {
+	tests := map[string]struct {
+		yaml         string
+		wantDisabled bool
+	}{
+		"absent disabled key (a pre-#431 file)": {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n", false},
+		"disabled true":                         {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n    disabled: true\n", true},
+		"disabled false":                        {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n    disabled: false\n", false},
+	}
+
+	for label, tc := range tests {
+		t.Run(label, func(t *testing.T) {
+			configDir := t.TempDir()
+			profileDir := filepath.Join(configDir, "games", "skyrim-se", "profiles")
+			require.NoError(t, os.MkdirAll(profileDir, 0755))
+			require.NoError(t, os.WriteFile(filepath.Join(profileDir, "default.yaml"), []byte(tc.yaml), 0644))
+
+			profile, err := LoadProfile(configDir, "skyrim-se", "default")
+			require.NoError(t, err)
+
+			require.Len(t, profile.Mods, 1)
+			assert.Equal(t, tc.wantDisabled, profile.Mods[0].Disabled)
+		})
+	}
+}
+
+// TestExportImportProfile_PreservesDisabledMarker guards #431's requirement
+// that the intent travels with a shared profile: export writes the key and
+// import reads it back.
+func TestExportImportProfile_PreservesDisabledMarker(t *testing.T) {
+	profile := &domain.Profile{
+		Name:   "default",
+		GameID: "skyrim-se",
+		Mods: []domain.ModReference{
+			{SourceID: "nexusmods", ModID: "123", Version: "1.0.0", Disabled: true},
+			{SourceID: "nexusmods", ModID: "456", Version: "2.0.0"},
+		},
+	}
+
+	data, err := ExportProfile(profile)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "disabled: true")
+	assert.NotContains(t, string(data), "disabled: false", "an enabled ref must not gain the key on export")
+
+	imported, err := ImportProfile(data)
+	require.NoError(t, err)
+	require.Len(t, imported.Mods, 2)
+	assert.True(t, imported.Mods[0].Disabled)
+	assert.False(t, imported.Mods[1].Disabled)
 }

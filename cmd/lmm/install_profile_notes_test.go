@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,4 +51,26 @@ func TestDoInstall_ProfileWriteSucceeds_StillSaysAddedToProfile(t *testing.T) {
 
 	assert.Contains(t, out, "Added to profile: default")
 	assert.NotContains(t, out, "could not update profile")
+}
+
+// TestShowInstallPlan_NamesADependencyItSwitchesBackOn is #431 fix round 2's
+// R8 at the CLI: a dependency the profile had switched off is named before
+// the confirmation prompt, with the profile and the mod that needs it,
+// because the user did not ask for it by name.
+func TestShowInstallPlan_NamesADependencyItSwitchesBackOn(t *testing.T) {
+	plan := &core.InstallPlan{
+		Profile: "survival",
+		Mod:     domain.Mod{ID: "root", SourceID: "src", Name: "Root Mod"},
+		Dependencies: []domain.Mod{
+			{ID: "lib", SourceID: "src", Name: "Some Library"},
+			{ID: "other", SourceID: "src", Name: "Other Library"},
+		},
+		ReenabledDependencies: []domain.ModReference{{SourceID: "src", ModID: "lib"}},
+	}
+	out := captureStdout(t, func() error {
+		showInstallPlan(plan)
+		return nil
+	})
+	assert.Contains(t, out, `Note: Some Library is switched off in profile "survival". Installing Root Mod switches it back on there, because Root Mod depends on it.`)
+	assert.NotContains(t, out, "Other Library is switched off")
 }

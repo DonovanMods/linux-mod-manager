@@ -7,6 +7,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // Test-only accessors for package core_test. This file is compiled only into
@@ -160,6 +161,9 @@ func (s *Service) NewInstallerWithLinkerForTest(game *domain.Game, method domain
 // ApplyProfileSwitch to see.
 func (s *Service) FreshSwitchPlanForTest(ctx context.Context, plan *SwitchPlan) *SwitchPlan {
 	plan.snapshot, _ = s.currentInstalledSnapshot(ctx, plan.GameID, plan.From)
+	// Both halves, since the freshness check covers the target profile too
+	// (fix-round F9) - with its markers, as PlanProfileSwitch records it.
+	plan.targetSnapshot, _ = s.currentMarkedSnapshot(ctx, plan.GameID, plan.To)
 	return plan
 }
 
@@ -266,6 +270,40 @@ func (i *Importer) ImportForTest(ctx context.Context, archivePath string, game *
 // package's metadata.
 func NewLoaderRequirementForTest(game *domain.Game, modName, kind, version, evidence string) *LoaderRequiredError {
 	return newLoaderRequirement(game, modName, kind, version, evidence)
+}
+
+// OweProfileDisabledBackfillForTest puts the Service in the state
+// migrateV17 leaves a database an older lmm wrote: the one-time
+// profile-document backfill (#431) is owed. Every test database is created
+// fresh, so the migration itself never finds a row to owe it for - a test
+// seeds the rows an older lmm would have left FIRST, then calls this.
+func (s *Service) OweProfileDisabledBackfillForTest(ctx context.Context) error {
+	if err := s.db.SetMeta(ctx, db.MetaProfileDisabledBackfill, "test"); err != nil {
+		return err
+	}
+	s.backfillPending.Store(true)
+	return nil
+}
+
+// ProfileDisabledBackfillOwedForTest reports every db_meta key the backfill
+// still holds: the whole obligation, and any per-profile remainder.
+func (s *Service) ProfileDisabledBackfillOwedForTest(ctx context.Context) (map[string]string, error) {
+	return s.db.MetaWithPrefix(ctx, db.MetaProfileDisabledBackfill)
+}
+
+// SetBeforeProfileBackfillScanForTest arms a hook that runs once the
+// backfill holds the mutation slot, immediately before it reads the rows it
+// works from - the point a concurrent writer's committed change must
+// already be visible from (fix round 2, R4).
+func (s *Service) SetBeforeProfileBackfillScanForTest(fn func()) {
+	s.beforeProfileBackfillScan = fn
+}
+
+// SetProfileMarkerForTest replaces the profile editor the backfill calls
+// (config.MarkModsDisabled) - so a test can make it panic, the way F1's
+// did - or restores it when fn is nil.
+func (s *Service) SetProfileMarkerForTest(fn func(path string, mods []domain.ModReference) ([]domain.ModReference, error)) {
+	s.profileMarker = fn
 }
 
 // SetNestedTreeHookForTest arms verify's nested-BepInEx-tree seam: fn runs

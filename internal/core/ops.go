@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 )
 
 // beginOp acquires the Service's single mutation slot, waiting until it is
@@ -36,16 +38,63 @@ import (
 // NewService - so the failure is an immediate, clear panic instead of a
 // hang until the test's 10-minute timeout.
 func (s *Service) beginOp(ctx context.Context) (release func(), err error) {
+	release, err = s.acquireOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// #431 (fix round 2): a profile-document backfill still owed runs
+	// FIRST, inside this slot. The mutation about to run can write the very
+	// flag values the backfill reads as evidence - `lmm purge` clears
+	// deployed on every row - so it must not get there before the evidence
+	// has been read. Normally app.Open has already discharged it and this is
+	// one atomic load; it only does work when that open could not (the lock
+	// was held) or when a profile kept for later has changed. A failure
+	// refuses the mutation rather than letting it run over unread evidence.
+	if s.backfillPending.Load() {
+		if _, err := s.dischargeProfileBackfill(ctx); err != nil {
+			release()
+			return nil, fmt.Errorf("recording mods disabled before the upgrade in their profile files: %w", err)
+		}
+	}
+	return release, nil
+}
+
+// acquireOp is beginOp's slot acquisition alone - the in-process semaphore
+// and the cross-process lock, waiting as a mutation does.
+func (s *Service) acquireOp(ctx context.Context) (release func(), err error) {
+	return s.acquireOpWithin(ctx, opLockWait)
+}
+
+// tryAcquireOp takes the slot only if it is free right now, and otherwise
+// fails at once - with OperationInProgressError when another process holds
+// the lock. For the one caller that must never make a command wait: the
+// backfill an open runs (F5), which a mutation's own slot finishes anyway.
+func (s *Service) tryAcquireOp(ctx context.Context) (release func(), err error) {
+	return s.acquireOpWithin(ctx, 0)
+}
+
+// acquireOpWithin takes the in-process semaphore and then the cross-process
+// lock, giving up on the lock after wait. A zero wait does not queue for
+// the semaphore either.
+func (s *Service) acquireOpWithin(ctx context.Context, wait time.Duration) (release func(), err error) {
 	if s.opSem == nil {
 		panic("core: beginOp called on a Service with a nil opSem; construct it via NewService, not a struct literal")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	select {
-	case s.opSem <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if wait == 0 {
+		select {
+		case s.opSem <- struct{}{}:
+		default:
+			return nil, ErrOperationInProgress
+		}
+	} else {
+		select {
+		case s.opSem <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
 	// #336: every mutation invalidates the verify memo. Done HERE, at the
@@ -58,7 +107,7 @@ func (s *Service) beginOp(ctx context.Context) (release func(), err error) {
 	var lock *opLock
 	if s.opLockPath != "" {
 		var err error
-		if lock, err = acquireOpLock(ctx, s.opLockPath); err != nil {
+		if lock, err = acquireOpLock(ctx, s.opLockPath, wait); err != nil {
 			<-s.opSem // never hold the in-process slot for a mutation that is not happening
 			return nil, err
 		}

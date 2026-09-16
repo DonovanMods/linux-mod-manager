@@ -915,6 +915,9 @@ func TestProfileManager_Mutators_HonourCancellation(t *testing.T) {
 		{"SetModLock", func(ctx context.Context, pm *core.ProfileManager) error {
 			return pm.SetModLock(ctx, gameID, profileName, seeded.SourceID, seeded.ModID, "1.0")
 		}},
+		{"SetModDisabled", func(ctx context.Context, pm *core.ProfileManager) error {
+			return pm.SetModDisabled(ctx, gameID, profileName, seeded.SourceID, seeded.ModID, true)
+		}},
 		{"ClearModLock", func(ctx context.Context, pm *core.ProfileManager) error {
 			return pm.ClearModLock(ctx, gameID, profileName, seeded.SourceID, seeded.ModID)
 		}},
@@ -969,4 +972,153 @@ func TestProfileManager_Mutators_HonourCancellation(t *testing.T) {
 			assert.Equal(t, before, after, "a cancelled mutator must not touch the profile YAML")
 		})
 	}
+}
+
+// --- #431: the per-mod disabled marker ---
+
+// TestProfileManager_SetModDisabled covers the write that records "#431: in
+// this profile, but off" - and the two things it must NOT disturb while
+// doing so, the load-order position and the pinned Version.
+func TestProfileManager_SetModDisabled(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(context.Background(), "skyrim-se", "test", domain.ModReference{SourceID: "src", ModID: "first", Version: "1.0.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), "skyrim-se", "test", domain.ModReference{SourceID: "src", ModID: "second", Version: "2.0.0", Locked: true}))
+
+	require.NoError(t, pm.SetModDisabled(context.Background(), "skyrim-se", "test", "src", "second", true))
+
+	profile, err := pm.Get(context.Background(), "skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 2)
+	assert.Equal(t, "first", profile.Mods[0].ModID, "load order must be untouched")
+	assert.False(t, profile.Mods[0].Disabled, "only the named mod is marked")
+	assert.Equal(t, "second", profile.Mods[1].ModID)
+	assert.True(t, profile.Mods[1].Disabled)
+	assert.Equal(t, "2.0.0", profile.Mods[1].Version, "the pinned version must survive a disable")
+	assert.True(t, profile.Mods[1].Locked, "the lock marker must survive a disable")
+
+	require.NoError(t, pm.SetModDisabled(context.Background(), "skyrim-se", "test", "src", "second", false))
+
+	profile, err = pm.Get(context.Background(), "skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 2)
+	assert.False(t, profile.Mods[1].Disabled, "enabling clears the marker")
+	assert.Equal(t, "2.0.0", profile.Mods[1].Version)
+	assert.True(t, profile.Mods[1].Locked)
+}
+
+// TestProfileManager_SetModDisabled_NotInProfile pins the typed answer for
+// a mod the profile does not list: domain.ErrModNotFound, which the
+// enable/disable flows treat as "nothing to record", not as a failure.
+func TestProfileManager_SetModDisabled_NotInProfile(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	require.NoError(t, err)
+
+	err = pm.SetModDisabled(context.Background(), "skyrim-se", "test", "src", "missing", true)
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+}
+
+// TestProfileManager_SetModDisabled_NoOpLeavesTheFileUntouched guards
+// invariant (c) of #431: a profile file whose marker already says what the
+// caller is asking for is never rewritten, so a hand-edited file keeps its
+// own formatting, comments and key order.
+func TestProfileManager_SetModDisabled_NoOpLeavesTheFileUntouched(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	profileDir := filepath.Join(dir, "games", "skyrim-se", "profiles")
+	require.NoError(t, os.MkdirAll(profileDir, 0755))
+	path := filepath.Join(profileDir, "test.yaml")
+	handEdited := "# my notes\nname: test\ngame_id: skyrim-se\nmods:\n  - source_id: src\n    mod_id: m1\n    version: 1.0.0\n"
+	require.NoError(t, os.WriteFile(path, []byte(handEdited), 0644))
+
+	pm := core.NewProfileManager(dir, database)
+	require.NoError(t, pm.SetModDisabled(context.Background(), "skyrim-se", "test", "src", "m1", false))
+
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, handEdited, string(after), "an already-enabled ref must not provoke a rewrite")
+}
+
+// TestProfileManager_UpsertMod_PreservesDisabledMarker is the lock marker's
+// rule applied to #431: every install/update/converge caller builds a fresh
+// ModReference with Disabled false, so an upsert that copied it would let a
+// reinstall switch a mod the user turned off back on.
+func TestProfileManager_UpsertMod_PreservesDisabledMarker(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+	_, err = pm.Create(context.Background(), "skyrim-se", "test")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(context.Background(), "skyrim-se", "test", domain.ModReference{SourceID: "src", ModID: "m1", Version: "1.0.0"}))
+	require.NoError(t, pm.SetModDisabled(context.Background(), "skyrim-se", "test", "src", "m1", true))
+
+	// A version-moving upsert, exactly as ApplyUpdate/ApplyProfileApply
+	// build it: no Disabled field at all.
+	require.NoError(t, pm.UpsertMod(context.Background(), "skyrim-se", "test", domain.ModReference{
+		SourceID: "src", ModID: "m1", Version: "2.0.0", FileIDs: []string{"9"},
+	}))
+
+	profile, err := pm.Get(context.Background(), "skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.True(t, profile.Mods[0].Disabled, "an upsert must not clear the user's off intent")
+	assert.Equal(t, "2.0.0", profile.Mods[0].Version)
+	assert.Equal(t, []string{"9"}, profile.Mods[0].FileIDs)
+}
+
+// TestResolveReorder_PreservesTheDisabledMarker pins the invariant that
+// keeps `lmm profile reorder` (and the web UI's reorder modal, which drives
+// the same seam) from wiping #431's marker: ReorderMods replaces the
+// profile's whole mod list, so the order it is handed has to carry the
+// refs' own fields, not just their identities.
+func TestResolveReorder_PreservesTheDisabledMarker(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "first", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "second", Version: "2.0"}))
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "default", "src", "second", true))
+
+	order, err := svc.ResolveReorder(ctx, game, "default", []string{"second"})
+	require.NoError(t, err)
+	require.NoError(t, svc.ReorderProfileMods(ctx, game.ID, "default", order))
+
+	profile, err := pm.Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 2)
+	assert.Equal(t, "second", profile.Mods[0].ModID, "the named mod moves to the front")
+	assert.True(t, profile.Mods[0].Disabled, "and keeps its off marker")
+	assert.Equal(t, "2.0", profile.Mods[0].Version)
+	assert.False(t, profile.Mods[1].Disabled)
 }

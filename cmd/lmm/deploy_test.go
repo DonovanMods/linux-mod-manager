@@ -143,6 +143,24 @@ func seedDeployableMod(t *testing.T, svc *core.Service, game *domain.Game, modID
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
 }
 
+// seedLiveRowUnderProfile records an installed row that is already enabled
+// AND deployed under profileName, without touching the cache (the bytes are
+// usually already there under another profile). It is what "this mod is
+// already live under the target profile" looks like in the DB - the state
+// #430 made PlanProfileSwitch ask about, instead of reading the outgoing
+// profile's row and assuming it answers for the target's.
+func seedLiveRowUnderProfile(t *testing.T, svc *core.Service, game *domain.Game, profileName, modID, name string) {
+	t.Helper()
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
+		ProfileName:  profileName,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+	}))
+}
+
 // TestDoDeploy_Verbose_HappyPath_PrintsExpectedOutput guards doDeploy's
 // normal multi-mod console output end to end: the "Deploying N mod(s)
 // using METHOD..." header, one "  ✓ Name" line per mod in profile order,
@@ -794,4 +812,35 @@ func TestDoDeploy_ProfileForm_IgnoresSourceEntirely(t *testing.T) {
 	})
 
 	assert.Contains(t, out, "✓ Test Mod")
+}
+
+// TestDoDeploy_ALiveModTheProfileSwitchedOffIsNamedNotFailed is #431 fix
+// round 2's R9 at the CLI: a mod the profile marks off whose files are still
+// live is left in place - deploy is not a converge run - and named, with the
+// command that takes it down, both by the deploy and by its dry run. It is
+// not a failure, so neither summary counts it as one.
+func TestDoDeploy_ALiveModTheProfileSwitchedOffIsNamedNotFailed(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "on", "On Mod", "on.esp")
+	seedDeployableMod(t, svc, game, "off", "Off Mod", "off.esp")
+	captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	require.NoError(t, svc.NewProfileManager().SetModDisabled(context.Background(), game.ID, "default", "src", "off", true))
+
+	want := `  ⊘ Off Mod — switched off in profile "default" but still deployed - ` + "`lmm deploy`" + ` does not take mods down; run ` + "`lmm profile apply`" + ` to remove it`
+
+	deployDryRun = true
+	dry := captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	deployDryRun = false
+	assert.Contains(t, dry, want)
+	assert.Contains(t, dry, "Deploying 1 mod(s)")
+	assert.Contains(t, dry, "Would deploy: 1\n")
+	assert.NotContains(t, dry, "Skipped:")
+
+	live := captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	assert.Contains(t, live, want)
+	assert.Contains(t, live, "Deploying 1 mod(s)")
+	assert.Contains(t, live, "  ✓ On Mod\n")
+	assert.Contains(t, live, "\nDeployed: 1\n")
+	assert.NotContains(t, live, "Failed")
+	assert.FileExists(t, filepath.Join(game.ModPath, "off.esp"), "deploy leaves it in place")
 }

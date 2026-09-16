@@ -37,13 +37,20 @@ type ProfileConfig struct {
 	Overrides  map[string]string    `yaml:"overrides,omitempty"` // path (relative to game install) -> file content (INI tweaks, etc.)
 }
 
-// ModReferenceConfig is the YAML representation of a mod reference
+// ModReferenceConfig is the YAML representation of a mod reference.
+//
+// Disabled carries #431's per-mod off marker; like Locked it is
+// `omitempty`, so a profile file written before the marker existed - and
+// every profile whose mods are all enabled - is byte-identical to what
+// SaveProfile wrote before, and an older file simply decodes to false
+// ("absent means enabled") with no migration step.
 type ModReferenceConfig struct {
 	SourceID string   `yaml:"source_id"`
 	ModID    string   `yaml:"mod_id"`
 	Version  string   `yaml:"version,omitempty"`
 	FileIDs  []string `yaml:"file_ids,omitempty"`
 	Locked   bool     `yaml:"locked,omitempty"`
+	Disabled bool     `yaml:"disabled,omitempty"`
 }
 
 // parseProfileHooks converts YAML hooks to domain types, tracking which were explicitly set
@@ -148,6 +155,22 @@ func validateProfilePath(gameID, profileName string) error {
 	return validateSegment(profileName, domain.ErrInvalidProfileName)
 }
 
+// unmarshalYAML is yaml.Unmarshal for a profile document a user may have
+// written by hand, with the decoder's own panics returned as errors.
+// gopkg.in/yaml.v3 v3.0.1 panics on some malformed input instead of
+// failing - a merge key over a mapping keyed by a mapping ("hash of
+// unhashable type") is one fuzzing found - and a profile is read at the
+// start of nearly every command, #431's upgrade step included, so one such
+// file must read as unparseable rather than stop lmm from starting.
+func unmarshalYAML(data []byte, v any) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("yaml: the decoder failed on this document: %v", r)
+		}
+	}()
+	return yaml.Unmarshal(data, v)
+}
+
 // LoadProfile reads a profile from disk
 func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error) {
 	if err := validateProfilePath(gameID, profileName); err != nil {
@@ -163,7 +186,7 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 	}
 
 	var cfg ProfileConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := unmarshalYAML(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing profile: %w", err)
 	}
 
@@ -189,6 +212,7 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 			Version:  m.Version,
 			FileIDs:  m.FileIDs,
 			Locked:   m.Locked,
+			Disabled: m.Disabled,
 		}
 	}
 
@@ -230,6 +254,7 @@ func SaveProfile(configDir string, profile *domain.Profile) error {
 			Version:  m.Version,
 			FileIDs:  m.FileIDs,
 			Locked:   m.Locked,
+			Disabled: m.Disabled,
 		}
 	}
 
@@ -379,7 +404,7 @@ func ExportProfile(profile *domain.Profile) ([]byte, error) {
 // ImportProfile imports a profile from portable format
 func ImportProfile(data []byte) (*domain.Profile, error) {
 	var wire exportedProfileYAML
-	if err := yaml.Unmarshal(data, &wire); err != nil {
+	if err := unmarshalYAML(data, &wire); err != nil {
 		return nil, fmt.Errorf("parsing exported profile: %w", err)
 	}
 

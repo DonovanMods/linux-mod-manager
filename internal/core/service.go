@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -139,6 +140,25 @@ type Service struct {
 	// beginOp takes around every mutation, or "" for no cross-process lock.
 	opLockPath string
 
+	// backfillPending is whether #431's profile-document backfill might
+	// still be owed (backfill.go): true once construction found any db_meta
+	// record of it, false once a discharge leaves none. Only a migration
+	// can create the whole obligation, and that runs before construction
+	// returns, so a false here stays false - which is what lets beginOp and
+	// every enable skip the backfill with one atomic load.
+	backfillPending atomic.Bool
+
+	// beforeProfileBackfillScan, when non-nil, runs once the backfill holds
+	// the mutation slot, immediately before it reads its rows. Test-only
+	// seam (export_test.go's SetBeforeProfileBackfillScanForTest); always
+	// nil in production.
+	beforeProfileBackfillScan func()
+
+	// profileMarker, when non-nil, replaces config.MarkModsDisabled as the
+	// profile editor the backfill calls. Test-only seam (export_test.go's
+	// SetProfileMarkerForTest); always nil in production.
+	profileMarker func(path string, mods []domain.ModReference) ([]domain.ModReference, error)
+
 	// relayoutPlaceFile, when non-nil, replaces the per-file placement
 	// verify's BepInEx re-layout uses to build the new cache entry. Test-only
 	// seam (export_test.go's SetRelayoutPlaceFileForTest): the rewrite's
@@ -236,6 +256,11 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		warnWriter: cfg.WarnWriter,
 		opLockPath: cfg.OpLockPath,
 	}
+
+	// #431: whether the one-time profile-document backfill is owed, as the
+	// database found it at open - so every open and every mutation after
+	// this can ask an atomic.Bool instead.
+	svc.backfillPending.Store(database.OwesProfileBackfill())
 
 	// Expire the archives a refused ingest kept (retained_download.go).
 	// Here rather than only on the way in to a NEW retention: an entry
@@ -2454,8 +2479,18 @@ func (s *Service) setModFileIDs(ctx context.Context, sourceID, modID, gameID, pr
 // setModEnabled toggles the enabled flag for an installed mod. Unexported
 // with doProfileApply's lift (#290): the profile-apply loops were the last
 // cmd callers, and every flow that flips this flag now lives in core.
+//
+// It is also one of the two writers every enable goes through, so it is
+// where an enable supersedes a profile-document backfill still owed for
+// that row (#431, supersedePendingProfileBackfill).
 func (s *Service) setModEnabled(ctx context.Context, sourceID, modID, gameID, profileName string, enabled bool) error {
-	return s.db.SetModEnabled(ctx, sourceID, modID, gameID, profileName, enabled)
+	if err := s.db.SetModEnabled(ctx, sourceID, modID, gameID, profileName, enabled); err != nil {
+		return err
+	}
+	if enabled {
+		s.supersedePendingProfileBackfill(ctx, gameID, profileName, sourceID, modID)
+	}
+	return nil
 }
 
 // SetModDeployed records whether a mod's files are currently deployed.
@@ -2498,8 +2533,16 @@ func (s *Service) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod
 	return s.saveInstalledMod(ctx, mod)
 }
 
+// saveInstalledMod is the other writer every enable goes through - see
+// setModEnabled.
 func (s *Service) saveInstalledMod(ctx context.Context, mod *domain.InstalledMod) error {
-	return s.db.SaveInstalledMod(ctx, mod)
+	if err := s.db.SaveInstalledMod(ctx, mod); err != nil {
+		return err
+	}
+	if mod.Enabled {
+		s.supersedePendingProfileBackfill(ctx, mod.GameID, mod.ProfileName, mod.SourceID, mod.ID)
+	}
+	return nil
 }
 
 // setModVersion corrects an installed mod's recorded version without

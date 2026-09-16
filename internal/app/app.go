@@ -54,6 +54,26 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 	RegisterAdapters(svc)
 	warnAdapterConfig(svc, warnWriter(opts), opts.OmitAdapterWarnings)
 	registerSources(ctx, svc, p, warnWriter(opts))
+	// #431: the one-time backfill of the profile documents' `disabled:`
+	// markers, owed only by a database an older lmm wrote (migrateV17). It
+	// runs here so the first command after the upgrade - a read-only one
+	// included - records it and prints what it recorded; beginOp runs it too,
+	// so a mutation can never get to the evidence first. A no-op on every
+	// later open, and on any installation that does not owe it. Core prints
+	// its own notice, on the same WarnWriter this passes it.
+	//
+	// Nothing here may stop lmm from starting. Core only tries the
+	// mutation lock, never waits for it (another lmm mid-mutation leaves
+	// the job to the next mutation or open), and turns every per-file or
+	// per-row problem - an editor panic included - into a skipped profile
+	// in its own notice. What is left (the database itself failing) is a
+	// warning, never a refusal: the intent it records is already recorded
+	// in the database. Same channel and same reasoning as the source
+	// warnings above; the next open, or this process's first mutation,
+	// finishes the job.
+	if _, err := svc.BackfillProfileDisabledMarkers(ctx); err != nil {
+		_, _ = fmt.Fprintf(warnWriter(opts), "warning: could not record mods disabled before this upgrade in their profiles: %v\n", err) //nolint:errcheck // best-effort warning write
+	}
 	return svc, nil
 }
 

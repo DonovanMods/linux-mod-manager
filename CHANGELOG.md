@@ -252,6 +252,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A profile can say a mod is switched off (#431).** Mod references in a
+  profile file gain an optional `disabled: true` key. Disabling a mod used
+  to flip one column in the database and nothing else, so the profile
+  document — the desired state `lmm profile apply` converges to — had
+  nowhere to record it, and the intent survived nothing: a profile switch
+  overwrote the row, an export never carried it, and a rebuilt database
+  lost it. The marker is written by `lmm mod disable`. It keeps the mod's
+  load-order position and pinned version, and it travels through `lmm
+profile export`/`import` and `lmm profile sync`. A converge run never
+  downloads or deploys a mod marked this way, and a mod newly added to a
+  profile still defaults to enabled.
+
+  `lmm deploy` is not a converge run and never takes files down. It skips a
+  marked mod, and so does the web UI's Deploy button. If the mod's files are
+  still deployed, deploy leaves them in place but names the mod and points at
+  `lmm profile apply`; the dry run and the web UI's Deploy confirmation list
+  it too. `lmm deploy --mod <mod-id>` refuses a marked mod by name. `lmm
+deploy --all`, which exists to deploy switched-off mods, still deploys it,
+  and its help now says the next `lmm profile apply` or `lmm profile switch`
+  takes it down again.
+
+  Three things clear the marker, and each is a request for that mod:
+
+  - `lmm mod enable`, which clears it even when the database already said
+    the mod was enabled, so a document and a database that disagree can
+    always be brought back into line — except on a game whose adapter lmm
+    refuses (#413), where enabling is refused like every deploy and leaves
+    the marker where it is (`lmm mod disable` still writes it there);
+  - `lmm install` of the same mod, because asking for a mod by name is a
+    request to have it, not something the next converge run should undo;
+  - installing a mod that depends on it. The user did not name the
+    dependency, so the install plan names it before the prompt, and the
+    result names it again with a warning: it is switched back on in that
+    profile because the mod asked for cannot work without it. The install
+    plan and result gain a `reenabled_dependencies` list for this.
+
+  The key is additive in both directions. **A missing `disabled` key means
+  enabled**, which is what every profile file written by an earlier lmm
+  already says, so nothing is rewritten on read. The key is omitted whenever
+  it would be false, so profile files, exports and every `--json` document
+  that carries a mod reference stay byte-identical until you actually
+  disable something. Editing it by hand is supported — see
+  [docs/configuration.md](docs/configuration.md#per-mod-keys). A mod a
+  hand edit lists twice is read by its first entry in every command, and
+  lmm writes the marker onto every entry, so a `lmm profile sync` never
+  deletes a marked entry along with an unmarked copy.
+
+  **Some mods you had already disabled are recorded once, at upgrade.**
+  Their off state lived only in the database, which no converge run reads.
+  The first `lmm` command after the upgrade (or `lmm serve` as it starts)
+  writes `disabled: true` for them, then prints each mod it recorded with its
+  game, profile and file, followed by the `lmm mod enable` command that undoes
+  it. Only rows lmm can be sure about are recorded: a mod that is switched off
+  **and** not deployed, under the game's one profile file that says
+  `is_default: true`. The database cannot tell anything else from a mod you
+  want on:
+
+  - every profile switch writes "off" onto the profile it leaves;
+  - `lmm purge` (or `lmm deploy --purge`, or a failed `verify --fix` re-link)
+    followed by a switch leaves exactly what a real disable leaves;
+  - the #430 switch bug, and a failed enable during a switch, leave the
+    active profile's row switched off while the mod is live.
+
+  So mods in other profiles, and disables made before v1.28.0, stay
+  unrecorded. They behave as they did before the upgrade, and one `lmm mod
+disable` records them for good.
+
+  The step edits only the one entry in the file the profile was read from.
+  Comments, layout, line endings (LF, CRLF or CR) and `~/` paths survive,
+  and a symlink is followed. A file it cannot edit is named in a warning and
+  tried again once it changes, while every other profile is still recorded.
+  That covers a read-only file, an entry it cannot change in place, and a
+  failure of the step itself. A profile file the YAML parser itself fails
+  on now reads as unparseable, for every command, rather than crashing lmm
+  (`games.yaml`, `config.yaml` and custom source definitions are not
+  covered yet: #452). A database row naming a game or profile that no file
+  can have is named and skipped. Nothing in the step can stop lmm from
+  starting, and a command never waits for it: when another lmm is
+  mid-change, the next command that changes something runs the step first.
+  `profile apply`, `profile sync` and `profile switch` decide from the
+  marker, so they run the step before they plan, including the retry of a
+  file that has changed since — a switch away from that profile is enough.
+  A plan of theirs made before the step recorded a mod in its profile is
+  refused as out of date, and the refusal says the profile's disabled
+  markers changed, so one confirmed earlier cannot undo what the step just
+  recorded. The step runs once per installation, decided by a database
+  migration, and an installation with nothing to record writes nothing.
+  Mods disabled afterwards by an older lmm still running, or after a
+  downgrade, are not recorded.
+
 - **`lmm serve` has a tab icon (#435).** The shell declared no icon, so the
   tab showed the browser's generic page glyph and every page load fired a
   `GET /favicon.ico` the server had no route for. An SVG mark now ships
@@ -1381,6 +1471,55 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **lmm processes starting together on a new installation no longer fail
+  with "database is locked" (#453).** Switching a brand-new database file
+  into write-ahead-log mode needs the write lock, and SQLite refuses at
+  once, without its usual five-second wait, when another process holds it.
+  So `lmm serve` started beside a CLI command on a fresh installation could
+  kill one of them at startup. That first switch now waits its turn.
+
+- **A refused `lmm import <archive>` no longer blames installed mods.** When
+  the archive or its file conflicts changed between the plan and the
+  import, the refusal read "plan is stale: installed mods changed since it
+  was computed: … changed since the plan was computed". It now names only
+  what changed. A refusal over installed mods reads as before.
+
+- **A mod two profiles share is no longer disabled by switching between
+  them (#430).** `lmm profile switch` (and the web UI's "Switch and
+  deploy…") worked out what to enable by merging the two profiles'
+  installed rows and then asking whether the mod had been enabled under the
+  profile it was switching **away from**. For a mod both profiles list the
+  answer was yes, so the switch classified it as no work at all: the
+  profile you switched **to** never got a row of its own, and the mod
+  showed as disabled — or vanished from `lmm list` entirely — while its
+  files sat deployed in the game directory. The question is now asked of
+  the target profile: a mod is enabled and deployed under the profile you
+  switched to unless that profile's own row already says both. The target
+  profile's row is also what the switch now reads the mod's version and
+  file list from, and what it records the deployment on, and switching back
+  and forth settles instead of re-planning the same mod and asking for
+  confirmation on every pass. When the two profiles hold one mod at
+  different versions (an `lmm update` under one of them is enough), the
+  switch replaces the version that is live with the target profile's own.
+  Files only the old version shipped are removed, and the profile switched
+  away from stops claiming a deployment, so switching back puts its version
+  back rather than reporting nothing to do. A pinned version in the target
+  profile replaces whatever is live the same way. A mod both profiles have
+  a row for is listed once, not twice.
+
+- **A mod you disabled stays disabled across a profile switch or apply
+  (#431).** Disable a mod under one profile, switch away, switch back, and
+  it was enabled and deployed again — `lmm profile apply` and `lmm profile
+sync` each undid the intent in their own way too, sync by deleting the
+  mod's reference from the profile outright, load-order position and pinned
+  version included. All three now read the profile document's new
+  `disabled:` marker (see Added): a switch or an apply converges **to** the
+  document rather than over it, an apply undeploys a mod the document
+  turned off while the database still says otherwise, and a sync treats a
+  marked reference as intent rather than as a leftover. `lmm profile
+import` brings the marker in with the rest of the document and does not
+  download or deploy a mod it marks off.
 
 - **The web UI's enable/disable checkbox acknowledges the click straight
   away (#432).** Enabling a mod deploys its files, which for a large mod is

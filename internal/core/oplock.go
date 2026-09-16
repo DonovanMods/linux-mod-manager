@@ -106,7 +106,8 @@ func (l *opLock) release() {
 }
 
 // acquireOpLock takes an exclusive advisory lock on path, waiting up to
-// opLockWait for a holder to let go (#317).
+// wait for a holder to let go (#317) - opLockWait for a mutation, zero for a
+// caller that only tries.
 //
 // flock rather than a lock file's mere existence, for the property a
 // crash-safe lock needs: the kernel drops it when the descriptor closes,
@@ -122,13 +123,13 @@ func (l *opLock) release() {
 //
 // Reads never call this. Only beginOp does, which is exactly the set of
 // mutations the in-process semaphore already serializes.
-func acquireOpLock(ctx context.Context, path string) (*opLock, error) {
+func acquireOpLock(ctx context.Context, path string, wait time.Duration) (*opLock, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("opening the operation lock: %w", err)
 	}
 
-	deadline := time.Now().Add(opLockWait)
+	deadline := time.Now().Add(wait)
 	for {
 		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {

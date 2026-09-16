@@ -29,13 +29,17 @@ type ProfileApplyPlan struct {
 	GameID  string `json:"game_id"`
 	Profile string `json:"profile"`
 
-	// ToDisable is every mod installed AND enabled under Profile that the
-	// profile no longer lists: undeploy it and clear its enabled flag.
+	// ToDisable is every mod installed under Profile whose files must come
+	// down: one the profile no longer lists at all, or (#431) one it lists
+	// with the document's `disabled:` marker while the row still says
+	// enabled or still claims a deployment. Undeploy it, clear its enabled
+	// flag and clear its deployed flag.
 	ToDisable []domain.InstalledMod `json:"to_disable"`
-	// ToEnable is every listed mod that is installed, disabled, and still
-	// cached at its installed version: deploy it and set its enabled flag.
-	// A disabled mod whose cache entry is GONE cannot be deployed, so it
-	// lands in ToInstall instead (carrying the DB row's own FileIDs).
+	// ToEnable is every listed mod that is installed, disabled, NOT marked
+	// disabled in the document, and still cached at its installed version:
+	// deploy it and set its enabled flag. A disabled mod whose cache entry
+	// is GONE cannot be deployed, so it lands in ToInstall instead
+	// (carrying the DB row's own FileIDs).
 	ToEnable []domain.InstalledMod `json:"to_enable"`
 
 	// ToInstall is the (re)install list, in the order doProfileApply built
@@ -195,7 +199,9 @@ type ProfileApplyResult struct {
 // PlanProfileApply computes what it would take to make the mods installed
 // under profileName match the profile itself, without mutating anything (no
 // DB writes, no filesystem changes, no downloads) - callers may call it
-// speculatively, render it, and discard it.
+// speculatively, render it, and discard it. The one exception is #431's
+// backfill: what it still owes is settled first (settleOwedProfileBackfill),
+// since the plan is decided from the very markers it writes.
 //
 // The three buckets are built exactly as doProfileApply built them,
 // including their deterministic ordering (orderByProfile for the
@@ -205,6 +211,14 @@ type ProfileApplyResult struct {
 // than the plan, because doProfileApply printed those failures per mod,
 // inside its install loop, and carried on.
 func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profileName string) (*ProfileApplyPlan, error) {
+	s.settleOwedProfileBackfill(ctx)
+	return s.planProfileApply(ctx, game, profileName)
+}
+
+// planProfileApply is PlanProfileApply without the backfill settlement, for
+// a caller already inside the mutation slot (snapshot restore's converge
+// step), where beginOp has settled it.
+func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profileName string) (*ProfileApplyPlan, error) {
 	pm := s.NewProfileManager()
 
 	profile, err := pm.Get(ctx, game.ID, profileName)
@@ -222,10 +236,9 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 		installedByKey[domain.ModKey(installedMods[i].SourceID, installedMods[i].ID)] = &installedMods[i]
 	}
 
-	profileKeys := make(map[string]domain.ModReference, len(profile.Mods))
-	for _, mr := range profile.Mods {
-		profileKeys[domain.ModKey(mr.SourceID, mr.ModID)] = mr
-	}
+	// A mod listed twice is decided by its first reference, as pass 2 below
+	// and every other flow decide it (firstRefs).
+	profileKeys := firstRefs(profile.Mods)
 
 	plan := &ProfileApplyPlan{GameID: game.ID, Profile: profileName}
 	gameCache := s.GetGameCache(game)
@@ -253,6 +266,21 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 		if !inProfile {
 			// Installed but no longer listed - disable it.
 			if im.Enabled {
+				plan.ToDisable = append(plan.ToDisable, *im)
+			}
+			continue
+		}
+
+		if ref.Disabled {
+			// #431: the document lists this mod and says it is off, which
+			// is a different statement from "not listed" - the load-order
+			// position and the pinned version stay - but converges to the
+			// same place. A row that still says enabled (or still claims a
+			// deployment) is what an imported or restored document leaves
+			// behind, and converging it off is the whole point of an apply.
+			// No version drift is chased for it either: there is nothing to
+			// download for a mod the user switched off.
+			if im.Enabled || im.Deployed {
 				plan.ToDisable = append(plan.ToDisable, *im)
 			}
 			continue
@@ -315,6 +343,13 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 		if _, installed := installedByKey[key]; installed {
 			continue
 		}
+		if ref.Disabled {
+			// #431: a listed-but-off ref with no row at all - what an
+			// imported profile looks like on a machine with no database.
+			// A converge run must not fetch and deploy a mod the document
+			// says is switched off; enabling it later is what fetches it.
+			continue
+		}
 		if externalElsewhere == nil {
 			externalElsewhere = s.externalRowsElsewhere(ctx, pm, game.ID, profileName)
 		}
@@ -345,7 +380,9 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 		s.resolveProfileApplyInstall(ctx, game, &plan.ToInstall[i])
 	}
 
-	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
+	// The rows and the document this plan was decided from (see
+	// markedSnapshotOf).
+	snapshot, err := s.markedSnapshotOf(game.ID, installedMods, disabledKeysOf(profile))
 	if err != nil {
 		return nil, err
 	}
@@ -528,6 +565,16 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		}
 		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.Profile, false); err != nil {
 			note(scope, SwitchDisableNote, fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err))
+		}
+		// #183's pair, the same one DisableMod makes: a row whose files
+		// just came down must stop claiming they are deployed. It matters
+		// now that #431 admits a row the document turned off - a converge
+		// pass that left deployed = true would re-plan the same disable on
+		// every run.
+		if im.Deployed {
+			if err := s.setModDeployed(ctx, im.SourceID, im.ID, game.ID, plan.Profile, false); err != nil {
+				note(scope, SwitchDisableNote, fmt.Sprintf("Warning: could not mark %s as not deployed: %v", im.Name, err))
+			}
 		}
 
 		result.Disabled++

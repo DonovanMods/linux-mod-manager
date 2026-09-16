@@ -36,10 +36,17 @@ which source that mod ID belongs to - it resolves automatically when the
 game has exactly one configured source, or prompts interactively when it
 has several. -s is ignored when deploying the whole profile.
 
+A mod the profile marks ` + "`disabled: true`" + ` is not deployed. Deploy is not a
+converge run, so it never takes files down: if such a mod's files are still
+in the game directory, deploy leaves them there and names the mod, and
+'lmm profile apply' is what removes them.
+
 Use --purge to remove all deployed mods before deploying. This ensures
 a clean slate, useful when mods have gotten out of sync.
 
 Use --all to deploy all mods including disabled ones (e.g., after a purge).
+It is a one-off: the next converge run ('lmm profile apply' or 'lmm
+profile switch') takes down again any mod the profile marks disabled.
 
 Use --dry-run to print what the deploy would do - which mods, which files,
 what a --purge pass would remove first - without changing anything.
@@ -62,7 +69,7 @@ func init() {
 	deployCmd.Flags().StringVarP(&deployProfile, "profile", "p", "", "profile (default: active profile)")
 	deployCmd.Flags().StringVarP(&deployMethod, "method", "m", "", "link method: symlink, hardlink, or copy (default: game's configured method)")
 	deployCmd.Flags().BoolVar(&deployPurge, "purge", false, "purge all deployed mods before deploying")
-	deployCmd.Flags().BoolVarP(&deployAll, "all", "a", false, "deploy all mods including disabled ones")
+	deployCmd.Flags().BoolVarP(&deployAll, "all", "a", false, "deploy all mods including disabled ones (the next 'lmm profile apply' or 'lmm profile switch' takes down any the profile marks disabled)")
 	deployCmd.Flags().BoolVarP(&deployForce, "force", "f", false, "continue even if hooks fail")
 	deployCmd.Flags().BoolVar(&deployDryRun, "dry-run", false, "print what the deploy would do without changing anything")
 
@@ -163,12 +170,21 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// deploy loop starts (a forced before_all warning, anything from the
 	// --purge pass) return early, without calling printDeployHeaderOnce -
 	// they must print before "Deploying N mod(s)..." even exists.
+	// offStillDeployed counts DeployOffStillDeployed reports (#431, R9):
+	// they are DeployResult.Skipped entries, but not failures.
+	offStillDeployed := 0
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
 			return
 		}
 		switch p.Phase {
+		case core.DeployOffStillDeployed:
+			// Reported before the deploy loop starts, like the purge
+			// phases: a mod left in place is not one of the N deployed.
+			fmt.Printf("  ⊘ %s — %s\n", p.ModName, p.Detail)
+			offStillDeployed++
+			return
 		case core.DeployBeforeAllForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 			return
@@ -300,7 +316,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	} else {
 		fmt.Printf("\nDeployed: %d", result.Deployed)
 	}
-	if failed := len(result.Skipped); failed > 0 {
+	if failed := len(result.Skipped) - offStillDeployed; failed > 0 {
 		fmt.Printf(", Failed: %d", failed)
 	}
 	fmt.Println()
@@ -355,7 +371,24 @@ func renderDeployPlan(plan *core.DeployPlan, progress func(core.Event), printHea
 		fmt.Println()
 	}
 
-	if len(plan.Mods) == 0 {
+	// #431 (R9): a mod left in place because the profile switched it off
+	// is reported the way the live deploy reports it - ahead of, and not
+	// counted among, the mods that deploy.
+	mods := make([]core.DeployPlanMod, 0, len(plan.Mods))
+	for _, m := range plan.Mods {
+		if m.Class == core.DeployModOff {
+			progress(core.ModEvent{
+				Scope:  core.Scope{Op: core.OpDeploy, ModName: m.Name, Mod: &domain.ModReference{SourceID: m.Ref.SourceID, ModID: m.Ref.ModID}},
+				Phase:  core.DeployOffStillDeployed,
+				Detail: m.Skipped,
+				Class:  m.Class,
+			})
+			continue
+		}
+		mods = append(mods, m)
+	}
+
+	if len(mods) == 0 {
 		if deployAll {
 			fmt.Println("No mods to deploy.")
 		} else {
@@ -373,12 +406,12 @@ func renderDeployPlan(plan *core.DeployPlan, progress func(core.Event), printHea
 		return
 	}
 
-	printHeaderOnce(len(plan.Mods))
+	printHeaderOnce(len(mods))
 
 	deployable := 0
-	for i, m := range plan.Mods {
+	for i, m := range mods {
 		scope := core.Scope{
-			Op: core.OpDeploy, Index: i + 1, Total: len(plan.Mods),
+			Op: core.OpDeploy, Index: i + 1, Total: len(mods),
 			ModName: m.Name, Mod: &domain.ModReference{SourceID: m.Ref.SourceID, ModID: m.Ref.ModID},
 		}
 		if m.Skipped != "" {
@@ -429,7 +462,7 @@ func renderDeployPlan(plan *core.DeployPlan, progress func(core.Event), printHea
 	} else {
 		fmt.Printf("\nWould deploy: %d", deployable)
 	}
-	if skipped := len(plan.Mods) - deployable; skipped > 0 {
+	if skipped := len(mods) - deployable; skipped > 0 {
 		fmt.Printf(", Skipped: %d", skipped)
 	}
 	fmt.Println()

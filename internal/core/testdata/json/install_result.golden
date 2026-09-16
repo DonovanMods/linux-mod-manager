@@ -21,6 +21,14 @@
   "files_deployed": 7,
   "merged_pak_sync_failed": true,
   "profile_write_failed": true,
+  "reenabled_dependencies": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "98",
+      "name": "Required Library",
+      "version": "2.0.0"
+    }
+  ],
   "warnings": [
     "merged pak sync failed"
   ],

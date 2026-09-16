@@ -758,6 +758,7 @@ func TestDoProfileSwitch_DryRun_NoChanges_DoesNotSwitchDefault(t *testing.T) {
 	require.NoError(t, err)
 
 	seedDeployableMod(t, svc, game, "shared", "Shared Mod", "shared.esp")
+	seedLiveRowUnderProfile(t, svc, game, "other", "shared", "Shared Mod")
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
 	withProfileDryRun(t, &profileSwitchDryRun)
 

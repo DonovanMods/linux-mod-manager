@@ -396,3 +396,43 @@ func TestApplyProfileSync_StalePlan(t *testing.T) {
 	_, err = svc.ApplyProfileSync(context.Background(), game, plan, nil)
 	require.ErrorIs(t, err, core.ErrStalePlan)
 }
+
+// TestPlanProfileSync_KeepsADisabledRef guards #431's "the marker survives
+// profile sync" requirement. The sync's staleness test was "is there an
+// ENABLED row for this ref?", so a mod the user switched off looked like a
+// leftover and was pruned - taking the marker, the load-order position and
+// the pinned version with it, and re-enabling the mod on the next converge.
+// A disabled ref that still has a row is deliberate, not stale.
+func TestPlanProfileSync_KeepsADisabledRef(t *testing.T) {
+	svc, game := newSyncTestService(t)
+	pm := svc.NewProfileManager()
+	ctx := context.Background()
+
+	seedSyncInstalledMod(t, svc, game, "src", "off", "Off Mod", "1.0", "default", false, nil)
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "default", "src", "off", true))
+
+	plan, err := svc.PlanProfileSync(ctx, game, "default")
+	require.NoError(t, err)
+	assert.Empty(t, plan.ToRemove, "a ref the document marks disabled is intent, not a stale leftover")
+	assert.Empty(t, plan.ToAdd)
+	assert.True(t, plan.NoChanges)
+}
+
+// TestPlanProfileSync_StillRemovesAnUninstalledDisabledRef is the limit of
+// the rule above: the ref is kept because a row exists for it, not because
+// the marker makes it immortal. With no row at all it is as stale as any
+// other unbacked ref.
+func TestPlanProfileSync_StillRemovesAnUninstalledDisabledRef(t *testing.T) {
+	svc, game := newSyncTestService(t)
+	pm := svc.NewProfileManager()
+	ctx := context.Background()
+
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ghost", Version: "1.0"}))
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "default", "src", "ghost", true))
+
+	plan, err := svc.PlanProfileSync(ctx, game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToRemove, 1)
+	assert.Equal(t, "ghost", plan.ToRemove[0].ModID)
+}

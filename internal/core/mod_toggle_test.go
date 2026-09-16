@@ -308,3 +308,96 @@ func TestService_EnableMod_SetModDeployedFailure_NonFatalNote(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, mod.Enabled, "SetModEnabled touches a different column and must still succeed")
 }
+
+// --- #431: the toggle flows write the profile document too ---
+
+// TestService_DisableThenEnable_RoundTripsTheProfileMarker pins the pair of
+// writes #431 rests on: disable records the off intent in the profile
+// document beside the DB row, and enable clears it, leaving a document
+// byte-identical to one that never carried the key.
+func TestService_DisableThenEnable_RoundTripsTheProfileMarker(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	profilePath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
+	before, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+
+	_, err = svc.DisableMod(ctx, game, "default", "src", "1")
+	require.NoError(t, err)
+
+	disabled, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	assert.Contains(t, string(disabled), "disabled: true")
+
+	_, err = svc.EnableMod(ctx, game, "default", "src", "1")
+	require.NoError(t, err)
+
+	after, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after), "enabling again must leave the document exactly as it was")
+}
+
+// TestService_DisableMod_ModNotInProfileIsNotADiagnostic guards the one
+// "nothing to record" case: an installed row whose profile never listed the
+// mod has no desired-state entry to mark, which is not a failure and must
+// not produce a note.
+func TestService_DisableMod_ModNotInProfileIsNotADiagnostic(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	assert.Empty(t, result.Notes)
+}
+
+// TestService_EnableMod_ClearsTheMarkerWhenTheRowAlreadySaysEnabled is the
+// fix-round F1 regression, and the coverage gap F10 named: the round trip
+// above only ever enables a mod whose ROW already says disabled, so
+// enableMod's already-enabled short-circuit - which returned before the
+// marker was cleared - was never reached by a test.
+//
+// "Document off, row on" is the drift `profile import --force`, `snapshot
+// restore`, a hand-edited profile and an explicit `lmm install` all
+// produce, and docs/configuration.md prescribes `lmm mod enable` as the way
+// back from it. That recovery used to run to completion, report success,
+// and leave the marker set - so the next converge run silently took the mod
+// away again, with no note at any step.
+func TestService_EnableMod_ClearsTheMarkerWhenTheRowAlreadySaysEnabled(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+	// The document alone says off - exactly what an imported or restored
+	// document leaves behind over a live enabled row.
+	require.NoError(t, pm.SetModDisabled(ctx, "g1", "default", "src", "1", true))
+
+	result, err := svc.EnableMod(ctx, game, "default", "src", "1")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Empty(t, result.Notes)
+
+	profile, err := pm.Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.False(t, profile.Mods[0].Disabled,
+		"`lmm mod enable` must clear the document's off marker even when the row already says enabled")
+
+	plan, err := svc.PlanProfileApply(ctx, game, "default")
+	require.NoError(t, err)
+	assert.Empty(t, plan.ToDisable, "and the next converge run must not take the mod away again")
+}

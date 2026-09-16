@@ -678,3 +678,85 @@ func TestPlanProfileApply_ExternalRefIsRecordedNotFetched(t *testing.T) {
 	assert.True(t, row.External)
 	assert.Equal(t, "/steam/workshop/content/1/111000111", row.ExternalPath)
 }
+
+// --- #431: the per-mod disabled marker, on the converge path ---
+
+// TestProfileApply_HonoursTheDisabledMarker is #431's `profile apply`
+// regression. PlanProfileApply classified an installed-but-disabled mod the
+// profile lists straight into ToEnable, because "listed in the profile" was
+// read as "should be enabled" - the profile document had no way to say
+// otherwise. A converge run must converge TO the document, marker included.
+func TestProfileApply_HonoursTheDisabledMarker(t *testing.T) {
+	svc, game := newApplyTestService(t)
+	pm := svc.NewProfileManager()
+	ctx := context.Background()
+
+	seedInstalledMod(t, svc, game, "src", "off", "1.0", true, map[string][]byte{"off.esp": []byte("x")})
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
+
+	_, err := svc.DisableMod(ctx, game, "default", "src", "off")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanProfileApply(ctx, game, "default")
+	require.NoError(t, err)
+	assert.Empty(t, plan.ToEnable, "a mod the document marks disabled must never be scheduled for enable")
+	assert.Empty(t, plan.ToInstall)
+	assert.Empty(t, plan.ToDisable, "the row already agrees with the document, so there is nothing to converge")
+	assert.True(t, plan.NoChanges)
+
+	row, err := svc.GetInstalledMod(ctx, "src", "off", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, row.Enabled)
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "off.esp"))
+}
+
+// TestProfileApply_DisabledMarkerConvergesAnEnabledRow is the other
+// direction of the same rule, and the one an imported or restored profile
+// document actually reaches: the document says off while the installed row
+// still says on (nothing in lmm writes that pair, but `profile import
+// --force` and `snapshot restore` both replace the document under live
+// rows). The apply must undeploy it and clear the row.
+func TestProfileApply_DisabledMarkerConvergesAnEnabledRow(t *testing.T) {
+	svc, game := newApplyTestService(t)
+	pm := svc.NewProfileManager()
+	ctx := context.Background()
+
+	seedInstalledMod(t, svc, game, "src", "off", "1.0", true, map[string][]byte{"off.esp": []byte("x")})
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
+	// The document alone is edited - the row keeps saying "enabled".
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "default", "src", "off", true))
+
+	plan, err := svc.PlanProfileApply(ctx, game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToDisable, 1, "the row disagrees with the document, so the apply must converge it off")
+	assert.Equal(t, "off", plan.ToDisable[0].ID)
+	assert.Empty(t, plan.ToEnable)
+	assert.Empty(t, plan.ToInstall)
+
+	result, err := svc.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Disabled)
+
+	row, err := svc.GetInstalledMod(ctx, "src", "off", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, row.Enabled)
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "off.esp"))
+}
+
+// TestProfileApply_DisabledMarkerIsNotInstalled covers pass 2: a ref the
+// document marks disabled with no installed row at all (a freshly imported
+// profile on a machine with no database) must not be fetched and deployed.
+func TestProfileApply_DisabledMarkerIsNotInstalled(t *testing.T) {
+	svc, game := newApplyTestService(t)
+	pm := svc.NewProfileManager()
+	ctx := context.Background()
+	svc.RegisterSource(newMockSourceWithDownloads("src"))
+
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "default", "src", "off", true))
+
+	plan, err := svc.PlanProfileApply(ctx, game, "default")
+	require.NoError(t, err)
+	assert.Empty(t, plan.ToInstall, "a mod the document says is off must not be downloaded and deployed by a converge run")
+	assert.True(t, plan.NoChanges)
+}

@@ -423,6 +423,19 @@ func doModUnlock(ctx context.Context, service *core.Service, game *domain.Game, 
 	return nil
 }
 
+// resolveInstalledModSource is resolveSource for a command that acts on a
+// mod already installed, which may be an imported one: its source is
+// domain.SourceLocal, which no game configures, and `lmm uninstall` has
+// always accepted it for the same reason. `lmm mod enable`/`disable` need it
+// because #431's one-time upgrade notice and its docs point at them to
+// switch a mod back on or record it as off.
+func resolveInstalledModSource(service *core.Service, game *domain.Game, sourceFlag string) (string, error) {
+	if sourceFlag == domain.SourceLocal {
+		return sourceFlag, nil
+	}
+	return resolveSource(service, game, sourceFlag, false)
+}
+
 func runModEnable(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
 		return doModEnable(ctx, service, game, args[0])
@@ -432,7 +445,7 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Resolve source: use flag if set, otherwise first configured source
 	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
+	modSource, err = resolveInstalledModSource(service, game, modSource)
 	if err != nil {
 		return err
 	}
@@ -491,7 +504,7 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 func doModDisable(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Resolve source: use flag if set, otherwise first configured source
 	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
+	modSource, err = resolveInstalledModSource(service, game, modSource)
 	if err != nil {
 		return err
 	}

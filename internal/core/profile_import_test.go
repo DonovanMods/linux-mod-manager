@@ -1460,3 +1460,43 @@ func TestApplyImport_TwoLiveOtherVersions_ConvergesTheFirstOnly(t *testing.T) {
 	assert.NoError(t, err,
 		"and the second, mmm's 2.0, is knowingly left behind: liveOtherVersion is first-match-wins, and resolving one of a mixed pair is better than resolving neither")
 }
+
+// TestPlanImport_DisabledRefIsNeitherFetchedNorDeployed covers #431 on the
+// import path: a shared profile that marks a mod off must not arrive with
+// that mod downloaded and deployed. The ref still lands in the imported
+// document - with its position, its pinned version and its marker - it is
+// simply not part of the install work.
+func TestPlanImport_DisabledRefIsNeitherFetchedNorDeployed(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	profile := &domain.Profile{
+		Name: "target", GameID: game.ID,
+		Mods: []domain.ModReference{
+			{SourceID: "src", ModID: "off-mod", Version: "1.0", Disabled: true},
+		},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(ctx, game, data)
+	require.NoError(t, err)
+	assert.Empty(t, plan.Missing, "a mod the document says is off must not be reported as missing - it is not wanted")
+	assert.Empty(t, plan.NeedsRedownload)
+	assert.Empty(t, plan.AlreadyCached)
+	assert.Empty(t, plan.Installed)
+
+	result, err := svc.ApplyImport(ctx, game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.Installed)
+	assert.Equal(t, 0, result.Failed)
+
+	// The marker reached the profile on disk, which is what a later
+	// converge run reads.
+	imported, err := svc.NewProfileManager().Get(ctx, game.ID, "target")
+	require.NoError(t, err)
+	require.Len(t, imported.Mods, 1)
+	assert.True(t, imported.Mods[0].Disabled)
+	assert.Equal(t, "1.0", imported.Mods[0].Version)
+}

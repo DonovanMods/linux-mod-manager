@@ -70,6 +70,14 @@ type ProfileSyncPlan struct {
 	// this plan was computed from. ApplyProfileSync re-derives it and
 	// returns ErrStalePlan when it no longer matches.
 	snapshot installedSnapshot `json:"-"`
+
+	// keepMarked is every ToRemove key that still has an installed row
+	// (#431). Removing it removes its unmarked references only: a copy the
+	// document marks disabled - which can sit beside an unmarked one only
+	// in a hand edit - is the off intent the row itself agrees with, and
+	// RemoveMod would take it, its load-order position and its pinned
+	// version with the unmarked one. Unexported, like snapshot.
+	keepMarked map[string]bool `json:"-"`
 }
 
 // ProfileSyncResult reports the outcome of ApplyProfileSync. Added/Removed/
@@ -115,7 +123,11 @@ type ProfileSyncResult struct {
 // membership checks). Pre-Ruling-4, doProfileSync built all three buckets by
 // ranging those maps directly, so the order was whatever that run's Go map
 // iteration produced.
+//
+// Like PlanProfileApply, it first settles what #431's backfill still owes
+// (settleOwedProfileBackfill).
 func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profileName string) (*ProfileSyncPlan, error) {
+	s.settleOwedProfileBackfill(ctx)
 	pm := s.NewProfileManager()
 
 	profile, err := pm.Get(ctx, game.ID, profileName)
@@ -134,7 +146,15 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 	}
 
 	installedRefs := make(map[string]domain.ModReference, len(installedMods))
+	// installedAny is every row, enabled or not (#431). The sync's
+	// staleness test - "no ENABLED row, so this ref is a leftover" - is
+	// right for a ref the document says nothing special about and wrong for
+	// one it marks disabled: that ref IS the user's off intent, and pruning
+	// it would take the marker, the load-order position and the pinned
+	// version with it, switching the mod back on at the next converge.
+	installedAny := make(map[string]bool, len(installedMods))
 	for _, im := range installedMods {
+		installedAny[domain.ModKey(im.SourceID, im.ID)] = true
 		if im.Enabled {
 			installedRefs[domain.ModKey(im.SourceID, im.ID)] = domain.ModReference{
 				SourceID: im.SourceID,
@@ -145,10 +165,7 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 		}
 	}
 
-	profileRefs := make(map[string]domain.ModReference, len(profile.Mods))
-	for _, mr := range profile.Mods {
-		profileRefs[domain.ModKey(mr.SourceID, mr.ModID)] = mr
-	}
+	profileRefs := firstRefs(profile.Mods)
 
 	// #269: no external rule is needed here, and that is a fact worth
 	// stating rather than an omission. A sync moves lmm's TRACKING to match
@@ -169,10 +186,29 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 		}
 	}
 
+	// A mod listed twice (a hand edit) is decided by its first reference,
+	// as every other flow decides it (firstRefs), and listed once.
+	seen := make(map[string]bool, len(profile.Mods))
 	for _, mr := range profile.Mods {
 		key := domain.ModKey(mr.SourceID, mr.ModID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		ref, exists := installedRefs[key]
 		if !exists {
+			// #431: kept because a row exists for it, not because the
+			// marker makes a ref immortal - a disabled ref with no row at
+			// all is as stale as any other unbacked ref.
+			if installedAny[key] {
+				if mr.Disabled {
+					continue
+				}
+				if plan.keepMarked == nil {
+					plan.keepMarked = make(map[string]bool)
+				}
+				plan.keepMarked[key] = true
+			}
 			plan.ToRemove = append(plan.ToRemove, mr)
 		} else if len(ref.FileIDs) > 0 && len(mr.FileIDs) == 0 {
 			plan.ToUpdate = append(plan.ToUpdate, ref)
@@ -205,7 +241,9 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 
 	plan.NoChanges = len(plan.ToAdd) == 0 && len(plan.ToRemove) == 0 && len(plan.ToUpdate) == 0
 
-	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
+	// The rows and the document this plan was decided from (see
+	// markedSnapshotOf).
+	snapshot, err := s.markedSnapshotOf(game.ID, installedMods, disabledKeysOf(profile))
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +335,8 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		if err := pm.RemoveMod(ctx, plan.GameID, plan.Profile, ref.SourceID, ref.ModID); err != nil {
+		keepMarked := plan.keepMarked[domain.ModKey(ref.SourceID, ref.ModID)]
+		if err := pm.removeMod(ctx, plan.GameID, plan.Profile, ref.SourceID, ref.ModID, keepMarked); err != nil {
 			// v2 Phase 3 Task 18: same cancellation-stays-fatal guard as
 			// the ToAdd loop above.
 			if ctxErr := ctx.Err(); ctxErr != nil {

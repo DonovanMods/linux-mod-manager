@@ -81,6 +81,12 @@ const (
 	// links nothing: its Link and Remove are both empty, and the deploy
 	// loop emits DeployExternalSkipped for it and moves on.
 	DeployModExternal
+	// DeployModOff: a mod the profile document marks disabled (#431) whose
+	// files are still deployed. A deploy does not take files down (that is
+	// `lmm profile apply`'s job), so the plan lists it as Skipped, saying
+	// so, and the deploy emits DeployOffStillDeployed for it (fix round 2,
+	// R9). Only a profile-wide plan without --purge or --all has one.
+	DeployModOff
 )
 
 // deployModClassNames maps each DeployModClass to its wire name. Keep in
@@ -90,6 +96,20 @@ var deployModClassNames = [...]string{
 	DeployModMerged:     "merged",
 	DeployModRaw:        "raw",
 	DeployModExternal:   "external",
+	DeployModOff:        "off",
+}
+
+// offStillDeployedReason is why a profile-wide deploy leaves a mod the
+// document switched off where it is, and what to do about it.
+func offStillDeployedReason(profileName, modID string) string {
+	return fmt.Sprintf("switched off in profile %q but still deployed - `lmm deploy` does not take mods down; run `lmm profile apply` to remove it, or `lmm mod enable %s` to keep it", profileName, modID)
+}
+
+// offButDeployed reports whether a profile-wide deploy without --all must
+// report mod instead of deploying it: the document marks it off (#431)
+// while its row still claims a deployment. External mods have none.
+func offButDeployed(mod *domain.InstalledMod, docDisabled map[string]bool) bool {
+	return docDisabled[domain.ModKey(mod.SourceID, mod.ID)] && mod.Deployed && !mod.External
 }
 
 // String returns the class's wire name.
@@ -378,7 +398,9 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 				Name:    opts.ModID,
 				Skipped: "mod not found",
 			})
-		case !mod.Enabled && !opts.All:
+		case (!mod.Enabled || s.profileDisabledKeys(ctx, game.ID, profileName)[domain.ModKey(mod.SourceID, mod.ID)]) && !opts.All:
+			// #431: the document marking it off is refused the same way
+			// deployProfile refuses it.
 			plan.Mods = append(plan.Mods, DeployPlanMod{
 				Ref:     stampLock(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}),
 				Name:    mod.Name,
@@ -392,8 +414,24 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 		if err != nil {
 			return nil, fmt.Errorf("getting installed mods: %w", err)
 		}
+		// #431: deployProfile's own selection - the document marking a mod
+		// off keeps it out, and one whose files are still live is listed as
+		// skipped, saying why (R9), unless a --purge takes it down first.
+		docDisabled := s.profileDisabledKeys(ctx, game.ID, profileName)
 		for i := range mods {
-			if opts.All || mods[i].Enabled {
+			switch {
+			case opts.All:
+				modsToDeploy = append(modsToDeploy, &mods[i])
+			case docDisabled[domain.ModKey(mods[i].SourceID, mods[i].ID)]:
+				if !opts.Purge && offButDeployed(&mods[i], docDisabled) {
+					plan.Mods = append(plan.Mods, DeployPlanMod{
+						Ref:     stampLock(domain.ModReference{SourceID: mods[i].SourceID, ModID: mods[i].ID, Version: mods[i].Version}),
+						Name:    mods[i].Name,
+						Class:   DeployModOff,
+						Skipped: offStillDeployedReason(profileName, mods[i].ID),
+					})
+				}
+			case mods[i].Enabled:
 				modsToDeploy = append(modsToDeploy, &mods[i])
 			}
 		}
@@ -716,7 +754,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 	}
 	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
-	var modsToDeploy []*domain.InstalledMod
+	var modsToDeploy, offStillDeployed []*domain.InstalledMod
 	if opts.ModID != "" {
 		mod, err := s.GetInstalledMod(ctx, opts.SourceID, opts.ModID, game.ID, profileName)
 		if err != nil {
@@ -729,7 +767,13 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		if err := refuseExternal("deploy", mod, ReasonExternalNoDeploy); err != nil {
 			return result, err
 		}
-		if !mod.Enabled && !opts.All {
+		// #431 (fix round F7): the document marking the mod off is the same
+		// statement about the same mod as the row's own flag, so it gets
+		// the same answer - a refusal that names the remedy, not a silent
+		// deploy. A targeted command that quietly did the opposite of what
+		// the profile says is worse than one that explains itself.
+		docOff := s.profileDisabledKeys(ctx, game.ID, profileName)[domain.ModKey(mod.SourceID, mod.ID)]
+		if (!mod.Enabled || docOff) && !opts.All {
 			return result, fmt.Errorf("mod %s is disabled - use --all to deploy disabled mods, or enable it with 'lmm mod enable %s'", mod.Name, opts.ModID)
 		}
 		modsToDeploy = append(modsToDeploy, mod)
@@ -738,11 +782,29 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		if err != nil {
 			return result, fmt.Errorf("getting installed mods: %w", err)
 		}
+		// #431 (fix round F7): the profile document is the desired state,
+		// so a mod it marks off is not deployed by the profile-wide deploy
+		// - the flow the web UI's Mission Control button drives - however
+		// the installed row's own enabled flag reads. That drift is what
+		// `profile import --force`, `snapshot restore` and a hand-edited
+		// document all leave behind, and deploy was the one flow of the
+		// five that still carried it into the game directory. --all is
+		// unaffected: it exists to deploy mods that are switched off, and
+		// overrides the marker exactly as it overrides the row's flag.
+		docDisabled := s.profileDisabledKeys(ctx, game.ID, profileName)
 		for i := range mods {
 			var shouldDeploy bool
 			switch {
 			case opts.All:
 				shouldDeploy = true
+			case docDisabled[domain.ModKey(mods[i].SourceID, mods[i].ID)]:
+				// R9: not deployed, and - when its files are live, which a
+				// purge above has already changed - reported rather than
+				// left silent. A deploy is not a converge run.
+				if offButDeployed(&mods[i], docDisabled) {
+					offStillDeployed = append(offStillDeployed, &mods[i])
+				}
+				shouldDeploy = false
 			case enabledBeforePurge != nil:
 				shouldDeploy = enabledBeforePurge[domain.ModKey(mods[i].SourceID, mods[i].ID)]
 			default:
@@ -765,6 +827,17 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 			Phase:  DeployExternalSkipped,
 			Detail: mod.ExternalPath,
 			Class:  DeployModExternal,
+		})
+	}
+
+	for _, mod := range offStillDeployed {
+		reason := offStillDeployedReason(profileName, mod.ID)
+		result.Skipped = append(result.Skipped, skippedRef(mod, reason))
+		emit(ModEvent{
+			Scope:  Scope{Op: OpDeploy, Total: len(modsToDeploy), ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}},
+			Phase:  DeployOffStillDeployed,
+			Detail: reason,
+			Class:  DeployModOff,
 		})
 	}
 

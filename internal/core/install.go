@@ -97,6 +97,17 @@ type InstallPlan struct {
 	// resolveInstallDependencies).
 	DependencyWarnings []DependencyWarning `json:"dependency_warnings,omitempty"`
 
+	// ReenabledDependencies names each Dependencies entry the profile
+	// document marks `disabled: true` (#431) - a mod the user switched off
+	// in Profile, which this install switches back ON there, because Mod
+	// cannot work without it and a dependency left marked would be taken
+	// straight back down by the next converge run (fix round 2, R8). The
+	// user did not name it, so a frontend says so before asking to
+	// proceed; InstallResult.ReenabledDependencies and a Warning say so
+	// again afterwards. Identity only - the name is on the matching
+	// Dependencies entry. Empty unless a dependency is marked off.
+	ReenabledDependencies []domain.ModReference `json:"reenabled_dependencies,omitempty"`
+
 	// Conflicts lists files installing Mod would overwrite from OTHER
 	// installed mods, exactly as installer.GetConflicts reports them - but
 	// ONLY when Mod's exact (SourceID, ID, Version) is already cached:
@@ -275,6 +286,7 @@ func (p *InstallPlan) SkipDependencies() {
 	p.MissingDependencies = nil
 	p.CycleDetected = false
 	p.DependencyWarnings = nil
+	p.ReenabledDependencies = nil
 }
 
 // PlanInstall computes what installing (sourceID, modID) into profileName
@@ -377,6 +389,14 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 			installedIDs[domain.ModKey(im.SourceID, im.ID)] = true
 		}
 		plan.Dependencies, plan.MissingDependencies, plan.CycleDetected, plan.DependencyWarnings = s.resolveInstallDependencies(ctx, sourceID, game.ID, mod, installedIDs)
+		if len(plan.Dependencies) > 0 {
+			off := s.profileDisabledKeys(ctx, game.ID, profileName)
+			for _, dep := range plan.Dependencies {
+				if off[domain.ModKey(dep.SourceID, dep.ID)] {
+					plan.ReenabledDependencies = append(plan.ReenabledDependencies, domain.ModReference{SourceID: dep.SourceID, ModID: dep.ID})
+				}
+			}
+		}
 	}
 
 	files, err := s.GetModFiles(ctx, sourceID, mod)
@@ -855,6 +875,14 @@ type InstallResult struct {
 	// datum. True in the BATCH path when ANY mod's profile write failed.
 	// omitzero, so an ordinary install's document is unchanged (#312).
 	ProfileWriteFailed bool `json:"profile_write_failed,omitzero"`
+
+	// ReenabledDependencies holds one entry per dependency this install
+	// switched back ON in the profile - its `disabled: true` marker cleared
+	// (#431, fix round 2 R8) - in install order: InstallPlan.
+	// ReenabledDependencies, as it actually happened. Each also has a
+	// Warnings entry saying so, emitted as an InstallWarning event where it
+	// happens. Empty unless one did.
+	ReenabledDependencies []InstalledRef `json:"reenabled_dependencies,omitempty"`
 
 	Warnings []string `json:"warnings,omitempty"`
 	Notes    []string `json:"notes,omitempty"`
@@ -1476,7 +1504,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 			if err := ctx.Err(); err != nil {
 				return result, err
 			}
-			target := batchTarget{mod: mod, idx: idx, total: total}
+			target := batchTarget{mod: mod, idx: idx, total: total, dependency: idx < total-1}
 			if idx == total-1 {
 				target.files = primaryOverrideFiles
 			}
@@ -1662,6 +1690,10 @@ type batchTarget struct {
 	// primary-or-first), which is also the one place more than one file per
 	// mod can appear (--file can name several).
 	files []domain.DownloadableFile
+
+	// dependency is true for an entry installed only because the primary
+	// depends on it - a mod the user did not name (R8).
+	dependency bool
 
 	// planError, when non-empty, is a failure decided BEFORE this call -
 	// PlanInstallMany's own file-resolution step - to be reported in place
@@ -1941,6 +1973,27 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		result.ProfileWriteFailed = true
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
+	}
+	// #431 (fix round F4): UpsertMod preserves the document's off marker,
+	// which is right for an update or a convergence and wrong here. An
+	// install names the mod, and asking for a mod by name is the clearest
+	// statement of intent there is - so the marker is cleared rather than
+	// leaving the next converge run to undo the install. A no-op (and no
+	// file write) whenever the marker was not set.
+	//
+	// A DEPENDENCY is the one entry nobody named (R8). Its marker is
+	// cleared all the same - the primary cannot work without it - but that
+	// is a change to the user's own setting, so it is said out loud.
+	wasOff := t.dependency && s.profileDisabledKeys(ctx, game.ID, plan.Profile)[domain.ModKey(mod.SourceID, mod.ID)]
+	if msg := s.recordProfileDisabled(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID, false); msg != "" {
+		result.Notes = append(result.Notes, msg)
+		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
+	} else if wasOff && ctx.Err() == nil {
+		msg := fmt.Sprintf("%s was switched off in profile %q and is now switched back on there, because %s depends on it",
+			mod.Name, plan.Profile, plan.Mod.Name)
+		result.ReenabledDependencies = append(result.ReenabledDependencies, InstalledRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version})
+		result.Warnings = append(result.Warnings, msg)
+		emit(WarningEvent{Scope: scope, Phase: InstallWarning, Message: msg})
 	}
 
 	result.Installed = append(result.Installed, InstalledRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version})
@@ -2447,6 +2500,12 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		}
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.ProfileWriteFailed = true
+		result.Notes = append(result.Notes, msg)
+		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
+	}
+	// #431 (fix round F4): the explicit install clears the document's off
+	// marker - see the dependency loop's identical call for why.
+	if msg := s.recordProfileDisabled(ctx, game.ID, plan.Profile, mod.SourceID, mod.ID, false); msg != "" {
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}
