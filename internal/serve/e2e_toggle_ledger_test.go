@@ -1225,7 +1225,10 @@ func TestE2E_LibraryToggle_ASupersededRereadSettlesNothing(t *testing.T) {
 			name = "batch"
 		}
 		t.Run(name, func(t *testing.T) {
-			f, wire := newToggleWireFixture(t, newFakeSource("fake"), 1<<30)
+			// Alpha's start goes through; Beta's waits until Alpha's read
+			// is held, so Alpha's read is the older one whichever surface
+			// starts Beta.
+			f, wire := newToggleWireFixture(t, newFakeSource("fake"), 1)
 			seedDeployableMods(t, f.Svc, f.Game)
 
 			f.runInBrowser(t,
@@ -1253,6 +1256,7 @@ func TestE2E_LibraryToggle_ASupersededRereadSettlesNothing(t *testing.T) {
 			}
 			awaitJobsOver(t, f, wire, map[string]bool{"a": false})
 			awaitMods(t, wire, 1, 0)
+			wire.releaseToggles()
 
 			// Beta's job ends too - clicked, or started by the batch - and the
 			// read its ending asks for, issued later, is the newer one. It is
