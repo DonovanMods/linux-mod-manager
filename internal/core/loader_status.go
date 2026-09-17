@@ -235,6 +235,7 @@ func (s *Service) LoaderStatus(_ context.Context, gameID string) (*LoaderStatus,
 	}
 
 	status.Warnings = loaderStatusWarnings(status)
+	status.Warnings = append(status.Warnings, bepinexSetupWarnings(status, s.runsBepInEx(game))...)
 	// Design decision 11 (#413 review F5): a game whose BepInEx its adapter
 	// never acts on is told so here too, on the report a user reads when
 	// inspecting the game rather than only when importing into it - when
@@ -283,6 +284,61 @@ func loaderStatusWarnings(status *LoaderStatus) []string {
 		warnings = append(warnings, "lmm could not tell whether this is a native Linux build or a Proton one, so it has no launch option to give you; set it with `lmm game edit <game> --loader-bootstrap native|proton`")
 	}
 	return warnings
+}
+
+// bepinexSetupWarnings names what a BepInEx game still lacks, in the order
+// a user meets it: the loader is not installed; it is installed but lmm is
+// acting on what it found rather than on a declaration (laysOut: only while
+// the bepinex adapter is the one acting - for a game on another adapter,
+// declaring the loader is the contradiction adapterConfigWarning reports);
+// it is installed and has never run. A correctly set-up game gets none.
+//
+// These were the bepinex adapter's guidance notes, which nothing rendered;
+// the capability was dropped (#443) and its sentences live here, on the
+// report `lmm game show` and the web loader panel already show - beside the
+// launch option, so they point at it rather than at another command.
+func bepinexSetupWarnings(status *LoaderStatus, laysOut bool) []string {
+	var warnings []string
+	declared := status.Declared != nil && strings.EqualFold(strings.TrimSpace(status.Declared.Kind), domain.LoaderKindBepInEx)
+	switch {
+	case declared && !status.Installed:
+		return append(warnings, "BepInEx is not installed in this game's directory: install it yourself - "+
+			bepinexBuildAdvice(status.EffectiveBootstrap)+
+			". lmm does not choose or download it, because the wrong build leaves a game that silently loads nothing")
+	case !status.Installed:
+		return nil
+	case status.Declared == nil && laysOut:
+		warnings = append(warnings, fmt.Sprintf(
+			"BepInEx is installed here but this game does not declare it, so lmm is acting on what it found; declare it with `lmm game edit %s --loader bepinex`",
+			status.GameID))
+	}
+	if status.LoadedAt == "" {
+		next := "the Steam launch option above"
+		if status.LaunchOption == "" {
+			next = "the Steam launch option, which lmm can name once it knows the bootstrap"
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"BepInEx has never written %s, so it has not run and nothing it was given has loaded; on Linux that is almost always %s",
+			domain.BepInExLogPath, next))
+	}
+	return warnings
+}
+
+// bepinexBuildAdvice names the BepInEx build a game with bootstrap needs,
+// or both builds when the bootstrap is unanswered.
+func bepinexBuildAdvice(bootstrap domain.LoaderBootstrap) string {
+	const (
+		native = "a native Linux build needs the BepInEx_linux_x64 archive from BepInEx's own GitHub releases"
+		proton = "a Windows build run under Proton or Wine needs BepInEx's Windows pack (winhttp.dll plus doorstop_config.ini)"
+	)
+	switch bootstrap {
+	case domain.LoaderBootstrapNative:
+		return "this game is " + strings.TrimPrefix(native, "a ")
+	case domain.LoaderBootstrapProton:
+		return "this game is " + strings.TrimPrefix(proton, "a ")
+	default:
+		return native + ", while " + proton
+	}
 }
 
 // Relevant reports whether anything about this game says a mod loader is

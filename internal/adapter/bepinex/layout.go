@@ -222,8 +222,7 @@ func noteUndeclared(l *layout, game *domain.Game) {
 	l.Warnings = append(l.Warnings, undeclaredNotice(game))
 }
 
-// undeclaredNotice is that notice's exact text, named once so the layout
-// warning and the guidance note say the same sentence.
+// undeclaredNotice is that notice's exact text.
 func undeclaredNotice(game *domain.Game) string {
 	return fmt.Sprintf("BepInEx found in %s; declare it with `lmm game edit %s --loader bepinex`",
 		game.InstallPath, game.ID)

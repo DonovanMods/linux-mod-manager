@@ -37,7 +37,6 @@ type capableAdapter struct {
 	route    adapter.FileRoute
 	precond  error
 	findings []adapter.Finding
-	notes    []adapter.GuidanceNote
 }
 
 func (c capableAdapter) RouteFile(*domain.Game, string) adapter.FileRoute { return c.route }
@@ -47,7 +46,6 @@ func (c capableAdapter) CheckPreconditions(*domain.Game, []domain.InstalledMod) 
 func (c capableAdapter) Verify(context.Context, adapter.VerifyRequest) ([]adapter.Finding, error) {
 	return c.findings, nil
 }
-func (c capableAdapter) Guidance(*domain.Game) []adapter.GuidanceNote { return c.notes }
 
 func TestRegistryResolve(t *testing.T) {
 	t.Run("an empty name resolves to the generic default", func(t *testing.T) {
@@ -144,7 +142,6 @@ func TestCapabilityDispatchIsNilSafe(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, findings)
 
-		assert.Empty(t, adapter.Guidance(a, game))
 		_, ok := adapter.Compiler(a)
 		assert.False(t, ok)
 	})
@@ -156,7 +153,6 @@ func TestCapabilityDispatchIsNilSafe(t *testing.T) {
 			route:       adapter.RouteCopyOnce,
 			precond:     boom,
 			findings:    []adapter.Finding{{Status: "loader_missing", Note: "no preloader"}},
-			notes:       []adapter.GuidanceNote{{Title: "Launch", Body: "run it once"}},
 		}
 		assert.Equal(t, adapter.RouteCopyOnce, adapter.Route(a, game, "BepInEx/config/x.cfg"))
 		assert.ErrorIs(t, adapter.CheckPreconditions(a, game, nil), boom)
@@ -165,8 +161,6 @@ func TestCapabilityDispatchIsNilSafe(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, findings, 1)
 		assert.Equal(t, "loader_missing", findings[0].Status)
-
-		require.Len(t, adapter.Guidance(a, game), 1)
 	})
 }
 

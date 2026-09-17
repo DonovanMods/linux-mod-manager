@@ -23,8 +23,7 @@
 // internal/source already proves with CapabilityReporter, MergeCompiler and
 // WorkshopScanner - so no adapter pays for a capability it does not have
 // and core never imports a concrete adapter. Dispatch goes through this
-// package's nil-safe helpers (Route, CheckPreconditions, Verify, Guidance,
-// Compiler), which is what lets a core seam be one unconditional call
+// package's nil-safe helpers (Route, CheckPreconditions, Verify, Compiler), which is what lets a core seam be one unconditional call
 // instead of a type switch. NormalizeArchive needs no such helper: it is a
 // required method, so every adapter answers it.
 package adapter
@@ -307,30 +306,6 @@ type Verifier interface {
 	Verify(ctx context.Context, req VerifyRequest) ([]Finding, error)
 }
 
-// GuidanceNote is one piece of launch/bootstrap advice an adapter offers
-// for a game.
-//
-// No frontend renders one yet: no core flow asks an adapter for its
-// Guidance, so a note an adapter returns reaches nobody today (#413 review
-// F3). The design's frontend pass (§5 of
-// docs/plans/2026-09-10-game-adapter-design.md) puts them on `lmm game list
-// --json`, after `lmm verify`'s summary and on the web game card, and has
-// to land in both frontends at once. BepInEx's own setup advice reaches
-// users through core's LoaderStatus in the meantime.
-type GuidanceNote struct {
-	// Title is the note's one-line heading.
-	Title string
-	// Body is the note's text.
-	Body string
-}
-
-// Guide is the optional capability that supplies GuidanceNotes.
-type Guide interface {
-	// Guidance returns the notes for g, or nil when there is nothing to
-	// say.
-	Guidance(g *domain.Game) []GuidanceNote
-}
-
 // MergeCompiler is the optional capability of an adapter whose
 // compile-eligible files must be merged across every enabled mod into ONE
 // profile-level artifact rather than compiled per-mod (#197: Icarus's
@@ -538,15 +513,6 @@ func Verify(ctx context.Context, a GameAdapter, req VerifyRequest) ([]Finding, e
 		return nil, nil
 	}
 	return v.Verify(ctx, req)
-}
-
-// Guidance returns the adapter's notes for g, or nil when it offers none.
-func Guidance(a GameAdapter, g *domain.Game) []GuidanceNote {
-	gd, ok := a.(Guide)
-	if !ok {
-		return nil
-	}
-	return gd.Guidance(g)
 }
 
 // Compiler reports whether the adapter is the compile capability, and

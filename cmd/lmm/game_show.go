@@ -141,9 +141,10 @@ func printLoaderStatus(status *core.LoaderStatus, laysOut bool) {
 		// decision 11 warns about, so the hint would be advice that causes
 		// a warning (#413 re-review M1); the loader report's own warning,
 		// if any, says what to do there instead.
+		// The command that declares it is the report's own warning (#443),
+		// printed below with the others.
 		if status.Installed && laysOut {
 			fmt.Printf("  Declared:     %s\n", colorRed("none - BepInEx is in the game directory but this game does not declare it"))
-			fmt.Printf("                %s\n", colorDim(fmt.Sprintf("declare it with `lmm game edit %s --loader bepinex`", status.GameID)))
 		} else {
 			fmt.Printf("  Declared:     %s\n", colorDim("none"))
 		}

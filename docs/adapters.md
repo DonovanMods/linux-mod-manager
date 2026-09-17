@@ -156,7 +156,6 @@ adapter.
 | `FileRouter` | `RouteFile(g, rel) FileRoute` | `bepinex` | decides link / copy-once / skip, per deployable file |
 | `ArchiveClaimer` | `ClaimArchive(members) (Claim, error)` | `bepinex` | refuses an archive that is unmistakably ANOTHER kind of game's |
 | `Verifier` | `Verify(ctx, req) ([]Finding, error)` | `bepinex` | appends adapter findings to `lmm verify`'s result |
-| `Guide` | `Guidance(g) []GuidanceNote` | `bepinex` | *(not rendered yet — see below)* |
 | `MergeCompiler` | 11 methods | `icarus` | the whole merged-artifact compile path |
 | `Preconditioner` | `CheckPreconditions(g, mods) error` | *(none yet)* | refuses a flow before it starts |
 
@@ -257,29 +256,23 @@ drift, bootstrap files matching the declared mode), and each of those is
 honestly an instruction to the user, carrying a `FixableReason` that says
 so.
 
-### Guide
+### Setup advice is not a capability
 
-`Guidance(g) []GuidanceNote` returns `{Title, Body}` pairs — the setup
-advice a game still needs. Keep them *specific to what is missing*: the
-BepInEx adapter reports "not installed", "installed but not declared" and
-"installed but has never run", and says nothing at all about a game that is
-correctly set up.
+A game's loader setup advice — install the loader, declare it, set the
+Steam launch option, check that it ran — is core's `LoaderStatus`
+(`lmm game show`'s loader section, the web UI's loader panel,
+`GET /api/v1/games/{id}`), not an adapter capability. `LoaderStatus`
+resolves the game's effective bootstrap from the declaration or from the
+install directory's own Unity markers, so it is the one place the exact
+launch option is computed, and its `warnings` name what is still missing
+for a BepInEx game.
 
-It deliberately does **not** repeat the exact Steam launch option. That
-string is computed once, for every game, by core's `LoaderStatus` — which
-resolves the effective bootstrap from the declaration or from the install
-directory's own Unity markers — and a second copy of a string whose wrong
-value leaves a game that launches perfectly and loads nothing is not worth
-the duplication. The note names `lmm game show <game>` instead.
-
-**No frontend renders `Guidance` yet.** The capability and its `bepinex`
-implementation exist, but no core flow asks for them, so nothing an adapter
-returns here reaches a user today. BepInEx's own setup advice reaches them
-through `LoaderStatus` instead — `lmm game show`'s loader section and the
-web UI's loader panel — which already covers the same three states. Wiring
-`Guidance` into `lmm game list --json`, `lmm verify` and the web game card
-is the design's frontend pass (§5 of the design document) and has to land
-in both frontends at once.
+An earlier draft of the seam carried a separate guidance capability
+(`Guidance(g)`) that the `bepinex` adapter implemented and nothing
+rendered; it was dropped before 2.0 (#443), with every sentence it held
+folded into `LoaderStatus`, since no second loader adapter is planned for
+2.0. A future adapter with advice of its own should extend `LoaderStatus`'s
+answer rather than add a parallel channel.
 
 ### MergeCompiler
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -270,4 +271,63 @@ func TestLoaderStatus_AnInstalledButUndeclaredLoaderIsRelevant(t *testing.T) {
 	assert.True(t, status.Relevant(), "BepInEx being ON DISK is as loader-relevant as a declaration")
 	require.NotEmpty(t, status.Warnings, "so the bootstrap question is worth asking")
 	assert.Contains(t, status.Warnings[0], "--loader-bootstrap")
+}
+
+// TestLoaderStatus_NamesWhatABepInExGameStillLacks walks the three states a
+// user meets on the way to a working BepInEx install, in order - the advice
+// the bepinex adapter's guidance notes held until that capability was
+// dropped (#443) - and says nothing about a working one.
+func TestLoaderStatus_NamesWhatABepInExGameStillLacks(t *testing.T) {
+	declared := &domain.GameLoader{Kind: domain.LoaderKindBepInEx, Bootstrap: domain.LoaderBootstrapNative}
+	statusOf := func(t *testing.T, root string, loader *domain.GameLoader) *core.LoaderStatus {
+		t.Helper()
+		svc := newFlowsTestService(t)
+		game := &domain.Game{ID: "valheim", Name: "Valheim", InstallPath: root, ModPath: root, Loader: loader}
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		status, err := svc.LoaderStatus(context.Background(), "valheim")
+		require.NoError(t, err)
+		return status
+	}
+
+	t.Run("nothing installed", func(t *testing.T) {
+		status := statusOf(t, t.TempDir(), declared)
+		require.Len(t, status.Warnings, 1, "%q", status.Warnings)
+		assert.Contains(t, status.Warnings[0], "BepInEx is not installed in this game's directory")
+		assert.Contains(t, status.Warnings[0], "BepInEx_linux_x64", "the build for the game's bootstrap")
+		assert.NotContains(t, status.Warnings[0], "winhttp.dll", "and only that one")
+		assert.Contains(t, status.Warnings[0], "does not choose or download it")
+	})
+
+	t.Run("nothing installed, bootstrap unknown", func(t *testing.T) {
+		status := statusOf(t, t.TempDir(), &domain.GameLoader{Kind: domain.LoaderKindBepInEx})
+		assert.True(t, containsLine(status.Warnings, "BepInEx_linux_x64", "winhttp.dll"), "both builds: %q", status.Warnings)
+	})
+
+	t.Run("installed but never run", func(t *testing.T) {
+		root := t.TempDir()
+		bepinexInstall(t, root, "5.4.23.5", domain.LoaderBootstrapNative, time.Time{})
+		status := statusOf(t, root, declared)
+		require.Len(t, status.Warnings, 1, "%q", status.Warnings)
+		assert.Contains(t, status.Warnings[0], "BepInEx has never written BepInEx/LogOutput.log")
+		assert.Contains(t, status.Warnings[0], "the Steam launch option above")
+		assert.Equal(t, core.BepInExLaunchOptionNative, status.LaunchOption, "which the report carries")
+	})
+
+	t.Run("installed but undeclared", func(t *testing.T) {
+		root := fakeGameDir(t, domain.LoaderRuntimeMono, domain.LoaderBootstrapNative)
+		bepinexInstall(t, root, "5.4.23.5", domain.LoaderBootstrapNative, time.Now())
+		status := statusOf(t, root, nil)
+		assert.Equal(t, []string{"BepInEx is installed here but this game does not declare it, so lmm is acting on what it found; declare it with `lmm game edit valheim --loader bepinex`"},
+			status.Warnings)
+	})
+
+	t.Run("a working install has nothing to say", func(t *testing.T) {
+		root := t.TempDir()
+		bepinexInstall(t, root, "5.4.23.5", domain.LoaderBootstrapNative, time.Now())
+		assert.Empty(t, statusOf(t, root, declared).Warnings)
+	})
+
+	t.Run("a game with no loader at all has nothing to say", func(t *testing.T) {
+		assert.Empty(t, statusOf(t, t.TempDir(), nil).Warnings)
+	})
 }

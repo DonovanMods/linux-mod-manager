@@ -67,8 +67,6 @@ func TestGenericImplementsNoOptionalCapability(t *testing.T) {
 	assert.False(t, isPre, "generic-files must implement no Preconditioner")
 	_, isVerifier := a.(adapter.Verifier)
 	assert.False(t, isVerifier, "generic-files must implement no Verifier")
-	_, isGuide := a.(adapter.Guide)
-	assert.False(t, isGuide, "generic-files must implement no Guide")
 	_, isCompiler := adapter.Compiler(a)
 	assert.False(t, isCompiler, "generic-files must implement no MergeCompiler")
 
