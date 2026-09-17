@@ -91,6 +91,9 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 	"components/plan_purge.js": {
 		"version": {1, "core.PurgePlan.Mods is partitionExternal's NON-external half (internal/core/purge.go); the external items are names only, in their own 'Left alone' section, and carry no version."},
 	},
+	"components/listedoff.js": {
+		"version": {2, "Both are the install PICK sent to POST /api/v1/plans/install's apply options (the version the profile lists, #440) - a wire value, never rendered; the row's own version line goes through displayVersion."},
+	},
 	"components/plan_switch.js": {
 		"version": {4, "core.SwitchPlan's three buckets. ToDisable and ToEnable are safe outright: PlanProfileSwitch classifies an INSTALLED row, and `if installed && im.External { continue }` counts it under ExternalUnchanged first (internal/core/switch.go). ToInstall is the KNOWN GAP (#365 fixed its two named siblings, plan_profile_sync.js and plan_profile_import.js, by stamping domain.ModReference's additive external/updated_at in core; this bucket and plan_profile_apply.js's hold a ProfileApplyInstall/ref pair rather than a bare slice, so the same stamping is a separate change): a profile ref whose installed row is gone falls past that guard as a bare domain.ModReference, which carries no stamped External flag to branch on."},
 	},
