@@ -153,6 +153,14 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		return nil, err
 	}
 
+	// #451: a row recorded under another mod_path says nothing about what
+	// is at its path under this one. The row pass leaves it alone - a purge
+	// clears it - and verify reports the move (modPathPass).
+	strandedPaths, err := s.strandedRowPaths(ctx, game, profileName)
+	if err != nil {
+		return nil, err
+	}
+
 	result := &ConvergeResult{}
 	handled := make(map[string]bool) // every row path the row pass actually judged (kept or removed)
 	var errs []error
@@ -179,6 +187,9 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			// joined-error path instead.
 			if !filepath.IsLocal(path) {
 				errs = append(errs, fmt.Errorf("skipping unsafe deployed-file record %q for %s/%s", path, m.SourceID, m.ID))
+				continue
+			}
+			if strandedPaths[path] {
 				continue
 			}
 			if unknown {
@@ -212,6 +223,18 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				}
 				continue
 			}
+			// #466: nor the user's file - kept, reported, and no longer
+			// tracked, as a purge does it.
+			j := judgeDeployed(ctx, s.db, game, path, dstPath)
+			if j.verdict == deployedUsers {
+				errs = append(errs, errors.New(userFileNote(path, j.reason)))
+				if !dryRun {
+					if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
+						errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
+					}
+				}
+				continue
+			}
 			if dryRun {
 				result.Removed = append(result.Removed, cf)
 				continue
@@ -220,6 +243,11 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			if err := lnk.Undeploy(dstPath); err != nil {
 				errs = append(errs, fmt.Errorf("undeploying %s: %w", path, err))
 				continue
+			}
+			if j.verdict == deployedUnverified {
+				if store := s.originalsStoreFor(game.ID); store != nil {
+					store.noteUnverified(filepath.ToSlash(path))
+				}
 			}
 			// Coordinator ruling on review note 13: a convergence removes
 			// a file lmm deployed, so whatever that file displaced goes
@@ -328,6 +356,22 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		return result, errors.Join(errs...)
 	}
 	return result, nil
+}
+
+// strandedRowPaths is the paths of profileName's deployed-file rows in game
+// that were recorded under a mod_path other than its current one (#451).
+func (s *Service) strandedRowPaths(ctx context.Context, game *domain.Game, profileName string) (map[string]bool, error) {
+	rows, err := s.db.ListDeployedFiles(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("listing deployed files: %w", err)
+	}
+	paths := make(map[string]bool)
+	for _, row := range rows {
+		if !underCurrentRoot(game, row.ModPath) {
+			paths[row.RelativePath] = true
+		}
+	}
+	return paths, nil
 }
 
 // cacheRoots is every directory lmm-owned content for game can live under

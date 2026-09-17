@@ -16,5 +16,11 @@
   {
     "path": "BepInEx/config/m.cfg",
     "reason": "user_file"
+  },
+  {
+    "path": "Data/edited.esp",
+    "reason": "user_file",
+    "note": "its content changed after lmm deployed it",
+    "mod_path": "/games/skyrim-se/OldData"
   }
 ]

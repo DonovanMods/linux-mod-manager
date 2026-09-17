@@ -176,6 +176,10 @@ type originalsStore struct {
 	// the last drain, so the flow that is running can put them on its
 	// result's Warnings as well (takeFailures).
 	failures []string
+	// unverified collects the paths removed since the last drain with no
+	// fingerprint to check them against (#466); a drain reports them as
+	// one line.
+	unverified []string
 }
 
 // snapshotsDirFor returns a game's snapshot directory,
@@ -222,14 +226,46 @@ func (s *originalsStore) note(msg string) {
 	s.mu.Unlock()
 }
 
+// noteUnverified records rel as removed without a content check (#466).
+func (s *originalsStore) noteUnverified(rel string) {
+	s.mu.Lock()
+	s.unverified = append(s.unverified, rel)
+	s.mu.Unlock()
+}
+
 // takeFailures drains the pending capture failures, so a flow can put them
-// on its own result's Warnings.
+// on its own result's Warnings - and, after them, one line for every path
+// removed unverified since the last drain.
 func (s *originalsStore) takeFailures() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := s.failures
-	s.failures = nil
+	if len(s.unverified) > 0 {
+		out = append(out, unverifiedNote(s.unverified))
+	}
+	s.failures, s.unverified = nil, nil
 	return out
+}
+
+// holds reports whether the store already keeps an original of relPath
+// under root - so a capture there would keep nothing (first original wins).
+func (s *originalsStore) holds(root OriginalRoot, relPath string) (bool, error) {
+	rel, err := cleanOriginalRelPath(relPath)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.read()
+	if err != nil {
+		return false, err
+	}
+	for _, existing := range m.Originals {
+		if existing.Root == root && existing.RelativePath == rel {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // originalsStoreDirName is the store's own subdirectory of a game's

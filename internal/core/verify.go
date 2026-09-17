@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -130,6 +131,8 @@ type VerifyFinding struct {
 	//	                      tree (#413); a ModFilter run leaves every
 	//	                      nested tree alone, since none belongs to one
 	//	                      mod
+	//	deployed_modified     never: a copy or hardlink the user changed is
+	//	                      theirs, and --fix leaves it (#466)
 	//	everything else       never - ok, skipped, file_count_mismatch,
 	//	                      loader_foreign_nested_tree (lmm cannot prove
 	//	                      the files are its own),
@@ -674,6 +677,9 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		// path below.
 		r.adapterPass(installedMods)
 		r.loaderPass(installedMods)
+		if err := r.deployedContentPass(installedMods); err != nil {
+			return result, err
+		}
 		r.convergencePass()
 		return result, nil
 	}
@@ -737,9 +743,70 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	// #359: after the per-file walk, so the loader's "did it run?" question
 	// is asked about the deployment the passes above have just described.
 	r.loaderPass(installedMods)
+	if err := r.deployedContentPass(installedMods); err != nil {
+		return result, err
+	}
 	r.convergencePass()
 
 	return result, nil
+}
+
+// VerifyStatusDeployedModified is the status of a verify row for a copy or
+// hardlink the profile deployed whose content is no longer what lmm wrote
+// there (#466) - the user replaced or edited it. Every removal keeps such a
+// file and every deploy leaves it, so --fix does too: the row is never
+// fixable, and its note says how to take the mod's version back.
+const VerifyStatusDeployedModified = "deployed_modified"
+
+// deployedContentPass reports every file this profile deployed, under the
+// game's current mod_path, that is no longer provably lmm's (#466):
+// VerifyStatusDeployedModified. A file that is missing is not this pass's
+// row, and neither is one with no fingerprint to compare - there is nothing
+// to say about it. A file that could not be read to compare is reported
+// the same way, since it is left alone the same way. Only a cancellation
+// ends the run; a listing that fails is a skipped row.
+func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) error {
+	rows, err := r.svc.db.ListDeployedFiles(r.ctx, r.game.ID, r.profile)
+	if err != nil {
+		// Tolerated like every other pass's read failure: a skipped row,
+		// not a verify that reports nothing.
+		if cerr := r.ctx.Err(); cerr != nil {
+			return cerr
+		}
+		r.result.Warnings++
+		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("deployed content: listing deployed files: %v", err)}, VerifyEvent{})
+		return nil
+	}
+	names := make(map[string]string, len(installedMods))
+	for _, m := range installedMods {
+		names[domain.ModKey(m.SourceID, m.ID)] = m.Name
+	}
+	for _, row := range rows {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		if r.opts.ModFilter != "" && row.ModID != r.opts.ModFilter {
+			continue
+		}
+		if !underCurrentRoot(r.game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(row.RelativePath)) {
+			continue
+		}
+		dst := filepath.Join(r.game.ModPath, filepath.FromSlash(row.RelativePath))
+		j := judgeDeployed(r.ctx, r.svc.db, r.game, row.RelativePath, dst)
+		if j.verdict != deployedUsers {
+			continue
+		}
+		r.result.Warnings++
+		r.finding(VerifyFinding{
+			ModID:         row.ModID,
+			ModName:       names[domain.ModKey(row.SourceID, row.ModID)],
+			FileID:        row.RelativePath,
+			Status:        VerifyStatusDeployedModified,
+			Note:          fmt.Sprintf("%s: %s, so lmm leaves it as yours", row.RelativePath, j.reason),
+			FixableReason: "--fix never writes over a file you changed - delete it, then run `lmm deploy`, to take the mod's version",
+		}, VerifyEvent{})
+	}
+	return nil
 }
 
 // adapterPass appends the game adapter's read-only findings to the result.

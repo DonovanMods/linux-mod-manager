@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -199,7 +200,12 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 		fmt.Printf(", Failed: %d", failed)
 	}
 	fmt.Println()
-	// #445 gate 2, G2-1: the files another game records, left in place.
+	if result.RemovedPaths > 0 {
+		// #451: files removed from a mod_path the game no longer uses.
+		fmt.Printf("Removed %d file(s) deployed under an earlier mod_path\n", result.RemovedPaths)
+	}
+	// #445 gate 2, G2-1: the files another game records, left in place -
+	// and (#466) the files the user changed.
 	printKeptPaths(result.Kept)
 
 	if !purgeUninstall {
@@ -291,11 +297,16 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 // stops tracking it.
 func printKeptPaths(kept []core.PurgeKeptPath) {
 	for _, k := range kept {
+		path := k.Path
+		if k.ModPath != "" {
+			// #451: under a mod_path the game no longer uses.
+			path = filepath.Join(k.ModPath, filepath.FromSlash(k.Path))
+		}
 		if k.Reason == core.PurgeKeptUserFile {
-			fmt.Printf("Kept your file; lmm no longer tracks it (%s): %s\n", keptReason(k), k.Path)
+			fmt.Printf("Kept your file; lmm no longer tracks it (%s): %s\n", keptReason(k), path)
 			continue
 		}
-		fmt.Printf("Left in place (%s): %s\n", keptReason(k), k.Path)
+		fmt.Printf("Left in place (%s): %s\n", keptReason(k), path)
 	}
 }
 
@@ -307,6 +318,10 @@ func keptReason(k core.PurgeKeptPath) string {
 	case core.PurgeKeptOtherGame:
 		return "still recorded by game " + strings.Join(k.Games, ", ")
 	case core.PurgeKeptUserFile:
+		if k.Note != "" {
+			// #466: a copy or hardlink the user changed.
+			return k.Note
+		}
 		return "the game hands it to you after its first deploy"
 	default:
 		return "still recorded by " + strings.Join(k.Profiles, ", ")

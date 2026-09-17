@@ -37,6 +37,9 @@ const snapshotMarkersKey = "#431 disabled markers"
 // can detect any version, enabled-state, addition, or removal since a Plan
 // was computed.
 func (s *Service) currentInstalledSnapshot(ctx context.Context, gameID, profileName string) (installedSnapshot, error) {
+	if err := s.refuseModPathMoved(ctx, gameID); err != nil {
+		return nil, err
+	}
 	mods, err := s.GetInstalledMods(ctx, gameID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading installed mods: %w", err)
@@ -127,11 +130,34 @@ func (s *Service) checkAdapterPreconditions(gameID string, mods []domain.Install
 // (adapter_precondition_ratchet_test.go) fails the build for a deploy path
 // that reaches the Installer without this check or a Plan's.
 func (s *Service) deployRefusal(ctx context.Context, game *domain.Game, profileName string) error {
+	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+		return err
+	}
 	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("loading installed mods: %w", err)
 	}
 	return s.checkAdapterPreconditions(game.ID, mods)
+}
+
+// refuseModPathMoved refuses a deploy-direction flow on gameID while files
+// are recorded under a mod_path other than its current one (#451), with
+// ModPathProblem's answer, which names both ways out. The Installer makes
+// the same check before every deploy (Installer.refuseStranded); this is
+// the Plan-time half, so a plan does not promise what its Apply refuses.
+func (s *Service) refuseModPathMoved(ctx context.Context, gameID string) error {
+	game, ok := s.game(gameID)
+	if !ok {
+		return nil
+	}
+	problem, err := modPathMovedProblem(ctx, s.db, game)
+	if err != nil {
+		return err
+	}
+	if problem != nil {
+		return problem
+	}
+	return nil
 }
 
 // snapshotOf builds the precondition from an ALREADY-READ installed-mod set,

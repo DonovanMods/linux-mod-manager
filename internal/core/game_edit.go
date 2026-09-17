@@ -26,6 +26,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // GameEdit is one edit of a configured game's games.yaml entry - what `lmm
@@ -258,15 +259,41 @@ func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to s
 	if samePath(game.ModPath, to) {
 		return nil
 	}
-	counts, err := s.db.DeployedFileCounts(ctx, game.ID)
+	// #451: each row is judged by the mod_path it was deployed under, so a
+	// games.yaml hand edit made with files deployed does not hide them - and
+	// moving back to where they are strands nothing.
+	roots, err := s.db.DeployedFileRoots(ctx, game.ID)
 	if err != nil {
 		return err
+	}
+	counts := map[string]int{}
+	var under []string
+	current := false
+	for _, r := range roots {
+		root := r.ModPath
+		if root == "" {
+			root = game.ModPath
+		}
+		if samePath(root, to) {
+			continue
+		}
+		counts[r.Profile] += r.Files
+		switch {
+		case samePath(root, game.ModPath):
+			current = true
+		case !slices.Contains(under, root):
+			under = append(under, root)
+		}
 	}
 	if len(counts) == 0 {
 		return nil
 	}
+	if len(under) > 0 && current {
+		under = append(under, game.ModPath)
+	}
 
-	inUse := &GameModPathInUseError{GameID: game.ID, ModPath: game.ModPath, NewModPath: to}
+	inUse := &GameModPathInUseError{GameID: game.ID, ModPath: game.ModPath, NewModPath: to, DeployedUnder: under}
+	slices.Sort(inUse.DeployedUnder)
 	for _, profile := range slices.Sorted(maps.Keys(counts)) {
 		inUse.Profiles = append(inUse.Profiles, ProfileDeployedFiles{Profile: profile, DeployedFiles: counts[profile]})
 		inUse.DeployedFiles += counts[profile]
@@ -310,7 +337,7 @@ func (s *Service) countListedUnrecorded(ctx context.Context, game *domain.Game, 
 		if p.Profile == inUse.ActiveProfile {
 			continue
 		}
-		_, kept, err := s.recordedPaths(ctx, game, p.Profile, inUse.ActiveProfile, others)
+		_, kept, err := s.recordedPaths(ctx, game, p.Profile, inUse.ActiveProfile, others, false)
 		if err != nil {
 			return err
 		}
@@ -501,6 +528,10 @@ func resolveModPathValue(installPath, modPath string) (string, error) {
 // not there at all - the one reason that is not always a problem.
 const modPathReasonAbsent = "does not exist"
 
+// modPathReasonMoved is ModPathMissingError.Reason for a mod_path that is
+// not the one lmm deployed files under (#451).
+const modPathReasonMoved = "is not where lmm deployed its files"
+
 // ModPathProblem reports whether game's mod_path needs the user's attention
 // - a *ModPathMissingError - or nil when it does not. It is what every game
 // document's mod_path_error says (GameListEntry, GameSummary, GameStatus,
@@ -519,9 +550,17 @@ const modPathReasonAbsent = "does not exist"
 //   - a deploy could not create it: the install path is gone too, or the
 //     nearest part of the mod_path that exists is outside the install path.
 //
+// Before any of that, a mod_path that is not the one lmm deployed files
+// under is always a problem (#451): games.yaml was edited with files
+// deployed, so they are still live where they were and lmm no longer looks
+// there. That answer's DeployedUnder names each recorded mod_path.
+//
 // A game with no mod_path configured is a different complaint, made
 // elsewhere, and answers nil.
 func (s *Service) ModPathProblem(ctx context.Context, game *domain.Game) (*ModPathMissingError, error) {
+	if moved, err := modPathMovedProblem(ctx, s.db, game); err != nil || moved != nil {
+		return moved, err
+	}
 	problem := modPathStatProblem(game)
 	if problem == nil || problem.Reason != modPathReasonAbsent {
 		return problem, nil
@@ -540,6 +579,25 @@ func (s *Service) ModPathProblem(ctx context.Context, game *domain.Game) (*ModPa
 	}
 	if problem.DeployedFiles == 0 && problem.InstallPath == "" {
 		return nil, nil
+	}
+	return problem, nil
+}
+
+// modPathMovedProblem is ModPathProblem's #451 half: the answer for a game
+// with files recorded under a mod_path other than its current one, or nil.
+// Installer uses it too, to refuse every deploy while that is so.
+func modPathMovedProblem(ctx context.Context, database *db.DB, game *domain.Game) (*ModPathMissingError, error) {
+	if game == nil || game.ModPath == "" {
+		return nil, nil
+	}
+	roots, err := strandedRoots(ctx, database, game)
+	if err != nil || len(roots) == 0 {
+		return nil, err
+	}
+	problem := &ModPathMissingError{GameID: game.ID, ModPath: game.ModPath, Reason: modPathReasonMoved}
+	for _, r := range roots {
+		problem.DeployedFiles += r.Files
+		problem.DeployedUnder = append(problem.DeployedUnder, DeployedUnder(r))
 	}
 	return problem, nil
 }
@@ -615,7 +673,8 @@ type ModPathMissingError struct {
 	GameID  string `json:"game_id"`
 	ModPath string `json:"mod_path"`
 	// Reason is what is wrong with it: "does not exist", "is not a
-	// directory", or "cannot be read: <cause>".
+	// directory", "cannot be read: <cause>", or "is not where lmm deployed
+	// its files" (DeployedUnder).
 	Reason string `json:"reason"`
 	// DeployedFiles is how many deployed files lmm has recorded under the
 	// absent mod_path, across every profile - the reason an absent
@@ -630,10 +689,27 @@ type ModPathMissingError struct {
 	// SuggestedModPath is the value lmm can recommend with confidence - the
 	// install path, for a game that has BepInEx - and empty otherwise.
 	SuggestedModPath string `json:"suggested_mod_path,omitempty"`
+	// DeployedUnder names each other mod_path lmm recorded deployed files
+	// under (#451): mod_path was changed without purging them first, so
+	// they are still there. DeployedFiles counts them then.
+	DeployedUnder []DeployedUnder `json:"deployed_under,omitempty"`
+}
+
+// DeployedUnder is a mod_path, other than a game's current one, that lmm
+// recorded deployed files under (ModPathMissingError.DeployedUnder).
+type DeployedUnder struct {
+	ModPath string `json:"mod_path"`
+	Files   int    `json:"files"`
+	// Profiles names each profile with files there, since each is purged
+	// on its own.
+	Profiles []string `json:"profiles"`
 }
 
 // Error implements error.
 func (e *ModPathMissingError) Error() string {
+	if len(e.DeployedUnder) > 0 {
+		return e.movedError()
+	}
 	head := fmt.Sprintf("mod_path %s %s", e.ModPath, e.Reason)
 	switch {
 	case e.DeployedFiles > 0:
@@ -664,6 +740,28 @@ func (e *ModPathMissingError) Error() string {
 	}
 }
 
+// movedError is Error for a DeployedUnder problem: where the files are,
+// where lmm looks now, and the two ways out.
+func (e *ModPathMissingError) movedError() string {
+	var where, back, purges []string
+	for _, u := range e.DeployedUnder {
+		where = append(where, fmt.Sprintf("%d under %s (profile %s)", u.Files, u.ModPath, strings.Join(u.Profiles, ", ")))
+		back = append(back, fmt.Sprintf("`lmm game edit %s --mod-path %s`", e.GameID, u.ModPath))
+		for _, p := range u.Profiles {
+			cmd := fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, p)
+			if !slices.Contains(purges, cmd) {
+				purges = append(purges, cmd)
+			}
+		}
+	}
+	setBack := "set it back with " + back[0]
+	if len(back) > 1 {
+		setBack = "set it back to where the files are (" + strings.Join(back, " or ") + ")"
+	}
+	return fmt.Sprintf("files are deployed under a mod_path this game no longer uses - %s - but mod_path is now %s, so lmm will not deploy until that is resolved: either %s, or run %s, which removes them from where they were deployed, then `lmm deploy --game %s`",
+		strings.Join(where, "; "), e.ModPath, setBack, strings.Join(purges, ", then "), e.GameID)
+}
+
 // Details returns the error itself for the --json error envelope's
 // "details" field (Ruling 3).
 func (e *ModPathMissingError) Details() any { return e }
@@ -676,7 +774,11 @@ type GameModPathInUseError struct {
 	GameID  string `json:"game_id"`
 	ModPath string `json:"mod_path"`
 	// NewModPath is where the refused edit would have moved it.
-	NewModPath    string                 `json:"new_mod_path"`
+	NewModPath string `json:"new_mod_path"`
+	// DeployedUnder names every mod_path the files were deployed under,
+	// when any of them is not ModPath (#451): ModPath was changed behind
+	// lmm's back, and those files are still there.
+	DeployedUnder []string               `json:"deployed_under,omitempty"`
 	DeployedFiles int                    `json:"deployed_files"`
 	Profiles      []ProfileDeployedFiles `json:"profiles"`
 	ActiveProfile string                 `json:"active_profile"`
@@ -802,8 +904,12 @@ func (e *GameModPathInUseError) Error() string {
 		purge = b.String()
 	}
 
+	where := e.ModPath
+	if len(e.DeployedUnder) > 0 {
+		where = strings.Join(e.DeployedUnder, " and ")
+	}
 	msg := fmt.Sprintf("%d file(s) are deployed under %s (%s), and lmm records each one relative to the mod_path, so moving it to %s would strand them; %s - run %s - then change the mod_path, then run `lmm deploy --game %s`, which deploys the active profile (%s) into the new one",
-		e.DeployedFiles, e.ModPath, strings.Join(shares, ", "), e.NewModPath,
+		e.DeployedFiles, where, strings.Join(shares, ", "), e.NewModPath,
 		purge, strings.Join(purges, ", then "), e.GameID, e.ActiveProfile)
 	if e.ApplyAfterMove {
 		msg += fmt.Sprintf(", then `lmm profile apply %s --game %s`, which deploys the mods it lists whose files another game keeps in the old one",

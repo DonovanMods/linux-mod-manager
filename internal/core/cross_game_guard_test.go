@@ -115,7 +115,11 @@ func TestCrossGame_AnUninstallKeepsAFileAnotherGameRecords(t *testing.T) {
 
 	assert.Equal(t, "sky2 a, USER-EDITED", liveBytes(t, live))
 	assert.NoFileExists(t, filepath.Join(sky.game.ModPath, "Data", "k.esp"))
-	assert.Equal(t, []string{"Data/a.esp was left in place: game sky2 records it too"}, result.Warnings)
+	assert.Equal(t, []string{
+		"Data/a.esp was left in place: game sky2 records it too",
+		// The fixture's rows predate fingerprints (#466).
+		"1 copied or hard-linked file(s) were removed unverified (deployed before checksums were recorded): Data/k.esp",
+	}, result.Warnings)
 	assert.Equal(t, []string{"Data/a.esp"}, sky2.recorded(t, "default", "j"))
 }
 
