@@ -142,10 +142,12 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 		return doRecordedPurge(ctx, service, game, plan, opts, progress)
 	}
 
-	if len(mods) == 0 {
+	if !plan.HasWork() {
 		// Ruling 15: nothing to purge is not an error, and a --json caller
 		// is still owed a document - the Result a purge of nothing
-		// produces, rather than the console sentence.
+		// produces, rather than the console sentence. A profile with no
+		// mods left can still have files to remove from an earlier
+		// mod_path (#451, #466 review F2), which is work.
 		if jsonOutput {
 			return emitJSON(&core.PurgeResult{})
 		}
@@ -167,6 +169,7 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	if !purgeYes {
 		if !jsonOutput {
 			fmt.Printf("This will undeploy %d mod(s) from %s (profile: %s)\n", len(mods), game.Name, profileName)
+			printStrandedPaths(plan, "It will also remove")
 			if purgeUninstall {
 				fmt.Println("Mod records will also be removed from the database.")
 			} else {
@@ -215,6 +218,25 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	return nil
 }
 
+// printStrandedPaths lists the files plan removes from a mod_path the game
+// no longer uses (#451), each as the absolute path it is removed from,
+// after lead ("It will also remove"), and the ones there it leaves.
+func printStrandedPaths(plan *core.PurgePlan, lead string) {
+	if len(plan.Stranded) > 0 {
+		fmt.Printf("%s %d file(s) deployed under an earlier mod_path:\n", lead, len(plan.Stranded))
+		for _, st := range plan.Stranded {
+			fmt.Printf("  - %s\n", filepath.Join(st.ModPath, filepath.FromSlash(st.Path)))
+		}
+	}
+	var kept []core.PurgeKeptPath
+	for _, k := range plan.Kept {
+		if k.ModPath != "" {
+			kept = append(kept, k)
+		}
+	}
+	printKeptPaths(kept)
+}
+
 // doRecordedPurge is doPurge for a profile that is not the game's active
 // one (#445, core.PurgePlan.RecordedOnly): it says that only the files the
 // profile recorded as deployed are removed, lists them and the ones it
@@ -227,7 +249,15 @@ func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 		fmt.Printf("%s is not the active profile of %s (%s is), so this purge only removes the files %s recorded as deployed that nothing else still claims:\n",
 			plan.Profile, game.Name, plan.ActiveProfile, plan.Profile)
+		strandedAt := make(map[string]string, len(plan.Stranded))
+		for _, st := range plan.Stranded {
+			strandedAt[st.Path] = st.ModPath
+		}
 		for _, path := range plan.Remove {
+			if root, ok := strandedAt[path]; ok {
+				// #451: under a mod_path the game no longer uses.
+				path = filepath.Join(root, filepath.FromSlash(path)) + " (deployed under an earlier mod_path)"
+			}
 			fmt.Printf("  - %s\n", path)
 		}
 		if len(plan.Remove) == 0 {
@@ -380,6 +410,7 @@ func renderPurgePlan(plan *core.PurgePlan, game *domain.Game, progress func(core
 	}
 
 	fmt.Printf("\nWould purge: %d mod(s)\n", total)
+	printStrandedPaths(plan, "Would also remove")
 	// #269: PurgePlan.External exists "so the preview says what it will not
 	// touch" (design §2). Without it the user sees a shorter mod count with
 	// no explanation for the difference.

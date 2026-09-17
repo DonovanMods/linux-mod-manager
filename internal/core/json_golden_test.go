@@ -367,6 +367,20 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #451, #466 review F2: a purge of the active profile with no
+			// mod left, whose files are still under a mod_path the game no
+			// longer uses - the plan names each file it removes there, and
+			// the one it leaves.
+			"purge_plan_stranded",
+			core.PurgePlan{
+				Profile:  "default",
+				Mods:     []domain.InstalledMod{},
+				Stranded: []core.PurgeStrandedPath{{Path: "Data/plugin.esp", ModPath: "/games/skyrim-se/OldData"}},
+				Kept: []core.PurgeKeptPath{{Path: "Data/edited.esp", Reason: core.PurgeKeptUserFile,
+					Note: "its content changed after lmm deployed it", ModPath: "/games/skyrim-se/OldData"}},
+			},
+		},
+		{
 			"purge_result_recorded_only",
 			core.PurgeResult{
 				Purged:       1,
