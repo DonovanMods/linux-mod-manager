@@ -149,8 +149,16 @@ var errBadPlanRequest = errors.New("invalid plan request")
 // exactly as the search and the index routes answer them.
 func planErrorStatus(err error) int {
 	var loader *core.LoaderRequiredError
+	var moved *core.ModPathMissingError
 	switch {
 	case errors.As(err, &loader):
+		return http.StatusConflict
+	// #451: a mod_path hand-edited out from under recorded deployments is
+	// the same kind of refusal as the three below - the request is fine,
+	// the game's current state refuses it until the user resolves it (`lmm
+	// game edit --mod-path` back, or a purge) - so it gets the same 409
+	// rather than the default 500.
+	case errors.As(err, &moved):
 		return http.StatusConflict
 	case core.IsGameIdentifierInvalid(err):
 		return http.StatusBadRequest
