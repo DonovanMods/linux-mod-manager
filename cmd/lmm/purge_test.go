@@ -332,14 +332,10 @@ func TestDoPurge_Verbose_UndeployDiagnosticPrintsInline(t *testing.T) {
 	svc, game := setupDoPurgeTest(t)
 	seedPurgeableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 
-	// Corrupt the deployed symlink into a directory so Uninstall fails: the
-	// link's record still names the path, so the removal tries it, and the
-	// symlink linker refuses to remove anything but a link. (A plain file
-	// there is no longer attempted at all: it differs from the mod's cached
-	// copy, so it is kept as the user's - #466.)
+	// Corrupt the deployed symlink into a plain file so Uninstall fails.
 	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.Mkdir(deployedPath, 0o755))
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
 	oldVerbose := verbose
 	verbose = true
@@ -361,7 +357,7 @@ func TestDoPurge_Verbose_UndeployDiagnosticPrintsInline(t *testing.T) {
 	seedPurgeableMod(t, svc, game, "2", "Other Mod", "other.esp")
 	deployedPath2 := filepath.Join(game.ModPath, "other.esp")
 	require.NoError(t, os.Remove(deployedPath2))
-	require.NoError(t, os.Mkdir(deployedPath2, 0o755))
+	require.NoError(t, os.WriteFile(deployedPath2, []byte("not a symlink"), 0644))
 	out = captureStdout(t, func() error {
 		return doPurge(context.Background(), svc, game)
 	})

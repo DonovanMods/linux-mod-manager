@@ -365,16 +365,21 @@ func (i *Installer) judgeFor(game *domain.Game, profileName string, others *othe
 
 // cachedMod is one version of a mod in a cache: what a removal of that
 // deployment compares an unfingerprinted file with (#466 review D10).
+// method is how that deployment was made: only a copy or a hard link is
+// compared - a regular file where a symlink deployment's link should be is
+// #469's state, which keeps today's handling.
 type cachedMod struct {
-	cache *cache.Cache
-	game  *domain.Game
-	mod   *domain.Mod
+	cache  *cache.Cache
+	game   *domain.Game
+	mod    *domain.Mod
+	method domain.LinkMethod
 }
 
-// fileFor is c's cached copy of rel when st records c's mod and the copy is
-// a regular file on disk, otherwise "".
+// fileFor is c's cached copy of rel when st records c's mod, the
+// deployment was a copy or a hard link, and the copy is a regular file on
+// disk, otherwise "".
 func (c *cachedMod) fileFor(st db.DeployedFileState, rel string) string {
-	if c == nil || c.cache == nil || st.SourceID != c.mod.SourceID || st.ModID != c.mod.ID {
+	if c == nil || c.cache == nil || c.method == domain.LinkSymlink || st.SourceID != c.mod.SourceID || st.ModID != c.mod.ID {
 		return ""
 	}
 	path := c.cache.GetFilePath(c.game.ID, c.mod.SourceID, c.mod.ID, c.mod.Version, filepath.FromSlash(rel))
@@ -885,7 +890,7 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		// #466: nor the user's - asked before whether another game
 		// records it, so a changed file is reported as the user's (review
 		// D5).
-		rc := i.keepOnRemoval(ctx, i.judgeFor(game, profileName, others, &cachedMod{cache: oldCache, game: game, mod: oldMod}), file, dstPath)
+		rc := i.keepOnRemoval(ctx, i.judgeFor(game, profileName, others, &cachedMod{cache: oldCache, game: game, mod: oldMod, method: i.linker.Method()}), file, dstPath)
 		if rc.keep {
 			i.noteHeld(rc.held.removalNote())
 			if rc.keepRecord {
@@ -1299,7 +1304,7 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 		keepRoots[j] = r.ModPath
 	}
 
-	jd := i.judgeFor(game, profileName, others, &cachedMod{cache: i.cache, game: game, mod: mod})
+	jd := i.judgeFor(game, profileName, others, &cachedMod{cache: i.cache, game: game, mod: mod, method: i.linker.Method()})
 	// keepPaths is the paths whose records stay: files this removal could
 	// not judge (#466 review D3).
 	var keepPaths []string

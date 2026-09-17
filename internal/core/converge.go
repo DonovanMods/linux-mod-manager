@@ -218,7 +218,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			// another game also records is reported as the user's (review
 			// D5). One that could not be judged keeps its record too.
 			jd := deployedJudge{db: s.db, game: game, profile: profileName, cacheRoots: cacheRoots, others: others,
-				cached: (&cachedMod{cache: gameCache, game: game, mod: &m.Mod}).fileFor}
+				cached: (&cachedMod{cache: gameCache, game: game, mod: &m.Mod, method: m.LinkMethod}).fileFor}
 			j := jd.judge(ctx, path, dstPath)
 			if j.verdict == deployedUsers {
 				errs = append(errs, errors.New(userFileNote(path, j.reason)))

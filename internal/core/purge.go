@@ -677,7 +677,7 @@ func (s *Service) installedCacheLookup(ctx context.Context, game *domain.Game, p
 	byKey := make(map[string]*cachedMod, len(installed))
 	gameCache := s.GetGameCache(game)
 	for i := range installed {
-		byKey[domain.ModKey(installed[i].SourceID, installed[i].ID)] = &cachedMod{cache: gameCache, game: game, mod: &installed[i].Mod}
+		byKey[domain.ModKey(installed[i].SourceID, installed[i].ID)] = &cachedMod{cache: gameCache, game: game, mod: &installed[i].Mod, method: installed[i].LinkMethod}
 	}
 	return func(st db.DeployedFileState, rel string) string {
 		return byKey[domain.ModKey(st.SourceID, st.ModID)].fileFor(st, rel)

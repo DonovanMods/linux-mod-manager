@@ -1246,7 +1246,7 @@ func TestService_DeployProfile_UndeployFailureEmitsNoteEventBeforeSuccessEvent(t
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	deployedPath := filepath.Join(gameDir, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.Mkdir(deployedPath, 0o755)) // #466: a plain file there is the user's, kept; a directory the record names is still an undeploy failure
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
@@ -1331,7 +1331,7 @@ func TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent(t *testing.T) 
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	deployedPath := filepath.Join(gameDir, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.Mkdir(deployedPath, 0o755)) // #466: a plain file there is the user's, kept; a directory the record names is still an undeploy failure
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{Purge: true}, sink)

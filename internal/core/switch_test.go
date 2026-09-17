@@ -672,7 +672,7 @@ func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAre
 	// Corrupt the deployed symlink so Uninstall fails deterministically.
 	deployedPath := filepath.Join(gameDir, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.Mkdir(deployedPath, 0o755)) // #466: a plain file there is the user's, kept; a directory the record names is still an undeploy failure
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
 	// Block updates to installed_mods.enabled so SetModEnabled fails too.
 	installEnabledBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))

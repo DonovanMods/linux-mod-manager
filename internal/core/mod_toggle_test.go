@@ -223,11 +223,11 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 	require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", "g1", "default", true),
 		"seed Deployed=true so the post-disable assertion below actually proves a transition")
 
-	// Corrupt the deployed file into a directory (not a symlink) so the
+	// Corrupt the deployed file into a plain file (not a symlink) so the
 	// symlink linker's Undeploy fails deterministically ("not a symlink").
 	deployedPath := filepath.Join(gameDir, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.Mkdir(deployedPath, 0o755)) // #466: a plain file there is the user's, kept; a directory the record names is still an undeploy failure
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
 	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err, "undeploy failures must not fail DisableMod")

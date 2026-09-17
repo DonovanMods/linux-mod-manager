@@ -301,10 +301,10 @@ func TestService_PurgeProfile_UndeployFailure_EmitsPurgeNoteAndStillCounts(t *te
 	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
 	installSeededMod(t, svc, game, "1")
 
-	// Corrupt the deployed symlink into a directory so Uninstall fails.
+	// Corrupt the deployed symlink into a plain file so Uninstall fails.
 	deployedPath := filepath.Join(gameDir, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.Mkdir(deployedPath, 0o755)) // #466: a plain file there is the user's, kept; a directory the record names is still an undeploy failure
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)

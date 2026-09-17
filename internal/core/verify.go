@@ -808,7 +808,7 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 	gameCache := r.svc.GetGameCache(r.game)
 	for i, m := range installedMods {
 		names[domain.ModKey(m.SourceID, m.ID)] = m.Name
-		byKey[domain.ModKey(m.SourceID, m.ID)] = &cachedMod{cache: gameCache, game: r.game, mod: &installedMods[i].Mod}
+		byKey[domain.ModKey(m.SourceID, m.ID)] = &cachedMod{cache: gameCache, game: r.game, mod: &installedMods[i].Mod, method: m.LinkMethod}
 	}
 	jd := deployedJudge{
 		db: r.svc.db, game: r.game, profile: r.profile, cacheRoots: r.svc.cacheRoots(r.game),
