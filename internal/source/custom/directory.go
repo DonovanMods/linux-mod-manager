@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -110,7 +111,9 @@ func (d *Directory) scan() ([]dirMod, error) {
 		}
 
 		if info.IsDir() {
-			mods = append(mods, d.scanDir(entry.Name(), entryPath))
+			dm := d.scanDir(entry.Name(), entryPath)
+			dm.mod.UpdatedAt = modTime(info)
+			mods = append(mods, dm)
 			continue
 		}
 
@@ -119,7 +122,7 @@ func (d *Directory) scan() ([]dirMod, error) {
 			continue
 		}
 		base := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		mod := domain.Mod{ID: base, SourceID: d.id}
+		mod := domain.Mod{ID: base, SourceID: d.id, UpdatedAt: modTime(info)}
 		if meta := metadata.ResolveArchive(entryPath); meta != nil {
 			applyMetadata(&mod, meta)
 		} else {
@@ -133,6 +136,13 @@ func (d *Directory) scan() ([]dirMod, error) {
 	}
 
 	return mods, nil
+}
+
+// modTime is an entry's modification time, in UTC, as the mod's UpdatedAt
+// (#433): a directory source has no publisher to ask, and the time the
+// archive or folder last changed on disk is the one date it does have.
+func modTime(info os.FileInfo) time.Time {
+	return info.ModTime().UTC()
 }
 
 // scanDir builds a dirMod for a mod directory, preferring well-known metadata
@@ -230,12 +240,13 @@ func (d *Directory) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.
 		return nil, err
 	}
 	return []domain.DownloadableFile{{
-		ID:        "main",
-		Name:      dm.mod.Name,
-		FileName:  filepath.Base(dm.path),
-		Version:   dm.mod.Version,
-		Size:      dm.size,
-		IsPrimary: true,
+		ID:         "main",
+		Name:       dm.mod.Name,
+		FileName:   filepath.Base(dm.path),
+		Version:    dm.mod.Version,
+		Size:       dm.size,
+		IsPrimary:  true,
+		UploadedAt: dm.mod.UpdatedAt,
 	}}, nil
 }
 

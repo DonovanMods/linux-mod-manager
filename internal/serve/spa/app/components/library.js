@@ -26,6 +26,7 @@ import {
 import { mutationLabel, progressText } from "../progress.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
+import { authorTitle, displayAuthor } from "../author.js";
 import { AddModsMenu } from "./addmodsmenu.js";
 import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import { InlineJob } from "./jobprogress.js";
@@ -1022,7 +1023,9 @@ export function Library({
                             row.hasUpdate && html` → ${row.updateTarget}`
                           }
                         </td>
-                        <td class="col--author">${row.author || "—"}</td>
+                        <td class="col--author" title=${authorTitle(row)}>
+                          ${displayAuthor(row) || "—"}
+                        </td>
                         <td class="col--source mono">${row.source_id}</td>
                         <td class="col--badges mod-row__badges">
                           ${

@@ -165,6 +165,7 @@ func (s *Icarus) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.Dow
 			FileName:    fileNameFromURL(rawURL, kind),
 			Category:    strings.ToUpper(kind),
 			Description: description,
+			UploadedAt:  doc.UpdateTime,
 		})
 	}
 	if len(out) == 1 {
@@ -245,6 +246,7 @@ func mapDoc(d firestoreDoc) domain.Mod {
 		Description: str("description"),
 		PictureURL:  str("imageURL"),
 		SourceURL:   str("readmeURL"),
+		UpdatedAt:   d.UpdateTime,
 	}
 }
 

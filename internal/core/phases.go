@@ -747,7 +747,7 @@ const (
 	ImportArchiveDetected
 	// ImportArchiveDetail is one readout field line following
 	// ImportArchiveDetected, in emission order: "Source: <id>", "ID: <id>",
-	// "Version: <v>" (omitted for the "unknown" sentinel), "Author: <a>"
+	// "Version: <v>" (omitted for the VersionUnknown sentinel), "Author: <a>"
 	// and "URL: <u>" (each omitted when empty), "(auto-detected from
 	// filename)" (only when the identity came from the filename pattern),
 	// and always "Files: <n>". Stdout at a 2-space indent.

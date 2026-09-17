@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 )
@@ -168,6 +169,7 @@ query SearchMods($filter: ModsFilter, $count: Int, $offset: Int) {
       name
       summary
       version
+      updatedAt
       uploader { name }
     }
   }
@@ -197,11 +199,15 @@ type graphqlModsResponse struct {
 	Data struct {
 		Mods struct {
 			Nodes []struct {
-				ModID    int    `json:"modId"`
-				Name     string `json:"name"`
-				Summary  string `json:"summary"`
-				Version  string `json:"version"`
-				Uploader struct {
+				ModID   int    `json:"modId"`
+				Name    string `json:"name"`
+				Summary string `json:"summary"`
+				Version string `json:"version"`
+				// UpdatedAt is the Mod type's `updatedAt: DateTime!` (RFC
+				// 3339), requested so a search hit carries the date the
+				// search surfaces show (#433). Zero when absent.
+				UpdatedAt time.Time `json:"updatedAt"`
+				Uploader  struct {
 					Name string `json:"name"`
 				} `json:"uploader"`
 			} `json:"nodes"`
@@ -334,11 +340,12 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 	results := make([]ModData, len(gqlResp.Data.Mods.Nodes))
 	for i, node := range gqlResp.Data.Mods.Nodes {
 		results[i] = ModData{
-			ModID:   node.ModID,
-			Name:    node.Name,
-			Summary: node.Summary,
-			Version: node.Version,
-			Author:  node.Uploader.Name,
+			ModID:       node.ModID,
+			Name:        node.Name,
+			Summary:     node.Summary,
+			Version:     node.Version,
+			Author:      node.Uploader.Name,
+			UpdatedTime: node.UpdatedAt,
 		}
 	}
 

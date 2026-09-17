@@ -166,6 +166,15 @@ type ModDescription struct {
 	Note        string
 }
 
+// AuthorNameCache is implemented by sources whose Mod.Author is an opaque
+// id with a display name behind it (#420: Steam Workshop). It answers from
+// what the source has already resolved - no request of any kind - so core
+// can name the authors of installed rows on a listing without a network
+// call; ids it has no name for are simply absent from the map.
+type AuthorNameCache interface {
+	CachedAuthorNames(authors []string) map[string]string
+}
+
 // BatchModDescriber is implemented by sources that can resolve MANY mods'
 // metadata in one round trip, so a flow with a list of ids in hand does not
 // have to make one GetMod call per id (#269: a workshop adopt routinely has

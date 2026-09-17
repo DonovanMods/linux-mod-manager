@@ -57,6 +57,8 @@ import { findingLabel } from "../verify.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { RichText } from "../richtext.js";
+
+import { authorTitle, displayAuthor } from "../author.js";
 import {
   ModSettingsControls,
   ManagedBySteam,
@@ -191,7 +193,13 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
     <main id="main" class="app-main mod-page">
       <h1 class="mod-page__title">${installedMod.name}</h1>
       <p class="mod-page__meta">
-        ${installedMod.author ? html`by ${installedMod.author} · ` : ""}
+        ${
+          displayAuthor(installedMod)
+            ? html`by${" "}<span title=${authorTitle(installedMod)}
+                  >${displayAuthor(installedMod)}</span
+                >${" "}·${" "}`
+            : ""
+        }
         <span class="mono">${sourceID}/${modID}</span>${" "}
         <span>·</span>${" "}
         <span class="mono"

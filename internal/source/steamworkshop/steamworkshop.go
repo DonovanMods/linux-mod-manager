@@ -37,6 +37,11 @@ type Options struct {
 	// from a test is forbidden, and TestNoTestReachesTheProductionAPI
 	// enforces it.
 	BaseURL string
+	// CommunityURL overrides the Steam Community host the keyless
+	// author-name lookup reads. Empty uses DefaultCommunityURL when BaseURL
+	// is Valve's own, and BaseURL otherwise (see communityURL), so a test
+	// that overrides BaseURL alone still never leaves the process.
+	CommunityURL string
 	// SteamRoots overrides Steam-installation discovery. Empty discovers
 	// the roots the way `lmm game detect` already does (steam.FindSteamRoots,
 	// which honours $STEAM_ROOT and $HOME). Tests set it, or sandbox $HOME.
@@ -169,9 +174,7 @@ func (s *Source) libraries() (paths []string, warnings []string) {
 	return paths, warnings
 }
 
-// SourceURL returns the Steam Community page for a published file - the one
-// click that resolves an item's raw creator steamid64 to a real author name
-// (Tier 1 deliberately does not resolve it itself; that needs a key).
+// SourceURL returns the Steam Community page for a published file.
 func SourceURL(fileID string) string {
 	return "https://steamcommunity.com/sharedfiles/filedetails/?id=" + fileID
 }

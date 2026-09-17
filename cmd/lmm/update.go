@@ -759,7 +759,11 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// Tier-1 (External) or Tier-3 (lmm-downloaded) Workshop item -
 		// displayVersionAt substitutes its revision date instead.
 		wv := workshopVersioned(service, &plan.Mod.Mod, plan.Mod.External)
-		fmt.Printf("%s is pinned at %s and was not checked%s.\n", plan.Mod.Name, displayVersionAt(wv, plan.Mod.Version, plan.Mod.UpdatedAt), lockedSuffix)
+		pinnedAt := ""
+		if at := displayVersionAt(wv, plan.Mod.Version, plan.Mod.UpdatedAt); at != "" {
+			pinnedAt = " at " + at
+		}
+		fmt.Printf("%s is pinned%s and was not checked%s.\n", plan.Mod.Name, pinnedAt, lockedSuffix)
 		// #142 round 5: -s/-p, same reasoning as the locked-refusal
 		// remedies below - set-update is profile-scoped (SetModUpdatePolicy
 		// takes profileName) and the mod ID may exist under more than one
@@ -773,8 +777,11 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		}
 		// #428: same content-id-vs-revision-date substitution as the
 		// pinned branch above.
-		fmt.Printf("%s is already up to date (%s).\n", plan.Mod.Name,
-			displayVersionAt(workshopVersioned(service, &plan.Mod.Mod, plan.Mod.External), plan.Mod.Version, plan.Mod.UpdatedAt))
+		if at := displayVersionAt(workshopVersioned(service, &plan.Mod.Mod, plan.Mod.External), plan.Mod.Version, plan.Mod.UpdatedAt); at != "" {
+			fmt.Printf("%s is already up to date (%s).\n", plan.Mod.Name, at)
+		} else {
+			fmt.Printf("%s is already up to date.\n", plan.Mod.Name)
+		}
 		return nil
 
 	case plan.RecompileNeeded:

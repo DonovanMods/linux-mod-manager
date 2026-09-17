@@ -95,3 +95,18 @@ func writeParseTestIndex(t *testing.T, st *store) {
 	require.NoError(t, json.Unmarshal(data, &file))
 	require.Len(t, file.Rows, 2)
 }
+
+// TestParseTimestampLeavesAnUndatedValueZero is the undated half of #433's
+// per-source table for this source: a package or version without a
+// parsable date carries the zero time, which every surface renders as no
+// date rather than 0001-01-01.
+func TestParseTimestampLeavesAnUndatedValueZero(t *testing.T) {
+	for _, in := range []string{"", "not a date", "2026-13-40"} {
+		if got := parseTimestamp(in); !got.IsZero() {
+			t.Errorf("parseTimestamp(%q) = %v, want the zero time", in, got)
+		}
+	}
+	if got := parseTimestamp("2026-09-08T10:00:00.000000Z"); got.IsZero() {
+		t.Error("a dated value parsed to the zero time")
+	}
+}

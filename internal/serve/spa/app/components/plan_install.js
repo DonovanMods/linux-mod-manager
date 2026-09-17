@@ -39,6 +39,27 @@
 
 import { html, useState } from "../render.js";
 import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
+import { absoluteTime, updatedPhrase } from "../relativetime.js";
+
+/** fileOptionLabel is one file entry of the File picker. */
+function fileOptionLabel(f) {
+  return withUpdated(f.name || f.file_name, f.uploaded_at);
+}
+
+/** withUpdated appends a picker entry's date (issue 433) - the file's own
+ * uploaded_at, where the source reports one - as ONE string: an <option>
+ * holds text only, so the age rides in the label and the exact moment in
+ * its title. An undated entry reads exactly as before. */
+function withUpdated(label, uploadedAt) {
+  const updated = updatedPhrase(uploadedAt);
+  return updated ? `${label} · ${updated}` : label;
+}
+
+/** versionUploadedAt is a version's date: the first pool file carrying
+ * that version and a date. */
+function versionUploadedAt(pool, v) {
+  return pool.find((f) => f.version === v && f.uploaded_at)?.uploaded_at;
+}
 
 /** distinctVersions returns pool's Version values, first-seen order (the
  * pool's own FilterAndSortFiles order - newest/primary-favoring - so the
@@ -133,9 +154,16 @@ export function InstallPlanView({ plan, modal, actions }) {
                     value=${version}
                     onChange=${(e) => pickVersion(e.currentTarget.value)}
                   >
-                    ${versions.map(
-                      (v) => html`<option key=${v} value=${v}>${v}</option>`,
-                    )}
+                    ${versions.map((v) => {
+                      const at = versionUploadedAt(pool, v);
+                      return html`<option
+                        key=${v}
+                        value=${v}
+                        title=${absoluteTime(at) || undefined}
+                      >
+                        ${withUpdated(v, at)}
+                      </option>`;
+                    })}
                   </select>
                 </label>
               `
@@ -153,8 +181,12 @@ export function InstallPlanView({ plan, modal, actions }) {
                     <option value="">Default</option>
                     ${filesForVersion.map(
                       (f) => html`
-                        <option key=${f.id} value=${f.id}>
-                          ${f.name || f.file_name}
+                        <option
+                          key=${f.id}
+                          value=${f.id}
+                          title=${absoluteTime(f.uploaded_at) || undefined}
+                        >
+                          ${fileOptionLabel(f)}
                         </option>
                       `,
                     )}

@@ -2435,7 +2435,9 @@ What such a profile does **not** do is change what the game loads. A Workshop it
 
 In `lmm serve` the same input is in the **Profiles** modal, and pasting a collection link into the search box offers the import directly.
 
-Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop/meta/` — six hours for an item Valve describes, one hour for one it refuses. The directory is safe to delete at any time; `--refresh` bypasses it for one run.
+**Author names.** Valve reports a Workshop item's creator as a steamid64, so lmm looks up the creator's Steam persona name and shows that instead — `lmm mod show` prints `Author: <name> (<steamid64>)`, `lmm search` and `lmm list` show the name, and the web UI shows the name with the id on hover; `--json` keeps the id in `author` and adds the name as `author_name`. With a Steam Web API key the lookup is one batched `GetPlayerSummaries` request; without one, lmm reads each creator's public community profile, one request per author (at most 20 not-yet-known authors per search or detail view), and stops asking for the rest of that call if the community site refuses. A name lmm cannot resolve shows the id. `lmm list` and the web UI's library never make a lookup of their own: they show the names a search, a `mod show` or a mod page has already resolved.
+
+Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop/meta/` — six hours for an item Valve describes, one hour for one it refuses — and author names under `…/_steamworkshop/authors/` with the same lifetimes. The directory is safe to delete at any time; `--refresh` bypasses the item cache for one run.
 
 ### Search
 
@@ -2443,10 +2445,12 @@ Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop
 
 ```text
 $ lmm search bigger --game baldurs-gate-3
-ID                  NAME             AUTHOR   VERSION  SOURCE
---                  ----             ------   -------  ------
-BiggerBackpack-2.1  Bigger Backpack  donovan  2.1      donovan-mods
+ID                  NAME             AUTHOR   VERSION  UPDATED     SOURCE
+--                  ----             ------   -------  -------     ------
+BiggerBackpack-2.1  Bigger Backpack  donovan  2.1      2026-07-01  donovan-mods
 ```
+
+The `UPDATED` column is when the source last changed the mod: an age for anything from the last week (`3h ago`, `2d ago`), the date (UTC) for anything older. It appears only when at least one result has a date; a result whose source reports none shows `-`. NexusMods, CurseForge, Thunderstore, Steam Workshop and the Icarus catalog report one; a `manifest` source reports its `updated_at`, an `api` source whatever its `updated_at` mapping names, and a `directory` source the time the mod's folder or archive last changed on disk. The install picker shows each file's own date the same way, and the web UI shows it on search results and in the install dialog, with the exact time on hover.
 
 If one source fails, its failure is reported as a warning on stderr and the other sources' results are still returned — a flaky manifest URL doesn't hide results from a source that responded:
 

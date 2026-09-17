@@ -34,6 +34,33 @@ export function relativeTime(value, now = Date.now()) {
 }
 
 /**
+ * absoluteTime renders value as the full local date and time - the `title`
+ * beside a relativeTime phrase, so hovering an age shows the moment it
+ * measures (issue 433). "" when there is nothing parsable to render.
+ */
+export function absoluteTime(value) {
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return "";
+  return new Date(ms).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+/**
+ * updatedPhrase is a search hit's or an installable file's last-update
+ * fact (issue 433): "Updated 3 hours ago", "Updated on 12 Sep 2025", or ""
+ * for a document whose source reports no date (the key is omitted on the
+ * wire, and a zero time must never render as the year 1). One string, for
+ * htm's whitespace rule.
+ */
+export function updatedPhrase(value, now = Date.now()) {
+  if (!value) return "";
+  const phrase = relativeTime(value, now);
+  return phrase ? `Updated ${phrase}` : "";
+}
+
+/**
  * countdown renders value as the wait until it - "in 9 minutes" - for a
  * moment deliberately ahead of now, such as a source.Hold's retry_at
  * (sourceindexes.js, issue 436). "" once it has passed or is unparsable.

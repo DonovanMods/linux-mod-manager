@@ -285,6 +285,32 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
 
 ### Added
 
+- **Steam Workshop items show their author's name, not a number (#420).**
+  A Workshop item's author was the creator's raw steamid64 everywhere. lmm
+  now resolves it to the creator's Steam persona name: `lmm mod show`
+  prints `Author: <name> (<steamid64>)`, `lmm search` and `lmm list` show
+  the name, and the web UI shows the name with the id on hover. `--json`
+  and the API keep the id in `author` and add `author_name` beside it. With
+  a Steam Web API key the names come from one batched request; without
+  one, from each creator's public Steam Community profile. Names are cached
+  for six hours (a missing profile for one), a name that cannot be resolved
+  shows the id, and `lmm list` and the library only show names lmm has
+  already looked up — they never make a request of their own.
+
+- **Search results and the install picker show when a mod was last
+  updated (#433).** `lmm search` has an `UPDATED` column — an age for
+  anything from the last week, the date after that — shown whenever at
+  least one result has a date, with `-` for a result whose source reports
+  none. The interactive install list and its file picker show the same fact
+  per mod and per file, and the web UI's search results, omnibar results
+  and install dialog show it as "Updated 3 hours ago" with the exact time on
+  hover. NexusMods search results now carry their date (the search never
+  asked for it), a file's upload date is recorded for NexusMods, CurseForge,
+  Thunderstore and Steam Workshop (`uploaded_at` on the file documents, in
+  `--json` too), the Icarus catalog reports each entry's last change, and a
+  `directory` source dates a mod by its folder's or archive's modification
+  time.
+
 - **`lmm game edit <id> --mod-path <path>` (#427, #456).** A game's
   `mod_path` could only be changed by editing `games.yaml` by hand. It is
   now a command, and `PUT /api/v1/games/{id}` takes a `mod_path` member for
@@ -1649,6 +1675,19 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   `lmm mod show` is unchanged.
 
 ### Fixed
+
+- **A mod imported without a version no longer reads "vunknown", and a mod
+  with no author no longer prints an empty `Author:` (#459).** `lmm import`
+  records an archive whose name carries no version at the version
+  `unknown`, and `lmm mod show` printed `Installed: vunknown`,
+  `lmm mod set-update --pin` printed `(vunknown)`, and the `mod show`
+  header ended in `Author: ` with nothing after it. Every CLI line that
+  labels a version now treats that placeholder as no version at all —
+  `Installed (profile: default)`, a pin with no version in brackets,
+  `is already up to date.` —
+  and the `mod show` header leaves out a version or author it does not
+  have. `lmm list` and `--json` still show `unknown`, which is what lmm
+  records.
 
 - **The web UI's install confirmation lists the dependencies it switches
   back on (#448).** Installing a mod whose dependency the profile has

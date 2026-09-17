@@ -95,12 +95,23 @@ func displayUpdateTarget(external bool, newVersion string) string {
 // - rather than through a table column: "v1.2.3" for an ordinary mod,
 // "revision of <date>" for a Workshop item (#428), mirroring
 // displayModVersion but with the "v" baked into the ordinary branch so
-// these callers never print "v" in front of a date.
+// these callers never print "v" in front of a date. Empty for a mod with
+// no version (core.VersionText, #459): the caller words its line without
+// one.
 func displayVersionAt(workshop bool, version string, updatedAt time.Time) string {
 	if workshop {
 		return displayRevision(updatedAt)
 	}
-	return "v" + version
+	return labelledVersion(version)
+}
+
+// labelledVersion is "v<version>", or "" for a mod with no version - the
+// importer's placeholder included (core.VersionText, #459).
+func labelledVersion(version string) string {
+	if v := core.VersionText(&domain.Mod{Version: version}); v != "" {
+		return "v" + v
+	}
+	return ""
 }
 
 // displayRollbackTarget is displayUpdateTarget's rollback twin: the version
@@ -124,11 +135,14 @@ func displayRollbackTarget(workshop bool, toVersion string) string {
 // which is exactly what the SPA's modrows.js#lockedNote settled on. A caller
 // wording a line words it without the target; a caller filling a table column
 // says "yes".
+//
+// A mod with no version (#459) has nothing to name either, and is
+// rendered as an external one is.
 func displayLockTarget(external bool, version string) string {
 	if external {
 		return ""
 	}
-	return "v" + version
+	return labelledVersion(version)
 }
 
 // sourceIsWorkshop reports whether sourceID's registered source is the
@@ -204,20 +218,23 @@ func (l modVersionLabels) eventSuffix(p flowLine) string {
 
 // displayVersionSuffix renders " v<version>" for a line that appends a
 // version to a name, and the empty string when there is no version to
-// append (#398). "✓ Installed: alpha v" reads as a line that got cut off,
-// not as "this mod has no version" - the label belongs to the value, so it
-// goes when the value is absent.
+// append (#398) - which the importer's "unknown" placeholder is too (#459,
+// core.VersionText). "✓ Installed: alpha v" reads as a line that got cut
+// off, not as "this mod has no version" - the label belongs to the value,
+// so it goes when the value is absent.
 func displayVersionSuffix(version string) string {
-	if version == "" {
-		return ""
+	if v := labelledVersion(version); v != "" {
+		return " " + v
 	}
-	return " v" + version
+	return ""
 }
 
 // displayAuthorSuffix is displayVersionSuffix's twin for " by <author>":
 // "Selected: StockOverride v1.0.0 by " left a dangling "by" for any source
-// that does not report an author.
-func displayAuthorSuffix(author string) string {
+// that does not report an author. The author is core.AuthorText's - the
+// persona name where one resolved (#420).
+func displayAuthorSuffix(m *domain.Mod) string {
+	author := core.AuthorText(m)
 	if author == "" {
 		return ""
 	}

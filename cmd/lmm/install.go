@@ -296,7 +296,11 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 			if installedIDs[m.ID] {
 				installedMark = " [installed]"
 			}
-			fmt.Printf("  [%d] %s%s%s (ID: %s)%s\n", i+1, m.Name, labels.suffix(&m), displayAuthorSuffix(m.Author), m.ID, installedMark)
+			updated := ""
+			if age := displayAge(m.UpdatedAt, cliNow()); age != "" {
+				updated = ", updated " + age // #433
+			}
+			fmt.Printf("  [%d] %s%s%s (ID: %s%s)%s\n", i+1, m.Name, labels.suffix(&m), displayAuthorSuffix(&m), m.ID, updated, installedMark)
 		}
 
 		hasMore := false
@@ -444,7 +448,11 @@ func installFileRow(index int, f domain.DownloadableFile) string {
 	if f.IsPrimary {
 		defaultMark = " <- default"
 	}
-	row := fmt.Sprintf("  [%d] %s (%s, %s)", index+1, displayFileLabel(f), f.Category, sizeStr)
+	facts := f.Category + ", " + sizeStr
+	if age := displayAge(f.UploadedAt, cliNow()); age != "" {
+		facts += ", " + age // #433: the file's own date, where the source reports one
+	}
+	row := fmt.Sprintf("  [%d] %s (%s)", index+1, displayFileLabel(f), facts)
 	if f.Description != "" {
 		row += " - " + f.Description
 	}
@@ -559,7 +567,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// Every human-facing line below is suppressed under --json: the run
 	// emits exactly one document (Ruling 15).
 	if !jsonOutput {
-		fmt.Printf("\nSelected: %s%s%s\n", mod.Name, newModVersionLabels(service).suffix(mod), displayAuthorSuffix(mod.Author))
+		fmt.Printf("\nSelected: %s%s%s\n", mod.Name, newModVersionLabels(service).suffix(mod), displayAuthorSuffix(mod))
 
 		if !installNoDeps && mod.SourceID != domain.SourceLocal {
 			fmt.Println("\nResolving dependencies...")

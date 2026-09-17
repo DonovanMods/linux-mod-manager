@@ -23,6 +23,7 @@ import { findingLabel } from "../verify.js";
 import { healthLabel } from "../modrows.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
+import { authorTitle, displayAuthor } from "../author.js";
 import { InlineJob } from "./jobprogress.js";
 
 /** modUrl builds the ?mod= URL for row, on the given base path - the same
@@ -231,7 +232,13 @@ export function ModPanel({
           </button>
           <h2 class="section-header">${catalogMod.name}</h2>
           <p class="slide-over__meta">
-            ${catalogMod.author ? html`by ${catalogMod.author} · ` : ""}
+            ${
+              displayAuthor(catalogMod)
+                ? html`by${" "}<span title=${authorTitle(catalogMod)}
+                      >${displayAuthor(catalogMod)}</span
+                    >${" "}·${" "}`
+                : ""
+            }
             <span class="mono">${catalogMod.version}</span> ·
             <span class="badge">${catalogMod.source_id}</span>
           </p>
@@ -372,7 +379,13 @@ export function ModPanel({
 
         <h2 class="section-header">${row.name}</h2>
         <p class="slide-over__meta">
-          ${row.author ? html`by ${row.author} · ` : ""}
+          ${
+            displayAuthor(row)
+              ? html`by${" "}<span title=${authorTitle(row)}
+                    >${displayAuthor(row)}</span
+                  >${" "}·${" "}`
+              : ""
+          }
           <span class="mono"
             >${
               // version.js#displayVersion, issue 269's version DISPLAY rule:

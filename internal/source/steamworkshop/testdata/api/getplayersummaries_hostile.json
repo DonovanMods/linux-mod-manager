@@ -1,0 +1,11 @@
+{
+  "response": {
+    "players": [
+      {
+        "steamid": "76561198000000000",
+        "personaname": "\u001b[31mEvil\u202e\n Name\u0007"
+      },
+      { "steamid": "76561198000000001", "personaname": "\u200b\u2066 \t" }
+    ]
+  }
+}

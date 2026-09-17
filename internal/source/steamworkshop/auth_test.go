@@ -39,6 +39,9 @@ func serveRoutes(t *testing.T, replies ...reply) *routedFixture {
 	t.Helper()
 	fx := &routedFixture{replies: replies}
 	fx.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerNameLookup(w, r) {
+			return
+		}
 		fx.paths = append(fx.paths, r.URL.Path)
 		fx.requests = append(fx.requests, r.URL.Query())
 		idx := min(fx.calls, len(fx.replies)-1)

@@ -1321,10 +1321,13 @@ func newE2EFixtureWithSearchableMods(t *testing.T) e2eSearchFixture {
 	sandboxE2EEnv(t)
 
 	src := newE2ESearchSource(t, "fake")
+	// Better Boots and its 2.0 file carry a date and everything else carries
+	// none - the dated/undated pair TestE2E_SearchAndInstallPickerShowTheLastUpdateDate
+	// asserts on (#433).
 	src.addMod(e2eSearchSourceMod{
-		mod: domain.Mod{ID: e2eSearchInstallModID, SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		mod: domain.Mod{ID: e2eSearchInstallModID, SourceID: "fake", Name: "Better Boots", Version: "2.0", UpdatedAt: e2eSearchUpdatedAt},
 		files: []domain.DownloadableFile{
-			{ID: "f2", Name: "Main 2.0", FileName: "boots-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 128},
+			{ID: "f2", Name: "Main 2.0", FileName: "boots-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 128, UploadedAt: e2eSearchUpdatedAt},
 			{ID: "f1", Name: "Main 1.0", FileName: "boots-1.0.zip", Version: "1.0", Category: "MAIN", Size: 96},
 		},
 		members: map[string]string{"f1": "Mods/boots.pak", "f2": "Mods/boots.pak"},
@@ -1335,7 +1338,8 @@ func newE2EFixtureWithSearchableMods(t *testing.T) e2eSearchFixture {
 		members: map[string]string{"c1": e2eSearchDeployedFile},
 	})
 	src.addMod(e2eSearchSourceMod{
-		mod: domain.Mod{ID: e2eSearchMultiFileModID, SourceID: "fake", Name: "Multi Edition Mod", Version: "1.0"},
+		// #420: an opaque author id with its resolved name beside it.
+		mod: domain.Mod{ID: e2eSearchMultiFileModID, SourceID: "fake", Name: "Multi Edition Mod", Version: "1.0", Author: "76561198000000000", AuthorName: "Cargo Captain"},
 		files: []domain.DownloadableFile{
 			{ID: "m1", Name: "Regular Edition", FileName: "multi-regular.zip", Version: "1.0", Category: "MAIN", IsPrimary: true, Size: 48},
 			{ID: "m2", Name: "Definitive Edition", FileName: "multi-definitive.zip", Version: "1.0", Category: "MAIN", Size: 48},

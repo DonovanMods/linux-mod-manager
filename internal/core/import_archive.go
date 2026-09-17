@@ -470,7 +470,7 @@ func EmitImportArchiveReadout(plan *ImportArchivePlan, sink EventSink) {
 	step(ImportArchiveDetected, "Mod: "+plan.Mod.Name)
 	step(ImportArchiveDetail, "Source: "+plan.LinkedSource)
 	step(ImportArchiveDetail, "ID: "+plan.Mod.ID)
-	if plan.Mod.Version != "unknown" {
+	if plan.Mod.Version != VersionUnknown {
 		step(ImportArchiveDetail, "Version: "+plan.Mod.Version)
 	}
 	if plan.Mod.Author != "" {
@@ -932,7 +932,7 @@ func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, arch
 	imported.Summary = mod.Summary
 	imported.SourceURL = mod.SourceURL
 	imported.PictureURL = mod.PictureURL
-	if mod.Version != "" && imported.Version == "unknown" {
+	if mod.Version != "" && imported.Version == VersionUnknown {
 		imported.Version = mod.Version
 	}
 

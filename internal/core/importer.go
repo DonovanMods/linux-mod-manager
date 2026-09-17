@@ -151,7 +151,7 @@ func resolveImportIdentity(filename string, opts ImportOptions) importIdentity {
 		if v := domain.ExtractVersionFromName(nameNoExt); v != "" {
 			return v
 		}
-		return "unknown"
+		return VersionUnknown
 	}
 
 	if opts.SourceID != "" && opts.ModID != "" {
@@ -422,7 +422,7 @@ func matchImportedFile(files []domain.DownloadableFile, archiveFilename, version
 	if exact != nil {
 		return exact
 	}
-	if !allowVersionFallback || version == "" || version == "unknown" {
+	if !allowVersionFallback || version == "" || version == VersionUnknown {
 		return nil
 	}
 	var byVersion *domain.DownloadableFile

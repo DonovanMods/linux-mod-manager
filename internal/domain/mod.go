@@ -89,6 +89,11 @@ type DownloadableFile struct {
 	Category    string `json:"category,omitempty"`    // Category: "MAIN", "OPTIONAL", "UPDATE", etc.
 	Description string `json:"description,omitempty"` // File description
 	SHA256      string `json:"sha256,omitempty"`      // Expected SHA-256 of the download (hex); empty = source declares no checksum
+	// UploadedAt is when the source published this file (or, for a source
+	// whose "files" are versions, that version), for the install picker's
+	// date column (#433). Zero when the source reports none; omitzero, so
+	// such a file's document is unchanged.
+	UploadedAt time.Time `json:"uploaded_at,omitzero"`
 }
 
 // EffectiveInstalledVersion resolves the version string that describes what
@@ -179,11 +184,17 @@ type ModReference struct {
 
 // Mod represents a mod from any source
 type Mod struct {
-	ID           string         `json:"id"`
-	SourceID     string         `json:"source_id"`
-	Name         string         `json:"name"`
-	Version      string         `json:"version"`
-	Author       string         `json:"author"`
+	ID       string `json:"id"`
+	SourceID string `json:"source_id"`
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	Author   string `json:"author"`
+	// AuthorName is Author as a person reads it, where the source's author
+	// field is an opaque id (#420: a Steam Workshop creator's steamid64
+	// resolves to its persona name). Empty when Author is already a name
+	// or no name resolved - a surface shows AuthorName when set and Author
+	// otherwise. Never stored.
+	AuthorName   string         `json:"author_name,omitempty"`
 	Summary      string         `json:"summary"`
 	Description  string         `json:"description"`
 	GameID       string         `json:"game_id"`

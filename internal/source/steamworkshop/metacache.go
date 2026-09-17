@@ -121,11 +121,16 @@ func (c *metaCache) put(d itemDetails) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	writeFileAtomic(path, data)
+}
+
+// writeFileAtomic writes data to path, silently giving up on any failure.
+// Write-then-rename so a concurrent reader never sees a half-written entry
+// and a crash mid-write leaves the previous answer intact.
+func writeFileAtomic(path string, data []byte) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
 	}
-	// Write-then-rename so a concurrent reader never sees a half-written
-	// entry and a crash mid-write leaves the previous answer intact.
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".meta-*")
 	if err != nil {
 		return

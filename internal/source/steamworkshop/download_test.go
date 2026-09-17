@@ -42,6 +42,9 @@ func serveLegacyFixture(t *testing.T, payload string) *legacyFixture {
 	t.Helper()
 	fx := &legacyFixture{payload: []byte(payload)}
 	fx.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerNameLookup(w, r) {
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/ugc/") {
 			fx.mu.Lock()
 			fx.methods = append(fx.methods, r.Method)
@@ -91,6 +94,24 @@ func TestGetModFiles_DescribesTheItemAsOneDownloadableFile(t *testing.T) {
 	assert.True(t, files[0].IsPrimary)
 	assert.Equal(t, int64(572330), files[0].Size)
 	assert.Equal(t, "7987119735124793734", files[0].Version)
+	assert.Equal(t, time.Unix(1764767935, 0).UTC(), files[0].UploadedAt, "time_updated is the file's date (#433)")
+}
+
+// TestGetModAndFiles_AnUndatedItemCarriesTheZeroTime is the undated half of
+// #433's per-source table: an item Valve gives no time_updated has no date
+// on any surface, rather than 1970-01-01.
+func TestGetModAndFiles_AnUndatedItemCarriesTheZeroTime(t *testing.T) {
+	fx := serveFixture(t, "getpublishedfiledetails_undated.json")
+	src := newTestSource(t, fx.srv.URL, t.TempDir(), nil)
+
+	mod, err := src.GetMod(context.Background(), "1133870", "3617086699")
+	require.NoError(t, err)
+	assert.True(t, mod.UpdatedAt.IsZero(), "GetMod: %v", mod.UpdatedAt)
+
+	files, err := src.GetModFiles(context.Background(), mod)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.True(t, files[0].UploadedAt.IsZero(), "file: %v", files[0].UploadedAt)
 }
 
 // TestGetDownloadURL_ReturnsTheLegacyFileURLWhenValveServesOne is Path A:

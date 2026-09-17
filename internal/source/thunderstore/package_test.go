@@ -109,6 +109,10 @@ func TestGetModFilesIsOneFilePerVersionNewestFirst(t *testing.T) {
 	assert.True(t, newest.IsPrimary, "the newest version is the primary file")
 	assert.Equal(t, "MAIN", newest.Category)
 	assert.Empty(t, newest.SHA256, "Thunderstore publishes no checksum")
+	// #433: a version's date_created is the file's date in the install
+	// picker - each version its own, not the package's date_updated.
+	assert.Equal(t, time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC), newest.UploadedAt)
+	assert.Equal(t, time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC), files[4].UploadedAt)
 
 	for _, f := range files[1:] {
 		assert.False(t, f.IsPrimary, "exactly one file is primary")

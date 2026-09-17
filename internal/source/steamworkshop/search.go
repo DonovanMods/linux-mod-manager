@@ -184,6 +184,7 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 		}
 		result.Mods = append(result.Mods, modFromDetails(d, query.GameID))
 	}
+	s.client.withAuthorNames(ctx, result.Mods)
 	s.client.search.put(cacheKey, result)
 	return result, nil
 }

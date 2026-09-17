@@ -192,6 +192,7 @@ func (n *NexusMods) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.
 			IsPrimary:   f.IsPrimary,
 			Category:    f.CategoryName,
 			Description: f.Description,
+			UploadedAt:  f.UploadedTime,
 		}
 	}
 
