@@ -1708,7 +1708,12 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   which covers the files a v1.30.1 switch between two profiles sharing a
   mod left live with no record under the new profile. Only in that last
   case does the purged profile keep its record, the file's only claim to
-  be lmm's. A config file is yours, so like an ordinary purge it stops
+  be lmm's — even where another profile or game records the file as well,
+  unless that record is the active profile's own or is for a mod the
+  active profile lists: any other claimant's purge would not keep the
+  file, so the file would be deleted from under the active profile (a
+  v1.30.1 import gave each profile its own key for one archive, two mods
+  can ship one file, and two games can share a directory). A config file is yours, so like an ordinary purge it stops
   tracking it ("Kept your file; lmm no longer tracks it"); a file someone
   else records stays theirs to track, and their own purge decides it. A
   record of a file that is already gone goes as well. So every purge

@@ -29,8 +29,10 @@ place, and listed with why, when the game hands it to you after its first
 deploy (a BepInEx config file), another profile or another game sharing
 the directory records it, or the active profile lists its mod. The purged
 profile's record of such a file goes - the others still track it, and a
-config file is yours - except where the active profile lists its mod. A
-record of a file that is already gone goes too. It runs no hooks, keeps
+config file is yours - except where the active profile lists its mod and
+no other record of the file is the active profile's or for a mod it lists:
+that record is then what keeps the file from the next purge. A record of a
+file that is already gone goes too. It runs no hooks, keeps
 the mod records, and refuses --uninstall ('lmm profile switch' to that
 profile first to remove its records too).
 

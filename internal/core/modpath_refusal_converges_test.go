@@ -101,9 +101,13 @@ func followModPathRefusal(t *testing.T, svc *core.Service, gameID, to string) []
 	return nil
 }
 
-// requireActiveListedLive checks that every mod gameID's active profile
-// lists and enables is deployed under its (new) mod_path: each cached file
-// is there, and recorded under the active profile.
+// requireActiveListedLive checks every mod gameID's active profile lists
+// and does not mark off, each decided by its first reference: the active
+// profile has a row for it, enabled and deployed, and each of its cached
+// files is live under the (new) mod_path, byte for byte, and recorded under
+// the active profile. A listed mod with no row fails rather than being
+// skipped - the #445 final gate's F-A left exactly that, a listed mod with
+// neither a row nor its file, behind a move the refusal allowed.
 func requireActiveListedLive(t *testing.T, svc *core.Service, gameID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -111,20 +115,33 @@ func requireActiveListedLive(t *testing.T, svc *core.Service, gameID string) {
 	require.NoError(t, err)
 	active, err := svc.NewProfileManager().GetDefault(ctx, gameID)
 	require.NoError(t, err)
+	gameCache := svc.GetGameCache(game)
+	seen := make(map[string]bool, len(active.Mods))
 	for _, ref := range active.Mods {
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		if ref.Disabled {
 			continue
 		}
 		row, err := svc.GetInstalledMod(ctx, ref.SourceID, ref.ModID, gameID, active.Name)
-		require.NoError(t, err, "the active profile %s has a row for %s", active.Name, ref.ModID)
-		files, err := svc.GetGameCache(game).ListFiles(gameID, row.SourceID, row.ID, row.Version)
+		require.NoError(t, err, "the active profile %s lists %s, so it has a row for it", active.Name, ref.ModID)
+		assert.True(t, row.Enabled, "%s is enabled under %s", ref.ModID, active.Name)
+		assert.True(t, row.Deployed, "%s is deployed under %s", ref.ModID, active.Name)
+		files, err := gameCache.ListFiles(gameID, row.SourceID, row.ID, row.Version)
 		require.NoError(t, err)
 		require.NotEmpty(t, files)
 		recorded, err := svc.GetDeployedFilesForMod(ctx, gameID, active.Name, row.SourceID, row.ID)
 		require.NoError(t, err)
 		for _, file := range files {
-			_, err := os.Lstat(filepath.Join(game.ModPath, file))
-			assert.NoError(t, err, "%s of %s is live under %s", file, ref.ModID, game.ModPath)
+			want, err := os.ReadFile(gameCache.GetFilePath(gameID, row.SourceID, row.ID, row.Version, file))
+			require.NoError(t, err)
+			got, err := os.ReadFile(filepath.Join(game.ModPath, file))
+			if assert.NoError(t, err, "%s of %s is live under %s", file, ref.ModID, game.ModPath) {
+				assert.Equal(t, string(want), string(got), "%s of %s is its cached copy", file, ref.ModID)
+			}
 			assert.Contains(t, recorded, filepath.ToSlash(file))
 		}
 	}

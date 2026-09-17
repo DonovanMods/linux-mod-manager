@@ -296,26 +296,26 @@ func TestListDeployedFiles_EmptyProfileIsNotAnError(t *testing.T) {
 	assert.Empty(t, files)
 }
 
-// TestDeployedPathProfiles_NamesEveryProfileRecordingAPath is #445's read:
-// which profiles of a game record each path, so a purge of a profile that
-// is not active can leave every path another profile records.
-func TestDeployedPathProfiles_NamesEveryProfileRecordingAPath(t *testing.T) {
+// TestDeployedPathRecords_NamesEveryRecordOfAPath is #445's read: which
+// profiles of a game record each path, and for which mod, so a purge of a
+// profile that is not active can leave every path another record claims.
+func TestDeployedPathRecords_NamesEveryRecordOfAPath(t *testing.T) {
 	d, err := db.New(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, d.Close()) })
 	ctx := context.Background()
 
 	require.NoError(t, d.SaveDeployedFile(ctx, "g1", "b", "shared.esp", "src", "s"))
-	require.NoError(t, d.SaveDeployedFile(ctx, "g1", "a", "shared.esp", "src", "s"))
+	require.NoError(t, d.SaveDeployedFile(ctx, "g1", "a", "shared.esp", "local", "other"))
 	require.NoError(t, d.SaveDeployedFile(ctx, "g1", "b", "own.esp", "src", "o"))
 	require.NoError(t, d.SaveDeployedFile(ctx, "g2", "c", "shared.esp", "src", "s"))
 
-	profiles, err := d.DeployedPathProfiles(ctx, "g1")
+	records, err := d.DeployedPathRecords(ctx, "g1")
 	require.NoError(t, err)
-	assert.Equal(t, map[string][]string{
-		"shared.esp": {"a", "b"},
-		"own.esp":    {"b"},
-	}, profiles, "another game's rows are not included")
+	assert.Equal(t, map[string][]db.PathRecord{
+		"shared.esp": {{Profile: "a", SourceID: "local", ModID: "other"}, {Profile: "b", SourceID: "src", ModID: "s"}},
+		"own.esp":    {{Profile: "b", SourceID: "src", ModID: "o"}},
+	}, records, "another game's rows are not included")
 }
 
 // TestDeployedFileCounts: the rows a mod_path move would strand, per

@@ -258,9 +258,10 @@ type PurgePlan struct {
 	// paths in Remove - the ones Profile has a deployed-file record for and
 	// nothing else still claims, and the ones whose file is already gone -
 	// and nothing else. A path it may not remove (PurgeKeptReason) is left
-	// and listed in Kept; Profile's record of it goes unless the active
-	// profile lists its mod (PurgeKeptReason.DropsRecord), so every purge
-	// the mod_path refusal names can clear the records it counts (#427). It
+	// and listed in Kept; Profile's record of it goes unless it is kept as
+	// PurgeKeptListed (PurgeKeptReason.DropsRecord), so every purge the
+	// mod_path refusal names can clear the records it counts (#427), or the
+	// refusal names what records the file under the active profile. It
 	// runs no hooks, removes no mod records or profile entries (--uninstall
 	// is refused with ErrProfileNotActive), and leaves a merged artifact to
 	// the paths Profile recorded. Mods is then the installed mods with a
@@ -299,20 +300,26 @@ type PurgeKeptPath struct {
 // profile's and nothing else anyone wants live (#445 review), so each of
 // these keeps its file.
 //
-// A path is decided in this order (#445 audit), and the first answer holds:
+// A path is decided in this order (#445 audit, final gate F-A), and the
+// first answer holds:
 //
 //  1. its file is already gone: nothing is kept, and the record goes (the
 //     path is in PurgePlan.Remove);
 //  2. PurgeKeptUserFile;
-//  3. PurgeKeptRecorded, then PurgeKeptOtherGame;
-//  4. PurgeKeptListed;
+//  3. PurgeKeptListed - unless another record of the path keeps the file
+//     for the same reason (listedHandedOn);
+//  4. PurgeKeptRecorded, then PurgeKeptOtherGame;
 //  5. otherwise the path is the purged profile's alone: it is removed.
 //
 // Only a listed path keeps the purged profile's record (DropsRecord).
 // Every other kept file is still tracked by whoever else claims it, or is
 // never lmm's to remove, so the record would only keep the game's mod_path
 // locked (refuseModPathMove) with no purge able to clear it: two profiles
-// recording one file used to keep it for each other forever.
+// recording one file used to keep it for each other forever. A listed path
+// is different: the other claimant's purge asks whether the active profile
+// lists ITS mod, in ITS game, so dropping this record could hand the file to
+// a purge that removes it - a v1.30.1 import minted a key per profile, two
+// mods can ship one file, and two games can share a directory.
 type PurgeKeptReason string
 
 const (
@@ -332,11 +339,14 @@ const (
 	// records it (review F7), and still tracks it.
 	PurgeKeptOtherGame PurgeKeptReason = "other_game"
 	// PurgeKeptListed: the active profile's document lists the path's mod,
-	// not marked off, and nothing else records the path - so the file may be
-	// live for the active profile, and the purged profile's record is its
-	// only claim to be lmm's. What a v1.30.1 switch between profiles
-	// sharing a mod left (review F3). Asked on every purge, so the last
-	// claimant's purge never removes a file the active profile lists.
+	// not marked off, and no other record keeps the file for that reason -
+	// none under the active profile, and none whose mod it lists - so the
+	// file may be live for the active profile, and the purged profile's
+	// record is its only claim to be lmm's. What a v1.30.1 switch between
+	// profiles sharing a mod left (review F3). Asked on every purge, so the
+	// last claimant's purge never removes a file the active profile lists.
+	// Another profile or game may still record the path (Profiles names
+	// only the active profile then): its purge would not keep the file.
 	PurgeKeptListed PurgeKeptReason = "listed"
 )
 
@@ -509,7 +519,7 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing deployed files: %w", err)
 	}
-	owners, err := s.db.DeployedPathProfiles(ctx, game.ID)
+	records, err := s.db.DeployedPathRecords(ctx, game.ID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing deployed files: %w", err)
 	}
@@ -528,7 +538,7 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 			remove = append(remove, row)
 			continue
 		}
-		if k, ok := keptPath(row, profileName, owners, listed, others, installer, game); ok {
+		if k, ok := keptPath(row, profileName, live, records[row.RelativePath], listed, others, installer, game); ok {
 			kept = append(kept, keptRecord{PurgeKeptPath: k, row: row})
 			continue
 		}
@@ -538,14 +548,25 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 }
 
 // keptPath is recordedPaths' decision for one row whose file is there (or
-// could not be checked), in PurgeKeptReason's order.
-func keptPath(row db.DeployedPath, profileName string, owners map[string][]string, listed map[string]string, others *otherGameRecords, installer *Installer, game *domain.Game) (PurgeKeptPath, bool) {
+// could not be checked), in PurgeKeptReason's order. records are every
+// record of the row's path in its game, the purged profile's included.
+func keptPath(row db.DeployedPath, profileName, live string, records []db.PathRecord, listed map[string]string, others *otherGameRecords, installer *Installer, game *domain.Game) (PurgeKeptPath, bool) {
 	k := PurgeKeptPath{Path: row.RelativePath}
 	if installer.notLinkerOwned(game, row.RelativePath) {
 		k.Reason = PurgeKeptUserFile
 		return k, true
 	}
-	if profiles := slices.DeleteFunc(slices.Clone(owners[row.RelativePath]), func(p string) bool { return p == profileName }); len(profiles) > 0 {
+	var profiles []string
+	for _, r := range records {
+		if r.Profile != profileName {
+			profiles = append(profiles, r.Profile)
+		}
+	}
+	if profile, ok := listed[domain.ModKey(row.SourceID, row.ModID)]; ok && !listedHandedOn(records, profileName, live, listed) {
+		k.Reason, k.Profiles = PurgeKeptListed, []string{profile}
+		return k, true
+	}
+	if len(profiles) > 0 {
 		k.Reason, k.Profiles = PurgeKeptRecorded, profiles
 		return k, true
 	}
@@ -553,11 +574,26 @@ func keptPath(row db.DeployedPath, profileName string, owners map[string][]strin
 		k.Reason, k.Games = PurgeKeptOtherGame, games
 		return k, true
 	}
-	if profile, ok := listed[domain.ModKey(row.SourceID, row.ModID)]; ok {
-		k.Reason, k.Profiles = PurgeKeptListed, []string{profile}
-		return k, true
-	}
 	return PurgeKeptPath{}, false
+}
+
+// listedHandedOn reports whether a path the active profile (live) lists
+// stays protected once profileName's record of it goes (#445 final gate
+// F-A): another record of it in the same game is the active profile's own -
+// which only the active profile's purge, or its deploy, decides - or names
+// a mod the active profile lists, so that record's purge keeps the file as
+// PurgeKeptListed in turn. Another game's record never qualifies: its purge
+// asks about that game's active profile.
+func listedHandedOn(records []db.PathRecord, profileName, live string, listed map[string]string) bool {
+	for _, r := range records {
+		if r.Profile == profileName {
+			continue
+		}
+		if _, ok := listed[domain.ModKey(r.SourceID, r.ModID)]; ok || r.Profile == live {
+			return true
+		}
+	}
+	return false
 }
 
 // liveListedMods is the mods live's document lists and does not mark off,
@@ -596,8 +632,8 @@ type otherGameRecords struct {
 
 type otherGame struct {
 	id    string
-	root  string              // its mod directory, links resolved
-	paths map[string][]string // its recorded paths (DeployedPathProfiles)
+	root  string                     // its mod directory, links resolved
+	paths map[string][]db.PathRecord // its recorded paths (DeployedPathRecords)
 }
 
 // otherGamesRecording reads the records of every other configured game
@@ -612,7 +648,7 @@ func (s *Service) otherGamesRecording(ctx context.Context, game *domain.Game) (*
 		if !pathWithin(records.root, root) && !pathWithin(root, records.root) {
 			continue
 		}
-		paths, err := s.db.DeployedPathProfiles(ctx, other.ID)
+		paths, err := s.db.DeployedPathRecords(ctx, other.ID)
 		if err != nil {
 			return nil, fmt.Errorf("listing %s's deployed files: %w", other.ID, err)
 		}

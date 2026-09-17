@@ -29,11 +29,14 @@ package core_test
 //
 //  1. its file is already gone: the purged profile's record goes;
 //  2. the game hands the file to the user: the file stays, the record goes;
-//  3. another profile, or another game, records it: the file stays - that
+//  3. the active profile's document lists its mod: the file and the record
+//     stay, because the record is the file's only claim to be lmm's -
+//     unless another record of the path is the active profile's, or is for
+//     a mod it lists, which keeps the file in turn
+//     (recorded_purge_handoff_test.go);
+//  4. another profile, or another game, records it: the file stays - that
 //     claimant still tracks it, and its own purge decides it - and the
 //     purged profile's record goes;
-//  4. the active profile's document lists its mod: the file and the record
-//     stay, because the record is the file's only claim to be lmm's;
 //  5. otherwise it is the purged profile's alone: file and record go.
 
 import (
@@ -93,6 +96,10 @@ func (f *legacyFixture) deployed(t *testing.T, profile, modID string, method dom
 		require.NoError(t, gameCache.Store(f.game.ID, "local", modID, "unknown", rel, []byte(content)))
 		dst := filepath.Join(f.game.ModPath, filepath.FromSlash(rel))
 		require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
+		// A later deploy of a path replaces what an earlier one left.
+		if err := os.Remove(dst); err != nil {
+			require.ErrorIs(t, err, os.ErrNotExist)
+		}
 		if text, edited := live[rel]; edited {
 			require.NoError(t, os.WriteFile(dst, []byte(text), 0o644))
 		} else if method == domain.LinkSymlink {
