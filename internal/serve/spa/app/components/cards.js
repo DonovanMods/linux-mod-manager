@@ -8,6 +8,7 @@
 import { html, useState } from "../render.js";
 import { findingLabel, findingSubject } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
+import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import {
   EXTERNAL_UPDATE_NOTE,
   countOf,
@@ -91,6 +92,7 @@ export function AttentionCards({
   );
   const conflictRows = conflicts?.conflicts ?? [];
   const hasError = Boolean(errors.updates || errors.health || errors.conflicts);
+  const listedOff = listedOffRefs(mods);
   const notInstalled = notInstalledCount(state, mods);
   const notListed = notListedCount(state, mods);
 
@@ -100,6 +102,7 @@ export function AttentionCards({
     conflictRows.length === 0 &&
     notInstalled === 0 &&
     notListed === 0 &&
+    listedOff.length === 0 &&
     !hasError
   ) {
     return null;
@@ -130,11 +133,12 @@ export function AttentionCards({
         />`
       }
       ${
-        (notInstalled > 0 || notListed > 0) &&
+        (notInstalled > 0 || notListed > 0 || listedOff.length > 0) &&
         html`<${ProfileCard}
           state=${state}
           notInstalled=${notInstalled}
           notListed=${notListed}
+          listedOff=${listedOff}
           actions=${actions}
         />`
       }
@@ -587,7 +591,13 @@ function notInstalledCount(state, mods) {
     (p) => p.name === profileName,
   );
   if (!summary) return 0;
-  return Math.max(0, summary.mod_count - (mods?.mods?.length ?? 0));
+  // Issue 440: a ref the document marks off with nothing installed is not
+  // something `lmm profile apply` installs - lmm never fetches a disabled
+  // mod - so it is not counted here; the card lists it on its own.
+  return Math.max(
+    0,
+    summary.mod_count - (mods?.mods?.length ?? 0) - listedOffRefs(mods).length,
+  );
 }
 
 /** notListedCount is the OTHER direction of the same subtraction (C-3):
@@ -624,14 +634,17 @@ export function notListedCount(state, mods) {
  * what is installed. Which of the two is offered depends on which way the
  * drift runs; Sync is offered either way, because it is the one that can
  * answer both buckets at once. */
-function ProfileCard({ state, notInstalled, notListed, actions }) {
+function ProfileCard({ state, notInstalled, notListed, listedOff, actions }) {
   // ONE string rather than three adjacent interpolations: htm collapses
   // JSX-style whitespace between them, which silently fuses "profile" and
   // "is" into "profileis" (the same trap conflictLabel below documents).
   const sentence =
     notInstalled > 0
       ? `${notInstalled} mod${notInstalled === 1 ? "" : "s"} in this profile ${notInstalled === 1 ? "is" : "are"} not installed`
-      : `${notListed} installed mod${notListed === 1 ? "" : "s"} ${notListed === 1 ? "is" : "are"} not in this profile's load order`;
+      : notListed > 0
+        ? `${notListed} installed mod${notListed === 1 ? "" : "s"} ${notListed === 1 ? "is" : "are"} not in this profile's load order`
+        : "";
+  const offSentence = `${listedOff.length} mod${listedOff.length === 1 ? "" : "s"} in this profile ${listedOff.length === 1 ? "is" : "are"} switched off and not downloaded`;
 
   function apply() {
     actions.openPlan({
@@ -655,12 +668,24 @@ function ProfileCard({ state, notInstalled, notListed, actions }) {
 
   return html`
     <div class="card card--profile">
-      <h2 class="card__title">${`◎ Profile (${notInstalled || notListed})`}</h2>
+      <h2 class="card__title">
+        ${`◎ Profile (${(notInstalled || notListed) + listedOff.length})`}
+      </h2>
       <ul class="card__list">
-        <li class="card__row">
-          <span class="card__row-name">${sentence}</span>
-        </li>
+        ${
+          sentence &&
+          html`<li class="card__row">
+            <span class="card__row-name">${sentence}</span>
+          </li>`
+        }
+        ${
+          listedOff.length > 0 &&
+          html`<li class="card__row" data-testid="profile-listed-off">
+            <span class="card__row-name">${offSentence}</span>
+          </li>`
+        }
       </ul>
+      <${ListedOffList} refs=${listedOff} state=${state} actions=${actions} />
       <div class="card__actions">
         ${
           notInstalled > 0 &&

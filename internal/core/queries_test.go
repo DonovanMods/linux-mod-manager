@@ -53,6 +53,38 @@ func TestListMods_ProfileOrderAndIdentity(t *testing.T) {
 	assert.Equal(t, "Mod B", list.Mods[0].Name, "the whole InstalledMod is embedded, not a bare reference")
 }
 
+// TestListMods_NamesDisabledRefsWithNoRow covers #440: a ref the profile
+// document marks disabled that has no installed row - an imported profile
+// on a fresh machine - is listed in DisabledNotInstalled, in load order,
+// by its first copy; an installed mod is not, and neither is a listed mod
+// that is switched on (profile apply's to install) or a duplicate.
+func TestListMods_NamesDisabledRefsWithNoRow(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", false, nil)
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, "g1", "default")
+	require.NoError(t, err)
+	for _, ref := range []domain.ModReference{
+		{SourceID: "src", ModID: "z", Version: "3.0", Disabled: true},
+		{SourceID: "src", ModID: "a", Version: "1.0", Disabled: true},
+		{SourceID: "src", ModID: "on", Version: "1.0"},
+		{SourceID: "src", ModID: "c", Version: "2.0", Disabled: true},
+	} {
+		require.NoError(t, pm.AddMod(ctx, "g1", "default", ref))
+	}
+
+	list, err := svc.ListMods(ctx, game, "default")
+	require.NoError(t, err)
+	require.Len(t, list.Mods, 1)
+	assert.Equal(t, []domain.ModReference{
+		{SourceID: "src", ModID: "z", Version: "3.0", Disabled: true},
+		{SourceID: "src", ModID: "c", Version: "2.0", Disabled: true},
+	}, list.DisabledNotInstalled)
+}
+
 // TestListMods_LockStateFromProfile covers the lock join: lock state lives on
 // the profile YAML ref, not the DB row ListMods reads its mods from.
 func TestListMods_LockStateFromProfile(t *testing.T) {

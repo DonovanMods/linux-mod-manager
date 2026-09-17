@@ -102,6 +102,18 @@ func TestJSONGolden_List(t *testing.T) {
 		assertJSONCLIGolden(t, "list_empty", listVerbose(t, svc, game, true))
 	})
 
+	// #440: a disabled ref with no installed row.
+	t.Run("disabled_not_installed", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		pm := svc.NewProfileManager()
+		_, err := pm.Create(context.Background(), game.ID, "default")
+		require.NoError(t, err)
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default",
+			domain.ModReference{SourceID: "test", ModID: "off", Version: "2.0", Disabled: true}))
+
+		assertJSONCLIGolden(t, "list_disabled_not_installed", listVerbose(t, svc, game, true))
+	})
+
 	t.Run("profiles", func(t *testing.T) {
 		svc, game := setupDoDeployTest(t)
 		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")

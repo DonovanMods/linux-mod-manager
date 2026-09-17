@@ -1,0 +1,14 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "mods": [],
+  "disabled_not_installed": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "12345",
+      "version": "1.2.0",
+      "locked": false,
+      "disabled": true
+    }
+  ]
+}

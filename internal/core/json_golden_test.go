@@ -1142,6 +1142,16 @@ func TestJSONGoldens(t *testing.T) {
 			core.ModList{GameID: "skyrim-se", Profile: "default", Mods: nil},
 		},
 		{
+			// #440: a disabled ref the profile lists with no installed row.
+			"mod_list_disabled_not_installed",
+			core.ModList{
+				GameID: "skyrim-se", Profile: "default", Mods: nil,
+				DisabledNotInstalled: []domain.ModReference{
+					{SourceID: "nexusmods", ModID: "12345", Version: "1.2.0", Disabled: true},
+				},
+			},
+		},
+		{
 			// Profiles deliberately populated: ModList above already pins a
 			// nil list field encoding as "[]", and what this type adds is
 			// the game_id stamp beside the names.

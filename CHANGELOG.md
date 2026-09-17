@@ -1599,6 +1599,14 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A mod your profile lists switched off but never downloaded is no
+  longer invisible (#440).** An imported profile on a fresh machine lists
+  such mods without installing them; `lmm list` now names them under its
+  table (and `--json` carries them as `disabled_not_installed`), and the web
+  UI's library and Profile card show each one as off and not downloaded,
+  with **Install…** to download it and switch it on. The Profile card no
+  longer counts them as mods **Apply profile** would install.
+
 - **The web UI's install confirmation lists the dependencies it switches
   back on (#448).** Installing a mod whose dependency the profile has
   switched off turns that dependency on again; the confirmation now says so,

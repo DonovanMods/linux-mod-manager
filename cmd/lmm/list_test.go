@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,4 +86,27 @@ func TestList_NonVerboseAllLiveKeepsItsShape(t *testing.T) {
 
 	assert.NotContains(t, out, "STATE")
 	assert.NotContains(t, out, "disabled")
+}
+
+// TestList_NamesDisabledRefsWithNoRow is #440: a ref the profile marks
+// disabled with nothing installed is listed under the table, switched off
+// and not downloaded, with the command that enables it - including when
+// nothing at all is installed, an imported profile's usual state.
+func TestList_NamesDisabledRefsWithNoRow(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default",
+		domain.ModReference{SourceID: "test", ModID: "off", Version: "2.0", Disabled: true}))
+
+	out := listNonVerbose(t, svc, game)
+	assert.Contains(t, out, "No mods installed.")
+	assert.Contains(t, out, "Listed but not downloaded, switched off — 1 mod(s):\n  test:off 2.0\n")
+	assert.Contains(t, out, "lmm install --id <mod-id>")
+
+	seedModWithState(t, svc, game, "live", "Live Mod", true, true)
+	out = listNonVerbose(t, svc, game)
+	assert.Contains(t, out, "Live Mod")
+	assert.Contains(t, out, "test:off 2.0", "the section follows the table too")
 }
