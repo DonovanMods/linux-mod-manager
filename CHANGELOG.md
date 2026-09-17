@@ -3171,6 +3171,17 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
   needs repair is still listed by "Detect games…", marked, so the scan can
   point you at it.
 
+- **Three web UI accessibility gaps are closed (#442).** A library row's
+  ⬆ update, ⇄ conflict and 🔒 lock badges now have names a screen reader
+  reads out ("Update available: 2.0", "File conflict", "Locked to 1.0"),
+  not just a hover tooltip. The library's activity line and each row's
+  "Enabling…"/job line are always present and change their words, so the
+  first thing they say is announced rather than lost. The row you are
+  dragging in the reorder window is marked with an outline and a sunken
+  background instead of being faded, so its name stays readable; disabled
+  buttons and fields are likewise shown in muted colours rather than at
+  half strength.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

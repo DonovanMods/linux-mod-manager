@@ -2238,10 +2238,12 @@ func TestE2E_SlideOver_ClosingMidJobLeavesTheRowsLiveLine(t *testing.T) {
 		waitGone(`.slide-over`),
 	)
 
+	// Every row carries its live region (issue 442); the one that matters
+	// is the one with words in it.
 	var rowLive string
 	f.runInBrowser(t,
-		chromedp.WaitVisible(`.mod-row__live`, chromedp.ByQuery),
-		textContent(`.mod-row__live`, &rowLive),
+		pollUntil(`[...document.querySelectorAll(".mod-row__live")].some((e) => e.textContent.trim() !== "")`),
+		chromedp.Evaluate(`[...document.querySelectorAll(".mod-row__live")].map((e) => e.textContent.trim()).find(Boolean)`, &rowLive),
 	)
 	assert.Contains(t, rowLive, "Disabling", "the row must name the mutation, not just show a bare dot")
 	assert.Empty(t, f.BrowserErrors())

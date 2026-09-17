@@ -211,16 +211,11 @@ func relativeLuminance(t *testing.T, hex string) float64 {
 
 // partialOpacityAllowList is every app.css rule that may paint at a partial
 // opacity, keyed by its whitespace-normalised selector, with the reason.
-var partialOpacityAllowList = map[string]string{
-	// WCAG 1.4.3 exempts inactive user-interface components from the
-	// contrast minimum, and a faded control is the conventional way to
-	// say "inactive".
-	".button:disabled, input:disabled, select:disabled": "disabled controls are exempt",
-	// PRE-EXISTING, and not a settled decision: the row under the pointer
-	// while a reorder drag is in progress. It carries the mod's name, so it
-	// is text below AA for as long as the drag lasts.
-	".reorder-row--dragging": "pre-existing drag ghost - see the note above",
-}
+//
+// Empty, and meant to stay that way (issue 442): its last two entries - the
+// disabled controls and the reorder drag row - now mark their state with
+// certified tokens instead. An entry needs a reason a reviewer accepts.
+var partialOpacityAllowList = map[string]string{}
 
 var (
 	cssComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
@@ -473,7 +468,8 @@ func TestPartialOpacityCheck_CatchesEveryForm(t *testing.T) {
 		{name: "a relative colour at full alpha", css: ".x { color: lab(from var(--text-primary) l a b / 1) }"},
 		{name: "a relative colour whose channel math divides", css: ".x { color: oklch(from var(--text-primary) calc(l / 2) c h) }"},
 		{name: "a translucent token definition", css: ":root { --scrim: rgb(0 0 0 / 55%) }"},
-		{name: "an allow-listed rule", css: ".reorder-row--dragging { opacity: .7 }"},
+		{name: "the reorder drag row, no longer allow-listed", css: ".reorder-row--dragging { opacity: .7 }", refused: true},
+		{name: "disabled controls, no longer allow-listed", css: ".button:disabled, input:disabled, select:disabled { opacity: 0.5 }", refused: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := partialOpacityViolations(tc.css)
@@ -484,4 +480,16 @@ func TestPartialOpacityCheck_CatchesEveryForm(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPartialOpacityCheck_HonoursTheAllowList keeps the allow-list's own
+// mechanism tested now that the list itself is empty (issue 442).
+func TestPartialOpacityCheck_HonoursTheAllowList(t *testing.T) {
+	const selector = ".x--exempt"
+	css := selector + " { opacity: 0.5 }"
+	require.NotEmpty(t, partialOpacityViolations(css))
+
+	partialOpacityAllowList[selector] = "test-only entry"
+	t.Cleanup(func() { delete(partialOpacityAllowList, selector) })
+	assert.Empty(t, partialOpacityViolations(css))
 }
