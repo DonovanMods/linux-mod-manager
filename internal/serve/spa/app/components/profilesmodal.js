@@ -197,7 +197,7 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
       title: active
         ? `Purge ${profile.name}`
         : `Clean up ${profile.name}'s deployed files`,
-      confirmLabel: "Purge",
+      confirmLabel: active ? "Purge" : "Clean up",
       options: {},
       context: rowContext,
       openerSelector: `[data-action="purge-profile"][data-profile="${profile.name}"]`,

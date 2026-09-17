@@ -80,7 +80,7 @@ func TestE2E_ProfilesModal_ActiveRowHasNoDeleteAndACleanUpListsWhatItKeeps(t *te
 	f := newE2EFixtureWithASharedDeployment(t)
 
 	var defaultDeletes, altDeletes int
-	var defaultPurge, altPurge, note, summary string
+	var defaultPurge, altPurge, note, summary, cleanUpConfirmLabel string
 	var remove, kept []string
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
@@ -94,6 +94,7 @@ func TestE2E_ProfilesModal_ActiveRowHasNoDeleteAndACleanUpListsWhatItKeeps(t *te
 		chromedp.Click(`[data-action="purge-profile"][data-profile="alt"]`, chromedp.ByQuery),
 		pollUntil(`document.querySelector('.modal[data-kind="purge"] [data-testid="purge-recorded-only"]') !== null`),
 		textContent(`[data-testid="purge-recorded-only"] .plan__summary`, &summary),
+		textContent(`.modal [data-action="confirm"]`, &cleanUpConfirmLabel),
 		chromedp.Evaluate(`[...document.querySelectorAll('[data-testid="purge-remove"] li')].map(li => li.textContent.trim())`, &remove),
 		chromedp.Evaluate(`[...document.querySelectorAll('[data-testid="purge-kept"] li')].map(li => li.dataset.reason + ": " + li.textContent.trim().replace(/\s+/g, " "))`, &kept),
 	)
@@ -103,6 +104,7 @@ func TestE2E_ProfilesModal_ActiveRowHasNoDeleteAndACleanUpListsWhatItKeeps(t *te
 	assert.Equal(t, "Purge…", strings.TrimSpace(defaultPurge))
 	assert.Equal(t, "Clean up…", strings.TrimSpace(altPurge))
 	assert.Contains(t, summary, "alt is not the active profile (default is). This clean-up removes only the files alt recorded deploying")
+	assert.Equal(t, "Clean up", strings.TrimSpace(cleanUpConfirmLabel), "a non-active clean-up's confirm button does not claim to Purge")
 	assert.Equal(t, []string{"own.pak"}, remove)
 	assert.Equal(t, []string{"recorded: shared.pak — profile default records it too"}, kept)
 
@@ -174,7 +176,7 @@ func TestE2E_NoActiveProfile_WarnsAndTheSwitchOnlyMarks(t *testing.T) {
 	assert.Contains(t, deployErr, "lmm profile list", "the refusal names the command that shows the profiles")
 	assert.Contains(t, listWarn, "is_default")
 
-	var preview, recovery, notice string
+	var preview, recovery, notice, switchConfirmLabel string
 	f.runInBrowser(t,
 		chromedp.Click(`.modal .modal__close`, chromedp.ByQuery),
 		waitGone(`.modal`),
@@ -185,6 +187,7 @@ func TestE2E_NoActiveProfile_WarnsAndTheSwitchOnlyMarks(t *testing.T) {
 		pollUntil(`document.querySelector('[data-testid="switch-flag-only"]') !== null`),
 		textContent(`[data-testid="switch-flag-only"] [data-testid="plan-warnings"]`, &preview),
 		textContent(`[data-testid="switch-flag-only-recovery"]`, &recovery),
+		textContent(`.modal [data-action="confirm"]`, &switchConfirmLabel),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		waitGone(`.modal`),
 		pollUntil(`document.querySelector('[data-testid="job-result-warning"]') !== null`),
@@ -192,6 +195,7 @@ func TestE2E_NoActiveProfile_WarnsAndTheSwitchOnlyMarks(t *testing.T) {
 	)
 	assert.Contains(t, preview, "only marks alt as the active profile")
 	assert.Contains(t, recovery, "lmm profile apply alt --game "+f.Game.ID)
+	assert.Equal(t, "Mark as active", strings.TrimSpace(switchConfirmLabel), "the flag-only switch's confirm button does not claim to deploy")
 	assert.Contains(t, notice, "alt is now the active profile")
 	assert.Contains(t, notice, "lmm purge -p default --game "+f.Game.ID)
 	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/plans/deploy")
