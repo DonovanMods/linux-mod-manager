@@ -6,7 +6,7 @@
 // (issue 332) wires the per-row and batch actions themselves.
 
 import { html, useState } from "../render.js";
-import { findingLabel } from "../verify.js";
+import { findingLabel, findingSubject } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
 import {
   EXTERNAL_UPDATE_NOTE,
@@ -16,6 +16,7 @@ import {
 } from "../modrows.js";
 import { displayVersion, displayUpdateTarget } from "../version.js";
 import { relativeTime } from "../relativetime.js";
+import { navigate, modPathEditPath } from "../router.js";
 import { conflictLabel } from "../conflicts.js";
 
 // UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
@@ -418,6 +419,8 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
       : `Last verified ${checked}`
     : "";
 
+  const coverage = verifyCoverage(result);
+
   return html`
     <div class="card card--health">
       <h2 class="card__title">
@@ -427,6 +430,12 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
         lastVerified &&
         html`<p class="card__meta" data-testid="health-last-verified">
           ${lastVerified}
+        </p>`
+      }
+      ${
+        coverage &&
+        html`<p class="card__meta" data-testid="health-coverage">
+          ${coverage}
         </p>`
       }
       ${
@@ -441,13 +450,19 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                 ${findings.map(
                   (f, i) => html`
                     <li
-                      key=${f.mod_id + "/" + (f.file_id || i)}
+                      key=${(f.mod_id || f.status) + "/" + (f.file_id || i)}
                       class="card__row"
+                      data-status=${f.status}
                     >
-                      <span
-                        class="card__row-name"
-                        title=${f.mod_name || f.mod_id}
-                        >${f.mod_name || f.mod_id}</span
+                      <span class="card__row-name" title=${findingSubject(f)}
+                        >${findingSubject(f)}${
+                          f.external &&
+                          html` <span
+                            class="badge"
+                            data-testid="finding-external"
+                            >Steam</span
+                          >`
+                        }</span
                       >
                       <span class="card__row-detail" title=${findingLabel(f)}
                         >${findingLabel(f)}</span
@@ -468,11 +483,27 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                                 Repair
                               </button>
                             <//>`
-                          : html`<span
-                              class="card__row-detail"
-                              title=${notFixableReason(f)}
-                              >Not fixable: ${notFixableReason(f)}</span
-                            >`
+                          : f.status === "mod_path_missing"
+                            ? html`<button
+                                type="button"
+                                class="button button--small"
+                                data-action="set-mod-path"
+                                onClick=${() =>
+                                  navigate(
+                                    modPathEditPath(
+                                      state.route.game,
+                                      state.route.profile,
+                                      state.route.game,
+                                    ),
+                                  )}
+                              >
+                                Set mod path…
+                              </button>`
+                            : html`<span
+                                class="card__row-detail"
+                                title=${notFixableReason(f)}
+                                >Not fixable: ${notFixableReason(f)}</span
+                              >`
                       }
                     </li>
                   `,
@@ -506,6 +537,27 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
       }
     </div>
   `;
+}
+
+/** verifyCoverage is the Health card's "what was checked" line (issues 460
+ * and 429): core.VerifyResult's mods/external/unverified counts, said the way
+ * a reader needs them - N Steam Workshop items checked only for presence
+ * (lmm never deployed their files), M mods with no recorded file to
+ * compare. Empty when neither applies. One string, for htm's whitespace
+ * rule (conflictLabel). */
+export function verifyCoverage(result) {
+  const external = result?.external ?? 0;
+  const unverified = result?.unverified ?? 0;
+  const parts = [];
+  if (external > 0) {
+    parts.push(`${external} tracked from Steam, checked for presence`);
+  }
+  if (unverified > 0) {
+    parts.push(`${unverified} with nothing to compare`);
+  }
+  if (parts.length === 0) return "";
+  const mods = result?.mods ?? 0;
+  return `${mods} mod${mods === 1 ? "" : "s"} checked: ${parts.join("; ")}`;
 }
 
 /** notInstalledCount is how many of the current profile's listed mods have

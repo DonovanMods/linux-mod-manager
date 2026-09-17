@@ -1599,6 +1599,17 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The web UI edits a game's mod path and flags one that needs repair
+  (#460).** Setup → Games gains **Edit mod path…**: a rejected value is
+  marked on the field, and a move refused because files are still deployed
+  under the old directory lists the steps that clear it, in order. A game
+  whose mod path lmm deployed into has gone now shows a warning with **Set
+  mod path…** on Mission Control, in the Health card, the Games table, the
+  loader panel and the game chooser; Steam detection marks it **needs
+  repair** instead of "already configured". The Health card also says how
+  many mods it checked, how many are Steam Workshop items checked only for
+  presence, and how many have nothing recorded to compare.
+
 - **The web UI reports a game whose adapter lmm refuses as that refusal,
   not a server error (#461).** Deploy, install, updates, profile apply,
   profile sync, mod edit, adopt and archive import on such a game used to

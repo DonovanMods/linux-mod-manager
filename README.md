@@ -1424,8 +1424,8 @@ Confirm will submit.
 
 The **Setup page** (`/g/{game}/{profile}/setup`) holds everything
 administrative, in five sections: **Games** (the configured games table with
-its sources, **Edit sources…** per row, Steam detection, manual add,
-set/clear the default), **Authentication**
+its sources, **Edit sources…**, **Edit mod path…** and **Edit loader…** per
+row, Steam detection, manual add, set/clear the default), **Authentication**
 (per-source status, log in and out, the environment variable each source
 reads shown beside its field, orphaned-token removal), **Sources**
 (a line-numbered YAML editor for custom sources with validate-then-save and
@@ -1464,6 +1464,18 @@ an optional override you can layer on top — the same thing `lmm game add
 still needs a source and identifier, because nothing on disk supplies them. If the scan that offered a game goes
 stale (it was uninstalled between the scan and the submit), the form says
 so by name and offers a **Rescan** rather than a dead end.
+
+A game whose **mod path** needs you — lmm deployed files into a directory
+that has since gone — is flagged wherever the game is shown: a warning at
+the top of Mission Control, a row in the Health card, the Games table, the
+game's loader panel and the game chooser, each with **Set mod path…**,
+which opens that row's editor. Saving a new mod path while files are still
+deployed under the old one is refused, and the refusal lists what to do in
+order: record any files the active profile lists but only another profile
+records (`lmm profile apply` / `lmm deploy`), purge each profile with files
+there, save the new path again, then deploy. Steam detection marks such a
+game **needs repair** and never offers it for re-adding, which would reset
+its profile.
 
 ### Flows
 

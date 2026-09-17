@@ -57,6 +57,14 @@ function GameCard({ game }) {
         ${game.mod_count} mod${game.mod_count === 1 ? "" : "s"} ·
         ${profileCount} profile${profileCount === 1 ? "" : "s"}
       </span>
+      ${
+        // issue 460: the card is one button, so the warning is a line in it;
+        // Mission Control and Setup > Games carry the sentence and the fix.
+        game.mod_path_error &&
+        html`<span class="game-card__warn" data-testid="mod-path-error"
+          >Mod path needs repair</span
+        >`
+      }
     </button>
   `;
 }

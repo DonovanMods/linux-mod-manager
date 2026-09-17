@@ -13,7 +13,7 @@
 // (confirmplan.js's own addition for the two of them).
 
 import { html } from "../render.js";
-import { findingLabel } from "../verify.js";
+import { findingLabel, findingSubject } from "../verify.js";
 
 export function VerifyFixPlanView({ plan, modal }) {
   const findings = (plan?.result?.findings ?? []).filter(
@@ -45,9 +45,8 @@ export function VerifyFixPlanView({ plan, modal }) {
               <ul class="plan__paths">
                 ${findings.map(
                   (f, i) => html`
-                    <li key=${f.mod_id + "/" + (f.file_id || i)}>
-                      <span class="plan__mod-name"
-                        >${f.mod_name || f.mod_id}</span
+                    <li key=${(f.mod_id || f.status) + "/" + (f.file_id || i)}>
+                      <span class="plan__mod-name">${findingSubject(f)}</span
                       >${" "}
                       <span class="plan__mod-detail">${findingLabel(f)}</span>
                       ${

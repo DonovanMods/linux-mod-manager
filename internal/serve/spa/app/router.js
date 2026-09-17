@@ -62,6 +62,11 @@ export function parseLocation(url = window.location) {
     // links, the top bar's Setup entry point) - the page itself owns which
     // section is showing and does not round-trip a change back into the URL.
     route.section = params.get("section") || "";
+    // issue 460: a "Set mod path" action anywhere in the app lands on the
+    // Games section with that game's mod-path editor open, prefilled with
+    // the value lmm suggests when it has one.
+    route.editModPath = params.get("edit_mod_path") || "";
+    route.suggestedModPath = params.get("suggested_mod_path") || "";
     return route;
   }
   return route;
@@ -118,6 +123,17 @@ export function contextPath(game, profile) {
 export function setupPath(game, profile, section = "") {
   const base = `${contextPath(game, profile)}/setup`;
   return section ? `${base}?section=${encodeURIComponent(section)}` : base;
+}
+
+/** Builds the Setup > Games URL with gameID's mod-path editor open (issue
+ * 460), prefilled with suggested when lmm has a value to recommend. */
+export function modPathEditPath(game, profile, gameID, suggested = "") {
+  const params = new URLSearchParams({
+    section: "games",
+    edit_mod_path: gameID,
+  });
+  if (suggested) params.set("suggested_mod_path", suggested);
+  return `${contextPath(game, profile)}/setup?${params}`;
 }
 
 /**

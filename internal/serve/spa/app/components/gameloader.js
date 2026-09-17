@@ -11,6 +11,7 @@
 // Copy control. Every sentence here comes from the server; nothing about
 // which build or which option is decided in JavaScript.
 
+import { ModPathWarning } from "./modpath.js";
 import { html, useEffect, useState } from "../render.js";
 import { ApiError, getGameDetail, updateGameLoader } from "../api.js";
 
@@ -128,8 +129,12 @@ export function GameLoaderEditor({ value, onChange, disabled }) {
  *
  * It fetches on mount and on every refreshKey change, so a save in the row
  * above it re-reads rather than guessing what changed. */
-export function GameLoaderPanel({ gameID, refreshKey }) {
+export function GameLoaderPanel({ gameID, refreshKey, onSetModPath }) {
   const [status, setStatus] = useState(null);
+  // The rest of the game document (issue 460): the panel is the one place
+  // the web UI reads a game's GameDetail, so its mod_path warning is
+  // rendered here too.
+  const [detail, setDetail] = useState(null);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
 
@@ -137,7 +142,11 @@ export function GameLoaderPanel({ gameID, refreshKey }) {
     let live = true;
     setCopied(false);
     getGameDetail(gameID)
-      .then((detail) => live && setStatus(detail.loader_status ?? null))
+      .then((doc) => {
+        if (!live) return;
+        setDetail(doc);
+        setStatus(doc.loader_status ?? null);
+      })
       .catch(
         (err) =>
           live && setError(err instanceof ApiError ? err.message : String(err)),
@@ -169,6 +178,11 @@ export function GameLoaderPanel({ gameID, refreshKey }) {
 
   return html`
     <div class="loader-panel" data-testid="loader-panel">
+      <${ModPathWarning}
+        error=${detail?.mod_path_error}
+        gameID=${gameID}
+        onSetModPath=${onSetModPath}
+      />
       <dl class="loader-panel__facts">
         <dt>Installed</dt>
         <dd data-testid="loader-installed">

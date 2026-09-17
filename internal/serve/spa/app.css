@@ -3046,3 +3046,68 @@ select {
 .adapter-refusal p {
   margin: 0 0 var(--space-1);
 }
+
+/* issue 460: a game's mod_path that needs the user - a warning line with
+ * the action that repairs it - and the ordered steps a refused move names. */
+.mod-path-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--warn);
+  background: var(--surface-sunken);
+}
+
+.mod-path-warning__text {
+  flex: 1 1 20rem;
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.mod-path-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mod-path-editor input {
+  flex: 1 1 24rem;
+}
+
+.mod-path-editor > p,
+.mod-path-editor__answer {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.mod-path-in-use {
+  flex-basis: 100%;
+  color: var(--text-secondary);
+}
+
+.mod-path-in-use__title {
+  margin: 0 0 var(--space-1);
+  color: var(--danger);
+}
+
+.mod-path-in-use__steps {
+  margin: 0 0 var(--space-2);
+  padding-left: 1.5rem;
+}
+
+.mod-path-in-use__step + .mod-path-in-use__step {
+  margin-top: var(--space-1);
+}
+
+.mod-path-in-use__step code {
+  overflow-wrap: anywhere;
+}
+
+.game-card__warn {
+  color: var(--warn);
+  font-size: 0.85em;
+}
