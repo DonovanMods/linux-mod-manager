@@ -17,10 +17,20 @@ func NewCopy() *CopyLinker {
 	return &CopyLinker{}
 }
 
-// Deploy copies src to dst
+// Deploy copies src to dst.
+//
+// It never writes through what is at dst (#466 review D2): a symlink there
+// is refused - it may point anywhere, and whether it is lmm's own to
+// replace is the caller's call, which removes it first - and anything else
+// is replaced by a rename, so a hard link dst shares with another file
+// (the mod's cached copy itself, after a hardlink deployment) keeps its
+// content.
 func (l *CopyLinker) Deploy(src, dst string) (err error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("creating destination dir: %w", err)
+	}
+	if info, err := os.Lstat(dst); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("creating destination: %s is a link, and a copy is never written through one", dst)
 	}
 
 	srcFile, err := os.Open(src)
@@ -38,20 +48,30 @@ func (l *CopyLinker) Deploy(src, dst string) (err error) {
 		return fmt.Errorf("stat source: %w", err)
 	}
 
-	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
+	tmp, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".lmm-*")
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}
+	tmpName := tmp.Name()
 	defer func() {
-		if cerr := dstFile.Close(); err == nil && cerr != nil {
-			err = fmt.Errorf("closing destination: %w", cerr)
+		if err != nil {
+			_ = os.Remove(tmpName)
 		}
 	}()
-
-	if _, err := io.Copy(dstFile, srcFile); err != nil {
+	if _, err := io.Copy(tmp, srcFile); err != nil {
+		_ = tmp.Close()
 		return fmt.Errorf("copying file: %w", err)
 	}
-
+	if err := tmp.Chmod(srcInfo.Mode().Perm()); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("setting destination mode: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing destination: %w", err)
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		return fmt.Errorf("creating destination: %w", err)
+	}
 	return nil
 }
 
