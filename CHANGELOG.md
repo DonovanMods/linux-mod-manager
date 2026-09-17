@@ -1599,6 +1599,16 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The web UI's profiles modal and plans follow the active-profile rules
+  (#463).** The active profile no longer offers **Delete**, and says why; a
+  non-active profile's purge is **Clean up…**, previewing the files it will
+  remove and each file it keeps with the reason ("kept your file; lmm no
+  longer tracks it" for one that is yours). The modal shows the profile
+  listing's warnings, the sync preview shows the mods it keeps and why, and
+  a switch in a game with no single active profile says it only marks the
+  target — before you confirm and again when it finishes, with the commands
+  that complete it.
+
 - **The web UI edits a game's mod path and flags one that needs repair
   (#460).** Setup → Games gains **Edit mod path…**: a rejected value is
   marked on the field, and a move refused because files are still deployed

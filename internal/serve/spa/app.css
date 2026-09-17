@@ -3111,3 +3111,20 @@ select {
   color: var(--warn);
   font-size: 0.85em;
 }
+
+/* issue 463: a plan's own warnings, before Confirm. */
+.plan__warnings {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.plan__warnings > .plan__note {
+  margin-bottom: var(--space-2);
+}
+
+/* issue 463: why the active profile's row has no Delete. */
+.profiles-row__note {
+  flex-basis: 100%;
+  margin: 0;
+}

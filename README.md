@@ -1526,6 +1526,18 @@ step keeps **Purge** disabled until you type the profile's own name back,
 because it undeploys the whole profile and, with its own option set,
 removes every mod record behind it.
 
+The profiles modal follows the active-profile rules: the active profile has
+no **Delete** (its mods are the ones in the game directory — switch first),
+and every other profile's purge is labelled **Clean up…**, because it
+removes only the files that profile deployed which nothing else uses; its
+preview lists what it will remove and each file it keeps, with the reason
+(another profile or game records it, the active profile lists its mod, or it
+is your file and lmm no longer tracks it). The modal shows the listing's own
+warnings (no profile, or several, marked active); a sync previews the mods
+it keeps despite a disagreement; and a switch in a game with no single
+active profile says it will only mark its target, then finishes with the
+commands that finish the job.
+
 ### Keyboard
 
 The whole UI is operable from the keyboard, and every focused control shows

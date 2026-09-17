@@ -22,7 +22,8 @@ import {
   resultTallyLabel,
   resultTallyTone,
 } from "../progress.js";
-import { useJobResultTally } from "../jobresult.js";
+import { useJobResultTally, useJobResultWarnings } from "../jobresult.js";
+import { codeSpans } from "../errortext.js";
 import { OverwriteButton } from "./tray.js";
 import { explainerFor, loaderSetupFor } from "../failures.js";
 import { LoaderSetup } from "./errordetails.js";
@@ -74,6 +75,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   // wave)'s own rule applies here too: a hook called only on one side of a
   // conditional is exactly the pattern that let a stale value survive.
   const tally = useJobResultTally(jobID, state);
+  const resultWarnings = useJobResultWarnings(jobID, state);
 
   if (state === "running") {
     const fraction = progressFraction(frame);
@@ -116,9 +118,16 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   // comment) - the tone class follows the TALLY, not the bare state, for
   // exactly the cases that disagree with it.
   const tone = !failed && tally ? resultTallyTone(tally) : state;
+  // Issue 463: a profile switch that could only mark its target active
+  // (flag_only) succeeds with a recovery notice - the commands that make
+  // the game directory that profile's. A bare "Done" would hide the one
+  // thing the user still has to do, so a switch's result warnings render
+  // where it finished.
+  const notices =
+    !failed && summary?.kind === "switch" ? resultWarnings : NO_NOTICES;
   return html`
     <div
-      class="job-progress job-progress--${tone} ${explainer || loader ? "job-progress--explained" : ""}"
+      class="job-progress job-progress--${tone} ${explainer || loader || notices.length > 0 ? "job-progress--explained" : ""}"
       data-job=${jobID}
       data-state=${state}
       role="status"
@@ -149,6 +158,16 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
       >
         ✕
       </button>
+      ${notices.map(
+        (n, i) =>
+          html`<p
+            key=${i}
+            class="job-progress__explainer"
+            data-testid="job-result-warning"
+          >
+            ${codeSpans(n)}
+          </p>`,
+      )}
       ${
         loader &&
         html`<div class="job-progress__explainer">
@@ -173,6 +192,8 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
     </div>
   `;
 }
+
+const NO_NOTICES = [];
 
 /** startingLabel is what a running job with nothing to report yet says.
  * "Queued" rather than "Working" when the job has emitted no event at all,

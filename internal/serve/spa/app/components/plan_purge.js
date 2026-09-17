@@ -45,6 +45,13 @@ export function PurgePlanView({ plan, modal, actions }) {
     </label>
   `;
 
+  if (plan.recorded_only) {
+    return html`<${RecordedPurgeView}
+      plan=${plan}
+      confirmName=${confirmName}
+    />`;
+  }
+
   if (mods.length === 0) {
     return html`
       <div class="plan plan--purge">
@@ -157,6 +164,86 @@ export function PurgePlanView({ plan, modal, actions }) {
           hint="lmm purge --force. Continue even if hooks fail."
         />
       <//>
+    </div>
+  `;
+}
+
+/**
+ * keptReason is a kept path's PurgeKeptReason in words (issues 463 and 445).
+ * Each keeps the file; the words say for whom.
+ */
+export function keptReason(k) {
+  const names = (list) => (list ?? []).join(", ");
+  switch (k.reason) {
+    case "listed":
+      return `the active profile ${names(k.profiles)} lists its mod, so it may be live`;
+    case "recorded":
+      return `profile ${names(k.profiles)} records it too`;
+    case "other_game":
+      return `game ${names(k.games)} records it too`;
+    case "user_file":
+      return "kept your file; lmm no longer tracks it";
+    default:
+      return k.reason;
+  }
+}
+
+/**
+ * RecordedPurgeView is the plan for a profile that is NOT the game's
+ * active one (core.PurgePlan.recorded_only, issue 445): the game directory holds
+ * the active profile's mods, so this purge is a cleanup of what this
+ * profile itself put there - the paths it will remove, and the paths it
+ * keeps with why - and nothing else. It runs no hooks and removes no mod
+ * records, so neither option applies (--uninstall is refused outright).
+ */
+function RecordedPurgeView({ plan, confirmName }) {
+  const remove = plan.remove ?? [];
+  const kept = plan.kept ?? [];
+  return html`
+    <div class="plan plan--purge" data-testid="purge-recorded-only">
+      <p class="plan__summary">
+        <span class="mono">${plan.profile}</span> is not the active profile
+        (<span class="mono">${plan.active_profile}</span> is). This clean-up
+        removes only the files <span class="mono">${plan.profile}</span>
+        recorded deploying that nothing else still uses. Of the files it keeps,
+        it forgets its own record - except one the active profile lists.
+      </p>
+      <p class="plan__note">
+        No hooks run, and the profile's mod records stay.
+      </p>
+
+      <section class="plan__section">
+        <h3 class="plan__heading">Will remove (${remove.length})</h3>
+        ${
+          remove.length === 0
+            ? html`<p class="plan__note">
+                Nothing: no file here is this profile's alone.
+              </p>`
+            : html`<ul class="plan__paths" data-testid="purge-remove">
+                ${remove.map((p) => html`<li key=${p} class="mono">${p}</li>`)}
+              </ul>`
+        }
+      </section>
+
+      ${
+        kept.length > 0 &&
+        html`
+          <section class="plan__section">
+            <h3 class="plan__heading">Kept (${kept.length})</h3>
+            <ul class="plan__paths" data-testid="purge-kept">
+              ${kept.map(
+                (k) => html`
+                  <li key=${k.path} data-reason=${k.reason}>
+                    <span class="mono">${k.path}</span>${" "}
+                    <span class="plan__mod-detail">— ${keptReason(k)}</span>
+                  </li>
+                `,
+              )}
+            </ul>
+          </section>
+        `
+      }
+      ${confirmName}
     </div>
   `;
 }
