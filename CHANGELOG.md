@@ -1616,6 +1616,18 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   many mods it checked, how many are Steam Workshop items checked only for
   presence, and how many have nothing recorded to compare.
 
+- **Mod descriptions show their formatting in the web UI (#419).** The full
+  mod page now renders a NexusMods description's BBCode (`[b]`, `[url=…]`,
+  `[list]`, `[quote]`, `[code]`, …) and a Markdown description's headings,
+  emphasis, links, lists, quotes and code blocks as formatted text, where
+  it used to show the raw brackets and asterisks. It is safe by
+  construction: the description is parsed into a fixed set of page
+  elements, never inserted as markup; links open in a new tab, say so, and
+  must be `http`/`https` (anything else stays literal text); an image
+  becomes a link to the image rather than something the page loads; and a
+  description's own sizes, colours and fonts are ignored. Markup lmm does
+  not recognise stays as text. `lmm mod show` is unchanged.
+
 ### Fixed
 
 - **The web UI's install confirmation lists the dependencies it switches

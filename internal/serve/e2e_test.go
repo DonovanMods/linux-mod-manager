@@ -7027,7 +7027,7 @@ func TestE2E_ModDescriptionRendersAsProseNotMarkup(t *testing.T) {
 	var pageText string
 	f.runInBrowser(t,
 		chromedp.Navigate(f.ModPagePath("fake", "a")),
-		chromedp.WaitVisible(`.mod-page__prose`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.mod-page__description p`, chromedp.ByQuery),
 		textContent(`.mod-page`, &pageText),
 	)
 	assert.Contains(t, pageText, "Adds bigger backpacks.")
@@ -7040,7 +7040,7 @@ func TestE2E_ModDescriptionRendersAsProseNotMarkup(t *testing.T) {
 	// runs jammed together.
 	var paragraphs []string
 	f.runInBrowser(t, chromedp.Evaluate(
-		`Array.from(document.querySelectorAll(".mod-page__prose")).map((p) => p.textContent.trim())`,
+		`Array.from(document.querySelectorAll(".mod-page__description p")).map((p) => p.textContent.trim())`,
 		&paragraphs))
 	assert.Contains(t, paragraphs, "Adds bigger backpacks.")
 	assert.Contains(t, paragraphs, "Requires SKSE & SkyUI.")

@@ -2298,6 +2298,74 @@ select {
   white-space: pre-wrap;
 }
 
+/* A mod's description, parsed from BBCode or Markdown into allow-listed
+   elements (issue 419, spa/app/richtext.js). Every value is a token: a
+   description's own [size]/[color] never reaches the page. */
+.richtext {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.richtext > :first-child {
+  margin-top: 0;
+}
+
+.richtext p,
+.richtext ul,
+.richtext ol,
+.richtext blockquote,
+.richtext pre {
+  margin: 0 0 var(--space-3);
+}
+
+.richtext ul,
+.richtext ol {
+  padding-left: var(--space-6);
+}
+
+.richtext blockquote {
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--border-strong);
+}
+
+.richtext code {
+  font-family: var(--font-mono);
+}
+
+.richtext__code {
+  overflow-x: auto;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  white-space: pre;
+}
+
+.richtext__heading {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--text-primary);
+}
+
+.richtext strong {
+  color: var(--text-primary);
+}
+
+.richtext__rule {
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  margin: var(--space-4) 0;
+}
+
+.richtext__link {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.richtext__link:hover {
+  color: var(--accent-hover);
+}
+
 .mod-page__table {
   width: 100%;
   border-collapse: collapse;
