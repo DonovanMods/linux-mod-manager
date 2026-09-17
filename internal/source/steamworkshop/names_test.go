@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -297,4 +298,84 @@ func TestAuthorName_AFailingKeyedLookupNeverSuspendsMetadata(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Contains(t, metaIDs, "3617086611", "item B's metadata request reached the server")
+}
+
+// TestAuthorName_AMalformedProfileFallsBackToTheID pins that a profile
+// document that will not decode shows the id and is not cached.
+func TestAuthorName_AMalformedProfileFallsBackToTheID(t *testing.T) {
+	api := serveFixture(t, "getpublishedfiledetails_ok.json")
+	community, hits := serveProfileBody(t, func() string {
+		return "<profile><steamID64>" + creatorA + "</steamID64><steamID>unterminated"
+	})
+	src := newNamedSource(t, api.srv.URL, community.URL, t.TempDir(), nil)
+
+	mod, err := src.GetMod(context.Background(), "1133870", "3617086610")
+	require.NoError(t, err)
+	assert.Equal(t, creatorA, mod.Author)
+	assert.Empty(t, mod.AuthorName)
+
+	_, err = src.GetMod(context.Background(), "1133870", "3617086610")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, hits.Load(), "an unreadable profile is not cached, so it is asked again")
+}
+
+// TestAuthorName_AnOversizedProfileFallsBackToTheID pins the community
+// client's response cap: a valid profile padded past it yields no name.
+func TestAuthorName_AnOversizedProfileFallsBackToTheID(t *testing.T) {
+	api := serveFixture(t, "getpublishedfiledetails_ok.json")
+	body := "<profile><steamID64>" + creatorA + "</steamID64><steamID>Big</steamID><pad>" +
+		strings.Repeat("A", 300<<10) + "</pad></profile>"
+	community, _ := serveProfileBody(t, func() string { return body })
+	src := newNamedSource(t, api.srv.URL, community.URL, t.TempDir(), nil)
+
+	mod, err := src.GetMod(context.Background(), "1133870", "3617086610")
+	require.NoError(t, err)
+	assert.Empty(t, mod.AuthorName, "an oversized body must not yield a name")
+}
+
+// TestAuthorName_ARenameShowsOnceTheCachedNameExpires pins that the cached
+// name is served within the positive TTL and the new one after it.
+func TestAuthorName_ARenameShowsOnceTheCachedNameExpires(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		name = "Old Name"
+	)
+	clock := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	api := serveFixture(t, "getpublishedfiledetails_ok.json")
+	community, _ := serveProfileBody(t, func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return "<profile><steamID64>" + creatorA + "</steamID64><steamID><![CDATA[" + name + "]]></steamID></profile>"
+	})
+	src := newNamedSource(t, api.srv.URL, community.URL, t.TempDir(), func() time.Time { return clock })
+	ctx := context.Background()
+
+	mod, err := src.GetMod(ctx, "1133870", "3617086610")
+	require.NoError(t, err)
+	assert.Equal(t, "Old Name", mod.AuthorName)
+
+	mu.Lock()
+	name = "New Name"
+	mu.Unlock()
+	clock = clock.Add(time.Hour)
+	mod, err = src.GetMod(ctx, "1133870", "3617086610")
+	require.NoError(t, err)
+	assert.Equal(t, "Old Name", mod.AuthorName, "within the TTL the cached name is served")
+
+	clock = clock.Add(6 * time.Hour)
+	mod, err = src.GetMod(ctx, "1133870", "3617086610")
+	require.NoError(t, err)
+	assert.Equal(t, "New Name", mod.AuthorName, "after the TTL the new name is fetched")
+}
+
+// serveProfileBody answers every request with body() and counts them.
+func serveProfileBody(t *testing.T, body func() string) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(body()))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
 }
