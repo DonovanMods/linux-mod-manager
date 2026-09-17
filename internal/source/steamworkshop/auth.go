@@ -70,6 +70,7 @@ func (s *Source) AuthInstructions() string {
 // needs to keep one credential's answers from being served to another.
 func (s *Source) SetAPIKey(key string) {
 	s.client.http.SetAPIKey(key)
+	s.client.names.SetAPIKey(key)
 	s.client.keyID = keyFingerprint(key)
 }
 

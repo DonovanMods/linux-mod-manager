@@ -72,6 +72,11 @@ type client struct {
 	// each metadata fetch to the user's Steam account (W2 review,
 	// Important 2).
 	anon *httpclient.Client
+	// names is the keyed GetPlayerSummaries reader (names.go). It carries
+	// the same key as http but its OWN retry transport, so a failing name
+	// lookup can never trip the circuit breaker that guards Workshop
+	// metadata.
+	names *httpclient.Client
 	// community reads public Steam Community profiles for the keyless
 	// author-name lookup (names.go) - another host, its own backoff.
 	community *httpclient.Client
@@ -106,10 +111,15 @@ func newClient(opts Options) *client {
 	// is the only layer that sees the Retry-After header at all.
 	retrying := *httpClient
 	retrying.Transport = newRetryTransport(httpClient.Transport, now)
+	// The author-name lookup is cosmetic, so it gets a breaker of its own:
+	// its failures must never suspend the metadata calls above.
+	namesRetrying := *httpClient
+	namesRetrying.Transport = newRetryTransport(httpClient.Transport, now)
 
 	return &client{
 		http:      newAPIClient(&retrying, baseURL, ""),
 		anon:      newAPIClient(&retrying, baseURL, ""),
+		names:     newAPIClient(&namesRetrying, baseURL, ""),
 		community: newCommunityClient(httpClient, communityURL(opts), now),
 		doer:      &retrying,
 		baseURL:   baseURL,

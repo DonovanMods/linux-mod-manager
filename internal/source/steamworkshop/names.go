@@ -230,7 +230,7 @@ func (c *client) authorNames(ctx context.Context, ids []string) map[string]strin
 		missing = append(missing, id)
 	}
 
-	if len(missing) > 0 && c.http.IsAuthenticated() {
+	if len(missing) > 0 && c.names.IsAuthenticated() {
 		missing = c.keyedAuthorNames(ctx, missing, out)
 	}
 	for i, id := range missing {
@@ -264,14 +264,16 @@ type playerSummariesResponse struct {
 // keyedAuthorNames asks GetPlayerSummaries for ids in batches of
 // maxIDsPerRequest, recording each answer in out and the cache, and
 // returns the ids it got no name for. A failed batch returns its ids
-// unanswered, which sends them to the keyless route.
+// unanswered, which sends them to the keyless route. It goes through
+// c.names, never c.http: the two share a key but not a circuit breaker, so
+// a failing lookup here cannot suspend GetPublishedFileDetails.
 func (c *client) keyedAuthorNames(ctx context.Context, ids []string, out map[string]string) []string {
 	var left []string
 	for start := 0; start < len(ids); start += maxIDsPerRequest {
 		batch := ids[start:min(start+maxIDsPerRequest, len(ids))]
 		var resp playerSummariesResponse
 		path := playerSummariesPath + "?steamids=" + strings.Join(batch, ",")
-		if err := c.http.DoJSON(ctx, http.MethodGet, path, &resp); err != nil {
+		if err := c.names.DoJSON(ctx, http.MethodGet, path, &resp); err != nil {
 			left = append(left, batch...)
 			continue
 		}

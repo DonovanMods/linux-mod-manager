@@ -246,3 +246,55 @@ func TestAuthorName_CacheHonoursTheMetadataTTLs(t *testing.T) {
 	assert.Equal(t, "Cargo Captain", mod.AuthorName)
 	assert.Len(t, community.requests(), 2, "a stale name is asked for again")
 }
+
+// TestAuthorName_AFailingKeyedLookupNeverSuspendsMetadata pins that the
+// keyed GetPlayerSummaries lookup has its own circuit breaker: three
+// failing name lookups on a cached item must leave GetPublishedFileDetails
+// reachable for the next one, and the key never reaches an error.
+func TestAuthorName_AFailingKeyedLookupNeverSuspendsMetadata(t *testing.T) {
+	okBody, err := os.ReadFile(filepath.Join("testdata", "api", "getpublishedfiledetails_ok.json"))
+	require.NoError(t, err)
+	var (
+		mu      sync.Mutex
+		metaIDs []string
+	)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/ISteamUser/") {
+			assert.NotEmpty(t, r.URL.Query().Get("key"), "the name lookup is the keyed route")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		assert.Empty(t, r.URL.Query().Get("key"), "metadata stays keyless")
+		assert.NoError(t, r.ParseForm())
+		id := r.PostForm.Get("publishedfileids[0]")
+		mu.Lock()
+		metaIDs = append(metaIDs, id)
+		mu.Unlock()
+		_, _ = w.Write([]byte(strings.ReplaceAll(string(okBody), "3617086610", id)))
+	}))
+	t.Cleanup(api.Close)
+	community := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(community.Close)
+
+	const key = "SECRETKEY123"
+	src := newNamedSource(t, api.URL, community.URL, t.TempDir(), nil)
+	src.SetAPIKey(key)
+	ctx := context.Background()
+	for i := range 3 {
+		mod, err := src.GetMod(ctx, "1133870", "3617086610")
+		require.NoError(t, err, "view %d", i)
+		assert.Empty(t, mod.AuthorName, "nothing answered, so the id is shown")
+	}
+
+	mod, err := src.GetMod(ctx, "1133870", "3617086611")
+	if err != nil {
+		assert.NotContains(t, err.Error(), key)
+	}
+	require.NoError(t, err, "a failing name lookup must never suspend metadata")
+	assert.Equal(t, "3617086611", mod.ID)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Contains(t, metaIDs, "3617086611", "item B's metadata request reached the server")
+}
