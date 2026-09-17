@@ -72,9 +72,11 @@ coverage.html
 .envrc
 
 # Other files
+mise.toml
 *.local.md
 docs/plans/*
 !docs/plans/archive
+/.superpowers
 
 # trunk/mise local caches the Makefile points at; never content
 /.trunk-cache-local/

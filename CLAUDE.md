@@ -16,13 +16,6 @@ Because `main` is the default branch, a PR's `Fixes #N` will **not** auto-close 
 
 ## Before Development
 
-**ALWAYS run `/dev-init` at the start of every new session.** This skill reads the required directive files and ensures consistent development practices.
-
-Read these global guidance files before starting any development work:
-
-- `~/.claude/DEV.md` - Project-agnostic development practices (test-first, fail-fast, error handling)
-- `~/.claude/GO.md` - Go-specific conventions (error wrapping, context threading, table-driven tests)
-
 **ALWAYS orchestrate subagents through Orca's `orchestration` skill** — invoke it by name; it ships with the `orca` binary. Orca is the dispatch mechanism and `superpowers:subagent-driven-development` is the review policy layered on top, so they compose rather than compete. Create worktrees with `orca-ide worktree create --base-branch v2 --issue <n>` (during the v2 line; `develop` otherwise): Orca has no adopt/import, so a worktree made with plain `git worktree add` can never be dispatched into.
 
 ## Project Overview
