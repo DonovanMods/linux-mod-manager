@@ -316,6 +316,24 @@ func (s *Service) countListedUnrecorded(ctx context.Context, game *domain.Game, 
 		}
 		for _, k := range kept {
 			if k.Reason != PurgeKeptListed {
+				// A file of a mod the active profile lists that another
+				// game keeps for its own active profile is that game's
+				// (heldForActive), so the active profile deploys the mod
+				// into the new directory only - and only an apply does it
+				// when the profile has no enabled row of it.
+				if !inUse.ApplyAfterMove && len(others.heldForActive(k.Path)) > 0 {
+					if view == nil {
+						if view, err = s.activeApplyViewOf(ctx, game, inUse.ActiveProfile); err != nil {
+							return err
+						}
+					}
+					key := domain.ModKey(k.row.SourceID, k.row.ModID)
+					if ref, listed := view.refs[key]; listed && !ref.Disabled {
+						if own := view.rows[key]; own == nil || !own.Enabled {
+							inUse.ApplyAfterMove = true
+						}
+					}
+				}
 				continue
 			}
 			if view == nil {
@@ -686,6 +704,12 @@ type GameModPathInUseError struct {
 	// of these lets go of them: none is its game's active profile, and its
 	// purge keeps a file this game records and drops its own record of it.
 	ReleaseFirst []OtherGameProfile `json:"release_first,omitempty"`
+	// ApplyAfterMove is set when ActiveProfile lists a mod, and has no
+	// enabled row of it, whose file here another game keeps for its own
+	// active profile (#445 gate 2, G2-1): that file stays that game's, so
+	// the mod is deployed into the new directory only, and `lmm deploy`
+	// deploys only rows - `lmm profile apply` after the move does it.
+	ApplyAfterMove bool `json:"apply_after_move,omitzero"`
 }
 
 // OtherGameProfile is a profile of another game (GameModPathInUseError.
@@ -781,6 +805,10 @@ func (e *GameModPathInUseError) Error() string {
 	msg := fmt.Sprintf("%d file(s) are deployed under %s (%s), and lmm records each one relative to the mod_path, so moving it to %s would strand them; %s - run %s - then change the mod_path, then run `lmm deploy --game %s`, which deploys the active profile (%s) into the new one",
 		e.DeployedFiles, e.ModPath, strings.Join(shares, ", "), e.NewModPath,
 		purge, strings.Join(purges, ", then "), e.GameID, e.ActiveProfile)
+	if e.ApplyAfterMove {
+		msg += fmt.Sprintf(", then `lmm profile apply %s --game %s`, which deploys the mods it lists whose files another game keeps in the old one",
+			e.ActiveProfile, e.GameID)
+	}
 	for _, profile := range others {
 		msg += fmt.Sprintf("; profile %s is deployed there when you next switch to it (`lmm profile switch %s --game %s`)",
 			profile, profile, e.GameID)

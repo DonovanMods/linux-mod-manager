@@ -1801,7 +1801,10 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   The mod_path refusal follows. A file the active profile lists that the
   other game's **active** profile keeps (its own record, or one of a mod
   it lists) is that game's: the purge of the profile that recorded it here
-  drops its record, and no `lmm profile apply` is named for it. A file only
+  drops its record, and no `lmm profile apply` is named for it before the
+  move; the refusal names one after it (`apply_after_move`), which deploys
+  the mod into the new directory when the active profile has no row of it
+  yet — `lmm deploy` alone deploys only rows. A file only
   another game's **non-active** profile records is named first — the
   refusal lists `lmm purge --game <other> --profile <name>`, which keeps the
   file and lets go of it, before the apply that records it here (and

@@ -1949,6 +1949,18 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #445 gate 2, G2-1: a file the active profile lists that another
+			// game keeps for its own active profile - that game's, so the
+			// active profile's apply deploys the mod after the move.
+			"game_mod_path_in_use_error_apply_after_move",
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/shared/Data", NewModPath: "/games/skyrim-se/Mods",
+				DeployedFiles: 1, ActiveProfile: "survival",
+				Profiles:       []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}},
+				ApplyAfterMove: true,
+			},
+		},
+		{
 			// One entry of game_mod_path_in_use_error's release_first.
 			"other_game_profile",
 			core.OtherGameProfile{GameID: "skyrim-vr", Profile: "vanilla"},

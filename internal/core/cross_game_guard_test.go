@@ -206,21 +206,15 @@ func TestCrossGame_V5c_AListedFileTheOtherGamesActiveProfileRecordsIsThatGames(t
 		refusals := followModPathRefusal(t, sky.svc, "sky", filepath.Join(sky.game.InstallPath, "mods2"))
 
 		require.Len(t, refusals, 1)
-		assert.NotContains(t, refusals[0], "lmm profile apply", "alt cannot take the file over, so no apply is named")
+		before, after, found := strings.Cut(refusals[0], "then change the mod_path")
+		require.True(t, found)
+		assert.NotContains(t, before, "lmm profile apply", "alt cannot take the file over here, so no apply is named before the move")
+		assert.Contains(t, after, "then run `lmm deploy --game sky`, which deploys the active profile (alt) into the new one, then `lmm profile apply alt --game sky`",
+			"alt has no row for the mod, so only an apply deploys it into the new directory")
 		assert.NotContains(t, refusals[0], "--game sky2")
 		assert.Equal(t, "sky2's a, USER-EDITED", liveBytes(t, live))
 		assert.Equal(t, []string{"Data/a.esp"}, sky2.recorded(t, "x", "j"))
-
-		// alt's apply deploys its mod into the new directory.
-		moved, err := sky.svc.GetGame("sky")
-		require.NoError(t, err)
-		plan, err := sky.svc.PlanProfileApply(ctx, moved, "alt")
-		require.NoError(t, err)
-		result, err := sky.svc.ApplyProfileApply(ctx, moved, plan, core.ProfileApplyOptions{}, nil)
-		require.NoError(t, err)
-		assert.Empty(t, result.Warnings)
 		requireActiveListedLive(t, sky.svc, "sky")
-		assert.Equal(t, "sky2's a, USER-EDITED", liveBytes(t, live))
 	})
 
 	// Following the refusal as it stood - an apply of alt, then its purge -
