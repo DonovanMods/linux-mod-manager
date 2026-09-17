@@ -772,15 +772,14 @@ export function Library({
             >${`${externalCount} tracked by Steam`}</span
           >`
         }
-        ${
-          // issue 442: the activity line is a live region that is ALWAYS in
-          // the document and changes its text, for the same reason as the
-          // selection status above - one mounted together with its first
-          // words is not reliably announced.
-          ""
-        }
         <span class="library__live" role="status" data-testid="library-live"
-          >${liveActivity || ""}</span
+          >${
+            // issue 442: the activity line is a live region that is ALWAYS
+            // in the document and changes only this text, for the same
+            // reason as the selection status above - one mounted together
+            // with its first words is not reliably announced.
+            liveActivity || ""
+          }</span
         >
         <label class="library__control">
           Filter
@@ -997,16 +996,6 @@ export function Library({
                           >
                             ${row.name}
                           </button>
-                          ${
-                            // The row's own live line: the running job's
-                            // words once there IS a job, and - issue 432 -
-                            // the requested change's own words for the
-                            // window before that, which is exactly the
-                            // window the user was clicking into. Issue 442:
-                            // the region is always there and only its text
-                            // changes, so its first words are announced.
-                            ""
-                          }
                           <span
                             class="mod-row__live"
                             role="status"
@@ -1015,7 +1004,17 @@ export function Library({
                                 ? "toggle-pending"
                                 : undefined
                             }
-                            >${rowLiveText(mutation, togglePending, requested)}</span
+                            >${
+                              // The row's own live line: the running job's
+                              // words once there IS a job, and - issue 432 -
+                              // the requested change's own words for the
+                              // window before that, which is exactly the
+                              // window the user was clicking into. Issue
+                              // 442: the region is always there and only
+                              // this text changes, so its first words are
+                              // announced.
+                              rowLiveText(mutation, togglePending, requested)
+                            }</span
                           >
                         </td>
                         <td class="col--version mono">
