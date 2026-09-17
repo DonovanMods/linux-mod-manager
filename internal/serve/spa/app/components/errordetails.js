@@ -93,7 +93,7 @@ export function LoaderSetup({ loader }) {
  * above it is core's sentence; this names where the fix is made, in both
  * frontends.
  *
- * When `refusal.reason` is set (an AdapterPreconditionError, #353), the
+ * When `refusal.reason` is set (an AdapterPreconditionError, issue 353), the
  * reason IS the adapter's own remedy - and core's `Error()` already embeds
  * it verbatim in the message this component sits under (review F3). So
  * there is nothing left for this component to add: the generic "change the
