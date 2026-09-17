@@ -156,6 +156,34 @@ export function SetupGames({
     );
   }
 
+  // issue 421: "Edit…" opens every editor the row has - sources, mod path,
+  // loader - at once, the one place a configured game changes now that the
+  // add flows no longer offer it; each keeps its own Save, since each is
+  // its own request. An editor already open keeps its draft; pressed with
+  // all three open, it closes them.
+  const editingAll = (id) =>
+    editing?.id === id && editingModPath?.id === id && editingLoader?.id === id;
+
+  function toggleEditGame(g) {
+    setModPathError(null);
+    setRowError(null);
+    if (editingAll(g.id)) {
+      setEditing(null);
+      setEditingModPath(null);
+      setEditingLoader(null);
+      return;
+    }
+    if (editing?.id !== g.id) {
+      setEditing({ id: g.id, map: { ...(g.source_ids ?? {}) } });
+    }
+    if (editingModPath?.id !== g.id) {
+      setEditingModPath({ id: g.id, value: g.mod_path ?? "" });
+    }
+    if (editingLoader?.id !== g.id) {
+      setEditingLoader({ id: g.id, draft: loaderDraft(g.loader) });
+    }
+  }
+
   // openOrFocusModPath is the row warning's and the loader panel's own
   // "Set mod path…" action (review F4): when that row's editor is not open
   // yet, it opens it (ModPathEditor's own mount effect then takes focus);
@@ -263,8 +291,20 @@ export function SetupGames({
           ${games.map(
             (g) => html`
               <tr key=${g.id}>
-                <td>
-                  ${g.name} <span class="mono empty-state__hint">${g.id}</span>
+                <td class="setup-table__name">
+                  <span>${g.name}</span>${" "}
+                  <span class="mono empty-state__hint">${g.id}</span>${" "}
+                  <button
+                    type="button"
+                    class="button button--small"
+                    data-action="edit-game"
+                    data-game=${g.id}
+                    aria-expanded=${editingAll(g.id) ? "true" : "false"}
+                    disabled=${busyID === g.id || sources === null}
+                    onClick=${() => toggleEditGame(g)}
+                  >
+                    ${editingAll(g.id) ? "Close editors" : "Edit…"}
+                  </button>
                 </td>
                 <td class="col--path mono" title=${g.install_path}>
                   ${g.install_path}

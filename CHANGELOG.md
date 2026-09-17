@@ -3158,6 +3158,19 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
   when the applied profile leaves nothing to report; it now waits for the
   job to be over either way.
 
+- **Setup → Add Game uses the whole width, and a configured game is edited,
+  not offered again (#421).** The manual add form was a fixed narrow
+  column, so the "Pick an installed game…" list cut its install paths short
+  even on a wide screen, and its game names did not line up. The form now
+  follows the width of its panel, the installed-games lists (the picker and
+  "Detect games…") set names and paths in aligned columns, and a long path
+  wraps instead of being cut off. Neither list offers a game you have
+  already configured any more — it says how many it left out — and each
+  row of the Games table has an **Edit…** button that opens its sources,
+  mod path and loader editors together. A configured game whose mod path
+  needs repair is still listed by "Detect games…", marked, so the scan can
+  point you at it.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

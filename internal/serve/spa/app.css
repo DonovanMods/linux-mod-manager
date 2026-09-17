@@ -2839,35 +2839,49 @@ select {
   gap: var(--space-3);
 }
 
-/* Games: detect + manual add (gameadd.js), shared by the first-run flow. */
+/* Games: detect + manual add (gameadd.js), shared by the first-run flow.
+   Issue 421: the list is ONE grid and every row a subgrid of it, so the
+   names line up in a column however long each is, and the path column
+   takes whatever width the page has rather than a fixed share of it. */
 .setup-detect__list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) auto auto;
+  column-gap: var(--space-3);
   margin: 0 0 var(--space-3);
   padding: 0;
   list-style: none;
 }
 
 .setup-detect__row {
-  display: flex;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: var(--space-3);
   padding: var(--space-1) 0;
 }
 
 /* First-run readiness item 9: the game name must never wrap mid-word to
    make room for the path beside it - it gets its own natural width and
-   the path (usually much longer) truncates instead, with the full value
-   still available via its own `title` attribute. */
+   the path (usually much longer) gives way instead. Issue 421: it gives
+   way by WRAPPING, not by an ellipsis - a truncated install path is the
+   one fact that tells two copies of a game apart - and keeps its `title`. */
 .setup-detect__name {
-  flex: 0 0 auto;
+  display: flex;
+  grid-column: 1;
+  align-items: center;
+  gap: var(--space-2);
   white-space: nowrap;
 }
 
+.setup-detect__action {
+  grid-column: 4;
+  justify-self: end;
+}
+
 .setup-detect__path {
-  flex: 1 1 auto;
+  grid-column: 2;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   color: var(--text-muted);
   font-size: 0.85em;
 }
@@ -2878,17 +2892,24 @@ select {
    path above goes on absorbing the overflow. Muted, like the path: it is
    context for the name, not a second title. */
 .setup-detect__workshop {
-  flex: 0 0 auto;
+  grid-column: 3;
   white-space: nowrap;
   color: var(--text-muted);
   font-size: 0.85em;
 }
 
+/* Issue 421: the form is as wide as its panel - the installed-games picker
+   inside it needs the room - and only its input fields keep a reading
+   measure. */
 .setup-add {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  max-width: 30rem;
+}
+
+.setup-add > .plan__control,
+.setup-add__advanced .plan__control {
+  max-width: 60ch;
 }
 
 .setup-add__catalog {
