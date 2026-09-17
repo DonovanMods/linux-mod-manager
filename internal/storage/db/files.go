@@ -337,28 +337,67 @@ func (d *DB) DeleteDeployedFiles(ctx context.Context, gameID, profileName, sourc
 }
 
 // DeleteDeployedFilesExcept is DeleteDeployedFiles keeping every row
-// recorded under one of the mod_paths in keepRoots (#451): an uninstall
+// recorded under one of the mod_paths in keepRoots (#451) - an uninstall
 // under a game's current mod_path does not know what is under another one,
-// so it leaves those rows for the purge that does.
-func (d *DB) DeleteDeployedFilesExcept(ctx context.Context, gameID, profileName, sourceID, modID string, keepRoots []string) error {
-	if len(keepRoots) == 0 {
+// so it leaves those rows for the purge that does - and every row for one
+// of the relative paths in keepPaths: files the uninstall could not judge
+// (#466), whose records must not change.
+func (d *DB) DeleteDeployedFilesExcept(ctx context.Context, gameID, profileName, sourceID, modID string, keepRoots, keepPaths []string) error {
+	if len(keepRoots) == 0 && len(keepPaths) == 0 {
 		return d.DeleteDeployedFiles(ctx, gameID, profileName, sourceID, modID)
 	}
-	args := []any{gameID, profileName, sourceID, modID}
-	placeholders := make([]string, len(keepRoots))
-	for i, root := range keepRoots {
-		placeholders[i] = "?"
-		args = append(args, root)
-	}
-	_, err := d.ExecContext(ctx, fmt.Sprintf(`
+	query := `
 		DELETE FROM deployed_files
-		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
-		AND COALESCE(mod_path, '') NOT IN (%s)
-	`, strings.Join(placeholders, ",")), args...)
-	if err != nil {
+		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?`
+	args := []any{gameID, profileName, sourceID, modID}
+	notIn := func(column string, values []string) {
+		if len(values) == 0 {
+			return
+		}
+		query += fmt.Sprintf(" AND %s NOT IN (%s)", column, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
+		for _, v := range values {
+			args = append(args, v)
+		}
+	}
+	notIn("COALESCE(mod_path, '')", keepRoots)
+	notIn("relative_path", keepPaths)
+	if _, err := d.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("deleting deployed files: %w", err)
 	}
 	return nil
+}
+
+// DeployedFileRecordsForMod returns every deployed_files row of one mod in
+// a game's profile exactly as it is stored - fingerprint and mod_path
+// included - sorted by path: what a replace puts back if it fails (#466).
+func (d *DB) DeployedFileRecordsForMod(ctx context.Context, gameID, profileName, sourceID, modID string) (records []DeployedFileRecord, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT relative_path, mod_path, checksum, size, mtime, ctime FROM deployed_files
+		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
+		ORDER BY relative_path
+	`, gameID, profileName, sourceID, modID)
+	if err != nil {
+		return nil, fmt.Errorf("querying deployed file records: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+	for rows.Next() {
+		rec := DeployedFileRecord{GameID: gameID, Profile: profileName, SourceID: sourceID, ModID: modID}
+		var modPath, checksum sql.NullString
+		var size, mtime, ctime sql.NullInt64
+		if err := rows.Scan(&rec.RelativePath, &modPath, &checksum, &size, &mtime, &ctime); err != nil {
+			return nil, fmt.Errorf("scanning deployed file record: %w", err)
+		}
+		rec.ModPath = modPath.String
+		if checksum.Valid && checksum.String != "" {
+			rec.Fingerprint = &FileFingerprint{Checksum: checksum.String, Size: size.Int64, MTime: mtime.Int64, CTime: ctime.Int64}
+		}
+		records = append(records, rec)
+	}
+	return records, rows.Err()
 }
 
 // DeleteDeployedFile removes one deployed-file ownership row. Deleting a

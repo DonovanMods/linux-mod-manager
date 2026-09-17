@@ -191,19 +191,76 @@ func TestDeployedIdentity_EveryRemovalStillRemovesLmmsOwnFile(t *testing.T) {
 }
 
 // TestDeployedIdentity_AnUnfingerprintedRowIsRemovedAndReportedUnverified:
-// a row written before fingerprints were recorded keeps the old
-// behaviour - the file goes - and the flow says it was not checked.
+// a row written before fingerprints were recorded, whose mod's cached copy
+// is gone, keeps the old behaviour - the file goes - and the flow says it
+// was not checked.
 func TestDeployedIdentity_AnUnfingerprintedRowIsRemovedAndReportedUnverified(t *testing.T) {
 	ctx := context.Background()
 	f := newLegacyFixture(t, handoffGame(t, "sky", t.TempDir(), domain.LinkCopy))
 	f.profile(t, "default", true, "k")
 	f.deployed(t, "default", "k", domain.LinkCopy, map[string]string{"Data/k.esp": "mod k"}, map[string]string{"Data/k.esp": "edited before v18"})
+	// With the cache entry gone the removal walks the recorded paths, and
+	// there is no cached copy to compare with.
+	require.NoError(t, os.RemoveAll(f.svc.GetGameCache(f.game).ModPath(f.game.ID, "local", "k", "unknown")))
 
 	result, err := f.svc.UninstallMod(ctx, f.game, "default", "local", "k", core.UninstallOptions{})
 	require.NoError(t, err)
 
 	assert.NoFileExists(t, f.kPath())
 	assert.Equal(t, []string{"1 copied or hard-linked file(s) were removed unverified (deployed before checksums were recorded): Data/k.esp"}, result.Warnings)
+}
+
+// TestDeployedIdentity_AnUnfingerprintedRowIsJudgedByTheCachedCopy (#466
+// review D10): a row written before fingerprints were recorded is compared
+// with the mod's cached copy when it is there. The same content is lmm's
+// and goes, silently; other content is the user's and stays.
+func TestDeployedIdentity_AnUnfingerprintedRowIsJudgedByTheCachedCopy(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		live map[string]string
+		kept bool
+	}{
+		{"the mod's content", nil, false},
+		{"edited before v18", map[string]string{"Data/k.esp": "edited before v18"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLegacyFixture(t, handoffGame(t, "sky", t.TempDir(), domain.LinkCopy))
+			f.profile(t, "default", true, "k")
+			f.deployed(t, "default", "k", domain.LinkCopy, map[string]string{"Data/k.esp": "mod k"}, tc.live)
+
+			result, err := f.svc.UninstallMod(ctx, f.game, "default", "local", "k", core.UninstallOptions{})
+			require.NoError(t, err)
+
+			if tc.kept {
+				assert.Equal(t, "edited before v18", readLive(t, f.kPath()))
+				assert.Equal(t, []string{"Data/k.esp was left in place: it differs from the mod's cached copy, and lmm recorded no checksum when it deployed it, so lmm treats it as yours"}, result.Warnings)
+				return
+			}
+			assert.NoFileExists(t, f.kPath())
+			assert.Empty(t, result.Warnings, "a file proven lmm's is not unverified")
+		})
+	}
+}
+
+// TestDeployedIdentity_ARowWrittenWithoutAChecksumSaysSo (#466 review D3):
+// only a row that predates schema v18 is "deployed before checksums were
+// recorded"; one this lmm wrote without a fingerprint says that instead.
+func TestDeployedIdentity_ARowWrittenWithoutAChecksumSaysSo(t *testing.T) {
+	ctx := context.Background()
+	f := newLegacyFixture(t, handoffGame(t, "sky", t.TempDir(), domain.LinkCopy))
+	f.profile(t, "default", true, "k")
+	f.deployed(t, "default", "k", domain.LinkCopy, map[string]string{"Data/k.esp": "mod k"}, nil)
+	require.NoError(t, f.svc.ExecForTest(ctx, `UPDATE deployed_files SET mod_path = ?`, f.game.ModPath))
+	// With the cache entry gone the removal walks the recorded paths, and
+	// there is no cached copy to compare with.
+	require.NoError(t, os.RemoveAll(f.svc.GetGameCache(f.game).ModPath(f.game.ID, "local", "k", "unknown")))
+
+	result, err := f.svc.UninstallMod(ctx, f.game, "default", "local", "k", core.UninstallOptions{})
+	require.NoError(t, err)
+
+	assert.NoFileExists(t, f.kPath())
+	assert.Equal(t, []string{"1 copied or hard-linked file(s) were removed unverified (recorded without a checksum): Data/k.esp"}, result.Warnings)
 }
 
 // TestDeployedIdentity_ADeployDoesNotOverwriteAFileTheUserReplaced: a

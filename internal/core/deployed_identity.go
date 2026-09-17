@@ -25,33 +25,36 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
-// deployedVerdict is judgeDeployed's answer about one deployed path.
+// deployedVerdict is deployedJudge's answer about one deployed path.
 type deployedVerdict int
 
 const (
 	// deployedGone: nothing is at the path.
 	deployedGone deployedVerdict = iota
 	// deployedOurs: the file is lmm's - its content matches a recorded
-	// fingerprint, or it is not a regular file and no record fingerprints
-	// the path (a symlink deployment, whose link is its identity).
+	// fingerprint or the mod's cached copy, or it is a link lmm made (one
+	// into the game's cache, or one a record of the acting profile names
+	// without a fingerprint: a symlink deployment, whose link is its
+	// identity).
 	deployedOurs
 	// deployedUnverified: a regular file that records name but none
-	// fingerprints - deployed before checksums were recorded. Removed as
-	// before, and reported.
+	// fingerprints, and the mod's cached copy is not there to compare
+	// with. Removed as before, and reported.
 	deployedUnverified
 	// deployedUsers: the file is not provably lmm's; it stays. With
-	// recorded false it is a regular file lmm has no record of under the
-	// game's current mod_path at all - foreign content, which a deploy may
-	// still preserve and replace (captureOriginal).
+	// recorded false lmm has no record of the path under the game's
+	// current mod_path at all - foreign content, which a deploy may still
+	// preserve and replace (captureOriginal) when it is a regular file.
 	deployedUsers
 )
 
-// deployedJudgement is judgeDeployed's full answer.
+// deployedJudgement is deployedJudge's full answer.
 type deployedJudgement struct {
 	verdict deployedVerdict
 	// reason says why a deployedUsers file is kept, as a clause: "its
@@ -60,17 +63,40 @@ type deployedJudgement struct {
 	// recorded reports whether any record of the path under the game's
 	// current mod_path exists.
 	recorded bool
+	// regular reports that the path holds a regular file - the only kind
+	// the originals store can preserve.
+	regular bool
 	// unchecked marks a deployedUsers answer that is only a failure to
 	// look - the file, its record or its content could not be read - not a
-	// finding that the file is the user's. The file stays either way; a
-	// purge keeps its record too.
+	// finding that the file is the user's. The file stays either way, and
+	// so does every record of it.
 	unchecked bool
-	// kept is the recorded state a deployedUsers file was judged against:
-	// the record an overwrite that leaves the file keeps.
+	// legacy marks a deployedUnverified answer whose records all predate
+	// schema v18 (they name no mod_path): deployed before checksums were
+	// recorded, rather than recorded without one.
+	legacy bool
+	// cacheProof marks a deployedUsers answer that rests on the mod's
+	// cached copy rather than on a fingerprint lmm recorded (#466 review
+	// D10): a record from before checksums whose file differs from it.
+	cacheProof bool
+	// sharesCache marks a deployedUsers hard link that is still the mod's
+	// cached copy: an edit in place changed that copy too, so a redeploy
+	// would only link the edit again (#466 review D8).
+	sharesCache bool
+	// kept is the fingerprinted record a deployedUsers file was judged
+	// against: the record an overwrite that leaves the file keeps. Nil
+	// when the answer rests on no fingerprint.
 	kept *db.DeployedFileState
 }
 
 // fingerprintFile fingerprints the regular file at path.
+//
+// The ctime is recorded only when it cannot be racy (git's "racy clean"
+// rule, #466 review D1): a filesystem stamps changes with a coarse clock,
+// so a write landing in the same tick as the one this fingerprint read
+// would leave size, mtime and ctime all as recorded. When the fingerprint
+// was finished within one tick of the ctime it read, the record carries no
+// ctime, and every later check of it hashes.
 func fingerprintFile(path string) (*db.FileFingerprint, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -83,7 +109,30 @@ func fingerprintFile(path string) (*db.FileFingerprint, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &db.FileFingerprint{Checksum: sum, Size: size, MTime: info.ModTime().UnixNano(), CTime: inodeChangeTime(info)}, nil
+	return fingerprintOf(info, sum, size, time.Now()), nil
+}
+
+// fingerprintOf is the fingerprint of a file whose Lstat was info and whose
+// content hashed to sum and size, finished at done (fingerprintFile).
+func fingerprintOf(info fs.FileInfo, sum string, size int64, done time.Time) *db.FileFingerprint {
+	fp := &db.FileFingerprint{Checksum: sum, Size: size, MTime: info.ModTime().UnixNano()}
+	if ctime := inodeChangeTime(info); ctime != 0 && !racyCTime(ctime, done) {
+		fp.CTime = ctime
+	}
+	return fp
+}
+
+// racyCTime reports whether a change after done could still be stamped
+// with ctime: done is less than one timestamp tick after it. A ctime with
+// no sub-second part comes from a filesystem that keeps whole seconds
+// (ext4 with small inodes, vfat's two), so its tick is taken as two
+// seconds; any other is taken as a scheduler tick, generously.
+func racyCTime(ctime int64, done time.Time) bool {
+	tick := 20 * time.Millisecond
+	if ctime%int64(time.Second) == 0 {
+		tick = 2 * time.Second
+	}
+	return done.UnixNano()-ctime < int64(tick)
 }
 
 // recordRoot is the mod_path a deploy under game records (#451).
@@ -118,11 +167,32 @@ func currentStates(ctx context.Context, database *db.DB, game *domain.Game, rel 
 	return kept, nil
 }
 
-// judgeDeployed decides whether dst, the deployed path rel of game, holds
-// lmm's own file. A nil database cannot tell and answers deployedOurs, the
+// deployedJudge decides whether the file at a deployed path of game is
+// lmm's own (#466). A zero db cannot tell and answers deployedOurs, the
 // behaviour every db-less Installer has always had.
-func judgeDeployed(ctx context.Context, database *db.DB, game *domain.Game, rel, dst string) deployedJudgement {
-	if database == nil {
+type deployedJudge struct {
+	db   *db.DB
+	game *domain.Game
+	// profile is the profile acting on the path. Its own records decide a
+	// link (#466 review F1): another profile's fingerprinted copy of the
+	// same path says nothing about the link this one deployed.
+	profile string
+	// cacheRoots is every directory lmm-owned content for game lives
+	// under (Service.cacheRoots): a link into one is lmm's.
+	cacheRoots []string
+	// others is what the games whose mod directories overlap game's
+	// record (#466 review D5): their fingerprints of the same file count.
+	others *otherGameRecords
+	// cached returns the mod's cached copy of rel for a record, or "" when
+	// there is none to compare with (#466 review D10): the proof a record
+	// with no fingerprint can still have.
+	cached func(st db.DeployedFileState, rel string) string
+}
+
+// judge decides whether dst, the deployed path rel of the judge's game,
+// holds lmm's own file.
+func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudgement {
+	if jd.db == nil {
 		return deployedJudgement{verdict: deployedOurs, recorded: true}
 	}
 	info, err := os.Lstat(dst)
@@ -134,38 +204,46 @@ func judgeDeployed(ctx context.Context, database *db.DB, game *domain.Game, rel,
 	default:
 		return deployedJudgement{verdict: deployedUsers, recorded: true, unchecked: true, reason: fmt.Sprintf("it could not be checked (%v)", err)}
 	}
-	states, err := currentStates(ctx, database, game, rel)
+	states, err := currentStates(ctx, jd.db, jd.game, rel)
 	if err != nil {
 		return deployedJudgement{verdict: deployedUsers, recorded: true, unchecked: true, reason: fmt.Sprintf("its record could not be read (%v)", err)}
 	}
-	var printed []db.DeployedFileState
+	j := deployedJudgement{recorded: len(states) > 0, regular: info.Mode().IsRegular()}
+	if !j.regular {
+		return jd.judgeLink(j, info, states, dst)
+	}
+	var prints []db.DeployedFileState
 	for _, st := range states {
 		if st.Fingerprint != nil {
-			printed = append(printed, st)
+			prints = append(prints, st)
 		}
 	}
-	j := deployedJudgement{recorded: len(states) > 0}
-	switch {
-	case len(printed) > 0:
-	case !info.Mode().IsRegular():
-		j.verdict = deployedOurs
-		return j
-	case j.recorded:
-		j.verdict = deployedUnverified
-		return j
-	default:
-		j.verdict, j.reason = deployedUsers, "lmm has no record of deploying it under "+recordRoot(game)
+	theirs, err := jd.others.fingerprints(ctx, rel)
+	if err != nil {
+		j.verdict, j.unchecked, j.recorded = deployedUsers, true, true
+		j.reason = fmt.Sprintf("another game's record of it could not be read (%v)", err)
 		return j
 	}
-	j.kept = &printed[0]
-	if !info.Mode().IsRegular() {
-		j.verdict, j.reason = deployedUsers, "lmm deployed a file there and it is now "+describeMode(info.Mode())
-		return j
+	if len(prints) > 0 {
+		j.kept = &prints[0]
 	}
-	for _, st := range printed {
-		if unchangedSince(info, st.Fingerprint) {
-			j.verdict = deployedOurs
+	prints = append(prints, theirs...)
+	if len(prints) == 0 {
+		if !j.recorded {
+			j.verdict, j.reason = deployedUsers, "lmm has no record of deploying it under "+recordRoot(jd.game)
 			return j
+		}
+		return jd.judgeUnprinted(j, info, states, rel, dst)
+	}
+	if j.kept == nil {
+		j.kept = &prints[0]
+	}
+	if fsKeepsChangeTime(dst) {
+		for _, st := range prints {
+			if unchangedSince(info, st.Fingerprint) {
+				j.verdict = deployedOurs
+				return j
+			}
 		}
 	}
 	sum, _, err := hashFile(dst)
@@ -174,25 +252,232 @@ func judgeDeployed(ctx context.Context, database *db.DB, game *domain.Game, rel,
 		j.reason = fmt.Sprintf("it could not be read to compare with what lmm deployed (%v)", err)
 		return j
 	}
-	for i, st := range printed {
+	for i, st := range prints {
 		if st.Fingerprint.Checksum == sum {
-			j.verdict, j.kept = deployedOurs, &printed[i]
+			j.verdict = deployedOurs
+			if i < len(prints)-len(theirs) {
+				j.kept = &prints[i]
+			}
 			return j
 		}
 	}
 	j.verdict, j.reason = deployedUsers, "its content changed after lmm deployed it"
+	j.sharesCache = jd.sharesCache(info, states, rel)
 	return j
+}
+
+// judgeLink is judge for a path that holds something other than a regular
+// file: a link, a directory, a device.
+//
+// A link into the game's cache is lmm's whatever the records say - it
+// holds nothing of the user's. Anything else is lmm's only on a record
+// under the game's current mod_path that fingerprints nothing - a link
+// deployment's record - the acting profile's own records deciding when it
+// has any (#466 review F1). With no record at all it is the user's (review
+// D2): a link lmm did not make may point anywhere, and a deploy that wrote
+// through it would overwrite whatever it points at.
+func (jd deployedJudge) judgeLink(j deployedJudgement, info fs.FileInfo, states []db.DeployedFileState, dst string) deployedJudgement {
+	if info.Mode()&fs.ModeSymlink != 0 && jd.linksIntoCache(dst) {
+		j.verdict = deployedOurs
+		return j
+	}
+	if !j.recorded {
+		j.verdict = deployedUsers
+		j.reason = fmt.Sprintf("it is %s lmm has no record of deploying under %s", describeMode(info.Mode()), recordRoot(jd.game))
+		return j
+	}
+	deciding := states
+	if own := statesOf(states, jd.profile); len(own) > 0 {
+		deciding = own
+	}
+	for _, st := range deciding {
+		if st.Fingerprint == nil {
+			j.verdict = deployedOurs
+			return j
+		}
+	}
+	j.kept = &deciding[0]
+	j.verdict, j.reason = deployedUsers, "lmm deployed a file there and it is now "+describeMode(info.Mode())
+	return j
+}
+
+// judgeUnprinted is judge for a regular file whose records under the
+// game's current mod_path fingerprint nothing: the mod's cached copy is the
+// proof when it is there (#466 review D10). Equal is lmm's. Different is
+// the user's when that mod is the path's only claimant; when another mod,
+// profile or game records the path too, the content may be theirs, and the
+// file is unverified - as it is when there is nothing to compare with.
+func (jd deployedJudge) judgeUnprinted(j deployedJudgement, info fs.FileInfo, states []db.DeployedFileState, rel, dst string) deployedJudgement {
+	var sum string
+	compared := false
+	for _, st := range jd.comparable(states) {
+		if jd.cached == nil {
+			break
+		}
+		cached := jd.cached(st, rel)
+		if cached == "" {
+			continue
+		}
+		cachedSum, _, err := hashFile(cached)
+		if err != nil {
+			continue
+		}
+		if sum == "" {
+			s, _, err := hashFile(dst)
+			if err != nil {
+				j.verdict, j.unchecked = deployedUsers, true
+				j.reason = fmt.Sprintf("it could not be read to compare with the mod's cached copy (%v)", err)
+				return j
+			}
+			sum = s
+		}
+		if sum == cachedSum {
+			j.verdict = deployedOurs
+			return j
+		}
+		compared = true
+	}
+	if compared && jd.onlyClaimant(states, rel) {
+		j.verdict, j.cacheProof = deployedUsers, true
+		j.reason = "it differs from the mod's cached copy, and lmm recorded no checksum when it deployed it"
+		j.sharesCache = jd.sharesCache(info, states, rel)
+		return j
+	}
+	j.verdict, j.legacy = deployedUnverified, true
+	for _, st := range states {
+		if st.ModPath != "" {
+			j.legacy = false
+		}
+	}
+	return j
+}
+
+// onlyClaimant reports whether every record of rel - the game's, under its
+// current mod_path, and the overlapping games' - is the acting profile's
+// record of one mod.
+func (jd deployedJudge) onlyClaimant(states []db.DeployedFileState, rel string) bool {
+	if len(jd.others.holding(rel)) > 0 {
+		return false
+	}
+	for _, st := range states {
+		if st.Profile != states[0].Profile || st.SourceID != states[0].SourceID || st.ModID != states[0].ModID {
+			return false
+		}
+		if jd.profile != "" && st.Profile != jd.profile {
+			return false
+		}
+	}
+	return true
+}
+
+// linksIntoCache reports whether the link at dst points under one of the
+// judge's cache roots.
+func (jd deployedJudge) linksIntoCache(dst string) bool {
+	if len(jd.cacheRoots) == 0 {
+		return false
+	}
+	target, err := os.Readlink(dst)
+	if err != nil {
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(dst), target)
+	}
+	return underAnyCacheRoot(filepath.Clean(target), jd.cacheRoots)
+}
+
+// sharesCache reports whether the file info describes is the very file the
+// mod's cache holds for rel - a hard link to it.
+func (jd deployedJudge) sharesCache(info fs.FileInfo, states []db.DeployedFileState, rel string) bool {
+	if jd.cached == nil {
+		return false
+	}
+	for _, st := range jd.comparable(states) {
+		cached := jd.cached(st, rel)
+		if cached == "" {
+			continue
+		}
+		if ci, err := os.Lstat(cached); err == nil && os.SameFile(info, ci) {
+			return true
+		}
+	}
+	return false
+}
+
+// comparable is the states whose mod's cached copy the judge can compare
+// with: the acting profile's own, whose installed version is the one
+// cached names - or every state, for a judge acting for no profile.
+func (jd deployedJudge) comparable(states []db.DeployedFileState) []db.DeployedFileState {
+	if jd.profile == "" {
+		return states
+	}
+	return statesOf(states, jd.profile)
+}
+
+// statesOf is the states recorded by profile.
+func statesOf(states []db.DeployedFileState, profile string) []db.DeployedFileState {
+	var out []db.DeployedFileState
+	for _, st := range states {
+		if profile != "" && st.Profile == profile {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// judgeDeployed is a deployedJudge with only a database, a game and the
+// acting profile.
+func judgeDeployed(ctx context.Context, database *db.DB, game *domain.Game, profile, rel, dst string) deployedJudgement {
+	return deployedJudge{db: database, game: game, profile: profile}.judge(ctx, rel, dst)
 }
 
 // unchangedSince is the pre-check that spares a hash: info matches fp's
 // size, mtime and ctime exactly. A size and an mtime can be copied onto
-// another file; a ctime cannot be set at all, and any write, replacement or
-// permission change moves it - so a file that passes is the one the record
-// describes. An unknown ctime never passes.
+// another file; a ctime cannot be set on a filesystem that keeps one
+// (fsKeepsChangeTime, which the caller asks), and any write, replacement
+// or permission change moves it - so a file that passes is the one the
+// record describes. An unknown ctime, recorded or live, never passes.
 func unchangedSince(info fs.FileInfo, fp *db.FileFingerprint) bool {
 	ctime := inodeChangeTime(info)
 	return ctime != 0 && fp.CTime == ctime &&
 		fp.Size == info.Size() && fp.MTime == info.ModTime().UnixNano()
+}
+
+// Filesystem magic numbers (statfs(2)) of the filesystems that keep a real
+// inode change time: one no user call can set, and that every write moves.
+const (
+	magicExt4     = 0xEF53 // ext2, ext3 and ext4 share it
+	magicBtrfs    = 0x9123683E
+	magicXFS      = 0x58465342
+	magicTmpfs    = 0x01021994
+	magicF2FS     = 0xF2F52010
+	magicBcachefs = 0xCA451A4E
+	magicZFS      = 0x2FC12FC1
+)
+
+// changeTimeFilesystems is the allow-list fsKeepsChangeTime trusts.
+var changeTimeFilesystems = map[int64]bool{
+	magicExt4: true, magicBtrfs: true, magicXFS: true, magicTmpfs: true,
+	magicF2FS: true, magicBcachefs: true, magicZFS: true,
+}
+
+// statfsType is statfs(2)'s filesystem type for path; a seam for tests.
+var statfsType = func(path string) (int64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, err
+	}
+	return int64(st.Type), nil
+}
+
+// fsKeepsChangeTime reports whether the filesystem holding path keeps a
+// change time the size/mtime/ctime pre-check can trust (#466 review D1).
+// vfat and exFAT have none - their "ctime" is the mtime, which a user can
+// set, at a granularity of up to two seconds - and NTFS, FUSE and anything
+// unknown are not trusted either: a file there is always hashed.
+func fsKeepsChangeTime(path string) bool {
+	typ, err := statfsType(path)
+	return err == nil && changeTimeFilesystems[typ]
 }
 
 // inodeChangeTime is info's ctime in Unix nanoseconds, or 0 when the
@@ -223,9 +508,21 @@ func userFileNote(rel, reason string) string {
 }
 
 // userFileOverwriteNote is what a deploy that did not replace rel reports.
-func userFileOverwriteNote(rel, reason string) string {
-	return fmt.Sprintf("%s was not replaced: %s, so lmm left your file there - delete it, then deploy again, to take the mod's version",
-		filepath.ToSlash(rel), reason)
+func userFileOverwriteNote(rel, reason string, sharesCache bool) string {
+	return fmt.Sprintf("%s was not replaced: %s, so lmm left your file there - %s",
+		filepath.ToSlash(rel), reason, takeModVersionRemedy(sharesCache))
+}
+
+// takeModVersionRemedy is how the user takes the mod's version of a file
+// they changed back. A hard link that is still the mod's cached copy was
+// changed in the cache too (#466 review D8), so a redeploy would link the
+// edit again: only a forced reinstall, which extracts the mod afresh, has
+// the mod's version to give.
+func takeModVersionRemedy(sharesCache bool) string {
+	if sharesCache {
+		return "it is a hard link to the mod's cached copy, so that copy changed too; run `lmm install --force` for the mod to extract its own version again"
+	}
+	return "delete it, then deploy again, to take the mod's version"
 }
 
 // unpreservedOverwriteNote is what a deploy reports for a file it did not
@@ -236,9 +533,47 @@ func unpreservedOverwriteNote(rel string) string {
 		filepath.ToSlash(rel))
 }
 
-// unverifiedNote is the one report a flow makes for the files it removed
-// without a content check.
-func unverifiedNote(paths []string) string {
+// uncapturableOverwriteNote is what a deploy reports for a path it did not
+// replace because what is there could not be preserved first (#466 review
+// D2, D4): a link or directory lmm did not make, or a file the originals
+// store failed to copy.
+func uncapturableOverwriteNote(rel, why string) string {
+	return fmt.Sprintf("%s was not replaced: lmm did not deploy what is there, and it could not be preserved (%s), so lmm left it - move it aside, then deploy again, to take the mod's version",
+		filepath.ToSlash(rel), why)
+}
+
+// unverifiedPath is a path a flow removed with no content check, and
+// whether its records all predate schema v18.
+type unverifiedPath struct {
+	rel    string
+	legacy bool
+}
+
+// unverifiedNotes are the reports a flow makes for the files it removed
+// without a content check: one line for the files deployed before
+// checksums were recorded, one for the files recorded without one (#466
+// review D3).
+func unverifiedNotes(paths []unverifiedPath) []string {
+	var legacy, bare []string
+	for _, p := range paths {
+		if p.legacy {
+			legacy = append(legacy, p.rel)
+		} else {
+			bare = append(bare, p.rel)
+		}
+	}
+	var out []string
+	if len(legacy) > 0 {
+		out = append(out, unverifiedNote(legacy, "deployed before checksums were recorded"))
+	}
+	if len(bare) > 0 {
+		out = append(out, unverifiedNote(bare, "recorded without a checksum"))
+	}
+	return out
+}
+
+// unverifiedNote is one unverifiedNotes line.
+func unverifiedNote(paths []string, why string) string {
 	const shown = 5
 	list := slices.Clone(paths)
 	slices.Sort(list)
@@ -247,8 +582,8 @@ func unverifiedNote(paths []string) string {
 		more = fmt.Sprintf(" and %d more", len(list)-shown)
 		list = list[:shown]
 	}
-	return fmt.Sprintf("%d copied or hard-linked file(s) were removed unverified (deployed before checksums were recorded): %s%s",
-		len(paths), strings.Join(list, ", "), more)
+	return fmt.Sprintf("%d copied or hard-linked file(s) were removed unverified (%s): %s%s",
+		len(paths), why, strings.Join(list, ", "), more)
 }
 
 // strandedRoot is a mod_path, other than the game's current one, that

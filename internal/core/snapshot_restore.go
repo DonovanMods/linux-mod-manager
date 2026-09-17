@@ -563,7 +563,11 @@ func (s *Service) ApplySnapshotRestore(ctx context.Context, game *domain.Game, p
 	if plan == nil {
 		return &SnapshotRestoreResult{}, errors.New("snapshot restore plan is nil: call PlanSnapshotRestore first")
 	}
-	return s.applySnapshotRestore(ctx, game, plan, opts, sink)
+	result, err := s.applySnapshotRestore(ctx, game, plan, opts, sink)
+	// #466 review D3: whatever the restore's removals and deploys left in
+	// place and did not already report is this restore's to report.
+	s.takeCaptureWarnings(game.ID, OpSnapshotRestore, SnapshotWarning, &result.Warnings, sink)
+	return result, err
 }
 
 func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, plan *SnapshotRestorePlan, opts SnapshotRestoreOptions, sink EventSink) (*SnapshotRestoreResult, error) {

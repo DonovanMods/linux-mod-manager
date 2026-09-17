@@ -165,6 +165,8 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	handled := make(map[string]bool) // every row path the row pass actually judged (kept or removed)
 	var errs []error
 
+	cacheRoots := s.cacheRoots(game)
+
 	// --- Row pass ---
 	for _, m := range mods {
 		if err := ctx.Err(); err != nil {
@@ -211,23 +213,29 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				ModID:    m.ID,
 			}
 			dstPath := filepath.Join(game.ModPath, path)
+			// #466: the user's file is kept, reported, and no longer
+			// tracked, as a purge does it - asked first, so a changed file
+			// another game also records is reported as the user's (review
+			// D5). One that could not be judged keeps its record too.
+			jd := deployedJudge{db: s.db, game: game, profile: profileName, cacheRoots: cacheRoots, others: others,
+				cached: (&cachedMod{cache: gameCache, game: game, mod: &m.Mod}).fileFor}
+			j := jd.judge(ctx, path, dstPath)
+			if j.verdict == deployedUsers {
+				errs = append(errs, errors.New(userFileNote(path, j.reason)))
+				if !dryRun && !j.unchecked {
+					if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
+						errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
+					} else if store := s.originalsStoreFor(game.ID); store != nil {
+						store.markKeptUser(filepath.ToSlash(path))
+					}
+				}
+				continue
+			}
 			// The file stays for the game that records it, reported as
 			// every other item this pass does not remove is; this stale
 			// record goes, as a purge's does.
 			if held, ok := heldElsewhere(others, path, dstPath); ok {
 				errs = append(errs, errors.New(held.removalNote()))
-				if !dryRun {
-					if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
-						errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
-					}
-				}
-				continue
-			}
-			// #466: nor the user's file - kept, reported, and no longer
-			// tracked, as a purge does it.
-			j := judgeDeployed(ctx, s.db, game, path, dstPath)
-			if j.verdict == deployedUsers {
-				errs = append(errs, errors.New(userFileNote(path, j.reason)))
 				if !dryRun {
 					if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
 						errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
@@ -246,7 +254,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			}
 			if j.verdict == deployedUnverified {
 				if store := s.originalsStoreFor(game.ID); store != nil {
-					store.noteUnverified(filepath.ToSlash(path))
+					store.noteUnverified(filepath.ToSlash(path), j.legacy)
 				}
 			}
 			// Coordinator ruling on review note 13: a convergence removes
@@ -270,7 +278,6 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	cacheRoots := s.cacheRoots(game)
 
 	checked := 0
 	walkErr := filepath.WalkDir(game.ModPath, func(path string, d fs.DirEntry, err error) error {

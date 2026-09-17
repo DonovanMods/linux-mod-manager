@@ -2304,6 +2304,8 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	// #445 gate 2, G2-1: and none of them removes or replaces a file
 	// another game records.
 	installer.otherGames = s.otherGamesRecording
+	// #466 review F1: a link into the game's cache is lmm's.
+	installer.cacheRoots = s.cacheRoots(game)
 	// #353: and every Installer routes its deployable files through the
 	// game's adapter. A resolution failure is reported by the flow's own
 	// AdapterFor call (every flow that reaches an Installer makes one);

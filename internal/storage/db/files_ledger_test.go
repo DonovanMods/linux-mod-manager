@@ -193,7 +193,7 @@ func TestDeleteDeployedFilesExcept_KeepsRowsUnderTheNamedRoots(t *testing.T) {
 	} {
 		require.NoError(t, database.RecordDeployedFile(ctx, rec))
 	}
-	require.NoError(t, database.DeleteDeployedFilesExcept(ctx, "g", "p", "s", "m", []string{"/old"}))
+	require.NoError(t, database.DeleteDeployedFilesExcept(ctx, "g", "p", "s", "m", []string{"/old"}, nil))
 	files, err := database.ListDeployedFiles(ctx, "g", "p")
 	require.NoError(t, err)
 	var paths []string
@@ -202,8 +202,34 @@ func TestDeleteDeployedFilesExcept_KeepsRowsUnderTheNamedRoots(t *testing.T) {
 	}
 	assert.Equal(t, []string{"other", "there"}, paths)
 
-	require.NoError(t, database.DeleteDeployedFilesExcept(ctx, "g", "p", "s", "m", nil))
+	require.NoError(t, database.DeleteDeployedFilesExcept(ctx, "g", "p", "s", "m", nil, nil))
 	files, err = database.ListDeployedFiles(ctx, "g", "p")
 	require.NoError(t, err)
 	assert.Len(t, files, 1)
+}
+
+// TestDeleteDeployedFilesExcept_KeepsRowsForTheNamedPaths: a row for a
+// file an uninstall could not judge stays exactly as it is (#466).
+func TestDeleteDeployedFilesExcept_KeepsRowsForTheNamedPaths(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	ctx := t.Context()
+
+	fp := &db.FileFingerprint{Checksum: "abc", Size: 3, MTime: 1, CTime: 2}
+	for _, rec := range []db.DeployedFileRecord{
+		{GameID: "g", Profile: "p", RelativePath: "a", SourceID: "s", ModID: "m", ModPath: "/new", Fingerprint: fp},
+		{GameID: "g", Profile: "p", RelativePath: "b", SourceID: "s", ModID: "m", ModPath: "/new"},
+		{GameID: "g", Profile: "p", RelativePath: "c", SourceID: "s", ModID: "m", ModPath: "/old"},
+	} {
+		require.NoError(t, database.RecordDeployedFile(ctx, rec))
+	}
+	require.NoError(t, database.DeleteDeployedFilesExcept(ctx, "g", "p", "s", "m", []string{"/old"}, []string{"a"}))
+
+	records, err := database.DeployedFileRecordsForMod(ctx, "g", "p", "s", "m")
+	require.NoError(t, err)
+	assert.Equal(t, []db.DeployedFileRecord{
+		{GameID: "g", Profile: "p", RelativePath: "a", SourceID: "s", ModID: "m", ModPath: "/new", Fingerprint: fp},
+		{GameID: "g", Profile: "p", RelativePath: "c", SourceID: "s", ModID: "m", ModPath: "/old"},
+	}, records)
 }

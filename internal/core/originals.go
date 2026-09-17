@@ -62,11 +62,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // OriginalRoot names which of a game's two directories an original's
@@ -152,6 +151,10 @@ type OriginalFile struct {
 // without every existing manifest becoming unreadable.
 type originalsManifest struct {
 	Originals []OriginalFile `json:"originals"`
+	// KeptUser is the mod-directory paths (slash form) a removal left in
+	// place as the user's file and stopped tracking (#466 review F5), so
+	// the deploy that later sets such a file aside to replace it says so.
+	KeptUser []string `json:"kept_user,omitempty"`
 }
 
 // originalsStore is one game's originals directory plus its manifest.
@@ -181,10 +184,12 @@ type originalsStore struct {
 	// unverified collects the paths removed since the last drain with no
 	// fingerprint to check them against (#466); a drain reports them as
 	// one line.
-	unverified []string
+	unverified []unverifiedPath
 	// kept is Installer.keptUser for every Installer of the running flow,
-	// cleared by the same drain.
-	kept map[string]db.DeployedFileState
+	// cleared by the same drain and at the end of every mutation
+	// (Service.beginOp): a value is the fingerprinted record the path was
+	// judged against and why it was kept.
+	kept map[string]keptFile
 }
 
 // snapshotsDirFor returns a game's snapshot directory,
@@ -232,28 +237,74 @@ func (s *originalsStore) note(msg string) {
 }
 
 // rememberKept records that a removal left rel as the user's (#466).
-func (s *originalsStore) rememberKept(rel string, st db.DeployedFileState) {
+func (s *originalsStore) rememberKept(rel string, kf keptFile) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.kept == nil {
-		s.kept = make(map[string]db.DeployedFileState)
+		s.kept = make(map[string]keptFile)
 	}
-	s.kept[rel] = st
+	s.kept[rel] = kf
 }
 
 // keptBefore reports whether a removal in the running flow left rel as the
 // user's, and the record it was judged against.
-func (s *originalsStore) keptBefore(rel string) (db.DeployedFileState, bool) {
+func (s *originalsStore) keptBefore(rel string) (keptFile, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st, ok := s.kept[rel]
-	return st, ok
+	kf, ok := s.kept[rel]
+	return kf, ok
 }
 
-// noteUnverified records rel as removed without a content check (#466).
-func (s *originalsStore) noteUnverified(rel string) {
+// noteUnverified records rel as removed without a content check (#466);
+// legacy says its records all predate schema v18.
+func (s *originalsStore) noteUnverified(rel string, legacy bool) {
 	s.mu.Lock()
-	s.unverified = append(s.unverified, rel)
+	s.unverified = append(s.unverified, unverifiedPath{rel: rel, legacy: legacy})
+	s.mu.Unlock()
+}
+
+// markKeptUser records, in the manifest, that a removal left rel in place
+// as the user's file and stopped tracking it (#466 review F5). Best effort:
+// a mark that cannot be written costs only the warning takeKeptUser gives.
+func (s *originalsStore) markKeptUser(rel string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.read()
+	if err != nil || slices.Contains(m.KeptUser, rel) {
+		return
+	}
+	m.KeptUser = append(m.KeptUser, rel)
+	slices.Sort(m.KeptUser)
+	if err := s.write(m); err != nil {
+		s.log.Debug("could not record a file lmm left as yours", "path", rel, "err", err)
+	}
+}
+
+// takeKeptUser reports whether rel carries markKeptUser's mark, and clears
+// it.
+func (s *originalsStore) takeKeptUser(rel string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.read()
+	if err != nil {
+		return false
+	}
+	i := slices.Index(m.KeptUser, rel)
+	if i < 0 {
+		return false
+	}
+	m.KeptUser = slices.Delete(m.KeptUser, i, i+1)
+	if err := s.write(m); err != nil {
+		s.log.Debug("could not clear the mark of a file lmm left as yours", "path", rel, "err", err)
+	}
+	return true
+}
+
+// forgetKept ends the running flow's memory of the files its removals
+// kept (#466 review D3): a later flow judges them again, from the records.
+func (s *originalsStore) forgetKept() {
+	s.mu.Lock()
+	s.kept = nil
 	s.mu.Unlock()
 }
 
@@ -265,9 +316,7 @@ func (s *originalsStore) takeFailures() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := s.failures
-	if len(s.unverified) > 0 {
-		out = append(out, unverifiedNote(s.unverified))
-	}
+	out = append(out, unverifiedNotes(s.unverified)...)
 	s.failures, s.unverified, s.kept = nil, nil, nil
 	return out
 }
@@ -527,6 +576,23 @@ func (s *Service) originalsStoreFor(gameID string) *originalsStore {
 	}
 	s.originalsStores[gameID] = store
 	return store
+}
+
+// forgetKeptFiles ends every game's memory of the files the running flow's
+// removals kept (originalsStore.forgetKept).
+func (s *Service) forgetKeptFiles() {
+	if s == nil {
+		return
+	}
+	s.originalsMu.Lock()
+	stores := make([]*originalsStore, 0, len(s.originalsStores))
+	for _, store := range s.originalsStores {
+		stores = append(stores, store)
+	}
+	s.originalsMu.Unlock()
+	for _, store := range stores {
+		store.forgetKept()
+	}
 }
 
 // takeCaptureWarnings drains gameID's pending originals failures onto

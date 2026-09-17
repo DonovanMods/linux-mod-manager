@@ -537,6 +537,12 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		fmt.Printf("%s %s - CHANGED SINCE DEPLOY (%s)\n", colorYellow("?"), f.ModName, f.Note)
 		fmt.Printf("  %s\n", f.FixableReason)
 
+	case core.VerifyStatusDeployedBlocked:
+		// #466: a path the mod ships that lmm left, because what is there
+		// could not be preserved first.
+		fmt.Printf("%s %s - NOT DEPLOYED (%s)\n", colorYellow("?"), f.ModName, f.Note)
+		fmt.Printf("  %s\n", f.FixableReason)
+
 	case "external_missing":
 		// #269/#429: counted as an issue, and until this arm printed
 		// nothing - "1 issue(s)" with no line saying which item.

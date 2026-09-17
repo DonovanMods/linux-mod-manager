@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -321,6 +322,37 @@ func (s *Service) SetNestedTreeHookForTest(fn func(stage string)) {
 func (s *Service) ExecForTest(ctx context.Context, query string, args ...any) error {
 	_, err := s.db.ExecContext(ctx, query, args...)
 	return err
+}
+
+// QueryForTest runs a read against the Service's database and returns each
+// row's columns as text.
+func (s *Service) QueryForTest(ctx context.Context, query string, args ...any) ([][]string, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck // read-only
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	var out [][]string
+	for rows.Next() {
+		vals := make([]sql.NullString, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		row := make([]string, len(cols))
+		for i, v := range vals {
+			row[i] = v.String
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 // GetFileChecksumForTest reads one file's stored checksum for a row.

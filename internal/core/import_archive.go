@@ -538,7 +538,11 @@ func (s *Service) ApplyImportArchive(ctx context.Context, game *domain.Game, pro
 		return &ImportArchiveResult{}, fmt.Errorf("%w: %s changed since the plan was computed", ErrStalePlan, plan.Archive)
 	}
 
-	return s.applyImportArchive(ctx, game, profileName, plan, opts, sink)
+	result, err := s.applyImportArchive(ctx, game, profileName, plan, opts, sink)
+	// #466 review D7: what the deploy left in place - a file the user
+	// changed, one lmm could not preserve - is this import's to report.
+	s.takeCaptureWarnings(game.ID, OpImport, ImportArchiveWarning, &result.Warnings, sink)
+	return result, err
 }
 
 func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, profileName string, plan *ImportArchivePlan, opts ImportArchiveOptions, sink EventSink) (*ImportArchiveResult, error) {
@@ -738,6 +742,9 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	if err := installer.Install(ctx, game, result.Mod, profileName); err != nil {
 		return result, fmt.Errorf("deployment failed: %w", err)
 	}
+	// Only the files the deploy wrote are deployed (#466 review D7, #476):
+	// a path it left in place is reported, not counted.
+	result.Deployed = max(0, result.Deployed-installer.lastSkipped)
 
 	installedMod := &domain.InstalledMod{
 		Mod:          *result.Mod,

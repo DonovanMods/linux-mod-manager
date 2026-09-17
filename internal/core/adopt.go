@@ -526,7 +526,11 @@ func (s *Service) ApplyAdopt(ctx context.Context, game *domain.Game, plan *Adopt
 		return &AdoptResult{}, err
 	}
 	defer release()
-	return s.applyAdopt(ctx, game, plan, sink)
+	result, err := s.applyAdopt(ctx, game, plan, sink)
+	// #466 review D7: what the deploys left in place is this adopt's to
+	// report.
+	s.takeCaptureWarnings(game.ID, OpAdopt, AdoptSyncWarning, &result.Warnings, sink)
+	return result, err
 }
 
 func (s *Service) applyAdopt(ctx context.Context, game *domain.Game, plan *AdoptPlan, sink EventSink) (*AdoptResult, error) {
