@@ -51,6 +51,10 @@ type toggleKind struct {
 	// Apply runs the core call. It takes the job's own context, never the
 	// request's (jobs.go).
 	Apply func(ctx context.Context, s *Server, sel selection, sourceID, modID string) (any, error)
+	// Precheck, when set, refuses the request before a job starts (#462):
+	// a refusal the core call would return anyway answers the request as a
+	// plan kind's would, rather than failing the job.
+	Precheck func(ctx context.Context, s *Server, sel selection) error
 }
 
 // toggleKinds is the closed table of plan-free mutation kinds, written only
@@ -77,6 +81,10 @@ func init() {
 		Name: "enable",
 		Apply: func(ctx context.Context, s *Server, sel selection, sourceID, modID string) (any, error) {
 			return s.svc.EnableMod(ctx, sel.Game, sel.Profile, sourceID, modID)
+		},
+		// Enabling deploys, which only the game's active profile may.
+		Precheck: func(ctx context.Context, s *Server, sel selection) error {
+			return s.svc.CheckDeployTarget(ctx, sel.Game.ID, sel.Profile)
 		},
 	})
 	registerToggleKind(toggleKind{
@@ -126,6 +134,13 @@ func (s *Server) startToggleJob(w http.ResponseWriter, r *http.Request, kindName
 	sel, ok := s.resolveReadyAPISelection(w, r)
 	if !ok {
 		return
+	}
+
+	if kind.Precheck != nil {
+		if err := kind.Precheck(r.Context(), s, sel); err != nil {
+			s.writeAPIError(w, planErrorStatus(err), err)
+			return
+		}
 	}
 
 	if depth := s.jobs.QueueDepth(); depth > maxQueuedJobs {

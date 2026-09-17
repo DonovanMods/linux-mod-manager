@@ -39,7 +39,8 @@ function isoDate(value) {
  * displayVersion is the version text for one mod - a core.ModListing, a
  * domain.InstalledMod, or anything else carrying the same two wire fields.
  *
- * For an EXTERNAL mod it is the item's revision date (domain.Mod.UpdatedAt,
+ * Core's own display_version wins when the document carries one (issue 458);
+ * otherwise, for an EXTERNAL mod it is the item's revision date (domain.Mod.UpdatedAt,
  * which the Workshop source stamps from Steam's own time_updated), falling
  * back to an em dash when the row carries none: a blank cell under a heading
  * reads as a rendering bug, while "—" says the document has no date, which is
@@ -48,6 +49,11 @@ function isoDate(value) {
  */
 export function displayVersion(mod) {
   if (!mod) return "";
+  // issue 458: core stamps display_version on every document whose version is a
+  // Workshop content id - a Tier-3 download as much as a tracked item - with
+  // the revision date, or "-" when it has none.
+  if (mod.display_version)
+    return mod.display_version === "-" ? "—" : mod.display_version;
   if (mod.external) return isoDate(mod.updated_at) || "—";
   return mod.version ?? "";
 }
@@ -63,6 +69,7 @@ export function displayVersion(mod) {
  */
 export function displayUpdateTarget(update) {
   if (!update) return "";
-  if (update.installed_mod?.external) return "newer";
+  if (update.installed_mod?.external || update.installed_mod?.display_version)
+    return "newer";
   return update.new_version ?? "";
 }

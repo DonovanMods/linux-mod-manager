@@ -86,7 +86,10 @@ func TestFlowProfileImport_JobSavesTheProfileAndInstallsThePendingMod(t *testing
 	result, ok := j.status().Result.(*core.ProfileImportResult)
 	require.True(t, ok, "the stored result must be the core document")
 	assert.Equal(t, importedProfileName, result.ProfileName)
-	assert.Equal(t, 2, result.Installed, "the missing mod AND the already-cached one must be installed")
+	// "imported" is not the game's active profile, so the import records
+	// both mods - rows and all - and deploys neither (#462).
+	assert.True(t, result.RecordedOnly)
+	assert.Equal(t, 2, result.Recorded, "the missing mod AND the already-cached one must be recorded")
 	assert.Equal(t, 0, result.Skipped)
 	assert.Equal(t, 0, result.Failed, "warnings: %v", result.Warnings)
 
