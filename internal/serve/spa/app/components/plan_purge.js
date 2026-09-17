@@ -174,13 +174,28 @@ export function PurgePlanView({ plan, modal, actions }) {
  */
 export function keptReason(k) {
   const names = (list) => (list ?? []).join(", ");
+  // andNames joins the last item with "and" rather than a comma, so a kept
+  // reason with more than one name reads as a sentence ("profiles default
+  // and imported record it too") rather than a list glued to a verb that
+  // does not agree with it (review F6).
+  const andNames = (list) => {
+    const l = list ?? [];
+    if (l.length < 2) return l[0] ?? "";
+    return `${l.slice(0, -1).join(", ")} and ${l[l.length - 1]}`;
+  };
   switch (k.reason) {
     case "listed":
       return `the active profile ${names(k.profiles)} lists its mod, so it may be live`;
-    case "recorded":
-      return `profile ${names(k.profiles)} records it too`;
-    case "other_game":
-      return `game ${names(k.games)} records it too`;
+    case "recorded": {
+      const noun = (k.profiles?.length ?? 0) > 1 ? "profiles" : "profile";
+      const verb = (k.profiles?.length ?? 0) > 1 ? "record" : "records";
+      return `${noun} ${andNames(k.profiles)} ${verb} it too`;
+    }
+    case "other_game": {
+      const noun = (k.games?.length ?? 0) > 1 ? "games" : "game";
+      const verb = (k.games?.length ?? 0) > 1 ? "record" : "records";
+      return `${noun} ${andNames(k.games)} ${verb} it too`;
+    }
     case "user_file":
       return "kept your file; lmm no longer tracks it";
     default:

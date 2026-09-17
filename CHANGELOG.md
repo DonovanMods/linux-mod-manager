@@ -1597,8 +1597,6 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   changelog field; a source without it, or a failed live fetch, simply
   omits the section rather than failing the command (#87).
 
-### Fixed
-
 - **A mod your profile lists switched off but never downloaded is no
   longer invisible (#440).** An imported profile on a fresh machine lists
   such mods without installing them; `lmm list` now names them under its
@@ -1606,6 +1604,19 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   UI's library and Profile card show each one as off and not downloaded,
   with **Install…** to download it and switch it on. The Profile card no
   longer counts them as mods **Apply profile** would install.
+
+- **The web UI edits a game's mod path and flags one that needs repair
+  (#460).** Setup → Games gains **Edit mod path…**: a rejected value is
+  marked on the field, and a move refused because files are still deployed
+  under the old directory lists the steps that clear it, in order. A game
+  whose mod path lmm deployed into has gone now shows a warning with **Set
+  mod path…** on Mission Control, in the Health card, the Games table, the
+  loader panel and the game chooser; Steam detection marks it **needs
+  repair** instead of "already configured". The Health card also says how
+  many mods it checked, how many are Steam Workshop items checked only for
+  presence, and how many have nothing recorded to compare.
+
+### Fixed
 
 - **The web UI's install confirmation lists the dependencies it switches
   back on (#448).** Installing a mod whose dependency the profile has
@@ -1626,17 +1637,6 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   a switch in a game with no single active profile says it only marks the
   target — before you confirm and again when it finishes, with the commands
   that complete it.
-
-- **The web UI edits a game's mod path and flags one that needs repair
-  (#460).** Setup → Games gains **Edit mod path…**: a rejected value is
-  marked on the field, and a move refused because files are still deployed
-  under the old directory lists the steps that clear it, in order. A game
-  whose mod path lmm deployed into has gone now shows a warning with **Set
-  mod path…** on Mission Control, in the Health card, the Games table, the
-  loader panel and the game chooser; Steam detection marks it **needs
-  repair** instead of "already configured". The Health card also says how
-  many mods it checked, how many are Steam Workshop items checked only for
-  presence, and how many have nothing recorded to compare.
 
 - **The web UI reports a game whose adapter lmm refuses as that refusal,
   not a server error (#461).** Deploy, install, updates, profile apply,

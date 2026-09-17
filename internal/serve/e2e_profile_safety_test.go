@@ -134,16 +134,20 @@ func TestE2E_KeptReasons_SayForWhomEachFileIsKept(t *testing.T) {
 			const { keptReason } = await import("/static/app/components/plan_purge.js");
 			return [
 				keptReason({reason: "listed", profiles: ["main"]}),
-				keptReason({reason: "recorded", profiles: ["a", "b"]}),
+				keptReason({reason: "recorded", profiles: ["default"]}),
+				keptReason({reason: "recorded", profiles: ["default", "imported"]}),
 				keptReason({reason: "other_game", games: ["g2"]}),
+				keptReason({reason: "other_game", games: ["g2", "g3"]}),
 				keptReason({reason: "user_file"}),
 			];
 		})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
 	)
 	assert.Equal(t, []string{
 		"the active profile main lists its mod, so it may be live",
-		"profile a, b records it too",
+		"profile default records it too",
+		"profiles default and imported record it too",
 		"game g2 records it too",
+		"games g2 and g3 record it too",
 		"kept your file; lmm no longer tracks it",
 	}, got)
 	assert.Empty(t, f.BrowserErrors())
