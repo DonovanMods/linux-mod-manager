@@ -195,10 +195,14 @@ func TestBeginOp_AFlowsKeptFilesEndWithIt(t *testing.T) {
 	store.rememberKept("Data/k.esp", keptFile{reason: "it could not be checked"})
 	_, ok := store.keptBefore("Data/k.esp")
 	require.True(t, ok, "the flow itself still knows")
+	// A flow that fails before its drain (#466 re-review R6).
+	store.note("Data/k2.esp was left in place: it could not be checked")
+	store.noteUnverified("Data/k3.esp", false)
 	release()
 
 	_, ok = store.keptBefore("Data/k.esp")
 	assert.False(t, ok, "the next flow judges the file again")
+	assert.Empty(t, store.takeFailures(), "and does not report the last flow's notes as its own")
 }
 
 // TestJudgeLink_OnlyTheActingProfilesRecordsMakeALinkLmms (#466 re-review

@@ -302,9 +302,12 @@ func (s *originalsStore) takeKeptUser(rel string) bool {
 
 // forgetKept ends the running flow's memory of the files its removals
 // kept (#466 review D3): a later flow judges them again, from the records.
+// The notes it has not drained go too (re-review R6): a flow that failed
+// before its drain reported its error, and the next flow's warnings are
+// that flow's own.
 func (s *originalsStore) forgetKept() {
 	s.mu.Lock()
-	s.kept = nil
+	s.kept, s.failures, s.unverified = nil, nil, nil
 	s.mu.Unlock()
 }
 
@@ -588,7 +591,7 @@ func (s *Service) originalsStoreFor(gameID string) *originalsStore {
 }
 
 // forgetKeptFiles ends every game's memory of the files the running flow's
-// removals kept (originalsStore.forgetKept).
+// removals kept, and its undrained notes (originalsStore.forgetKept).
 func (s *Service) forgetKeptFiles() {
 	if s == nil {
 		return
