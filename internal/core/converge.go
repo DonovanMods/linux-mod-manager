@@ -174,6 +174,14 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		installer := s.getInstaller(game)
 		kept = func(path string, m domain.InstalledMod, jd deployedJudge) (PurgeKeptPath, bool) {
 			row := db.DeployedPath{RelativePath: filepath.ToSlash(path), SourceID: m.SourceID, ModID: m.ID}
+			// #469 (b), as the recorded-only purge judges it: a regular
+			// file where this profile recorded a link is the user's - by the
+			// method the mod's row was deployed with, as recordedPaths
+			// reads it. The #466 judge cannot say so: a link's record
+			// carries no fingerprint.
+			if m.LinkMethod == domain.LinkSymlink && !installer.notLinkerOwned(game, row.RelativePath) && replacedLink(filepath.Join(game.ModPath, path)) {
+				return PurgeKeptPath{Path: row.RelativePath, Reason: PurgeKeptUserFile, Note: replacedLinkNote}, true
+			}
 			return keptPath(ctx, row, profileName, live, recordsUnder(game, game, records[row.RelativePath]), listed, others, installer, jd)
 		}
 	}

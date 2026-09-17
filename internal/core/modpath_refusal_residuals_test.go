@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -238,4 +239,42 @@ func TestSaveGame_RefusesOnlyAnEditThatMovesTheModPath(t *testing.T) {
 	renamed := *f.game
 	renamed.Name = "Sky, renamed"
 	require.NoError(t, f.svc.SaveGame(ctx, &renamed), "an edit that keeps the mod_path is not refused")
+}
+
+// TestVerifyFix_ANonActiveProfilesReplacedLinkIsTheUsers: a non-active
+// profile's convergence judges a regular file at a path it recorded a link
+// for as a recorded-only purge does (#469's (b)) - the user's file, kept,
+// its record dropped - rather than warning "not a symlink" on every run.
+func TestVerifyFix_ANonActiveProfilesReplacedLinkIsTheUsers(t *testing.T) {
+	ctx := context.Background()
+	f := newLegacyFixture(t, &domain.Game{ID: "sky", Name: "Sky", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink})
+	f.profile(t, "default", true)
+	f.profile(t, "other", false, "o")
+	f.deployed(t, "other", "o", domain.LinkSymlink, map[string]string{"Data/o.esp": "o", "Data/d.esp": "d"}, nil)
+	// The mod no longer provides d.esp, and the user put their own file there.
+	cached := filepath.Join(f.svc.GetGameCache(f.game).ModPath("sky", "local", "o", "unknown"), "Data", "d.esp")
+	require.NoError(t, os.Remove(cached))
+	user := userFileAt(t, f, "Data/d.esp", "the user's")
+
+	for run := 1; run <= 2; run++ {
+		report, err := f.svc.VerifyReport(ctx, f.game, "other", core.VerifyOptions{Force: true, Fix: true}, nil)
+		require.NoError(t, err)
+		for _, finding := range report.Result.Findings {
+			assert.NotContains(t, finding.Note, "not a symlink", "run %d", run)
+		}
+		if run == 1 {
+			assert.Contains(t, findingNotes(report.Result), "you replaced lmm's link with your own file")
+		}
+	}
+
+	assert.Equal(t, "the user's", readLive(t, user))
+	assert.Equal(t, []string{"Data/o.esp"}, f.recorded(t, "other", "o"), "d.esp's record is dropped")
+}
+
+func findingNotes(r *core.VerifyResult) string {
+	var notes []string
+	for _, f := range r.Findings {
+		notes = append(notes, f.Note)
+	}
+	return strings.Join(notes, "\n")
 }
