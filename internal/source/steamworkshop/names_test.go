@@ -212,7 +212,7 @@ func TestAuthorName_APersonaNameIsMadeSafeToPrint(t *testing.T) {
 		res, err := src.Search(context.Background(), source.SearchQuery{GameID: "1133870", Query: "ship"})
 		require.NoError(t, err)
 		require.Len(t, res.Mods, 2)
-		assert.Equal(t, "[31mEvil Name", res.Mods[0].AuthorName, "no ESC, no BEL, no RLO, no newline")
+		assert.Equal(t, "Evil Name", res.Mods[0].AuthorName, "no escape sequence, no BEL, no RLO, no newline")
 		assert.Empty(t, res.Mods[1].AuthorName, "an invisible name is no name")
 	})
 

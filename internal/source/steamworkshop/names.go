@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -115,13 +116,18 @@ func isSteamID64(id string) bool {
 	return true
 }
 
-// cleanPersona makes a persona name safe to print: control and format
-// characters (terminal escapes, bidi overrides) are dropped, whitespace is
-// collapsed, and the result is capped. A name that cleans to nothing is no
-// name.
+// csiSequence matches an ANSI control sequence (ESC [ params final), so
+// cleanPersona drops a colour code whole rather than leaving its "[31m"
+// behind once the ESC byte is gone.
+var csiSequence = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+
+// cleanPersona makes a persona name safe to print: control sequences and
+// control and format characters (terminal escapes, bidi overrides) are
+// dropped, whitespace is collapsed, and the result is capped. A name that
+// cleans to nothing is no name.
 func cleanPersona(name string) string {
 	var b strings.Builder
-	for _, r := range name {
+	for _, r := range csiSequence.ReplaceAllString(name, "") {
 		switch {
 		case r == utf8.RuneError, unicode.Is(unicode.Cf, r):
 			continue
