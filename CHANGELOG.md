@@ -1599,6 +1599,11 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The web UI's Games table no longer shows `generic-files` for a game
+  whose adapter lmm refuses (#449).** The cell names the configured adapter,
+  marked **refused**, with lmm's reason and the command that fixes it; the
+  game's loader panel shows the same.
+
 - **The web UI's profiles modal and plans follow the active-profile rules
   (#463).** The active profile no longer offers **Delete**, and says why; a
   non-active profile's purge is **Clean up…**, previewing the files it will

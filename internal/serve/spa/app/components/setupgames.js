@@ -22,6 +22,7 @@ import {
 } from "./gameloader.js";
 import { GameDetectSection, GameAddForm } from "./gameadd.js";
 import { ModPathEditor, ModPathWarning } from "./modpath.js";
+import { AdapterCell } from "./adaptercell.js";
 
 /** setDefaultGame/clearDefaultGame are this section's own two mutations -
  * thin single-step writes (api_games.go, issue 333) with nothing to preview, the
@@ -227,7 +228,9 @@ export function SetupGames({
   // deploy_mode: compile, bepinex for a game with BepInEx), where `adapter`
   // is only what games.yaml says. An absent `effective_adapter` IS the
   // generic-files identity, so the cell names it rather than leaving a
-  // blank - there is no such thing as a game with no adapter.
+  // blank - there is no such thing as a game with no adapter. A game core
+  // refuses (`adapter_error`, issue 449) is the exception: it uses none, and
+  // the cell says so (adaptercell.js).
   return html`
     <div class="setup-section" data-testid="setup-games">
       <table class="setup-table">
@@ -272,7 +275,7 @@ export function SetupGames({
                       editingModPath?.id !== g.id && toggleModPathEditor(g)}
                   />
                 </td>
-                <td class="mono">${g.effective_adapter || "generic-files"}</td>
+                <td><${AdapterCell} game=${g} /></td>
                 <td>
                   <span class="mono"
                     >${Object.keys(g.source_ids ?? {}).join(", ") || "—"}</span

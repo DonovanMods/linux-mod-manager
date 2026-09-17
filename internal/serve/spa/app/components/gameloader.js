@@ -12,6 +12,7 @@
 // which build or which option is decided in JavaScript.
 
 import { ModPathWarning } from "./modpath.js";
+import { AdapterError } from "./adaptercell.js";
 import { html, useEffect, useState } from "../render.js";
 import { ApiError, getGameDetail, updateGameLoader } from "../api.js";
 
@@ -183,6 +184,7 @@ export function GameLoaderPanel({ gameID, refreshKey, onSetModPath }) {
         gameID=${gameID}
         onSetModPath=${onSetModPath}
       />
+      <${AdapterError} game=${detail} />
       <dl class="loader-panel__facts">
         <dt>Installed</dt>
         <dd data-testid="loader-installed">
