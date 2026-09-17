@@ -186,11 +186,13 @@ export function InstallPlanView({ plan, modal, actions }) {
               Switched back on (${reenabled.length})
             </h3>
             <p class="plan__note plan__note--warn">
-              Profile <span class="mono">${plan.profile}</span> has
-              ${reenabled.length === 1 ? " this dependency" : " these dependencies"}
-              switched off. ${plan.mod?.name ?? "This mod"} can't work without
-              ${reenabled.length === 1 ? " it" : " them"}, so installing turns
-              ${reenabled.length === 1 ? " it" : " them"} back on.
+              ${
+                // One string, for htm's whitespace rule
+                // (cards.js#conflictLabel).
+                reenabled.length === 1
+                  ? `Profile ${plan.profile} has this dependency switched off. ${plan.mod?.name ?? "This mod"} can't work without it, so installing turns it back on.`
+                  : `Profile ${plan.profile} has these dependencies switched off. ${plan.mod?.name ?? "This mod"} can't work without them, so installing turns them back on.`
+              }
             </p>
             <ul class="plan__mods">
               ${reenabled.map(

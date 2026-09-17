@@ -46,7 +46,6 @@ func TestE2E_InstallPlan_ListsTheDependenciesItSwitchesBackOn(t *testing.T) {
 	)
 	assert.Contains(t, section, "Switched back on (1)")
 	assert.Contains(t, section, "Helper Mod")
-	assert.Contains(t, section, "switched off")
-	assert.Contains(t, section, "Needy Mod can't work without it")
+	assert.Contains(t, section, "Profile default has this dependency switched off. Needy Mod can't work without it, so installing turns it back on.")
 	assert.Empty(t, f.BrowserErrors())
 }
