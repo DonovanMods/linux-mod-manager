@@ -113,3 +113,30 @@ export function retryAtFor(details) {
   if (Number.isNaN(at)) return null;
   return { source: details.source, at: new Date(at) };
 }
+
+/**
+ * adapterRefusalFor returns the adapter refusal a failure's TYPED details
+ * describe, or null (issue 461). Two core shapes carry it:
+ * core.AdapterRefusedError ({game_id, adapter}: the game's configured
+ * adapter cannot run at all) and core.AdapterPreconditionError ({game_id,
+ * adapter, reason}: the adapter refused this flow). Identified by structure
+ * - exactly those members - never by the message, which already names the
+ * problem and, where core knows one, the fix.
+ */
+export function adapterRefusalFor(details) {
+  if (!details || typeof details !== "object") return null;
+  const keys = Object.keys(details);
+  const known = new Set(["game_id", "adapter", "reason"]);
+  if (
+    !details.game_id ||
+    !("adapter" in details) ||
+    !keys.every((k) => known.has(k))
+  ) {
+    return null;
+  }
+  return {
+    gameID: details.game_id,
+    adapter: details.adapter ?? "",
+    reason: details.reason ?? "",
+  };
+}

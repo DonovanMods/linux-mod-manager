@@ -13,7 +13,7 @@
 
 import { html } from "../render.js";
 import { codeSpans } from "../errortext.js";
-import { loaderSetupFor, retryAtFor } from "../failures.js";
+import { adapterRefusalFor, loaderSetupFor, retryAtFor } from "../failures.js";
 import { DocumentView } from "./documentview.js";
 
 /** loaderLabel spells a loader kind the way its own project does. An
@@ -31,6 +31,9 @@ export function ErrorDetails({ details }) {
 
   const loader = loaderSetupFor(details);
   if (loader) return html`<${LoaderSetup} loader=${loader} />`;
+
+  const refusal = adapterRefusalFor(details);
+  if (refusal) return html`<${AdapterRefusal} refusal=${refusal} />`;
 
   const retry = retryAtFor(details);
   if (retry) {
@@ -79,6 +82,36 @@ export function LoaderSetup({ loader }) {
             </li>`,
         )}
       </ol>
+    </div>
+  `;
+}
+
+/**
+ * AdapterRefusal is a refused adapter's remedy (issue 461): the game's
+ * configuration refuses the flow, so nothing is wrong with the request and
+ * nothing will change on a retry until the game is changed. The message
+ * above it is core's sentence; this names where the fix is made, in both
+ * frontends.
+ */
+export function AdapterRefusal({ refusal }) {
+  const adapter = refusal.adapter || "generic-files";
+  return html`
+    <div
+      class="adapter-refusal"
+      data-testid="adapter-refusal"
+      data-adapter=${adapter}
+    >
+      ${
+        refusal.reason &&
+        html`<p class="adapter-refusal__reason">
+          ${codeSpans(refusal.reason)}
+        </p>`
+      }
+      <p class="adapter-refusal__remedy">
+        Fix the game's adapter in Setup → Games, or run ${" "}<code
+          >lmm game edit ${refusal.gameID} --adapter ${"<name>"}</code
+        >, then try again.
+      </p>
     </div>
   `;
 }

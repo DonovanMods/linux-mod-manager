@@ -25,6 +25,7 @@ import { html } from "../render.js";
 import { Modal } from "./modal.js";
 import { ErrorDetails } from "./errordetails.js";
 import { planRendererFor } from "./planrenderers.js";
+import { codeSpans } from "../errortext.js";
 
 /**
  * ConfirmPlanModal renders whatever the store's `modal` slice holds, which
@@ -142,7 +143,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
           : status === "error"
             ? html`
                 <div class="modal__error">
-                  <p>${error}</p>
+                  <p>${codeSpans(error)}</p>
                   <${ErrorDetails} details=${details} />
                 </div>
               `

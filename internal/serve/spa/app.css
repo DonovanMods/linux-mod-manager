@@ -3036,3 +3036,13 @@ select {
   overflow-wrap: anywhere;
   user-select: all;
 }
+
+/* issue 461: a refused adapter's remedy under the refusal itself. */
+.adapter-refusal {
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+}
+
+.adapter-refusal p {
+  margin: 0 0 var(--space-1);
+}

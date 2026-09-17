@@ -147,10 +147,20 @@ var errBadPlanRequest = errors.New("invalid plan request")
 // setup steps that say how. A game whose identifier for the source is
 // missing or malformed is 400, and an index that could not be had is 502,
 // exactly as the search and the index routes answer them.
+//
+// A game whose adapter core refuses (#461) - an adapter this build does not
+// ship, a compile game whose adapter cannot compile, bepinex off the game
+// root - and an adapter that refuses a flow's preconditions are the same
+// class: 409, the typed refusal in the envelope, exactly as GET
+// /api/v1/conflicts answers since #455. The sentence names the remedy.
 func planErrorStatus(err error) int {
-	var loader *core.LoaderRequiredError
+	var (
+		loader       *core.LoaderRequiredError
+		refused      *core.AdapterRefusedError
+		precondition *core.AdapterPreconditionError
+	)
 	switch {
-	case errors.As(err, &loader):
+	case errors.As(err, &loader), errors.As(err, &refused), errors.As(err, &precondition):
 		return http.StatusConflict
 	case core.IsGameIdentifierInvalid(err):
 		return http.StatusBadRequest
