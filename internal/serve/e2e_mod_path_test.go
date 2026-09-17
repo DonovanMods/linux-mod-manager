@@ -46,6 +46,7 @@ func TestE2E_MissingModPath_FlaggedWithTheRepairEverywhere(t *testing.T) {
 	f := newE2EFixtureWithAMissingModPath(t)
 
 	var banner, healthRow, value, rowWarning string
+	var focused bool
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
@@ -58,6 +59,7 @@ func TestE2E_MissingModPath_FlaggedWithTheRepairEverywhere(t *testing.T) {
 			document.querySelector('[data-testid="mod-path-editor"] input[name="mod-path"]').value !== ""`),
 		chromedp.Value(`[data-testid="mod-path-editor"] input[name="mod-path"]`, &value, chromedp.ByQuery),
 		textContent(`[data-testid="setup-games"] td [data-testid="mod-path-error"]`, &rowWarning),
+		chromedp.Evaluate(`document.activeElement === document.querySelector('[data-testid="mod-path-editor"] input[name="mod-path"]')`, &focused),
 	)
 	assert.Contains(t, banner, f.Game.ModPath+" does not exist, but lmm recorded 2 deployed file(s) under it")
 	assert.Contains(t, banner, "Set mod path…")
@@ -66,6 +68,33 @@ func TestE2E_MissingModPath_FlaggedWithTheRepairEverywhere(t *testing.T) {
 	assert.Contains(t, healthRow, "Set mod path…", "the row's action is the repair, not a dead 'Not fixable'")
 	assert.Equal(t, f.Game.ModPath, value, "with no suggestion the editor starts from the current value")
 	assert.Contains(t, rowWarning, "does not exist")
+	assert.True(t, focused, "opening the editor from the deep link moves keyboard focus into its input")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ModPathEditor_RowActionRefocusesWhenAlreadyOpen is review F4: a
+// row's own "Set mod path…" warning action used to no-op when that row's
+// editor was already open (setupgames.js gated the call on
+// `editingModPath?.id !== g.id`), leaving a keyboard user with no feedback
+// at all for the click. The action now moves focus into the input either
+// way.
+func TestE2E_ModPathEditor_RowActionRefocusesWhenAlreadyOpen(t *testing.T) {
+	f := newE2EFixtureWithAMissingModPath(t)
+
+	var reopenedFocus bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/setup"),
+		chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+		chromedp.Click(`.setup-nav__tab[data-section="games"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-testid="setup-games"] [data-action="edit-mod-path"]`),
+		chromedp.WaitVisible(`[data-testid="mod-path-editor"] input[name="mod-path"]`, chromedp.ByQuery),
+		// Move focus elsewhere so the row action's effect is unambiguous.
+		chromedp.Evaluate(`document.querySelector('[data-testid="setup-games"] [data-action="edit-mod-path"]').focus()`, nil),
+		clickWhenSettled(`[data-testid="setup-games"] td [data-testid="mod-path-error"] [data-action="set-mod-path"]`),
+		chromedp.Evaluate(`document.activeElement === document.querySelector('[data-testid="mod-path-editor"] input[name="mod-path"]')`, &reopenedFocus),
+	)
+	assert.True(t, reopenedFocus, "the row warning's action refocuses the already-open editor's input rather than doing nothing")
 	assert.Empty(t, f.BrowserErrors())
 }
 

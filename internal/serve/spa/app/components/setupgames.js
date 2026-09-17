@@ -156,6 +156,20 @@ export function SetupGames({
     );
   }
 
+  // openOrFocusModPath is the row warning's and the loader panel's own
+  // "Set mod path…" action (review F4): when that row's editor is not open
+  // yet, it opens it (ModPathEditor's own mount effect then takes focus);
+  // when it is ALREADY open, toggling would close it, so the action instead
+  // moves focus into the input that is already on screen - never a silent
+  // no-op for a click the user just made.
+  function openOrFocusModPath(g) {
+    if (editingModPath?.id === g.id) {
+      document.getElementById(`mod-path-${g.id}`)?.focus();
+      return;
+    }
+    toggleModPathEditor(g);
+  }
+
   async function saveModPath() {
     if (!editingModPath) return;
     const { id, value } = editingModPath;
@@ -271,8 +285,7 @@ export function SetupGames({
                   <${ModPathWarning}
                     error=${g.mod_path_error}
                     gameID=${g.id}
-                    onSetModPath=${() =>
-                      editingModPath?.id !== g.id && toggleModPathEditor(g)}
+                    onSetModPath=${() => openOrFocusModPath(g)}
                   />
                 </td>
                 <td><${AdapterCell} game=${g} /></td>
@@ -388,8 +401,7 @@ export function SetupGames({
                     </button>
                     <${GameLoaderPanel}
                       gameID=${g.id}
-                      onSetModPath=${() =>
-                        editingModPath?.id !== g.id && toggleModPathEditor(g)}
+                      onSetModPath=${() => openOrFocusModPath(g)}
                       refreshKey=${loaderKey}
                     />
                   </td>

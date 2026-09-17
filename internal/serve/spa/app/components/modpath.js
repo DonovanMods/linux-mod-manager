@@ -8,7 +8,7 @@
 // has gone, typically); `GameModPathInUseError` carries the ORDERED steps
 // that clear a refused move. This file renders them and invents nothing.
 
-import { html } from "../render.js";
+import { html, useEffect, useRef } from "../render.js";
 import { codeSpans } from "../errortext.js";
 import { navigate, modPathEditPath } from "../router.js";
 
@@ -202,11 +202,24 @@ export function ModPathEditor({
   const inputID = `mod-path-${gameID}`;
   const fieldError = error?.field === "mod_path" ? error.message : "";
   const inUse = modPathInUseFor(error?.details);
+  const inputRef = useRef(null);
+
+  // Review F4: this component only ever exists while the editor is open
+  // (setupgames.js mounts it conditionally, keyed per row), so mounting IS
+  // "the editor opened" - from the deep link, from the row's own "Edit mod
+  // path…", or from a warning's "Set mod path…" for a row not yet open.
+  // Without this a keyboard user lands on Setup > Games with focus still on
+  // `<body>` and has to tab through the whole page to reach the input.
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
   return html`
     <div class="mod-path-editor" data-testid="mod-path-editor">
       <label class="plan__control" for=${inputID}>Mod path</label>
       <input
         id=${inputID}
+        ref=${inputRef}
         type="text"
         class="mono"
         name="mod-path"
