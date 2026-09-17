@@ -1781,6 +1781,35 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   failure, and `from_profile` for a mod deployed from another profile's
   cache. The web UI's Apply job fails with the same message.
 
+- **lmm never removes or replaces a file another game records (#445).**
+  Two games can share one mod directory. `lmm purge` of the active
+  profile, `lmm uninstall`, a deploy (`lmm deploy`, a switch, an apply, an
+  update) and `verify --fix` ignored the other game's records: `lmm purge
+-g sky` deleted a file `sky2`'s active profile had live — under `copy`,
+  the user's edited copy, for good — and the `lmm game edit --mod-path`
+  refusal's own commands could do the same. Only the purge of a profile
+  that is not active already kept such a file. Every removal and every
+  overwrite now leaves it exactly as it is and says so: `lmm purge` lists
+  it (`Left in place (still recorded by game sky2): Data/a.esp`, and in
+  `--json`'s `kept`), and the other flows warn
+  (`Data/a.esp was not replaced: game sky2 records it too, …`). A deploy
+  still records the path for its own profile, so the other game's purge
+  keeps the file in turn; a purge drops its profile's record, leaving the
+  file to the other game. lmm refuses to change anything when it cannot
+  read those records.
+
+  The mod_path refusal follows. A file the active profile lists that the
+  other game's **active** profile keeps (its own record, or one of a mod
+  it lists) is that game's: the purge of the profile that recorded it here
+  drops its record, and no `lmm profile apply` is named for it. A file only
+  another game's **non-active** profile records is named first — the
+  refusal lists `lmm purge --game <other> --profile <name>`, which keeps the
+  file and lets go of it, before the apply that records it here (and
+  `--json`'s `release_first` lists those profiles). When lmm cannot tell
+  which profile of that other game is active, the move is refused with
+  that instead of naming a purge that could be the other game's whole
+  deployment.
+
 - **`lmm uninstall` keeps a cache entry another profile still uses
   (#445).** Uninstalling a mod deleted its version's cache entry even while
   another profile's row still used it — and for a local mod that entry is

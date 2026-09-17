@@ -199,6 +199,8 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 		fmt.Printf(", Failed: %d", failed)
 	}
 	fmt.Println()
+	// #445 gate 2, G2-1: the files another game records, left in place.
+	printKeptPaths(result.Kept)
 
 	if !purgeUninstall {
 		fmt.Println("\nMod records preserved. Use 'lmm deploy' to restore mods.")

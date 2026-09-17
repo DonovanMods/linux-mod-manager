@@ -12,6 +12,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -288,14 +289,28 @@ func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to s
 // refusal names can clear them, and when an apply cannot deploy the mod at
 // the version the active profile lists, nothing records them at all: only
 // an edit of the active profile's document ends that.
+//
+// A file among those that another game records as well (#445 gate 2,
+// G2-1) is one no command of this game can record while that game does:
+// lmm never replaces another game's file. Each profile of another game
+// recording one is named in ReleaseFirst - none is its game's active
+// profile, or the file would be that game's (heldForActive) - and when lmm
+// cannot tell which profile of such a game is active, the move is refused
+// with that instead, since the purge it would name could be that game's
+// whole deployment.
 func (s *Service) countListedUnrecorded(ctx context.Context, game *domain.Game, inUse *GameModPathInUseError) error {
 	var view *activeApplyView
 	named := make(map[string]bool)
+	others, err := s.otherGamesRecording(ctx, game)
+	if err != nil {
+		return err
+	}
+	release := make(map[OtherGameProfile]bool)
 	for _, p := range inUse.Profiles {
 		if p.Profile == inUse.ActiveProfile {
 			continue
 		}
-		_, kept, err := s.recordedPaths(ctx, game, p.Profile, inUse.ActiveProfile)
+		_, kept, err := s.recordedPaths(ctx, game, p.Profile, inUse.ActiveProfile, others)
 		if err != nil {
 			return err
 		}
@@ -315,12 +330,27 @@ func (s *Service) countListedUnrecorded(ctx context.Context, game *domain.Game, 
 				inUse.NeedsDeploy = true
 			case view.canDeploy(key, s.hasSource):
 				inUse.NeedsApply = true
-			case !named[key]:
-				named[key] = true
-				inUse.ListedUnavailable = append(inUse.ListedUnavailable, view.unavailable(key))
+			default:
+				if !named[key] {
+					named[key] = true
+					inUse.ListedUnavailable = append(inUse.ListedUnavailable, view.unavailable(key))
+				}
+				continue
+			}
+			for _, h := range others.holding(k.Path) {
+				if c := others.claims(h.game); c.err != nil {
+					return fmt.Errorf("cannot move the mod_path of %s: %d deployed file(s) are recorded under it, and game %s, which shares the directory, records %s too - lmm cannot name the purge that lets it go until it can tell which profile of %s is active: %w",
+						game.ID, inUse.DeployedFiles, h.game.id, k.Path, h.game.id, c.err)
+				}
+				for _, rec := range h.records {
+					release[OtherGameProfile{GameID: h.game.id, Profile: rec.Profile}] = true
+				}
 			}
 		}
 	}
+	inUse.ReleaseFirst = slices.SortedFunc(maps.Keys(release), func(a, b OtherGameProfile) int {
+		return cmp.Or(strings.Compare(a.GameID, b.GameID), strings.Compare(a.Profile, b.Profile))
+	})
 	return nil
 }
 
@@ -642,6 +672,20 @@ type GameModPathInUseError struct {
 	// until ActiveProfile's document lists another version or marks them
 	// off.
 	ListedUnavailable []ListedVersionUnavailable `json:"listed_unavailable,omitempty"`
+	// ReleaseFirst names the profiles of other games sharing the directory
+	// that record some of the files NeedsApply or NeedsDeploy is for (#445
+	// gate 2, G2-1), in game and profile order. lmm never replaces a file
+	// another game records, so ActiveProfile cannot record those until each
+	// of these lets go of them: none is its game's active profile, and its
+	// purge keeps a file this game records and drops its own record of it.
+	ReleaseFirst []OtherGameProfile `json:"release_first,omitempty"`
+}
+
+// OtherGameProfile is a profile of another game (GameModPathInUseError.
+// ReleaseFirst).
+type OtherGameProfile struct {
+	GameID  string `json:"game_id"`
+	Profile string `json:"profile"`
 }
 
 // ListedVersionUnavailable is a mod a game's active profile lists at a
@@ -691,6 +735,9 @@ func (e *GameModPathInUseError) Error() string {
 	purge := "purge them first"
 	if e.ListedUnrecorded > 0 {
 		var steps []string
+		for _, r := range e.ReleaseFirst {
+			steps = append(steps, fmt.Sprintf("`lmm purge --game %s --profile %s`", r.GameID, r.Profile))
+		}
 		if e.NeedsApply {
 			steps = append(steps, fmt.Sprintf("`lmm profile apply %s --game %s`", e.ActiveProfile, e.GameID))
 		}
@@ -702,6 +749,9 @@ func (e *GameModPathInUseError) Error() string {
 		those := "those"
 		if len(e.ListedUnavailable) > 0 {
 			those = "the others"
+		}
+		if len(e.ReleaseFirst) > 0 {
+			b.WriteString(" - and another game sharing the directory records some of them too, which lmm leaves to that game until its purge lets them go")
 		}
 		if len(steps) > 0 {
 			fmt.Fprintf(&b, ", so first run %s to record %s under %s", strings.Join(steps, ", then "), those, e.ActiveProfile)

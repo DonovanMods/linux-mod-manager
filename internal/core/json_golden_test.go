@@ -1929,6 +1929,24 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #445 gate 2, G2-1: such a file another game sharing the
+			// directory records too - that game's non-active profile has to
+			// let it go before the active profile can record it.
+			"game_mod_path_in_use_error_release_first",
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/shared/Data", NewModPath: "/games/skyrim-se/Mods",
+				DeployedFiles: 1, ActiveProfile: "survival",
+				Profiles:         []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}},
+				ListedUnrecorded: 1, NeedsApply: true,
+				ReleaseFirst: []core.OtherGameProfile{{GameID: "skyrim-vr", Profile: "vanilla"}},
+			},
+		},
+		{
+			// One entry of game_mod_path_in_use_error's release_first.
+			"other_game_profile",
+			core.OtherGameProfile{GameID: "skyrim-vr", Profile: "vanilla"},
+		},
+		{
 			// One entry of game_mod_path_in_use_error's listed_unavailable:
 			// a mod listed with no version, and nothing of it cached.
 			"listed_version_unavailable",

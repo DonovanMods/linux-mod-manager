@@ -211,6 +211,17 @@ func (s *originalsStore) noteFailure(msg string) {
 	}
 }
 
+// note records msg on the pending list alone, for the running flow to put on
+// its result's Warnings: a path a removal or an overwrite left for another
+// game (#445 gate 2, G2-1, heldPath), which that flow reports. Unlike
+// noteFailure it is not echoed on the always-on channel - the flow's own
+// Warnings are where it is read.
+func (s *originalsStore) note(msg string) {
+	s.mu.Lock()
+	s.failures = append(s.failures, msg)
+	s.mu.Unlock()
+}
+
 // takeFailures drains the pending capture failures, so a flow can put them
 // on its own result's Warnings.
 func (s *originalsStore) takeFailures() []string {
@@ -464,7 +475,8 @@ func (s *Service) originalsStoreFor(gameID string) *originalsStore {
 //
 // "Capture" is the historical name; the pending list holds failed PUT-BACKS
 // too (ruling (a)), which is why the removal flows drain it as well - a
-// purge and an uninstall through re-review finding N2.
+// purge and an uninstall through re-review finding N2 - and the paths a
+// removal or an overwrite left for another game (#445 gate 2, G2-1).
 func (s *Service) takeCaptureWarnings(gameID string, op Op, phase DeployPhase, warnings *[]string, emit func(Event)) {
 	store := s.originalsStoreFor(gameID)
 	if store == nil {

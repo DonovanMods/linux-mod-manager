@@ -48,6 +48,9 @@ type purgeSpec struct {
 	notes    *[]string
 	skipped  *[]InstalledRef
 	purged   *int
+	// kept receives the paths the loop left for another game (purge
+	// command only; nil in deploy mode, which reports them as warnings).
+	kept *[]PurgeKeptPath
 }
 
 // purgeMods is THE purge loop (#61): the one shared implementation of
@@ -125,8 +128,18 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 			continue
 		}
 
-		modRemoved, err := installer.uninstall(ctx, game, &mod.Mod, profileName)
+		modRemoved, held, err := installer.uninstall(ctx, game, &mod.Mod, profileName)
 		removed = append(removed, modRemoved...)
+		// #445 gate 2, G2-1: the purge command reports what it left for
+		// another game as a recorded-only purge does; deploy's pass puts it
+		// on the deploy's Warnings.
+		for _, h := range held {
+			if spec.kept != nil {
+				*spec.kept = append(*spec.kept, PurgeKeptPath{Path: h.path, Reason: PurgeKeptOtherGame, Games: h.games})
+				continue
+			}
+			installer.noteHeld(h.removalNote())
+		}
 		if err != nil {
 			// Best-effort: files may have been manually removed.
 			msg := fmt.Sprintf("⚠ %s - %v", mod.Name, err)
@@ -307,7 +320,8 @@ type PurgeKeptPath struct {
 //     path is in PurgePlan.Remove);
 //  2. PurgeKeptUserFile;
 //  3. PurgeKeptListed - unless another record of the path keeps the file
-//     for the same reason (listedHandedOn);
+//     for the same reason (listedHandedOn), or another game's record keeps
+//     it for that game's active profile (otherGameRecords.heldForActive);
 //  4. PurgeKeptRecorded, then PurgeKeptOtherGame;
 //  5. otherwise the path is the purged profile's alone: it is removed.
 //
@@ -340,7 +354,8 @@ const (
 	PurgeKeptOtherGame PurgeKeptReason = "other_game"
 	// PurgeKeptListed: the active profile's document lists the path's mod,
 	// not marked off, and no other record keeps the file for that reason -
-	// none under the active profile, and none whose mod it lists - so the
+	// none under the active profile, none whose mod it lists, and none of
+	// another game's that keeps it for that game's active profile - so the
 	// file may be live for the active profile, and the purged profile's
 	// record is its only claim to be lmm's. What a v1.30.1 switch between
 	// profiles sharing a mod left (review F3). Asked on every purge, so the
@@ -471,7 +486,11 @@ func (s *Service) planRecordedPurge(ctx context.Context, game *domain.Game, prof
 	if err != nil {
 		return nil, nil, fmt.Errorf("getting installed mods: %w", err)
 	}
-	remove, kept, err := s.recordedPaths(ctx, game, profileName, live)
+	others, err := s.otherGamesRecording(ctx, game)
+	if err != nil {
+		return nil, nil, err
+	}
+	remove, kept, err := s.recordedPaths(ctx, game, profileName, live, others)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -511,10 +530,12 @@ type keptRecord struct {
 // recordedPaths splits profileName's deployed-file records into the ones a
 // recorded-only purge may remove - a path whose file is already gone among
 // them - and the ones whose file it keeps, each in path order, deciding
-// each in PurgeKeptReason's order. live is the game's active profile.
+// each in PurgeKeptReason's order. live is the game's active profile, and
+// others what the games overlapping its mod directory record
+// (otherGamesRecording).
 // Anything that cannot be read to decide that is an error: the purge fails
 // closed. A path that cannot be checked is not taken for gone.
-func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileName, live string) (remove []db.DeployedPath, kept []keptRecord, err error) {
+func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileName, live string, others *otherGameRecords) (remove []db.DeployedPath, kept []keptRecord, err error) {
 	rows, err := s.db.ListDeployedFiles(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing deployed files: %w", err)
@@ -524,10 +545,6 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 		return nil, nil, fmt.Errorf("listing deployed files: %w", err)
 	}
 	listed, err := s.liveListedMods(game.ID, live)
-	if err != nil {
-		return nil, nil, err
-	}
-	others, err := s.otherGamesRecording(ctx, game)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -562,7 +579,7 @@ func keptPath(row db.DeployedPath, profileName, live string, records []db.PathRe
 			profiles = append(profiles, r.Profile)
 		}
 	}
-	if profile, ok := listed[domain.ModKey(row.SourceID, row.ModID)]; ok && !listedHandedOn(records, profileName, live, listed) {
+	if profile, ok := listed[domain.ModKey(row.SourceID, row.ModID)]; ok && !listedHandedOn(records, profileName, live, listed) && len(others.heldForActive(row.RelativePath)) == 0 {
 		k.Reason, k.Profiles = PurgeKeptListed, []string{profile}
 		return k, true
 	}
@@ -582,8 +599,9 @@ func keptPath(row db.DeployedPath, profileName, live string, records []db.PathRe
 // F-A): another record of it in the same game is the active profile's own -
 // which only the active profile's purge, or its deploy, decides - or names
 // a mod the active profile lists, so that record's purge keeps the file as
-// PurgeKeptListed in turn. Another game's record never qualifies: its purge
-// asks about that game's active profile.
+// PurgeKeptListed in turn. Another game's record qualifies only as
+// otherGameRecords.heldForActive says: its purge asks about that game's
+// active profile.
 func listedHandedOn(records []db.PathRecord, profileName, live string, listed map[string]string) bool {
 	for _, r := range records {
 		if r.Profile == profileName {
@@ -627,19 +645,45 @@ func (s *Service) liveListedMods(gameID, live string) (map[string]string, error)
 // link.
 type otherGameRecords struct {
 	root  string // the purged game's mod directory, links resolved
-	games []otherGame
+	games []*otherGame
+	// claimsOf reads a game's active profile and the mods its document
+	// lists, for heldForActive (Service.gameClaims).
+	claimsOf func(gameID string) gameClaims
 }
 
 type otherGame struct {
 	id    string
 	root  string                     // its mod directory, links resolved
 	paths map[string][]db.PathRecord // its recorded paths (DeployedPathRecords)
+	// claims is claimsOf's answer for the game, read on first use.
+	claims *gameClaims
+}
+
+// gameClaims is a game's active profile and the mods its document lists
+// (liveListedMods), or err when its profile files do not say.
+type gameClaims struct {
+	live   string
+	listed map[string]string
+	err    error
+}
+
+// gameClaims reads gameID's gameClaims.
+func (s *Service) gameClaims(ctx context.Context, gameID string) gameClaims {
+	live, err := s.liveProfile(ctx, gameID)
+	if err != nil {
+		return gameClaims{err: err}
+	}
+	listed, err := s.liveListedMods(gameID, live)
+	if err != nil {
+		return gameClaims{err: err}
+	}
+	return gameClaims{live: live, listed: listed}
 }
 
 // otherGamesRecording reads the records of every other configured game
 // whose mod directory overlaps game's (review F7).
 func (s *Service) otherGamesRecording(ctx context.Context, game *domain.Game) (*otherGameRecords, error) {
-	records := &otherGameRecords{root: resolvedDir(game.ModPath)}
+	records := &otherGameRecords{root: resolvedDir(game.ModPath), claimsOf: func(id string) gameClaims { return s.gameClaims(ctx, id) }}
 	for _, other := range s.ListGames() {
 		if other.ID == game.ID || other.ModPath == "" {
 			continue
@@ -652,7 +696,7 @@ func (s *Service) otherGamesRecording(ctx context.Context, game *domain.Game) (*
 		if err != nil {
 			return nil, fmt.Errorf("listing %s's deployed files: %w", other.ID, err)
 		}
-		records.games = append(records.games, otherGame{id: other.ID, root: root, paths: paths})
+		records.games = append(records.games, &otherGame{id: other.ID, root: root, paths: paths})
 	}
 	return records, nil
 }
@@ -660,14 +704,64 @@ func (s *Service) otherGamesRecording(ctx context.Context, game *domain.Game) (*
 // recording names the other games that record rel, a path under the purged
 // game's mod directory.
 func (r *otherGameRecords) recording(rel string) []string {
+	var games []string
+	for _, h := range r.holding(rel) {
+		games = append(games, h.game.id)
+	}
+	return games
+}
+
+// otherGameHold is one other game's records of a path.
+type otherGameHold struct {
+	game    *otherGame
+	records []db.PathRecord
+}
+
+// holding is each other game that records rel, a path under the purged
+// game's mod directory, with its records of it.
+func (r *otherGameRecords) holding(rel string) []otherGameHold {
 	if r == nil {
 		return nil
 	}
 	abs := filepath.Join(r.root, filepath.FromSlash(rel))
-	var games []string
+	var holds []otherGameHold
 	for _, g := range r.games {
 		if theirs, ok := relWithin(g.root, abs); ok && len(g.paths[filepath.ToSlash(theirs)]) > 0 {
-			games = append(games, g.id)
+			holds = append(holds, otherGameHold{game: g, records: g.paths[filepath.ToSlash(theirs)]})
+		}
+	}
+	return holds
+}
+
+// claims is g's gameClaims, read once.
+func (r *otherGameRecords) claims(g *otherGame) gameClaims {
+	if g.claims == nil {
+		c := r.claimsOf(g.id)
+		g.claims = &c
+	}
+	return *g.claims
+}
+
+// heldForActive names the other games whose records of rel keep the file
+// for their own active profile (#445 gate 2, G2-1): one is that profile's
+// own, or names a mod it lists. Such a game's own purges and deploys decide
+// the file, as the active profile's own record does in its game, and lmm
+// never removes or replaces a file another game records - so a profile of
+// this game that lists the path's mod cannot take the file over, and its
+// file is that game's. A game whose active profile lmm cannot tell is not
+// among them: nothing is handed to it.
+func (r *otherGameRecords) heldForActive(rel string) []string {
+	var games []string
+	for _, h := range r.holding(rel) {
+		c := r.claims(h.game)
+		if c.err != nil {
+			continue
+		}
+		for _, rec := range h.records {
+			if _, listed := c.listed[domain.ModKey(rec.SourceID, rec.ModID)]; listed || rec.Profile == c.live {
+				games = append(games, h.game.id)
+				break
+			}
 		}
 	}
 	return games
@@ -712,7 +806,11 @@ func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *Pu
 	if err != nil {
 		return result, err
 	}
-	remove, kept, err := s.recordedPaths(ctx, game, plan.Profile, live)
+	others, err := s.otherGamesRecording(ctx, game)
+	if err != nil {
+		return result, err
+	}
+	remove, kept, err := s.recordedPaths(ctx, game, plan.Profile, live, others)
 	if err != nil {
 		return result, err
 	}
@@ -869,7 +967,9 @@ type PurgeOptions struct {
 //
 // A recorded-only purge (#445, PurgePlan.RecordedOnly) also reports how
 // many recorded paths it removed and which it kept, and why; a path it
-// meant to remove and could not remove, or check, is a Warnings entry.
+// meant to remove and could not remove, or check, is a Warnings entry. A
+// purge of the active profile reports in Kept the paths it left because
+// another game records them (PurgeKeptOtherGame, #445 gate 2, G2-1).
 type PurgeResult struct {
 	Purged   int            `json:"purged"`
 	Skipped  []InstalledRef `json:"skipped,omitempty"`
@@ -973,6 +1073,7 @@ func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileNa
 		notes:    &result.Notes,
 		skipped:  &result.Skipped,
 		purged:   &result.Purged,
+		kept:     &result.Kept,
 	})
 	if err != nil {
 		return result, err

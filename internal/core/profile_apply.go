@@ -995,6 +995,9 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 	} else {
 		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
+	// #445 gate 2, G2-1: the files it left for another game, and any
+	// original it could not put back, are this flow's to report.
+	s.takeCaptureWarnings(game.ID, OpProfileApply, SwitchInstallWarning, &result.Warnings, nil)
 
 	return result, nil
 }

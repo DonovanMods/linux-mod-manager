@@ -2292,6 +2292,9 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	// #350: every Installer this Service hands out captures into the
 	// game's originals store, so no flow has to remember to ask for it.
 	installer.setOriginals(s.originalsStoreFor(game.ID))
+	// #445 gate 2, G2-1: and none of them removes or replaces a file
+	// another game records.
+	installer.otherGames = s.otherGamesRecording
 	// #353: and every Installer routes its deployable files through the
 	// game's adapter. A resolution failure is reported by the flow's own
 	// AdapterFor call (every flow that reaches an Installer makes one);

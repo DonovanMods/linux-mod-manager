@@ -29,19 +29,24 @@ import (
 var refusalCommand = regexp.MustCompile("`(lmm [^`]+)`")
 
 // runRefusalCommand runs one command the refusal names through core, the
-// way the CLI runs it.
+// way the CLI runs it. The refusal for gameID names commands for gameID,
+// and - to let go of a file another game records (#445 gate 2, G2-1) -
+// purges of another game's profiles.
 func runRefusalCommand(t *testing.T, svc *core.Service, gameID, command string) {
 	t.Helper()
 	ctx := context.Background()
-	game, err := svc.GetGame(gameID)
-	require.NoError(t, err)
 	fields := strings.Fields(command)
 	flag := func(name string) string {
 		i := slices.Index(fields, name)
 		require.GreaterOrEqual(t, i, 0, "%q has no %s", command, name)
 		return fields[i+1]
 	}
-	require.Equal(t, gameID, flag("--game"), command)
+	named := flag("--game")
+	if !strings.HasPrefix(command, "lmm purge ") {
+		require.Equal(t, gameID, named, command)
+	}
+	game, err := svc.GetGame(named)
+	require.NoError(t, err)
 	switch {
 	case strings.HasPrefix(command, "lmm purge "):
 		plan, err := svc.PlanPurge(ctx, game, flag("--profile"), core.PurgeOptions{})
