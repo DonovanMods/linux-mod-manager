@@ -62,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lmm game show` and the web loader panel say what a BepInEx game still
+  lacks (#443).** Their loader warnings now name the missing step: BepInEx
+  is not installed (with the build this game needs - the Linux archive or
+  the Windows pack - and that lmm does not download it), it is installed
+  but not declared (with the `lmm game edit <game> --loader bepinex` that
+  declares it), or it has never run (so the launch option shown above is
+  the likely cause). These were an adapter "guidance" capability that
+  nothing displayed; that capability is gone from the adapter contract
+  (`docs/adapters.md`).
 - **The BepInEx/adapter contradiction warning printed at startup is one
   line (#456).** A game that declares the BepInEx loader while its adapter
   is another one was reported on stderr by **every** `lmm` command in a
@@ -1599,6 +1608,47 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A copied or hard-linked file you replaced is no longer deleted (#466).**
+  Under `link_method: copy` or `hardlink`, a purge, uninstall, `lmm mod
+disable`, rollback, profile switch or apply, and `lmm verify --fix` deleted
+  whatever sat at a deployed path - your own file included, with no backup.
+  lmm now records a checksum of every copy it deploys and compares before it
+  removes anything: a file that changed is left in place and reported
+  ("... was left in place: its content changed after lmm deployed it, so lmm
+  treats it as yours"), and a purge stops tracking it. A deploy does not
+  write over it either, and says how to take the mod's version back (delete
+  the file, deploy again). `lmm verify` reports it as a new
+  `deployed_modified` row, which `--fix` leaves alone. A file lmm cannot
+  read to compare is kept too. Files deployed before this version have no
+  checksum yet: they are removed as before, reported once per run as
+  "removed unverified (deployed before checksums were recorded)", and get
+  one on their next deploy. The purge's `--json` document carries the reason
+  in each kept path's new `note`.
+- **Changing `mod_path` by hand no longer strands deployed files (#451).**
+  lmm now records the `mod_path` each file was deployed under. After a
+  `games.yaml` edit made with files deployed, `lmm game show`,
+  `lmm game list`, `lmm status`, `lmm verify` and the web UI say where the
+  files are and what `mod_path` is now, and every deploy refuses until you
+  either set it back (`lmm game edit <game> --mod-path <old path>`) or run
+  `lmm purge`, which now removes the files from where they were deployed
+  (`--json`: `removed_paths`, and `mod_path` on a kept path). Before, a
+  deploy there quietly took the files' records over and left the files
+  behind for good. `lmm game edit --mod-path` also names the old directory
+  when it refuses a move, and always allows moving back to it. The
+  mod_path problem document gains `deployed_under`.
+- **`lmm source index prune` keeps an index a truncated `games.yaml` hides
+  (#468).** A `games.yaml` cut off in the middle of a Thunderstore
+  community slug still reads as valid, so the index the game really uses
+  looked unused and was deleted (and re-downloaded on the next search). An
+  index whose name extends a mapped slug that has no index of its own is
+  now kept, and the prune says why; `--all` still removes it.
+- **A downloaded BepInEx archive's layout warning reaches `--json` (#464).**
+  Installing a BepInEx-shaped archive into a game whose `mod_path` is not
+  its install path was never silent - with no BepInEx it is refused, and
+  with BepInEx installed it deploys as packaged with a warning naming the
+  steps that make lmm lay it out - but on the download path that warning
+  reached only the terminal. `lmm install --json` and `lmm deploy --json`
+  now carry it in `warnings`.
 - **lmm writes a profile to its own file, safely, and keeps what you wrote
   in it (#441).**
   - A profile copied by hand (`default.yaml` → `vanilla.yaml`, `name:`

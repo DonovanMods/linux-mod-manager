@@ -65,6 +65,28 @@ The one thing a snapshot restore does NOT need from anywhere is the stock
 game content lmm replaced: those bytes are in the originals store, which is
 the only copy of them and is never pruned or deleted by lmm.
 
+### A copied file you changed is yours
+
+Under the `copy` and `hardlink` link methods a deployed file is a regular
+file, so lmm records a checksum (with its size and timestamps) of what it
+deployed. Every removal compares before it deletes: a purge, an uninstall,
+`lmm mod disable`, a rollback or update, a profile switch or apply, and
+`lmm verify --fix`. A file whose content no longer matches is left where it
+is and reported ("… was left in place: its content changed after lmm
+deployed it, so lmm treats it as yours"); a purge also stops tracking it.
+A deploy does not write over it either — it says so, and a deploy after
+you delete the file puts the mod's version back. `lmm verify` reports such
+a file as `deployed_modified`, which `--fix` leaves alone.
+
+A file lmm cannot read to compare is kept the same way. Files deployed
+before checksums were recorded (schema v18) are removed as they always
+were, and the flow reports them once as "removed unverified (deployed
+before checksums were recorded)"; the next deploy records their checksums.
+The same care applies to content lmm did not deploy at all: a deploy
+preserves it in the originals store before replacing it, and when the
+store already holds an earlier original of that path — so this one could
+not be kept too — the deploy leaves the file and says so.
+
 Removing the mod that replaced a file puts that file back on its own — an
 uninstall, a purge, an update that drops a file the previous version
 shipped, a rolled-back install, or the deploy-time convergence — and the
@@ -111,6 +133,27 @@ read, naming the game and the field, and at the prompt/form/API, where the
 refusal names `install_path`, the value that is actually missing. The
 alternative is the CWD-relative behaviour this rule exists to end, applied
 silently.
+
+#### Changing `mod_path` with files deployed
+
+lmm records each deployed file relative to the `mod_path` it was deployed
+under, and — since schema v18 — records that `mod_path` too. So
+`lmm game edit --mod-path` (and `lmm game detect`'s repair, and
+`PUT /api/v1/games/{id}`) refuse to move it while files are deployed,
+naming the purges that clear them; moving it back to where the files are is
+always allowed.
+
+A hand edit of `games.yaml` made while files are deployed is detected on
+the next run: `lmm game show`, `lmm game list`, `lmm status`,
+`GET /api/v1/status` and `lmm verify` (as a `mod_path_missing` row) all say
+where the files are and what `mod_path` is now, and every deploy refuses
+until it is resolved — a deploy there would take the files' records over
+and leave the files behind for good. Either set `mod_path` back
+(`lmm game edit <game> --mod-path <old path>`), or run
+`lmm purge --game <game> --profile <profile>` for each profile named, which
+removes the files from where they were deployed, then `lmm deploy`.
+Files deployed before v18 carry no recorded `mod_path` and are taken to be
+under the current one, as before.
 
 ### Hooks (games.yaml)
 
