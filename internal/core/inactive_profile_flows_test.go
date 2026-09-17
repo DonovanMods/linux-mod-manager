@@ -422,3 +422,24 @@ func TestSnapshotRestore_RefusesToGuessTheActiveProfile(t *testing.T) {
 
 	requireActiveUnknown(t, err)
 }
+
+// TestDeployTarget_AGameWithNoProfileFileStillHasALiveProfile: a game with
+// no profile file may be installed into under any name - the install
+// creates its first, active profile - unless its DB still records another
+// profile's deployment in the directory (the profile files were deleted by
+// hand). Then the directory is that profile's - liveProfile's answer,
+// "default" - and a flow for another name is refused as any non-active
+// profile's is.
+func TestDeployTarget_AGameWithNoProfileFileStillHasALiveProfile(t *testing.T) {
+	ctx := context.Background()
+	f := newLegacyFixture(t, &domain.Game{ID: "sky", Name: "Sky", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink})
+
+	require.NoError(t, f.svc.CheckDeployTarget(ctx, "sky", "foo", core.VerbInstall), "a fresh game takes any first profile")
+
+	f.deployed(t, "default", "a", domain.LinkSymlink, map[string]string{"Data/a.esp": "mod a"}, nil)
+
+	err := f.svc.CheckDeployTarget(ctx, "sky", "foo", core.VerbInstall)
+	require.ErrorIs(t, err, core.ErrProfileNotActive)
+	assert.Contains(t, err.Error(), `the active profile "default"`)
+	assert.NoError(t, f.svc.CheckDeployTarget(ctx, "sky", "default", core.VerbInstall), "the profile the records name is the live one")
+}

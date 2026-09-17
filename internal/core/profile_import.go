@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // --- ImportPlan/ApplyImport (Phase 6b Task 8) ---
@@ -405,15 +404,13 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 // importScope is whether an import into profileName deploys (#462): it
 // does when profileName is the game's active profile, or will be - the
 // game has no profile file yet, so the import creates its first, active
-// one. Otherwise recordedOnly is set and live names the active profile. A
-// game whose active profile cannot be told is ErrActiveProfileUnknown.
+// one (createsFirstProfile). Otherwise recordedOnly is set and live names
+// the active profile. A game whose active profile cannot be told is
+// ErrActiveProfileUnknown.
 func (s *Service) importScope(ctx context.Context, gameID, profileName string) (live string, recordedOnly bool, err error) {
-	names, err := config.ListProfiles(s.configDir, gameID)
-	if err != nil {
-		return "", false, fmt.Errorf("listing profiles: %w", err)
-	}
-	if len(names) == 0 {
-		return "", false, nil
+	first, err := s.createsFirstProfile(ctx, gameID, profileName)
+	if err != nil || first {
+		return "", false, err
 	}
 	live, recordedOnly, err = s.profileScope(ctx, gameID, profileName)
 	if err != nil || !recordedOnly {

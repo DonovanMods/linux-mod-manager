@@ -772,16 +772,40 @@ func (s *Service) refuseInactive(ctx context.Context, gameID, profileName, verb 
 // it is gameID's active profile (#462), as refuseInactive does for deploy
 // and apply (#445). A game with no profile file at all is the exception: the
 // flow creates the game's first profile, and a game's only profile is its
-// active one.
+// active one (createsFirstProfile).
 func (s *Service) requireActiveProfile(ctx context.Context, gameID, profileName string, verb DeployVerb) error {
-	names, err := config.ListProfiles(s.configDir, gameID)
-	if err != nil {
-		return fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
-	}
-	if len(names) == 0 {
-		return nil
+	first, err := s.createsFirstProfile(ctx, gameID, profileName)
+	if err != nil || first {
+		return err
 	}
 	return s.refuseInactive(ctx, gameID, profileName, string(verb))
+}
+
+// createsFirstProfile reports whether a flow for profileName would create
+// gameID's first profile, and so its active one (#462): the game has no
+// profile file, and its DB records no other profile's files in the
+// directory - rows left by profile files deleted by hand make that
+// directory liveProfile's, as for any other game.
+func (s *Service) createsFirstProfile(ctx context.Context, gameID, profileName string) (bool, error) {
+	names, err := config.ListProfiles(s.configDir, gameID)
+	if err != nil {
+		return false, fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+	}
+	if len(names) > 0 {
+		return false, nil
+	}
+	records, err := s.db.DeployedPathRecords(ctx, gameID)
+	if err != nil {
+		return false, fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+	}
+	for _, rs := range records {
+		for _, r := range rs {
+			if r.Profile != profileName {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
 }
 
 // DeployVerb names a deploy-direction flow in its active-profile refusal
