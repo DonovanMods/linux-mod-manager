@@ -23,6 +23,12 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
     return html`
       <section class="library omnibar-results">
         <p class="app-booting">Searching sources…</p>
+        ${
+          omnibarSearch.indexNotice &&
+          html`<p class="index-notice" data-testid="index-notice">
+            ${omnibarSearch.indexNotice}
+          </p>`
+        }
       </section>
     `;
   }

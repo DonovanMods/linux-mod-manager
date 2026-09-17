@@ -11,6 +11,7 @@ package thunderstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,14 +34,15 @@ const indexTTL = 6 * time.Hour
 const progressEvery = 1000
 
 // wirePackage is one package as Thunderstore serves it. Only the fields the
-// index keeps are declared; everything else (uuid4, rating_score, downloads,
-// has_nsfw_content, ...) is skipped by the decoder without allocating.
+// index keeps are declared; everything else (uuid4, rating_score,
+// downloads, ...) is skipped by the decoder without allocating.
 type wirePackage struct {
 	Name         string        `json:"name"`
 	FullName     string        `json:"full_name"`
 	Owner        string        `json:"owner"`
 	DateUpdated  string        `json:"date_updated"`
 	IsDeprecated bool          `json:"is_deprecated"`
+	HasNSFW      bool          `json:"has_nsfw_content"`
 	Categories   []string      `json:"categories"`
 	Versions     []wireVersion `json:"versions"`
 }
@@ -140,6 +142,15 @@ func (s *Source) ensureIndex(ctx context.Context, community string, force bool, 
 		return current, rows, true, nil
 	}
 
+	// A held host or community refuses before anything is locked or
+	// created: a refusal leaves no directory behind to list as an index.
+	if heldErr := s.heldRefusal(ctx, community); heldErr != nil {
+		if current, rows, usable := s.usable(community); usable {
+			return current, rows, true, heldErr
+		}
+		return watermark{}, nil, false, heldErr
+	}
+
 	// From here a rebuild is possible, so the CROSS-PROCESS lock applies
 	// (T1 review #2): `lmm serve` and a `lmm search` in a terminal are two
 	// processes sharing one TTL, and two of their commits interleaving
@@ -180,10 +191,63 @@ func (s *Source) ensureIndex(ctx context.Context, community string, force bool, 
 
 // refresh performs the conditional GET and, when the document has changed,
 // the streaming rebuild.
+//
+// A COLD build that nobody asked for by name - the one Search, a package
+// read or an update check does for itself - is announced as a
+// source.Notice on ctx (#360 §2.7, T1 review #8): it is the one-time wait of
+// a few seconds that otherwise explains itself to nobody, whichever command
+// happened to trigger it. A caller that passed its own progress function
+// asked for the build and reports it that way, so it is not announced
+// twice; a refresh over a usable index is a conditional request that costs
+// nothing worth explaining.
+//
+// A HELD host or community (hold.go) is refused here, before anything is
+// sent or announced - a "building the index" line followed at once by "not
+// asking" would be two lines for one refusal. The retry transport refuses a
+// held host too, for any request that does not come through here. What
+// this fetch finds out about the community itself - a 404, a document that
+// is not a package list - is recorded against it, and a good answer clears
+// it.
 func (s *Source) refresh(ctx context.Context, community string, current watermark, usable bool, progress source.IndexProgressFunc) (watermark, error) {
+	// Asked again under the lock: another process may have set a hold
+	// while this one waited for it.
+	if err := s.heldRefusal(ctx, community); err != nil {
+		return watermark{}, err
+	}
+	wm, err := s.fetchAndBuild(ctx, community, current, usable, progress)
+	var doc *documentError
+	switch {
+	case err == nil:
+		s.holds.succeeded(community)
+	case errors.As(err, &doc):
+		s.holds.failed(community, doc.Error())
+	}
+	return wm, err
+}
+
+// heldRefusal is the refusal, and its notice, for a request about
+// community while the host or community is held; nil otherwise.
+func (s *Source) heldRefusal(ctx context.Context, community string) error {
+	held, scope, open := s.holds.active(community)
+	if !open {
+		return nil
+	}
+	source.Notify(ctx, source.Notice{Kind: source.NoticeSuspended, Source: serviceName, GameID: scope, Until: held.Until})
+	return indexUnavailable(community, &source.RetryLaterError{
+		Source: serviceName, GameID: scope, Until: held.Until, Reason: held.Reason,
+	})
+}
+
+// fetchAndBuild is refresh's request and rebuild.
+func (s *Source) fetchAndBuild(ctx context.Context, community string, current watermark, usable bool, progress source.IndexProgressFunc) (watermark, error) {
 	ifModifiedSince := ""
 	if usable {
 		ifModifiedSince = current.LastModified
+	}
+	announce := progress == nil && !usable
+	started := s.now()
+	if announce {
+		source.Notify(ctx, source.Notice{Kind: source.NoticeIndexBuilding, Source: serviceName, GameID: community})
 	}
 	tick := progress
 	if tick == nil {
@@ -193,6 +257,13 @@ func (s *Source) refresh(ctx context.Context, community string, current watermar
 
 	resp, err := s.client.fetchCommunity(ctx, community, ifModifiedSince)
 	if err != nil {
+		// A hold is its own sentence: the request plumbing around it
+		// ("fetching ...: executing request to ...") says nothing a user
+		// needs about a request lmm decided not to send.
+		var later *source.RetryLaterError
+		if errors.As(err, &later) {
+			err = later
+		}
 		return watermark{}, indexUnavailable(community, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -211,6 +282,12 @@ func (s *Source) refresh(ctx context.Context, community string, current watermar
 		return watermark{}, err
 	}
 	tick(source.FetchPhaseDone, fmt.Sprintf("indexed %d packages for %s", wm.Packages, community), 0)
+	if announce {
+		source.Notify(ctx, source.Notice{
+			Kind: source.NoticeIndexBuilt, Source: serviceName, GameID: community,
+			Packages: wm.Packages, Elapsed: s.now().Sub(started),
+		})
+	}
 	return wm, nil
 }
 
@@ -230,7 +307,13 @@ func (s *Source) build(ctx context.Context, community string, resp *http.Respons
 	counter := &countingReader{r: resp.Body}
 	dec := json.NewDecoder(counter)
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
-		return watermark{}, indexUnavailable(community, fmt.Errorf("the package index is not a JSON array"))
+		if err != nil && !isDocumentFault(err) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return watermark{}, ctxErr
+			}
+			return watermark{}, indexUnavailable(community, fmt.Errorf("reading the package index: %w", err))
+		}
+		return watermark{}, indexUnavailable(community, &documentError{err: fmt.Errorf("the package index is not a JSON array")})
 	}
 	for n := 0; dec.More(); n++ {
 		// Checked per package rather than per read: a cancelled search or a
@@ -250,7 +333,11 @@ func (s *Source) build(ctx context.Context, community string, resp *http.Respons
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return watermark{}, ctxErr
 			}
-			return watermark{}, indexUnavailable(community, fmt.Errorf("decoding package %d: %w", n+1, err))
+			err = fmt.Errorf("decoding package %d: %w", n+1, err)
+			if isDocumentFault(err) {
+				err = &documentError{err: err}
+			}
+			return watermark{}, indexUnavailable(community, err)
 		}
 		rec, row := project(p)
 		if row.FullName == "" {
@@ -280,12 +367,14 @@ func project(p wirePackage) (packageRecord, indexRow) {
 		DateUpdated: p.DateUpdated,
 		Categories:  p.Categories,
 		Deprecated:  p.IsDeprecated,
+		NSFW:        p.HasNSFW,
 	}
 	row := indexRow{
 		FullName:    p.FullName,
 		Categories:  p.Categories,
 		DateUpdated: p.DateUpdated,
 		Deprecated:  p.IsDeprecated,
+		NSFW:        p.HasNSFW,
 	}
 	if len(p.Versions) > 0 {
 		latest := p.Versions[0]
@@ -348,7 +437,14 @@ func (s *Source) communityLock(community string) *sync.Mutex {
 // which failure it actually was. Flattening the cause to text with %v left
 // callers unable to tell an unreachable upstream from an unwritable cache
 // directory without matching on a sentence.
+//
+// A cause that already IS the sentinel (a host lmm is refusing to ask) is
+// not wrapped in it a second time, which only repeated "source index is
+// unavailable" in the sentence a user reads.
 func indexUnavailable(community string, err error) error {
+	if errors.Is(err, ErrIndexUnavailable) {
+		return fmt.Errorf("source %q: the %s index could not be built: %w", sourceID, community, err)
+	}
 	return fmt.Errorf("source %q: the %s index could not be built: %w: %w", sourceID, community, err, ErrIndexUnavailable)
 }
 
@@ -364,4 +460,22 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
 	c.n += int64(n)
 	return n, err
+}
+
+// documentError is a failure that belongs to one community's DOCUMENT - it
+// is missing, or it is not a package list - rather than to the host or the
+// transfer, and so holds only that community (T3 review F9).
+type documentError struct{ err error }
+
+func (e *documentError) Error() string { return e.err.Error() }
+func (e *documentError) Unwrap() error { return e.err }
+
+// isDocumentFault reports whether a decode failure is the document's own
+// shape. A read that failed - a stall, a dropped connection, a body cut
+// short - says nothing about the document, and neither does a document too
+// large to accept, which is lmm's own ceiling.
+func isDocumentFault(err error) bool {
+	var syntax *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	return errors.As(err, &syntax) || errors.As(err, &typ)
 }

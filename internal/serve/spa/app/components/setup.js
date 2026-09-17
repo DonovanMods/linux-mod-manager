@@ -1,7 +1,7 @@
 // setup.js - the Setup page at /g/{game}/{profile}/setup (issue 333, design
 // doc §Scope: "a real Setup surface"). A whole page rather than a modal,
 // per the task brief - "a Setup page that earns it" - with one section per
-// admin surface: Games, Authentication, Custom sources, Archive import,
+// admin surface: Games, Authentication, Sources, Archive import,
 // Adopt. Reached from the top bar's ⚙ (topbar.js), the empty-library links
 // (library.js), or straight after first-run add/detect via a game's own
 // Mission Control link.
@@ -23,7 +23,7 @@ import { AwayBar } from "./awaybar.js";
 const SECTIONS = [
   { key: "games", label: "Games" },
   { key: "auth", label: "Authentication" },
-  { key: "sources", label: "Custom sources" },
+  { key: "sources", label: "Sources" },
   { key: "archive", label: "Archive import" },
   { key: "adopt", label: "Adopt" },
 ];

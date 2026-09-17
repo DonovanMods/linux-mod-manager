@@ -550,6 +550,16 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// T3 review F3: the same status while lmm is holding requests
+			// off - retry_at and hold_reason appear only then.
+			"index_status_held",
+			core.IndexStatus{
+				Source: "thunderstore", Game: "lethal-company",
+				RetryAt:    fixedTime.Add(10 * time.Minute),
+				HoldReason: "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s",
+			},
+		},
+		{
 			// #360: and the write half. Status is what the refresh DID,
 			// Changed whether the index the user searches is now different -
 			// a forced rebuild producing an identical index is "built" and
@@ -560,6 +570,89 @@ func TestJSONGoldens(t *testing.T) {
 				Status: core.IndexStatusStale, Changed: false,
 				Packages: 50707, Bytes: 239075328, DurationMS: 4137,
 				Warnings: []string{"source \"thunderstore\": the lethal-company index could not be built: connection refused"},
+			},
+		},
+		{
+			// #410: no index and no way to build one, as the envelope's
+			// details. Reason is the cause without the sentinel's framing,
+			// and retry_at is present only when the host is refusing to be
+			// asked - which is what the web UI turns into "try again at".
+			"index_unavailable_error",
+			&core.IndexUnavailableError{
+				Source: "thunderstore", Game: "lethal-company",
+				Reason:  "suspended after repeated failures",
+				RetryAt: fixedTime.Add(5 * time.Minute),
+			},
+		},
+		{
+			// #410: a game whose identifier for a source is missing or
+			// malformed. game_id and source are what the web UI needs to
+			// open the sources editor on the right row; value is what
+			// games.yaml says ("" for blank or absent).
+			"game_identifier_error",
+			&core.GameIdentifierError{GameID: "lethal", Source: "thunderstore", Value: "Lethal_Company"},
+		},
+		{
+			// #410: one row of `lmm source index --all` - a cached index,
+			// with every game that maps the source to it.
+			"source_index_entry",
+			core.SourceIndexEntry{
+				Source: "thunderstore", Game: "lethal-company", Cached: true, Present: true,
+				Packages: 50707, FetchedAt: fixedTime, Bytes: 239075328,
+				MappedBy: []string{"lethal", "lethal-modded"},
+			},
+		},
+		{
+			// #410: the whole listing - a cached index no game uses, and a
+			// mapped index that has never been built (cached false, no
+			// fetched_at), which is how a frontend offers to build it.
+			"source_index_listing",
+			//
+			// T3 review F7/F10: keep_reason is present only on an index a
+			// prune would keep whatever its use, and holds lists when lmm
+			// will next ask a host - an empty list when it is asking freely.
+			core.SourceIndexListing{
+				Indexes: []core.SourceIndexEntry{
+					{Source: "thunderstore", Game: "content-warning", Cached: true, Present: true, Packages: 900, FetchedAt: fixedTime, Bytes: 4096000, MappedBy: []string{}},
+					{Source: "thunderstore", Game: "old-mod-pack", Cached: true, Bytes: 5120, MappedBy: []string{}, KeepReason: "the old-mod-pack index directory holds notes.txt, which is not part of an index"},
+					{Source: "thunderstore", Game: "repo", MappedBy: []string{"repo"}},
+				},
+				Holds: []core.IndexHold{
+					{Source: "thunderstore", RetryAt: fixedTime.Add(10 * time.Minute), Reason: "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s"},
+				},
+				Warnings: []string{},
+			},
+		},
+		{
+			// T3 review F10: one hold. game is present only when a single
+			// index is held; a hold without it holds the whole host.
+			"index_hold",
+			core.IndexHold{
+				Source: "thunderstore", Game: "broken-community", RetryAt: fixedTime.Add(5 * time.Minute),
+				Reason: "suspended after 3 failed requests in a row; the last: Thunderstore has no package index at /c/broken-community/api/v1/package/ (HTTP 404)",
+			},
+		},
+		{
+			// #410: one index and what a prune did with it.
+			"index_prune_entry",
+			core.IndexPruneEntry{
+				Source: "thunderstore", Game: "content-warning", Bytes: 4096000,
+				FetchedAt: fixedTime, MappedBy: []string{},
+				Action: core.IndexPruneRemoved, Reason: "no game uses it",
+			},
+		},
+		{
+			// #410: `lmm source index prune --json`. A dry run's entries say
+			// "remove" and its counts are what the run WOULD remove; a real
+			// run says "removed". A kept index always says why.
+			"index_prune_report",
+			core.IndexPruneReport{
+				DryRun: true,
+				Entries: []core.IndexPruneEntry{
+					{Source: "thunderstore", Game: "content-warning", Bytes: 4096000, FetchedAt: fixedTime, MappedBy: []string{}, Action: core.IndexPruneRemove, Reason: "no game uses it"},
+					{Source: "thunderstore", Game: "lethal-company", Bytes: 239075328, FetchedAt: fixedTime, MappedBy: []string{"lethal"}, Action: core.IndexPruneKeep, Reason: "used by lethal"},
+				},
+				Removed: 1, FreedBytes: 4096000, Warnings: []string{},
 			},
 		},
 		{

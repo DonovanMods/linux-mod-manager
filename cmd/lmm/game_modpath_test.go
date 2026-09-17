@@ -427,7 +427,7 @@ func TestDoVerify_SaysTheModPathIsMissing(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	assert.Contains(t, lineContaining(out, "? mod_path - "), missingModPathRepair)
 	assert.Contains(t, out, "1 warning(s)")
 }

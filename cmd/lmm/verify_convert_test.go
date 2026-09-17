@@ -127,7 +127,7 @@ func TestVerifyReportsConversionFailed(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
@@ -145,7 +145,7 @@ func TestVerifyReportsConversionFailed(t *testing.T) {
 	assert.GreaterOrEqual(t, result.Warnings, 1)
 
 	jsonOutput = false
-	textOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	textOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	assert.Contains(t, textOut, "CONVERSION FAILED")
 	assert.Contains(t, textOut, "deploying raw")
 }
@@ -185,7 +185,7 @@ func TestVerifyReportsConversionFailed_UninstalledMod(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
@@ -202,7 +202,7 @@ func TestVerifyReportsConversionFailed_UninstalledMod(t *testing.T) {
 	assert.Equal(t, modID, found.ModName, "ModName must fall back to the raw ModID when the mod is no longer installed")
 
 	jsonOutput = false
-	textOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	textOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	assert.Contains(t, textOut, modID+" - CONVERSION FAILED", "text output must show the fallback name, not a blank")
 }
 
@@ -230,7 +230,7 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
 	result := resultDoc.Result
@@ -248,7 +248,7 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 
 	verifyFix = true
 	t.Cleanup(func() { verifyFix = false })
-	fixOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	fixOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
 	// The --fix run's OWN JSON output must reflect the successful re-ingest
 	// immediately, in the SAME run - every other --fix success path in this
@@ -294,7 +294,7 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 
 	jsonOutput = true
 	verifyFix = false
-	secondOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	secondOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	var secondResultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(secondOut), &secondResultDoc))
 	secondResult := secondResultDoc.Result
@@ -325,7 +325,7 @@ func TestVerifyNeedsReingest_ModOptedOut_NotFlagged(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
@@ -372,7 +372,7 @@ func TestVerifyNeedsReingest_CheckErrorSurfacedUnderVerbose(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	quietOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	quietOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	verbose = false
 	// Non-verbose: the check failure must not be reported as a fabricated
 	// pass/fail status at all (no needs_reingest row, since the check itself
@@ -380,7 +380,7 @@ func TestVerifyNeedsReingest_CheckErrorSurfacedUnderVerbose(t *testing.T) {
 	assert.NotContains(t, quietOut, "NEEDS REINGEST")
 
 	verbose = true
-	verboseOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	verboseOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	assert.Contains(t, verboseOut, "could not check pak-reingest status", "a genuine check failure must be surfaced under --verbose, not silently dropped")
 	assert.Contains(t, verboseOut, modID)
 }
@@ -423,7 +423,7 @@ func TestVerifyFileCountCarveOutMembersAware(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))

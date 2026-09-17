@@ -417,7 +417,7 @@ func initStepImport(ctx context.Context, cmd *cobra.Command, reader *bufio.Reade
 	// The scan flow is `lmm import`'s own, verbatim - including its
 	// confirmation prompt, which is why a "no" there needs no handling
 	// here beyond not treating a cancellation as a wizard failure.
-	if err := runImportScan(cmd, game, service, profileName); err != nil {
+	if err := runImportScan(ctx, game, service, profileName); err != nil {
 		if isInitCancellation(err) {
 			cmd.Println("  Nothing imported.")
 			return

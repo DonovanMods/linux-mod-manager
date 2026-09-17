@@ -9,6 +9,7 @@ package thunderstore
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -89,7 +90,18 @@ type rowTerms struct {
 	categories  []string
 	updated     time.Time
 	deprecated  bool
+	nsfw        bool
 }
+
+// The synthetic categories (#410): facts Thunderstore flags on a package
+// rather than lists among its categories. They are SHOWN as categories -
+// every renderer already prints those - and FILTER like categories, but
+// they are not searchable text and never score: typing "deprecated" is a
+// query about package names, not a filter.
+const (
+	categoryDeprecated = "Deprecated"
+	categoryNSFW       = "NSFW"
+)
 
 // Search implements source.ModSource over the local index (#360). It
 // refreshes the index on its own TTL first - correctness must not depend on
@@ -104,18 +116,27 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 	if err := validateCommunity(community); err != nil {
 		return source.SearchResult{}, err
 	}
-	wm, rows, present, err := s.ensureIndex(ctx, community, false, nil)
+	wm, rows, present, refreshErr := s.ensureIndex(ctx, community, false, nil)
 	if !present {
-		return source.SearchResult{}, err
+		return source.SearchResult{}, refreshErr
 	}
-	// err here is a refresh that failed over an index still worth serving:
-	// the stale copy answers the query rather than the user seeing nothing.
 	idx, err := s.residentFor(community, wm, rows)
 	if err != nil {
 		return source.SearchResult{}, indexUnavailable(community, err)
 	}
+	// refreshErr here is a refresh that failed over an index still worth
+	// serving: the stale copy answers the query rather than the user seeing
+	// nothing, and the result SAYS so (#360 §2.4) rather than passing an old
+	// answer off as a current one.
+	var warnings []error
+	if refreshErr != nil {
+		warnings = []error{staleIndexWarning(community, wm, refreshErr)}
+	}
 
-	matches := idx.match(query)
+	matches, hidden := idx.match(query)
+	if len(matches) == 0 && hidden > 0 {
+		warnings = append(warnings, hiddenNSFWWarning(hidden))
+	}
 	page, pageSize := clampPaging(query.Page, query.PageSize)
 	total := len(matches)
 
@@ -126,7 +147,18 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 	for _, m := range matches[start:end] {
 		mods = append(mods, modFromRow(community, idx.rows[m.row]))
 	}
-	return source.SearchResult{Mods: mods, TotalCount: total, Page: page, PageSize: pageSize}, nil
+	return source.SearchResult{Mods: mods, TotalCount: total, Page: page, PageSize: pageSize, Warnings: warnings}, nil
+}
+
+// staleIndexWarning words a refresh that failed over a copy still being
+// served: which community, how old the answer is, and why it could not be
+// replaced. err keeps its chain, so the warning still classifies as
+// source.ErrIndexUnavailable.
+func staleIndexWarning(community string, wm watermark, err error) error {
+	// The reader's local time, as every other time lmm prints (T3 review
+	// F12).
+	fetched := time.Unix(wm.FetchedAt, 0).Local().Format("2006-01-02 15:04")
+	return fmt.Errorf("results come from the %s index fetched %s, because refreshing it failed: %w", community, fetched, err)
 }
 
 // clampPaging applies the page defaults. A page past the end is not an
@@ -178,12 +210,23 @@ type scored struct {
 //
 // Filtering runs BEFORE ranking, so TotalCount counts filtered hits.
 // Category and Tags both filter Thunderstore's categories - it has no
-// second concept - exactly and case-folded, ANDed together.
-func (idx *residentIndex) match(query source.SearchQuery) []scored {
+// second concept - exactly and case-folded, ANDed together, and the
+// synthetic "Deprecated" and "NSFW" filter the same way.
+//
+// An NSFW package is left out unless the query asks for the NSFW category
+// (#410, T1 review #7). That is the default Thunderstore's own clients
+// ship, and the opt-in is the filter every frontend already has - so a
+// browse of the community cannot put one in front of a user who did not
+// ask, and a user who did ask sees only those.
+//
+// hidden counts the rows that matched everything but were left out for
+// being NSFW, which the caller turns into a hint when nothing else matched.
+func (idx *residentIndex) match(query source.SearchQuery) (matches []scored, hidden int) {
 	terms := strings.Fields(strings.ToLower(query.Query))
 	required := requiredCategories(query)
+	wantNSFW := slices.Contains(required, strings.ToLower(categoryNSFW))
 
-	matches := make([]scored, 0, 64)
+	matches = make([]scored, 0, 64)
 	for i := range idx.terms {
 		row := &idx.terms[i]
 		if !row.hasEvery(required) {
@@ -192,10 +235,23 @@ func (idx *residentIndex) match(query source.SearchQuery) []scored {
 		if !row.contains(terms) {
 			continue
 		}
+		if row.nsfw && !wantNSFW {
+			hidden++
+			continue
+		}
 		matches = append(matches, scored{row: i, score: row.score(terms)})
 	}
 	idx.rank(matches)
-	return matches
+	return matches, hidden
+}
+
+// hiddenNSFWWarning is the hint a search that found nothing gets when the
+// NSFW filter is why (T3 review F12).
+func hiddenNSFWWarning(hidden int) error {
+	if hidden == 1 {
+		return fmt.Errorf("1 package marked NSFW matches this search and is hidden; ask for the %s category, or name the package by its id, to see it", categoryNSFW)
+	}
+	return fmt.Errorf("%d packages marked NSFW match this search and are hidden; ask for the %s category, or name a package by its id, to see them", hidden, categoryNSFW)
 }
 
 // requiredCategories collects the case-folded categories a row must carry.
@@ -231,9 +287,22 @@ func (idx *residentIndex) rank(matches []scored) {
 	})
 }
 
-// hasEvery reports whether the row carries every required category.
+// hasEvery reports whether the row carries every required category,
+// counting the synthetic ones its flags stand for.
 func (r *rowTerms) hasEvery(required []string) bool {
 	for _, want := range required {
+		switch want {
+		case strings.ToLower(categoryDeprecated):
+			if !r.deprecated {
+				return false
+			}
+			continue
+		case strings.ToLower(categoryNSFW):
+			if !r.nsfw {
+				return false
+			}
+			continue
+		}
 		found := false
 		for _, have := range r.categories {
 			if have == want {
@@ -380,6 +449,7 @@ func newResidentIndex(fetchedAt int64, rows []indexRow) *residentIndex {
 			categories:  cats,
 			updated:     parseTimestamp(row.DateUpdated),
 			deprecated:  row.Deprecated,
+			nsfw:        row.NSFW,
 		}
 	}
 	return &residentIndex{fetchedAt: fetchedAt, rows: rows, terms: terms, byName: byName}
@@ -415,23 +485,29 @@ func modFromRow(community string, row indexRow) domain.Mod {
 		Author:      ns,
 		Description: row.Description,
 		GameID:      community,
-		Category:    strings.Join(categoriesWithDeprecation(row), ", "),
+		Category:    strings.Join(displayCategories(row), ", "),
 		PictureURL:  IconURL(row.FullName, row.LatestVersion),
 		SourceURL:   PackageURL(community, ns, name),
 		UpdatedAt:   parseTimestamp(row.DateUpdated),
 	}
 }
 
-// categoriesWithDeprecation is the row's categories, with a synthetic
-// "Deprecated" entry appended when the package is. Deprecation gets no new
-// domain.Mod field: it rides in the categories every existing renderer
-// already prints.
-func categoriesWithDeprecation(row indexRow) []string {
-	cats := row.Categories
-	if !row.Deprecated {
-		return cats
+// displayCategories is the row's categories, with the synthetic
+// "Deprecated" and "NSFW" entries appended when the package carries those
+// flags. Neither gets a domain.Mod field of its own: they ride in the
+// categories every existing renderer already prints.
+func displayCategories(row indexRow) []string {
+	if !row.Deprecated && !row.NSFW {
+		return row.Categories
 	}
-	return append(append([]string{}, cats...), "Deprecated")
+	cats := append([]string{}, row.Categories...)
+	if row.Deprecated {
+		cats = append(cats, categoryDeprecated)
+	}
+	if row.NSFW {
+		cats = append(cats, categoryNSFW)
+	}
+	return cats
 }
 
 // PackageURL is a package's page on Thunderstore.

@@ -33,8 +33,15 @@ var detailsCoverage = map[string]string{
 	"core.ConflictError":          "TestReportError_JSON_ConflictError",
 	"core.ExternalModError":       "TestReportError_JSON_ExternalModError",
 	"core.GameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
-	"core.GameSourceInUseError":   "TestReportError_JSON_GameSourceInUseError",
-	"core.GameSpecError":          "TestReportError_JSON_GameSpecError",
+	// #410: a game whose identifier for a source is missing or malformed -
+	// the game and the source reach the envelope so the web UI can open
+	// the sources editor on that row.
+	"core.GameIdentifierError":  "TestReportError_JSON_GameIdentifierError",
+	"core.GameSourceInUseError": "TestReportError_JSON_GameSourceInUseError",
+	"core.GameSpecError":        "TestReportError_JSON_GameSpecError",
+	// #410: no local index and no way to build one - the community, the
+	// reason and, when a host is refusing to be asked, when it will be.
+	"core.IndexUnavailableError": "TestReportError_JSON_IndexUnavailableError",
 	// #427: SetGameModPath's refusal to strand deployed files, and the
 	// missing-mod_path refusal with its repair, reach the envelope as data.
 	"core.GameModPathInUseError": "TestReportError_JSON_GameModPathInUseError",

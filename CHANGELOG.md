@@ -732,6 +732,74 @@ game edit`) prints it once.
   install loaders or write launch options, so the rest report and point at
   the setup.
 
+- **The Thunderstore index has a surface in both frontends (#410).**
+  `lmm source index` shows the active game's index (packages, when it was
+  last confirmed current, its size on disk) and `--refresh` rebuilds it now -
+  the command to reach for when a package published in the last few hours
+  does not show up. `lmm search --refresh` does the same before searching.
+  `lmm source index --all` lists every index on disk, for every game, with
+  the games that use each, and `lmm source index prune` removes what nothing
+  needs: an index no game maps, and a mapped one not refreshed for 30 days.
+  `--all` removes every index after asking (`-y` skips the question), and
+  `--dry-run` lists exactly what a real run would remove. The design put
+  these under an `lmm cache` command lmm does not have; they live beside the
+  index instead.
+
+  Pruning is fail-closed. Nothing is removed if `games.yaml` cannot be
+  read, and only `--all` removes anything when `games.yaml` is missing,
+  empty, or holds something lmm cannot read as a game - a mistyped key, a
+  game indented out of its block, or a game whose profiles exist but which
+  the file does not list - and the games lmm loaded when it started count as
+  in use too. No unused index is removed while a game maps Thunderstore to
+  an identifier lmm cannot use, and an index refreshed after the prune
+  decided to remove it is kept. A directory is removed only when every file
+  in it is provably lmm's - the exact name a build gives it and the content
+  that build writes, so a `.index-my-backup.json` of your own is kept - and
+  only through a directory handle, never through a symbolic link (the
+  index lock included), and never when lmm has no permission to remove it,
+  which the dry run already says. Indexes under a symlinked `_thunderstore`
+  directory are listed, with the reason, and never removed. A run that
+  could not remove an index it set out to exits 1; the web UI shows every
+  index a confirmed prune could not remove or kept after all, and why, and
+  its prune request must name the indexes it confirms. Every index is a
+  copy of a public catalogue, so anything removed is rebuilt by the next
+  search.
+
+  While lmm is holding Thunderstore off, `lmm source index`, `--all` and the
+  Setup page say until when and why, without asking it; the search page
+  shows an index failure's reason and when to try again.
+
+  The web UI's Setup page (the tab is now "Sources") lists the same indexes
+  with a **Refresh index** button per used index and a **Prune unused
+  indexes** action that previews first and removes only what it showed. The
+  search page and the omnibar say "Building the Thunderstore index for …
+  (one-time)…" while a first search waits on the build. Four new routes
+  answer the same core documents the CLI's `--json` prints:
+  `GET`/`POST /api/v1/sources/{id}/index`, `GET /api/v1/indexes` and
+  `POST /api/v1/indexes/prune`.
+
+  An index that cannot be had at all is now a typed error with its source,
+  community, reason and - when lmm is holding off a host - when it will ask
+  again (`--json` details; HTTP 502), and a game whose identifier for a
+  source is missing or malformed is one with the game, source and value
+  (HTTP 400) wherever they surface: the index routes, the search, a plan.
+
+- **Thunderstore packages flagged NSFW are left out of search results unless
+  you ask for them (#410).** They are marked with an `NSFW` category, and
+  asking for that category or tag (`lmm search --tag NSFW`, or the search
+  page's tag filter) is the opt-in - the default Thunderstore's own clients
+  ship. The `Deprecated` category is now filterable the same way. Neither
+  word matches as ordinary search text. A search that finds nothing only
+  because the filter hid every match says so, and so does `lmm install
+<query>`. Existing indexes are rebuilt once, on the next search, to pick
+  the flag up.
+
+- **A search served from a Thunderstore index that could not be refreshed
+  says so (#410).** The results still come from the copy on disk, and a
+  warning beside them names the community, how old the copy is and why the
+  refresh failed - in `lmm search`, its `--json` document and the web UI's
+  warning row - instead of passing an old answer off as current.
+
 - **Thunderstore is a built-in source, with search over a locally cached
   community index (#360).** Thunderstore publishes one unpaginated document
   per community and no per-query search endpoint at all, so lmm keeps a local
@@ -1514,6 +1582,51 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **A rate-limited or stalled download no longer looks like a hang
+  (#436).** Every command now says what it is waiting on, on stderr: "Rate
+  limited by Thunderstore; retrying in 12s (attempt 2 of 3).", "The transfer
+  from Thunderstore stalled; retrying in 1s (attempt 2 of 3).", "Not asking
+  Thunderstore again until 12:04:30 (in 4m30s).", and the one-time "Building
+  the Thunderstore index for … (one-time)..." - which `lmm import`'s
+  scan-mode matching, `lmm install` and `lmm verify --fix` now print too,
+  not only `lmm search`; a scan whose lookups could not be made says so
+  without `--verbose`. In the web UI the same sentence is the progress text
+  of the job that is waiting. A server's `Retry-After` is now honoured as
+  the least lmm waits (it was jittered below it, so a throttled request came
+  back early), in either of its two forms, including on the last attempt,
+  and read as at most a day however large it is.
+
+  For the Thunderstore index, more than a minute of waiting in one request
+  is not slept through but refused at once, naming when lmm will ask again,
+  and nothing is sent to Thunderstore before then - by that command or any
+  later one, `lmm serve` included: the hold is kept on disk beside the
+  indexes. A throttle or a server error holds every community; a community
+  whose own document is missing or unreadable is held on its own ("Not
+  asking Thunderstore about <community> again until …"), and three failed
+  requests in a row trip either, across processes. A mod download told to
+  wait more than a minute fails at once, naming the wait.
+
+  A transfer that stops delivering bytes now fails as stalled - after 30
+  seconds for the Thunderstore index, a minute for a mod download - instead
+  of holding for the index's ten-minute ceiling, or, for a download,
+  forever: the download client had no timeout at all. A stalled download is
+  retried like any dropped connection, and a stall is reported as the
+  failure it is - exit 1, with a `--json` error document - never as a
+  cancellation, including over HTTP/2, which is what thunderstore.io speaks.
+  The download changes apply to every source's downloads (NexusMods,
+  CurseForge, custom sources), not only Thunderstore's. Thunderstore
+  publishes no rate limit for the endpoints lmm uses; what the retry policy
+  rests on instead is recorded in `internal/source/thunderstore`'s package
+  documentation.
+
+- **The web UI shows a loader refusal's setup steps (#423).** Installing a
+  package that needs BepInEx into a game with no `loader:` block - the usual
+  first install on a Thunderstore game - now shows the three steps that fix
+  it, in order, with the version the package asked for, in the install
+  dialog and on a failed job, instead of one line and a key/value dump. The
+  plan request answers that refusal with HTTP 409 and the steps in its
+  details, where it used to answer 500.
 
 - **A warning only a download can raise now reaches you whichever command
   downloaded (#425).** #424's "BepInEx found in <path>; declare it with

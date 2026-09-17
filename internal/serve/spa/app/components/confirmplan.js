@@ -23,7 +23,7 @@
 
 import { html } from "../render.js";
 import { Modal } from "./modal.js";
-import { DocumentView } from "./documentview.js";
+import { ErrorDetails } from "./errordetails.js";
 import { planRendererFor } from "./planrenderers.js";
 
 /**
@@ -143,7 +143,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
             ? html`
                 <div class="modal__error">
                   <p>${error}</p>
-                  ${details && html`<${DocumentView} value=${details} />`}
+                  <${ErrorDetails} details=${details} />
                 </div>
               `
             : html`<${PlanView}

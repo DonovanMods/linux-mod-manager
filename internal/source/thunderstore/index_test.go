@@ -29,6 +29,7 @@ const (
 	fieldDeprecated
 	fieldOffset
 	fieldLength
+	fieldNSFW
 )
 
 // TestRefreshIndexBuildsTheSplitIndex is the unit's central claim: one
@@ -55,7 +56,7 @@ func TestRefreshIndexBuildsTheSplitIndex(t *testing.T) {
 	wm := readWatermark(t, cacheDir, testCommunity)
 	assert.Equal(t, "Wed, 10 Sep 2026 12:00:00 GMT", wm["last_modified"])
 	assert.EqualValues(t, 12, wm["packages"])
-	assert.EqualValues(t, 2, wm["schema"])
+	assert.EqualValues(t, 3, wm["schema"])
 	assert.NotEmpty(t, wm["generation"], "the watermark names the build its data files carry")
 	assert.NotZero(t, wm["fetched_at"])
 
@@ -65,7 +66,7 @@ func TestRefreshIndexBuildsTheSplitIndex(t *testing.T) {
 	rows := readIndexRows(t, cacheDir, testCommunity)
 	require.Len(t, rows, 12)
 	for _, row := range rows {
-		require.Len(t, row, 8, "an index row is a fixed 8-element array")
+		require.Len(t, row, 9, "an index row is a fixed 9-element array")
 		offset, length := rowInt(t, row, fieldOffset), rowInt(t, row, fieldLength)
 		require.LessOrEqual(t, offset+length, int64(len(packages)))
 
@@ -86,6 +87,7 @@ func TestRefreshIndexBuildsTheSplitIndex(t *testing.T) {
 	assert.Equal(t, "3.0.2", rowString(t, first, fieldLatestVersion), "Thunderstore orders versions newest-first")
 	assert.Equal(t, "2026-09-08T10:00:00.000000Z", rowString(t, first, fieldDateUpdated))
 	assert.Contains(t, rowString(t, first, fieldDescription), "mimic the voices")
+	assert.Equal(t, "false", string(first[fieldNSFW]), "schema 3 carries has_nsfw_content last")
 }
 
 // TestIndexRecordsEveryVersion pins the design's deliberate refusal to cap

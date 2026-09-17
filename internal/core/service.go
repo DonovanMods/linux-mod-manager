@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -74,6 +75,14 @@ type ServiceConfig struct {
 	// The composition root (internal/app) registers only NAMED adapters on
 	// top of that default; core never imports a concrete adapter package.
 	Adapters *adapter.Registry
+
+	// DownloadClient is the HTTP client file downloads use. Nil builds the
+	// default: http.DefaultTransport under a guard that fails a transfer
+	// once it stops delivering bytes for a minute (#436). A caller that
+	// supplies its own client supplies its own stall guard with it - a
+	// test does, to prove over a real HTTP/2 server that a stalled
+	// download is reported as a failure, in well under a minute.
+	DownloadClient *http.Client
 }
 
 // DownloadModResult contains the outcome of downloading a mod file
@@ -235,7 +244,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 
 	modCache := cache.New(cfg.CacheDir)
 	modCache.SetLogger(log)
-	downloader := NewDownloader(nil)
+	downloader := NewDownloader(cfg.DownloadClient)
 	downloader.SetLogger(log)
 
 	svc := &Service{
@@ -596,7 +605,7 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 		return source.SearchResult{}, err
 	}
 
-	return src.Search(ctx, source.SearchQuery{
+	result, err := src.Search(ctx, source.SearchQuery{
 		GameID:   sourceGameID,
 		Query:    query,
 		Category: category,
@@ -604,6 +613,7 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 		Page:     page,
 		PageSize: pageSize,
 	})
+	return result, classifyIndexError(sourceID, sourceGameID, err)
 }
 
 // SourcesForGame resolves gameID and returns the subset of its configured
@@ -816,9 +826,12 @@ type searchSourceState struct {
 	// err is the FIRST failure this source hit, on any round. A failure on
 	// a later page is reported exactly like a first-page failure - a
 	// Warning - and the hits the earlier pages did return are kept.
-	err   error
-	mods  []domain.Mod
-	total int // the source's most recently reported TotalCount
+	err error
+	// warnings are the source's own non-fatal problems (a stale local
+	// index, #360 §2.4), each reported once however many pages repeated it.
+	warnings []error
+	mods     []domain.Mod
+	total    int // the source's most recently reported TotalCount
 }
 
 // pagedSourceHasMore is sourceHasMore's counterpart for searchAllSources'
@@ -1066,6 +1079,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 				// rather than two frames away (#361, review N10).
 				firstRound := page == 0 && st.cursor == page
 				st.succeeded = true
+				st.warnings = appendNewWarnings(st.warnings, res.Warnings)
 				st.mods = append(st.mods, res.Mods...)
 				st.total = res.TotalCount
 				if paging {
@@ -1145,6 +1159,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 			continue
 		}
 		succeeded++
+		result.Warnings = append(result.Warnings, sourceWarnings(st.id, st.warnings)...)
 		result.Mods = append(result.Mods, st.mods...)
 		result.TotalCount += st.total
 		if st.hasMore {
@@ -1164,6 +1179,37 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 		return result, fmt.Errorf("all %d source(s) failed: %w", attemptedCount, errors.Join(errs...))
 	}
 	return result, nil
+}
+
+// appendNewWarnings adds each of more to have unless an identical message
+// is already there - a paged search asks one source several times, and its
+// stale-index warning is one fact, not one per page.
+func appendNewWarnings(have, more []error) []error {
+	for _, w := range more {
+		dup := false
+		for _, h := range have {
+			if h.Error() == w.Error() {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			have = append(have, w)
+		}
+	}
+	return have
+}
+
+// sourceWarnings renders one source's own warnings as SourceWarnings.
+func sourceWarnings(sourceID string, warnings []error) []SourceWarning {
+	if len(warnings) == 0 {
+		return nil
+	}
+	out := make([]SourceWarning, 0, len(warnings))
+	for _, w := range warnings {
+		out = append(out, newSourceWarning(sourceID, w))
+	}
+	return out
 }
 
 // rankAggregate orders merged results: query-name matches first, then by
@@ -1203,7 +1249,8 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 		}
 	}
 
-	return src.GetMod(ctx, sourceGameID, modID)
+	mod, err := src.GetMod(ctx, sourceGameID, modID)
+	return mod, classifyIndexError(sourceID, sourceGameID, err)
 }
 
 // GetModFiles retrieves available download files for a mod

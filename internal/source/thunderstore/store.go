@@ -45,7 +45,12 @@ const (
 	// 2 added the generation stamp (T1 review #2), which changed the shape
 	// of both data files: index.json gained its object wrapper and
 	// packages.jsonl its trailer line.
-	indexSchema = 2
+	//
+	// 3 added the has_nsfw_content flag (#410): a ninth row element and a
+	// record field. Bumped rather than defaulted, because a schema-2 index
+	// would otherwise read every package as safe until upstream next
+	// changed - and the flag exists to HIDE something.
+	indexSchema = 3
 	// rootDirName is the cache root's subdirectory. The "_" prefix is
 	// unreachable as a game slug (core.DeriveGameID never emits one), so
 	// this tree can never collide with the game-scoped mod cache that
@@ -91,7 +96,13 @@ type indexFile struct {
 // indexRow is one row of index.json: everything a search needs, plus where
 // the full record lives in packages.jsonl. Rows are written as fixed-shape
 // ARRAYS rather than objects - repeating the field names would be a third
-// of the file - so the two methods below are the format.
+// of the file - so the two methods below are the format:
+//
+//	[full_name, description, categories, date_updated, latest_version,
+//	 is_deprecated, offset, length, has_nsfw_content]
+//
+// has_nsfw_content is LAST (schema 3) so the two offsets keep the
+// positions every earlier reader of the format knew them by.
 type indexRow struct {
 	FullName      string
 	Description   string
@@ -103,32 +114,38 @@ type indexRow struct {
 	// trailing newline: bytes [Offset, Offset+Length).
 	Offset int64
 	Length int64
+	// NSFW is Thunderstore's has_nsfw_content. Such a package is left out
+	// of search results unless the query asks for it (search.go).
+	NSFW bool
 }
 
-// MarshalJSON writes the row as its fixed 8-element array.
+// indexRowFields is the fixed length of a row array.
+const indexRowFields = 9
+
+// MarshalJSON writes the row as its fixed array.
 func (r indexRow) MarshalJSON() ([]byte, error) {
 	cats := r.Categories
 	if cats == nil {
 		cats = []string{}
 	}
 	return json.Marshal([]any{
-		r.FullName, r.Description, cats, r.DateUpdated, r.LatestVersion, r.Deprecated, r.Offset, r.Length,
+		r.FullName, r.Description, cats, r.DateUpdated, r.LatestVersion, r.Deprecated, r.Offset, r.Length, r.NSFW,
 	})
 }
 
-// UnmarshalJSON reads the fixed 8-element array MarshalJSON writes. A row
-// of any other shape is a corrupt index, which the caller treats as cold.
+// UnmarshalJSON reads the fixed array MarshalJSON writes. A row of any
+// other shape is a corrupt index, which the caller treats as cold.
 func (r *indexRow) UnmarshalJSON(data []byte) error {
 	var raw []json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if len(raw) != 8 {
-		return fmt.Errorf("index row has %d fields, want 8", len(raw))
+	if len(raw) != indexRowFields {
+		return fmt.Errorf("index row has %d fields, want %d", len(raw), indexRowFields)
 	}
 	fields := []any{
 		&r.FullName, &r.Description, &r.Categories, &r.DateUpdated,
-		&r.LatestVersion, &r.Deprecated, &r.Offset, &r.Length,
+		&r.LatestVersion, &r.Deprecated, &r.Offset, &r.Length, &r.NSFW,
 	}
 	for i, target := range fields {
 		if err := json.Unmarshal(raw[i], target); err != nil {
@@ -186,6 +203,7 @@ type packageRecord struct {
 	DateUpdated string       `json:"date_updated"`
 	Categories  []string     `json:"categories"`
 	Deprecated  bool         `json:"is_deprecated"`
+	NSFW        bool         `json:"has_nsfw_content"`
 	Description string       `json:"description"`
 	WebsiteURL  string       `json:"website_url"`
 	Versions    []versionRow `json:"versions"`

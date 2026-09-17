@@ -58,6 +58,11 @@ type Options struct {
 	// the only value production ever wants; a test sets it small so that
 	// proving the ceiling works does not mean serving half a gigabyte.
 	MaxIndexBytes int64
+	// StallTimeout is how long one listing attempt may go without a byte
+	// before it fails as stalled. 0 uses stallTimeout, which is the only
+	// value production wants; a test sets it small so that proving a stall
+	// is reported correctly does not mean waiting thirty seconds for one.
+	StallTimeout time.Duration
 }
 
 // Source is the Thunderstore ModSource (#360).
@@ -68,7 +73,10 @@ type Options struct {
 type Source struct {
 	client *client
 	store  *store
-	now    func() time.Time
+	// holds is when lmm will next ask the host, or a community on it
+	// (hold.go) - shared with the client's retry transport.
+	holds *holdStore
+	now   func() time.Time
 
 	// mu guards resident and locks below. Held only to look one up, never
 	// across a fetch or a decode.
@@ -91,6 +99,9 @@ var (
 	_ source.CapabilityReporter = (*Source)(nil)
 	_ source.TypeLabeler        = (*Source)(nil)
 	_ source.LocalIndexSource   = (*Source)(nil)
+
+	_ source.GameIdentifierValidator = (*Source)(nil)
+	_ source.HoldReporter            = (*Source)(nil)
 )
 
 // New constructs a Thunderstore source.
@@ -99,9 +110,12 @@ func New(opts Options) *Source {
 	if now == nil {
 		now = time.Now
 	}
+	store := newStore(opts.CacheDir)
+	holds := newHoldStore(store.root, now)
 	return &Source{
-		client:   newClient(opts, now),
-		store:    newStore(opts.CacheDir),
+		client:   newClient(opts, now, holds),
+		store:    store,
+		holds:    holds,
 		now:      now,
 		resident: make(map[string]*residentIndex),
 		locks:    make(map[string]*sync.Mutex),
@@ -136,6 +150,11 @@ func (s *Source) TypeLabel() string { return "built-in" }
 func (s *Source) Capabilities() source.Capabilities {
 	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: false, Versions: true}
 }
+
+// ValidateGameIdentifier implements source.GameIdentifierValidator: the
+// identifier is a community slug, and core refuses one that is not before
+// it is joined onto anything.
+func (s *Source) ValidateGameIdentifier(id string) error { return validateCommunity(id) }
 
 // AuthURL: unsupported - there is no credential to obtain.
 func (s *Source) AuthURL() string { return "" }

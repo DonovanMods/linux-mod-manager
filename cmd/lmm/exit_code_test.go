@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,6 +29,27 @@ func TestExitCodeFor(t *testing.T) {
 	assert.Equal(t, exitCancelled, exitCodeFor(context.Canceled))
 	assert.Equal(t, exitError, exitCodeFor(ErrReported), "a reported failure is still a failure")
 	assert.Equal(t, exitError, exitCodeFor(os.ErrNotExist))
+}
+
+// TestExitCodeIn_ACancellationTheUserDidNotMakeIsAnError is Execute's
+// structural guard (T3 review F1): exit 2 promises "cancelled by the user",
+// and the user cancels through the command's context - Ctrl-C, SIGTERM - or
+// by declining a prompt. A context.Canceled that reaches Execute while that
+// context is still live came from somewhere inside lmm, and reporting it as
+// the user's own cancellation would print "Cancelled." and, under --json,
+// no document at all.
+func TestExitCodeIn_ACancellationTheUserDidNotMakeIsAnError(t *testing.T) {
+	live := t.Context()
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	assert.Equal(t, exitError, exitCodeIn(live, context.Canceled), "nobody cancelled the command")
+	assert.Equal(t, exitError, exitCodeIn(live, fmt.Errorf("fetching: %w", context.Canceled)))
+	assert.Equal(t, exitCancelled, exitCodeIn(cancelled, context.Canceled), "Ctrl-C")
+	assert.Equal(t, exitCancelled, exitCodeIn(live, ErrCancelled), "a declined prompt")
+	assert.Equal(t, exitCancelled, exitCodeIn(cancelled, ErrCancelled))
+	assert.Equal(t, exitOK, exitCodeIn(live, nil))
+	assert.Equal(t, exitError, exitCodeIn(cancelled, os.ErrNotExist))
 }
 
 // TestDeclinedConfirmationsAllExitTwo drives every confirming command with a
@@ -107,7 +129,7 @@ func TestDeclinedConfirmationsAllExitTwo(t *testing.T) {
 			importDryRun = false
 			cmd := &cobra.Command{}
 			cmd.SetContext(context.Background())
-			return runImportScan(cmd, game, svc, "default")
+			return runImportScan(cmd.Context(), game, svc, "default")
 		}},
 	}
 

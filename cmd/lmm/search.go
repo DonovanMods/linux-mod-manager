@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -24,6 +23,7 @@ var (
 	searchProfile  string
 	searchCategory string
 	searchTags     []string
+	searchRefresh  bool
 )
 
 var searchCmd = &cobra.Command{
@@ -35,6 +35,13 @@ If --source is not specified, all configured sources for the game are
 searched concurrently and the results are merged. Results already
 installed in the target profile (-p/--profile, default: active profile)
 are marked [installed].
+
+A source that searches a LOCAL copy of its catalogue (Thunderstore) builds
+that copy on the first search - a one-time wait of a few seconds, announced
+on stderr - and refreshes it every six hours. --refresh rebuilds it before
+searching, for a package published in the last few hours. Thunderstore
+packages flagged NSFW are left out unless you ask for them with
+--tag NSFW (or --category NSFW); --tag Deprecated finds deprecated ones.
 
 Use --category and --tag to filter results; support varies by source.
 --category is honored by NexusMods and CurseForge; --tag is currently
@@ -65,6 +72,7 @@ func init() {
 	searchCmd.Flags().StringVarP(&searchProfile, "profile", "p", "", "profile to check for installed mods (default: active profile)")
 	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (NexusMods: the category name; CurseForge: its numeric id)")
 	searchCmd.Flags().StringSliceVar(&searchTags, "tag", nil, "filter by tag (repeatable; source-specific)")
+	searchCmd.Flags().BoolVar(&searchRefresh, "refresh", false, "rebuild a locally cached source index (Thunderstore) before searching")
 
 	rootCmd.AddCommand(searchCmd)
 }
@@ -180,10 +188,12 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// A source that answers Search from a LOCAL index builds that index on
-	// the first search, which is a one-time wait of a few seconds with
-	// nothing on screen to explain it (#360 §2.7). The notice goes to
-	// STDERR so `--json` keeps its one-document-on-stdout invariant.
-	indexed := noteColdIndexes(ctx, service, game, opts.SourceID)
+	// the first search and announces it itself, through the notices
+	// withServiceOpts prints to stderr (#360 §2.7, #436). --refresh asks
+	// for the rebuild up front instead.
+	if searchRefresh {
+		refreshSearchedIndexes(ctx, service, game, opts.SourceID)
+	}
 
 	// core.Search owns the search itself, the merge across sources and the
 	// installed-mod join; this command only classifies the failure and
@@ -204,8 +214,6 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 		return fmt.Errorf("search failed: %w", err)
 	}
-
-	indexed()
 
 	for _, w := range report.Warnings {
 		fmt.Fprintf(os.Stderr, "warning: source %s: %v\n", w.SourceID, w.Err)
@@ -335,42 +343,33 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// noteColdIndexes announces the one-time index build a local-index source
-// (#360: Thunderstore) performs inside its first Search, and returns the
-// function that reports what it produced once the search is back.
-//
-// Both lines go to STDERR: `lmm search --json` promises exactly one
-// document on stdout (the `update --json` invariant), and a progress notice
-// is not that document. A STALE index prints nothing - its refresh is a
-// conditional request that costs nothing worth explaining.
-//
-// Every failure here is silent by design. This is a courtesy notice around
-// a search that is about to happen anyway; a source that cannot answer
-// what it has cached must not turn `lmm search` into an error.
-func noteColdIndexes(ctx context.Context, service *core.Service, game *domain.Game, sourceID string) func() {
-	var cold []string
+// refreshSearchedIndexes rebuilds the local index of every source this
+// search will ask that keeps one (`lmm search --refresh`). Progress and the
+// outcome go to STDERR, like every other index notice, so `--json` keeps
+// its single document; a refresh that fails is reported and the search
+// goes ahead on whatever is cached, where the search's own error or
+// warning says the rest.
+func refreshSearchedIndexes(ctx context.Context, service *core.Service, game *domain.Game, sourceID string) {
 	for _, id := range searchedSourceIDs(game, sourceID) {
 		status, err := service.SourceIndexStatus(ctx, id, game.ID)
-		if err != nil || status == nil || status.Present {
-			continue // no index surface, or one that is already built
+		if err != nil || status == nil {
+			continue // no index to refresh; the search reports the rest
 		}
-		fmt.Fprintf(os.Stderr, "Building the %s index for %s (one-time)...\n", sourceName(service, id), status.Game)
-		cold = append(cold, id)
+		report, err := service.RefreshSourceIndex(ctx, id, game.ID, true, printIndexStep)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: refreshing the %s index for %s failed: %v\n", sourceName(service, id), status.Game, err)
+			continue
+		}
+		fmt.Fprintln(os.Stderr, indexReportLine(sourceName(service, id), report))
 	}
-	if len(cold) == 0 {
-		return func() {}
-	}
+}
 
-	started := time.Now()
-	return func() {
-		elapsed := time.Since(started).Round(100 * time.Millisecond)
-		for _, id := range cold {
-			status, err := service.SourceIndexStatus(ctx, id, game.ID)
-			if err != nil || status == nil || !status.Present {
-				continue // the build failed; the search's own error says so
-			}
-			fmt.Fprintf(os.Stderr, "Indexed %d packages in %s.\n", status.Packages, elapsed)
-		}
+// printIndexStep prints an explicit refresh's start line to stderr; the
+// per-thousand progress ticks and the done tick are left to the summary
+// line the caller prints from the report.
+func printIndexStep(e core.Event) {
+	if step, ok := e.(core.StepEvent); ok && step.Phase == core.IndexRefreshStarted {
+		fmt.Fprintf(os.Stderr, "%s...\n", capitalize(step.Detail))
 	}
 }
 

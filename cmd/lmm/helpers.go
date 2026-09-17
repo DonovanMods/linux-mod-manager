@@ -26,6 +26,9 @@ func withService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.Serv
 
 // withServiceOpts is withService with bootstrap options (e.g. a custom warning
 // writer); ConfigDir and DataDir still come from the global flags.
+//
+// The context fn receives prints what a source or a download is waiting on
+// to stderr (withSourceNotices, #436), for every command.
 func withServiceOpts(cmd *cobra.Command, opts app.Options, fn func(ctx context.Context, svc *core.Service) error) error {
 	svc, err := initServiceWith(cmd.Context(), opts)
 	if err != nil {
@@ -33,7 +36,7 @@ func withServiceOpts(cmd *cobra.Command, opts app.Options, fn func(ctx context.C
 	}
 	defer closeService(svc)
 
-	return fn(cmd.Context(), svc)
+	return fn(withSourceNotices(cmd.Context()), svc)
 }
 
 // withGameService extends withService with the requireGame check and resolves

@@ -314,10 +314,14 @@ func printTableTo(out io.Writer, buf *bytes.Buffer, headerLines int, rowColor fu
 func Execute() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Every command's context prints what a source is waiting on, so a
+	// command that hands cmd.Context() to a call rather than the context
+	// withServiceOpts gave it still says why it is slow (T3 review F2).
+	ctx = withSourceNotices(ctx)
 
 	rawArgs = os.Args[1:]
 	if err := runRoot(ctx); err != nil {
-		switch exitCodeFor(err) {
+		switch exitCodeIn(ctx, err) {
 		case exitCancelled:
 			printCancelledNotice(os.Stderr, jsonOutput)
 			os.Exit(exitCancelled)
@@ -352,6 +356,22 @@ func exitCodeFor(err error) int {
 	default:
 		return exitError
 	}
+}
+
+// exitCodeIn is exitCodeFor for a command run under ctx, and what Execute
+// applies: a context.Canceled is the USER's cancellation only when ctx -
+// the one SIGINT and SIGTERM cancel - is actually done (T3 review F1).
+//
+// Anything else is lmm cancelling a request of its own - a stall guard
+// giving up on a transfer is the case that shipped - and exit 2 would
+// report that failure as "Cancelled." with, under --json, no document at
+// all. A declined prompt (ErrCancelled) is the user's whatever ctx says.
+func exitCodeIn(ctx context.Context, err error) int {
+	code := exitCodeFor(err)
+	if code == exitCancelled && !errors.Is(err, ErrCancelled) && ctx.Err() == nil {
+		return exitError
+	}
+	return code
 }
 
 // printCancelledNotice names the cancellation on Execute's exit-2 path

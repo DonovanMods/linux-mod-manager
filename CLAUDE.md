@@ -131,13 +131,16 @@ internal/
     ├── mod_files.go       # `lmm mod files`: ModFileEntry/ModFilesReport
     ├── verify.go          # verify engine: VerifyTier/VerifyResult (`lmm verify`)
     ├── verify_helpers.go  # verify engine internals: retained-source / mismatch detection
+    ├── source_index.go    # the local-index surface (#360/#410): SourceIndexStatus/RefreshSourceIndex, IndexStatus/IndexReport
+    ├── source_index_prune.go # ListSourceIndexes/PruneSourceIndexes (`lmm source index --all`/`prune`): the fail-closed prune policy
+    ├── source_notices.go  # WithSourceNotices: a source's throttle/suspension/cold-build notices as events (#436)
     └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
 └── serve/                # `lmm serve` local web UI: an SPA over /api/v1; imports only app/core/domain (boundary_test.go)
     ├── server.go          # Package doc; New/Listen/Serve/Close, graceful shutdown, CSRF guard
     ├── middleware.go      # Host allow-list (DNS-rebinding guard), Origin/CSRF checks, security headers, request logging
     ├── routes.go          # Registers the SPA routes (spa.go) and every /api/v1 route on the mux
     ├── spa.go             # The SPA shell (a template: it carries the CSRF token), its embedded asset trees, the CSP hash, the legacy 301s
-    ├── spa/               # index.html shell (+ skip link, the one inline theme script) + app.css (Launcher tokens dark+light, motion tokens, prefers-reduced-motion) + app/*.js (ES modules: render/router/store/api/sse/theme/main, activity+progress+failures+jobhistory+jobresult for the job layer, modrows/navigation/verify/conflicts/shortcuts/relativetime/motion/focustrap/dismiss/slicefence/version, + components/: app, missioncontrol, topbar, awaybar, cards, library, gamechooser, modpanel, fullmodpage, searchpage, omnibarresults, searchresults, tray, modal, confirmplan, planrenderers, planoptions, plan_{deploy,install,uninstall,rollback,updates,verify_fix,profile_import,import_archive,adopt,switch,profile_apply,purge,profile_sync,mod_relink}, reordermodal, profilesmodal, shortcutsmodal, uninstallbatchmodal, setup{,adopt,auth,games,import,sources}, sourcesmap, gameadd, documentview, jobprogress, toasts)
+    ├── spa/               # index.html shell (+ skip link, the one inline theme script) + app.css (Launcher tokens dark+light, motion tokens, prefers-reduced-motion) + app/*.js (ES modules: render/router/store/api/sse/theme/main, activity+progress+failures+jobhistory+jobresult for the job layer, modrows/navigation/verify/conflicts/shortcuts/relativetime/motion/focustrap/dismiss/slicefence/version/indexnotice, + components/: app, missioncontrol, topbar, awaybar, cards, library, gamechooser, modpanel, fullmodpage, searchpage, omnibarresults, searchresults, tray, modal, confirmplan, errordetails, planrenderers, planoptions, plan_{deploy,install,uninstall,rollback,updates,verify_fix,profile_import,import_archive,adopt,switch,profile_apply,purge,profile_sync,mod_relink}, reordermodal, profilesmodal, shortcutsmodal, uninstallbatchmodal, setup{,adopt,auth,games,import,sources}, sourceindexes, sourcesmap, gameadd, documentview, jobprogress, toasts)
     ├── vendor/            # preact.module.js, hooks.module.js, htm.module.js - pinned, doc-commented, NEVER fetched by any build
     ├── selection.go       # ?game/?profile resolution shared by every scoped /api/v1 endpoint and the 301s
     ├── api.go             # GET /api/v1/{status,mods,updates,profiles,health,conflicts,search,mods/{source}/{id}}
@@ -167,6 +170,7 @@ internal/
     ├── api_games.go       # game add/detect/set-default (#307/#333) + PUT /api/v1/games/{id} sources (#326)
     ├── api_auth.go        # per-source credential store + the live re-key (restart_required)
     ├── api_sources.go     # the custom-source editor: list/definition/validate/save/delete
+    ├── api_source_index.go # the local-index routes (#410): GET/POST /api/v1/sources/{id}/index, GET /api/v1/indexes, POST /api/v1/indexes/prune
     ├── api_mod_settings.go # mod lock/unlock/update-policy/convert - single DB writes, no job
     ├── api_mod_files.go   # GET /api/v1/mods/{source}/{id}/{files,versions}
     ├── uploads.go         # streamed archive uploads into the real staging dir (2 GiB cap, 30-min TTL)

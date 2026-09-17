@@ -79,3 +79,37 @@ export function explainerFor(job) {
     outputTail: details.output_tail ?? "",
   };
 }
+
+/**
+ * loaderSetupFor returns the loader refusal a failure's TYPED details
+ * describe (core.LoaderRequiredError, issue 423), or null when they
+ * describe something else.
+ *
+ * Identified by structure - an ordered `setup` list of sentences beside the
+ * loader `kind` - never by the message. `setup` is DATA precisely so this
+ * UI renders the same sentences the terminal prints rather than carrying
+ * its own copy; `version` is the loader version the mod asked for, when
+ * whatever reported the requirement knew one (a Thunderstore package's own
+ * BepInExPack dependency, issue 409).
+ */
+export function loaderSetupFor(details) {
+  if (!details || !Array.isArray(details.setup) || !details.kind) return null;
+  return {
+    kind: details.kind,
+    loaderVersion: details.version ?? "",
+    modName: details.mod_name ?? "",
+    steps: details.setup.filter((s) => typeof s === "string" && s !== ""),
+  };
+}
+
+/**
+ * retryAtFor returns when lmm will next ask a source that is refusing to be
+ * asked (core.IndexUnavailableError's retry_at, issue 436), or null. The
+ * message already says why; this is the one fact worth pulling out of it.
+ */
+export function retryAtFor(details) {
+  if (!details?.retry_at || !details.source) return null;
+  const at = Date.parse(details.retry_at);
+  if (Number.isNaN(at)) return null;
+  return { source: details.source, at: new Date(at) };
+}

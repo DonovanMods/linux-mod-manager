@@ -68,7 +68,7 @@ func TestRunImportScan_ExtractModeWarning_ExactOutput(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	out, _, err := captureStdoutAndStderr(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestRunImportScan_BackfillLoop_UpdatesMissingMetadataAndSavesToDB(t *testin
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	out, _, err := captureStdoutAndStderr(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 
 	require.NoError(t, err)
@@ -160,7 +160,7 @@ func TestRunImportScan_BackfillLoop_SkipMatchHonored_NoBackfillAttempted(t *test
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	out, _, err := captureStdoutAndStderr(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 
 	require.NoError(t, err)
@@ -203,7 +203,7 @@ func TestRunImportScan_DuplicateSkip_NoDBWriteNoCacheWrite(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	out, _, err := captureStdoutAndStderr(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 
 	require.NoError(t, err)
@@ -249,7 +249,7 @@ func TestRunImportScan_ConfirmDecline_ReturnsErrCancelled(t *testing.T) {
 	var err error
 	withStdin(t, "n\n", func() {
 		out, _, err = captureStdoutAndStderr(t, func() error {
-			return runImportScan(cmd, game, svc, "default")
+			return runImportScan(cmd.Context(), game, svc, "default")
 		})
 	})
 
@@ -289,7 +289,7 @@ func TestRunImportScan_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	cmd.SetContext(context.Background())
 
 	err := assertStdinNeverRead(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 
 	require.ErrorIs(t, err, core.ErrConfirmationRequired)
@@ -314,7 +314,7 @@ func TestRunImportScan_Force_SkipsConfirmPrompt_ImportsAndWritesCache(t *testing
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	out, _, err := captureStdoutAndStderr(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 
 	require.NoError(t, err)
@@ -815,7 +815,7 @@ func TestRunImportScan_MatchConfidence_AnnotatesNonExactMatches(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetContext(context.Background())
 		out, _, err := captureStdoutAndStderr(t, func() error {
-			return runImportScan(cmd, game, svc, "default")
+			return runImportScan(cmd.Context(), game, svc, "default")
 		})
 		require.NoError(t, err)
 		return out
@@ -857,7 +857,7 @@ func TestRunImportScan_CompileModeGame_NoteNamesCompileMode(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	out, _, err := captureStdoutAndStderr(t, func() error {
-		return runImportScan(cmd, game, svc, "default")
+		return runImportScan(cmd.Context(), game, svc, "default")
 	})
 
 	require.NoError(t, err)
