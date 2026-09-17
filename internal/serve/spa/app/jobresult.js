@@ -19,6 +19,16 @@ import { resultTally } from "./progress.js";
 // once, and neither ever re-fetches on a later re-render.
 const tallyCache = new Map();
 
+// pendingReads is a job id's in-flight read, while one is outstanding.
+// useJobResultTally and useJobResultWarnings are two SEPARATE hooks called
+// on the SAME jobID in the SAME render (jobprogress.js's JobProgress), so
+// their effects both fire before either's fetch has resolved - tallyCache
+// alone is not enough, since it is only filled once a fetch's .then runs.
+// Caching the promise itself closes that window: the second hook finds the
+// first's request already in flight and awaits it instead of starting its
+// own.
+const pendingReads = new Map();
+
 /**
  * useJobResultTally returns jobID's own resultTally, or null while the job
  * is still running, its result hasn't been fetched yet, or its result
@@ -62,19 +72,24 @@ function useJobResultRead(jobID, jobState) {
       return;
     }
     let cancelled = false;
-    jobStatus(jobID).then(
-      (status) => {
-        const computed = readResult(status.result);
-        tallyCache.set(jobID, computed);
-        if (!cancelled) setRead(computed);
-      },
-      () => {
-        // A job the registry has already evicted (jobs.go's retention
-        // limit) - honestly null, same as jobhistory.js's own "a gap in
-        // history is honest, a blank page over one missing job is not".
-        if (!cancelled) setRead(null);
-      },
-    );
+    let read = pendingReads.get(jobID);
+    if (!read) {
+      read = jobStatus(jobID).then(
+        (status) => readResult(status.result),
+        () => {
+          // A job the registry has already evicted (jobs.go's retention
+          // limit) - honestly null, same as jobhistory.js's own "a gap in
+          // history is honest, a blank page over one missing job is not".
+          return null;
+        },
+      );
+      pendingReads.set(jobID, read);
+      read.finally(() => pendingReads.delete(jobID));
+    }
+    read.then((computed) => {
+      tallyCache.set(jobID, computed);
+      if (!cancelled) setRead(computed);
+    });
     return () => {
       cancelled = true;
     };
