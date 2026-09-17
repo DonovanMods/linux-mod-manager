@@ -108,7 +108,8 @@ export function AdapterRefusal({ refusal }) {
         </p>`
       }
       <p class="adapter-refusal__remedy">
-        Fix the game's adapter in Setup → Games, or run ${" "}<code
+        Nothing runs on this game until its adapter can: change it in its
+        games.yaml entry, or run${" "}<code
           >lmm game edit ${refusal.gameID} --adapter ${"<name>"}</code
         >, then try again.
       </p>

@@ -1642,9 +1642,9 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   not a server error (#461).** Deploy, install, updates, profile apply,
   profile sync, mod edit, adopt and archive import on such a game used to
   fail their plan with a 500; they answer 409 with the refusal now, and the
-  confirmation dialog shows lmm's sentence and where to fix it (Setup →
-  Games, or `lmm game edit <game> --adapter <name>`), with nothing to
-  confirm.
+  confirmation dialog shows lmm's sentence and where to fix it (the
+  game's `games.yaml` entry, or `lmm game edit <game> --adapter <name>`),
+  with nothing to confirm.
 
 - **lmm writes a profile to its own file, safely, and keeps what you wrote
   in it (#441).**

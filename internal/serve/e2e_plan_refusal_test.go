@@ -29,7 +29,7 @@ func TestE2E_DeployOnARefusedAdapter_ConfirmShowsTheRefusalAndItsRemedy(t *testi
 		chromedp.Evaluate(`document.querySelectorAll('.modal[data-kind="deploy"] [data-action="confirm"]').length`, &confirms),
 	)
 	assert.Contains(t, body, `unknown adapter "no-such-adapter"`, "core's sentence, verbatim")
-	assert.Contains(t, body, "Setup → Games", "where the fix is made")
+	assert.Contains(t, body, "games.yaml entry", "where the fix is made")
 	assert.Contains(t, body, "lmm game edit "+f.Game.ID+" --adapter <name>")
 	assert.Zero(t, confirms, "a refused plan offers nothing to confirm")
 	// The 409 is the one expected failed request; nothing else may error.
