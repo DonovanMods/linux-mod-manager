@@ -658,6 +658,9 @@ func TestPlanProfileApply_ExternalRefIsRecordedNotFetched(t *testing.T) {
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "shared",
 		domain.ModReference{SourceID: "steamworkshop", ModID: "111000111", Version: "9876543210"}))
 
+	// An apply acts for the active profile only (#462).
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "shared"))
+
 	// No source is registered: an external entry must never reach one.
 	plan, err := svc.PlanProfileApply(context.Background(), game, "shared")
 	require.NoError(t, err)

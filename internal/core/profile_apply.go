@@ -16,11 +16,14 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // ProfileApplyPlan is the pure, displayable diff between a profile and the
@@ -218,7 +221,21 @@ type ProfileApplyResult struct {
 // resolution failure fails that ONE entry (recorded as Error text) rather
 // than the plan, because doProfileApply printed those failures per mod,
 // inside its install loop, and carried on.
+//
+// An apply deploys, so it acts for the game's active profile only (#462,
+// #445), as a deploy does: any other profile is refused with
+// ErrProfileNotActive, and a game whose profile files do not say which
+// profile is active with ErrActiveProfileUnknown.
 func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profileName string) (*ProfileApplyPlan, error) {
+	if err := s.refuseInactive(ctx, game.ID, profileName, "apply"); err != nil {
+		// A profile that does not exist is that, not a profile to switch
+		// to. Listed, not loaded: the plan's own load is the read it
+		// decides from.
+		if names, listErr := config.ListProfiles(s.configDir, game.ID); errors.Is(err, ErrProfileNotActive) && listErr == nil && !slices.Contains(names, profileName) {
+			return nil, fmt.Errorf("profile not found: %s", profileName)
+		}
+		return nil, err
+	}
 	s.settleOwedProfileBackfill(ctx)
 	return s.planProfileApply(ctx, game, profileName)
 }
@@ -557,7 +574,8 @@ func profileApplyFileIDs(files []*domain.DownloadableFile) []string {
 // Ruling 5: the plan is refused with ErrStalePlan when the profile's
 // installed-mod set has changed since it was computed. Beyond that the plan
 // is executed exactly as given - it already carries each entry's resolved
-// mod, file selection and cache verdict.
+// mod, file selection and cache verdict. A plan whose profile is no longer
+// the active one is refused as PlanProfileApply refuses it (#462).
 //
 // doProfileApply runs no install/uninstall hooks at all (unlike
 // DeployProfile/ApplyInstall), so this doesn't either - see
@@ -568,6 +586,15 @@ func (s *Service) ApplyProfileApply(ctx context.Context, game *domain.Game, plan
 		return &ProfileApplyResult{}, err
 	}
 	defer release()
+	if plan == nil {
+		return &ProfileApplyResult{}, errors.New("profile apply plan is nil: call PlanProfileApply first")
+	}
+	// #462: re-checked here, since the active profile can change between a
+	// plan and its apply. Snapshot restore's converge step calls
+	// applyProfileApply itself, for the profile it has just made active.
+	if err := s.refuseInactive(ctx, game.ID, plan.Profile, "apply"); err != nil {
+		return &ProfileApplyResult{}, err
+	}
 	return s.applyProfileApply(ctx, game, plan, opts, sink)
 }
 

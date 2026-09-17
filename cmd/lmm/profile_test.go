@@ -1320,6 +1320,8 @@ func TestDoProfileApply_ExternalEntry_IsNotRenderedAsADownload(t *testing.T) {
 	}))
 	require.NoError(t, pm.AddMod(ctx, game.ID, "shared",
 		domain.ModReference{SourceID: "steamworkshop", ModID: "111000111", Version: "9876543210"}))
+	// An apply acts for the active profile only (#462).
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "shared"))
 
 	oldDryRun := profileApplyDryRun
 	profileApplyDryRun = true

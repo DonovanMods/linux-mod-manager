@@ -58,6 +58,50 @@ func TestDoDeployAndDoPurge_RefuseANonActiveProfile(t *testing.T) {
 	assert.True(t, rows[0].Enabled)
 }
 
+// TestDoProfileApply_RefusesANonActiveProfile is #462 for `lmm profile
+// apply` (#445 final gate F-B): an apply deploys, so a profile that is not
+// active is refused before anything is printed or changed, dry run or not,
+// and the active profile - what the mod_path refusal names - still applies.
+func TestDoProfileApply_RefusesANonActiveProfile(t *testing.T) {
+	ctx := context.Background()
+	svc, game := setupDoProfileSwitchTest(t) // "default" is active
+	pm := getProfileManager(svc)
+	_, err := pm.Create(ctx, game.ID, "alt")
+	require.NoError(t, err)
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "m1", "1.0", "m1.esp", []byte("m1")))
+	seedSyncInstalledMod(t, svc, game, "src", "m1", "Mod One", "1.0", "alt", false, nil)
+	require.NoError(t, pm.AddMod(ctx, game.ID, "alt", domain.ModReference{SourceID: "src", ModID: "m1", Version: "1.0"}))
+	setFlag(t, &profileApplyYes, true)
+
+	for _, dryRun := range []bool{false, true} {
+		for _, asJSON := range []bool{false, true} {
+			setFlag(t, &profileApplyDryRun, dryRun)
+			setFlag(t, &jsonOutput, asJSON)
+			stdout, stderr, err := captureStdoutAndStderr(t, func() error {
+				return doProfileApply(ctx, svc, game, []string{"alt"})
+			})
+			require.ErrorIs(t, err, core.ErrProfileNotActive, "dry run %v, json %v", dryRun, asJSON)
+			assert.Contains(t, err.Error(), "lmm profile switch alt")
+			assert.Empty(t, stdout)
+			assert.Empty(t, stderr)
+		}
+	}
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "m1.esp"))
+	rows, err := svc.GetInstalledMods(ctx, game.ID, "alt")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.False(t, rows[0].Enabled, "alt's row is untouched")
+
+	setFlag(t, &profileApplyDryRun, false)
+	setFlag(t, &jsonOutput, false)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "alt"))
+	_, _, err = captureStdoutAndStderr(t, func() error {
+		return doProfileApply(ctx, svc, game, []string{"alt"})
+	})
+	require.NoError(t, err, "the active profile applies")
+	assert.FileExists(t, filepath.Join(game.ModPath, "m1.esp"))
+}
+
 // mixedGameDir leaves the game directory holding the active profile's
 // shared.esp and, deployed while alt was briefly active, alt's own
 // altonly.esp and its record of shared.esp.

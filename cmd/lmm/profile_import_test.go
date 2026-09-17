@@ -292,7 +292,7 @@ func TestDoProfileImport_PromptDeclined_NoInstallHappens(t *testing.T) {
 		"  ↓ 1 need to be downloaded:\n"+
 		"    - test-src:mod1 v1.0\n"+
 		"\n"+
-		"Download and install mods? [Y/n]: Skipped. Use 'lmm profile apply target' to install them later.\n"+
+		"Download and install mods? [Y/n]: Skipped. Use 'lmm profile switch target' to install them later, or 'lmm profile apply target' if it is already the active profile.\n"+
 		"\n"+
 		"✓ Imported profile: target\n", out)
 
@@ -362,7 +362,7 @@ func TestDoProfileImport_NoInstallFlag_SkipsPromptEntirely(t *testing.T) {
 		"\n"+
 		"✓ Imported profile: target\n"+
 		"\n"+
-		"Skipped installing 1 mod(s). Use 'lmm profile apply target' to install them later.\n", out)
+		"Skipped installing 1 mod(s). Use 'lmm profile switch target' to install them later, or 'lmm profile apply target' if it is already the active profile.\n", out)
 
 	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	assert.Error(t, err)
@@ -490,7 +490,7 @@ func TestDoProfileImport_ForceOverwritesExistingProfile(t *testing.T) {
 		"\n"+
 		"✓ Imported profile: target\n"+
 		"\n"+
-		"Skipped installing 1 mod(s). Use 'lmm profile apply target' to install them later.\n", out)
+		"Skipped installing 1 mod(s). Use 'lmm profile switch target' to install them later, or 'lmm profile apply target' if it is already the active profile.\n", out)
 
 	saved, err := pm.Get(context.Background(), game.ID, "target")
 	require.NoError(t, err)

@@ -77,6 +77,21 @@ func TestFlowInactiveProfile_DeployIsRefused(t *testing.T) {
 	assert.FileExists(t, deployedFixturePath(game), "the active profile's deployment is untouched")
 }
 
+// TestFlowInactiveProfile_ApplyIsRefused is #462 for the profile card's
+// Apply (#445 final gate F-B): an apply deploys, so a profile that is not
+// active answers 409, naming `lmm profile switch`, and the active profile
+// still plans.
+func TestFlowInactiveProfile_ApplyIsRefused(t *testing.T) {
+	s, _, game := mixedFlowServer(t)
+	rec := doAPI(s, http.MethodPost, altPlanTarget("profile_apply", game), `{"profile":"alt"}`)
+	requireConflict(t, rec)
+	assert.FileExists(t, deployedFixturePath(game), "the active profile's deployment is untouched")
+
+	target := "/api/v1/plans/profile_apply?" + gameParam + "=" + url.QueryEscape(game.ID)
+	rec = doAPI(s, http.MethodPost, target, `{"profile":"default"}`)
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
 func TestFlowInactiveProfile_PurgeClearsOnlyWhatItRecorded(t *testing.T) {
 	s, svc, game := mixedFlowServer(t)
 

@@ -1490,12 +1490,17 @@ func TestBackfillProfileDisabledMarkers_ADuplicatedReference(t *testing.T) {
 			f.switchTo(t, "b")
 			f.writeDuplicated(t, "a", false, tc.marks...)
 
-			apply, err := f.svc.PlanProfileApply(ctx, f.game, "a")
-			require.NoError(t, err)
 			switchPlan, err := f.svc.PlanProfileSwitch(ctx, f.game, "a")
 			require.NoError(t, err)
 			sync, err := f.svc.PlanProfileSync(ctx, f.game, "a")
 			require.NoError(t, err)
+			// An apply acts for the active profile only (#462): a is
+			// marked active - by flag alone - for its plan.
+			pm := f.svc.NewProfileManager()
+			require.NoError(t, pm.SetDefault(ctx, f.game.ID, "a"))
+			apply, err := f.svc.PlanProfileApply(ctx, f.game, "a")
+			require.NoError(t, err)
+			require.NoError(t, pm.SetDefault(ctx, f.game.ID, "b"))
 			if tc.off {
 				assert.Empty(t, apply.ToEnable, "apply")
 				assert.Empty(t, switchPlan.ToEnable, "switch")

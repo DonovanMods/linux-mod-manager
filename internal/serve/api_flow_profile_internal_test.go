@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,12 +72,20 @@ func TestFlowSwitch_JobSwitchesAndReportsTheLockedRefWarning(t *testing.T) {
 	assert.Contains(t, result.Warnings[0], "could not update profile")
 }
 
+// makeApplyTargetActive marks applyTargetProfile active, by flag alone: an
+// apply acts for the active profile only (#462).
+func makeApplyTargetActive(t *testing.T, svc *core.Service, game *domain.Game) {
+	t.Helper()
+	require.NoError(t, svc.NewProfileManager().SetDefault(t.Context(), game.ID, applyTargetProfile))
+}
+
 // TestFlowProfileApply_PlanListsInstallsAndRemovalsAndAppliesNothing is the
 // plan half: what would be installed, what would be removed, and the entry
 // the source could not resolve - which the plan carries as data rather than
 // failing on.
 func TestFlowProfileApply_PlanListsInstallsAndRemovalsAndAppliesNothing(t *testing.T) {
 	s, svc, game := newProfilesFixtureServer(t)
+	makeApplyTargetActive(t, svc, game)
 
 	_, raw := planFlow(t, s, game, "profile_apply", `{"profile":"`+applyTargetProfile+`"}`)
 	body := string(raw)
@@ -94,6 +103,7 @@ func TestFlowProfileApply_PlanListsInstallsAndRemovalsAndAppliesNothing(t *testi
 // could not resolve is reported rather than silently dropped.
 func TestFlowProfileApply_JobConverges(t *testing.T) {
 	s, svc, game := newProfilesFixtureServer(t)
+	makeApplyTargetActive(t, svc, game)
 
 	j := runFlow(t, s, game, "profile_apply", `{"profile":"`+applyTargetProfile+`"}`, "")
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)

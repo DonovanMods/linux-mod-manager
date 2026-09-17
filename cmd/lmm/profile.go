@@ -202,6 +202,11 @@ Use this after manually editing a profile YAML to apply those changes.
 If no name is given, uses the current/default profile. Prompts for
 confirmation before making any changes; pass -y/--yes to skip the prompt.
 
+The game directory holds the active profile's mods, so only the active
+profile is applied; for any other, 'lmm profile switch' makes it active
+and deploys it. A game whose profile files do not say which one is active
+is not applied at all; 'lmm profile list' says why.
+
 Examples:
   lmm profile apply --game skyrim-se
   lmm profile apply survival --game skyrim-se
@@ -893,7 +898,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			}
 			if input != "" && input != "y" && input != "yes" {
 				declined = true
-				fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", plan.Profile.Name)
+				fmt.Printf("Skipped. %s\n", installLaterHint(plan.Profile.Name))
 				// Unreachable under --json: readPromptLine above refuses to
 				// read stdin there (Ruling 2), so a decline is impossible.
 			} else {
@@ -963,7 +968,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	switch {
 	case profileImportNoInstall:
 		if result.Skipped > 0 {
-			fmt.Printf("\nSkipped installing %d mod(s). Use 'lmm profile apply %s' to install them later.\n", result.Skipped, result.ProfileName)
+			fmt.Printf("\nSkipped installing %d mod(s). %s\n", result.Skipped, installLaterHint(result.ProfileName))
 		}
 	case declined:
 		// The decline message was already printed at the prompt above.
@@ -1507,6 +1512,13 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 
 	fmt.Printf("\n✓ Applied profile: %s\n", profileName)
 	return nil
+}
+
+// installLaterHint names the commands that install an imported profile's
+// skipped mods later. An apply acts for the active profile only (#462), so
+// a profile that is not active is switched to, which installs them too.
+func installLaterHint(profile string) string {
+	return fmt.Sprintf("Use 'lmm profile switch %s' to install them later, or 'lmm profile apply %s' if it is already the active profile.", profile, profile)
 }
 
 // profileApplyTarget resolves which profile `lmm profile apply` acts on: the

@@ -18,6 +18,12 @@ If no name is given, uses the current/default profile. Prompts for
 confirmation before making any changes; pass -y/--yes to skip the prompt.
 
 .PP
+The game directory holds the active profile's mods, so only the active
+profile is applied; for any other, 'lmm profile switch' makes it active
+and deploys it. A game whose profile files do not say which one is active
+is not applied at all; 'lmm profile list' says why.
+
+.PP
 Examples:
   lmm profile apply --game skyrim-se
   lmm profile apply survival --game skyrim-se

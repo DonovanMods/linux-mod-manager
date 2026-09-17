@@ -1740,6 +1740,19 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   mod whose listed version is not in the cache, or with another version
   live, is still fetched.
 
+- **`lmm profile apply` acts for the active profile only (#462, for
+  apply).** An apply deploys, and the game directory holds the active
+  profile's mods, yet `lmm profile apply <other profile>` deployed that
+  profile's mods beside them — since the change above, even offline, for
+  any mod another profile has in the cache. It is now refused like
+  `lmm deploy -p <other profile>`: it names the active profile and points
+  at `lmm profile switch`, which makes a profile active and deploys it; a
+  game whose profile files do not say which profile is active is not
+  applied at all. The web UI's Apply answers `409` for both. A plan made
+  before the active profile changed is refused when applied.
+  `lmm profile import` no longer suggests applying a profile that is not
+  active to install the mods it skipped; it names `lmm profile switch`.
+
 - **`lmm profile apply` records the mods it switches on as deployed
   (#467).** Their rows kept saying "not deployed" while the files were
   live, so a later `lmm profile switch` that moved one of those mods to
