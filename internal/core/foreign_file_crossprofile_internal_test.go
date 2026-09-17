@@ -69,6 +69,9 @@ func newCrossProfileFixture(t *testing.T, lm domain.LinkMethod) crossProfileFixt
 
 	inst := NewInstaller(modCache, linker.New(lm), database)
 	inst.setOriginals(store)
+	// As every Installer a Service hands out: a link into the cache is
+	// lmm's (#466 re-review R1 counts no other profile's record for one).
+	inst.cacheRoots = []string{cacheDir}
 
 	return crossProfileFixture{
 		inst: inst, store: store,
