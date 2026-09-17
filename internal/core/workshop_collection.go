@@ -380,7 +380,8 @@ func (s *Service) stampRefDisplay(refs []domain.ModReference, installedRows map[
 		ref := &refs[i]
 		if im, ok := installedRows[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
 			ref.External = im.External
-			if im.External {
+			ref.DisplayVersion = s.displayVersionFor(im.External, im.SourceID, im.UpdatedAt)
+			if ref.DisplayVersion != "" {
 				ref.UpdatedAt = im.UpdatedAt
 			}
 			continue
@@ -391,6 +392,7 @@ func (s *Service) stampRefDisplay(refs []domain.ModReference, installedRows map[
 			external[ref.SourceID] = isExternal
 		}
 		ref.External = isExternal
+		ref.DisplayVersion = s.displayVersionFor(isExternal, ref.SourceID, ref.UpdatedAt)
 	}
 }
 

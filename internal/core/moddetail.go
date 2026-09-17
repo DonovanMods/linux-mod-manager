@@ -55,11 +55,14 @@ type ModDetail struct {
 // InstalledDetail is the local install state. Nil on ModDetail when the mod
 // is not installed in the profile - an ordinary state, not an error.
 type InstalledDetail struct {
-	Version       string              `json:"version"`
-	Profile       string              `json:"profile"`
-	UpdatePolicy  domain.UpdatePolicy `json:"update_policy"`
-	Locked        bool                `json:"locked"`
-	LockedVersion string              `json:"locked_version,omitempty"`
+	Version string `json:"version"`
+	// DisplayVersion is the installed row's domain.Mod.DisplayVersion
+	// (#458).
+	DisplayVersion string              `json:"display_version,omitempty"`
+	Profile        string              `json:"profile"`
+	UpdatePolicy   domain.UpdatePolicy `json:"update_policy"`
+	Locked         bool                `json:"locked"`
+	LockedVersion  string              `json:"locked_version,omitempty"`
 	// ConvertPaks is nil when pak conversion does not apply to this mod at
 	// all (not a merge-compile game, or no pak merge source) - distinct from
 	// a non-nil pointer to false, which means "applies, and is off".
@@ -116,18 +119,21 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 	installed, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profile)
 	switch {
 	case errors.Is(err, domain.ErrModNotFound):
+		s.stampDisplayVersion(mod, false) // #458
 		return detail, nil
 	case err != nil:
 		return nil, fmt.Errorf("loading installed mod: %w", err)
 	}
 
+	s.stampDisplayVersion(mod, installed.External) // #458
 	info := &InstalledDetail{
-		Version:      installed.Version,
-		Profile:      profile,
-		UpdatePolicy: installed.UpdatePolicy,
-		External:     installed.External,
-		ExternalPath: installed.ExternalPath,
-		UpdatedAt:    installed.UpdatedAt,
+		DisplayVersion: installed.DisplayVersion,
+		Version:        installed.Version,
+		Profile:        profile,
+		UpdatePolicy:   installed.UpdatePolicy,
+		External:       installed.External,
+		ExternalPath:   installed.ExternalPath,
+		UpdatedAt:      installed.UpdatedAt,
 	}
 	if game.DeployMode == domain.DeployCompile && s.ModHasPakMergeSource(game, installed) {
 		v := installed.ConvertPaks

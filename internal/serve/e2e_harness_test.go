@@ -257,8 +257,9 @@ func newE2EFixtureFromSource(t *testing.T, src *fakeSource) e2eFixture {
 // with distinguishable names and enabled states - enough to prove the
 // library's filter and sort controls actually narrow/reorder the DOM,
 // without needing the fuller health/conflict machinery
-// newE2EFixtureWithAttention sets up. Seeded with no cache files (nil), so
-// none of the three trips a verify finding of its own.
+// newE2EFixtureWithAttention sets up. Each models a mod downloaded from
+// the fake source, so each has the cache entry such a download leaves (and
+// no recorded file): none of the three trips a verify finding of its own.
 func newE2EFixtureWithLibrarySample(t *testing.T) e2eFixture {
 	t.Helper()
 
@@ -282,11 +283,11 @@ func newE2EFixtureWithLibrarySample(t *testing.T) e2eFixture {
 	// not also depend on which of the three the library happens to render
 	// first - which the filter and sort scenarios deliberately vary.
 	seedInstalledMod(t, f.Svc, f.Game,
-		domain.Mod{ID: "z", SourceID: "fake", Name: "Zebra Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, true, nil)
+		domain.Mod{ID: "z", SourceID: "fake", Name: "Zebra Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, true, map[string][]byte{"z.pak": []byte("z")})
 	seedInstalledMod(t, f.Svc, f.Game,
-		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, true, nil)
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, true, map[string][]byte{"a.pak": []byte("a")})
 	seedInstalledMod(t, f.Svc, f.Game,
-		domain.Mod{ID: "m", SourceID: "fake", Name: "Middle Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, false, nil)
+		domain.Mod{ID: "m", SourceID: "fake", Name: "Middle Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, false, map[string][]byte{"m.pak": []byte("m")})
 
 	return f
 }
@@ -560,7 +561,7 @@ func newE2EFixtureWithFailingPath(t *testing.T, failPath string) (e2eFixture, fu
 
 	svc, game := newFixtureServiceWithSource(t, newFakeSource("fake"))
 	seedInstalledMod(t, svc, game,
-		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: game.ID}, true, nil)
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: game.ID}, true, map[string][]byte{"a.pak": []byte("a")})
 
 	baseURL, setFailing := startE2EServerWithFailingPath(t, svc, failPath)
 	ctx, browserErrors := newE2EBrowser(t)

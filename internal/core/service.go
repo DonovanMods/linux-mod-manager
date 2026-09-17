@@ -2186,7 +2186,9 @@ func (s *Service) gamesSnapshot() []*domain.Game {
 
 // GetInstalledMods returns all installed mods for a game/profile (DB order: installed_at).
 func (s *Service) GetInstalledMods(ctx context.Context, gameID, profileName string) ([]domain.InstalledMod, error) {
-	return s.db.GetInstalledMods(ctx, gameID, profileName)
+	rows, err := s.db.GetInstalledMods(ctx, gameID, profileName)
+	s.stampInstalledDisplay(rows) // #458
+	return rows, err
 }
 
 // GetInstalledModsInProfileOrder returns installed mods in profile load order (first = lowest priority).
@@ -2746,7 +2748,11 @@ func (s *Service) saveFileChecksum(ctx context.Context, sourceID, modID, gameID,
 
 // GetInstalledMod retrieves a single installed mod
 func (s *Service) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profileName string) (*domain.InstalledMod, error) {
-	return s.db.GetInstalledMod(ctx, sourceID, modID, gameID, profileName)
+	row, err := s.db.GetInstalledMod(ctx, sourceID, modID, gameID, profileName)
+	if row != nil {
+		s.stampDisplayVersion(&row.Mod, row.External) // #458
+	}
+	return row, err
 }
 
 // GetDependencies returns dependencies for a mod from the specified source

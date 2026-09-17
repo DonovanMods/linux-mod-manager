@@ -409,6 +409,11 @@ type UpdatePlan struct {
 // plan - see PlanUpdateFrom's doc comment for why a caller that already has
 // an Update (applyBulkUpdate) should call that instead of this.
 func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*UpdatePlan, error) {
+	// #462: an update writes into the game directory, which holds the active
+	// profile's mods, so it acts for that profile alone.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbUpdate); err != nil {
+		return nil, err
+	}
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, err
@@ -438,6 +443,11 @@ func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName
 // that already found them, and the plan being applied can never disagree
 // with the update the caller printed.
 func (s *Service) PlanUpdateFrom(ctx context.Context, game *domain.Game, profileName string, upd domain.Update) (*UpdatePlan, error) {
+	// #462: an update writes into the game directory, which holds the active
+	// profile's mods, so it acts for that profile alone.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbUpdate); err != nil {
+		return nil, err
+	}
 	mod, err := s.GetInstalledMod(ctx, upd.InstalledMod.SourceID, upd.InstalledMod.ID, game.ID, profileName)
 	if err != nil {
 		return nil, err
@@ -723,6 +733,12 @@ func lockedRefSentence(mod domain.Mod, profileName string, ref *domain.ModRefere
 		clause = fmt.Sprintf("move the lock with 'lmm mod lock -s %s -p %s %s <version>' or %s",
 			mod.SourceID, profileName, mod.ID, unlock)
 	}
+	// #458: a Workshop item's lock target is a content id, which no
+	// sentence prints - the lock is named without it, as every lock line
+	// names one.
+	if mod.DisplayVersion != "" {
+		return fmt.Sprintf("%s is locked in profile %s - %s", mod.Name, profileName, clause)
+	}
 	return fmt.Sprintf("%s is locked at v%s in profile %s - %s", mod.Name, ref.Version, profileName, clause)
 }
 
@@ -796,6 +812,9 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// First statement inside the op (ApplyUpdate took beginOp just above),
 	// before any lock check, hook, or side effect - a stale plan is refused
 	// having changed nothing at all, mirroring applyInstall's own placement.
+	if err := s.requireActiveProfile(ctx, game.ID, plan.Mod.ProfileName, VerbUpdate); err != nil {
+		return result, err
+	}
 	if err := s.checkPlanFresh(ctx, plan.Mod.GameID, plan.Mod.ProfileName, plan.snapshot); err != nil {
 		return result, err
 	}

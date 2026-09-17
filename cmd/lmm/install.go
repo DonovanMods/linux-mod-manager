@@ -512,16 +512,21 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		return fmt.Errorf("--file %q contains no file IDs", installFileID)
 	}
 
-	// Resolve source: flag if set; else the sole configured source, an
-	// interactive prompt when several are configured, or the first
-	// alphabetically under --yes.
-	var err error
-	installSource, err = resolveSource(service, game, installSource, installYes)
+	profileName, err := resolveProfile(ctx, service, game.ID, installProfile)
 	if err != nil {
 		return err
 	}
+	// #462: PlanInstall refuses a profile that is not the game's active
+	// one; ask first, so the refusal comes before the fetch, the search
+	// prompt and the dependency walk.
+	if err := service.CheckDeployTarget(ctx, game.ID, profileName, core.VerbInstall); err != nil {
+		return err
+	}
 
-	profileName, err := resolveProfile(ctx, service, game.ID, installProfile)
+	// Resolve source: flag if set; else the sole configured source, an
+	// interactive prompt when several are configured, or the first
+	// alphabetically under --yes.
+	installSource, err = resolveSource(service, game, installSource, installYes)
 	if err != nil {
 		return err
 	}

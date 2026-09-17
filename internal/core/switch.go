@@ -408,6 +408,9 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		return nil, err
 	}
 
+	// #458: the preview names each install by a version a person reads.
+	s.stampRefDisplay(toInstall, nil)
+
 	return &SwitchPlan{
 		GameID: game.ID, From: currentName, To: target,
 		ToDisable: toDisable, ToEnable: toEnable, ToInstall: toInstall,
@@ -672,6 +675,12 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			msg := fmt.Sprintf("Warning: failed to undeploy %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: SwitchDisableNote, Detail: msg})
+			// #471: files still in the game directory are not a disabled
+			// mod. The row keeps saying enabled and deployed - so a
+			// recorded-only purge of that profile, or its next switch,
+			// still finds them - and the mod is a failure (#475).
+			result.recordFailure(skippedRef(&im, fmt.Sprintf("undeploy failed: %v", err)), im.Version)
+			continue
 		}
 		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, disableProfile, false); err != nil {
 			msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)

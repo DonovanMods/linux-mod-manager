@@ -71,6 +71,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the likely cause). These were an adapter "guidance" capability that
   nothing displayed; that capability is gone from the adapter contract
   (`docs/adapters.md`).
+- **A Steam Workshop item lmm downloaded itself shows its revision date
+  everywhere (#458).** Every document core returns for a mod now carries
+  `display_version` when its version is a Workshop content id — the
+  revision date, or `-` when lmm has none — whether lmm tracks the item or
+  downloaded it. The web UI, the profile import and switch plan lines,
+  `lmm verify`'s missing row, the locked-mod refusal and `lmm import`'s scan
+  summary read it, so none of them prints the 19-digit id any more.
+
 - **The BepInEx/adapter contradiction warning printed at startup is one
   line (#456).** A game that declares the BepInEx loader while its adapter
   is another one was reported on stderr by **every** `lmm` command in a
@@ -1722,6 +1730,54 @@ restore`, refuse before changing anything, and the web API answers the
   steps that make lmm lay it out - but on the download path that warning
   reached only the terminal. `lmm install --json` and `lmm deploy --json`
   now carry it in `warnings`.
+- **A profile that is not active no longer writes the live game directory
+  (#462).** A game has one game directory, and it holds the active profile's
+  mods. `lmm install`, `lmm update`, `lmm update rollback`, `lmm mod enable`,
+  `lmm import` (an archive, or a scan) and `verify --fix`'s repairs that
+  deploy the verified profile's own mods now refuse another profile, before
+  anything changes, naming `lmm profile switch <name>` — at the plan and
+  again when it is applied; the web UI answers the same refusal with `409`.
+  `lmm uninstall -p <other>` and `lmm mod disable -p <other>` still work, and
+  now remove only the files that profile alone recorded deploying, leaving
+  anything the active profile, another profile or another game uses, or a
+  copied file you changed (#466) — and say which, and why. A file that
+  profile deployed under an earlier `mod_path` is left for `lmm purge`
+  (#451). `lmm profile import` of a profile you are not
+  switching to records its mods (downloading what the cache lacks) and
+  deploys nothing; the preview, the prompt and the summary say so. `lmm
+snapshot restore` no longer guesses which profile is active when none is
+  marked: it refuses, as deploy does. A game whose profile files do not say
+  which profile is active refuses all of these the same way.
+- **Repairing a configured game with `lmm game detect` keeps its profiles
+  (#465).** Selecting an already-configured game in `lmm game detect`, `lmm
+init` or the web UI's detect used to reset its default profile to
+  `mods: []`. A repair now changes the game's paths and sources only, and
+  creates a default profile only for a game that has none.
+- **A mod whose files could not be taken down is no longer reported as
+  disabled (#471).** When `lmm profile apply` or `lmm profile switch` could
+  not remove a mod's files, it still recorded the mod as disabled. The mod
+  now keeps its record, is listed among the failures (text and `--json`),
+  and the command exits non-zero; the next apply tries again.
+- **Every `mod_path` "files are deployed" refusal can now be cleared by the
+  commands it names (#469).** A deployed-file record of the active profile
+  with no installed mod behind it is now a `lmm verify` finding
+  (`orphaned_record`), and the refusal names `lmm verify --fix`, which drops
+  the record and leaves the file where it is. A file you put where lmm had
+  deployed a link is kept by `lmm purge`, which stops recording it and says
+  so. A file another profile recorded for a mod the active profile lists at
+  a version that no longer ships it is removed by that profile's purge
+  instead of being kept forever, and the purge names the mod. `lmm verify`
+  now also reports an installed mod whose cache entry is gone
+  (`missing_cache`). `Service.SaveGame` refuses a `mod_path` move under a
+  live deployment, as every other path does (#451).
+- **`lmm profile import --no-install` says what it did with each mod
+  (#472).** It printed "will be added" for a mod and then "Skipped
+  installing" it. Each pending mod now gets one line: recorded in the
+  profile, not installed or deployed.
+- **`lmm mod edit` and `lmm import` report the files they left for another
+  game (#476),** once, in text and in `--json` (and in the web UI's job
+  result), instead of leaving the warning to surface on a later command.
+
 - **lmm writes a profile to its own file, safely, and keeps what you wrote
   in it (#441).**
   - A profile copied by hand (`default.yaml` → `vanilla.yaml`, `name:`

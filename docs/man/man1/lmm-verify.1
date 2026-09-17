@@ -199,7 +199,10 @@ game's mod_path is not a directory while it has mods to deploy, or is not
 the one lmm deployed files under - a warning whose note names the repair),
 "deployed_modified" (a copied or hard-linked file whose content changed
 after lmm deployed it - a warning --fix leaves alone, since the file is
-yours), or one of the loader tier's own rows -
+yours), "orphaned_record" and "fixed_orphaned_record" (deployed-file records
+of a mod the profile has no installed row for; --fix drops the active
+profile's, leaving the files), "missing_cache" (an installed mod with no
+recorded file whose cache entry is gone), or one of the loader tier's own rows -
 "loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
 "loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
 "fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",

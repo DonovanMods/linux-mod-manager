@@ -159,6 +159,11 @@ type UpdateBatchResult struct {
 // same reason PlanUpdateFrom exists: re-checking would cost a second live
 // source query per source and could disagree with what the user was shown.
 func (s *Service) PlanUpdateBatch(ctx context.Context, game *domain.Game, profileName string, selection []string) (*UpdateBatchPlan, error) {
+	// #462: an update writes into the game directory, which holds the active
+	// profile's mods, so it acts for that profile alone.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbUpdateMany); err != nil {
+		return nil, err
+	}
 	installed, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, err
@@ -180,6 +185,11 @@ func (s *Service) PlanUpdateBatch(ctx context.Context, game *domain.Game, profil
 //
 // Only a local read happens here: the Ruling-5 installed-mod snapshot.
 func (s *Service) PlanUpdateBatchFrom(ctx context.Context, game *domain.Game, profileName string, updates []domain.Update, selection []string) (*UpdateBatchPlan, error) {
+	// #462: an update writes into the game directory, which holds the active
+	// profile's mods, so it acts for that profile alone.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbUpdateMany); err != nil {
+		return nil, err
+	}
 	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, err
@@ -295,6 +305,9 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 
 	// Ruling 5, once for the whole batch: first statement inside the op,
 	// before any lock check, hook or side effect.
+	if err := s.requireActiveProfile(ctx, game.ID, plan.Profile, VerbUpdateMany); err != nil {
+		return result, err
+	}
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {
 		return result, err
 	}

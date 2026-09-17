@@ -647,7 +647,11 @@ func TestService_ApplyProfileSwitch_DisableLoopUsesSourceProfileLinkMethod(t *te
 // still firing - the disable loop always "wins" regardless of either
 // sub-step's outcome, unlike the enable loop (see the InstallFailureSkipsMod
 // test below).
-func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAreNonFatalNotes_SuccessEventStillFires(t *testing.T) {
+// TestService_ApplyProfileSwitch_DisableLoop_SetEnabledFailureIsANonFatalNote_SuccessEventStillFires:
+// a disable whose files came down is a disable even when its bookkeeping
+// write fails. (A failed UNDEPLOY is not one since #471 - see
+// failed_undeploy_test.go.)
+func TestService_ApplyProfileSwitch_DisableLoop_SetEnabledFailureIsANonFatalNote_SuccessEventStillFires(t *testing.T) {
 	dataDir := t.TempDir()
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
@@ -669,12 +673,7 @@ func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAre
 	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
-	// Corrupt the deployed symlink so Uninstall fails deterministically.
-	deployedPath := filepath.Join(gameDir, "plugin.esp")
-	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
-
-	// Block updates to installed_mods.enabled so SetModEnabled fails too.
+	// Block updates to installed_mods.enabled so SetModEnabled fails.
 	installEnabledBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
 
 	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
@@ -689,10 +688,10 @@ func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAre
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, 1, result.Disabled, "the mod must still be counted as disabled despite both failures")
-	require.Len(t, result.Notes, 2)
-	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to undeploy Test Mod: "), "note[0]: %q", result.Notes[0])
-	assert.True(t, strings.HasPrefix(result.Notes[1], "Warning: failed to update Test Mod: "), "note[1]: %q", result.Notes[1])
+	assert.Equal(t, 1, result.Disabled, "the mod must still be counted as disabled despite the failure")
+	require.Len(t, result.Notes, 1)
+	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to update Test Mod: "), "note[0]: %q", result.Notes[0])
+	assert.NoFileExists(t, filepath.Join(gameDir, "plugin.esp"))
 
 	var noteEvents []core.StepEvent
 	disabledIdx := -1
@@ -704,10 +703,9 @@ func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAre
 			disabledIdx = i
 		}
 	}
-	require.Len(t, noteEvents, 2)
+	require.Len(t, noteEvents, 1)
 	assert.Equal(t, result.Notes[0], noteEvents[0].Detail)
-	assert.Equal(t, result.Notes[1], noteEvents[1].Detail)
-	require.NotEqual(t, -1, disabledIdx, "expected a SwitchDisabled event despite both failures")
+	require.NotEqual(t, -1, disabledIdx, "expected a SwitchDisabled event despite the failure")
 	assert.Greater(t, disabledIdx, 0, "the success event must come after the note events")
 }
 

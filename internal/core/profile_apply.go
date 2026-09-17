@@ -778,7 +778,13 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			Mod: &domain.ModReference{SourceID: im.SourceID, ModID: im.ID}}
 
 		if err := installer.Uninstall(ctx, game, &im.Mod, plan.Profile); err != nil {
+			// #471: files still in the game directory are not a disabled
+			// mod. The row keeps saying enabled and deployed - the next
+			// apply plans the disable again - and the mod is a failure,
+			// as a failed enable is (#470).
 			note(scope, SwitchDisableNote, fmt.Sprintf("Warning: failed to undeploy %s: %v", im.Name, err))
+			result.recordFailure(skippedRef(&im, fmt.Sprintf("undeploy failed: %v", err)), im.Version)
+			continue
 		}
 		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.Profile, false); err != nil {
 			note(scope, SwitchDisableNote, fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err))

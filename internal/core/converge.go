@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // ConvergedFile describes one game-directory path convergence found to be
@@ -152,6 +153,38 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	if err != nil {
 		return nil, err
 	}
+	// #462: the game directory holds the active profile's mods. For another
+	// profile a stale record's file goes only as a recorded-only purge's
+	// would (keptPath), and the sweep - which judges links no row of this
+	// profile claims - is the active profile's to run.
+	live, recordedOnly, err := s.profileScope(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	var kept func(path string, m domain.InstalledMod, jd deployedJudge) (PurgeKeptPath, bool)
+	if recordedOnly {
+		records, err := s.db.DeployedPathRecords(ctx, game.ID)
+		if err != nil {
+			return nil, fmt.Errorf("listing deployed files: %w", err)
+		}
+		listed, err := s.liveListedMods(game.ID, live)
+		if err != nil {
+			return nil, err
+		}
+		installer := s.getInstaller(game)
+		kept = func(path string, m domain.InstalledMod, jd deployedJudge) (PurgeKeptPath, bool) {
+			row := db.DeployedPath{RelativePath: filepath.ToSlash(path), SourceID: m.SourceID, ModID: m.ID}
+			// #469 (b), as the recorded-only purge judges it: a regular
+			// file where this profile recorded a link is the user's - by the
+			// method the mod's row was deployed with, as recordedPaths
+			// reads it. The #466 judge cannot say so: a link's record
+			// carries no fingerprint.
+			if m.LinkMethod == domain.LinkSymlink && !installer.notLinkerOwned(game, row.RelativePath) && replacedLink(filepath.Join(game.ModPath, path)) {
+				return PurgeKeptPath{Path: row.RelativePath, Reason: PurgeKeptUserFile, Note: replacedLinkNote}, true
+			}
+			return keptPath(ctx, row, profileName, live, recordsUnder(game, game, records[row.RelativePath]), listed, others, installer, jd)
+		}
+	}
 
 	// #451: a row recorded under another mod_path says nothing about what
 	// is at its path under this one. The row pass leaves it alone - a purge
@@ -243,6 +276,17 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				}
 				continue
 			}
+			if kept != nil {
+				if k, ok := kept(path, m, jd); ok {
+					errs = append(errs, fmt.Errorf("%s was left in place: %s", path, k.describe()))
+					if !dryRun && k.Reason.DropsRecord() {
+						if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
+							errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
+						}
+					}
+					continue
+				}
+			}
 			if dryRun {
 				result.Removed = append(result.Removed, cf)
 				continue
@@ -277,6 +321,12 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	// --- Sweep pass ---
 	if err := ctx.Err(); err != nil {
 		return result, err
+	}
+	if recordedOnly {
+		if len(errs) > 0 {
+			return result, errors.Join(errs...)
+		}
+		return result, nil
 	}
 
 	checked := 0

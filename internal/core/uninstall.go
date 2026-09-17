@@ -71,9 +71,28 @@ type UninstallPlan struct {
 	// auth, cache_path, updated_at).
 	MergedArtifact *MergedArtifactEffect `json:"merged_artifact,omitzero"`
 
+	// RecordedOnly is set when the mod's profile is not the game's active
+	// profile (#462). The game directory holds the active profile's mods,
+	// so such an uninstall removes only the files that profile recorded
+	// deploying for the mod and nothing else still claims - the rule a
+	// recorded-only purge follows (PurgePlan.RecordedOnly). Files is then
+	// those paths, Kept the ones it leaves and why; it runs no hooks and
+	// leaves a merged artifact alone. The mod's record and profile entry go
+	// as usual.
+	RecordedOnly bool `json:"recorded_only,omitzero"`
+	// ActiveProfile names the game's active profile when RecordedOnly is
+	// set.
+	ActiveProfile string `json:"active_profile,omitempty"`
+	// Kept is the recorded paths a RecordedOnly uninstall leaves, and why.
+	Kept []PurgeKeptPath `json:"kept,omitempty"`
+
 	// snapshot is Ruling 5's precondition: the installed-mod set this plan
 	// was computed from, re-derived and compared by ApplyUninstall.
 	snapshot installedSnapshot `json:"-"`
+	// remove is every recorded path a RecordedOnly plan approved removing,
+	// the ones already gone included; untrack is the kept paths whose
+	// record it approved dropping.
+	remove, untrack map[string]bool
 }
 
 // PlanUninstall resolves sourceID/modID against profileName's installed mods
@@ -118,18 +137,33 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
+	live, recordedOnly, err := s.profileScope(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
 	plan := &UninstallPlan{
-		Mod:            *mod,
-		External:       mod.External,
-		KeepCache:      opts.KeepCache,
-		Hooks:          uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks),
-		MergedArtifact: s.mergedArtifactEffectForUninstall(ctx, game, profileName, mod),
+		Mod:       *mod,
+		External:  mod.External,
+		KeepCache: opts.KeepCache,
 		// A removal: the adapter has no say (removalSnapshotOf).
 		snapshot: removalSnapshotOf(installed),
 	}
-	for _, f := range s.deployedPathsFor(ctx, s.getInstaller(game), game, profileName, mod) {
-		if isDeployedNow(game, f) {
-			plan.Files = append(plan.Files, f)
+	switch {
+	case recordedOnly:
+		plan.RecordedOnly, plan.ActiveProfile = true, live
+		plan.Files, plan.Hooks = []string{}, []string{}
+		if !mod.External {
+			if err := s.planRecordedUninstall(ctx, game, plan, live); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		plan.Hooks = uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)
+		plan.MergedArtifact = s.mergedArtifactEffectForUninstall(ctx, game, profileName, mod)
+		for _, f := range s.deployedPathsFor(ctx, s.getInstaller(game), game, profileName, mod) {
+			if isDeployedNow(game, f) {
+				plan.Files = append(plan.Files, f)
+			}
 		}
 	}
 	if !opts.KeepCache && !mod.External {
@@ -140,6 +174,42 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 		plan.CacheUsedBy = usedBy
 	}
 	return plan, nil
+}
+
+// planRecordedUninstall fills a RecordedOnly plan's Files and Kept from
+// what the mod's profile recorded deploying for it (#462): the paths a
+// recorded-only purge of that profile would remove or keep, narrowed to the
+// mod.
+func (s *Service) planRecordedUninstall(ctx context.Context, game *domain.Game, plan *UninstallPlan, live string) error {
+	mod := plan.Mod
+	others, err := s.otherGamesRecording(ctx, game)
+	if err != nil {
+		return err
+	}
+	remove, kept, err := s.recordedPaths(ctx, game, mod.ProfileName, live, others, modKeySet(mod.SourceID, mod.ID), false)
+	if err != nil {
+		return err
+	}
+	plan.remove = make(map[string]bool, len(remove))
+	plan.untrack = make(map[string]bool, len(kept))
+	for _, row := range remove {
+		plan.remove[row.RelativePath] = true
+		if isDeployedNow(game, row.RelativePath) {
+			plan.Files = append(plan.Files, row.RelativePath)
+		}
+	}
+	for _, k := range kept {
+		plan.Kept = append(plan.Kept, k.PurgeKeptPath)
+		if k.Reason.DropsRecord() {
+			plan.untrack[k.Path] = true
+		}
+	}
+	return nil
+}
+
+// modKeySet is the one-mod filter clearRecorded and recordedPaths take.
+func modKeySet(sourceID, modID string) map[string]bool {
+	return map[string]bool{domain.ModKey(sourceID, modID): true}
 }
 
 // ApplyUninstall carries out plan under the mutation lock. Ruling 5: the
@@ -159,8 +229,20 @@ func (s *Service) ApplyUninstall(ctx context.Context, game *domain.Game, plan *U
 	if plan == nil {
 		return nil, errors.New("uninstall plan is nil: call PlanUninstall first")
 	}
+	live, recordedOnly, err := s.profileScope(ctx, game.ID, plan.Mod.ProfileName)
+	if err != nil {
+		return nil, err
+	}
+	if recordedOnly != plan.RecordedOnly {
+		return nil, fmt.Errorf("%w: the active profile of %s is %s now, not what it was when this uninstall was planned", ErrStalePlan, game.ID, live)
+	}
 	if err := s.checkRemovalPlanFresh(ctx, game.ID, plan.Mod.ProfileName, plan.snapshot); err != nil {
 		return nil, err
+	}
+	if recordedOnly {
+		return s.uninstallRecorded(ctx, game, plan.Mod.ProfileName, plan.Mod.SourceID, plan.Mod.ID, live, opts,
+			func(path string) bool { return plan.remove[path] },
+			func(path string) bool { return plan.untrack[path] })
 	}
 	return s.uninstallMod(ctx, game, plan.Mod.ProfileName, plan.Mod.SourceID, plan.Mod.ID, opts)
 }
@@ -213,6 +295,15 @@ type UninstallResult struct {
 	// entry at its version, which the uninstall therefore kept (#445 gate 2,
 	// G2-2) - see UninstallPlan.CacheUsedBy.
 	CacheUsedBy []string `json:"cache_used_by,omitempty"`
+
+	// RecordedOnly, ActiveProfile and Kept say that the uninstall acted for
+	// a profile that is not the game's active one (#462,
+	// UninstallPlan.RecordedOnly): it removed only Removed, of the files that
+	// profile recorded, and left Kept.
+	RecordedOnly  bool            `json:"recorded_only,omitzero"`
+	ActiveProfile string          `json:"active_profile,omitempty"`
+	Removed       []string        `json:"removed,omitempty"`
+	Kept          []PurgeKeptPath `json:"kept,omitempty"`
 }
 
 // UninstallMod removes a mod from the profile: runs uninstall hooks,
@@ -253,7 +344,69 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 		return nil, err
 	}
 	defer release()
+	live, recordedOnly, err := s.profileScope(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	if recordedOnly {
+		all := func(string) bool { return true }
+		return s.uninstallRecorded(ctx, game, profileName, sourceID, modID, live, opts, all, all)
+	}
 	return s.uninstallMod(ctx, game, profileName, sourceID, modID, opts)
+}
+
+// uninstallRecorded is uninstallMod for a profile that is not the game's
+// active one, live (#462, UninstallPlan.RecordedOnly): the mod's recorded
+// files go only as clearRecorded allows - approve and untrack are the
+// plan's say - and no hook runs. The record and the profile entry go as
+// they always do; a recorded path that is kept with its record stays with
+// that profile, for `lmm purge -p <profile>`.
+func (s *Service) uninstallRecorded(ctx context.Context, game *domain.Game, profileName, sourceID, modID, live string, opts UninstallOptions, approve, untrack func(string) bool) (*UninstallResult, error) {
+	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
+	}
+	result := &UninstallResult{RecordedOnly: true, ActiveProfile: live}
+	if mod.External {
+		result.Notes = append(result.Notes, "Note: "+UninstallExternalNote)
+	} else {
+		cleared, err := s.clearRecorded(ctx, game, profileName, live, recordedClearOptions{
+			only:    modKeySet(mod.SourceID, mod.ID),
+			approve: approve,
+			untrack: untrack,
+			note:    func(msg string) { result.Notes = append(result.Notes, msg) },
+			warn:    func(msg string) { result.Warnings = append(result.Warnings, msg) },
+		})
+		if cleared != nil {
+			result.Removed = cleared.removed
+			result.Kept = append(result.Kept, cleared.kept...)
+		}
+		if err != nil {
+			return result, err
+		}
+		if !opts.KeepCache {
+			usedBy, err := s.removeCacheEntry(ctx, game, profileName, mod.SourceID, modID, mod.Version)
+			if err != nil {
+				result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to clean cache: %v", err))
+			}
+			result.CacheUsedBy = usedBy
+		}
+	}
+
+	if err := s.deleteInstalledMod(ctx, mod.SourceID, modID, game.ID, profileName); err != nil {
+		return result, fmt.Errorf("failed to remove mod record: %w", err)
+	}
+	// Ruling 16 (A), as in uninstallMod.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return s.NewProfileManager().RemoveMod(ctx, game.ID, profileName, mod.SourceID, modID)
+	}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return result, cerr
+		}
+		result.Notes = append(result.Notes, fmt.Sprintf("Note: %v", err))
+	}
+	s.takeCaptureWarnings(game.ID, OpPurge, PurgeWarning, &result.Warnings, nil)
+	return result, nil
 }
 
 func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts UninstallOptions) (*UninstallResult, error) {

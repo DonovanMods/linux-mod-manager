@@ -349,7 +349,8 @@ func keptReason(k core.PurgeKeptPath) string {
 		return "still recorded by game " + strings.Join(k.Games, ", ")
 	case core.PurgeKeptUserFile:
 		if k.Note != "" {
-			// #466: a copy or hardlink the user changed.
+			// #466: a copy or hardlink the user changed; #469: a link the
+			// user replaced with a file.
 			return k.Note
 		}
 		return "the game hands it to you after its first deploy"

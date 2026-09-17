@@ -22,7 +22,7 @@ import (
 // domain.Profile{Mods: nil} + config.SaveProfile call). Pinned here on the
 // pre-lift code so ApplyGameDetect/ProfileManager.CreateOrResetDefault can
 // be verified to preserve it byte-for-byte.
-func TestDoGameDetect_RepairWipesExistingDefaultProfileMods(t *testing.T) {
+func TestDoGameDetect_RepairKeepsExistingDefaultProfileMods(t *testing.T) {
 	configDir = t.TempDir()
 	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Stale Name"}))
 	require.NoError(t, config.SaveProfile(configDir, &domain.Profile{
@@ -49,5 +49,6 @@ func TestDoGameDetect_RepairWipesExistingDefaultProfileMods(t *testing.T) {
 
 	profile, err := config.LoadProfile(configDir, "skyrim-se", "default")
 	require.NoError(t, err)
-	assert.Empty(t, profile.Mods, "repairing a configured game must wipe its default profile's mod list, matching 'lmm game add's unconditional overwrite")
+	assert.Equal(t, []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.0"}}, profile.Mods,
+		"repairing a configured game keeps its profiles as they are (#465)")
 }

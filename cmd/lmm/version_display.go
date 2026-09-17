@@ -147,14 +147,19 @@ func sourceIsWorkshop(svc *core.Service, sourceID string) bool {
 	return ok
 }
 
-// workshopVersioned reports whether a mod's Version is a Steam Workshop
-// content id rather than a version a person reads: an EXTERNAL row (Tier 1),
-// or any mod from the workshop-capable source (#428) - an item lmm
-// downloaded itself (Tier 3) is an ordinary, non-external mod whose Version
-// is the very same content id, and `lmm list` printed it as one. svc may be
-// nil, which answers from external alone.
-func workshopVersioned(svc *core.Service, external bool, sourceID string) bool {
-	return external || (svc != nil && sourceIsWorkshop(svc, sourceID))
+// workshopVersioned reports whether m's Version is a Steam Workshop content
+// id rather than a version a person reads. Core says so on every document
+// it returns for a mod (domain.Mod.DisplayVersion, #458), which is what this
+// reads; for a document core stamps nothing on it answers as core would: an
+// EXTERNAL row (Tier 1), or any mod from the workshop-capable source (#428)
+// - an item lmm downloaded itself (Tier 3) is an ordinary, non-external mod
+// whose Version is the very same content id. svc may be nil, which answers
+// from the stamp and external alone.
+func workshopVersioned(svc *core.Service, m *domain.Mod, external bool) bool {
+	if m.DisplayVersion != "" {
+		return true
+	}
+	return external || (svc != nil && sourceIsWorkshop(svc, m.SourceID))
 }
 
 // modVersionLabels renders the version part of a line that NAMES a mod -
@@ -183,7 +188,7 @@ func newModVersionLabels(svc *core.Service, mods ...*domain.Mod) modVersionLabel
 
 // suffix is the label for m.
 func (l modVersionLabels) suffix(m *domain.Mod) string {
-	if workshopVersioned(l.svc, false, m.SourceID) {
+	if workshopVersioned(l.svc, m, false) {
 		return " (" + displayRevision(m.UpdatedAt) + ")"
 	}
 	return displayVersionSuffix(m.Version)
@@ -191,7 +196,7 @@ func (l modVersionLabels) suffix(m *domain.Mod) string {
 
 // eventSuffix is the label for the mod a progress event names.
 func (l modVersionLabels) eventSuffix(p flowLine) string {
-	if workshopVersioned(l.svc, false, p.SourceID) {
+	if workshopVersioned(l.svc, &domain.Mod{SourceID: p.SourceID}, false) {
 		return " (" + displayRevision(l.dates[domain.ModKey(p.SourceID, p.ModID)]) + ")"
 	}
 	return displayVersionSuffix(p.ModVersion)

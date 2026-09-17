@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -188,7 +189,10 @@ game's mod_path is not a directory while it has mods to deploy, or is not
 the one lmm deployed files under - a warning whose note names the repair),
 "deployed_modified" (a copied or hard-linked file whose content changed
 after lmm deployed it - a warning --fix leaves alone, since the file is
-yours), or one of the loader tier's own rows -
+yours), "orphaned_record" and "fixed_orphaned_record" (deployed-file records
+of a mod the profile has no installed row for; --fix drops the active
+profile's, leaving the files), "missing_cache" (an installed mod with no
+recorded file whose cache entry is gone), or one of the loader tier's own rows -
 "loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
 "loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
 "fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",
@@ -375,6 +379,7 @@ func printVerifyTally(result *core.VerifyResult, fixHint string) {
 // was (#413 final review F6).
 var fixRepairs = map[string]string{
 	"stale_deployment":               "remove stale lmm-deployed files",
+	"orphaned_record":                "drop deployed-file records no installed mod owns",
 	"loader_plugin_unlinked":         "re-deploy plugins missing from the game directory",
 	"loader_deployed_outside_loader": "move plugins deployed outside BepInEx/ under it",
 	"loader_nested_tree":             "remove the links lmm left in a nested BepInEx/ directory",
@@ -480,6 +485,11 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		fmt.Printf("%s %s (%s) - NEEDS REINGEST (%s)\n", colorYellow("?"), f.ModName, f.FileID, f.Note)
 
 	case "missing":
+		if f.DisplayVersion != "" {
+			// #458: a Workshop item's version is its revision date.
+			fmt.Printf("%s %s (%s) - MISSING (revision of %s not in cache)\n", colorRed("X"), f.ModName, f.FileID, f.DisplayVersion)
+			break
+		}
 		fmt.Printf("%s %s (%s) - MISSING (version %s not in cache)\n", colorRed("X"), f.ModName, f.FileID, ev.Version)
 
 	case "no_checksum":
@@ -550,6 +560,21 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		if f.FixableReason != "" {
 			fmt.Printf("  %s\n", f.FixableReason)
 		}
+
+	case "orphaned_record", "missing_cache":
+		// #469: a complete sentence in Note, and the way out in
+		// FixableReason when --fix is not it.
+		marker := colorYellow("?")
+		if f.Status == "missing_cache" {
+			marker = colorRed("X")
+		}
+		fmt.Printf("%s %s - %s\n", marker, cmp.Or(f.ModName, f.ModID), f.Note)
+		if f.FixableReason != "" {
+			fmt.Printf("  %s\n", f.FixableReason)
+		}
+
+	case "fixed_orphaned_record":
+		fmt.Println(colorGreen("Fixed: " + f.Note))
 
 	case "fixed_stale_deployment":
 		// The WHOLE line is green, keyed on this Status alone (no event

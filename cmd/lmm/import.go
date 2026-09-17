@@ -528,8 +528,15 @@ func runImportScan(ctx context.Context, game *domain.Game, service *core.Service
 				// ", v1.0" when there is a version, nothing at all when
 				// there isn't: a scanned archive lmm could not read a
 				// version out of used to render as "(local, v)" (#398).
-				if v := displayVersionSuffix(r.Mod.Version); v != "" {
-					sourceTag += "," + v
+				switch {
+				case r.Mod.DisplayVersion == core.NoRevisionDate:
+				case r.Mod.DisplayVersion != "":
+					// #458: a Workshop item's version is its revision.
+					sourceTag += ", " + displayRevision(r.Mod.UpdatedAt)
+				default:
+					if v := displayVersionSuffix(r.Mod.Version); v != "" {
+						sourceTag += "," + v
+					}
 				}
 				fmt.Printf("  - %s (%s)\n", r.Mod.Name, sourceTag)
 			} else {

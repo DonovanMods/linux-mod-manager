@@ -560,7 +560,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		if len(plan.ToInstall) > 0 {
 			fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
 			for _, ref := range plan.ToInstall {
-				fmt.Printf("  ↓ %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+				fmt.Printf("  ↓ %s\n", planRefLine(ref))
 			}
 		}
 	}
@@ -715,11 +715,15 @@ func doProfileExport(ctx context.Context, service *core.Service, game *domain.Ga
 // updated_at so this line can say the revision date instead. A ref with
 // neither prints no version at all rather than a bare "v".
 func planRefLine(ref domain.ModReference) string {
-	shown := displayModVersion(ref.External, ref.Version, ref.UpdatedAt)
-	if shown == "" || shown == "-" {
+	workshop := ref.DisplayVersion != "" || ref.External
+	shown := displayModVersion(workshop, ref.Version, ref.UpdatedAt)
+	if ref.DisplayVersion != "" {
+		shown = ref.DisplayVersion
+	}
+	if shown == "" || shown == core.NoRevisionDate {
 		return fmt.Sprintf("%s:%s", ref.SourceID, ref.ModID)
 	}
-	if ref.External {
+	if workshop {
 		return fmt.Sprintf("%s:%s (%s)", ref.SourceID, ref.ModID, shown)
 	}
 	return fmt.Sprintf("%s:%s v%s", ref.SourceID, ref.ModID, shown)
@@ -866,26 +870,37 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		if len(plan.Installed) > 0 {
 			fmt.Printf("  ✓ %d already installed\n", len(plan.Installed))
 		}
+		if profileImportNoInstall {
+			// #472: under --no-install every pending mod gets the same one
+			// accurate line - the document names it, nothing installs or
+			// deploys it - instead of a bucket that promised an install.
+			printNoInstallRefs(plan)
+		}
 		// #371: these are installed under ANOTHER profile - the bytes are
 		// here, but this profile still needs its own rows, so they are
 		// pending work, not "already installed".
-		if len(plan.AlreadyCached) > 0 {
+		if len(plan.AlreadyCached) > 0 && !profileImportNoInstall {
 			fmt.Printf("  + %d already downloaded, will be added to this profile:\n", len(plan.AlreadyCached))
 			for _, ref := range plan.AlreadyCached {
 				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
 		}
-		if len(plan.NeedsRedownload) > 0 {
+		if len(plan.NeedsRedownload) > 0 && !profileImportNoInstall {
 			fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
 			for _, ref := range plan.NeedsRedownload {
 				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
 		}
-		if len(plan.Missing) > 0 {
+		if len(plan.Missing) > 0 && !profileImportNoInstall {
 			fmt.Printf("  ↓ %d need to be downloaded:\n", len(plan.Missing))
 			for _, ref := range plan.Missing {
 				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
+		}
+		if plan.RecordedOnly && !profileImportNoInstall && len(plan.AlreadyCached)+len(plan.NeedsRedownload)+len(plan.Missing) > 0 {
+			// #462: the game directory holds the active profile's mods.
+			fmt.Printf("\n%s is not the active profile of %s (%s is), so the import records these mods in it - downloading what the cache lacks - and deploys nothing; `lmm profile switch %s` deploys them.\n",
+				plan.Profile.Name, game.Name, plan.ActiveProfile, plan.Profile.Name)
 		}
 	}
 
@@ -901,7 +916,11 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			opts.Install = true
 		} else {
 			if !jsonOutput {
-				fmt.Print("\nDownload and install mods? [Y/n]: ")
+				if plan.RecordedOnly {
+					fmt.Print("\nRecord mods in the profile (downloading what is missing)? [Y/n]: ")
+				} else {
+					fmt.Print("\nDownload and install mods? [Y/n]: ")
+				}
 			}
 			input, err := readPromptLine()
 			if err != nil {
@@ -936,9 +955,18 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		case core.ImportSaved:
 			fmt.Printf("\n✓ Imported profile: %s\n", p.ModName)
 		case core.ImportInstalling:
-			fmt.Println("\nDownloading and installing mods...")
+			if plan.RecordedOnly {
+				fmt.Println("\nDownloading and recording mods...")
+			} else {
+				fmt.Println("\nDownloading and installing mods...")
+			}
 		case core.ImportModInstalling:
-			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
+			// #462: a recorded-only import installs nothing.
+			verb := "Installing"
+			if plan.RecordedOnly {
+				verb = "Recording"
+			}
+			fmt.Printf("  %s %s:%s...\n", verb, p.SourceID, p.ModID)
 		case core.ImportDownloading:
 			printProgressLine("\r    Downloading: %.1f%%", p.Percent)
 		case core.ImportModFailed:
@@ -949,7 +977,11 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		case core.ImportDownloadDone:
 			fmt.Println()
 		case core.ImportModInstalled:
-			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+			if plan.RecordedOnly {
+				fmt.Printf("    ✓ Recorded: %s\n", p.ModName)
+			} else {
+				fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+			}
 		case core.ImportNote:
 			if verbose {
 				fmt.Printf("    %s\n", p.Detail)
@@ -983,7 +1015,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	switch {
 	case profileImportNoInstall:
 		if result.Skipped > 0 {
-			fmt.Printf("\nSkipped installing %d mod(s). %s\n", result.Skipped, installLaterHint(result.ProfileName))
+			fmt.Printf("\nNothing was installed or deployed. %s\n", installLaterHint(result.ProfileName))
 		}
 	case declined:
 		// The decline message was already printed at the prompt above.
@@ -992,7 +1024,12 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		// printed anything further in this case either.
 	default:
 		fmt.Printf("\n--- Summary ---\n")
-		fmt.Printf("Installed: %d\n", result.Installed)
+		if result.RecordedOnly {
+			fmt.Printf("Recorded: %d (not deployed: %s is not the active profile - `lmm profile switch %s` deploys them)\n",
+				result.Recorded, result.ProfileName, result.ProfileName)
+		} else {
+			fmt.Printf("Installed: %d\n", result.Installed)
+		}
 		if result.Failed > 0 {
 			fmt.Printf("Failed: %d\n", result.Failed)
 		}
@@ -1560,6 +1597,24 @@ func borrowedFrom(im domain.InstalledMod, profile string) string {
 // installLaterHint names the commands that install an imported profile's
 // skipped mods later. An apply acts for the active profile only (#462), so
 // a profile that is not active is switched to, which installs them too.
+// printNoInstallRefs is doProfileImport's preview of the mods a
+// --no-install import leaves pending (#472): one line per mod, saying what
+// happens to it - the saved document lists it, and nothing is installed or
+// deployed.
+func printNoInstallRefs(plan *core.ImportPlan) {
+	var pending []domain.ModReference
+	pending = append(pending, plan.AlreadyCached...)
+	pending = append(pending, plan.NeedsRedownload...)
+	pending = append(pending, plan.Missing...)
+	if len(pending) == 0 {
+		return
+	}
+	fmt.Printf("  - %d recorded in the profile only (--no-install: not installed or deployed):\n", len(pending))
+	for _, ref := range pending {
+		fmt.Printf("    - %s\n", planRefLine(ref))
+	}
+}
+
 func installLaterHint(profile string) string {
 	return fmt.Sprintf("Use 'lmm profile switch %s' to install them later, or 'lmm profile apply %s' if it is already the active profile.", profile, profile)
 }

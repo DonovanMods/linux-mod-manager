@@ -137,6 +137,9 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 
 	fmt.Printf("✓ Uninstalled: %s\n", plan.Mod.Name)
 	fmt.Printf("  Removed from profile: %s\n", profileName)
+	if result.RecordedOnly {
+		printRecordedOnlyRemoval(profileName, result.ActiveProfile, result.Removed, result.Kept)
+	}
 
 	if uninstallKeep {
 		fmt.Println("  Cache files preserved")
@@ -145,6 +148,24 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	return nil
+}
+
+// printRecordedOnlyRemoval says what an uninstall or a disable did for a
+// profile that is not the game's active one (#462): the game directory holds
+// the active profile's mods, so only the files profile alone recorded went,
+// and the rest were left - each with why.
+func printRecordedOnlyRemoval(profile, active string, removed []string, kept []core.PurgeKeptPath) {
+	fmt.Printf("  %s is not the active profile (%s is), so only files it alone recorded deploying were removed: %d\n",
+		profile, active, len(removed))
+	if verbose {
+		for _, path := range removed {
+			fmt.Printf("    - %s\n", path)
+		}
+	}
+	for _, k := range kept {
+		fmt.Print("  ")
+		printKeptPaths([]core.PurgeKeptPath{k})
+	}
 }
 
 // usedByText says which installed rows still use a cache entry an
@@ -198,6 +219,10 @@ func renderUninstallPlan(plan *core.UninstallPlan, profileName string) {
 			fmt.Printf("  Location: %s\n", plan.Mod.ExternalPath)
 		}
 	} else {
+		if plan.RecordedOnly {
+			fmt.Printf("  %s is not the active profile (%s is): only files %s alone recorded deploying are removed, and no hooks run\n",
+				profileName, plan.ActiveProfile, profileName)
+		}
 		fmt.Printf("  Would remove %d file(s) from the game directory\n", len(plan.Files))
 		if verbose {
 			for _, f := range plan.Files {

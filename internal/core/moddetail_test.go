@@ -5,9 +5,11 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
@@ -400,4 +402,44 @@ func TestModDetail_ARegisteredSourcesFailureStillFails(t *testing.T) {
 	_, err := svc.ModDetail(context.Background(), game, "default", "src", "gone")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mod not found")
+}
+
+// workshopDetailSource is a mockSource the service treats as the Steam
+// Workshop source (it implements source.WorkshopScanner), so a mod of it is
+// a Tier-3 download when its installed row is not External.
+type workshopDetailSource struct{ *mockSource }
+
+func (workshopDetailSource) ScanWorkshopItems(context.Context, string) (source.WorkshopScan, error) {
+	return source.WorkshopScan{}, nil
+}
+
+// TestModDetail_ATier3WorkshopRowCarriesItsRevisionDate (#458): an item lmm
+// downloaded from the Workshop itself is not External, and its Version is
+// the content id; both the source document and the Installed block carry
+// the revision date `lmm mod show` and the web UI print instead.
+func TestModDetail_ATier3WorkshopRowCarriesItsRevisionDate(t *testing.T) {
+	ctx := context.Background()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"steamworkshop": "g1"}}
+	src := workshopDetailSource{newMockSource("steamworkshop")}
+	svc.RegisterSource(src)
+	updated := time.Date(2025, 12, 3, 13, 18, 55, 0, time.UTC)
+	const contentID = "7987119735124793734"
+	src.AddMod(game.ID, &domain.Mod{ID: "3000000001", SourceID: "steamworkshop", GameID: game.ID,
+		Name: "Workshop Item", Version: contentID, UpdatedAt: updated})
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod: domain.Mod{ID: "3000000001", SourceID: "steamworkshop", GameID: game.ID,
+			Name: "Workshop Item", Version: contentID, UpdatedAt: updated},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
+	}))
+
+	detail, err := svc.ModDetail(ctx, game, "default", "steamworkshop", "3000000001")
+
+	require.NoError(t, err)
+	assert.Equal(t, "2025-12-03", detail.Mod.DisplayVersion)
+	require.NotNil(t, detail.Installed)
+	assert.False(t, detail.Installed.External, "the row is a Tier-3 download, not Steam's own")
+	assert.Equal(t, contentID, detail.Installed.Version)
+	assert.Equal(t, "2025-12-03", detail.Installed.DisplayVersion)
 }

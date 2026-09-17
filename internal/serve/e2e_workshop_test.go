@@ -143,7 +143,7 @@ func seedWorkshopManagedMod(t *testing.T, f e2eFixture) {
 	}})
 	seedInstalledMod(t, f.Svc, f.Game, domain.Mod{
 		ID: "managed-1", SourceID: e2eWorkshopSourceID, Name: "Managed Mod",
-		Version: "1.0", GameID: f.Game.ID,
+		Version: "1.0", GameID: f.Game.ID, UpdatedAt: time.Unix(e2eWorkshopTimeUpdated, 0),
 	}, true, map[string][]byte{"managed.pak": []byte("managed")})
 	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
 		domain.ModReference{SourceID: e2eWorkshopSourceID, ModID: "managed-1", Version: "1.0"}))
@@ -550,8 +550,10 @@ func TestE2E_Workshop_UpdatesCardMarksTheExternalRowAndOffersNoTick(t *testing.T
 		"marked on the control the user meets first, the sibling of the lock mark")
 	assert.Equal(t, 0, externalBoxes,
 		"no checkbox: lmm can never apply this update, whatever the user picks")
-	assert.Equal(t, 1, managedBoxes, "an ordinary row is unaffected")
-	assert.Contains(t, managedRow, "1.0 → 2.0")
+	assert.Equal(t, 1, managedBoxes, "a mod lmm downloaded itself stays applicable")
+	// A mod lmm downloaded from the Workshop source (Tier 3) is versioned by
+	// content id too: its revision date and an honest target (issue 458).
+	assert.Contains(t, managedRow, e2eWorkshopRevisionDate+" → newer")
 
 	// The apply count excludes it: ticking every box this card offers plans a
 	// batch of ONE, and the external row is not in it.

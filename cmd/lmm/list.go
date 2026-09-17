@@ -158,7 +158,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		// prints it as a version (the design's approval note).
 		// #428: an item lmm downloaded from the Workshop itself is not
 		// external, and its Version is the same content id.
-		contentID := workshopVersioned(service, mod.External, mod.SourceID)
+		contentID := workshopVersioned(service, &mod.Mod, mod.External)
 		version := displayModVersion(contentID, mod.Version, mod.UpdatedAt)
 		var row string
 		if verbose {

@@ -444,8 +444,8 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	applyErr = detectApplyError(applyErr, applied, result)
 	// core.ApplyDetectSelection persists the whole selection under ONE
 	// mutation slot, curated rows first, and stops at the first failing game;
-	// result.Profiles holds exactly the games that fully completed
-	// (games.yaml write + default profile), one-for-one with `applied`'s
+	// result.Completed() counts exactly the games that fully completed
+	// (games.yaml write + profiles settled), one-for-one with `applied`'s
 	// leading entries in the same order - so this prints "Added:" for
 	// precisely the games doGameDetect's old interleaved loop would have
 	// printed before hitting the same error.
@@ -472,7 +472,7 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		// shape the linter flags the moment the file is touched.
 		cmd.PrintErrf("Warning: %s\n", w)
 	}
-	for i := range result.Profiles {
+	for i := range result.Completed() {
 		// result.Saved[i], not applied[i].Slug: a REPAIR writes the prior
 		// entry's id, not the curated slug the row was detected under, and
 		// those are exactly the case where the two differ. Printing the slug
@@ -497,8 +497,8 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 // --help says to "change it with `lmm game edit`", but what the user saw was
 // the bare wrapped core.ErrGameExists, which names nothing to do next.
 //
-// The offending row is applied[len(result.Profiles)]: the apply stops at the
-// first failure and result.Profiles holds exactly the rows that completed,
+// The offending row is applied[result.Completed()]: the apply stops at the
+// first failure and result.Completed() counts exactly the rows that completed,
 // one-for-one with applied's leading entries
 // (core.ApplyDetectSelection's contract). Wrapped with %w, so errors.Is(core.ErrGameExists) still holds
 // and --json's envelope carries the same sentence.
@@ -506,7 +506,7 @@ func detectApplyError(applyErr error, applied []domain.DetectedGame, result *cor
 	if applyErr == nil || !errors.Is(applyErr, core.ErrGameExists) {
 		return applyErr
 	}
-	i := len(result.Profiles)
+	i := result.Completed()
 	if i >= len(applied) {
 		return applyErr
 	}

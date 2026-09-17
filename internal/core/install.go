@@ -324,6 +324,11 @@ func (p *InstallPlan) SkipDependencies() {
 // write, filesystem write, cache write, hook execution, or download ever
 // happens here - see TestService_PlanInstall_PerformsZeroMutations.
 func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, showArchived bool) (*InstallPlan, error) {
+	// #462: an install writes into the game directory, which holds the active
+	// profile's mods, so it acts for that profile alone.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbInstall); err != nil {
+		return nil, err
+	}
 	// Q2 (#269), before any source read: installing an lmm-managed copy of
 	// an item Steam already loads would put the mod in the game twice. Asked
 	// FIRST so the ruled wording is what the user sees - a Tier-1 workshop
@@ -484,6 +489,11 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 // expected; no DB write, filesystem write, cache write, hook execution, or
 // download ever happens here.
 func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profileName string, mods []*domain.Mod, showArchived bool) (*InstallPlan, error) {
+	// #462: an install writes into the game directory, which holds the active
+	// profile's mods, so it acts for that profile alone.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbInstall); err != nil {
+		return nil, err
+	}
 	// Ruling 5: the installed set this plan is computed against, re-derived
 	// (and compared) by ApplyInstall. Doubles as the Reinstall oracle below
 	// - it is exactly GetInstalledMods' keys for this game/profile, which is
@@ -1325,6 +1335,9 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 	// so nothing this call does can race the re-derivation, and BEFORE any
 	// pin resolution, lock gate, hook, or side effect - a stale plan is
 	// refused having changed nothing at all.
+	if err := s.requireActiveProfile(ctx, game.ID, plan.Profile, VerbInstall); err != nil {
+		return result, err
+	}
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {
 		return result, err
 	}

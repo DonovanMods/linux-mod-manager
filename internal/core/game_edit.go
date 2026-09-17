@@ -305,7 +305,36 @@ func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to s
 	if err := s.countListedUnrecorded(ctx, game, inUse); err != nil {
 		return err
 	}
+	if counts[inUse.ActiveProfile] > 0 {
+		if inUse.OrphanedRecords, err = s.orphanedRecordCount(ctx, game.ID, inUse.ActiveProfile); err != nil {
+			return err
+		}
+	}
 	return inUse
+}
+
+// orphanedRecordCount is how many of profileName's deployed-file records
+// name a mod it has no installed row for (#469).
+func (s *Service) orphanedRecordCount(ctx context.Context, gameID, profileName string) (int, error) {
+	rows, err := s.db.ListDeployedFiles(ctx, gameID, profileName)
+	if err != nil {
+		return 0, fmt.Errorf("listing deployed files: %w", err)
+	}
+	installed, err := s.GetInstalledMods(ctx, gameID, profileName)
+	if err != nil {
+		return 0, fmt.Errorf("getting installed mods: %w", err)
+	}
+	owned := make(map[string]bool, len(installed))
+	for _, m := range installed {
+		owned[domain.ModKey(m.SourceID, m.ID)] = true
+	}
+	n := 0
+	for _, row := range rows {
+		if !owned[domain.ModKey(row.SourceID, row.ModID)] {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // countListedUnrecorded fills inUse's ListedUnrecorded, NeedsApply,
@@ -337,7 +366,7 @@ func (s *Service) countListedUnrecorded(ctx context.Context, game *domain.Game, 
 		if p.Profile == inUse.ActiveProfile {
 			continue
 		}
-		_, kept, err := s.recordedPaths(ctx, game, p.Profile, inUse.ActiveProfile, others, false)
+		_, kept, err := s.recordedPaths(ctx, game, p.Profile, inUse.ActiveProfile, others, nil, false)
 		if err != nil {
 			return err
 		}
@@ -790,9 +819,14 @@ type GameModPathInUseError struct {
 	// then purged too, rows or not: `lmm profile apply` does it for a mod
 	// ActiveProfile has no enabled row for (NeedsApply), `lmm deploy` for
 	// one it has (NeedsDeploy).
-	ListedUnrecorded int  `json:"listed_unrecorded,omitzero"`
-	NeedsApply       bool `json:"needs_apply,omitzero"`
-	NeedsDeploy      bool `json:"needs_deploy,omitzero"`
+	ListedUnrecorded int `json:"listed_unrecorded,omitzero"`
+	// OrphanedRecords is how many of ActiveProfile's deployed-file records
+	// name a mod it has no installed row for (#469): no purge or apply
+	// looks at them, so `lmm verify --fix` drops them first - leaving their
+	// files where they are.
+	OrphanedRecords int  `json:"orphaned_records,omitzero"`
+	NeedsApply      bool `json:"needs_apply,omitzero"`
+	NeedsDeploy     bool `json:"needs_deploy,omitzero"`
 	// ListedUnavailable names, once each, the mods among those that no
 	// apply can deploy at the version ActiveProfile lists (#445 final gate
 	// F-C): no command records their files, and no purge removes them,
@@ -866,12 +900,18 @@ func (e *GameModPathInUseError) Error() string {
 		purged = append(purged, e.ActiveProfile)
 		slices.Sort(purged)
 	}
-	purges := make([]string, len(purged))
-	for i, profile := range purged {
-		purges[i] = fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, profile)
+	purges := make([]string, 0, len(purged)+1)
+	if e.OrphanedRecords > 0 {
+		purges = append(purges, fmt.Sprintf("`lmm verify --fix --game %s --profile %s`", e.GameID, e.ActiveProfile))
+	}
+	for _, profile := range purged {
+		purges = append(purges, fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, profile))
 	}
 
 	purge := "purge them first"
+	if e.OrphanedRecords > 0 {
+		purge = fmt.Sprintf("%d of them are records of the active profile %s that no installed mod owns, which a verify --fix drops (leaving the files where they are); purge the rest first", e.OrphanedRecords, e.ActiveProfile)
+	}
 	if e.ListedUnrecorded > 0 {
 		var steps []string
 		for _, r := range e.ReleaseFirst {

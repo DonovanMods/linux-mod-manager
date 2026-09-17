@@ -179,6 +179,18 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if err != nil {
 		return err
 	}
+	// #462: an update is refused for a profile that is not the game's
+	// active one. Ask before the source check, so the refusal is not
+	// printed under an update table the run was never going to apply. A
+	// plain check - and --all --dry-run, which is one - still runs.
+	if len(args) > 0 {
+		err = service.CheckDeployTarget(ctx, game.ID, profileName, core.VerbUpdate)
+	} else if updateAll && !updateDryRun {
+		err = service.CheckDeployTarget(ctx, game.ID, profileName, core.VerbUpdateMany)
+	}
+	if err != nil {
+		return err
+	}
 
 	// Get installed mods
 	installed, err := service.GetInstalledMods(ctx, game.ID, profileName)
@@ -429,7 +441,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 					// #428: the same Workshop-revision-date rule
 					// printUpdateTable applies to the CURRENT/AVAILABLE
 					// columns.
-					wv := workshopVersioned(service, u.InstalledMod.External, u.InstalledMod.SourceID)
+					wv := workshopVersioned(service, &u.InstalledMod.Mod, u.InstalledMod.External)
 					fmt.Printf("  - %s %s → %s\n", u.InstalledMod.Name,
 						displayModVersion(wv, u.InstalledMod.Version, u.InstalledMod.UpdatedAt),
 						displayUpdateTarget(wv, u.NewVersion))
@@ -562,7 +574,7 @@ func printUpdateTable(service *core.Service, updates, autoUpdates []domain.Updat
 		// date for at all (version_display.go).
 		// #428: an item lmm downloaded from the Workshop itself is not
 		// external, and both of its versions are content ids too.
-		contentID := workshopVersioned(service, update.InstalledMod.External, update.InstalledMod.SourceID)
+		contentID := workshopVersioned(service, &update.InstalledMod.Mod, update.InstalledMod.External)
 		current := displayModVersion(contentID, update.InstalledMod.Version, update.InstalledMod.UpdatedAt)
 		available := displayUpdateTarget(contentID, update.NewVersion)
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
@@ -618,7 +630,7 @@ func printUpdateChangelogs(service *core.Service, updates []domain.Update) {
 		}
 		// #428: same Workshop-revision-date rule as printUpdateTable's
 		// CURRENT/AVAILABLE columns.
-		wv := workshopVersioned(service, u.InstalledMod.External, u.InstalledMod.SourceID)
+		wv := workshopVersioned(service, &u.InstalledMod.Mod, u.InstalledMod.External)
 		fmt.Printf("\n  %s (%s → %s):\n", u.InstalledMod.Name,
 			displayModVersion(wv, u.InstalledMod.Version, u.InstalledMod.UpdatedAt),
 			displayUpdateTarget(wv, u.NewVersion))
@@ -684,7 +696,7 @@ func batchProgress(service *core.Service, updates []domain.Update) func(core.Eve
 			u := byKey[domain.ModKey(p.SourceID, p.ModID)]
 			// #428: same Workshop-revision-date rule as printUpdateTable's
 			// CURRENT/AVAILABLE columns.
-			wv := workshopVersioned(service, u.InstalledMod.External, u.InstalledMod.SourceID)
+			wv := workshopVersioned(service, &u.InstalledMod.Mod, u.InstalledMod.External)
 			fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), p.ModName,
 				displayModVersion(wv, u.InstalledMod.Version, u.InstalledMod.UpdatedAt),
 				displayUpdateTarget(wv, u.NewVersion))
@@ -746,7 +758,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// #428: plan.Mod.Version is a Steam Workshop content id for a
 		// Tier-1 (External) or Tier-3 (lmm-downloaded) Workshop item -
 		// displayVersionAt substitutes its revision date instead.
-		wv := workshopVersioned(service, plan.Mod.External, plan.Mod.SourceID)
+		wv := workshopVersioned(service, &plan.Mod.Mod, plan.Mod.External)
 		fmt.Printf("%s is pinned at %s and was not checked%s.\n", plan.Mod.Name, displayVersionAt(wv, plan.Mod.Version, plan.Mod.UpdatedAt), lockedSuffix)
 		// #142 round 5: -s/-p, same reasoning as the locked-refusal
 		// remedies below - set-update is profile-scoped (SetModUpdatePolicy
@@ -762,7 +774,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// #428: same content-id-vs-revision-date substitution as the
 		// pinned branch above.
 		fmt.Printf("%s is already up to date (%s).\n", plan.Mod.Name,
-			displayVersionAt(workshopVersioned(service, plan.Mod.External, plan.Mod.SourceID), plan.Mod.Version, plan.Mod.UpdatedAt))
+			displayVersionAt(workshopVersioned(service, &plan.Mod.Mod, plan.Mod.External), plan.Mod.Version, plan.Mod.UpdatedAt))
 		return nil
 
 	case plan.RecompileNeeded:
@@ -821,7 +833,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// #428: oldVersion/newVersion stay the raw content id for the
 		// --json documents below (planUpdateResult, applyUpdate's result) -
 		// oldDisplay/newDisplay are for the human-facing lines only.
-		wv := workshopVersioned(service, plan.Mod.External, plan.Mod.SourceID)
+		wv := workshopVersioned(service, &plan.Mod.Mod, plan.Mod.External)
 		oldDisplay := displayModVersion(wv, oldVersion, plan.Mod.UpdatedAt)
 		newDisplay := displayUpdateTarget(wv, newVersion)
 
@@ -1024,7 +1036,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	// #428: plan.Mod.External/SourceID never change between here and the
 	// final report below - a rollback moves the SAME mod's version, never
 	// its source - so this is computed once and reused throughout.
-	wv := workshopVersioned(service, plan.Mod.External, plan.Mod.SourceID)
+	wv := workshopVersioned(service, &plan.Mod.Mod, plan.Mod.External)
 
 	if plan.CacheMissing {
 		if wv {

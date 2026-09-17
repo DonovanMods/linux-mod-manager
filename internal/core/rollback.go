@@ -84,6 +84,11 @@ type RollbackPlan struct {
 // pre-extraction checks (locked, cache missing) DO return a valid plan -
 // see RollbackPlan's doc comment for why.
 func (s *Service) PlanRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*RollbackPlan, error) {
+	// #462: a rollback writes into the game directory, which holds the active
+	// profile's mods, so it acts for that profile alone.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbRollback); err != nil {
+		return nil, err
+	}
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, err
@@ -292,6 +297,9 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	// First statement inside the op (ApplyRollback took beginOp just above),
 	// before any lock check, hook, or side effect - mirroring applyUpdate's
 	// own placement.
+	if err := s.requireActiveProfile(ctx, game.ID, plan.Mod.ProfileName, VerbRollback); err != nil {
+		return result, err
+	}
 	if err := s.checkPlanFresh(ctx, plan.Mod.GameID, plan.Mod.ProfileName, plan.snapshot); err != nil {
 		return result, err
 	}

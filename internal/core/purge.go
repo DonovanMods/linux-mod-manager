@@ -7,6 +7,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
@@ -78,6 +80,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 	if err != nil {
 		return err
 	}
+	installer.keepReplacedLinks = spec.op == OpPurge // #469
 	spec.emit(StepEvent{Scope: Scope{Op: spec.op, Total: len(mods)}, Phase: DeployPurging})
 
 	// deferredWarnings holds uninstall.after_each (per mod, in loop order)
@@ -293,6 +296,9 @@ type PurgePlan struct {
 	// purge of the active profile, the files under a mod_path the game no
 	// longer uses (#451) that it leaves (each with ModPath).
 	Kept []PurgeKeptPath `json:"kept,omitempty"`
+	// Unshipped is the paths in Remove whose mod the active profile lists
+	// at a version that does not ship them (#469).
+	Unshipped []PurgeUnshippedPath `json:"unshipped,omitempty"`
 	// Stranded is the files Profile deployed under a mod_path the game no
 	// longer uses (#451) that this purge removes from where they were
 	// deployed, in path order - so a frontend can say which files go, even
@@ -321,15 +327,19 @@ type PurgeKeptPath struct {
 	Profiles []string `json:"profiles,omitempty"`
 	// Games names the other games recording the path (PurgeKeptOtherGame).
 	Games []string `json:"games,omitempty"`
-	// Note says why a PurgeKeptUserFile path is the user's when the
-	// adapter is not the reason (#466): a copy or hardlink whose content
-	// is no longer what lmm deployed, as a clause.
+	// Note says, as a clause, why a PurgeKeptUserFile path is the user's
+	// when the adapter is not the reason: a copy or hardlink whose content
+	// is no longer what lmm deployed (#466), or a regular file where lmm
+	// deployed a link - the user's replacement of it (#469).
 	Note string `json:"note,omitempty"`
 	// ModPath is the mod_path Path is under, when that is not the game's
 	// current one (#451): the purge was clearing files deployed before the
 	// mod_path changed.
 	ModPath string `json:"mod_path,omitempty"`
 }
+
+// replacedLinkNote is PurgeKeptPath.Note for a link the user replaced.
+const replacedLinkNote = "you replaced lmm's link with your own file"
 
 // PurgeStrandedPath is a file a purge removes from a mod_path the game no
 // longer uses (#451): Path relative to ModPath, the mod_path it was
@@ -415,6 +425,23 @@ const (
 	PurgeKeptListed PurgeKeptReason = "listed"
 )
 
+// describe says why k's file was kept, for a removal that reports it as a
+// line rather than as a PurgeKeptPath.
+func (k PurgeKeptPath) describe() string {
+	switch k.Reason {
+	case PurgeKeptUserFile:
+		return cmp.Or(k.Note, "the game hands it to you") + ", so it is never lmm's to remove"
+	case PurgeKeptRecorded:
+		return fmt.Sprintf("profile(s) %s record it too", strings.Join(k.Profiles, ", "))
+	case PurgeKeptOtherGame:
+		return fmt.Sprintf("%s records it too", gamesText(k.Games))
+	case PurgeKeptListed:
+		return fmt.Sprintf("the active profile %s lists its mod", strings.Join(k.Profiles, ", "))
+	default:
+		return string(k.Reason)
+	}
+}
+
 // DropsRecord reports whether a recorded-only purge drops the purged
 // profile's record of a path it keeps for this reason: every reason but
 // PurgeKeptListed (see PurgeKeptReason).
@@ -468,7 +495,7 @@ func (s *Service) PlanPurge(ctx context.Context, game *domain.Game, profileName 
 	}
 	// #451: what the profile deployed under a mod_path the game no longer
 	// uses goes too, and the plan says which files.
-	remove, kept, err := s.recordedPaths(ctx, game, profileName, live, nil, true)
+	remove, kept, err := s.recordedPaths(ctx, game, profileName, live, nil, nil, true)
 	if err != nil {
 		return nil, err
 	}
@@ -575,7 +602,7 @@ func (s *Service) planRecordedPurge(ctx context.Context, game *domain.Game, prof
 	if err != nil {
 		return nil, nil, err
 	}
-	remove, kept, err := s.recordedPaths(ctx, game, profileName, live, others, false)
+	remove, kept, err := s.recordedPaths(ctx, game, profileName, live, others, nil, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -588,6 +615,9 @@ func (s *Service) planRecordedPurge(ctx context.Context, game *domain.Game, prof
 	}
 	for _, row := range remove {
 		plan.Remove = append(plan.Remove, row.RelativePath)
+		if row.unshipped != nil {
+			plan.Unshipped = append(plan.Unshipped, *row.unshipped)
+		}
 		withPaths[domain.ModKey(row.SourceID, row.ModID)] = true
 	}
 	plan.Stranded = strandedOf(game, remove)
@@ -609,7 +639,7 @@ func (s *Service) planRecordedPurge(ctx context.Context, game *domain.Game, prof
 
 // strandedOf is the rows among remove recorded under a mod_path other
 // than their game's current one, as PurgeStrandedPath.
-func strandedOf(game *domain.Game, remove []db.DeployedPath) []PurgeStrandedPath {
+func strandedOf(game *domain.Game, remove []recordedRemoval) []PurgeStrandedPath {
 	var out []PurgeStrandedPath
 	for _, row := range remove {
 		if rowGame := gameUnderRoot(game, row.ModPath); rowGame != game {
@@ -630,7 +660,10 @@ type keptRecord struct {
 // them - and the ones whose file it keeps, each in path order, deciding
 // each in PurgeKeptReason's order. live is the game's active profile, and
 // others what the games overlapping its mod directory record
-// (otherGamesRecording).
+// (otherGamesRecording). only, when not nil, narrows the records to the
+// mods whose domain.ModKey it holds (a recorded-only uninstall or disable,
+// #462) - and to the current mod_path: a one-mod removal leaves a record
+// under an earlier one to a purge, as the active profile's does (#451).
 //
 // Each record is judged under the mod_path it was deployed under (#451).
 // One recorded under a mod_path the game no longer uses is not the active
@@ -640,7 +673,7 @@ type keptRecord struct {
 //
 // Anything that cannot be read to decide that is an error: the purge fails
 // closed. A path that cannot be checked is not taken for gone.
-func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileName, live string, others *otherGameRecords, strandedOnly bool) (remove []db.DeployedPath, kept []keptRecord, err error) {
+func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileName, live string, others *otherGameRecords, only map[string]bool, strandedOnly bool) (remove []recordedRemoval, kept []keptRecord, err error) {
 	rows, err := s.db.ListDeployedFiles(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing deployed files: %w", err)
@@ -653,6 +686,16 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 	if err != nil {
 		return nil, nil, err
 	}
+	// #469: a listed path the listed version provably does not ship is not
+	// kept for the active profile - no apply would ever record it.
+	ships, err := s.listedVersionShips(ctx, game, live)
+	if err != nil {
+		return nil, nil, err
+	}
+	methods, err := s.recordedLinkMethods(ctx, game, profileName, only)
+	if err != nil {
+		return nil, nil, err
+	}
 	// The adapter's routing does not depend on the link method.
 	installer := s.getInstaller(game)
 	cached, err := s.installedCacheLookup(ctx, game, profileName)
@@ -661,9 +704,13 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 	}
 	othersUnder := map[string]*otherGameRecords{}
 	for _, row := range rows {
+		key := domain.ModKey(row.SourceID, row.ModID)
+		if only != nil && !only[key] {
+			continue
+		}
 		rowGame := gameUnderRoot(game, row.ModPath)
 		stranded := rowGame != game
-		if strandedOnly && !stranded {
+		if strandedOnly && !stranded || only != nil && stranded {
 			continue
 		}
 		rowOthers, rowListed := others, listed
@@ -678,21 +725,85 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 		}
 		dst := filepath.Join(rowGame.ModPath, filepath.FromSlash(row.RelativePath))
 		if _, err := os.Lstat(dst); errors.Is(err, fs.ErrNotExist) {
-			remove = append(remove, row)
+			remove = append(remove, recordedRemoval{DeployedPath: row})
 			continue
 		}
-		pathRecords := recordsUnder(game, rowGame, records[row.RelativePath])
-		jd := deployedJudge{db: s.db, game: rowGame, profile: profileName, cacheRoots: s.cacheRoots(game), others: rowOthers, cached: cached}
-		if k, ok := keptPath(ctx, row, profileName, live, pathRecords, rowListed, rowOthers, installer, jd); ok {
+		keep := func(k PurgeKeptPath) {
 			if stranded {
 				k.ModPath = rowGame.ModPath
 			}
 			kept = append(kept, keptRecord{PurgeKeptPath: k, row: row})
+		}
+		// #469: a regular file where a symlink profile recorded a link is
+		// the user's replacement of it: kept, like any file the game hands
+		// the user, and its record goes. The #466 judge below cannot say
+		// so - a link's record carries no fingerprint.
+		if methods(key) == domain.LinkSymlink && !installer.notLinkerOwned(rowGame, row.RelativePath) && replacedLink(dst) {
+			keep(PurgeKeptPath{Path: row.RelativePath, Reason: PurgeKeptUserFile, Note: replacedLinkNote})
 			continue
 		}
-		remove = append(remove, row)
+		pathRecords := recordsUnder(game, rowGame, records[row.RelativePath])
+		jd := deployedJudge{db: s.db, game: rowGame, profile: profileName, cacheRoots: s.cacheRoots(game), others: rowOthers, cached: cached}
+		if _, ok := rowListed[key]; ok {
+			if version, shipped := ships(key, row.RelativePath); !shipped {
+				if k, keepIt := keptPath(ctx, row, profileName, live, pathRecords, withoutKey(rowListed, key), rowOthers, installer, jd); keepIt {
+					keep(k)
+					continue
+				}
+				remove = append(remove, recordedRemoval{DeployedPath: row, unshipped: &PurgeUnshippedPath{
+					Path: row.RelativePath, SourceID: row.SourceID, ModID: row.ModID, Version: version, Profile: live,
+				}})
+				continue
+			}
+		}
+		if k, ok := keptPath(ctx, row, profileName, live, pathRecords, rowListed, rowOthers, installer, jd); ok {
+			keep(k)
+			continue
+		}
+		remove = append(remove, recordedRemoval{DeployedPath: row})
 	}
 	return remove, kept, nil
+}
+
+// recordedRemoval is a record recordedPaths lets a recorded-only purge
+// remove the path of.
+type recordedRemoval struct {
+	db.DeployedPath
+	// unshipped is set when the active profile lists the path's mod at a
+	// version that does not ship the path (#469).
+	unshipped *PurgeUnshippedPath
+}
+
+// PurgeUnshippedPath is a path a recorded-only purge removes although the
+// active profile lists its mod (#469): the version it lists does not ship
+// the path, so no apply of it would ever record the file, and keeping it
+// for the active profile kept the mod_path refusal for good.
+type PurgeUnshippedPath struct {
+	Path     string `json:"path"`
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	// Version is the version the active profile lists (or, for a reference
+	// with none, has installed).
+	Version string `json:"version"`
+	// Profile is the active profile.
+	Profile string `json:"profile"`
+}
+
+// String says why the path went.
+func (u PurgeUnshippedPath) String() string {
+	return fmt.Sprintf("%s: the active profile %s lists %s:%s at %s, which does not ship it, so it was not kept for that profile",
+		u.Path, u.Profile, u.SourceID, u.ModID, u.Version)
+}
+
+// withoutKey is listed less key.
+func withoutKey(listed map[string]string, key string) map[string]string {
+	out := make(map[string]string, len(listed))
+	for k, v := range listed {
+		if k != key {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // installedCacheLookup is a deployedJudge.cached for profileName's
@@ -800,6 +911,100 @@ func listedHandedOn(records []db.PathRecord, profileName string, listed map[stri
 		}
 	}
 	return false
+}
+
+// listedVersionShips returns whether the version live's document lists a
+// mod at - or, for a reference with no version, the version of live's row
+// of it - ships a path, answering true whenever that cannot be proven: the
+// version is unknown, or its cache entry cannot be listed (#469). A remote
+// mod whose listed version no longer ships a path another profile recorded
+// kept that record as PurgeKeptListed forever, since no apply the refusal
+// named could ever record the path under live.
+func (s *Service) listedVersionShips(ctx context.Context, game *domain.Game, live string) (func(key, rel string) (version string, shipped bool), error) {
+	yes := func(string, string) (string, bool) { return "", true }
+	names, err := config.ListProfiles(s.configDir, game.ID)
+	if err != nil {
+		return nil, fmt.Errorf("listing profiles: %w", err)
+	}
+	if !slices.Contains(names, live) {
+		return yes, nil
+	}
+	profile, err := config.LoadProfile(s.configDir, game.ID, live)
+	if err != nil {
+		return nil, fmt.Errorf("%w for %s: reading %s's profile file: %w", ErrActiveProfileUnknown, game.ID, live, err)
+	}
+	refs := firstRefs(profile.Mods)
+	gameAdapter, err := s.AdapterFor(game)
+	if err != nil {
+		return yes, nil //nolint:nilerr // no adapter, no proof: every path may ship
+	}
+	gameCache := s.GetGameCache(game)
+	shipped := make(map[string]map[string]bool)
+	return func(key, rel string) (string, bool) {
+		ref := refs[key]
+		version := ref.Version
+		if version == "" {
+			// A row that cannot be read leaves the version unknown, and
+			// an unknown version ships every path.
+			if row, err := s.GetInstalledMod(ctx, ref.SourceID, ref.ModID, game.ID, live); err == nil {
+				version = row.Version
+			}
+		}
+		files, seen := shipped[key]
+		if !seen {
+			if version != "" {
+				if listing, err := deployableFiles(gameCache, gameAdapter, game, ref.SourceID, ref.ModID, version); err == nil {
+					files = make(map[string]bool, len(listing))
+					for _, f := range listing {
+						files[filepath.ToSlash(f)] = true
+					}
+				}
+			}
+			shipped[key] = files
+		}
+		return version, files == nil || files[rel]
+	}, nil
+}
+
+// recordedLinkMethods returns the link method each of profileName's mods
+// was deployed with - its row's, or the profile's effective one for a
+// record with no row. only, when not nil, is the mods asked about, read one
+// by one: a one-mod removal does not depend on every other row reading.
+func (s *Service) recordedLinkMethods(ctx context.Context, game *domain.Game, profileName string, only map[string]bool) (func(key string) domain.LinkMethod, error) {
+	var rows []domain.InstalledMod
+	if only == nil {
+		all, err := s.GetInstalledMods(ctx, game.ID, profileName)
+		if err != nil {
+			return nil, fmt.Errorf("getting installed mods: %w", err)
+		}
+		rows = all
+	} else {
+		for key := range only {
+			sourceID, modID, _ := strings.Cut(key, ":")
+			row, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
+			switch {
+			case errors.Is(err, domain.ErrModNotFound):
+			case err != nil:
+				return nil, fmt.Errorf("getting installed mod %s: %w", key, err)
+			default:
+				rows = append(rows, *row)
+			}
+		}
+	}
+	fallback, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
+	if err != nil {
+		return nil, err
+	}
+	methods := make(map[string]domain.LinkMethod, len(rows))
+	for _, row := range rows {
+		methods[domain.ModKey(row.SourceID, row.ID)] = row.LinkMethod
+	}
+	return func(key string) domain.LinkMethod {
+		if m, ok := methods[key]; ok {
+			return m
+		}
+		return fallback
+	}, nil
 }
 
 // liveListedMods is the mods live's document lists and does not mark off,
@@ -1022,14 +1227,6 @@ func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *Pu
 	if err != nil {
 		return result, err
 	}
-	others, err := s.otherGamesRecording(ctx, game)
-	if err != nil {
-		return result, err
-	}
-	remove, kept, err := s.recordedPaths(ctx, game, plan.Profile, live, others, false)
-	if err != nil {
-		return result, err
-	}
 	approved := make(map[string]bool, len(plan.Remove))
 	for _, path := range plan.Remove {
 		approved[path] = true
@@ -1041,7 +1238,7 @@ func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *Pu
 		}
 	}
 	emit(StepEvent{Scope: Scope{Op: OpPurge, Total: len(plan.Mods)}, Phase: DeployPurging})
-	left, err := s.removeRecordedPaths(ctx, game, plan.Profile, remove, kept, approved, untrack, result, emit)
+	cleared, err := s.clearRecorded(ctx, game, plan.Profile, live, purgeClearOptions(approved, untrack, result, emit))
 	if err != nil {
 		return result, err
 	}
@@ -1050,7 +1247,7 @@ func (s *Service) purgeRecorded(ctx context.Context, game *domain.Game, plan *Pu
 	for idx := range plan.Mods {
 		mod := plan.Mods[idx]
 		scope := Scope{Op: OpPurge, Index: idx + 1, Total: total, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
-		if n := left[domain.ModKey(mod.SourceID, mod.ID)]; n > 0 {
+		if n := cleared.left[domain.ModKey(mod.SourceID, mod.ID)]; n > 0 {
 			detail := fmt.Sprintf("%d of its file(s) left in place: something else still claims them, or they could not be removed", n)
 			result.Skipped = append(result.Skipped, skippedRef(&mod, detail))
 			emit(ModEvent{Scope: scope, Phase: PurgeModSkipped, Detail: detail})
@@ -1082,7 +1279,7 @@ func (s *Service) purgeStranded(ctx context.Context, game *domain.Game, profileN
 	if err != nil {
 		return err
 	}
-	remove, kept, err := s.recordedPaths(ctx, game, profileName, live, nil, true)
+	remove, kept, err := s.recordedPaths(ctx, game, profileName, live, nil, nil, true)
 	if err != nil || len(remove)+len(kept) == 0 {
 		return err
 	}
@@ -1107,28 +1304,116 @@ func (s *Service) purgeStranded(ctx context.Context, game *domain.Game, profileN
 			}
 		}
 	}
-	_, err = s.removeRecordedPaths(ctx, game, profileName, remove, kept, approved, untrack, result, emit)
+	_, err = s.removeRecordedPaths(ctx, game, profileName, remove, kept, purgeClearOptions(approved, untrack, result, emit))
 	return err
 }
 
-// removeRecordedPaths removes the recorded paths recordedPaths split out
-// for profileName - those approved, each under the mod_path its record
-// names - drops the records of the kept paths in untrack, and puts the kept
-// paths, the count removed and any warning on result. It returns, per mod
-// key, how many of that mod's records it did not clear.
-func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, profileName string, remove []db.DeployedPath, kept []keptRecord, approved, untrack map[string]bool, result *PurgeResult, emit func(Event)) (map[string]int, error) {
-	for _, k := range kept {
-		result.Kept = append(result.Kept, k.PurgeKeptPath)
+// purgeClearOptions is the recordedClearOptions of a purge: approved names
+// the paths it removes, untrack the kept paths whose records it drops, and
+// what it removes, keeps and warns of goes on result, as events too.
+func purgeClearOptions(approved, untrack map[string]bool, result *PurgeResult, emit func(Event)) recordedClearOptions {
+	return recordedClearOptions{
+		approve: func(path string) bool { return approved[path] },
+		untrack: func(path string) bool { return untrack[path] },
+		note: func(msg string) {
+			result.Notes = append(result.Notes, msg)
+			emit(StepEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeNote, Detail: msg})
+		},
+		// A path this purge meant to remove and did not is a warning, not
+		// a --verbose note: the plan the user confirmed said it would go.
+		warn: func(msg string) {
+			result.Warnings = append(result.Warnings, msg)
+			emit(WarningEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeWarning, Message: msg})
+		},
+		kept:    func(k PurgeKeptPath) { result.Kept = append(result.Kept, k) },
+		removed: func(string) { result.RemovedPaths++ },
 	}
-	installed, err := s.GetInstalledMods(ctx, game.ID, profileName)
+}
+
+// recordedClearOptions steers clearRecorded and removeRecordedPaths.
+type recordedClearOptions struct {
+	// only, when not nil, narrows the clearing to the mods whose
+	// domain.ModKey it holds.
+	only map[string]bool
+	// approve says whether a path the records say may go is removed - the
+	// plan named it. untrack says whether the record of a kept path whose
+	// reason drops it (PurgeKeptReason.DropsRecord) goes.
+	approve, untrack func(path string) bool
+	// note receives a --verbose diagnostic; warn a path the caller meant to
+	// remove and could not.
+	note, warn func(msg string)
+	// kept, when set, receives each path left in place, and why; removed
+	// each path removed, its record gone with it.
+	kept    func(PurgeKeptPath)
+	removed func(path string)
+}
+
+// recordedClearing is what clearRecorded did.
+type recordedClearing struct {
+	removed []string        // the paths removed, their records gone with them
+	kept    []PurgeKeptPath // the paths left, and why
+	left    map[string]int  // mod key -> recorded paths whose record stays
+}
+
+// clearRecorded removes what profileName - not the game's active profile,
+// live - recorded putting into the game directory, the way a recorded-only
+// purge does (#445, PurgePlan.RecordedOnly), and a recorded-only uninstall
+// or disable does for one mod (#462). The records are read again: a path is
+// removed only when opts.approve names it and no other profile records it
+// NOW - one that another profile started recording since the plan is kept
+// and reported - and a path's record goes only once its file has, or, for a
+// kept file whose record goes (PurgeKeptReason.DropsRecord), when
+// opts.untrack says so. Each file is judged again as it is removed (#466),
+// under the mod_path its record names (#451): one the user changed is kept.
+// Removing a file puts back whatever it had replaced.
+//
+// It returns what it did so far alongside an error: the paths already
+// removed stay removed.
+func (s *Service) clearRecorded(ctx context.Context, game *domain.Game, profileName, live string, opts recordedClearOptions) (*recordedClearing, error) {
+	others, err := s.otherGamesRecording(ctx, game)
 	if err != nil {
-		return nil, fmt.Errorf("getting installed mods: %w", err)
+		return nil, err
 	}
-	rowsByKey := make(map[string]*domain.InstalledMod, len(installed))
-	for i := range installed {
-		rowsByKey[domain.ModKey(installed[i].SourceID, installed[i].ID)] = &installed[i]
+	remove, kept, err := s.recordedPaths(ctx, game, profileName, live, others, opts.only, false)
+	if err != nil {
+		return nil, err
 	}
-	profileMethod, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
+	cleared := &recordedClearing{left: map[string]int{}}
+	inner := opts
+	inner.kept = func(k PurgeKeptPath) {
+		cleared.kept = append(cleared.kept, k)
+		if opts.kept != nil {
+			opts.kept(k)
+		}
+	}
+	inner.removed = func(path string) {
+		cleared.removed = append(cleared.removed, path)
+		if opts.removed != nil {
+			opts.removed(path)
+		}
+	}
+	left, err := s.removeRecordedPaths(ctx, game, profileName, remove, kept, inner)
+	if left != nil {
+		cleared.left = left
+	}
+	return cleared, err
+}
+
+// removeRecordedPaths removes the recorded paths recordedPaths split out
+// for profileName - those opts.approve names, each under the mod_path its
+// record names - and drops the records of the kept paths opts.untrack names,
+// telling opts what it kept and removed. It returns, per mod key, how many
+// of that mod's records it did not clear.
+func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, profileName string, remove []recordedRemoval, kept []keptRecord, opts recordedClearOptions) (map[string]int, error) {
+	reportKept := func(k PurgeKeptPath) {
+		if opts.kept != nil {
+			opts.kept(k)
+		}
+	}
+	for _, k := range kept {
+		reportKept(k.PurgeKeptPath)
+	}
+	methods, err := s.recordedLinkMethods(ctx, game, profileName, opts.only)
 	if err != nil {
 		return nil, err
 	}
@@ -1138,23 +1423,19 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 	}
 	othersUnder := map[string]*otherGameRecords{}
 
-	emitNote := func(msg string) {
-		result.Notes = append(result.Notes, msg)
-		emit(StepEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeNote, Detail: msg})
-	}
 	left := make(map[string]int) // mod key -> recorded paths not cleared
 	for _, k := range kept {
 		key := domain.ModKey(k.row.SourceID, k.row.ModID)
 		// The file stays either way; only a record the plan said goes, goes -
 		// so a path another profile started recording since the plan, which
 		// the plan meant to remove, keeps its record too.
-		if !k.Reason.DropsRecord() || !untrack[k.Path] {
+		if !k.Reason.DropsRecord() || !opts.untrack(k.Path) {
 			left[key]++
 			continue
 		}
 		if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, k.Path); err != nil {
 			left[key]++
-			emitNote(fmt.Sprintf("⚠ %s - %v", k.Path, err))
+			opts.note(fmt.Sprintf("⚠ %s - %v", k.Path, err))
 			continue
 		}
 		if k.Reason == PurgeKeptUserFile && k.Note != "" && k.ModPath == "" {
@@ -1163,12 +1444,8 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 			}
 		}
 	}
-	// A path this purge meant to remove and did not is a warning, not a
-	// --verbose note: the plan the user confirmed said it would go.
 	warn := func(path string, err error, what string) {
-		msg := fmt.Sprintf("%s was left in place, with its record: %s: %v", path, what, err)
-		result.Warnings = append(result.Warnings, msg)
-		emit(WarningEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeWarning, Message: msg})
+		opts.warn(fmt.Sprintf("%s was left in place, with its record: %s: %v", path, what, err))
 	}
 
 	installers := make(map[domain.LinkMethod]*Installer)
@@ -1179,14 +1456,11 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 			return left, err
 		}
 		key := domain.ModKey(row.SourceID, row.ModID)
-		if !approved[row.RelativePath] {
+		if !opts.approve(row.RelativePath) {
 			left[key]++
 			continue
 		}
-		method := profileMethod
-		if mod, ok := rowsByKey[key]; ok {
-			method = mod.LinkMethod
-		}
+		method := methods(key)
 		installer, ok := installers[method]
 		if !ok {
 			installer = s.newInstallerWithLinker(game, s.getLinker(method))
@@ -1218,10 +1492,10 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 				if rowGame != game {
 					k.ModPath = rowGame.ModPath
 				}
-				result.Kept = append(result.Kept, k)
+				reportKept(k)
 				if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, row.RelativePath); err != nil {
 					left[key]++
-					emitNote(fmt.Sprintf("⚠ %s - %v", row.RelativePath, err))
+					opts.note(fmt.Sprintf("⚠ %s - %v", row.RelativePath, err))
 					continue
 				}
 				if rowGame == game {
@@ -1247,14 +1521,19 @@ func (s *Service) removeRecordedPaths(ctx context.Context, game *domain.Game, pr
 		}
 		if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, row.RelativePath); err != nil {
 			left[key]++
-			emitNote(fmt.Sprintf("⚠ %s - %v", row.RelativePath, err))
+			opts.note(fmt.Sprintf("⚠ %s - %v", row.RelativePath, err))
 			continue
 		}
 		if _, ok := removed[rowGame.ModPath]; !ok {
 			roots = append(roots, rowGame.ModPath)
 		}
 		removed[rowGame.ModPath] = append(removed[rowGame.ModPath], row.RelativePath)
-		result.RemovedPaths++
+		if opts.removed != nil {
+			opts.removed(row.RelativePath)
+		}
+		if row.unshipped != nil {
+			opts.note(row.unshipped.String())
+		}
 	}
 	for _, root := range roots {
 		linker.CleanupEmptyDirs(root, removed[root])
