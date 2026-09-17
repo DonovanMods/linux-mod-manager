@@ -1,0 +1,25 @@
+{
+  "game_id": "skyrim-se",
+  "mod_path": "/games/skyrim-se/Data",
+  "new_mod_path": "/games/skyrim-se/Mods",
+  "deployed_files": 1,
+  "profiles": [
+    {
+      "profile": "default",
+      "deployed_files": 1
+    }
+  ],
+  "active_profile": "survival",
+  "listed_unrecorded": 1,
+  "listed_unavailable": [
+    {
+      "source_id": "local",
+      "mod_id": "a",
+      "version": "2.0",
+      "cached": [
+        "unknown"
+      ],
+      "profile_file": "/home/user/.config/lmm/games/skyrim-se/profiles/survival.yaml"
+    }
+  ]
+}

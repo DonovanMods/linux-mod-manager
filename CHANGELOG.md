@@ -284,12 +284,20 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
   (what a v1.30.1 switch between profiles sharing a mod left), it first
   names `lmm profile apply <active>` or `lmm deploy`, which record that
   file under the active profile, and the active profile's purge; running
-  exactly the commands it names, in its order, clears it. With no single
+  exactly the commands it names, in its order, clears it. When the active
+  profile lists such a mod at a version lmm cannot deploy — no cache
+  holds it, and lmm has no source to download it from, as with a local mod
+  pinned to a version it was never imported at — no command could record
+  the file, so the refusal names none for it: it says which version is
+  listed and which are cached, and names the profile file to edit, to list
+  a cached version or to mark the mod `disabled: true`. With no single
   active profile it is refused naming `lmm profile list` instead. On the
   web it is a 409 carrying
   `{game_id, mod_path, new_mod_path, deployed_files, profiles[], active_profile}`,
   plus `listed_unrecorded`, `needs_apply` and `needs_deploy` when those
-  first steps are needed.
+  first steps are needed, and `listed_unavailable`
+  (`{source_id, mod_id, version, cached[], profile_file}` per mod) for a
+  version nothing can supply.
   `lmm game detect`'s repair of an already-configured game, which rewrites
   `mod_path` from the catalog, is refused the same way (a 409 from
   `POST /api/v1/games/detect`) and writes nothing. The edit is also refused
@@ -1758,9 +1766,9 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   download, was reported on its own line and the run still ended with
   `✓ Applied profile` and exit status 0; a mod whose deploy failed as it
   was switched on was only a `--verbose` note. The apply still carries on
-  with the rest, but a run with any failure now ends with `✗ Profile
-<name> was not fully applied: N mod(s) failed.`, an error naming each
-  failed mod and why, and a non-zero exit status. Under `--json` the error
+  with the rest, but a run with any failure now ends with
+  `✗ Profile <name> was not fully applied: N mod(s) failed.`, an error
+  naming each failed mod and why, and a non-zero exit status. Under `--json` the error
   envelope's `details` is the whole result, and the result gains
   `outcomes`: what the apply did with each mod — `disabled`, `enabled`,
   `installed`, `replaced` or `failed`, with the version, the reason for a

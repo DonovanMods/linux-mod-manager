@@ -234,3 +234,103 @@ func TestModPathRefusal_ItsOwnCommandsClearIt(t *testing.T) {
 		requireActiveListedLive(t, f.svc, "sky")
 	})
 }
+
+// TestModPathRefusal_AListedVersionNothingCanSupplyIsNamed is the #445
+// final gate's F-C (R7): the active profile lists a mod at a version no
+// cache holds and its source cannot supply - a local mod pinned to 2.0 while
+// only "unknown" is cached. A purge keeps the mod's live file for the active
+// profile, and `lmm profile apply` cannot record it, so a refusal naming
+// the apply sent the user round a loop that never ended. The refusal now
+// says what is listed, what is cached, and the edit that ends the loop; after
+// either edit, its own commands clear it.
+func TestModPathRefusal_AListedVersionNothingCanSupplyIsNamed(t *testing.T) {
+	ctx := context.Background()
+	altPinned := "name: alt\ngame_id: sky\nmods:\n    - source_id: local\n      mod_id: a\n      version: \"2.0\"\n"
+	pinned := func(t *testing.T, doc string) (*legacyFixture, string) {
+		t.Helper()
+		f := l1Fixture(t)
+		f.game.InstallPath = filepath.Dir(f.game.ModPath)
+		require.NoError(t, f.svc.SaveGame(ctx, f.game))
+		path := filepath.Join(f.svc.ConfigDir(), "games", "sky", "profiles", "alt.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(doc+"is_default: true\n"), 0o644))
+		return f, path
+	}
+	to := func(f *legacyFixture) string { return filepath.Join(f.game.InstallPath, "Mods") }
+
+	t.Run("the refusal says what is listed and what is cached", func(t *testing.T) {
+		f, path := pinned(t, altPinned)
+
+		_, err := f.svc.SetGameModPath(ctx, "sky", to(f))
+
+		var inUse *core.GameModPathInUseError
+		require.ErrorAs(t, err, &inUse)
+		assert.Equal(t, 1, inUse.ListedUnrecorded)
+		assert.False(t, inUse.NeedsApply, "no apply can record it")
+		assert.False(t, inUse.NeedsDeploy)
+		assert.Equal(t, []core.ListedVersionUnavailable{{
+			SourceID: "local", ModID: "a", Version: "2.0", Cached: []string{"unknown"}, ProfileFile: path,
+		}}, inUse.ListedUnavailable)
+		text := err.Error()
+		assert.NotContains(t, text, "lmm profile apply")
+		for _, want := range []string{"local:a at version 2.0", "the cache holds it only at unknown", "source local", path, "`disabled: true`"} {
+			assert.Contains(t, text, want)
+		}
+	})
+
+	t.Run("its own commands alone leave it refused, saying the same", func(t *testing.T) {
+		f, _ := pinned(t, altPinned)
+		_, err := f.svc.SetGameModPath(ctx, "sky", to(f))
+		require.Error(t, err)
+		first := err.Error()
+		before, _, found := strings.Cut(first, "then change the mod_path")
+		require.True(t, found)
+		for _, m := range refusalCommand.FindAllStringSubmatch(before, -1) {
+			runRefusalCommand(t, f.svc, "sky", m[1])
+		}
+
+		_, err = f.svc.SetGameModPath(ctx, "sky", to(f))
+
+		require.Error(t, err)
+		assert.Equal(t, first, err.Error())
+		assert.FileExists(t, filepath.Join(f.game.ModPath, "Data", "a.esp"), "the listed file is kept meanwhile")
+	})
+
+	t.Run("listing the cached version clears it", func(t *testing.T) {
+		f, _ := pinned(t, strings.Replace(altPinned, `"2.0"`, "unknown", 1))
+
+		refusals := followModPathRefusal(t, f.svc, "sky", to(f))
+
+		require.Len(t, refusals, 1)
+		assert.Contains(t, refusals[0], "`lmm profile apply alt --game sky`")
+		requireActiveListedLive(t, f.svc, "sky")
+	})
+
+	t.Run("marking it off clears it, and its file goes", func(t *testing.T) {
+		f, _ := pinned(t, altPinned+"      disabled: true\n")
+		old := f.game.ModPath
+
+		refusals := followModPathRefusal(t, f.svc, "sky", to(f))
+
+		require.Len(t, refusals, 1)
+		assert.NotContains(t, refusals[0], "lmm profile apply")
+		assert.NoFileExists(t, filepath.Join(old, "Data", "a.esp"))
+		assert.NoFileExists(t, filepath.Join(to(f), "Data", "a.esp"))
+	})
+
+	t.Run("a listed mod an apply can record is still named beside it", func(t *testing.T) {
+		f, path := pinned(t, altPinned+"    - source_id: local\n      mod_id: c\n      version: unknown\n")
+		f.deployed(t, "default", "c", domain.LinkSymlink, map[string]string{"Data/c.esp": "mod c"}, nil)
+
+		_, err := f.svc.SetGameModPath(ctx, "sky", to(f))
+
+		var inUse *core.GameModPathInUseError
+		require.ErrorAs(t, err, &inUse)
+		assert.Equal(t, 2, inUse.ListedUnrecorded)
+		assert.True(t, inUse.NeedsApply)
+		require.Len(t, inUse.ListedUnavailable, 1)
+		assert.Equal(t, "a", inUse.ListedUnavailable[0].ModID)
+		assert.Contains(t, err.Error(), "`lmm profile apply alt --game sky`")
+		assert.Contains(t, err.Error(), "local:a at version 2.0")
+		assert.Contains(t, err.Error(), path)
+	})
+}

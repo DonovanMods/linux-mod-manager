@@ -1913,6 +1913,28 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #445 final gate F-C: such a file whose mod the active profile
+			// lists at a version no cache holds and no source lmm has can
+			// supply - only an edit of that profile's document ends it.
+			"game_mod_path_in_use_error_listed_unavailable",
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/skyrim-se/Data", NewModPath: "/games/skyrim-se/Mods",
+				DeployedFiles: 1, ActiveProfile: "survival",
+				Profiles:         []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}},
+				ListedUnrecorded: 1,
+				ListedUnavailable: []core.ListedVersionUnavailable{{
+					SourceID: "local", ModID: "a", Version: "2.0", Cached: []string{"unknown"},
+					ProfileFile: "/home/user/.config/lmm/games/skyrim-se/profiles/survival.yaml",
+				}},
+			},
+		},
+		{
+			// One entry of game_mod_path_in_use_error's listed_unavailable:
+			// a mod listed with no version, and nothing of it cached.
+			"listed_version_unavailable",
+			core.ListedVersionUnavailable{SourceID: "local", ModID: "b", ProfileFile: "/home/user/.config/lmm/games/skyrim-se/profiles/survival.yaml"},
+		},
+		{
 			// One profile's share of game_mod_path_in_use_error.
 			"profile_deployed_files",
 			core.ProfileDeployedFiles{Profile: "survival", DeployedFiles: 2},

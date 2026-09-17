@@ -61,7 +61,10 @@ deployed there when you next switch to it. When the active profile lists
 a mod whose live file only another profile records - what a switch
 before lmm 2 could leave - the refusal first names 'lmm profile apply' or
 'lmm deploy' to record it under the active profile. Running exactly what
-the refusal names, in its order, clears it. A BepInEx game deploys into
+the refusal names, in its order, clears it. If the active profile lists
+that mod at a version lmm cannot deploy (not in the cache, and no source
+to download it from), the refusal says which version is listed and which
+are cached, and names the profile file to edit instead. A BepInEx game deploys into
 its install path, so that is its mod path.
 
 --source, --remove-source, --adapter and --mod-path are one edit: every
