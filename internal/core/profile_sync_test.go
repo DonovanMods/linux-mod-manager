@@ -114,12 +114,9 @@ func TestPlanProfileSync_BucketsAreDeterministicallyOrdered(t *testing.T) {
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "yankee", Version: "1.0"}))
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "bravo", Version: "1.0"}))
 
-	// ToRemove: listed in the profile, not enabled in the DB - each was
-	// installed-then-disabled (so it carries an installed_at) with
-	// installed order and profile order likewise disagreeing: delta was
-	// installed before romeo, but romeo is listed first in the profile.
-	seedSyncInstalledMod(t, svc, game, "src", "delta", "Delta", "1.0", "default", false, nil)
-	seedSyncInstalledMod(t, svc, game, "src", "romeo", "Romeo", "1.0", "default", false, nil)
+	// ToRemove: listed in the profile with no installed row at all (#444:
+	// an installed-but-disabled mod is kept, never removed) - romeo is
+	// listed before delta, so profile order is not alphabetical order.
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "romeo", Version: "1.0"}))
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "delta", Version: "1.0"}))
 

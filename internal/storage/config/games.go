@@ -9,8 +9,9 @@ import (
 	"sync"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // gamesMu serializes read-modify-write of games.yaml to avoid lost updates
@@ -148,8 +149,8 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 		return nil, fmt.Errorf("reading games.yaml: %w", err)
 	}
 	var gamesFile GamesFile
-	if err := yaml.Unmarshal(data, &gamesFile); err != nil {
-		return nil, fmt.Errorf("parsing games.yaml: %w", err)
+	if err := safeyaml.Unmarshal(data, &gamesFile); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", gamesPath, err)
 	}
 	games := make(map[string]*domain.Game)
 	for id, cfg := range gamesFile.Games {

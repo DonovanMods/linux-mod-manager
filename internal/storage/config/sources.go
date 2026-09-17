@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
-	"gopkg.in/yaml.v3"
 )
 
 // SourceLoadError describes a source definition file that could not be loaded.
@@ -89,7 +89,7 @@ func LoadSourceDefinitionFile(path string) (source.SourceDefinition, error) {
 // is ever written anywhere).
 func ParseSourceDefinition(data []byte) (source.SourceDefinition, error) {
 	var def source.SourceDefinition
-	if err := yaml.Unmarshal(data, &def); err != nil {
+	if err := safeyaml.Unmarshal(data, &def); err != nil {
 		return source.SourceDefinition{}, fmt.Errorf("parsing YAML: %w", err)
 	}
 	if err := def.Validate(); err != nil {

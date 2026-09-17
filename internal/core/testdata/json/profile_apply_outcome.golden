@@ -1,0 +1,7 @@
+{
+  "source_id": "local",
+  "mod_id": "a",
+  "version": "2.0",
+  "outcome": "failed",
+  "reason": "failed to fetch mod: source not found: local"
+}

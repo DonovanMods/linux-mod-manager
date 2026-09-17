@@ -36,6 +36,11 @@ which source that mod ID belongs to - it resolves automatically when the
 game has exactly one configured source, or prompts interactively when it
 has several. -s is ignored when deploying the whole profile.
 
+The game directory holds one profile's mods at a time - the active
+profile's - so a deploy acts for the active profile only: -p/--profile
+naming any other profile is refused. Make that profile active first with
+'lmm profile switch', which deploys it.
+
 A mod the profile marks ` + "`disabled: true`" + ` is not deployed. Deploy is not a
 converge run, so it never takes files down: if such a mod's files are still
 in the game directory, deploy leaves them there and names the mod, and
@@ -66,7 +71,7 @@ Examples:
 
 func init() {
 	deployCmd.Flags().StringVarP(&deploySource, "source", "s", "", "mod source for deploying a single mod ID (default: auto-detect when the game has one configured source, prompt when it has several)")
-	deployCmd.Flags().StringVarP(&deployProfile, "profile", "p", "", "profile (default: active profile)")
+	deployCmd.Flags().StringVarP(&deployProfile, "profile", "p", "", "profile; only the active profile can be deployed (default: active profile)")
 	deployCmd.Flags().StringVarP(&deployMethod, "method", "m", "", "link method: symlink, hardlink, or copy (default: game's configured method)")
 	deployCmd.Flags().BoolVar(&deployPurge, "purge", false, "purge all deployed mods before deploying")
 	deployCmd.Flags().BoolVarP(&deployAll, "all", "a", false, "deploy all mods including disabled ones (the next 'lmm profile apply' or 'lmm profile switch' takes down any the profile marks disabled)")

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,12 +72,45 @@ func TestFlowSwitch_JobSwitchesAndReportsTheLockedRefWarning(t *testing.T) {
 	assert.Contains(t, result.Warnings[0], "could not update profile")
 }
 
+// TestFlowSwitch_AFailedModFailsTheJob is #470's twin over the job API: a
+// switch to a profile listing a mod no source resolves still makes it the
+// active profile, but the job fails, naming the mod, and its envelope
+// carries the whole SwitchResult.
+func TestFlowSwitch_AFailedModFailsTheJob(t *testing.T) {
+	s, svc, game := newProfilesFixtureServer(t)
+
+	j := runFlow(t, s, game, "switch", `{"profile":"`+applyTargetProfile+`"}`, "")
+	status := j.status()
+	require.Equal(t, jobFailed, status.State, "a switch with a failed mod is not a success")
+	require.NotNil(t, status.Error)
+	assert.Contains(t, status.Error.Error, unresolvableModID)
+
+	active, err := svc.NewProfileManager().GetDefault(t.Context(), game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, applyTargetProfile, active.Name, "what did not fail is done: the target is active")
+
+	result, ok := status.Error.Details.(*core.SwitchResult)
+	require.True(t, ok, "the envelope's details must be the core document, got %T", status.Error.Details)
+	require.Len(t, result.Failed, 1)
+	assert.Equal(t, unresolvableModID, result.Failed[0].ModID)
+	var incomplete *core.ProfileSwitchIncompleteError
+	assert.ErrorAs(t, j.failure(), &incomplete, "the typed error survives the registry")
+}
+
+// makeApplyTargetActive marks applyTargetProfile active, by flag alone: an
+// apply acts for the active profile only (#462).
+func makeApplyTargetActive(t *testing.T, svc *core.Service, game *domain.Game) {
+	t.Helper()
+	require.NoError(t, svc.NewProfileManager().SetDefault(t.Context(), game.ID, applyTargetProfile))
+}
+
 // TestFlowProfileApply_PlanListsInstallsAndRemovalsAndAppliesNothing is the
 // plan half: what would be installed, what would be removed, and the entry
 // the source could not resolve - which the plan carries as data rather than
 // failing on.
 func TestFlowProfileApply_PlanListsInstallsAndRemovalsAndAppliesNothing(t *testing.T) {
 	s, svc, game := newProfilesFixtureServer(t)
+	makeApplyTargetActive(t, svc, game)
 
 	_, raw := planFlow(t, s, game, "profile_apply", `{"profile":"`+applyTargetProfile+`"}`)
 	body := string(raw)
@@ -91,12 +125,17 @@ func TestFlowProfileApply_PlanListsInstallsAndRemovalsAndAppliesNothing(t *testi
 
 // TestFlowProfileApply_JobConverges is the apply half: the listed mod is
 // installed, the unlisted one is disabled and undeployed, and the entry that
-// could not resolve is reported rather than silently dropped.
+// could not resolve is reported rather than silently dropped - as a failed
+// job (#470), whose envelope names it and carries the whole result.
 func TestFlowProfileApply_JobConverges(t *testing.T) {
 	s, svc, game := newProfilesFixtureServer(t)
+	makeApplyTargetActive(t, svc, game)
 
 	j := runFlow(t, s, game, "profile_apply", `{"profile":"`+applyTargetProfile+`"}`, "")
-	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+	status := j.status()
+	require.Equal(t, jobFailed, status.State, "#470: an apply with a failed mod is not a success")
+	require.NotNil(t, status.Error)
+	assert.Contains(t, status.Error.Error, unresolvableModID)
 
 	installedP1, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "p1", game.ID, applyTargetProfile)
 	require.NoError(t, err, "the profile's listed mod must now be installed under it")
@@ -106,8 +145,10 @@ func TestFlowProfileApply_JobConverges(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, installedP4.Enabled, "a mod the profile no longer lists must be disabled")
 
-	result, ok := j.status().Result.(*core.ProfileApplyResult)
-	require.True(t, ok, "the stored result must be the core document")
+	result, ok := status.Error.Details.(*core.ProfileApplyResult)
+	require.True(t, ok, "the envelope's details must be the core document, got %T", status.Error.Details)
 	require.NotEmpty(t, result.Failed, "the unresolvable entry must be reported on the result")
 	assert.Equal(t, unresolvableModID, result.Failed[0].ModID)
+	var incomplete *core.ProfileApplyIncompleteError
+	assert.ErrorAs(t, j.failure(), &incomplete, "the typed error survives the registry")
 }

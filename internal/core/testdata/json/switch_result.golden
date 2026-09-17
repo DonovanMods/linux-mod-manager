@@ -2,6 +2,38 @@
   "disabled": 1,
   "enabled": 2,
   "installed": 1,
+  "failed": [
+    {
+      "source_id": "local",
+      "mod_id": "a",
+      "name": "",
+      "reason": "failed to fetch mod: source not found: local"
+    }
+  ],
+  "outcomes": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "7",
+      "name": "Realistic Needs",
+      "version": "1.0.0",
+      "outcome": "disabled"
+    },
+    {
+      "source_id": "nexusmods",
+      "mod_id": "8",
+      "name": "Sample Mod",
+      "version": "2.0.0",
+      "outcome": "enabled",
+      "from_profile": "survival"
+    },
+    {
+      "source_id": "local",
+      "mod_id": "a",
+      "version": "2.0",
+      "outcome": "failed",
+      "reason": "failed to fetch mod: source not found: local"
+    }
+  ],
   "notes": [
     "Warning: failed to update Realistic Needs: some error"
   ],

@@ -11,6 +11,29 @@
       "reason": "failed to fetch mod: rate limited"
     }
   ],
+  "outcomes": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "7",
+      "name": "Realistic Needs",
+      "version": "1.0.0",
+      "outcome": "disabled"
+    },
+    {
+      "source_id": "local",
+      "mod_id": "a",
+      "name": "Mod a",
+      "version": "unknown",
+      "outcome": "enabled",
+      "from_profile": "survival"
+    },
+    {
+      "source_id": "nexusmods",
+      "mod_id": "8",
+      "outcome": "failed",
+      "reason": "failed to fetch mod: rate limited"
+    }
+  ],
   "notes": [
     "Warning: failed to undeploy Sample Mod: permission denied"
   ],

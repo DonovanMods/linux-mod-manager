@@ -16,6 +16,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -78,12 +81,14 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 	}
 
 	// One precomputed map rather than a FindRef scan per mod: this loops
-	// over every installed mod.
+	// over every installed mod. A mod listed twice is read by its first
+	// copy, the one the update gate enforces (#457) - firstRefs is FindRef's
+	// map form.
 	lockedByKey := map[string]domain.ModReference{}
 	if profile != nil {
-		for _, ref := range profile.Mods {
+		for key, ref := range firstRefs(profile.Mods) {
 			if ref.Locked {
-				lockedByKey[domain.ModKey(ref.SourceID, ref.ModID)] = ref
+				lockedByKey[key] = ref
 			}
 		}
 	}
@@ -136,6 +141,12 @@ func (s *Service) ListProfileNames(ctx context.Context, gameID string) (*Profile
 type ProfileListing struct {
 	GameID   string           `json:"game_id"`
 	Profiles []ProfileSummary `json:"profiles"`
+	// Warnings reports a game whose profiles do not mark exactly one of
+	// them active (`is_default: true`) - none, or several, which only a
+	// hand edit or a failed write leaves (#446). Every flow then treats the
+	// first such profile (or the first profile) as active; the warning
+	// names it and the command that settles it. No entry carries a prefix.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ListProfiles returns gameID's profiles as ProfileSummary rows, in
@@ -150,6 +161,41 @@ func (s *Service) ListProfiles(ctx context.Context, gameID string) (*ProfileList
 	listing := &ProfileListing{GameID: gameID}
 	for _, p := range profiles {
 		listing.Profiles = append(listing.Profiles, ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault})
+	}
+	// #441: a profile is known by its file name. A hand-copied file whose
+	// `name:` still names another profile is read - and written - as the
+	// copy, and the user is told the two disagree.
+	for _, p := range profiles {
+		declared, err := config.DeclaredProfileName(s.configDir, gameID, p.Name)
+		if err == nil && declared != "" && declared != p.Name {
+			listing.Warnings = append(listing.Warnings, fmt.Sprintf(
+				"profile file %s.yaml of %s says `name: %s` - lmm knows it by its file name, %q; set its name: to %s, or rename the file",
+				p.Name, gameID, declared, p.Name, p.Name))
+		}
+	}
+	// #445 review F2: the listing is where every refusal of an ambiguous
+	// active profile sends the user, so it says what the refusal saw - by
+	// the same reading of the files (readProfileFlags).
+	flags, err := readProfileFlags(s.configDir, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("listing profiles: %w", err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(flags.unreadable)) {
+		path, _ := config.ProfilePath(s.configDir, gameID, name)
+		listing.Warnings = append(listing.Warnings, fmt.Sprintf(
+			"profile file %s of %s cannot be read, so it is not listed: %v - until it is fixed or removed, lmm will not deploy, purge or switch %s, since it could be the active profile",
+			path, gameID, flags.unreadable[name], gameID))
+	}
+	switch {
+	case len(flags.unreadable) > 0 || !flags.ambiguous():
+	case len(flags.flagged) == 0:
+		listing.Warnings = append(listing.Warnings, fmt.Sprintf(
+			"no profile of %s is marked active (is_default: true), so lmm will not deploy or purge its files until one is - run `lmm profile switch <name>` to mark the one whose mods the game directory holds",
+			gameID))
+	default:
+		listing.Warnings = append(listing.Warnings, fmt.Sprintf(
+			"profiles %s of %s are all marked active (is_default: true), so lmm will not deploy or purge its files until one is - run `lmm profile switch <name>` to keep one",
+			strings.Join(flags.flagged, ", "), gameID))
 	}
 	return listing, nil
 }

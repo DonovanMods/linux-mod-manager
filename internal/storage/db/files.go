@@ -113,6 +113,47 @@ func (d *DB) AnyProfileOwnsFile(ctx context.Context, gameID, relativePath string
 	return true, nil
 }
 
+// PathRecord is one profile's deployed-file record of a path: the profile
+// and the mod the record names.
+type PathRecord struct {
+	Profile  string
+	SourceID string
+	ModID    string
+}
+
+// DeployedPathRecords returns, for every path any profile of gameID has a
+// deployed-file record for, those records, sorted by profile. A purge of a
+// profile that is not active (#445) removes only the paths no other record
+// claims, and hands a path the active profile lists on only to a record
+// that keeps it for the same reason - which depends on the mod each record
+// names.
+func (d *DB) DeployedPathRecords(ctx context.Context, gameID string) (records map[string][]PathRecord, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT relative_path, profile_name, source_id, mod_id FROM deployed_files
+		WHERE game_id = ?
+		ORDER BY relative_path, profile_name
+	`, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("querying deployed files: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+
+	records = make(map[string][]PathRecord)
+	for rows.Next() {
+		var path string
+		var r PathRecord
+		if err := rows.Scan(&path, &r.Profile, &r.SourceID, &r.ModID); err != nil {
+			return nil, fmt.Errorf("scanning deployed file: %w", err)
+		}
+		records[path] = append(records[path], r)
+	}
+	return records, rows.Err()
+}
+
 // DeployedFileCounts returns how many deployed_files rows each profile of
 // gameID has, keyed by profile name; a profile with none has no entry. It
 // is the population a mod_path move would strand, since each row is

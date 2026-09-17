@@ -202,6 +202,9 @@ func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName,
 	} else {
 		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
+	// #445 gate 2, G2-1: the files it left for another game, and any
+	// original it could not put back, are this flow's to report.
+	s.takeCaptureWarnings(game.ID, OpDeploy, PurgeWarning, &result.Warnings, nil)
 
 	result.Changed = true
 	return result, nil
@@ -312,6 +315,9 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 	} else {
 		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
+	// #445 gate 2, G2-1: the files it left for another game, and any
+	// original it could not put back, are this flow's to report.
+	s.takeCaptureWarnings(game.ID, OpDeploy, PurgeWarning, &result.Warnings, nil)
 
 	result.Changed = true
 	return result, nil

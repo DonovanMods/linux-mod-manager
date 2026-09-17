@@ -314,6 +314,10 @@ type MergePlan struct {
 // recorded as DeployPlanMod.Skipped entries and left for ApplyDeploy to
 // raise at the historical point.
 //
+// A deploy acts for the game's active profile only (#445): any other
+// profile is refused with ErrProfileNotActive, since the game directory
+// holds the active profile's deployment.
+//
 // The returned plan is a snapshot: pass it to ApplyDeploy promptly, and be
 // ready for ErrStalePlan if the installed set moved underneath it.
 func (s *Service) PlanDeploy(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions) (*DeployPlan, error) {
@@ -321,6 +325,9 @@ func (s *Service) PlanDeploy(ctx context.Context, game *domain.Game, profileName
 }
 
 func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions) (*DeployPlan, error) {
+	if err := s.refuseInactive(ctx, game.ID, profileName, "deploy"); err != nil {
+		return nil, err
+	}
 	// Read directly (not via currentInstalledSnapshot) to keep the
 	// pre-lift error text ("getting installed mods: …") on this
 	// reachable failure path - see planDeploy's doc comment and
@@ -341,12 +348,11 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	// preview reported locked:false for every locked mod while
 	// GET /api/v1/mods reported the same mod as locked. Read once here; a
 	// profile that will not load simply stamps nothing, exactly as the purge
-	// pass below treats one.
+	// pass below treats one. A mod listed twice is stamped from its first
+	// copy, the one the update gate enforces (#457).
 	profileRefs := map[string]domain.ModReference{}
 	if profile, perr := config.LoadProfile(s.configDir, game.ID, profileName); perr == nil {
-		for _, ref := range profile.Mods {
-			profileRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref
-		}
+		profileRefs = firstRefs(profile.Mods)
 	}
 	// stampLock marks ref locked when the profile says so. Version is
 	// deliberately left as the installed row's: it is what this deploy will
@@ -622,6 +628,11 @@ func (s *Service) ApplyDeploy(ctx context.Context, game *domain.Game, plan *Depl
 func (s *Service) applyDeploy(ctx context.Context, game *domain.Game, plan *DeployPlan, opts DeployOptions, sink EventSink) (*DeployResult, error) {
 	if plan == nil {
 		return &DeployResult{}, errors.New("deploy plan is nil: call PlanDeploy first")
+	}
+	// #445: re-checked here, since the active profile can change between a
+	// plan and its apply.
+	if err := s.refuseInactive(ctx, game.ID, plan.Profile, "deploy"); err != nil {
+		return &DeployResult{}, err
 	}
 	if err := s.checkPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
 		return &DeployResult{}, err

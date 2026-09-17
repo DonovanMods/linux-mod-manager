@@ -8,8 +8,9 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ProfileHookConfigYAML uses pointers to distinguish "not set" from "set to empty"
@@ -155,28 +156,21 @@ func validateProfilePath(gameID, profileName string) error {
 	return validateSegment(profileName, domain.ErrInvalidProfileName)
 }
 
-// unmarshalYAML is yaml.Unmarshal for a profile document a user may have
-// written by hand, with the decoder's own panics returned as errors.
-// gopkg.in/yaml.v3 v3.0.1 panics on some malformed input instead of
-// failing - a merge key over a mapping keyed by a mapping ("hash of
-// unhashable type") is one fuzzing found - and a profile is read at the
-// start of nearly every command, #431's upgrade step included, so one such
-// file must read as unparseable rather than stop lmm from starting.
-func unmarshalYAML(data []byte, v any) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("yaml: the decoder failed on this document: %v", r)
-		}
-	}()
-	return yaml.Unmarshal(data, v)
-}
-
-// LoadProfile reads a profile from disk
+// LoadProfile reads gameID's profile profileName from
+// <configDir>/games/<gameID>/profiles/<profileName>.yaml.
+//
+// The profile's identity is where its file is, not what the file says
+// (#441): Name is profileName and GameID is gameID, whatever the file's own
+// `name:` and `game_id:` hold. Every lmm command finds a profile by its file
+// name, and SaveProfile writes back to the file Name and GameID name - so a
+// hand-copied profile whose `name:` still says the original's is read, and
+// written, as the copy, never as the file it was copied from.
+// DeclaredProfileName reports a `name:` that disagrees.
 func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error) {
-	if err := validateProfilePath(gameID, profileName); err != nil {
+	profilePath, err := ProfilePath(configDir, gameID, profileName)
+	if err != nil {
 		return nil, err
 	}
-	profilePath := filepath.Join(configDir, "games", gameID, "profiles", profileName+".yaml")
 	data, err := os.ReadFile(profilePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -186,10 +180,40 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 	}
 
 	var cfg ProfileConfig
-	if err := unmarshalYAML(data, &cfg); err != nil {
+	if err := safeyaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing profile: %w", err)
 	}
+	return profileFromConfig(cfg, gameID, profileName)
+}
 
+// DeclaredProfileName returns the `name:` gameID's profile profileName's
+// file declares - "" when it declares none. It differs from profileName
+// only in a hand-copied or hand-renamed file, which LoadProfile reads under
+// its file name anyway; a frontend reports the difference (#441).
+func DeclaredProfileName(configDir, gameID, profileName string) (string, error) {
+	profilePath, err := ProfilePath(configDir, gameID, profileName)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", domain.ErrProfileNotFound
+		}
+		return "", fmt.Errorf("reading profile: %w", err)
+	}
+	var cfg struct {
+		Name string `yaml:"name"`
+	}
+	if err := safeyaml.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("parsing profile: %w", err)
+	}
+	return cfg.Name, nil
+}
+
+// profileFromConfig is the domain profile cfg, the document of gameID's
+// profile file profileName, describes - named for the file (LoadProfile).
+func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.Profile, error) {
 	linkMethod, ok := domain.ParseLinkMethod(cfg.LinkMethod)
 	if !ok {
 		return nil, fmt.Errorf("%w: profile %q (game %q): link_method %q (valid: %s)",
@@ -197,8 +221,8 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 	}
 
 	profile := &domain.Profile{
-		Name:               cfg.Name,
-		GameID:             cfg.GameID,
+		Name:               profileName,
+		GameID:             gameID,
 		LinkMethod:         linkMethod,
 		LinkMethodExplicit: cfg.LinkMethod != "",
 		IsDefault:          cfg.IsDefault,
@@ -226,61 +250,6 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 	}
 
 	return profile, nil
-}
-
-// SaveProfile writes a profile to disk
-func SaveProfile(configDir string, profile *domain.Profile) error {
-	if err := validateProfilePath(profile.GameID, profile.Name); err != nil {
-		return err
-	}
-	cfg := ProfileConfig{
-		Name:      profile.Name,
-		GameID:    profile.GameID,
-		IsDefault: profile.IsDefault,
-		Mods:      make([]ModReferenceConfig, len(profile.Mods)),
-		Hooks:     serializeProfileHooks(profile.Hooks, profile.HooksExplicit),
-	}
-	// Only write link_method if explicitly set: String() never returns "", so
-	// assigning it unconditionally defeats `omitempty` and bakes a phantom
-	// symlink override into every profile file.
-	if profile.LinkMethodExplicit {
-		cfg.LinkMethod = profile.LinkMethod.String()
-	}
-
-	for i, m := range profile.Mods {
-		cfg.Mods[i] = ModReferenceConfig{
-			SourceID: m.SourceID,
-			ModID:    m.ModID,
-			Version:  m.Version,
-			FileIDs:  m.FileIDs,
-			Locked:   m.Locked,
-			Disabled: m.Disabled,
-		}
-	}
-
-	if len(profile.Overrides) > 0 {
-		cfg.Overrides = make(map[string]string)
-		for path, content := range profile.Overrides {
-			cfg.Overrides[path] = string(content)
-		}
-	}
-
-	data, err := yaml.Marshal(&cfg)
-	if err != nil {
-		return fmt.Errorf("marshaling profile: %w", err)
-	}
-
-	profileDir := filepath.Join(configDir, "games", profile.GameID, "profiles")
-	if err := os.MkdirAll(profileDir, 0755); err != nil {
-		return fmt.Errorf("creating profiles dir: %w", err)
-	}
-
-	profilePath := filepath.Join(profileDir, profile.Name+".yaml")
-	if err := os.WriteFile(profilePath, data, 0644); err != nil {
-		return fmt.Errorf("writing profile: %w", err)
-	}
-
-	return nil
 }
 
 // ListProfiles returns all profile names for a game
@@ -404,7 +373,7 @@ func ExportProfile(profile *domain.Profile) ([]byte, error) {
 // ImportProfile imports a profile from portable format
 func ImportProfile(data []byte) (*domain.Profile, error) {
 	var wire exportedProfileYAML
-	if err := unmarshalYAML(data, &wire); err != nil {
+	if err := safeyaml.Unmarshal(data, &wire); err != nil {
 		return nil, fmt.Errorf("parsing exported profile: %w", err)
 	}
 

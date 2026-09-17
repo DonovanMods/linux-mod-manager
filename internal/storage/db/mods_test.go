@@ -318,3 +318,31 @@ func TestSetModConvertPaks(t *testing.T) {
 	err = database.SetModConvertPaks(context.Background(), "icarus", "nope", "icarus", "default", true)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
+
+func TestModVersionRows(t *testing.T) {
+	ctx := context.Background()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+
+	save := func(gameID, profile, modID, version string) {
+		t.Helper()
+		require.NoError(t, database.SaveInstalledMod(ctx, &domain.InstalledMod{
+			Mod:         domain.Mod{ID: modID, SourceID: "local", Name: modID, Version: version, GameID: gameID},
+			ProfileName: profile,
+		}))
+	}
+	save("sky2", "x", "k", "1.0")
+	save("sky", "p", "k", "1.0")
+	save("sky", "default", "k", "1.0")
+	save("sky", "default", "other", "1.0")
+	require.NoError(t, database.UpdateModVersion(ctx, "local", "k", "sky", "p", "2.0"))
+
+	rows, err := database.ModVersionRows(ctx, "local", "k")
+	require.NoError(t, err)
+	assert.Equal(t, []db.ModVersionRow{
+		{GameID: "sky", Profile: "default", Version: "1.0"},
+		{GameID: "sky", Profile: "p", Version: "2.0", PreviousVersion: "1.0"},
+		{GameID: "sky2", Profile: "x", Version: "1.0"},
+	}, rows)
+}

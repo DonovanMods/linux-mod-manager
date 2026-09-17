@@ -225,6 +225,61 @@ type profileWarningsDetails struct {
 	Warnings []string `json:"warnings"`
 }
 
+// ProfileApplyIncompleteError is ApplyProfileApply's error when the apply
+// ran to the end but could not install or deploy every mod (#470): Result
+// is the whole outcome - what was applied, and each failure with its reason
+// - and Error names each failed mod, so no frontend reports the apply as
+// done. Follows the GameDetectPartialError convention: Details() any is the
+// unnamed interface a frontend's envelope writer picks up automatically.
+type ProfileApplyIncompleteError struct {
+	Profile string
+	Result  *ProfileApplyResult
+}
+
+// Error names the profile and every failed mod with its reason.
+func (e *ProfileApplyIncompleteError) Error() string {
+	return fmt.Sprintf("profile %q was not fully applied - %d mod(s) failed: %s",
+		e.Profile, len(e.Result.Failed), failedModsText(e.Result.Failed))
+}
+
+// Details returns the whole ProfileApplyResult for a frontend's error
+// envelope's "details" field.
+func (e *ProfileApplyIncompleteError) Details() any { return e.Result }
+
+// ProfileSwitchIncompleteError is ApplyProfileSwitch's error when the
+// switch ran to the end - Profile is now the active profile - but could not
+// install or deploy every mod (#470's twin, #445 second gate): Result is the
+// whole outcome, and Error names each failed mod, so no frontend reports
+// the switch as done. Details() any is the whole result, as
+// ProfileApplyIncompleteError's is.
+type ProfileSwitchIncompleteError struct {
+	Profile string
+	Result  *SwitchResult
+}
+
+// Error names the profile and every failed mod with its reason.
+func (e *ProfileSwitchIncompleteError) Error() string {
+	return fmt.Sprintf("profile %q is now active, but %d mod(s) failed: %s",
+		e.Profile, len(e.Result.Failed), failedModsText(e.Result.Failed))
+}
+
+// Details returns the whole SwitchResult for a frontend's error envelope's
+// "details" field.
+func (e *ProfileSwitchIncompleteError) Details() any { return e.Result }
+
+// failedModsText names each failed mod with its reason.
+func failedModsText(failed []InstalledRef) string {
+	failures := make([]string, len(failed))
+	for i, f := range failed {
+		name := f.SourceID + ":" + f.ModID
+		if f.Name != "" {
+			name = fmt.Sprintf("%s (%s)", f.Name, name)
+		}
+		failures[i] = name + ": " + f.Reason
+	}
+	return strings.Join(failures, "; ")
+}
+
 // GameDetectPartialError reports a `game detect` run that failed partway
 // through ApplyGameDetect: Result still names exactly the games that were
 // fully persisted (games.yaml write + default profile) before Err stopped
@@ -289,6 +344,31 @@ func (e *AdapterRefusedError) Details() any {
 // CreateProfile/RenameProfile seams, before either writes anything, so a
 // frontend's 409 never depends on an untyped error's wording (#332 M6).
 var ErrProfileExists = errors.New("profile already exists")
+
+// ErrProfileNotActive is returned when a deploy - or a purge --uninstall -
+// is asked to act for a profile that is not the game's active one (#445). A
+// game has one directory, holding the active profile's deployment:
+// deploying another profile there mixes two profiles' mods. (A plain purge
+// of such a profile is allowed, as the recorded-only cleanup
+// PurgePlan.RecordedOnly describes.) The error names the active profile and
+// `lmm profile switch`, the way to make another profile live.
+var ErrProfileNotActive = errors.New("profile is not active")
+
+// ErrActiveProfileUnknown is returned when a flow that deploys into a game
+// directory, removes from it, or switches which profile it holds cannot
+// tell which of the game's profiles is active (#445 review F2): a profile
+// file cannot be read, several say `is_default: true`, or none does while
+// several exist. Any answer would be a guess - GetDefault's first-profile
+// fallback is one - and a guess turned a recorded-only purge into a full
+// one, so every such decision fails closed instead. The error names the
+// cause and `lmm profile list`.
+var ErrActiveProfileUnknown = errors.New("cannot tell which profile is active")
+
+// ErrProfileActive is returned when deleting the game's active profile
+// (#446): its mods are the ones in the game directory, and deleting its
+// file would leave them there with no profile claiming them and the game
+// with no active profile. The error names `lmm profile switch`.
+var ErrProfileActive = errors.New("profile is active")
 
 // ErrConfirmationRequired is returned by a frontend-facing entry point that
 // would have to prompt but cannot - the CLI's --json mode, which never reads

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,8 +15,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ErrProfileLayoutUnsupported is returned by MarkModsDisabled when it cannot
@@ -43,14 +45,15 @@ func ProfilePath(configDir, gameID, profileName string) (string, error) {
 // decides it by its first reference, but a copy left unmarked is one a
 // later edit - deleting the first, reordering - would turn back on.
 //
-// Unlike SaveProfile it does not re-serialize the document: the marker is
-// inserted into the file's own bytes, next to the reference it belongs to,
-// so comments, key order, flow style, blank lines, indentation and an
-// unexpanded `~/` hook path all stay exactly as the author wrote them. That
-// is what makes it safe to run on a hand-edited file the user never asked
-// lmm to rewrite. The edit is checked before anything is written - the new
-// text must decode to the original document with only those markers set -
-// and anything else is ErrProfileLayoutUnsupported with the file untouched.
+// The marker is inserted into the file's own bytes, next to the reference
+// it belongs to, so comments, key order, flow style, blank lines,
+// indentation and an unexpanded `~/` hook path all stay exactly as the
+// author wrote them. That is what makes it safe to run on a hand-edited file
+// the user never asked lmm to change. The edit is checked before anything is
+// written - the new text must decode to the original document with only
+// those markers set - and anything else is ErrProfileLayoutUnsupported with
+// the file untouched: unlike SaveProfile, which edits the same way (#441),
+// it never falls back to rewriting the file whole.
 //
 // The write goes to path itself (through a symlink, to its target) by
 // writing a temporary file beside it and renaming it into place, so a
@@ -74,7 +77,7 @@ func MarkModsDisabled(path string, mods []domain.ModReference) ([]domain.ModRefe
 		return nil, fmt.Errorf("%w: %s: %v", ErrProfileLayoutUnsupported, path, err)
 	}
 	var after ProfileConfig
-	if err := unmarshalYAML(edited, &after); err != nil || !reflect.DeepEqual(expected, after) {
+	if err := safeyaml.Unmarshal(edited, &after); err != nil || !reflect.DeepEqual(expected, after) {
 		return nil, fmt.Errorf("%w: %s: the edited text would not read back as the same profile", ErrProfileLayoutUnsupported, path)
 	}
 
@@ -89,11 +92,11 @@ func MarkModsDisabled(path string, mods []domain.ModReference) ([]domain.ModRefe
 // edits, and the mods they mark (see MarkModsDisabled).
 func planMarkers(path string, data []byte, mods []domain.ModReference) (ProfileConfig, []textEdit, []domain.ModReference, error) {
 	var before ProfileConfig
-	if err := unmarshalYAML(data, &before); err != nil {
+	if err := safeyaml.Unmarshal(data, &before); err != nil {
 		return ProfileConfig{}, nil, nil, fmt.Errorf("parsing profile: %w", err)
 	}
 	var doc yaml.Node
-	if err := unmarshalYAML(data, &doc); err != nil {
+	if err := safeyaml.Unmarshal(data, &doc); err != nil {
 		return ProfileConfig{}, nil, nil, fmt.Errorf("parsing profile: %w", err)
 	}
 	if len(before.Mods) == 0 {
@@ -539,32 +542,105 @@ func quotedEnd(data []byte, start int) (int, bool) {
 // dotfile manager that hard-links, rather than symlinks, into place), so it
 // is rewritten in place instead, trading atomicity for keeping the link.
 func writeFileAtomic(path string, data []byte) error {
+	_, err := writeFile(path, data, false)
+	return err
+}
+
+// writeFile is writeFileAtomic, and - with inPlaceFallback - also writes a
+// file whose directory refuses the temporary file in place, the way every
+// profile save did before #441 (review F10), reporting that it did.
+func writeFile(path string, data []byte, inPlaceFallback bool) (inPlace bool, err error) {
+	if err := checkWritable(path); err != nil {
+		return false, err
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false, fmt.Errorf("resolving profile path: %w", err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return false, fmt.Errorf("reading profile file mode: %w", err)
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
+		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
+			return false, fmt.Errorf("writing profile: %w", err)
+		}
+		return false, nil
+	}
+	err = renameIntoPlace(target, data, info.Mode().Perm())
+	var noTemp *tempFileError
+	if !inPlaceFallback || !errors.As(err, &noTemp) || !errors.Is(err, fs.ErrPermission) {
+		return false, err
+	}
+	if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
+		return false, fmt.Errorf("writing profile: %w", err)
+	}
+	return true, nil
+}
+
+// tempFileError is renameIntoPlace failing to create its temporary file -
+// the one failure writeFile's in-place fallback answers.
+type tempFileError struct{ err error }
+
+func (e *tempFileError) Error() string { return "writing profile: " + e.err.Error() }
+func (e *tempFileError) Unwrap() error { return e.err }
+
+// checkDirWritable refuses a directory lmm cannot create a file in.
+func checkDirWritable(dir string) error {
+	if err := syscall.Access(dir, accessWrite|accessSearch); err != nil {
+		return &os.PathError{Op: "access", Path: dir, Err: err}
+	}
+	return nil
+}
+
+// checkCreatable refuses a file path whose directory - or, when it does not
+// exist yet, the nearest existing directory above it, which MkdirAll would
+// create it in - lmm cannot create in.
+func checkCreatable(path string) error {
+	dir := filepath.Dir(path)
+	for {
+		info, err := os.Stat(dir)
+		switch {
+		case err == nil && !info.IsDir():
+			return &os.PathError{Op: "mkdir", Path: dir, Err: syscall.ENOTDIR}
+		case err == nil:
+			return checkDirWritable(dir)
+		case !errors.Is(err, fs.ErrNotExist):
+			return err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return err
+		}
+		dir = parent
+	}
+}
+
+// checkWritable refuses a profile file - through a symlink, its target -
+// the user cannot write (see writeFileAtomic).
+func checkWritable(path string) error {
 	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return fmt.Errorf("resolving profile path: %w", err)
 	}
-	info, err := os.Stat(target)
-	if err != nil {
-		return fmt.Errorf("reading profile file mode: %w", err)
-	}
 	if err := syscall.Access(target, accessWrite); err != nil {
 		return fmt.Errorf("writing profile: %w", &os.PathError{Op: "access", Path: target, Err: err})
 	}
-	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
-		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
-			return fmt.Errorf("writing profile: %w", err)
-		}
-		return nil
-	}
+	return nil
+}
 
+// renameIntoPlace writes data, with mode, to a temporary file beside target
+// and renames it to target - creating target, or replacing it whole - so a
+// reader never sees a partial file.
+func renameIntoPlace(target string, data []byte, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*.tmp")
 	if err != nil {
-		return fmt.Errorf("writing profile: %w", err)
+		return &tempFileError{err: err}
 	}
 	renamed := false
 	defer func() {
 		// Whatever stopped the write short - an error, or a panic on its
-		// way to the backfill's recover - leaves no temporary file behind.
+		// way to a caller's recover - leaves no temporary file behind.
 		if !renamed {
 			_ = tmp.Close()
 			_ = os.Remove(tmp.Name())
@@ -573,7 +649,7 @@ func writeFileAtomic(path string, data []byte) error {
 	if _, err := tmp.Write(data); err != nil {
 		return fmt.Errorf("writing profile: %w", err)
 	}
-	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+	if err := tmp.Chmod(mode); err != nil {
 		return fmt.Errorf("writing profile: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
@@ -589,5 +665,8 @@ func writeFileAtomic(path string, data []byte) error {
 	return nil
 }
 
-// accessWrite is access(2)'s W_OK.
-const accessWrite = 0x2
+// accessWrite and accessSearch are access(2)'s W_OK and X_OK.
+const (
+	accessWrite  = 0x2
+	accessSearch = 0x1
+)

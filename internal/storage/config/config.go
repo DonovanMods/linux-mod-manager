@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Config holds global application settings
@@ -77,8 +78,8 @@ func Load(configDir string) (*Config, error) {
 		return nil, fmt.Errorf("reading config: %w", err)
 	}
 
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("parsing config: %w", err)
+	if err := safeyaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parsing config: %s: %w", configPath, err)
 	}
 
 	// Convert string to LinkMethod

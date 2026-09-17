@@ -16,6 +16,11 @@ Delete a profile and its configuration.
 Note: This does not remove the installed mods, only the profile configuration.
 
 .PP
+The active profile cannot be deleted - its mods are the ones in the game
+directory - unless it is the game's only profile and has nothing installed.
+Switch to another profile first ('lmm profile switch').
+
+.PP
 Examples:
   lmm profile delete old-profile --game skyrim-se
 

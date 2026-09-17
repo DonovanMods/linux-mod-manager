@@ -77,6 +77,14 @@ type Snapshot struct {
 	// update (config.yaml's auto_snapshot), rather than one the user asked
 	// for by name.
 	Auto bool `json:"auto,omitempty"`
+	// ActiveProfile is the game's active profile when the snapshot was
+	// taken - the one profile file saying `is_default: true` - or empty
+	// when that had no single answer, or for a snapshot recorded before
+	// this was kept. A restore needs it to read Installed's enabled flags
+	// (#444): they say what the user chose only when ActiveProfile is
+	// Profile, since every profile switch writes enabled = 0 onto the
+	// profile it leaves.
+	ActiveProfile string `json:"active_profile,omitempty"`
 
 	// ProfileDocument is the profile's portable export - the DESIRED state
 	// a restore converges to, including each ref's pinned version and lock.
@@ -371,6 +379,7 @@ func (s *Service) buildSnapshot(ctx context.Context, game *domain.Game, profileN
 		// size_bytes (and therefore a golden) unstable for no gain.
 		CreatedAt:       time.Now().UTC().Truncate(time.Second),
 		Auto:            auto,
+		ActiveProfile:   s.flaggedActiveProfile(game.ID),
 		ProfileDocument: config.ExportProfileValue(profile),
 		Installed:       installed,
 		DeployedFiles:   deployed,

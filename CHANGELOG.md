@@ -279,9 +279,25 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
   names every such profile with its purge
   (`lmm purge --game <id> --profile <name>`) and says what the `lmm deploy`
   after the move does: it deploys the active profile, and any other profile
-  is deployed into the new directory when you next switch to it. On the web
-  it is a 409 carrying
-  `{game_id, mod_path, new_mod_path, deployed_files, profiles[], active_profile}`.
+  is deployed into the new directory when you next switch to it. Where the
+  active profile lists a mod whose live file only another profile records
+  (what a v1.30.1 switch between profiles sharing a mod left), it first
+  names `lmm profile apply <active>` or `lmm deploy`, which record that
+  file under the active profile, and the active profile's purge; running
+  exactly the commands it names, in its order, clears it. When the active
+  profile lists such a mod at a version lmm cannot deploy — no cache
+  holds it, and lmm has no source to download it from, as with a local mod
+  pinned to a version it was never imported at — no command could record
+  the file, so the refusal names none for it: it says which version is
+  listed and which are cached, and names the profile file to edit, to list
+  a cached version or to mark the mod `disabled: true`. With no single
+  active profile it is refused naming `lmm profile list` instead. On the
+  web it is a 409 carrying
+  `{game_id, mod_path, new_mod_path, deployed_files, profiles[], active_profile}`,
+  plus `listed_unrecorded`, `needs_apply` and `needs_deploy` when those
+  first steps are needed, and `listed_unavailable`
+  (`{source_id, mod_id, version, cached[], profile_file}` per mod) for a
+  version nothing can supply.
   `lmm game detect`'s repair of an already-configured game, which rewrites
   `mod_path` from the catalog, is refused the same way (a 409 from
   `POST /api/v1/games/detect`) and writes nothing. The edit is also refused
@@ -1582,6 +1598,302 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **lmm writes a profile to its own file, safely, and keeps what you wrote
+  in it (#441).**
+  - A profile copied by hand (`default.yaml` → `vanilla.yaml`, `name:`
+    unchanged) was written back to **`default.yaml`** by every change to
+    `vanilla` — overwriting default's own mods, disabled markers and
+    `is_default` — and read as `default` by every command that used its
+    name. A profile is now the file it lives in: lmm reads and writes it
+    under its file name (and its game's directory), and `lmm profile list`
+    warns while the file's `name:` says otherwise.
+  - A save truncated the file before writing it, so a crash or a full disk
+    could leave half a profile. Every write now goes to a temporary file
+    that is renamed into place.
+  - Every save rebuilt the file from scratch: comments gone, `~/` hook
+    paths expanded to this machine's home directory, eight `null` hook
+    keys added, flow style, indentation and the `overrides:` block
+    rewritten. A save now edits the file in place, changing only the text
+    of what changed, and checks that the result reads back as the intended
+    profile before writing it. A layout it cannot edit that way is
+    rewritten whole, as before, but the file as you wrote it is kept beside
+    it as `<name>.yaml.bak` — or `.bak.1`, `.bak.2`, …: an existing backup
+    is never replaced, and a `.bak` that is a link is never written through
+    — and lmm prints where it kept it; a profile the YAML encoder cannot
+    write so that it reads back is refused rather than saved unreadable. A
+    rename keeps the file's text too. Switching a mod back on removes the
+    `disabled:` key from a one-line `{…}` entry too, rather than writing
+    `disabled: false` into it.
+  - A writable profile in a directory lmm cannot create files in is still
+    saved: in place, as before this change, with a warning that the save
+    was not atomic.
+  - The one-time upgrade step that records mods you disabled before the
+    upgrade (#431) relied on lmm's next save rewriting a profile it could
+    not edit in place. Saves keep your layout now, so it rewrites such a
+    file itself — whole, with the original kept as above, naming both —
+    instead of leaving it for a switch that would turn those mods back on.
+
+- **A hand-edited config file can no longer crash lmm at startup (#452).**
+  A `games.yaml`, `config.yaml` or source definition holding a construct the
+  YAML decoder panicked on (a merge key over a mapping keyed by a mapping,
+  found by fuzzing) stopped every command — `lmm serve` included — before
+  it did anything. lmm now uses `go.yaml.in/yaml/v3`, the maintained
+  continuation of `gopkg.in/yaml.v3`, which reports that construct as an
+  error, and reads every YAML document — those three, profiles, a manifest
+  source's document and `steam-games.yaml` — through one guard that turns
+  any decoder panic into an error. The error names the file.
+
+- **A mod listed twice in a profile reads the same everywhere (#457).** lmm
+  never writes a duplicate, but a hand edit can, and every command already
+  decided such a mod by its **first** entry — `lmm update`'s lock check
+  included. The deploy preview reported the lock from the last entry and
+  `lmm list` (and the web UI's library) from any entry, so a mod could be
+  shown as locked while `lmm update` treated it as unlocked, or the other
+  way round. Both now read the first entry. `lmm deploy` also deployed such
+  a mod once per entry, and a load-order change moved the **last** entry
+  and dropped the others — which could unlock, lock or switch the mod back
+  on. A deploy now handles it once, and a reorder moves the first entry and
+  keeps the rest.
+
+- **A game always has exactly one active profile (#446).** `lmm profile
+import --force` over the active profile's name cleared its
+  `is_default: true`, leaving the game with no active profile, so every
+  command that asks which profile is live fell back to a guess. An import
+  that replaces a profile now keeps its active flag. The other ways lmm
+  could leave a game with none, or two, are closed too:
+  - re-running `lmm game add` or `lmm game detect` on a game whose active
+    profile is not `default` resets `default` without marking it active;
+  - `lmm profile delete` (and the web UI's Delete, which answers `409`)
+    refuses the active profile — its mods are the ones in the game
+    directory — unless it is the game's only profile and has nothing
+    installed; switch to another profile first;
+  - `lmm profile switch` and set-default mark the new profile before
+    unmarking the old one, so a failed write never leaves none, and one
+    that leaves two says so. A switch also checks, before it deploys
+    anything, that it can write both profile files: one it could not write
+    used to leave the new profile's files live with the old profile still
+    marked active.
+
+  A game's first profile is now created active, whether by `lmm profile
+create`, `lmm profile import` or an install that makes it.
+
+  A game a hand edit left with none marked, or several - or with a profile
+  file lmm cannot read, which could be the active one - is reported by
+  `lmm profile list` on stderr (and in its `--json` document's
+  `warnings`). lmm no longer guesses which profile is active there: `lmm
+deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
+  a mod_path move with files deployed (`lmm game edit --mod-path`, and
+  detection's repair of a configured game) and the web UI's equivalents
+  (`409`) refuse, name the cause and point at `lmm profile list`. A guess is what let a typo in the active profile's
+  file turn `lmm purge -p <other>` into a full purge that deleted the
+  active profile's files. A game with a single profile file counts that
+  profile as active, marked or not. `lmm profile switch <name>` is the way
+  out: an unreadable profile file refuses it too, but with none or several
+  marked it only marks `<name>` active — nothing is deployed or removed —
+  and says that the game directory may still hold another profile's files:
+  run `lmm profile apply <name>` to deploy its mods, then `lmm purge -p`
+  for each other profile it names, which clears only the files that
+  profile recorded and keeps what `<name>` uses.
+
+- **`lmm deploy` acts for the active profile only, and `lmm purge` of
+  another profile removes only what that profile put there (#445).** A game
+  has one game directory, and it holds the active profile's mods.
+  `lmm deploy -p <other profile>` deployed that profile's mods beside them;
+  it — and the web UI's Deploy, which answers `409` — now refuses any
+  profile but the active one, names the active profile and points at
+  `lmm profile switch`, which makes a profile active and deploys it.
+  `lmm purge -p <other profile>` removed every file that profile's mods
+  could have put there, including ones the active profile deployed. It now
+  removes only the files that profile recorded as deployed and nothing else
+  still claims, so files a non-active profile put into the game directory
+  (an `lmm import -p`, or a deploy before this fix) can still be cleared. A
+  file stays — and the plan, `--dry-run` and the result all list it, with
+  why — when the game hands it to you after its first deploy (a BepInEx
+  config file, which such a purge deleted even where an ordinary purge
+  keeps it); when another profile, or another game whose mod directory
+  holds it, records it too; and when the active profile lists its mod,
+  which covers the files a v1.30.1 switch between two profiles sharing a
+  mod left live with no record under the new profile. Only in that last
+  case does the purged profile keep its record, the file's only claim to
+  be lmm's — even where another profile or game records the file as well,
+  unless that record is the active profile's own or is for a mod the
+  active profile lists: any other claimant's purge would not keep the
+  file, so the file would be deleted from under the active profile (a
+  v1.30.1 import gave each profile its own key for one archive, two mods
+  can ship one file, and two games can share a directory). A config file is yours, so like an ordinary purge it stops
+  tracking it ("Kept your file; lmm no longer tracks it"); a file someone
+  else records stays theirs to track, and their own purge decides it. A
+  record of a file that is already gone goes as well. So every purge
+  `lmm game edit --mod-path` names can clear what it counts: two profiles
+  recording one file used to keep it for each other, and the edit stayed
+  refused with nothing left to purge. A profile whose only records are
+  such files is still purged. A file it
+  could not check (in a directory it cannot read, say) keeps its record
+  and is reported instead of being counted as removed, and a file it
+  could not remove is a warning rather than a `--verbose` note. Such a purge runs no hooks, keeps
+  the mod records, and refuses `--uninstall`. The web UI's per-profile
+  Purge does the same. A plan made before the active profile changed is
+  refused when applied.
+
+- **`lmm profile apply` deploys a mod another profile already has, rather
+  than fetching it (#445).** A mod the profile lists with no row of its
+  own was fetched from its source even when another profile of the game
+  had it at the listed version in the cache. A local mod has no source, so
+  the apply failed with "source not found: local" — and that apply is the
+  step `lmm game edit --mod-path` names to record a file a v1.30.1 switch
+  left live under another profile's record. Such a mod is now deployed
+  from the cache and the profile gets its own row, with the other row's
+  checksums, as `lmm profile switch` and `lmm profile import` already do.
+  That row is the profile's own: its link method, the `notify` update
+  policy and no update history, never the other profile's (an `auto`
+  policy used to be copied across). The plan, `--dry-run` included, shows
+  the version picked and whose cache it comes from
+  (`+ Mod (id) v2.0, from profile survival's cache`), and the game's
+  adapter has its say on such a mod as on the profile's own. A mod whose
+  listed version is not in the cache, or with another version live, is
+  still fetched.
+
+- **`lmm profile apply` acts for the active profile only (#462, for
+  apply).** An apply deploys, and the game directory holds the active
+  profile's mods, yet `lmm profile apply <other profile>` deployed that
+  profile's mods beside them — since the change above, even offline, for
+  any mod another profile has in the cache. It is now refused like
+  `lmm deploy -p <other profile>`: it names the active profile and points
+  at `lmm profile switch`, which makes a profile active and deploys it; a
+  game whose profile files do not say which profile is active is not
+  applied at all. The web UI's Apply answers `409` for both. A plan made
+  before the active profile changed is refused when applied.
+  `lmm profile import` no longer suggests applying a profile that is not
+  active to install the mods it skipped; it names `lmm profile switch`.
+
+- **`lmm profile apply` no longer says "Applied" when a mod inside it
+  failed (#470).** A mod the source could not resolve, or could not
+  download, was reported on its own line and the run still ended with
+  `✓ Applied profile` and exit status 0; a mod whose deploy failed as it
+  was switched on was only a `--verbose` note. The apply still carries on
+  with the rest, but a run with any failure now ends with
+  `✗ Profile <name> was not fully applied: N mod(s) failed.`, an error
+  naming each failed mod and why, and a non-zero exit status. Under `--json` the error
+  envelope's `details` is the whole result, and the result gains
+  `outcomes`: what the apply did with each mod — `disabled`, `enabled`,
+  `installed`, `replaced` or `failed`, with the version, the reason for a
+  failure, and `from_profile` for a mod deployed from another profile's
+  cache. The web UI's Apply job fails with the same message.
+
+- **lmm never removes or replaces a file another game records (#473).**
+  Two games can share one mod directory. `lmm purge` of the active
+  profile, `lmm uninstall`, a deploy (`lmm deploy`, a switch, an apply, an
+  update) and `verify --fix` ignored the other game's records: `lmm purge
+-g sky` deleted a file `sky2`'s active profile had live — under `copy`,
+  the user's edited copy, for good — and the `lmm game edit --mod-path`
+  refusal's own commands could do the same. Only the purge of a profile
+  that is not active already kept such a file. Every removal and every
+  overwrite now leaves it exactly as it is and says so: `lmm purge` lists
+  it (`Left in place (still recorded by game sky2): Data/a.esp`, and in
+  `--json`'s `kept`), and the other flows warn
+  (`Data/a.esp was not replaced: game sky2 records it too, …`). A deploy
+  still records the path for its own profile, so the other game's purge
+  keeps the file in turn; a purge drops its profile's record, leaving the
+  file to the other game. lmm refuses to change anything when it cannot
+  read those records.
+
+  The mod_path refusal follows. A file the active profile lists that the
+  other game's **active** profile keeps (its own record, or one of a mod
+  it lists) is that game's: the purge of the profile that recorded it here
+  drops its record, and no `lmm profile apply` is named for it before the
+  move; the refusal names one after it (`apply_after_move`), which deploys
+  the mod into the new directory when the active profile has no row of it
+  yet — `lmm deploy` alone deploys only rows. A file only
+  another game's **non-active** profile records is named first — the
+  refusal lists `lmm purge --game <other> --profile <name>`, which keeps the
+  file and lets go of it, before the apply that records it here (and
+  `--json`'s `release_first` lists those profiles). When lmm cannot tell
+  which profile of that other game is active, the move is refused with
+  that instead of naming a purge that could be the other game's whole
+  deployment.
+
+- **The mod_path refusal names `lmm profile apply` when the active
+  profile's document has moved on (#445).** A file the active profile
+  lists, recorded only by another profile, was treated as the active
+  profile's whenever the active profile recorded the same path under any
+  mod — including one its document no longer lists (you swapped one mod
+  for another that ships the same file and had not applied the change).
+  The refusal then named no apply, its purges cleared every record, and
+  the listed mod ended the move undeployed with no warning. Such a record
+  now counts only when the document lists its mod, so the refusal names
+  the apply that deploys and records the listed one.
+
+- **The mod_path refusal says what really blocks a listed version
+  (#445).** For a mod the active profile lists at a version no apply can
+  deploy, the refusal blamed the cache ("the cache holds it only at 1.0,
+  2.0") even when the cache held the listed 2.0 and the real blocker was
+  another profile's live 1.0, which an apply can only replace by
+  downloading 2.0. It now says so — `(the cache holds it, but profile p has
+it deployed at 1.0, which only a download of 2.0 could replace, …)` —
+  and names the edit that works: list the version deployed. `--json`'s
+  `listed_unavailable` entries gain `live_version` and `live_profile`.
+
+- **`lmm uninstall` keeps a cache entry another profile still uses
+  (#474).** Uninstalling a mod deleted its version's cache entry even while
+  another profile's row still used it — and for a local mod that entry is
+  the only copy, so the other profile was left with a mod it could never
+  deploy again (its switch failed with "source not found: local"). Since
+  `lmm profile apply` deploys a mod from another profile's cache, two rows
+  on one entry are the ordinary state. The entry is now removed only when
+  no other row has that version, or rolls back to it — in any profile of
+  the game, or of another game whose `cache_path` is the same directory
+  (a row of a game that is no longer configured keeps it too). The dry run
+  says `Cache entry kept: profile <name> still uses it` instead of
+  `Cache entry would be deleted`, the uninstall says `Cache files kept`,
+  and the plan and result carry `cache_used_by`. An install that replaces
+  a version clears the old version's entry under the same rule, and notes
+  (`--verbose`) the one it kept.
+
+- **`lmm profile switch` no longer says "Switched" when a mod inside it
+  failed (#475).** Like `lmm profile apply` before it, a switch whose mod
+  could not be fetched, downloaded or deployed printed the error on its own
+  line and still ended `✓ Switched to profile` with exit status 0 — a
+  deploy that failed as a mod was switched on was only a `--verbose` note.
+  The switch still carries on and still makes the profile active (its
+  other mods are live, the old profile's are down), but it now ends with
+  `✗ Profile <name> is now active, but N mod(s) failed.`, an error naming
+  each failed mod and why, and a non-zero exit status. Under `--json` the
+  error envelope's `details` is the whole result, which gains `failed` and
+  `outcomes` (what the switch did with each mod, as apply's result lists
+  them). The web UI's Switch job fails with the same message.
+
+- **`lmm profile apply` records the mods it switches on as deployed
+  (#467).** Their rows kept saying "not deployed" while the files were
+  live, so a later `lmm profile switch` that moved one of those mods to
+  another version installed it beside the live one instead of replacing
+  it.
+
+- **A profile you are not using keeps its mods (#444).** Every `lmm profile
+switch` marks the profile you leave as having its mods switched off —
+  that is how it takes them out of the game directory — and three flows
+  read that as "the user turned these off":
+  - `lmm profile sync -p <other profile>` **deleted every such mod from the
+    profile file**, load-order position and pinned version included. A sync
+    now removes a reference only when the mod is not installed under that
+    profile at all. On the active profile, a mod whose row is disabled while
+    the file still lists it as enabled is kept too, with a warning naming
+    `lmm mod disable` and `lmm profile apply` as the two ways to settle it.
+    The plan's `--json` document and `/api/v1` carry the same warnings.
+  - `lmm verify --fix`, repairing a mod's recorded version, re-linked the
+    same mod in every other profile that claimed a deployment — putting a
+    profile you are not using into the game directory. It now re-links only
+    the active profile's enabled, not-switched-off copy, corrects the other
+    profiles' records without touching the game directory, and says so. The
+    BepInEx re-layout repair (#424) follows the same rule: another
+    profile's copy is taken down with the old layout and not put back.
+  - Restoring a snapshot of a profile that was not active when you took it
+    turned off every mod that profile had been switched away from. A
+    snapshot now records which profile was active, and a restore turns a
+    mod off only where the profile file says so, or where the snapshot's own
+    profile was the active one and the mod was neither enabled nor deployed.
+    For an older snapshot that does not say, the mods stay on and the
+    restore names each one it could not decide.
 
 - **A rate-limited or stalled download no longer looks like a hang
   (#436).** Every command now says what it is waiting on, on stderr: "Rate

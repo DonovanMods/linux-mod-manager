@@ -52,6 +52,10 @@ var profileDeleteCmd = &cobra.Command{
 
 Note: This does not remove the installed mods, only the profile configuration.
 
+The active profile cannot be deleted - its mods are the ones in the game
+directory - unless it is the game's only profile and has nothing installed.
+Switch to another profile first ('lmm profile switch').
+
 Examples:
   lmm profile delete old-profile --game skyrim-se`,
 	Args: cobra.ExactArgs(1),
@@ -143,6 +147,12 @@ var profileSyncCmd = &cobra.Command{
 	Short: "Sync profile to match installed mods",
 	Long: `Update the profile YAML to match currently installed/enabled mods in the database.
 
+Enabled mods the profile does not list are added, and entries for mods not
+installed under the profile at all are removed. An entry for a mod that is
+installed but switched off is always kept, with its load-order position and
+pinned version: on the active profile a warning says when the database and
+the file disagree about it.
+
 Use this if the profile got out of sync, or to migrate from pre-profile installs.
 If no name is given, uses the current/default profile. Prompts for
 confirmation before making any changes; pass -y/--yes to skip the prompt.
@@ -191,6 +201,11 @@ var profileApplyCmd = &cobra.Command{
 Use this after manually editing a profile YAML to apply those changes.
 If no name is given, uses the current/default profile. Prompts for
 confirmation before making any changes; pass -y/--yes to skip the prompt.
+
+The game directory holds the active profile's mods, so only the active
+profile is applied; for any other, 'lmm profile switch' makes it active
+and deploys it. A game whose profile files do not say which one is active
+is not applied at all; 'lmm profile list' says why.
 
 Examples:
   lmm profile apply --game skyrim-se
@@ -278,6 +293,11 @@ func doProfileList(ctx context.Context, service *core.Service, game *domain.Game
 
 	if jsonOutput {
 		return emitJSON(listing)
+	}
+
+	// #446: a game without exactly one active profile is said out loud.
+	for _, w := range listing.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
 	if len(listing.Profiles) == 0 {
@@ -434,6 +454,15 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		} else {
 			fmt.Printf("Switching to profile: %s\n\n", targetName)
 		}
+		// #445 review F2: a FlagOnly plan says why it can only mark the
+		// target - before the prompt, since that is what is being asked.
+		for _, w := range plan.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+
+	if plan.FlagOnly {
+		return applyFlagOnlySwitch(ctx, service, game, plan)
 	}
 
 	// progress prints every diagnostic and per-mod status line at its exact
@@ -560,6 +589,21 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
+	// #470's twin: a switch that ran to the end with a mod it could not
+	// install or deploy is not "Switched", though the target is now active.
+	// The error names each failed mod and exits non-zero; under --json its
+	// envelope's details are the whole result, warnings and per-mod
+	// outcomes included.
+	var incomplete *core.ProfileSwitchIncompleteError
+	if errors.As(err, &incomplete) {
+		if !jsonOutput {
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+			fmt.Printf("\n✗ Profile %s is now active, but %d mod(s) failed.\n", targetName, len(result.Failed))
+		}
+		return err
+	}
 	if err != nil {
 		// Task 13 review round 1, Important 1: ApplyProfileSwitch's
 		// error-path convention returns diagnostics accumulated before the
@@ -595,6 +639,41 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	fmt.Printf("\n✓ Switched to profile: %s\n", targetName)
+	return nil
+}
+
+// applyFlagOnlySwitch is doProfileSwitch for a core.SwitchPlan with
+// FlagOnly set (#445 review F2): there is nothing to preview but the plan's
+// warning, already printed, so it confirms, marks the target and reports
+// the result's warning - that nothing was deployed or removed, and what to
+// run next.
+func applyFlagOnlySwitch(ctx context.Context, service *core.Service, game *domain.Game, plan *core.SwitchPlan) error {
+	if profileSwitchDryRun {
+		return nil
+	}
+	if !profileSwitchYes {
+		if !jsonOutput {
+			fmt.Printf("Mark %s as the active profile? [Y/n]: ", plan.To)
+		}
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if input != "" && input != "y" && input != "yes" {
+			return ErrCancelled
+		}
+	}
+	result, err := service.ApplyProfileSwitch(ctx, game, plan, nil)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(result)
+	}
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+	fmt.Printf("✓ Marked %s as the active profile of %s\n", plan.To, game.ID)
 	return nil
 }
 
@@ -834,7 +913,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			}
 			if input != "" && input != "y" && input != "yes" {
 				declined = true
-				fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", plan.Profile.Name)
+				fmt.Printf("Skipped. %s\n", installLaterHint(plan.Profile.Name))
 				// Unreachable under --json: readPromptLine above refuses to
 				// read stdin there (Ruling 2), so a decline is impossible.
 			} else {
@@ -904,7 +983,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	switch {
 	case profileImportNoInstall:
 		if result.Skipped > 0 {
-			fmt.Printf("\nSkipped installing %d mod(s). Use 'lmm profile apply %s' to install them later.\n", result.Skipped, result.ProfileName)
+			fmt.Printf("\nSkipped installing %d mod(s). %s\n", result.Skipped, installLaterHint(result.ProfileName))
 		}
 	case declined:
 		// The decline message was already printed at the prompt above.
@@ -957,10 +1036,12 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		}
 		if jsonOutput {
 			if result == nil {
-				result = &core.ProfileSyncResult{}
+				// #444: what the plan kept and why is the result's too.
+				result = &core.ProfileSyncResult{Warnings: plan.Warnings}
 			}
 			return emitJSON(result)
 		}
+		printSyncWarnings(plan.Warnings)
 		fmt.Printf("Profile %s is already in sync.\n", profileName)
 		return nil
 	}
@@ -1006,6 +1087,7 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 
 	// A dry run stops here: it has shown the plan and must change nothing.
 	if profileSyncDryRun {
+		printSyncWarnings(plan.Warnings)
 		return nil
 	}
 
@@ -1074,15 +1156,20 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 	}
 
 	// #197 postsmoke fix / #294 (Ruling 5): result.Warnings (unconditional
-	// stderr, unlike the --verbose-gated warnings above) - the toUpdate
-	// loop's refused UpsertMod (a LOCKED profile ref, #143), then a
-	// merged-pak sync failure for the profile.
-	for _, w := range result.Warnings {
-		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
-	}
+	// stderr, unlike the --verbose-gated warnings above) - the plan's kept
+	// mods (#444), the toUpdate loop's refused UpsertMod (a LOCKED profile
+	// ref, #143), then a merged-pak sync failure for the profile.
+	printSyncWarnings(result.Warnings)
 
 	fmt.Printf("✓ Synced profile: %s\n", profileName)
 	return nil
+}
+
+// printSyncWarnings writes each of a sync's warnings to stderr.
+func printSyncWarnings(warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
 }
 
 // profileSyncTarget resolves which profile `lmm profile sync` acts on: the
@@ -1310,7 +1397,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		if len(plan.ToEnable) > 0 {
 			fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
 			for _, im := range plan.ToEnable {
-				fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
+				fmt.Printf("  + %s (%s)%s\n", im.Name, im.ID, borrowedFrom(im, profileName))
 			}
 		}
 
@@ -1405,6 +1492,20 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 
 	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, quietSink(progress))
+	// #470: an apply that ran to the end with a mod it could not install or
+	// deploy is not "Applied". The error names each failed mod and exits
+	// non-zero; under --json its envelope's details are the whole result,
+	// warnings and per-mod outcomes included.
+	var incomplete *core.ProfileApplyIncompleteError
+	if errors.As(err, &incomplete) {
+		if !jsonOutput {
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+			fmt.Printf("\n✗ Profile %s was not fully applied: %d mod(s) failed.\n", profileName, len(result.Failed))
+		}
+		return err
+	}
 	if err != nil {
 		// Task 13 review round 1, Important 1: the #294 warning above lives
 		// on result.Warnings, not a live progress event, so it was never
@@ -1440,6 +1541,27 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 
 	fmt.Printf("\n✓ Applied profile: %s\n", profileName)
 	return nil
+}
+
+// borrowedFrom is the suffix of a "Will enable" line for a mod the apply
+// deploys from another profile's cache (#445 final gate F-D): the version
+// it picked, and whose cache that is. A mod of the profile's own has none.
+func borrowedFrom(im domain.InstalledMod, profile string) string {
+	if im.ProfileName == profile {
+		return ""
+	}
+	version := ""
+	if shown := displayModVersion(im.External, im.Version, im.UpdatedAt); shown != "" && shown != "-" {
+		version = " v" + shown
+	}
+	return fmt.Sprintf("%s, from profile %s's cache", version, im.ProfileName)
+}
+
+// installLaterHint names the commands that install an imported profile's
+// skipped mods later. An apply acts for the active profile only (#462), so
+// a profile that is not active is switched to, which installs them too.
+func installLaterHint(profile string) string {
+	return fmt.Sprintf("Use 'lmm profile switch %s' to install them later, or 'lmm profile apply %s' if it is already the active profile.", profile, profile)
 }
 
 // profileApplyTarget resolves which profile `lmm profile apply` acts on: the

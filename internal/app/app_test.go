@@ -141,3 +141,28 @@ func TestOpen_BackfillsProfileDisabledMarkers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, warnings.String())
 }
+
+// TestOpen_AConfigFileTheDecoderCannotReadIsAnError is #452 at startup: a
+// hand-edited games.yaml or config.yaml holding a construct the YAML decoder
+// once panicked on used to crash every command - `lmm serve` included -
+// before it did anything. Open reports the file instead.
+func TestOpen_AConfigFileTheDecoderCannotReadIsAnError(t *testing.T) {
+	for _, name := range []string{"games.yaml", "config.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			cfgDir := t.TempDir()
+			path := filepath.Join(cfgDir, name)
+			require.NoError(t, os.WriteFile(path, []byte("<<:\n? 0:"), 0o644))
+
+			var err error
+			require.NotPanics(t, func() {
+				var svc *core.Service
+				svc, err = Open(t.Context(), Options{ConfigDir: cfgDir, DataDir: t.TempDir()})
+				if svc != nil {
+					require.NoError(t, svc.Close())
+				}
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), path)
+		})
+	}
+}

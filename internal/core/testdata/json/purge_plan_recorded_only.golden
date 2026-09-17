@@ -1,0 +1,20 @@
+{
+  "profile": "alt",
+  "mods": [],
+  "uninstall": false,
+  "hooks": [],
+  "recorded_only": true,
+  "active_profile": "default",
+  "remove": [
+    "Data/alt.esp"
+  ],
+  "kept": [
+    {
+      "path": "Data/shared.esp",
+      "reason": "recorded",
+      "profiles": [
+        "default"
+      ]
+    }
+  ]
+}

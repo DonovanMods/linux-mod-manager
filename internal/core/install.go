@@ -1840,8 +1840,13 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 		}
-		if err := s.GetGameCache(game).Delete(game.ID, existing.SourceID, existing.ID, existing.Version); err != nil {
+		// #445 gate 2, G2-2: not while another row still uses it.
+		if usedBy, err := s.removeCacheEntry(ctx, game, plan.Profile, existing.SourceID, existing.ID, existing.Version); err != nil {
 			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
+			result.Notes = append(result.Notes, msg)
+			emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
+		} else if len(usedBy) > 0 {
+			msg := cacheKeptNote(existing.SourceID, existing.ID, existing.Version, usedBy)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 		}
@@ -2511,8 +2516,13 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 	}
 
 	if plan.Replaces != nil && plan.Replaces.Version != mod.Version {
-		if err := s.GetGameCache(game).Delete(game.ID, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version); err != nil {
+		// #445 gate 2, G2-2: not while another row still uses it.
+		if usedBy, err := s.removeCacheEntry(ctx, game, plan.Profile, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version); err != nil {
 			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
+			result.Notes = append(result.Notes, msg)
+			emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
+		} else if len(usedBy) > 0 {
+			msg := cacheKeptNote(plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version, usedBy)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 		}

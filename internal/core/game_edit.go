@@ -12,6 +12,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -248,6 +250,10 @@ func (s *Service) SetGameModPath(ctx context.Context, gameID, modPath string) (*
 // file relative to the mod_path it was deployed under, so a move under a
 // live deployment strands every file: still live, no longer recorded, and
 // looked for in the wrong place by the next purge. The purge comes first.
+// When the profile files do not say which profile is active, the refusal
+// is ErrActiveProfileUnknown instead (#445 review F2): every purge the
+// in-use error would name refuses then, and the profile it would name for
+// `lmm deploy` would be a guess.
 func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to string) error {
 	if samePath(game.ModPath, to) {
 		return nil
@@ -265,24 +271,205 @@ func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to s
 		inUse.Profiles = append(inUse.Profiles, ProfileDeployedFiles{Profile: profile, DeployedFiles: counts[profile]})
 		inUse.DeployedFiles += counts[profile]
 	}
-	if inUse.ActiveProfile, err = s.activeProfileName(ctx, game.ID); err != nil {
+	if inUse.ActiveProfile, err = s.liveProfile(ctx, game.ID); err != nil {
+		return fmt.Errorf("cannot move the mod_path of %s: %d deployed file(s) are recorded under it, and they cannot be purged until lmm can tell which profile is active - %w",
+			game.ID, inUse.DeployedFiles, err)
+	}
+	if err := s.countListedUnrecorded(ctx, game, inUse); err != nil {
 		return err
 	}
 	return inUse
 }
 
-// activeProfileName is the profile a command without --profile acts on:
-// the game's default profile, or "default" when it has none marked - the
-// rule `lmm deploy` and `lmm purge` resolve by.
-func (s *Service) activeProfileName(ctx context.Context, gameID string) (string, error) {
-	profile, err := s.NewProfileManager().GetDefault(ctx, gameID)
-	if errors.Is(err, domain.ErrProfileNotFound) {
-		return "default", nil
-	}
+// countListedUnrecorded fills inUse's ListedUnrecorded, NeedsApply,
+// NeedsDeploy and ListedUnavailable (#445 audit, final gate F-C): the files
+// a non-active profile's purge keeps because the active profile lists their
+// mods (PurgeKeptListed) - live for the active profile, recorded only by
+// that other profile. Until the active profile records them, no purge the
+// refusal names can clear them, and when an apply cannot deploy the mod at
+// the version the active profile lists, nothing records them at all: only
+// an edit of the active profile's document ends that.
+//
+// A file among those that another game records as well (#445 gate 2,
+// G2-1) is one no command of this game can record while that game does:
+// lmm never replaces another game's file. Each profile of another game
+// recording one is named in ReleaseFirst - none is its game's active
+// profile, or the file would be that game's (heldForActive) - and when lmm
+// cannot tell which profile of such a game is active, the move is refused
+// with that instead, since the purge it would name could be that game's
+// whole deployment.
+func (s *Service) countListedUnrecorded(ctx context.Context, game *domain.Game, inUse *GameModPathInUseError) error {
+	var view *activeApplyView
+	named := make(map[string]bool)
+	others, err := s.otherGamesRecording(ctx, game)
 	if err != nil {
-		return "", fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+		return err
 	}
-	return profile.Name, nil
+	release := make(map[OtherGameProfile]bool)
+	for _, p := range inUse.Profiles {
+		if p.Profile == inUse.ActiveProfile {
+			continue
+		}
+		_, kept, err := s.recordedPaths(ctx, game, p.Profile, inUse.ActiveProfile, others)
+		if err != nil {
+			return err
+		}
+		for _, k := range kept {
+			if k.Reason != PurgeKeptListed {
+				// A file of a mod the active profile lists that another
+				// game keeps for its own active profile is that game's
+				// (heldForActive), so the active profile deploys the mod
+				// into the new directory only - and only an apply does it
+				// when the profile has no enabled row of it.
+				if !inUse.ApplyAfterMove && len(others.heldForActive(k.Path)) > 0 {
+					if view == nil {
+						if view, err = s.activeApplyViewOf(ctx, game, inUse.ActiveProfile); err != nil {
+							return err
+						}
+					}
+					key := domain.ModKey(k.row.SourceID, k.row.ModID)
+					if ref, listed := view.refs[key]; listed && !ref.Disabled {
+						if own := view.rows[key]; own == nil || !own.Enabled {
+							inUse.ApplyAfterMove = true
+						}
+					}
+				}
+				continue
+			}
+			if view == nil {
+				if view, err = s.activeApplyViewOf(ctx, game, inUse.ActiveProfile); err != nil {
+					return err
+				}
+			}
+			inUse.ListedUnrecorded++
+			key := domain.ModKey(k.row.SourceID, k.row.ModID)
+			switch own := view.rows[key]; {
+			case own != nil && own.Enabled:
+				inUse.NeedsDeploy = true
+			case view.canDeploy(key, s.hasSource):
+				inUse.NeedsApply = true
+			default:
+				if !named[key] {
+					named[key] = true
+					inUse.ListedUnavailable = append(inUse.ListedUnavailable, view.unavailable(key))
+				}
+				continue
+			}
+			for _, h := range others.holding(k.Path) {
+				if c := others.claims(h.game); c.err != nil {
+					return fmt.Errorf("cannot move the mod_path of %s: %d deployed file(s) are recorded under it, and game %s, which shares the directory, records %s too - lmm cannot name the purge that lets it go until it can tell which profile of %s is active: %w",
+						game.ID, inUse.DeployedFiles, h.game.id, k.Path, h.game.id, c.err)
+				}
+				for _, rec := range h.records {
+					release[OtherGameProfile{GameID: h.game.id, Profile: rec.Profile}] = true
+				}
+			}
+		}
+	}
+	inUse.ReleaseFirst = slices.SortedFunc(maps.Keys(release), func(a, b OtherGameProfile) int {
+		return cmp.Or(strings.Compare(a.GameID, b.GameID), strings.Compare(a.Profile, b.Profile))
+	})
+	return nil
+}
+
+// hasSource reports whether lmm has a source registered as id - one an
+// apply can fetch a mod from.
+func (s *Service) hasSource(id string) bool {
+	_, err := s.registry.Get(id)
+	return err == nil
+}
+
+// activeApplyView is what `lmm profile apply` of a game's active profile
+// decides a listed mod from (planProfileApply), read once for the mod_path
+// refusal.
+type activeApplyView struct {
+	game  *domain.Game
+	cache *cache.Cache
+	file  string                          // the active profile's document
+	refs  map[string]domain.ModReference  // its first references, by mod key
+	rows  map[string]*domain.InstalledMod // its installed rows, by mod key
+	// elsewhere is every other profile's rows, by mod key.
+	elsewhere map[string][]domain.InstalledMod
+}
+
+// activeApplyViewOf reads game's active profile, active, for an
+// activeApplyView.
+func (s *Service) activeApplyViewOf(ctx context.Context, game *domain.Game, active string) (*activeApplyView, error) {
+	file, err := config.ProfilePath(s.configDir, game.ID, active)
+	if err != nil {
+		return nil, err
+	}
+	profile, err := config.LoadProfile(s.configDir, game.ID, active)
+	if err != nil {
+		return nil, fmt.Errorf("%w for %s: reading %s's profile file: %w", ErrActiveProfileUnknown, game.ID, active, err)
+	}
+	installed, err := s.GetInstalledMods(ctx, game.ID, active)
+	if err != nil {
+		return nil, fmt.Errorf("getting installed mods: %w", err)
+	}
+	view := &activeApplyView{
+		game:      game,
+		cache:     s.GetGameCache(game),
+		file:      file,
+		refs:      firstRefs(profile.Mods),
+		rows:      make(map[string]*domain.InstalledMod, len(installed)),
+		elsewhere: s.rowsElsewhere(ctx, s.NewProfileManager(), game.ID, active),
+	}
+	for i := range installed {
+		view.rows[domain.ModKey(installed[i].SourceID, installed[i].ID)] = &installed[i]
+	}
+	return view, nil
+}
+
+// canDeploy reports whether an apply of the active profile deploys the mod
+// it lists as key, deciding as planProfileApply does: from its own row's
+// cache entry at the listed version, from another profile's
+// (cachedRowElsewhere), or else by fetching it - which only a source lmm
+// has (hasSource) can do. Whether that source still offers the version is
+// not known offline, so a source lmm has counts as able.
+func (v *activeApplyView) canDeploy(key string, hasSource func(string) bool) bool {
+	ref := v.refs[key]
+	if own := v.rows[key]; own != nil {
+		if own.External {
+			return true
+		}
+		if (ref.Version == "" || own.Version == ref.Version) && v.cache.Exists(v.game.ID, own.SourceID, own.ID, own.Version) {
+			return true
+		}
+	} else {
+		if slices.ContainsFunc(v.elsewhere[key], func(row domain.InstalledMod) bool { return row.External }) {
+			return true
+		}
+		if _, ok := cachedRowElsewhere(v.cache, v.game.ID, ref, v.elsewhere[key]); ok {
+			return true
+		}
+	}
+	return hasSource(ref.SourceID)
+}
+
+// unavailable describes the mod the active profile lists as key, which no
+// apply can deploy (canDeploy).
+func (v *activeApplyView) unavailable(key string) ListedVersionUnavailable {
+	ref := v.refs[key]
+	u := ListedVersionUnavailable{SourceID: ref.SourceID, ModID: ref.ModID, Version: ref.Version, ProfileFile: v.file}
+	rows := slices.Clone(v.elsewhere[key])
+	if own := v.rows[key]; own != nil {
+		rows = append(rows, *own)
+	}
+	for _, row := range rows {
+		if !slices.Contains(u.Cached, row.Version) && v.cache.Exists(v.game.ID, row.SourceID, row.ID, row.Version) {
+			u.Cached = append(u.Cached, row.Version)
+		}
+	}
+	slices.Sort(u.Cached)
+	// #445 gate 2, G2-3: the cache holds the listed version, so what an
+	// apply cannot get past is the other version deployed.
+	if ref.Version != "" && slices.Contains(u.Cached, ref.Version) {
+		if prior, drift := liveOtherVersion(v.elsewhere[key], ref); drift {
+			u.LiveVersion, u.LiveProfile = prior.Version, prior.ProfileName
+		}
+	}
+	return u
 }
 
 // samePath reports whether a and b name the same directory: equal once
@@ -493,6 +680,65 @@ type GameModPathInUseError struct {
 	DeployedFiles int                    `json:"deployed_files"`
 	Profiles      []ProfileDeployedFiles `json:"profiles"`
 	ActiveProfile string                 `json:"active_profile"`
+	// ListedUnrecorded is how many of those files are live for
+	// ActiveProfile - its document lists their mods - while only another
+	// profile records them: what a v1.30.1 switch between profiles sharing
+	// a mod left (#445 audit). That profile's purge keeps them
+	// (PurgeKeptListed), so ActiveProfile has to record them first, and is
+	// then purged too, rows or not: `lmm profile apply` does it for a mod
+	// ActiveProfile has no enabled row for (NeedsApply), `lmm deploy` for
+	// one it has (NeedsDeploy).
+	ListedUnrecorded int  `json:"listed_unrecorded,omitzero"`
+	NeedsApply       bool `json:"needs_apply,omitzero"`
+	NeedsDeploy      bool `json:"needs_deploy,omitzero"`
+	// ListedUnavailable names, once each, the mods among those that no
+	// apply can deploy at the version ActiveProfile lists (#445 final gate
+	// F-C): no command records their files, and no purge removes them,
+	// until ActiveProfile's document lists another version or marks them
+	// off.
+	ListedUnavailable []ListedVersionUnavailable `json:"listed_unavailable,omitempty"`
+	// ReleaseFirst names the profiles of other games sharing the directory
+	// that record some of the files NeedsApply or NeedsDeploy is for (#445
+	// gate 2, G2-1), in game and profile order. lmm never replaces a file
+	// another game records, so ActiveProfile cannot record those until each
+	// of these lets go of them: none is its game's active profile, and its
+	// purge keeps a file this game records and drops its own record of it.
+	ReleaseFirst []OtherGameProfile `json:"release_first,omitempty"`
+	// ApplyAfterMove is set when ActiveProfile lists a mod, and has no
+	// enabled row of it, whose file here another game keeps for its own
+	// active profile (#445 gate 2, G2-1): that file stays that game's, so
+	// the mod is deployed into the new directory only, and `lmm deploy`
+	// deploys only rows - `lmm profile apply` after the move does it.
+	ApplyAfterMove bool `json:"apply_after_move,omitzero"`
+}
+
+// OtherGameProfile is a profile of another game (GameModPathInUseError.
+// ReleaseFirst).
+type OtherGameProfile struct {
+	GameID  string `json:"game_id"`
+	Profile string `json:"profile"`
+}
+
+// ListedVersionUnavailable is a mod a game's active profile lists at a
+// version lmm cannot deploy: no cache entry holds it, and lmm has no source
+// to download it from - a local mod pinned to a version it was never
+// imported at, say.
+type ListedVersionUnavailable struct {
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	// Version is the version the active profile lists; empty when it lists
+	// none, and then the cache holds no version at all.
+	Version string `json:"version,omitempty"`
+	// Cached is the versions of the mod the game's cache holds.
+	Cached []string `json:"cached,omitempty"`
+	// LiveVersion and LiveProfile are set when the cache does hold Version
+	// and what keeps an apply from deploying it is another profile's
+	// deployment of the mod at LiveVersion (#445 gate 2, G2-3): an enable
+	// cannot replace a deployed version, and only a download could.
+	LiveVersion string `json:"live_version,omitempty"`
+	LiveProfile string `json:"live_profile,omitempty"`
+	// ProfileFile is the active profile's document, where Version is set.
+	ProfileFile string `json:"profile_file"`
 }
 
 // ProfileDeployedFiles is one profile's share of a GameModPathInUseError.
@@ -504,19 +750,65 @@ type ProfileDeployedFiles struct {
 // Error implements error.
 func (e *GameModPathInUseError) Error() string {
 	shares := make([]string, len(e.Profiles))
-	purges := make([]string, len(e.Profiles))
+	purged := make([]string, 0, len(e.Profiles)+1)
 	var others []string
 	for i, p := range e.Profiles {
 		shares[i] = fmt.Sprintf("%d by profile %s", p.DeployedFiles, p.Profile)
-		purges[i] = fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, p.Profile)
+		purged = append(purged, p.Profile)
 		if p.Profile != e.ActiveProfile {
 			others = append(others, p.Profile)
 		}
 	}
+	// The files the active profile first records are its to purge.
+	if e.ListedUnrecorded > 0 && !slices.Contains(purged, e.ActiveProfile) {
+		purged = append(purged, e.ActiveProfile)
+		slices.Sort(purged)
+	}
+	purges := make([]string, len(purged))
+	for i, profile := range purged {
+		purges[i] = fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, profile)
+	}
 
-	msg := fmt.Sprintf("%d file(s) are deployed under %s (%s), and lmm records each one relative to the mod_path, so moving it to %s would strand them; purge them first - run %s - then change the mod_path, then run `lmm deploy --game %s`, which deploys the active profile (%s) into the new one",
+	purge := "purge them first"
+	if e.ListedUnrecorded > 0 {
+		var steps []string
+		for _, r := range e.ReleaseFirst {
+			steps = append(steps, fmt.Sprintf("`lmm purge --game %s --profile %s`", r.GameID, r.Profile))
+		}
+		if e.NeedsApply {
+			steps = append(steps, fmt.Sprintf("`lmm profile apply %s --game %s`", e.ActiveProfile, e.GameID))
+		}
+		if e.NeedsDeploy {
+			steps = append(steps, fmt.Sprintf("`lmm deploy --game %s`", e.GameID))
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "the active profile %s lists the mods of %d of them, which only another profile records", e.ActiveProfile, e.ListedUnrecorded)
+		those := "those"
+		if len(e.ListedUnavailable) > 0 {
+			those = "the others"
+		}
+		if len(e.ReleaseFirst) > 0 {
+			b.WriteString(" - and another game sharing the directory records some of them too, which lmm leaves to that game until its purge lets them go")
+		}
+		if len(steps) > 0 {
+			fmt.Fprintf(&b, ", so first run %s to record %s under %s", strings.Join(steps, ", then "), those, e.ActiveProfile)
+		}
+		if len(e.ListedUnavailable) > 0 {
+			b.WriteString(", but " + listedUnavailableText(e.ActiveProfile, e.ListedUnavailable) + ";")
+		} else {
+			b.WriteString(",")
+		}
+		b.WriteString(" then purge them all")
+		purge = b.String()
+	}
+
+	msg := fmt.Sprintf("%d file(s) are deployed under %s (%s), and lmm records each one relative to the mod_path, so moving it to %s would strand them; %s - run %s - then change the mod_path, then run `lmm deploy --game %s`, which deploys the active profile (%s) into the new one",
 		e.DeployedFiles, e.ModPath, strings.Join(shares, ", "), e.NewModPath,
-		strings.Join(purges, ", then "), e.GameID, e.ActiveProfile)
+		purge, strings.Join(purges, ", then "), e.GameID, e.ActiveProfile)
+	if e.ApplyAfterMove {
+		msg += fmt.Sprintf(", then `lmm profile apply %s --game %s`, which deploys the mods it lists whose files another game keeps in the old one",
+			e.ActiveProfile, e.GameID)
+	}
 	for _, profile := range others {
 		msg += fmt.Sprintf("; profile %s is deployed there when you next switch to it (`lmm profile switch %s --game %s`)",
 			profile, profile, e.GameID)
@@ -527,6 +819,51 @@ func (e *GameModPathInUseError) Error() string {
 // Details returns the error itself for the --json error envelope's
 // "details" field (Ruling 3).
 func (e *GameModPathInUseError) Details() any { return e }
+
+// listedUnavailableText is GameModPathInUseError's clause for the listed
+// mods no apply can deploy: what is listed, what the cache holds, and the
+// edit of the active profile's document that ends the refusal. It names no
+// command, since none would record their files.
+//
+// What blocks each is named (#445 gate 2, G2-3): the cache, or - when the
+// cache holds the listed version - another profile's deployment of another
+// one, and the edit that ends it lists the version deployed then.
+func listedUnavailableText(active string, mods []ListedVersionUnavailable) string {
+	items := make([]string, len(mods))
+	live := 0
+	for i, u := range mods {
+		listed := u.SourceID + ":" + u.ModID
+		if u.Version != "" {
+			listed += " at version " + u.Version
+		}
+		var why string
+		switch {
+		case u.LiveVersion != "":
+			live++
+			why = fmt.Sprintf("the cache holds it, but profile %s has it deployed at %s, which only a download of %s could replace", u.LiveProfile, u.LiveVersion, u.Version)
+		case len(u.Cached) > 0:
+			why = "the cache holds it only at " + strings.Join(u.Cached, ", ")
+		default:
+			why = "the cache does not hold it"
+		}
+		items[i] = fmt.Sprintf("%s (%s, and lmm has no source %s to download it from)", listed, why, u.SourceID)
+	}
+	files, them, each := "its file", "it", "it"
+	if len(mods) > 1 {
+		files, them, each = "their files", "them", "each"
+	}
+	at := "a version the cache holds"
+	switch {
+	case live == 1 && len(mods) == 1:
+		at = "the version deployed, " + mods[0].LiveVersion
+	case live == len(mods):
+		at = "the version deployed"
+	case live > 0:
+		at = "a version the cache holds, or at the version deployed where another profile has one"
+	}
+	return fmt.Sprintf("it lists %s, which lmm cannot deploy - nothing records %s under %s, and no purge removes %s, until you edit %s to list %s at %s (and ask for this move again, to be told what records %s) or to mark %s `disabled: true` (so the purges remove %s)",
+		strings.Join(items, " and "), files, active, them, mods[0].ProfileFile, each, at, them, each, files)
+}
 
 // validatedSourceMap trims and checks every entry of a proposed source
 // map, returning the map to persist. Each id must be non-empty and must

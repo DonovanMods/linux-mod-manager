@@ -2182,6 +2182,8 @@ func (s *Service) GetInstalledMods(ctx context.Context, gameID, profileName stri
 
 // GetInstalledModsInProfileOrder returns installed mods in profile load order (first = lowest priority).
 // Mods not present in the profile are omitted. Use this for deploy/switch so deployment order matches load order.
+// A mod the profile lists twice (a hand edit) is returned once, at its first
+// reference's position - the copy every flow decides it by (#457).
 //
 // No cmd/app caller today (deploy/merged-pak call it internally); kept
 // exported as a serve-facing query (Phase 3 Ruling 10) - a frontend
@@ -2204,6 +2206,7 @@ func (s *Service) GetInstalledModsInProfileOrder(ctx context.Context, gameID, pr
 		key := domain.ModKey(ref.SourceID, ref.ModID)
 		if m, ok := byKey[key]; ok {
 			ordered = append(ordered, *m)
+			delete(byKey, key)
 		}
 	}
 	return ordered, nil
@@ -2289,6 +2292,9 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	// #350: every Installer this Service hands out captures into the
 	// game's originals store, so no flow has to remember to ask for it.
 	installer.setOriginals(s.originalsStoreFor(game.ID))
+	// #445 gate 2, G2-1: and none of them removes or replaces a file
+	// another game records.
+	installer.otherGames = s.otherGamesRecording
 	// #353: and every Installer routes its deployable files through the
 	// game's adapter. A resolution failure is reported by the flow's own
 	// AdapterFor call (every flow that reaches an Installer makes one);
@@ -2318,7 +2324,9 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 // NewProfileManager returns a ProfileManager wired to this service's storage,
 // so callers do not need direct access to the database or registry.
 func (s *Service) NewProfileManager() *ProfileManager {
-	return NewProfileManager(s.configDir, s.db)
+	pm := NewProfileManager(s.configDir, s.db)
+	pm.warn = s.warnWriter
+	return pm
 }
 
 // NewUpdater returns an Updater wired to this service's source registry.

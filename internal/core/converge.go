@@ -147,6 +147,12 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	}
 	lnk := s.getLinker(method)
 
+	// #445 gate 2, G2-1: a path another game records is never removed.
+	others, err := s.otherGamesRecording(ctx, game)
+	if err != nil {
+		return nil, err
+	}
+
 	result := &ConvergeResult{}
 	handled := make(map[string]bool) // every row path the row pass actually judged (kept or removed)
 	var errs []error
@@ -193,12 +199,24 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				SourceID: m.SourceID,
 				ModID:    m.ID,
 			}
+			dstPath := filepath.Join(game.ModPath, path)
+			// The file stays for the game that records it, reported as
+			// every other item this pass does not remove is; this stale
+			// record goes, as a purge's does.
+			if held, ok := heldElsewhere(others, path, dstPath); ok {
+				errs = append(errs, errors.New(held.removalNote()))
+				if !dryRun {
+					if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
+						errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
+					}
+				}
+				continue
+			}
 			if dryRun {
 				result.Removed = append(result.Removed, cf)
 				continue
 			}
 
-			dstPath := filepath.Join(game.ModPath, path)
 			if err := lnk.Undeploy(dstPath); err != nil {
 				errs = append(errs, fmt.Errorf("undeploying %s: %w", path, err))
 				continue

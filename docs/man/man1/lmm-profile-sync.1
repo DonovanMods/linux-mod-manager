@@ -13,6 +13,13 @@ lmm-profile-sync - Sync profile to match installed mods
 Update the profile YAML to match currently installed/enabled mods in the database.
 
 .PP
+Enabled mods the profile does not list are added, and entries for mods not
+installed under the profile at all are removed. An entry for a mod that is
+installed but switched off is always kept, with its load-order position and
+pinned version: on the active profile a warning says when the database and
+the file disagree about it.
+
+.PP
 Use this if the profile got out of sync, or to migrate from pre-profile installs.
 If no name is given, uses the current/default profile. Prompts for
 confirmation before making any changes; pass -y/--yes to skip the prompt.

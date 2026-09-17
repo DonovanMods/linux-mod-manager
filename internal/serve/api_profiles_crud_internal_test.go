@@ -131,6 +131,23 @@ func TestAPIProfileDelete_QueuesBehindAnInFlightDeploy(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrProfileNotFound, "the delete must have gone through once the slot freed")
 }
 
+// TestAPIProfileDelete_TheActiveProfileAnswers409 is #446: the active
+// profile's mods are the ones in the game directory, so deleting it is
+// refused until another profile is active.
+func TestAPIProfileDelete_TheActiveProfileAnswers409(t *testing.T) {
+	s, svc, game := newProfilesFixtureServer(t)
+	require.NoError(t, svc.NewProfileManager().SetDefault(t.Context(), game.ID, activeProfile))
+
+	rec := doAPI(s, http.MethodDelete, scoped("/api/v1/profiles/"+activeProfile, game), "")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	var env apiErrorEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	assert.Contains(t, env.Error, "lmm profile switch")
+
+	_, err := svc.NewProfileManager().Get(t.Context(), game.ID, activeProfile)
+	require.NoError(t, err, "the profile is still there")
+}
+
 // TestAPIProfileDelete_UnknownProfileAnswers404
 func TestAPIProfileDelete_UnknownProfileAnswers404(t *testing.T) {
 	s, _, game := newProfilesFixtureServer(t)

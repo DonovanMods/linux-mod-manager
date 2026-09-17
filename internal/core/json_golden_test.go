@@ -354,8 +354,51 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #445: a purge of a profile that is not active clears only the
+			// paths it recorded, and says which it leaves.
+			"purge_plan_recorded_only",
+			core.PurgePlan{
+				Profile:       "alt",
+				Mods:          []domain.InstalledMod{},
+				RecordedOnly:  true,
+				ActiveProfile: "default",
+				Remove:        []string{"Data/alt.esp"},
+				Kept:          []core.PurgeKeptPath{{Path: "Data/shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default"}}},
+			},
+		},
+		{
+			"purge_result_recorded_only",
+			core.PurgeResult{
+				Purged:       1,
+				RemovedPaths: 1,
+				Kept:         []core.PurgeKeptPath{{Path: "Data/shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default"}}},
+			},
+		},
+		{
+			"purge_kept_path",
+			core.PurgeKeptPath{Path: "Data/shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default", "survival"}},
+		},
+		{
+			// #445 review F1, F3, F7: the other reasons a path is kept.
+			"purge_kept_paths_by_reason",
+			[]core.PurgeKeptPath{
+				{Path: "Data/listed.esp", Reason: core.PurgeKeptListed, Profiles: []string{"survival"}},
+				{Path: "Data/shared.esp", Reason: core.PurgeKeptOtherGame, Games: []string{"skyrim-vr"}},
+				{Path: "BepInEx/config/m.cfg", Reason: core.PurgeKeptUserFile},
+			},
+		},
+		{
 			"merged_artifact_effect",
 			core.MergedArtifactEffect{Action: core.MergedArtifactResync, Path: "zzz_LMM_Merged_P.pak"},
+		},
+		{
+			// #445 review F2: a game with no single profile marked active
+			// gets a switch that only marks its target.
+			"switch_plan_flag_only",
+			core.SwitchPlan{
+				GameID: "skyrim-se", To: "hardcore", FlagOnly: true,
+				Warnings: []string{"no single profile of skyrim-se is marked active (none of default, hardcore is), so lmm cannot tell whose mods the game directory holds: this switch only marks hardcore as the active profile - nothing is deployed or removed"},
+			},
 		},
 		{
 			// ToDisable is deliberately left nil (no `omitempty` on the tag)
@@ -399,7 +442,14 @@ func TestJSONGoldens(t *testing.T) {
 				Disabled:  1,
 				Enabled:   2,
 				Installed: 1,
-				Notes:     []string{"Warning: failed to update Realistic Needs: some error"},
+				Failed:    []core.InstalledRef{{SourceID: "local", ModID: "a", Reason: "failed to fetch mod: source not found: local"}},
+				// #470's twin: what the switch did with each mod, in order.
+				Outcomes: []core.ProfileApplyOutcome{
+					{SourceID: "nexusmods", ModID: "7", Name: "Realistic Needs", Version: "1.0.0", Outcome: core.ProfileApplyDisabled},
+					{SourceID: "nexusmods", ModID: "8", Name: "Sample Mod", Version: "2.0.0", Outcome: core.ProfileApplyEnabled, FromProfile: "survival"},
+					{SourceID: "local", ModID: "a", Version: "2.0", Outcome: core.ProfileApplyFailed, Reason: "failed to fetch mod: source not found: local"},
+				},
+				Notes: []string{"Warning: failed to update Realistic Needs: some error"},
 				Warnings: []string{
 					"could not update profile: mod is locked",
 					"could not sync merged pak: base pak missing",
@@ -669,11 +719,26 @@ func TestJSONGoldens(t *testing.T) {
 				Installed: 1,
 				Replaced:  1,
 				Failed:    []core.InstalledRef{{SourceID: "nexusmods", ModID: "8", Reason: "failed to fetch mod: rate limited"}},
-				Notes:     []string{"Warning: failed to undeploy Sample Mod: permission denied"},
+				// #470: what the apply did with each mod, in order.
+				Outcomes: []core.ProfileApplyOutcome{
+					{SourceID: "nexusmods", ModID: "7", Name: "Realistic Needs", Version: "1.0.0", Outcome: core.ProfileApplyDisabled},
+					{SourceID: "local", ModID: "a", Name: "Mod a", Version: "unknown", Outcome: core.ProfileApplyEnabled, FromProfile: "survival"},
+					{SourceID: "nexusmods", ModID: "8", Outcome: core.ProfileApplyFailed, Reason: "failed to fetch mod: rate limited"},
+				},
+				Notes: []string{"Warning: failed to undeploy Sample Mod: permission denied"},
 				Warnings: []string{
 					"could not update profile: mod is locked",
 					"could not sync merged pak: base pak missing",
 				},
+			},
+		},
+		{
+			// #470: one mod's outcome - a failure, with the version the
+			// apply meant to install and why it could not.
+			"profile_apply_outcome",
+			core.ProfileApplyOutcome{
+				SourceID: "local", ModID: "a", Version: "2.0",
+				Outcome: core.ProfileApplyFailed, Reason: "failed to fetch mod: source not found: local",
 			},
 		},
 		{
@@ -1840,6 +1905,81 @@ func TestJSONGoldens(t *testing.T) {
 					{Profile: "default", DeployedFiles: 10},
 					{Profile: "survival", DeployedFiles: 2},
 				},
+			},
+		},
+		{
+			// #445 audit: a live file only a non-active profile records,
+			// whose mod the active profile lists - it has to be recorded
+			// under the active profile before any purge can clear it.
+			"game_mod_path_in_use_error_listed_unrecorded",
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/skyrim-se/Data", NewModPath: "/games/skyrim-se/Mods",
+				DeployedFiles: 1, ActiveProfile: "survival",
+				Profiles:         []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}},
+				ListedUnrecorded: 1, NeedsApply: true,
+			},
+		},
+		{
+			// #445 final gate F-C: such a file whose mod the active profile
+			// lists at a version no cache holds and no source lmm has can
+			// supply - only an edit of that profile's document ends it.
+			"game_mod_path_in_use_error_listed_unavailable",
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/skyrim-se/Data", NewModPath: "/games/skyrim-se/Mods",
+				DeployedFiles: 1, ActiveProfile: "survival",
+				Profiles:         []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}},
+				ListedUnrecorded: 1,
+				ListedUnavailable: []core.ListedVersionUnavailable{{
+					SourceID: "local", ModID: "a", Version: "2.0", Cached: []string{"unknown"},
+					ProfileFile: "/home/user/.config/lmm/games/skyrim-se/profiles/survival.yaml",
+				}},
+			},
+		},
+		{
+			// #445 gate 2, G2-1: such a file another game sharing the
+			// directory records too - that game's non-active profile has to
+			// let it go before the active profile can record it.
+			"game_mod_path_in_use_error_release_first",
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/shared/Data", NewModPath: "/games/skyrim-se/Mods",
+				DeployedFiles: 1, ActiveProfile: "survival",
+				Profiles:         []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}},
+				ListedUnrecorded: 1, NeedsApply: true,
+				ReleaseFirst: []core.OtherGameProfile{{GameID: "skyrim-vr", Profile: "vanilla"}},
+			},
+		},
+		{
+			// #445 gate 2, G2-1: a file the active profile lists that another
+			// game keeps for its own active profile - that game's, so the
+			// active profile's apply deploys the mod after the move.
+			"game_mod_path_in_use_error_apply_after_move",
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/shared/Data", NewModPath: "/games/skyrim-se/Mods",
+				DeployedFiles: 1, ActiveProfile: "survival",
+				Profiles:       []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}},
+				ApplyAfterMove: true,
+			},
+		},
+		{
+			// One entry of game_mod_path_in_use_error's release_first.
+			"other_game_profile",
+			core.OtherGameProfile{GameID: "skyrim-vr", Profile: "vanilla"},
+		},
+		{
+			// One entry of game_mod_path_in_use_error's listed_unavailable:
+			// a mod listed with no version, and nothing of it cached.
+			"listed_version_unavailable",
+			core.ListedVersionUnavailable{SourceID: "local", ModID: "b", ProfileFile: "/home/user/.config/lmm/games/skyrim-se/profiles/survival.yaml"},
+		},
+		{
+			// #445 gate 2, G2-3: one the cache holds at the listed version,
+			// whose deployment at another version by another profile is what
+			// no apply can replace.
+			"listed_version_unavailable_live",
+			core.ListedVersionUnavailable{
+				SourceID: "local", ModID: "k", Version: "2.0", Cached: []string{"1.0", "2.0"},
+				LiveVersion: "1.0", LiveProfile: "default",
+				ProfileFile: "/home/user/.config/lmm/games/skyrim-se/profiles/survival.yaml",
 			},
 		},
 		{

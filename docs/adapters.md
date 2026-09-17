@@ -414,7 +414,11 @@ relative to the working directory. So:
 - `lmm game edit --mod-path` (and `PUT /api/v1/games/{id}`'s `mod_path`)
   refuses to move a `mod_path` while any profile has files deployed under
   it — lmm records deployed files relative to it, so the purge comes
-  first, and the refusal names every profile to purge. `lmm game detect`'s
+  first, and the refusal names every profile to purge (and, for a live
+  file the active profile lists but only another profile records, the
+  `lmm profile apply` or `lmm deploy` that records it first — or, when
+  the active profile lists that mod at a version lmm can neither find in
+  the cache nor download, the profile file to edit). `lmm game detect`'s
   repair of an already-configured game runs the same check. The edit also
   refuses a move that would leave an explicit `adapter: bepinex` off the
   game root, while a game already refused can be moved back; `--adapter`

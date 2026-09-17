@@ -346,8 +346,10 @@ func (s *Server) handleAPIGameDetail(w http.ResponseWriter, r *http.Request) {
 // removal a game's own installed mods still depend on is a 409 collision
 // with state the caller could not have known about from the map alone
 // (M5, epic review M-4 - GameSourceInUseError, the mirror of how a game
-// collision on `lmm game add`/POST /api/v1/games is classified), and
-// anything else is a real write failure (500).
+// collision on `lmm game add`/POST /api/v1/games is classified) - as is a
+// mod_path move refused for files deployed under it, or for profile files
+// that do not say which profile's those are (core.ErrActiveProfileUnknown,
+// #445 review F2) - and anything else is a real write failure (500).
 func gameSourcesErrorStatus(err error) int {
 	var specErr *core.GameSpecError
 	var inUseErr *core.GameSourceInUseError
@@ -357,7 +359,7 @@ func gameSourcesErrorStatus(err error) int {
 		return http.StatusNotFound
 	case errors.As(err, &specErr):
 		return http.StatusBadRequest
-	case errors.As(err, &inUseErr), errors.As(err, &modPathInUseErr):
+	case errors.As(err, &inUseErr), errors.As(err, &modPathInUseErr), errors.Is(err, core.ErrActiveProfileUnknown):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
@@ -501,12 +503,13 @@ func (s *Server) handleAPIGameDetectApply(w http.ResponseWriter, r *http.Request
 // gameDetectApplyErrorStatus classifies an ApplyDetectSelection failure: a
 // taken game id is a collision (409, matching POST /api/v1/games), and so is
 // a repair that would move the mod_path of a game with files deployed
-// (core.GameModPathInUseError, 409 as on PUT /api/v1/games/{id}, #427
-// review F1); anything else is a real write failure (500). A REJECTED
-// selector never reaches here - SelectDetectedGames answered 400 above.
+// (core.GameModPathInUseError, or core.ErrActiveProfileUnknown - 409 as on
+// PUT /api/v1/games/{id}, #427 review F1); anything else is a real write
+// failure (500). A REJECTED selector never reaches here -
+// SelectDetectedGames answered 400 above.
 func gameDetectApplyErrorStatus(err error) int {
 	var modPathInUse *core.GameModPathInUseError
-	if errors.Is(err, core.ErrGameExists) || errors.As(err, &modPathInUse) {
+	if errors.Is(err, core.ErrGameExists) || errors.As(err, &modPathInUse) || errors.Is(err, core.ErrActiveProfileUnknown) {
 		return http.StatusConflict
 	}
 	return http.StatusInternalServerError

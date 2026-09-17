@@ -1,0 +1,13 @@
+{
+  "purged": 1,
+  "removed_paths": 1,
+  "kept": [
+    {
+      "path": "Data/shared.esp",
+      "reason": "recorded",
+      "profiles": [
+        "default"
+      ]
+    }
+  ]
+}

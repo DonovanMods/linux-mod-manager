@@ -52,11 +52,16 @@ var detailsCoverage = map[string]string{
 	"core.LoaderRequiredError": "TestReportError_JSON_LoaderRequiredError",
 	// #317's cross-process mutation refusal: the holder's pid/started_at
 	// reach the envelope as data, not only as the sentence.
-	"core.OperationInProgressError":    "TestReportError_JSON_OperationInProgressError",
-	"core.ProfileWarningsError":        "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
-	"core.SnapshotRestorePartialError": "TestReportError_JSON_SnapshotRestorePartialError",
-	"core.SourceInUseError":            "TestReportError_JSON_SourceInUseError",
-	"core.TokenKeyError":               "TestReportError_JSON_TokenKeyError",
+	"core.OperationInProgressError": "TestReportError_JSON_OperationInProgressError",
+	// #470: an apply that ran to the end with a failed mod - the whole
+	// result, per-mod outcomes included, reaches the envelope.
+	"core.ProfileApplyIncompleteError": "TestDoProfileApply_JSON_AFailedModIsTheEnvelope",
+	// #470's twin: a switch that ran to the end with a failed mod.
+	"core.ProfileSwitchIncompleteError": "TestDoProfileSwitch_JSON_AFailedModIsTheEnvelope",
+	"core.ProfileWarningsError":         "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
+	"core.SnapshotRestorePartialError":  "TestReportError_JSON_SnapshotRestorePartialError",
+	"core.SourceInUseError":             "TestReportError_JSON_SourceInUseError",
+	"core.TokenKeyError":                "TestReportError_JSON_TokenKeyError",
 	// #269 Tier 3's download failure: the anonymous refusal, the
 	// unavailable item, the missing steamcmd and the unclassified tool
 	// failure all reach --json (and the SPA's failed-job envelope) as one

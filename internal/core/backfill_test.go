@@ -22,6 +22,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -33,7 +34,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -868,7 +868,7 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 				case "sync":
 					plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
 					require.NoError(t, err)
-					assert.Empty(t, plan.ToRemove)
+					assert.Empty(t, plan.Warnings, "the marker settles what the row says")
 				}
 				assert.Contains(t, f.warnings.String(), "Mod off", "the plan discharged it and said so")
 				assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
@@ -913,7 +913,10 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 		release := holdOpLock(t, f.lockPath)
 		plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
 		require.NoError(t, err)
-		require.Len(t, plan.ToRemove, 1, "planned before the marker existed")
+		// #444: the sync keeps an unmarked disabled mod and warns - it used
+		// to plan its removal - so the warning is what was decided from the
+		// unmarked read.
+		require.Len(t, plan.Warnings, 1, "planned before the marker existed")
 		release()
 
 		_, err = f.svc.ApplyProfileSync(ctx, f.game, plan, nil)
@@ -922,7 +925,7 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 
 		plan, err = f.svc.PlanProfileSync(ctx, f.game, "a")
 		require.NoError(t, err)
-		assert.Empty(t, plan.ToRemove, "the re-plan reads the marker")
+		assert.Empty(t, plan.Warnings, "the re-plan reads the marker")
 	})
 
 	// Another lmm's discharge can write the marker between the document
@@ -954,7 +957,7 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 					case "sync":
 						plan, err := f.svc.PlanProfileSync(ctx, f.game, "a")
 						require.NoError(t, err)
-						require.Len(t, plan.ToRemove, 1, "decided from the unmarked read")
+						require.Len(t, plan.Warnings, 1, "decided from the unmarked read")
 						apply = func() error {
 							_, err := f.svc.ApplyProfileSync(ctx, f.game, plan, nil)
 							return err
@@ -995,7 +998,9 @@ func TestBackfillProfileDisabledMarkers_APlanMadeBeforeTheMarkersIsStale(t *test
 	t.Run("a marker in another profile leaves the plan fresh", func(t *testing.T) {
 		f := newBackfillFixture(t)
 		f.row(t, "a", "off", false, false)
-		f.row(t, "b", "y", false, false)
+		// A reference with no row at all: something for b's sync to do.
+		require.NoError(t, f.svc.NewProfileManager().AddMod(ctx, f.game.ID, "b",
+			domain.ModReference{SourceID: "src", ModID: "y", Version: "1.0"}))
 		f.owe(t)
 
 		plan, err := f.svc.PlanProfileSync(ctx, f.game, "b")
@@ -1216,33 +1221,26 @@ func TestBackfillProfileDisabledMarkers_RoundOnesKeyIsNotAnObligation(t *testing
 	assert.Empty(t, f.disabledRefs(t, "a"))
 }
 
+// declinedWrite is what the profile editor seam returns to model a profile
+// file the backfill cannot write now - an unwritable file, or an editor
+// panic, both of which keep the profile's share for later. (A layout the
+// editor cannot edit used to as well; it is rewritten whole now, #441
+// review F11 - backfill_layout_test.go.)
+var declinedWrite = &fs.PathError{Op: "open", Path: "a.yaml", Err: fs.ErrPermission}
+
 // pendingSwitchBack leaves profile a's share of the backfill kept for later
-// - declined by the editor, which is what a layout it cannot edit, an
-// unwritable file and an editor panic all come to - with b the active
-// profile. The switch to b rewrote a's file (SetDefault), so the next
-// mutation retries a, whichever profile is active by then. how is
-// "declined", through the editor seam, or "layout", a flow reference with a
-// comment before its closing brace, which the editor really declines and
-// SetDefault's rewrite normalises.
+// - declined by the editor - with b the active profile. The switch to b
+// rewrote a's file (SetDefault), so the next mutation retries a, whichever
+// profile is active by then.
 func pendingSwitchBack(t *testing.T, how string) *backfillFixture {
 	t.Helper()
 	f := newBackfillFixture(t)
 	f.row(t, "a", "off", false, false)
 	f.row(t, "b", "x", true, false)
-	switch how {
-	case "declined":
-		f.svc.SetProfileMarkerForTest(func(string, []domain.ModReference) ([]domain.ModReference, error) {
-			return nil, config.ErrProfileLayoutUnsupported
-		})
-	case "layout":
-		doc := mustRead(t, f.profilePath("a"))
-		start := strings.Index(doc, "- source_id: src")
-		end := strings.Index(doc, "version: \"1.0\"\n")
-		require.True(t, start >= 0 && end > start, "unexpected profile layout:\n%s", doc)
-		end += len("version: \"1.0\"\n")
-		doc = doc[:start] + "- {source_id: src, mod_id: \"off\", version: \"1.0\" # kept by hand\n      }\n" + doc[end:]
-		require.NoError(t, os.WriteFile(f.profilePath("a"), []byte(doc), 0o644))
-	}
+	require.Equal(t, "declined", how)
+	f.svc.SetProfileMarkerForTest(func(string, []domain.ModReference) ([]domain.ModReference, error) {
+		return nil, declinedWrite
+	})
 	f.owe(t)
 	report, err := f.svc.BackfillProfileDisabledMarkers(context.Background())
 	require.NoError(t, err)
@@ -1250,7 +1248,7 @@ func pendingSwitchBack(t *testing.T, how string) *backfillFixture {
 	require.Empty(t, report.Marked)
 
 	f.switchTo(t, "b")
-	f.svc.SetProfileMarkerForTest(nil) // the editor takes the rewritten file
+	f.svc.SetProfileMarkerForTest(nil) // the editor takes the changed file
 	require.Empty(t, f.disabledRefs(t, "a"))
 	f.warnings.Reset()
 	return f
@@ -1278,7 +1276,7 @@ func (f *backfillFixture) assertOffAndUndeployed(t *testing.T) {
 // with no contention at all.
 func TestBackfillProfileDisabledMarkers_ASwitchIntoAKeptProfile(t *testing.T) {
 	ctx := context.Background()
-	for _, how := range []string{"declined", "layout"} {
+	for _, how := range []string{"declined"} {
 		t.Run(how, func(t *testing.T) {
 			// The plan settles the retry before it reads the document, so
 			// the ordinary case plans the switch right the first time.
@@ -1398,7 +1396,7 @@ func TestBackfillProfileDisabledMarkers_AnUnchangedKeptProfileCostsAPlanNothing(
 	f.row(t, "a", "off", false, false)
 	f.row(t, "b", "x", false, false)
 	f.svc.SetProfileMarkerForTest(func(string, []domain.ModReference) ([]domain.ModReference, error) {
-		return nil, config.ErrProfileLayoutUnsupported
+		return nil, declinedWrite
 	})
 	f.owe(t)
 	report, err := f.svc.BackfillProfileDisabledMarkers(ctx)
@@ -1451,8 +1449,8 @@ func (f *backfillFixture) refCount(t *testing.T, profile string) int {
 // sync` listed the unmarked copy for removal - through RemoveMod, which
 // removes every copy, the marked one and its marker with it. Every flow now
 // decides a listed-twice mod by its first reference, the backfill marks
-// every copy, and a sync never removes a marked copy of a mod that still
-// has a row.
+// every copy, and a sync never removes any copy of a mod that still has a
+// row (#444).
 func TestBackfillProfileDisabledMarkers_ADuplicatedReference(t *testing.T) {
 	ctx := context.Background()
 
@@ -1492,12 +1490,17 @@ func TestBackfillProfileDisabledMarkers_ADuplicatedReference(t *testing.T) {
 			f.switchTo(t, "b")
 			f.writeDuplicated(t, "a", false, tc.marks...)
 
-			apply, err := f.svc.PlanProfileApply(ctx, f.game, "a")
-			require.NoError(t, err)
 			switchPlan, err := f.svc.PlanProfileSwitch(ctx, f.game, "a")
 			require.NoError(t, err)
 			sync, err := f.svc.PlanProfileSync(ctx, f.game, "a")
 			require.NoError(t, err)
+			// An apply acts for the active profile only (#462): a is
+			// marked active - by flag alone - for its plan.
+			pm := f.svc.NewProfileManager()
+			require.NoError(t, pm.SetDefault(ctx, f.game.ID, "a"))
+			apply, err := f.svc.PlanProfileApply(ctx, f.game, "a")
+			require.NoError(t, err)
+			require.NoError(t, pm.SetDefault(ctx, f.game.ID, "b"))
 			if tc.off {
 				assert.Empty(t, apply.ToEnable, "apply")
 				assert.Empty(t, switchPlan.ToEnable, "switch")
@@ -1507,17 +1510,18 @@ func TestBackfillProfileDisabledMarkers_ADuplicatedReference(t *testing.T) {
 				assert.Len(t, apply.ToEnable, 1, "apply")
 				assert.Len(t, switchPlan.ToEnable, 1, "switch")
 				assert.Empty(t, switchPlan.ToDisable, "switch keeps b's live copy")
-				assert.Len(t, sync.ToRemove, 1, "sync lists the mod once")
+				// #444: a is not active, so its row's enabled = 0 is not a
+				// choice the sync may act on - the first copy says "on",
+				// and that is the profile's intent.
+				assert.True(t, sync.NoChanges, "sync keeps a mod a non-active profile lists")
 			}
 
-			// Either way the document ends the sync saying what the row
-			// says - off - and the marked copy is still there.
+			// Either way the sync leaves both copies, and the marked one
+			// keeps its marker.
 			_, err = f.svc.ApplyProfileSync(ctx, f.game, sync, nil)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"off"}, f.disabledRefs(t, "a"))
-			if !tc.off {
-				assert.Equal(t, 1, f.refCount(t, "a"), "only the unmarked copy was removed")
-			}
+			assert.Equal(t, 2, f.refCount(t, "a"), "no copy was removed")
 		})
 	}
 

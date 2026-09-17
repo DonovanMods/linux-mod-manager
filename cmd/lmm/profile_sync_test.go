@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -166,6 +167,40 @@ func TestDoProfileSync_AlreadyInSync_PrintsMessageWithoutPrompting(t *testing.T)
 	})
 
 	assert.Equal(t, "Profile default is already in sync.\n", out)
+}
+
+// TestDoProfileSync_KeptDisabledMod_WarnsOnStderr is #444: the active
+// profile lists a mod whose row is disabled, without the `disabled:`
+// marker. The sync keeps the reference - it used to delete it - and says on
+// stderr how to settle the disagreement, in both output modes.
+func TestDoProfileSync_KeptDisabledMod_WarnsOnStderr(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "off1", "Off One", "1.0", "default", false, nil)
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off1", Version: "1.0"}))
+
+	stdout, stderr, err := captureStdoutAndStderr(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Profile default is already in sync.\n", stdout)
+	assert.Equal(t, "Warning: Off One is disabled but profile default lists it as enabled - kept it; "+
+		"run `lmm mod disable -p default off1` to record that, or `lmm profile apply default` to enable it\n", stderr)
+
+	profile, err := pm.Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1, "the reference is kept")
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+	stdout = captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+	var result core.ProfileSyncResult
+	require.NoError(t, json.Unmarshal([]byte(stdout), &result))
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "Off One")
 }
 
 // TestDoProfileSync_MissingProfile_EmptyDiff_StillCreatesProfile pins the

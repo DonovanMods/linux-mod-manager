@@ -543,9 +543,12 @@ func TestDeploy_DoesNotPreserveAnotherProfilesOwnFile(t *testing.T) {
 	require.NoError(t, err)
 	require.FileExists(t, filepath.Join(gameDir, "Data", "shared.esp"))
 
-	// Profile B deploys a DIFFERENT mod over the same path.
+	// Profile B, made active (a deploy acts for the active profile only,
+	// #445) with A's file still in place, deploys a DIFFERENT mod over the
+	// same path.
 	seedInstalledModInProfile(t, svc, game, "other", "src", "m2", "Mod Two", "1.0",
 		map[string][]byte{"Data/shared.esp": []byte("B's version")})
+	require.NoError(t, svc.NewProfileManager().SetDefault(context.Background(), game.ID, "other"))
 	_, err = svc.DeployProfile(context.Background(), game, "other", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 

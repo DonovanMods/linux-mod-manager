@@ -288,6 +288,10 @@ func (r *verifyRun) repairMisplacedLoaderDeploy(mod *domain.InstalledMod, count 
 
 	var failures []string
 	for _, holder := range holders {
+		if holder.notLive != "" {
+			r.takeDownHolder(holder)
+			continue
+		}
 		if err := holder.installer.Install(r.ctx, r.game, &holder.mod.Mod, holder.profile); err != nil {
 			failures = append(failures, fmt.Sprintf("%s (%v)", holder.profile, err))
 			continue
@@ -314,6 +318,18 @@ func (r *verifyRun) redeployHolders(holders []relayoutHolder) {
 	for _, holder := range holders {
 		_ = holder.installer.Install(r.ctx, r.game, &holder.mod.Mod, holder.profile)
 	}
+}
+
+// takeDownHolder records that holder - a sibling whose files the re-layout
+// took down but which is not the game's live profile (#444) - no longer has
+// anything deployed, and says why it was not put back. A failure to record
+// it is reported, not fatal: the game directory is already right.
+func (r *verifyRun) takeDownHolder(holder relayoutHolder) {
+	detail := holder.notLive + "; its files were taken down with the old layout and not put back"
+	if err := r.svc.setModDeployed(r.ctx, holder.mod.SourceID, holder.mod.ID, r.game.ID, holder.profile, false); err != nil {
+		detail += fmt.Sprintf(" (recording that failed: %v)", err)
+	}
+	r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Note: " + detail})
 }
 
 // recordHolderLinkMethod keeps a re-deployed row's recorded link method
@@ -353,6 +369,10 @@ type relayoutHolder struct {
 	mod       *domain.InstalledMod
 	method    domain.LinkMethod
 	installer *Installer
+	// notLive, when set, says why this holder is undeployed but not put
+	// back: it is a sibling that is not the game's live profile's
+	// enabled, unmarked row (#444).
+	notLive string
 }
 
 // profilesDeploying lists every profile of this game holding mod at the same
@@ -371,6 +391,15 @@ type relayoutHolder struct {
 // deployed_files rows beside a Deployed=false record, which is exactly the
 // drift DisableMod's #183 self-heal exists to clear (#424 review, finding
 // 5).
+//
+// Nor is a sibling put back unless it is the game's live profile, the mod
+// is enabled there and its document does not mark it off (#444,
+// liveRelinker): the game directory holds one profile's deployment, and a
+// row of any other profile claiming `deployed` is what a profile switch
+// made before the upgrade left behind. Such a sibling is still taken down
+// with the old layout when it has deployed_files rows there - they name
+// paths the re-layout is about to move - and is then recorded as not
+// deployed; one with no rows is left alone entirely.
 //
 // The verifying profile is not asked: its rows are what raised the finding,
 // so it is deployed by construction, and skipping it would leave the
@@ -402,6 +431,7 @@ func (r *verifyRun) profilesDeploying(mod *domain.InstalledMod) ([]relayoutHolde
 		return nil, err
 	}
 	holders := []relayoutHolder{first}
+	live := r.liveRelinker(r.ctx)
 	for _, p := range profiles {
 		if p.Name == r.profile {
 			continue
@@ -422,6 +452,17 @@ func (r *verifyRun) profilesDeploying(mod *domain.InstalledMod) ([]relayoutHolde
 		h, err := holder(p.Name, sibling)
 		if err != nil {
 			return nil, err
+		}
+		if !live.allows(p.Name, sibling, disabledKeysOf(p)) {
+			h.notLive = live.declined(p.Name, sibling)
+			rows, err := r.svc.GetDeployedFilesForMod(r.ctx, r.game.ID, p.Name, sibling.SourceID, sibling.ID)
+			if err != nil {
+				return nil, fmt.Errorf("checking profile %s: %w", p.Name, err)
+			}
+			if len(rows) == 0 {
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Note: " + h.notLive})
+				continue
+			}
 		}
 		holders = append(holders, h)
 	}

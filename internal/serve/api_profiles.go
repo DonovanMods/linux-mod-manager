@@ -302,14 +302,17 @@ func (s *Server) handleAPIProfileExport(w http.ResponseWriter, r *http.Request) 
 
 // profileErrorStatus classifies a profile CRUD failure: a profile that is
 // not there answers 404, a name already taken (core.ErrProfileExists,
-// detected inside the gated Create/Rename seams - #332 M6) answers 409, a
-// name no profile file could carry answers 400, and anything else is a
-// genuine I/O failure (500).
+// detected inside the gated Create/Rename seams - #332 M6), a delete of
+// the active profile (core.ErrProfileActive, #446) or a delete in a game
+// whose files do not say which profile is active (core.
+// ErrActiveProfileUnknown, #445 review F2) answers 409, a name no profile
+// file could carry answers 400, and anything else is a genuine I/O failure
+// (500).
 func (s *Server) profileErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, domain.ErrProfileNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, core.ErrProfileExists):
+	case errors.Is(err, core.ErrProfileExists), errors.Is(err, core.ErrProfileActive), errors.Is(err, core.ErrActiveProfileUnknown):
 		return http.StatusConflict
 	case errors.Is(err, domain.ErrInvalidProfileName), errors.Is(err, domain.ErrInvalidGameID):
 		return http.StatusBadRequest

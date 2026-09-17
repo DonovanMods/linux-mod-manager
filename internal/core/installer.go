@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -57,6 +58,16 @@ type Installer struct {
 	// fail rather than deploy through the identity routing a refused
 	// adapter leaves behind.
 	refused error
+
+	// otherGames reads the records of every other configured game whose mod
+	// directory overlaps the one a call is for (Service.otherGamesRecording,
+	// #445 gate 2, G2-1). Every removal and every overwrite asks it first
+	// and leaves a path another game records exactly as it is (heldPath):
+	// that game still tracks the file, which may be its live, user-edited
+	// copy, and its own flows decide it. A read that fails refuses the call
+	// before anything is touched. Nil - an Installer built without a
+	// Service - asks nothing.
+	otherGames func(context.Context, *domain.Game) (*otherGameRecords, error)
 }
 
 // NewInstaller creates a new installer
@@ -190,6 +201,67 @@ func (i *Installer) notLinkerOwned(game *domain.Game, file string) bool {
 	return adapter.Route(i.adapter, game, filepath.ToSlash(file)) != adapter.RouteLink
 }
 
+// heldPath is a path a removal or an overwrite left as it is because other
+// games whose mod directories overlap this one record it (#445 gate 2,
+// G2-1).
+type heldPath struct {
+	path  string
+	games []string
+}
+
+// removalNote is what a removal that left h reports.
+func (h heldPath) removalNote() string {
+	return fmt.Sprintf("%s was left in place: %s records it too", h.path, gamesText(h.games))
+}
+
+// overwriteNote is what a deploy that did not replace h reports.
+func (h heldPath) overwriteNote() string {
+	return fmt.Sprintf("%s was not replaced: %s records it too, so lmm left that game's file there", h.path, gamesText(h.games))
+}
+
+// gamesText names games: "game a", or "games a, b".
+func gamesText(games []string) string {
+	if len(games) == 1 {
+		return "game " + games[0]
+	}
+	return "games " + strings.Join(games, ", ")
+}
+
+// otherGamesFor reads what the games overlapping game's mod directory
+// record (Installer.otherGames), or nil when there is no one to ask.
+func (i *Installer) otherGamesFor(ctx context.Context, game *domain.Game) (*otherGameRecords, error) {
+	if i.otherGames == nil {
+		return nil, nil
+	}
+	others, err := i.otherGames(ctx, game)
+	if err != nil {
+		return nil, fmt.Errorf("checking which other games record files under %s, so nothing was changed: %w", game.ModPath, err)
+	}
+	return others, nil
+}
+
+// heldElsewhere is file as a heldPath when another game records it and
+// something is at dstPath for that game to lose - a path that cannot be
+// checked counts as there.
+func heldElsewhere(others *otherGameRecords, file, dstPath string) (heldPath, bool) {
+	games := others.recording(file)
+	if len(games) == 0 {
+		return heldPath{}, false
+	}
+	if _, err := os.Lstat(dstPath); errors.Is(err, fs.ErrNotExist) {
+		return heldPath{}, false
+	}
+	return heldPath{path: filepath.ToSlash(file), games: games}, true
+}
+
+// noteHeld puts a held path's report on the pending list the running flow
+// drains onto its result's Warnings (Service.takeCaptureWarnings).
+func (i *Installer) noteHeld(msg string) {
+	if i.originals != nil {
+		i.originals.note(msg)
+	}
+}
+
 // foreignFile reports whether dstPath holds content lmm did not put there:
 // a REGULAR file (a symlink is a deployment, lmm's or another tool's) that
 // no profile of this GAME has a deployed_files row for.
@@ -265,6 +337,10 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	// partial deployment to roll back. The install still fails, which is
 	// the semantics that matters: a mod whose defaults could not be written
 	// is not installed.
+	others, err := i.otherGamesFor(ctx, game)
+	if err != nil {
+		return err
+	}
 	if err := seedCopyOnceFiles(i.cache, i.adapter, game, mod.SourceID, mod.ID, mod.Version); err != nil {
 		return err
 	}
@@ -279,6 +355,20 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 
 		srcPath := i.cache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
+
+		// #445 gate 2, G2-1: another game's file is never replaced. The
+		// profile still records the path - it is where its mod's file
+		// goes - so its own purge keeps the file for that game, and a purge
+		// of that game's keeps it for this one.
+		if held, ok := heldElsewhere(others, file, dstPath); ok {
+			i.noteHeld(held.overwriteNote())
+			if i.db != nil {
+				if err := i.db.SaveDeployedFile(ctx, game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
+					return fmt.Errorf("tracking deployed file %s: %w", file, err)
+				}
+			}
+			continue
+		}
 
 		// #350: preserve whatever is there before the deploy replaces it.
 		i.captureOriginal(ctx, game, profileName, file, dstPath, mod)
@@ -362,6 +452,10 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		return fmt.Errorf("new mod not in cache: %s/%s@%s", newMod.SourceID, newMod.ID, newMod.Version)
 	}
 
+	others, err := i.otherGamesFor(ctx, game)
+	if err != nil {
+		return err
+	}
 	oldFiles, err := oldCache.ListFiles(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version)
 	if err != nil {
 		return fmt.Errorf("listing old cached files: %w", err)
@@ -450,6 +544,11 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 			i.log.Debug("leaving a file this update does not own where it is", "path", dstPath)
 			continue
 		}
+		// #445 gate 2, G2-1: nor one another game records.
+		if held, ok := heldElsewhere(others, file, dstPath); ok {
+			i.noteHeld(held.removalNote())
+			continue
+		}
 		if err := i.linker.Undeploy(dstPath); err != nil {
 			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, nil, oldSet); rollbackErr != nil {
 				return &domain.DeployError{Op: fmt.Sprintf("removing obsolete file %s", file), Primary: err, Rollback: rollbackErr}
@@ -485,6 +584,13 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 
 		srcPath := newCache.GetFilePath(game.ID, newMod.SourceID, newMod.ID, newMod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
+		// #445 gate 2, G2-1: another game's file is never replaced; the
+		// path is still recorded for the new version below, as Install
+		// records it.
+		if held, ok := heldElsewhere(others, file, dstPath); ok {
+			i.noteHeld(held.overwriteNote())
+			continue
+		}
 		// #350: a replace can also land on a file lmm does not own - a
 		// new version whose file list grew into stock content - so the
 		// original is preserved here before the new file goes over it.
@@ -744,30 +850,44 @@ func rollbackDeploy(lnk linker.Linker, modPath string, relativePaths []string) e
 // Uninstall removes a mod from the game directory, then prunes the
 // directories its own removals emptied (#415 - only those; see
 // linker.CleanupEmptyDirs).
+//
+// A path another game records is left as it is (#445 gate 2, G2-1) and
+// reported on the flow's Warnings; the profile's record of it goes, as the
+// recorded-only purge's PurgeKeptOtherGame drops it.
 func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
-	removed, err := i.uninstall(ctx, game, mod, profileName)
+	removed, held, err := i.uninstall(ctx, game, mod, profileName)
+	for _, h := range held {
+		i.noteHeld(h.removalNote())
+	}
 	// Pruned even on failure: the paths in removed are gone either way, so
 	// the directories they emptied are lmm's to tidy either way.
 	linker.CleanupEmptyDirs(game.ModPath, removed)
 	return err
 }
 
-// uninstall is Uninstall without the prune, returning the paths (relative
-// to game.ModPath) it actually removed. purgeMods composes it so that a
-// whole purge prunes ONCE, over its whole removal set, instead of per mod -
-// which is what its single trailing CleanupEmptyDirs has always been.
-func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]string, error) {
+// uninstall is Uninstall without the prune or the report, returning the
+// paths (relative to game.ModPath) it actually removed and the ones it left
+// for another game. purgeMods composes it so that a whole purge prunes
+// ONCE, over its whole removal set, instead of per mod - which is what its
+// single trailing CleanupEmptyDirs has always been - and reports the held
+// paths as its own.
+func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]string, []heldPath, error) {
 	files, err := i.removalPaths(ctx, game, mod, profileName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	others, err := i.otherGamesFor(ctx, game)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Undeploy each file
 	var removed []string
+	var held []heldPath
 	for _, file := range files {
 		select {
 		case <-ctx.Done():
-			return removed, ctx.Err()
+			return removed, held, ctx.Err()
 		default:
 		}
 
@@ -794,9 +914,14 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 			i.log.Debug("leaving a file this mod does not own where it is", "path", dstPath)
 			continue
 		}
+		// #445 gate 2, G2-1: nor one another game records.
+		if h, ok := heldElsewhere(others, file, dstPath); ok {
+			held = append(held, h)
+			continue
+		}
 
 		if err := i.linker.Undeploy(dstPath); err != nil {
-			return removed, fmt.Errorf("undeploying %s: %w", file, err)
+			return removed, held, fmt.Errorf("undeploying %s: %w", file, err)
 		}
 		removed = append(removed, file)
 		// lmm's own file is gone; whatever it displaced goes back.
@@ -806,11 +931,11 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 	// Remove file ownership records from database
 	if i.db != nil {
 		if err := i.db.DeleteDeployedFiles(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
-			return removed, fmt.Errorf("removing file tracking: %w", err)
+			return removed, held, fmt.Errorf("removing file tracking: %w", err)
 		}
 	}
 
-	return removed, nil
+	return removed, held, nil
 }
 
 // removalPaths lists the paths, relative to game.ModPath, an uninstall of

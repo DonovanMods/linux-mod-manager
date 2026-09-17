@@ -30,9 +30,15 @@ type ProfileSyncPlan struct {
 	// ToAdd is every mod enabled in the DB but absent from the profile's
 	// mod list - doProfileSync's "Will add to profile:" bucket.
 	ToAdd []domain.ModReference `json:"to_add"`
-	// ToRemove is every mod listed in the profile that is not enabled in
-	// the DB (uninstalled, disabled, or never recorded) - doProfileSync's
-	// "Will remove from profile:" bucket.
+	// ToRemove is every mod listed in the profile that has no installed
+	// row under it at all (uninstalled, or never recorded) -
+	// doProfileSync's "Will remove from profile:" bucket. A mod that is
+	// installed but not enabled is NOT here (#444): on a profile that is
+	// not active its enabled flag is what a profile switch wrote, not a
+	// choice, and on the active one the document saying "on" while the row
+	// says "off" is a disagreement for the user to settle (see Warnings),
+	// not a leftover - removing the reference would take its load-order
+	// slot and pinned version with it.
 	ToRemove []domain.ModReference `json:"to_remove"`
 	// ToUpdate is every mod present in both, where the DB row carries
 	// FileIDs the profile's own ref is missing - doProfileSync's "Will
@@ -56,6 +62,15 @@ type ProfileSyncPlan struct {
 	// where doProfileSync's own pm.Create call sat.
 	Missing bool `json:"missing"`
 
+	// Warnings names every mod the sync kept although its installed row and
+	// the document disagree about whether it is on: a mod the ACTIVE
+	// profile lists without the `disabled:` marker whose row is disabled
+	// and undeployed (#444). The sync changes nothing for it; each entry
+	// says which command settles it. No entry carries a prefix; a caller
+	// prints each as `Warning: %s`. ApplyProfileSync repeats them first on
+	// its result.
+	Warnings []string `json:"warnings,omitempty"`
+
 	// Names maps "source:id" (domain.ModKey) to the installed mod's display
 	// name for every ToAdd/ToUpdate entry - the two GetInstalledMod lookups
 	// doProfileSync made while rendering "Will add to profile:"/"Will update
@@ -70,14 +85,6 @@ type ProfileSyncPlan struct {
 	// this plan was computed from. ApplyProfileSync re-derives it and
 	// returns ErrStalePlan when it no longer matches.
 	snapshot installedSnapshot `json:"-"`
-
-	// keepMarked is every ToRemove key that still has an installed row
-	// (#431). Removing it removes its unmarked references only: a copy the
-	// document marks disabled - which can sit beside an unmarked one only
-	// in a hand edit - is the off intent the row itself agrees with, and
-	// RemoveMod would take it, its load-order position and its pinned
-	// version with the unmarked one. Unexported, like snapshot.
-	keepMarked map[string]bool `json:"-"`
 }
 
 // ProfileSyncResult reports the outcome of ApplyProfileSync. Added/Removed/
@@ -91,10 +98,11 @@ type ProfileSyncPlan struct {
 // for those; a caller wanting them must observe the event stream, same as a
 // live renderer never needing ProfileApplyResult.Notes.
 //
-// Warnings holds the diagnostics printed unconditionally: the ToUpdate
-// loop's refused UpsertMod ("could not update <source>:<mod>: <err>",
-// #294/Ruling 5 - it used to be a --verbose-only SyncUpdateNote, which hid
-// a profile ref the sync silently failed to write), then the end-of-apply
+// Warnings holds the diagnostics printed unconditionally: the plan's own
+// Warnings (#444), then the ToUpdate loop's refused UpsertMod ("could not
+// update <source>:<mod>: <err>", #294/Ruling 5 - it used to be a
+// --verbose-only SyncUpdateNote, which hid a profile ref the sync silently
+// failed to write), then the end-of-apply
 // merged-pak sync's own diagnostics (#197) - "could not sync merged pak:
 // <err>" when the sync itself failed, or the sync's own warnings otherwise.
 // No entry carries a prefix; a caller prints each to stderr as
@@ -146,15 +154,11 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 	}
 
 	installedRefs := make(map[string]domain.ModReference, len(installedMods))
-	// installedAny is every row, enabled or not (#431). The sync's
-	// staleness test - "no ENABLED row, so this ref is a leftover" - is
-	// right for a ref the document says nothing special about and wrong for
-	// one it marks disabled: that ref IS the user's off intent, and pruning
-	// it would take the marker, the load-order position and the pinned
-	// version with it, switching the mod back on at the next converge.
-	installedAny := make(map[string]bool, len(installedMods))
+	// rows is every row, enabled or not. A reference is a leftover only
+	// when it has none (#431, #444): see ProfileSyncPlan.ToRemove.
+	rows := make(map[string]domain.InstalledMod, len(installedMods))
 	for _, im := range installedMods {
-		installedAny[domain.ModKey(im.SourceID, im.ID)] = true
+		rows[domain.ModKey(im.SourceID, im.ID)] = im
 		if im.Enabled {
 			installedRefs[domain.ModKey(im.SourceID, im.ID)] = domain.ModReference{
 				SourceID: im.SourceID,
@@ -166,6 +170,8 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 	}
 
 	profileRefs := firstRefs(profile.Mods)
+	// Only the active profile's enabled flag is a choice (#444).
+	flagIsIntent := s.flaggedActiveProfile(game.ID) == profileName
 
 	// #269: no external rule is needed here, and that is a fact worth
 	// stating rather than an omission. A sync moves lmm's TRACKING to match
@@ -197,19 +203,28 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 		seen[key] = true
 		ref, exists := installedRefs[key]
 		if !exists {
-			// #431: kept because a row exists for it, not because the
-			// marker makes a ref immortal - a disabled ref with no row at
-			// all is as stale as any other unbacked ref.
-			if installedAny[key] {
-				if mr.Disabled {
-					continue
-				}
-				if plan.keepMarked == nil {
-					plan.keepMarked = make(map[string]bool)
-				}
-				plan.keepMarked[key] = true
+			// Kept because a row exists for it, not because the marker
+			// makes a ref immortal - a disabled ref with no row at all is
+			// as stale as any other unbacked ref.
+			row, installed := rows[key]
+			if !installed {
+				plan.ToRemove = append(plan.ToRemove, mr)
+				continue
 			}
-			plan.ToRemove = append(plan.ToRemove, mr)
+			// #444: the row is disabled. Under the active profile that is
+			// the user's choice - and with the document saying "on" and
+			// no files deployed, the two disagree, which the user settles.
+			// Anywhere else the flag is a switch's, and the document is
+			// already right.
+			if flagIsIntent && !mr.Disabled && !row.Deployed {
+				name := row.Name
+				if name == "" {
+					name = row.ID
+				}
+				plan.Warnings = append(plan.Warnings, fmt.Sprintf(
+					"%s is disabled but profile %s lists it as enabled - kept it; run `lmm mod disable -p %s %s` to record that, or `lmm profile apply %s` to enable it",
+					name, profileName, profileName, row.ID, profileName))
+			}
 		} else if len(ref.FileIDs) > 0 && len(mr.FileIDs) == 0 {
 			plan.ToUpdate = append(plan.ToUpdate, ref)
 		}
@@ -273,6 +288,7 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {
 		return result, err
 	}
+	result.Warnings = append(result.Warnings, plan.Warnings...)
 
 	emit := func(e Event) {
 		if sink != nil {
@@ -335,8 +351,7 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		keepMarked := plan.keepMarked[domain.ModKey(ref.SourceID, ref.ModID)]
-		if err := pm.removeMod(ctx, plan.GameID, plan.Profile, ref.SourceID, ref.ModID, keepMarked); err != nil {
+		if err := pm.RemoveMod(ctx, plan.GameID, plan.Profile, ref.SourceID, ref.ModID); err != nil {
 			// v2 Phase 3 Task 18: same cancellation-stays-fatal guard as
 			// the ToAdd loop above.
 			if ctxErr := ctx.Err(); ctxErr != nil {

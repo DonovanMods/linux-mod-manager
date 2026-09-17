@@ -273,7 +273,10 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 	// unvetted pre-existing effective-version dir for no reason.
 	var relinkErr error
 	var relinkNotes []string
-	if note == "" && mod.Deployed && mod.LinkMethod == domain.LinkSymlink {
+	live := r.liveRelinker(ctx)
+	if note == "" && mod.Deployed && mod.LinkMethod == domain.LinkSymlink && !live.allows(r.profile, mod, r.svc.profileDisabledKeys(ctx, r.game.ID, r.profile)) {
+		relinkNotes = append(relinkNotes, live.declined(r.profile, mod))
+	} else if note == "" && mod.Deployed && mod.LinkMethod == domain.LinkSymlink {
 		installErr, recordErr, undeployErr := r.relinkDeployedRow(ctx, r.profile, mod)
 		if undeployErr != nil {
 			// Non-fatal (see relinkDeployedRow's doc) - but surfaced in
@@ -307,7 +310,7 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 	// not by anything that happens to the primary row's deployment.
 	var siblingCancelErr error
 	if renamed || (!oldExists && newExists && note == "") {
-		note, siblingFailures, siblingCancelErr = r.repairSiblingProfiles(ctx, mod, recorded, effective)
+		note, siblingFailures, siblingCancelErr = r.repairSiblingProfiles(ctx, mod, recorded, effective, live)
 	}
 
 	if len(relinkNotes) > 0 {
@@ -420,6 +423,14 @@ func fileIDsEqual(a, b []string) bool {
 // SetModVersion/SetModDeployed (never SaveInstalledMod's full-row upsert,
 // which would wipe stored checksums - audit Finding 1) do the writes.
 //
+// A sibling's links are re-created only when it is the game's ACTIVE
+// profile, enabled and not marked off in its own document (#444, see
+// liveRelinker): any other profile has nothing in the one game directory,
+// whatever its row still claims - a profile switch made before the upgrade
+// left `deployed` set on every row it switched away from - and re-linking it
+// would put that profile's mod live under the active one. Its record is
+// still corrected; the note says it was not re-linked. Not a failure.
+//
 // A sibling Deployed via symlink has its links re-created through the
 // installer exactly like the primary row's would be - built from that
 // sibling's OWN profile-effective link method (relinkDeployedRow, #152),
@@ -467,7 +478,7 @@ func fileIDsEqual(a, b []string) bool {
 // Ctrl-C into N "could not repair profile X" warnings and a non-zero
 // failedCount. The note and count accumulated up to that point are still
 // returned, so the caller reports the work that really happened.
-func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.InstalledMod, recorded, effective string) (note string, failedCount int, cancelErr error) {
+func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.InstalledMod, recorded, effective string, live liveRelinker) (note string, failedCount int, cancelErr error) {
 	pm := r.svc.NewProfileManager()
 	profiles, listErr := pm.List(ctx, r.game.ID)
 	if listErr != nil {
@@ -479,7 +490,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 		return "sibling repair check FAILED: " + msg, 1, nil
 	}
 
-	var repaired, failed, differs, locked, methodNotes, undeployWarns []string
+	var repaired, failed, differs, locked, methodNotes, undeployWarns, notLinked []string
 	for _, p := range profiles {
 		if p.Name == r.profile {
 			continue
@@ -515,7 +526,9 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 		// would silently move what the lock means, just as surely as
 		// rewriting the primary would. Loaded fresh per-sibling since the
 		// lock lives in that sibling's own profile YAML, not the primary's.
+		var siblingOff map[string]bool
 		if siblingProfile, perr := pm.Get(ctx, r.game.ID, p.Name); perr == nil {
+			siblingOff = disabledKeysOf(siblingProfile)
 			if ref := siblingProfile.FindRef(sibling.SourceID, sibling.ID); ref != nil && ref.Locked {
 				locked = append(locked, p.Name)
 				// #142 round 5: also name -s (in addition to the -p this
@@ -576,7 +589,13 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 		}
 		sibling.Version = effective
 
-		if sibling.Deployed && sibling.LinkMethod == domain.LinkSymlink {
+		relink := sibling.Deployed && sibling.LinkMethod == domain.LinkSymlink
+		if relink && !live.allows(p.Name, sibling, siblingOff) {
+			relink = false
+			notLinked = append(notLinked, live.declined(p.Name, sibling))
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Note: " + live.declined(p.Name, sibling)})
+		}
+		if relink {
 			installErr, recordErr, undeployErr := r.relinkDeployedRow(ctx, p.Name, sibling)
 			if undeployErr != nil {
 				// Non-fatal (see relinkDeployedRow's doc), but surfaced in
@@ -634,7 +653,47 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 	if len(undeployWarns) > 0 {
 		parts = append(parts, fmt.Sprintf("undeploy warning in profile(s): %s", strings.Join(undeployWarns, ", ")))
 	}
+	parts = append(parts, notLinked...)
 	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked), cancelErr
+}
+
+// liveRelinker decides which rows a version repair may re-link (#444). A
+// symlink re-link writes into the game directory, and a game directory
+// holds one profile's deployment - the active one's - so only a row of that
+// profile, enabled and not marked off in its document, has links there to
+// repair. Every other row's `deployed` flag is history: a profile switch
+// made before the upgrade left it set on each row it switched away from,
+// and a disable before #183 left it set too. Re-linking such a row would put
+// a mod live that no active profile asked for.
+type liveRelinker struct {
+	// profile is the active profile, "" when it could not be resolved -
+	// in which case nothing is re-linked (err says why).
+	profile string
+	err     error
+}
+
+// liveRelinker resolves the active profile once for a repair.
+func (r *verifyRun) liveRelinker(ctx context.Context) liveRelinker {
+	profile, err := r.svc.liveProfile(ctx, r.game.ID)
+	return liveRelinker{profile: profile, err: err}
+}
+
+// allows reports whether mod, a row of profileName whose document marks
+// off exactly the keys in off, may be re-linked.
+func (l liveRelinker) allows(profileName string, mod *domain.InstalledMod, off map[string]bool) bool {
+	return l.err == nil && profileName == l.profile && mod.Enabled && !off[domain.ModKey(mod.SourceID, mod.ID)]
+}
+
+// declined says why mod, a row of profileName, was not re-linked.
+func (l liveRelinker) declined(profileName string, mod *domain.InstalledMod) string {
+	switch {
+	case l.err != nil:
+		return fmt.Sprintf("not re-linked in profile %s: %v", profileName, l.err)
+	case profileName != l.profile:
+		return fmt.Sprintf("not re-linked in profile %s: it is not active (%s is), so none of its files are live - `lmm profile switch %s` deploys it", profileName, l.profile, profileName)
+	default:
+		return fmt.Sprintf("not re-linked in profile %s: %s is switched off there - `lmm mod enable -p %s %s` deploys it", profileName, mod.Name, profileName, mod.ID)
+	}
 }
 
 // relinkDeployedRow re-runs the installer for a row recorded as a symlink

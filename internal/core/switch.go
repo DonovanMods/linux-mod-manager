@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // SwitchPlan is the pure, displayable diff between the currently-active
@@ -80,6 +83,19 @@ type SwitchPlan struct {
 	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise; only SetDefault is needed
 	AlreadyActive bool `json:"already_active"` // To is already the active default profile; nothing to plan
 
+	// FlagOnly is set when no single profile of the game is marked active
+	// (#445 review F2, ruling C): none of several profile files says
+	// `is_default: true`, or several do. lmm then cannot tell whose mods the
+	// game directory holds, so there is no From to take down and nothing to
+	// diff against: the switch deploys and removes nothing and only marks
+	// To as the active profile - the way out of the refusal every deploy
+	// and purge gives in that state. From is empty and the three lists are
+	// too; Warnings says so.
+	FlagOnly bool `json:"flag_only,omitzero"`
+	// Warnings is what a frontend shows before the switch is confirmed:
+	// today only a FlagOnly plan's explanation.
+	Warnings []string `json:"warnings,omitempty"`
+
 	// snapshot is From's installed-mod set this plan was computed against
 	// (Ruling 5): ApplyProfileSwitch re-derives it under beginOp and returns
 	// ErrStalePlan when it no longer matches, so a plan a frontend held while
@@ -118,16 +134,42 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		return nil, fmt.Errorf("profile not found: %s", target)
 	}
 
-	currentProfile, err := pm.GetDefault(ctx, game.ID)
-	var currentName string
+	// The profile switched away from is the active one, decided the way
+	// every deploy and purge decides it (#445 review F2): an unreadable
+	// profile file refuses the switch, and a game with no single profile
+	// marked active gets a switch that only marks the target.
+	flags, err := readProfileFlags(s.configDir, game.ID)
 	if err != nil {
-		currentName = "default"
-	} else {
-		currentName = currentProfile.Name
+		return nil, fmt.Errorf("resolving the active profile for %s: %w", game.ID, err)
+	}
+	if len(flags.unreadable) > 0 {
+		return nil, flags.unknown()
+	}
+	if flags.ambiguous() {
+		if err := s.checkActiveMarkWritable(game.ID, target, flags); err != nil {
+			return nil, err
+		}
+		return &SwitchPlan{
+			GameID: game.ID, To: target, FlagOnly: true,
+			Warnings: []string{flagOnlyPlanNotice(flags, target)},
+		}, nil
+	}
+	currentName, err := flags.active()
+	if err != nil {
+		return nil, err
+	}
+	// The outgoing document orders the plan; flags just read every file,
+	// so a failure here is a file that vanished since (nil orders by key).
+	currentProfile, err := pm.Get(ctx, game.ID, currentName)
+	if err != nil {
+		currentProfile = nil
 	}
 
 	if currentName == target {
 		return &SwitchPlan{GameID: game.ID, From: currentName, To: target, AlreadyActive: true}, nil
+	}
+	if err := s.checkActiveMarkWritable(game.ID, target, flags); err != nil {
+		return nil, err
 	}
 
 	// currentMods/allMods errors are ignored, matching doProfileSwitch
@@ -400,12 +442,23 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 //
 // On error, the returned result carries any diagnostics/counts accumulated
 // before the failure; callers should surface them alongside the error.
+//   - Failed holds one InstalledRef per mod the switch could not install or
+//     deploy (#470's twin): an enable whose deploy failed, or an install
+//     entry, in the order it met them, the reason as data.
+//     ApplyProfileSwitch returns a ProfileSwitchIncompleteError whenever it
+//     is not empty.
+//   - Outcomes is what the switch did with each mod, in the order it did
+//     it - the per-mod record ProfileApplyResult.Outcomes carries for an
+//     apply: disabled, enabled (FromProfile naming the profile whose row
+//     it was), installed, replaced or failed.
 type SwitchResult struct {
-	Disabled  int      `json:"disabled"`
-	Enabled   int      `json:"enabled"`
-	Installed int      `json:"installed"`
-	Notes     []string `json:"notes,omitempty"`
-	Warnings  []string `json:"warnings,omitempty"`
+	Disabled  int                   `json:"disabled"`
+	Enabled   int                   `json:"enabled"`
+	Installed int                   `json:"installed"`
+	Failed    []InstalledRef        `json:"failed,omitempty"`
+	Outcomes  []ProfileApplyOutcome `json:"outcomes,omitempty"`
+	Notes     []string              `json:"notes,omitempty"`
+	Warnings  []string              `json:"warnings,omitempty"`
 }
 
 // ApplyProfileSwitch executes a plan produced by PlanProfileSwitch: disables
@@ -426,13 +479,32 @@ type SwitchResult struct {
 // showing that preview, accepts whatever has changed in the interim as
 // already baked into plan; PlanProfileSwitch's own doc comment documents
 // why speculative plans are cheap enough to discard and recompute instead.
+//
+// A mod it could not install or deploy does not stop it (#470's twin): it
+// carries on with the rest, makes plan.To the active profile, and then
+// returns the result together with a ProfileSwitchIncompleteError, so no
+// frontend reports the switch as done.
 func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, sink EventSink) (*SwitchResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &SwitchResult{}, err
 	}
 	defer release()
-	return s.applyProfileSwitch(ctx, game, plan, sink)
+	result, err := s.applyProfileSwitch(ctx, game, plan, sink)
+	if err == nil && len(result.Failed) > 0 {
+		err = &ProfileSwitchIncompleteError{Profile: plan.To, Result: result}
+	}
+	return result, err
+}
+
+// recordFailure records a mod the switch could not install or deploy, on
+// both Failed and Outcomes. version is the version it meant to deploy.
+func (r *SwitchResult) recordFailure(failed InstalledRef, version string) {
+	r.Failed = append(r.Failed, failed)
+	r.Outcomes = append(r.Outcomes, ProfileApplyOutcome{
+		SourceID: failed.SourceID, ModID: failed.ModID, Name: failed.Name,
+		Version: version, Outcome: ProfileApplyFailed, Reason: failed.Reason,
+	})
 }
 
 // clearRowUnderProfile clears enabled and deployed on mod's installed row
@@ -504,6 +576,20 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 	}
 
+	if plan.FlagOnly {
+		return s.applyFlagOnlySwitch(ctx, game, plan, emit)
+	}
+	// #445 review F2: the profile this plan takes down must still be the
+	// active one - an unreadable or re-flagged profile file since the plan
+	// refuses it before anything moves.
+	live, err := s.liveProfile(ctx, game.ID)
+	if err != nil {
+		return result, err
+	}
+	if live != plan.From {
+		return result, fmt.Errorf("%w: %s is no longer the active profile of %s (%s is); plan the switch again", ErrStalePlan, plan.From, game.ID, live)
+	}
+
 	// Ruling 5: the plan is a contract about a world that may have moved.
 	// First statement inside the op (ApplyProfileSwitch took beginOp just
 	// above), so nothing this call does can race the re-derivation - a stale
@@ -515,6 +601,12 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// (the enabled/deployed predicate) and writes (the enable loop, and the
 	// disable loop's cross-profile clear below).
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.To, plan.targetSnapshot); err != nil {
+		return result, err
+	}
+	// #445 review F5: and the profile files the switch ends by writing
+	// must still be writable, or it would leave To's files live with From
+	// still marked active.
+	if err := s.checkSwitchMarkWritable(game.ID, plan.To); err != nil {
 		return result, err
 	}
 
@@ -611,6 +703,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 
 		result.Disabled++
+		result.Outcomes = append(result.Outcomes, outcomeOf(&im, ProfileApplyDisabled))
 		emit(ModEvent{Scope: scope, Phase: SwitchDisabled})
 	}
 
@@ -634,6 +727,8 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			msg := fmt.Sprintf("Warning: failed to deploy %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
+			// #470's twin: a failure, not only a --verbose note.
+			result.recordFailure(skippedRef(&im, fmt.Sprintf("deploy failed: %v", err)), im.Version)
 			continue
 		}
 		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.To, true); err != nil {
@@ -678,6 +773,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 
 		result.Enabled++
+		enabled := outcomeOf(&im, ProfileApplyEnabled)
+		if im.ProfileName != plan.To {
+			enabled.FromProfile = im.ProfileName
+		}
+		result.Outcomes = append(result.Outcomes, enabled)
 		emit(ModEvent{Scope: scope, Phase: SwitchEnabled})
 	}
 
@@ -692,7 +792,12 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalInstall, Mod: &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID}}
 			emit(ModEvent{Scope: scope, Phase: SwitchInstallingMod})
 
+			// failed names the entry for Failed: the mod once it resolved.
+			failed := InstalledRef{SourceID: ref.SourceID, ModID: ref.ModID}
+			version := ref.Version
 			fail := func(reason string) {
+				failed.Reason = reason
+				result.recordFailure(failed, version)
 				emit(ModEvent{Scope: scope, Phase: SwitchInstallError, Detail: reason})
 			}
 
@@ -702,6 +807,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				continue
 			}
 			scope.ModName = mod.Name
+			failed.Name = mod.Name
 
 			files, err := s.GetModFiles(ctx, ref.SourceID, mod)
 			if err != nil {
@@ -720,6 +826,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			}
 
 			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
+			version = mod.Version
 
 			downloadedFileIDs := make([]string, 0, len(filesToDownload))
 			for _, f := range filesToDownload {
@@ -751,7 +858,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 					}
 					downloadResult, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn)
 					if err != nil {
-						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
+						// Not fail(): SwitchDownloadFailed renders this
+						// mod's Error line already.
+						failed.Reason = fmt.Sprintf("download failed: %v", err)
+						result.recordFailure(failed, version)
+						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: failed.Reason})
 						downloadFailed = true
 						break
 					}
@@ -846,6 +957,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			}
 
 			result.Installed++
+			installed := ProfileApplyInstalled
+			if replacing {
+				installed = ProfileApplyReplaced
+			}
+			result.Outcomes = append(result.Outcomes, outcomeOf(installedMod, installed))
 			emit(ModEvent{Scope: scope, Phase: SwitchInstalled})
 		}
 	}
@@ -862,6 +978,111 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	} else {
 		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
+	// #445 gate 2, G2-1: the files it left for another game, and any
+	// original it could not put back, are this flow's to report.
+	s.takeCaptureWarnings(game.ID, OpSwitch, SwitchInstallWarning, &result.Warnings, nil)
 
 	return result, nil
+}
+
+// flagOnlyPlanNotice is a FlagOnly plan's Warnings entry: why the switch
+// can only mark target, and that it does nothing else.
+func flagOnlyPlanNotice(flags profileFlags, target string) string {
+	why := fmt.Sprintf("none of %s is", strings.Join(flags.names, ", "))
+	if len(flags.flagged) > 1 {
+		why = fmt.Sprintf("%s all are", strings.Join(flags.flagged, ", "))
+	}
+	return fmt.Sprintf("no single profile of %s is marked active (%s), so lmm cannot tell whose mods the game directory holds: this switch only marks %s as the active profile - nothing is deployed or removed",
+		flags.gameID, why, target)
+}
+
+// flagOnlyResultNotice is what a FlagOnly switch reports once it has marked
+// target: the game directory is as it was, which is not the same as clean,
+// and the two commands that make it target's - naming others, the game's
+// other profiles, and the game, so a copied command cannot reach another
+// game's profile of the same name.
+func flagOnlyResultNotice(gameID, target string, others []string) string {
+	msg := fmt.Sprintf("%s is now the active profile of %s, but nothing was deployed or removed: the game directory may still hold files another profile deployed. Run `lmm profile apply %s --game %s` to deploy its mods",
+		target, gameID, target, gameID)
+	if len(others) == 0 {
+		return msg + "."
+	}
+	purges := make([]string, len(others))
+	for i, name := range others {
+		purges[i] = fmt.Sprintf("`lmm purge -p %s --game %s`", name, gameID)
+	}
+	list := purges[0]
+	whose := others[0]
+	if n := len(purges); n > 1 {
+		list = strings.Join(purges[:n-1], ", ") + " and " + purges[n-1]
+		whose = "each of those profiles"
+	}
+	return fmt.Sprintf("%s, then %s to clear the files %s recorded (a purge of a profile that is not active removes only those, and keeps what %s uses).",
+		msg, list, whose, target)
+}
+
+// applyFlagOnlySwitch carries out a FlagOnly plan: it marks plan.To as the
+// active profile and nothing else. A game whose profile files name one
+// active profile again, or cannot all be read, refuses the plan - the first
+// as stale, since a real switch is possible now.
+func (s *Service) applyFlagOnlySwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, emit func(Event)) (*SwitchResult, error) {
+	result := &SwitchResult{}
+	flags, err := readProfileFlags(s.configDir, game.ID)
+	if err != nil {
+		return result, fmt.Errorf("resolving the active profile for %s: %w", game.ID, err)
+	}
+	if len(flags.unreadable) > 0 {
+		return result, flags.unknown()
+	}
+	if !flags.ambiguous() {
+		return result, fmt.Errorf("%w: the profiles of %s mark one active profile again; plan the switch again", ErrStalePlan, game.ID)
+	}
+	if err := s.checkActiveMarkWritable(game.ID, plan.To, flags); err != nil {
+		return result, err
+	}
+	if err := s.NewProfileManager().SetDefault(ctx, game.ID, plan.To); err != nil {
+		return result, fmt.Errorf("setting default profile: %w", err)
+	}
+	others := slices.DeleteFunc(slices.Clone(flags.names), func(n string) bool { return n == plan.To })
+	msg := flagOnlyResultNotice(game.ID, plan.To, others)
+	result.Warnings = append(result.Warnings, msg)
+	emit(WarningEvent{Scope: Scope{Op: OpSwitch}, Phase: SwitchFlagOnly, Message: msg})
+	return result, nil
+}
+
+// checkSwitchMarkWritable is checkActiveMarkWritable for the profile files
+// as they are now.
+func (s *Service) checkSwitchMarkWritable(gameID, target string) error {
+	flags, err := readProfileFlags(s.configDir, gameID)
+	if err != nil {
+		return fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+	}
+	return s.checkActiveMarkWritable(gameID, target, flags)
+}
+
+// checkActiveMarkWritable refuses a switch to target, before it changes
+// anything, when SetDefault could not then record target as the active
+// profile (#445 review F5): target's file must take `is_default: true`, and
+// every other marked profile's file must lose it. A switch that deployed
+// target and then failed that write would leave target's files live with
+// another profile still marked active - the state every guard then reads
+// wrong.
+func (s *Service) checkActiveMarkWritable(gameID, target string, flags profileFlags) error {
+	names := []string{target}
+	for _, name := range flags.flagged {
+		if name != target {
+			names = append(names, name)
+		}
+	}
+	for _, name := range names {
+		profile, err := config.LoadProfile(s.configDir, gameID, name)
+		if err != nil {
+			return err
+		}
+		profile.IsDefault = name == target
+		if err := config.CheckProfileSave(s.configDir, profile); err != nil {
+			return fmt.Errorf("cannot switch %s to %s, so nothing was changed: lmm could not record which profile is active afterwards - %w", gameID, target, err)
+		}
+	}
+	return nil
 }

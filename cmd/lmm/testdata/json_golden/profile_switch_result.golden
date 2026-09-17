@@ -1,5 +1,14 @@
 {
   "disabled": 1,
   "enabled": 0,
-  "installed": 0
+  "installed": 0,
+  "outcomes": [
+    {
+      "source_id": "src",
+      "mod_id": "a",
+      "name": "Mod A",
+      "version": "1.0",
+      "outcome": "disabled"
+    }
+  ]
 }

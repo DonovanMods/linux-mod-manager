@@ -40,6 +40,12 @@ type UninstallPlan struct {
 	// cache entry is deleted too, so a later reinstall re-downloads.
 	KeepCache bool `json:"keep_cache"`
 
+	// CacheUsedBy names the installed rows, other than this one, that still
+	// use the mod's cache entry at its version (#445 gate 2, G2-2): the
+	// entry is kept for them even though KeepCache is false. Empty when the
+	// entry goes (or KeepCache keeps it anyway).
+	CacheUsedBy []string `json:"cache_used_by,omitempty"`
+
 	// External reports that this uninstall removes lmm's TRACKING and
 	// nothing else (#269): no files are touched, there is no cache entry to
 	// delete, and KeepCache is a no-op. A frontend's confirmation must say
@@ -126,6 +132,13 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 			plan.Files = append(plan.Files, f)
 		}
 	}
+	if !opts.KeepCache && !mod.External {
+		usedBy, err := s.cacheEntryUsers(ctx, game, profileName, mod.SourceID, mod.ID, mod.Version)
+		if err != nil {
+			return nil, err
+		}
+		plan.CacheUsedBy = usedBy
+	}
 	return plan, nil
 }
 
@@ -195,11 +208,17 @@ type UninstallOptions struct {
 type UninstallResult struct {
 	Warnings []string `json:"warnings,omitempty"` // unconditional, stderr, audience: operator/always-visible
 	Notes    []string `json:"notes,omitempty"`    // --verbose-gated, stdout, audience: diagnostic detail
+
+	// CacheUsedBy names the installed rows that still use the mod's cache
+	// entry at its version, which the uninstall therefore kept (#445 gate 2,
+	// G2-2) - see UninstallPlan.CacheUsedBy.
+	CacheUsedBy []string `json:"cache_used_by,omitempty"`
 }
 
 // UninstallMod removes a mod from the profile: runs uninstall hooks,
-// undeploys files, deletes the cache entry (unless KeepCache), removes the
-// DB row, and removes the mod from the profile YAML.
+// undeploys files, deletes the cache entry (unless KeepCache, or another
+// row still uses it - UninstallResult.CacheUsedBy), removes the DB row, and
+// removes the mod from the profile YAML.
 //
 // Hook failure semantics (matching the pre-extraction CLI's doUninstall):
 //   - uninstall.before_all / uninstall.before_each: a failure aborts the
@@ -288,9 +307,12 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 		}
 
 		if !opts.KeepCache {
-			if err := s.GetGameCache(game).Delete(game.ID, mod.SourceID, modID, mod.Version); err != nil {
+			// #445 gate 2, G2-2: not while another row still uses it.
+			usedBy, err := s.removeCacheEntry(ctx, game, profileName, mod.SourceID, modID, mod.Version)
+			if err != nil {
 				result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to clean cache: %v", err))
 			}
+			result.CacheUsedBy = usedBy
 		}
 	} else {
 		result.Notes = append(result.Notes, "Note: "+UninstallExternalNote)

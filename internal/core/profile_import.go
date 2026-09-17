@@ -865,6 +865,33 @@ func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profil
 	// Read the source row's checksums BEFORE the save below: saveInstalledMod
 	// rewrites installed_mod_files, and recordFileChecksums must run after
 	// it - the same ordering rule every downloading flow follows.
+	checksums, msgs := s.rowChecksums(ctx, game, row)
+
+	installedMod := &domain.InstalledMod{
+		Mod:          mod,
+		ProfileName:  profileName,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      row.FileIDs,
+		Deployed:     true, // installer.Install just succeeded, or Steam has it
+		External:     row.External,
+		ExternalPath: row.ExternalPath,
+	}
+	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
+		return domain.ModReference{}, nil, fmt.Errorf("save failed: %v", err)
+	}
+
+	msgs = append(msgs, s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profileName, checksums)...)
+
+	return domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: row.FileIDs}, msgs, nil
+}
+
+// rowChecksums reads the stored checksum of each of row's files, for a copy
+// of row under another profile (#371) - read before that copy is saved,
+// because saveInstalledMod rewrites installed_mod_files and
+// recordFileChecksums must run after it. A read that fails is a
+// "Warning: ..." message, not an error.
+func (s *Service) rowChecksums(ctx context.Context, game *domain.Game, row domain.InstalledMod) ([]fileChecksum, []string) {
 	var checksums []fileChecksum
 	var msgs []string
 	for _, fileID := range row.FileIDs {
@@ -891,24 +918,7 @@ func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profil
 		}
 		checksums = append(checksums, fileChecksum{fileID: fileID, checksum: checksum})
 	}
-
-	installedMod := &domain.InstalledMod{
-		Mod:          mod,
-		ProfileName:  profileName,
-		UpdatePolicy: domain.UpdateNotify,
-		Enabled:      true,
-		FileIDs:      row.FileIDs,
-		Deployed:     true, // installer.Install just succeeded, or Steam has it
-		External:     row.External,
-		ExternalPath: row.ExternalPath,
-	}
-	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
-		return domain.ModReference{}, nil, fmt.Errorf("save failed: %v", err)
-	}
-
-	msgs = append(msgs, s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profileName, checksums)...)
-
-	return domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: row.FileIDs}, msgs, nil
+	return checksums, msgs
 }
 
 // recordImportedRef writes the profile ref completing an installed row the

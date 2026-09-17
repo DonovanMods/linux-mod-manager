@@ -140,9 +140,21 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 
 	if uninstallKeep {
 		fmt.Println("  Cache files preserved")
+	} else if len(result.CacheUsedBy) > 0 {
+		fmt.Printf("  Cache files kept: %s\n", usedByText(result.CacheUsedBy, "them"))
 	}
 
 	return nil
+}
+
+// usedByText says which installed rows still use a cache entry an
+// uninstall keeps for them (core.UninstallResult.CacheUsedBy).
+func usedByText(usedBy []string, object string) string {
+	verb := "uses"
+	if len(usedBy) > 1 {
+		verb = "use"
+	}
+	return fmt.Sprintf("%s still %s %s", strings.Join(usedBy, ", "), verb, object)
 }
 
 // renderUninstallPlan prints a core.UninstallPlan under a "(dry run)"
@@ -192,9 +204,13 @@ func renderUninstallPlan(plan *core.UninstallPlan, profileName string) {
 				fmt.Printf("    - %s\n", f)
 			}
 		}
-		if plan.KeepCache {
+		switch {
+		case plan.KeepCache:
 			fmt.Println("  Cache files preserved")
-		} else {
+		case len(plan.CacheUsedBy) > 0:
+			// #445 gate 2, G2-2: another row still uses the entry.
+			fmt.Printf("  Cache entry kept: %s\n", usedByText(plan.CacheUsedBy, "it"))
+		default:
 			fmt.Println("  Cache entry would be deleted")
 		}
 	}

@@ -127,6 +127,27 @@ func TestDoProfileList_PlainTable(t *testing.T) {
 	assert.Equal(t, "NAME      MODS  DEFAULT\n----      ----  -------\ndefault   1     *\nsurvival  0     \n", out)
 }
 
+// TestDoProfileList_WarnsWithoutExactlyOneActiveProfile is #446: a game
+// whose profile files mark none of them active (or several) is reported on
+// stderr, and the table itself is unchanged.
+func TestDoProfileList_WarnsWithoutExactlyOneActiveProfile(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+	path := filepath.Join(configDir, "games", game.ID, "profiles", "survival.yaml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, append(data, []byte("is_default: true\n")...), 0o644))
+
+	stdout, stderr, err := captureStdoutAndStderr(t, func() error {
+		return doProfileList(context.Background(), svc, game)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "NAME      MODS  DEFAULT\n----      ----  -------\ndefault   0     *\nsurvival  0     *\n", stdout)
+	assert.Equal(t, "Warning: profiles default, survival of g1 are all marked active (is_default: true), so lmm will not deploy or purge its files until one is - run `lmm profile switch <name>` to keep one\n", stderr)
+}
+
 // TestDoProfileList_JSON pins the ProfileListing document's framing (one
 // document, empty stderr) and its recorded golden.
 func TestDoProfileList_JSON(t *testing.T) {
@@ -504,6 +525,14 @@ func TestDoProfileSwitch_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *te
 // (which records the version actually installed) hits the lock gate (#143).
 func switchLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
 	t.Helper()
+	svc, game, _ := switchLockRefusalFixtureWithSource(t)
+	return svc, game
+}
+
+// switchLockRefusalFixtureWithSource is switchLockRefusalFixture, also
+// returning the source the target's mod is installed from.
+func switchLockRefusalFixtureWithSource(t *testing.T) (*core.Service, *domain.Game, *fakeInstallSource) {
+	t.Helper()
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
 	_, err := pm.Create(context.Background(), game.ID, "target")
@@ -525,7 +554,7 @@ func switchLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
 	}))
 
 	withProfileSwitchYes(t)
-	return svc, game
+	return svc, game, src
 }
 
 // switchLockRefusalDetail is the exact SwitchResult.Warnings entry #294
@@ -616,16 +645,14 @@ func TestDoProfileSwitch_LockedRef_UpsertRefusal_JSON(t *testing.T) {
 // followed by a fatal SetDefault error was silently dropped on stderr - the
 // exact failure mode #294 exists to close, just narrowed to the error path.
 func TestDoProfileSwitch_LockedRefWarningSurvivesFatalSetDefaultError(t *testing.T) {
-	svc, game := switchLockRefusalFixture(t)
+	svc, game, src := switchLockRefusalFixtureWithSource(t)
 
 	// Force SetDefault's "clearing default on default" step to fail: it
 	// loads "target" (untouched, so the install loop's lock refusal above is
 	// unaffected) then tries to save the OLD default profile ("default") to
 	// clear its flag - making default.yaml unwritable fails SetDefault
 	// deterministically without touching the install loop at all.
-	defaultPath := filepath.Join(configDir, "games", game.ID, "profiles", "default.yaml")
-	require.NoError(t, os.Chmod(defaultPath, 0o444))
-	t.Cleanup(func() { _ = os.Chmod(defaultPath, 0o644) })
+	chmodDefaultProfileReadOnly(t, game, src)
 
 	var out, stderr string
 	var err error
@@ -646,10 +673,18 @@ func TestDoProfileSwitch_LockedRefWarningSurvivesFatalSetDefaultError(t *testing
 // fail deterministically: SetDefault loads "target" (untouched, so an
 // install-loop lock refusal is unaffected) then saves the OLD default
 // profile to clear its flag, which an unwritable default.yaml refuses.
-func chmodDefaultProfileReadOnly(t *testing.T, game *domain.Game) {
+//
+// The file is made unwritable DURING the switch, as src hands out the
+// install's download: a switch refuses one that already is before it
+// changes anything (#445 review F5), so a late SetDefault failure is a file
+// that changed underneath it.
+func chmodDefaultProfileReadOnly(t *testing.T, game *domain.Game, src *fakeInstallSource) {
 	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root writes a read-only file anyway")
+	}
 	defaultPath := filepath.Join(configDir, "games", game.ID, "profiles", "default.yaml")
-	require.NoError(t, os.Chmod(defaultPath, 0o444))
+	src.beforeDownload = func() { require.NoError(t, os.Chmod(defaultPath, 0o444)) }
 	t.Cleanup(func() { _ = os.Chmod(defaultPath, 0o644) })
 }
 
@@ -663,8 +698,8 @@ func chmodDefaultProfileReadOnly(t *testing.T, game *domain.Game) {
 // as {"warnings": [...]}, the core.ConflictError/core.GameDetectPartialError
 // convention.
 func TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings(t *testing.T) {
-	svc, game := switchLockRefusalFixture(t)
-	chmodDefaultProfileReadOnly(t, game)
+	svc, game, src := switchLockRefusalFixtureWithSource(t)
+	chmodDefaultProfileReadOnly(t, game, src)
 	withJSONOutput(t)
 
 	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
@@ -699,11 +734,11 @@ func TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings(t *testi
 // new key - so the M3 wrapper is invisible to every run that has nothing to
 // report.
 func TestDoProfileSwitch_JSON_FatalWithoutWarnings_EnvelopeUnchanged(t *testing.T) {
-	svc, game := setupDoProfileSwitchTest(t)
-	_, err := getProfileManager(svc).Create(context.Background(), game.ID, "target")
-	require.NoError(t, err)
-	withProfileSwitchYes(t)
-	chmodDefaultProfileReadOnly(t, game)
+	svc, game, src := switchLockRefusalFixtureWithSource(t)
+	// The same install, unlocked: it records its ref, so nothing is
+	// accumulated before SetDefault fails.
+	require.NoError(t, getProfileManager(svc).ClearModLock(context.Background(), game.ID, "target", "test-src", "mod1"))
+	chmodDefaultProfileReadOnly(t, game, src)
 	withJSONOutput(t)
 
 	stdout, stderr, callErr := captureStdoutStderrErr(t, func() error {
@@ -788,7 +823,7 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 	profileApplyYes = true
 	t.Cleanup(func() { profileApplyYes = origYes })
 
-	out := captureStdout(t, func() error {
+	out := captureIncompleteApply(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
 
@@ -909,7 +944,7 @@ func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing
 	profileApplyYes = true
 	t.Cleanup(func() { profileApplyYes = origYes })
 
-	out := captureStdout(t, func() error {
+	out := captureIncompleteApply(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
 
@@ -1285,6 +1320,8 @@ func TestDoProfileApply_ExternalEntry_IsNotRenderedAsADownload(t *testing.T) {
 	}))
 	require.NoError(t, pm.AddMod(ctx, game.ID, "shared",
 		domain.ModReference{SourceID: "steamworkshop", ModID: "111000111", Version: "9876543210"}))
+	// An apply acts for the active profile only (#462).
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "shared"))
 
 	oldDryRun := profileApplyDryRun
 	profileApplyDryRun = true

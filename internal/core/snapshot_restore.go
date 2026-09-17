@@ -928,7 +928,7 @@ func (s *Service) writeSnapshotProfile(gameID string, doc *Snapshot) error {
 	if current, err := config.LoadProfile(s.configDir, gameID, doc.Profile); err == nil {
 		restored.IsDefault = current.IsDefault
 	}
-	if err := config.SaveProfile(s.configDir, restored); err != nil {
+	if err := s.NewProfileManager().save(restored); err != nil {
 		return fmt.Errorf("restoring the profile %s: %w", doc.Profile, err)
 	}
 	return nil
@@ -969,6 +969,17 @@ func (s *Service) restoreRecordedSettings(ctx context.Context, game *domain.Game
 // restoreRecordedEnablement puts back each mod's recorded enabled flag,
 // between the convergence and the deploy.
 //
+// The restored document decides first (#444): a mod it marks `disabled:`
+// was already taken down by the convergence, and one it lists unmarked is
+// on - so a recorded disabled flag is put back only where it was the user's
+// choice. That is under the profile that was ACTIVE when the snapshot was
+// taken, for a row that was neither enabled nor deployed: every profile
+// switch writes enabled = 0 onto the profile it leaves (and, before the
+// upgrade, left deployed set), so on any other profile the flag is what a
+// switch wrote. The same line #431's backfill draws. A snapshot that does
+// not say which profile was active cannot tell the two apart; its unmarked
+// mods stay on, and a note names each one.
+//
 // A DISABLE goes through disableMod rather than the bare setModEnabled
 // setter, so the flag and the deployment stay in step (#183): at this point
 // in the restore nothing is deployed, so it is the cheap path through the
@@ -980,15 +991,26 @@ func (s *Service) restoreRecordedSettings(ctx context.Context, game *domain.Game
 // written is a note, not a reason to report a restore that put every file
 // back as a failure.
 func (s *Service) restoreRecordedEnablement(ctx context.Context, game *domain.Game, doc *Snapshot, result *SnapshotRestoreResult, note func(string)) {
+	docOff := disabledKeysOf(config.ProfileFromExported(doc.ProfileDocument))
+	flagIsIntent := doc.ActiveProfile != "" && doc.ActiveProfile == doc.Profile
 	for _, recorded := range doc.Installed {
 		if err := ctx.Err(); err != nil {
 			return
+		}
+		if docOff[domain.ModKey(recorded.SourceID, recorded.ID)] {
+			continue
 		}
 		current, err := s.db.GetInstalledMod(ctx, recorded.SourceID, recorded.ID, game.ID, doc.Profile)
 		if err != nil || current == nil {
 			continue
 		}
 		if current.Enabled == recorded.Enabled {
+			continue
+		}
+		if !recorded.Enabled && (!flagIsIntent || recorded.Deployed) {
+			if doc.ActiveProfile == "" {
+				note(fmt.Sprintf("%s was recorded as disabled, but the snapshot does not say whether %s was the active profile then, so that may only be what a profile switch left - it is enabled, as the profile lists it; `lmm mod disable -p %s %s` switches it off", recorded.Name, doc.Profile, doc.Profile, recorded.ID))
+			}
 			continue
 		}
 		if recorded.Enabled {
