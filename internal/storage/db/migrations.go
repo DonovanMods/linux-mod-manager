@@ -383,11 +383,14 @@ func migrateV17(ctx context.Context, d migrationExec) error {
 // migrateV18 gives deployed_files what a removal needs to tell lmm's file
 // from the user's, and where the file is.
 //
-// checksum (hex SHA-256), size and mtime (Unix nanoseconds) fingerprint the
-// content a copy or hardlink deployment wrote (#466): under those methods
-// the deployed path is a regular file, so without them a file the user
-// replaced looks exactly like lmm's own and a purge deleted it. A symlink
-// deployment leaves them NULL - its link target is its identity.
+// checksum (hex SHA-256), size, mtime and ctime (both Unix nanoseconds)
+// fingerprint the content a copy or hardlink deployment wrote (#466): under
+// those methods the deployed path is a regular file, so without them a file
+// the user replaced looks exactly like lmm's own and a purge deleted it. A
+// symlink deployment leaves them NULL - its link target is its identity.
+// Size, mtime and ctime together are the cheap pre-check before hashing;
+// ctime is there because a user can copy a size and an mtime across, but
+// cannot set a ctime.
 //
 // mod_path is the absolute mod_path the row's relative_path was deployed
 // under (#451), so a mod_path changed behind lmm's back (a games.yaml hand
@@ -405,6 +408,7 @@ func migrateV18(ctx context.Context, d migrationExec) error {
 		{"checksum", "TEXT"},
 		{"size", "INTEGER"},
 		{"mtime", "INTEGER"},
+		{"ctime", "INTEGER"},
 		{"mod_path", "TEXT"},
 	} {
 		var n int

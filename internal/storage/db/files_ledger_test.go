@@ -22,7 +22,7 @@ func TestNew_V18AddsTheLedgerColumnsToAV17Database(t *testing.T) {
 	// and its record of v18 gone.
 	seed, err := db.New(path)
 	require.NoError(t, err)
-	for _, col := range []string{"checksum", "size", "mtime", "mod_path"} {
+	for _, col := range []string{"checksum", "size", "mtime", "ctime", "mod_path"} {
 		_, err = seed.Exec("ALTER TABLE deployed_files DROP COLUMN " + col)
 		require.NoError(t, err)
 	}
@@ -51,12 +51,12 @@ func TestNew_V18AddsTheLedgerColumnsToAV17Database(t *testing.T) {
 	require.NoError(t, upgraded.RecordDeployedFile(ctx, db.DeployedFileRecord{
 		GameID: "g", Profile: "default", RelativePath: "a.pak", SourceID: "src", ModID: "m",
 		ModPath:     "/games/g/mods",
-		Fingerprint: &db.FileFingerprint{Checksum: "abc", Size: 3, MTime: 42},
+		Fingerprint: &db.FileFingerprint{Checksum: "abc", Size: 3, MTime: 42, CTime: 43},
 	}))
 	states, err = upgraded.DeployedFileStates(ctx, "g", "a.pak")
 	require.NoError(t, err)
 	require.Len(t, states, 1)
-	assert.Equal(t, &db.FileFingerprint{Checksum: "abc", Size: 3, MTime: 42}, states[0].Fingerprint)
+	assert.Equal(t, &db.FileFingerprint{Checksum: "abc", Size: 3, MTime: 42, CTime: 43}, states[0].Fingerprint)
 	assert.Equal(t, "/games/g/mods", states[0].ModPath)
 }
 
@@ -176,4 +176,34 @@ func TestDeployedFileRoots_CountsPerProfileAndRecordedModPath(t *testing.T) {
 	require.Len(t, files, 3)
 	assert.Equal(t, "/old", files[0].ModPath)
 	assert.Empty(t, files[2].ModPath)
+}
+
+// TestDeleteDeployedFilesExcept_KeepsRowsUnderTheNamedRoots (#451).
+func TestDeleteDeployedFilesExcept_KeepsRowsUnderTheNamedRoots(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	ctx := t.Context()
+
+	for _, rec := range []db.DeployedFileRecord{
+		{GameID: "g", Profile: "p", RelativePath: "legacy", SourceID: "s", ModID: "m"},
+		{GameID: "g", Profile: "p", RelativePath: "here", SourceID: "s", ModID: "m", ModPath: "/new"},
+		{GameID: "g", Profile: "p", RelativePath: "there", SourceID: "s", ModID: "m", ModPath: "/old"},
+		{GameID: "g", Profile: "p", RelativePath: "other", SourceID: "s", ModID: "n", ModPath: "/new"},
+	} {
+		require.NoError(t, database.RecordDeployedFile(ctx, rec))
+	}
+	require.NoError(t, database.DeleteDeployedFilesExcept(ctx, "g", "p", "s", "m", []string{"/old"}))
+	files, err := database.ListDeployedFiles(ctx, "g", "p")
+	require.NoError(t, err)
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, f.RelativePath)
+	}
+	assert.Equal(t, []string{"other", "there"}, paths)
+
+	require.NoError(t, database.DeleteDeployedFilesExcept(ctx, "g", "p", "s", "m", nil))
+	files, err = database.ListDeployedFiles(ctx, "g", "p")
+	require.NoError(t, err)
+	assert.Len(t, files, 1)
 }

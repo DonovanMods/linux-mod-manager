@@ -34,12 +34,13 @@ func (d *DB) SaveDeployedFile(ctx context.Context, gameID, profileName, relative
 
 // FileFingerprint identifies the content a copy or hardlink deployment
 // wrote at a path (#466): its hex SHA-256, its length, and its modification
-// time in Unix nanoseconds. Size and MTime are the cheap pre-check; Checksum
-// is the proof.
+// and inode-change times in Unix nanoseconds. Size, MTime and CTime are the
+// cheap pre-check; Checksum is the proof.
 type FileFingerprint struct {
 	Checksum string
 	Size     int64
 	MTime    int64
+	CTime    int64
 }
 
 // DeployedFileRecord is one deployed_files row as a deploy writes it.
@@ -63,27 +64,29 @@ type DeployedFileRecord struct {
 // old row described is no longer what the new one does.
 func (d *DB) RecordDeployedFile(ctx context.Context, rec DeployedFileRecord) error {
 	var checksum, modPath sql.NullString
-	var size, mtime sql.NullInt64
+	var size, mtime, ctime sql.NullInt64
 	if fp := rec.Fingerprint; fp != nil && fp.Checksum != "" {
 		checksum = sql.NullString{String: fp.Checksum, Valid: true}
 		size = sql.NullInt64{Int64: fp.Size, Valid: true}
 		mtime = sql.NullInt64{Int64: fp.MTime, Valid: true}
+		ctime = sql.NullInt64{Int64: fp.CTime, Valid: true}
 	}
 	if rec.ModPath != "" {
 		modPath = sql.NullString{String: rec.ModPath, Valid: true}
 	}
 	_, err := d.ExecContext(ctx, `
-		INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id, checksum, size, mtime, mod_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id, checksum, size, mtime, ctime, mod_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(game_id, profile_name, relative_path) DO UPDATE SET
 			source_id = excluded.source_id,
 			mod_id = excluded.mod_id,
 			checksum = excluded.checksum,
 			size = excluded.size,
 			mtime = excluded.mtime,
+			ctime = excluded.ctime,
 			mod_path = excluded.mod_path,
 			deployed_at = CURRENT_TIMESTAMP
-	`, rec.GameID, rec.Profile, rec.RelativePath, rec.SourceID, rec.ModID, checksum, size, mtime, modPath)
+	`, rec.GameID, rec.Profile, rec.RelativePath, rec.SourceID, rec.ModID, checksum, size, mtime, ctime, modPath)
 	if err != nil {
 		return fmt.Errorf("saving deployed file: %w", err)
 	}
@@ -108,7 +111,7 @@ type DeployedFileState struct {
 // against (#466).
 func (d *DB) DeployedFileStates(ctx context.Context, gameID, relativePath string) (states []DeployedFileState, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT profile_name, source_id, mod_id, mod_path, checksum, size, mtime, deployed_at FROM deployed_files
+		SELECT profile_name, source_id, mod_id, mod_path, checksum, size, mtime, ctime, deployed_at FROM deployed_files
 		WHERE game_id = ? AND relative_path = ?
 		ORDER BY profile_name
 	`, gameID, relativePath)
@@ -123,13 +126,13 @@ func (d *DB) DeployedFileStates(ctx context.Context, gameID, relativePath string
 	for rows.Next() {
 		var st DeployedFileState
 		var modPath, checksum sql.NullString
-		var size, mtime sql.NullInt64
-		if err := rows.Scan(&st.Profile, &st.SourceID, &st.ModID, &modPath, &checksum, &size, &mtime, &st.DeployedAt); err != nil {
+		var size, mtime, ctime sql.NullInt64
+		if err := rows.Scan(&st.Profile, &st.SourceID, &st.ModID, &modPath, &checksum, &size, &mtime, &ctime, &st.DeployedAt); err != nil {
 			return nil, fmt.Errorf("scanning deployed file state: %w", err)
 		}
 		st.ModPath = modPath.String
 		if checksum.Valid && checksum.String != "" {
-			st.Fingerprint = &FileFingerprint{Checksum: checksum.String, Size: size.Int64, MTime: mtime.Int64}
+			st.Fingerprint = &FileFingerprint{Checksum: checksum.String, Size: size.Int64, MTime: mtime.Int64, CTime: ctime.Int64}
 		}
 		states = append(states, st)
 	}
@@ -251,6 +254,9 @@ type PathRecord struct {
 	Profile  string
 	SourceID string
 	ModID    string
+	// ModPath is the mod_path the record was deployed under (#451), or ""
+	// when it recorded none.
+	ModPath string
 }
 
 // DeployedPathRecords returns, for every path any profile of gameID has a
@@ -261,7 +267,7 @@ type PathRecord struct {
 // names.
 func (d *DB) DeployedPathRecords(ctx context.Context, gameID string) (records map[string][]PathRecord, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT relative_path, profile_name, source_id, mod_id FROM deployed_files
+		SELECT relative_path, profile_name, source_id, mod_id, COALESCE(mod_path, '') FROM deployed_files
 		WHERE game_id = ?
 		ORDER BY relative_path, profile_name
 	`, gameID)
@@ -278,7 +284,7 @@ func (d *DB) DeployedPathRecords(ctx context.Context, gameID string) (records ma
 	for rows.Next() {
 		var path string
 		var r PathRecord
-		if err := rows.Scan(&path, &r.Profile, &r.SourceID, &r.ModID); err != nil {
+		if err := rows.Scan(&path, &r.Profile, &r.SourceID, &r.ModID, &r.ModPath); err != nil {
 			return nil, fmt.Errorf("scanning deployed file: %w", err)
 		}
 		records[path] = append(records[path], r)
@@ -324,6 +330,31 @@ func (d *DB) DeleteDeployedFiles(ctx context.Context, gameID, profileName, sourc
 		DELETE FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
 	`, gameID, profileName, sourceID, modID)
+	if err != nil {
+		return fmt.Errorf("deleting deployed files: %w", err)
+	}
+	return nil
+}
+
+// DeleteDeployedFilesExcept is DeleteDeployedFiles keeping every row
+// recorded under one of the mod_paths in keepRoots (#451): an uninstall
+// under a game's current mod_path does not know what is under another one,
+// so it leaves those rows for the purge that does.
+func (d *DB) DeleteDeployedFilesExcept(ctx context.Context, gameID, profileName, sourceID, modID string, keepRoots []string) error {
+	if len(keepRoots) == 0 {
+		return d.DeleteDeployedFiles(ctx, gameID, profileName, sourceID, modID)
+	}
+	args := []any{gameID, profileName, sourceID, modID}
+	placeholders := make([]string, len(keepRoots))
+	for i, root := range keepRoots {
+		placeholders[i] = "?"
+		args = append(args, root)
+	}
+	_, err := d.ExecContext(ctx, fmt.Sprintf(`
+		DELETE FROM deployed_files
+		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
+		AND COALESCE(mod_path, '') NOT IN (%s)
+	`, strings.Join(placeholders, ",")), args...)
 	if err != nil {
 		return fmt.Errorf("deleting deployed files: %w", err)
 	}
