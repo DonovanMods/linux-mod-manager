@@ -225,6 +225,35 @@ type profileWarningsDetails struct {
 	Warnings []string `json:"warnings"`
 }
 
+// ProfileApplyIncompleteError is ApplyProfileApply's error when the apply
+// ran to the end but could not install or deploy every mod (#470): Result
+// is the whole outcome - what was applied, and each failure with its reason
+// - and Error names each failed mod, so no frontend reports the apply as
+// done. Follows the GameDetectPartialError convention: Details() any is the
+// unnamed interface a frontend's envelope writer picks up automatically.
+type ProfileApplyIncompleteError struct {
+	Profile string
+	Result  *ProfileApplyResult
+}
+
+// Error names the profile and every failed mod with its reason.
+func (e *ProfileApplyIncompleteError) Error() string {
+	failures := make([]string, len(e.Result.Failed))
+	for i, f := range e.Result.Failed {
+		name := f.SourceID + ":" + f.ModID
+		if f.Name != "" {
+			name = fmt.Sprintf("%s (%s)", f.Name, name)
+		}
+		failures[i] = name + ": " + f.Reason
+	}
+	return fmt.Sprintf("profile %q was not fully applied - %d mod(s) failed: %s",
+		e.Profile, len(e.Result.Failed), strings.Join(failures, "; "))
+}
+
+// Details returns the whole ProfileApplyResult for a frontend's error
+// envelope's "details" field.
+func (e *ProfileApplyIncompleteError) Details() any { return e.Result }
+
 // GameDetectPartialError reports a `game detect` run that failed partway
 // through ApplyGameDetect: Result still names exactly the games that were
 // fully persisted (games.yaml write + default profile) before Err stopped

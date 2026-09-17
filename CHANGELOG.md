@@ -1753,6 +1753,20 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   `lmm profile import` no longer suggests applying a profile that is not
   active to install the mods it skipped; it names `lmm profile switch`.
 
+- **`lmm profile apply` no longer says "Applied" when a mod inside it
+  failed (#470).** A mod the source could not resolve, or could not
+  download, was reported on its own line and the run still ended with
+  `✓ Applied profile` and exit status 0; a mod whose deploy failed as it
+  was switched on was only a `--verbose` note. The apply still carries on
+  with the rest, but a run with any failure now ends with `✗ Profile
+<name> was not fully applied: N mod(s) failed.`, an error naming each
+  failed mod and why, and a non-zero exit status. Under `--json` the error
+  envelope's `details` is the whole result, and the result gains
+  `outcomes`: what the apply did with each mod — `disabled`, `enabled`,
+  `installed`, `replaced` or `failed`, with the version, the reason for a
+  failure, and `from_profile` for a mod deployed from another profile's
+  cache. The web UI's Apply job fails with the same message.
+
 - **`lmm profile apply` records the mods it switches on as deployed
   (#467).** Their rows kept saying "not deployed" while the files were
   live, so a later `lmm profile switch` that moved one of those mods to

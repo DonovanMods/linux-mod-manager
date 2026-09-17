@@ -470,7 +470,7 @@ func TestApplyProfileApply_EntryError_ReportsAndContinues(t *testing.T) {
 
 	sink, events := core.RecordEvents()
 	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, sink)
-	require.NoError(t, err)
+	require.ErrorAs(t, err, new(*core.ProfileApplyIncompleteError), "#470: a failed mod makes the apply incomplete")
 	assert.Equal(t, 1, result.Installed, "the healthy mod must still install")
 	require.Len(t, result.Failed, 1)
 	assert.Equal(t, "ghost", result.Failed[0].ModID)
@@ -511,8 +511,11 @@ func TestApplyProfileApply_EnableLoop_InstallFailure_NotesAndSkipsEnable(t *test
 
 	sink, events := core.RecordEvents()
 	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, sink)
-	require.NoError(t, err)
+	require.ErrorAs(t, err, new(*core.ProfileApplyIncompleteError), "#470: a failed mod makes the apply incomplete")
 	assert.Equal(t, 0, result.Enabled, "a failed deploy must not count as an enable")
+	require.Len(t, result.Failed, 1, "#470: and it is reported as a failure")
+	assert.Equal(t, "off", result.Failed[0].ModID)
+	assert.Contains(t, result.Failed[0].Reason, "deploy failed: ")
 	require.Len(t, result.Notes, 1)
 	assert.Contains(t, result.Notes[0], "Warning: failed to deploy Test Mod: ")
 
@@ -555,7 +558,7 @@ func TestApplyProfileApply_InstallLoop_DownloadFailure_DownloadDoneFollowsFailur
 
 	sink, events := core.RecordEvents()
 	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, sink)
-	require.NoError(t, err)
+	require.ErrorAs(t, err, new(*core.ProfileApplyIncompleteError), "#470: a failed mod makes the apply incomplete")
 	assert.Equal(t, 1, result.Installed, "the healthy mod must still install")
 	require.Len(t, result.Failed, 1)
 	assert.Equal(t, "bad", result.Failed[0].ModID)

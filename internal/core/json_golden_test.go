@@ -712,11 +712,26 @@ func TestJSONGoldens(t *testing.T) {
 				Installed: 1,
 				Replaced:  1,
 				Failed:    []core.InstalledRef{{SourceID: "nexusmods", ModID: "8", Reason: "failed to fetch mod: rate limited"}},
-				Notes:     []string{"Warning: failed to undeploy Sample Mod: permission denied"},
+				// #470: what the apply did with each mod, in order.
+				Outcomes: []core.ProfileApplyOutcome{
+					{SourceID: "nexusmods", ModID: "7", Name: "Realistic Needs", Version: "1.0.0", Outcome: core.ProfileApplyDisabled},
+					{SourceID: "local", ModID: "a", Name: "Mod a", Version: "unknown", Outcome: core.ProfileApplyEnabled, FromProfile: "survival"},
+					{SourceID: "nexusmods", ModID: "8", Outcome: core.ProfileApplyFailed, Reason: "failed to fetch mod: rate limited"},
+				},
+				Notes: []string{"Warning: failed to undeploy Sample Mod: permission denied"},
 				Warnings: []string{
 					"could not update profile: mod is locked",
 					"could not sync merged pak: base pak missing",
 				},
+			},
+		},
+		{
+			// #470: one mod's outcome - a failure, with the version the
+			// apply meant to install and why it could not.
+			"profile_apply_outcome",
+			core.ProfileApplyOutcome{
+				SourceID: "local", ModID: "a", Version: "2.0",
+				Outcome: core.ProfileApplyFailed, Reason: "failed to fetch mod: source not found: local",
 			},
 		},
 		{

@@ -1477,6 +1477,20 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 
 	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, quietSink(progress))
+	// #470: an apply that ran to the end with a mod it could not install or
+	// deploy is not "Applied". The error names each failed mod and exits
+	// non-zero; under --json its envelope's details are the whole result,
+	// warnings and per-mod outcomes included.
+	var incomplete *core.ProfileApplyIncompleteError
+	if errors.As(err, &incomplete) {
+		if !jsonOutput {
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+			fmt.Printf("\n✗ Profile %s was not fully applied: %d mod(s) failed.\n", profileName, len(result.Failed))
+		}
+		return err
+	}
 	if err != nil {
 		// Task 13 review round 1, Important 1: the #294 warning above lives
 		// on result.Warnings, not a live progress event, so it was never

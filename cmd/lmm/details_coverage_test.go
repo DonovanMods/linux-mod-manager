@@ -52,7 +52,10 @@ var detailsCoverage = map[string]string{
 	"core.LoaderRequiredError": "TestReportError_JSON_LoaderRequiredError",
 	// #317's cross-process mutation refusal: the holder's pid/started_at
 	// reach the envelope as data, not only as the sentence.
-	"core.OperationInProgressError":    "TestReportError_JSON_OperationInProgressError",
+	"core.OperationInProgressError": "TestReportError_JSON_OperationInProgressError",
+	// #470: an apply that ran to the end with a failed mod - the whole
+	// result, per-mod outcomes included, reaches the envelope.
+	"core.ProfileApplyIncompleteError": "TestDoProfileApply_JSON_AFailedModIsTheEnvelope",
 	"core.ProfileWarningsError":        "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
 	"core.SnapshotRestorePartialError": "TestReportError_JSON_SnapshotRestorePartialError",
 	"core.SourceInUseError":            "TestReportError_JSON_SourceInUseError",

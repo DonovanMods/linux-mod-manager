@@ -161,6 +161,25 @@ func profileApplyFailure(entry *ProfileApplyInstall, reason string) InstalledRef
 	return ref
 }
 
+// recordFailure records a mod the apply could not install or deploy, on
+// both Failed and Outcomes. version is the version it meant to deploy.
+func (r *ProfileApplyResult) recordFailure(failed InstalledRef, version string) {
+	r.Failed = append(r.Failed, failed)
+	r.Outcomes = append(r.Outcomes, ProfileApplyOutcome{
+		SourceID: failed.SourceID, ModID: failed.ModID, Name: failed.Name,
+		Version: version, Outcome: ProfileApplyFailed, Reason: failed.Reason,
+	})
+}
+
+// failedVersion is the version an install entry meant to install: the
+// resolved one, else the one its ref lists.
+func failedVersion(entry *ProfileApplyInstall) string {
+	if entry.Version != "" {
+		return entry.Version
+	}
+	return entry.Ref.Version
+}
+
 // ProfileApplyOptions is ApplyProfileApply's option set. It is deliberately
 // EMPTY today: `lmm profile apply` takes no flag the engine reads (--yes
 // gates the frontend's own prompt, never core), and unlike
@@ -191,20 +210,64 @@ type ProfileApplyOptions struct{}
 //     The install loop's entry is ALSO emitted as a SwitchInstallWarning
 //     event at its point of occurrence (the merged-pak ones are not), so a
 //     frontend rendering the stream live must not print this slice as well.
-//   - Failed holds one InstalledRef per mod the apply could not install,
-//     mirroring the events the loop emitted: the ref's identity plus the
-//     reason as data, rather than the pre-formatted
-//     "<source>:<mod>: <reason>" line it used to be (spec §4). Name is
-//     empty for an entry that failed to resolve at plan time - there is no
-//     mod to name yet.
+//   - Failed holds one InstalledRef per mod the apply could not install or
+//     deploy - an install entry, or an enable whose deploy failed (#470) -
+//     in the order it met them: the ref's identity plus the reason as data,
+//     rather than the pre-formatted "<source>:<mod>: <reason>" line it used
+//     to be (spec §4). Name is empty for an entry that failed to resolve at
+//     plan time - there is no mod to name yet. ApplyProfileApply returns a
+//     ProfileApplyIncompleteError whenever it is not empty.
+//   - Outcomes is what the apply did with each mod, in the order it did it
+//     (#470): the per-mod record behind the counters and Failed.
 type ProfileApplyResult struct {
-	Disabled  int            `json:"disabled"`
-	Enabled   int            `json:"enabled"`
-	Installed int            `json:"installed"`
-	Replaced  int            `json:"replaced"`
-	Failed    []InstalledRef `json:"failed,omitempty"`
-	Notes     []string       `json:"notes,omitempty"`
-	Warnings  []string       `json:"warnings,omitempty"`
+	Disabled  int                   `json:"disabled"`
+	Enabled   int                   `json:"enabled"`
+	Installed int                   `json:"installed"`
+	Replaced  int                   `json:"replaced"`
+	Failed    []InstalledRef        `json:"failed,omitempty"`
+	Outcomes  []ProfileApplyOutcome `json:"outcomes,omitempty"`
+	Notes     []string              `json:"notes,omitempty"`
+	Warnings  []string              `json:"warnings,omitempty"`
+}
+
+// ProfileApplyOutcome is what ApplyProfileApply did with one mod (#470).
+type ProfileApplyOutcome struct {
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	// Name is empty for an entry that failed to resolve at plan time.
+	Name string `json:"name,omitempty"`
+	// Version is the version the mod was disabled, enabled or installed
+	// at, or - for a failure - the version the apply meant to install.
+	Version string                  `json:"version,omitempty"`
+	Outcome ProfileApplyOutcomeKind `json:"outcome"`
+	// Reason is why a failed mod failed.
+	Reason string `json:"reason,omitempty"`
+	// FromProfile names the other profile whose cached copy an enabled mod
+	// was deployed from (cachedRowElsewhere).
+	FromProfile string `json:"from_profile,omitempty"`
+}
+
+// ProfileApplyOutcomeKind is a ProfileApplyOutcome's Outcome.
+type ProfileApplyOutcomeKind string
+
+const (
+	// ProfileApplyDisabled: the mod was undeployed and disabled.
+	ProfileApplyDisabled ProfileApplyOutcomeKind = "disabled"
+	// ProfileApplyEnabled: the mod was deployed from the cache and enabled.
+	ProfileApplyEnabled ProfileApplyOutcomeKind = "enabled"
+	// ProfileApplyInstalled: the mod was installed (or, for a tracked Steam
+	// Workshop item, recorded).
+	ProfileApplyInstalled ProfileApplyOutcomeKind = "installed"
+	// ProfileApplyReplaced: the mod was installed over its live deployment
+	// of another version.
+	ProfileApplyReplaced ProfileApplyOutcomeKind = "replaced"
+	// ProfileApplyFailed: the mod could not be installed or deployed.
+	ProfileApplyFailed ProfileApplyOutcomeKind = "failed"
+)
+
+// outcomeOf is the ProfileApplyOutcome for an installed row.
+func outcomeOf(im *domain.InstalledMod, outcome ProfileApplyOutcomeKind) ProfileApplyOutcome {
+	return ProfileApplyOutcome{SourceID: im.SourceID, ModID: im.ID, Name: im.Name, Version: im.Version, Outcome: outcome}
 }
 
 // PlanProfileApply computes what it would take to make the mods installed
@@ -580,6 +643,10 @@ func profileApplyFileIDs(files []*domain.DownloadableFile) []string {
 // doProfileApply runs no install/uninstall hooks at all (unlike
 // DeployProfile/ApplyInstall), so this doesn't either - see
 // ProfileApplyOptions.
+//
+// A mod it could not install or deploy does not stop it (#470): it carries
+// on with the rest, and then returns the result together with a
+// ProfileApplyIncompleteError, so no frontend reports the apply as done.
 func (s *Service) ApplyProfileApply(ctx context.Context, game *domain.Game, plan *ProfileApplyPlan, opts ProfileApplyOptions, sink EventSink) (*ProfileApplyResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -595,7 +662,11 @@ func (s *Service) ApplyProfileApply(ctx context.Context, game *domain.Game, plan
 	if err := s.refuseInactive(ctx, game.ID, plan.Profile, "apply"); err != nil {
 		return &ProfileApplyResult{}, err
 	}
-	return s.applyProfileApply(ctx, game, plan, opts, sink)
+	result, err := s.applyProfileApply(ctx, game, plan, opts, sink)
+	if err == nil && len(result.Failed) > 0 {
+		err = &ProfileApplyIncompleteError{Profile: plan.Profile, Result: result}
+	}
+	return result, err
 }
 
 func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan *ProfileApplyPlan, _ ProfileApplyOptions, sink EventSink) (*ProfileApplyResult, error) {
@@ -672,6 +743,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		}
 
 		result.Disabled++
+		result.Outcomes = append(result.Outcomes, outcomeOf(&im, ProfileApplyDisabled))
 		emit(ModEvent{Scope: scope, Phase: SwitchDisabled})
 	}
 
@@ -687,8 +759,10 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 
 		if err := installer.Install(ctx, game, &im.Mod, plan.Profile); err != nil {
 			// Unlike the disable loop's, a failed deploy is fatal FOR THIS
-			// MOD: it is skipped without its enabled flag being set.
+			// MOD: it is skipped without its enabled flag being set, and
+			// reported as a failure (#470).
 			note(scope, SwitchEnableNote, fmt.Sprintf("Warning: failed to deploy %s: %v", im.Name, err))
+			result.recordFailure(skippedRef(&im, fmt.Sprintf("deploy failed: %v", err)), im.Version)
 			continue
 		}
 		if im.ProfileName != plan.Profile {
@@ -710,6 +784,11 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		}
 
 		result.Enabled++
+		enabled := outcomeOf(&im, ProfileApplyEnabled)
+		if im.ProfileName != plan.Profile {
+			enabled.FromProfile = im.ProfileName
+		}
+		result.Outcomes = append(result.Outcomes, enabled)
 		emit(ModEvent{Scope: scope, Phase: SwitchEnabled})
 	}
 
@@ -727,7 +806,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			emit(ModEvent{Scope: scope, Phase: SwitchInstallingMod})
 
 			fail := func(reason string) {
-				result.Failed = append(result.Failed, profileApplyFailure(entry, reason))
+				result.recordFailure(profileApplyFailure(entry, reason), failedVersion(entry))
 				emit(ModEvent{Scope: scope, Phase: SwitchInstallError, Detail: reason})
 			}
 
@@ -761,6 +840,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 					continue
 				}
 				result.Installed++
+				result.Outcomes = append(result.Outcomes, outcomeOf(external, ProfileApplyInstalled))
 				emit(ModEvent{Scope: scope, Phase: SwitchInstalled})
 				continue
 			}
@@ -787,8 +867,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 						// Cannot use fail(): SwitchDownloadFailed above already
 						// renders this mod's Error line; fail() would emit a
 						// second SwitchInstallError and print a duplicate one.
-						result.Failed = append(result.Failed,
-							profileApplyFailure(entry, fmt.Sprintf("download failed: %v", err)))
+						result.recordFailure(profileApplyFailure(entry, fmt.Sprintf("download failed: %v", err)), failedVersion(entry))
 						downloadFailed = true
 						break
 					}
@@ -862,8 +941,10 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 
 			if replaced {
 				result.Replaced++
+				result.Outcomes = append(result.Outcomes, outcomeOf(installedMod, ProfileApplyReplaced))
 			} else {
 				result.Installed++
+				result.Outcomes = append(result.Outcomes, outcomeOf(installedMod, ProfileApplyInstalled))
 			}
 			emit(ModEvent{Scope: scope, Phase: SwitchInstalled})
 		}

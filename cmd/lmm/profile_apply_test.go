@@ -224,7 +224,7 @@ func TestDoProfileApply_InstallLoop_PerModErrorsContinue(t *testing.T) {
 
 	applyYes(t)
 
-	out := captureStdout(t, func() error {
+	out := captureIncompleteApply(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
 
@@ -235,7 +235,8 @@ func TestDoProfileApply_InstallLoop_PerModErrorsContinue(t *testing.T) {
 	assert.Contains(t, out, "  Installing test-src:empty...\n    Error: no downloadable files\n")
 	assert.Contains(t, out, "  Installing test-src:good...\n")
 	assert.Contains(t, out, "    ✓ Installed: Good Mod\n")
-	assert.Contains(t, out, "\n✓ Applied profile: default\n")
+	assert.NotContains(t, out, "Applied profile", "#470: an apply with failures is not applied")
+	assert.Contains(t, out, "\n✗ Profile default was not fully applied: 2 mod(s) failed.\n")
 
 	_, err := svc.GetInstalledMod(context.Background(), "test-src", "ghost", game.ID, "default")
 	assert.Error(t, err, "a mod that failed to fetch must not be installed")

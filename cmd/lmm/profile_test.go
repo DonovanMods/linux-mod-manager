@@ -823,7 +823,7 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 	profileApplyYes = true
 	t.Cleanup(func() { profileApplyYes = origYes })
 
-	out := captureStdout(t, func() error {
+	out := captureIncompleteApply(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
 
@@ -944,7 +944,7 @@ func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing
 	profileApplyYes = true
 	t.Cleanup(func() { profileApplyYes = origYes })
 
-	out := captureStdout(t, func() error {
+	out := captureIncompleteApply(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
 
