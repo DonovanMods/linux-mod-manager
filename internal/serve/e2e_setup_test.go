@@ -321,8 +321,8 @@ func TestE2E_FirstRunDetect_AddsTheGameAndLandsOnMissionControl(t *testing.T) {
 	assert.NotEmpty(t, pathTitle, "the truncated path must carry its full value via title")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.setup-detect__row input[type="checkbox"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-detected"]`, chromedp.ByQuery),
+		clickWhenSettled(`.setup-detect__row input[type="checkbox"]`),
+		clickWhenSettled(`[data-action="add-detected"]`),
 		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
 	)
 
@@ -375,7 +375,7 @@ func TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick(t *testing.T) {
 			};
 		`, nil),
 		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-with-details"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-testid="add-install-path-readonly"]`, chromedp.ByQuery),
 	)
@@ -417,7 +417,7 @@ func TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick(t *testing.T) {
 		"an exact catalog match pre-selects, it never auto-submits")
 
 	f.runInBrowser(t,
-		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-game"]`),
 		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
 	)
 
@@ -452,7 +452,7 @@ func TestE2E_FirstRunUncuratedGame_PrefillBannerHasASpaceBeforeTheAppID(t *testi
 	f.runInBrowser(t,
 		chromedp.Navigate(f.BaseURL+"/"),
 		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-with-details"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
 	)
 
@@ -476,7 +476,7 @@ func TestE2E_FirstRunUncuratedGame_ClearThenReclickSameRowReprefills(t *testing.
 	f.runInBrowser(t,
 		chromedp.Navigate(f.BaseURL+"/"),
 		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-with-details"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
 	)
 
@@ -484,7 +484,7 @@ func TestE2E_FirstRunUncuratedGame_ClearThenReclickSameRowReprefills(t *testing.
 	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
 	require.Equal(t, fixture.UnknownName, nameValue, "first click must prefill")
 
-	f.runInBrowser(t, chromedp.Click(`[data-action="clear-detected"]`, chromedp.ByQuery))
+	f.runInBrowser(t, clickWhenSettled(`[data-action="clear-detected"]`))
 	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
 	require.Empty(t, nameValue, "Clear must reset the form")
 
@@ -492,7 +492,7 @@ func TestE2E_FirstRunUncuratedGame_ClearThenReclickSameRowReprefills(t *testing.
 	// no-op with nothing to observe going wrong, so this is checked directly
 	// rather than inferred from an absence.
 	f.runInBrowser(t,
-		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-with-details"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
 	)
 	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
@@ -515,7 +515,7 @@ func TestE2E_SetupGames_ClearThenReclickSameRowReprefills(t *testing.T) {
 		chromedp.Evaluate(
 			`Array.from(document.querySelectorAll('.setup-section__actions button')).find(b => b.textContent.includes('Detect games')).click()`, nil),
 		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-with-details"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
 	)
 
@@ -523,12 +523,12 @@ func TestE2E_SetupGames_ClearThenReclickSameRowReprefills(t *testing.T) {
 	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
 	require.Equal(t, fixture.UnknownName, nameValue, "first click must prefill")
 
-	f.runInBrowser(t, chromedp.Click(`[data-action="clear-detected"]`, chromedp.ByQuery))
+	f.runInBrowser(t, clickWhenSettled(`[data-action="clear-detected"]`))
 	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
 	require.Empty(t, nameValue, "Clear must reset the form")
 
 	f.runInBrowser(t,
-		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-with-details"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
 	)
 	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
@@ -557,7 +557,7 @@ func TestE2E_ManualAdd_PickInstalledGamePrefillsForm(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.BaseURL+"/"),
 		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="pick-installed"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="pick-installed"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-picker"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-action="pick-installed-row"]`, chromedp.ByQuery),
 	)
@@ -596,7 +596,7 @@ func TestE2E_ManualAdd_PickInstalledGamePrefillsForm(t *testing.T) {
 	f.runInBrowser(t,
 		retrySetValue(`select[name="add-source"]`, "plain"),
 		chromedp.SendKeys(`input[name="add-identifier"]`, "manual-id", chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-game"]`),
 		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
 	)
 
@@ -627,7 +627,7 @@ func TestE2E_ManualAdd_StaleDetectedAppIDOffersRescan(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.BaseURL+"/"),
 		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-with-details"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
 	)
 
@@ -639,7 +639,7 @@ func TestE2E_ManualAdd_StaleDetectedAppIDOffersRescan(t *testing.T) {
 	f.runInBrowser(t,
 		retrySetValue(`select[name="add-source"]`, "plain"),
 		chromedp.SendKeys(`input[name="add-identifier"]`, "whatever", chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-game"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-game"] .modal__error`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-action="rescan-detected"]`, chromedp.ByQuery),
 	)
@@ -655,7 +655,7 @@ func TestE2E_ManualAdd_StaleDetectedAppIDOffersRescan(t *testing.T) {
 	// Rescanning drops the stale row and reopens the picker against a
 	// fresh scan - the uninstalled game is gone from it.
 	f.runInBrowser(t,
-		chromedp.Click(`[data-action="rescan-detected"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="rescan-detected"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-picker"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-action="pick-installed-row"]`, chromedp.ByQuery),
 	)
@@ -688,11 +688,11 @@ func TestE2E_FirstRunManualAdd_CatalogPickLandsOnMissionControl(t *testing.T) {
 		retrySetValue(`select[name="add-source"]`, "catalogsrc"),
 		chromedp.WaitVisible(`input[name="add-query"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-query"]`, "mine", chromedp.ByQuery),
-		chromedp.Click(`.setup-add__catalog button.button--small`, chromedp.ByQuery),
+		clickWhenSettled(`.setup-add__catalog button.button--small`),
 		chromedp.WaitVisible(`.setup-add__matches button`, chromedp.ByQuery),
-		chromedp.Click(`.setup-add__matches button`, chromedp.ByQuery),
+		clickWhenSettled(`.setup-add__matches button`),
 		chromedp.SendKeys(`input[name="add-install-path"]`, install, chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-game"]`),
 		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
 	)
 
@@ -719,7 +719,7 @@ func TestE2E_FirstRunManualAdd_CatalogAuthRequiredNamesTheSourceNotADeadEnd(t *t
 		retrySetValue(`select[name="add-source"]`, "catalogsrc"),
 		chromedp.WaitVisible(`input[name="add-query"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-query"]`, "mine", chromedp.ByQuery),
-		chromedp.Click(`.setup-add__catalog button.button--small`, chromedp.ByQuery),
+		clickWhenSettled(`.setup-add__catalog button.button--small`),
 		chromedp.WaitVisible(`.setup-add__catalog .modal__error`, chromedp.ByQuery),
 	)
 
@@ -799,11 +799,11 @@ func TestE2E_ManualAdd_GameIDFieldErrorOpensAdvancedAndRendersInline(t *testing.
 		retrySetValue(`select[name="add-source"]`, "catalogsrc"),
 		chromedp.WaitVisible(`input[name="add-query"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-query"]`, "weird", chromedp.ByQuery),
-		chromedp.Click(`.setup-add__catalog button.button--small`, chromedp.ByQuery),
+		clickWhenSettled(`.setup-add__catalog button.button--small`),
 		chromedp.WaitVisible(`.setup-add__matches button`, chromedp.ByQuery),
-		chromedp.Click(`.setup-add__matches button`, chromedp.ByQuery),
+		clickWhenSettled(`.setup-add__matches button`),
 		chromedp.SendKeys(`input[name="add-install-path"]`, install, chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-game"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-advanced"][open] .modal__error`, chromedp.ByQuery),
 	)
 
@@ -834,7 +834,7 @@ func TestE2E_FirstRunManualAdd_IdentifierFieldErrorThenSucceeds(t *testing.T) {
 		chromedp.SendKeys(`input[name="add-identifier"]`, "acme", chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-name"]`, "Acme Game", chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-install-path"]`, "/definitely/not/a/real/path", chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-game"]`),
 		chromedp.WaitVisible(`[data-testid="setup-add-game"] .modal__error`, chromedp.ByQuery),
 	)
 
@@ -858,7 +858,7 @@ func TestE2E_FirstRunManualAdd_IdentifierFieldErrorThenSucceeds(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.SetValue(`input[name="add-install-path"]`, install, chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-game"]`),
 		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
 	)
 
@@ -893,10 +893,10 @@ func TestE2E_ManualAdd_AdvancedGameIDOverridesTheDerivedKey(t *testing.T) {
 		chromedp.SendKeys(`input[name="add-identifier"]`, "acme", chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-name"]`, "Acme Game", chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-install-path"]`, install, chromedp.ByQuery),
-		chromedp.Click(`[data-testid="setup-add-advanced"] summary`, chromedp.ByQuery),
+		clickWhenSettled(`[data-testid="setup-add-advanced"] summary`),
 		chromedp.WaitVisible(`input[name="add-game-id"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-game-id"]`, "acme-custom", chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-game"]`),
 		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
 	)
 
@@ -952,7 +952,7 @@ func TestE2E_Auth_RejectedThenAcceptedNeverExposesTheKey(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.SendKeys(`[data-source="authy"] input[type="password"]`, badKey, chromedp.ByQuery),
-		chromedp.Click(`[data-source="authy"] button[type="submit"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-source="authy"] button[type="submit"]`),
 		chromedp.WaitVisible(`[data-source="authy"] .modal__error`, chromedp.ByQuery),
 	)
 	assertKeyNeverRendered(t, badKey)
@@ -979,7 +979,7 @@ func TestE2E_Auth_RejectedThenAcceptedNeverExposesTheKey(t *testing.T) {
 			el.dispatchEvent(new Event("input", { bubbles: true }));
 		})()`, nil),
 		chromedp.SendKeys(`[data-source="authy"] input[type="password"]`, goodKey, chromedp.ByQuery),
-		chromedp.Click(`[data-source="authy"] button[type="submit"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-source="authy"] button[type="submit"]`),
 		chromedp.WaitVisible(`[data-source="authy"] .badge--good`, chromedp.ByQuery),
 	)
 	assertKeyNeverRendered(t, goodKey)
@@ -1000,7 +1000,7 @@ func TestE2E_Auth_RejectedThenAcceptedNeverExposesTheKey(t *testing.T) {
 		"a login the running server did not pick up must SAY so, not claim success in silence")
 
 	f.runInBrowser(t,
-		chromedp.Click(`[data-source="authy"] button.button--small`, chromedp.ByQuery),
+		clickWhenSettled(`[data-source="authy"] button.button--small`),
 		chromedp.WaitVisible(`[data-source="authy"] input[type="password"]`, chromedp.ByQuery),
 	)
 	assertKeyNeverRendered(t, goodKey)
@@ -1024,7 +1024,7 @@ func TestE2E_Sources_CreateValidateFixSaveEditDelete(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.SetupPath("sources")),
 		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="new-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="new-source"]`),
 		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
 	)
 
@@ -1044,7 +1044,7 @@ func TestE2E_Sources_CreateValidateFixSaveEditDelete(t *testing.T) {
 	invalid := "id: BAD ID\nname: My Mods\ntype: directory\ndirectory:\n  path: " + dir + "\n"
 	f.runInBrowser(t,
 		chromedp.SetValue(`.source-editor__textarea`, invalid, chromedp.ByQuery),
-		chromedp.Click(`[data-action="validate-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="validate-source"]`),
 		chromedp.WaitVisible(`.source-editor__report .modal__error`, chromedp.ByQuery),
 	)
 
@@ -1056,9 +1056,9 @@ func TestE2E_Sources_CreateValidateFixSaveEditDelete(t *testing.T) {
 	valid := "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: " + dir + "\n"
 	f.runInBrowser(t,
 		chromedp.SetValue(`.source-editor__textarea`, valid, chromedp.ByQuery),
-		chromedp.Click(`[data-action="validate-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="validate-source"]`),
 		chromedp.WaitVisible(`.source-editor__report .plan__note`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="save-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="save-source"]`),
 		chromedp.WaitVisible(`tr[data-source="my-mods"]`, chromedp.ByQuery),
 	)
 
@@ -1066,7 +1066,7 @@ func TestE2E_Sources_CreateValidateFixSaveEditDelete(t *testing.T) {
 	assert.Len(t, infos, 1)
 
 	f.runInBrowser(t,
-		chromedp.Click(`tr[data-source="my-mods"] [data-action="edit-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`tr[data-source="my-mods"] [data-action="edit-source"]`),
 		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
 		// getSourceDefinition's own fetch resolves asynchronously after the
 		// editor mounts - poll rather than reading .value immediately.
@@ -1077,11 +1077,11 @@ func TestE2E_Sources_CreateValidateFixSaveEditDelete(t *testing.T) {
 	assert.Contains(t, loaded, "my-mods")
 
 	f.runInBrowser(t,
-		chromedp.Click(`[data-action="cancel-source-edit"]`, chromedp.ByQuery),
-		chromedp.Click(`tr[data-source="my-mods"] [data-action="delete-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="cancel-source-edit"]`),
+		clickWhenSettled(`tr[data-source="my-mods"] [data-action="delete-source"]`),
 		chromedp.WaitVisible(`tr[data-source="my-mods"] [data-action="confirm-delete-source"]`, chromedp.ByQuery),
-		chromedp.Click(`tr[data-source="my-mods"] [data-action="confirm-delete-source"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`tr[data-source="my-mods"]`, chromedp.ByQuery),
+		clickWhenSettled(`tr[data-source="my-mods"] [data-action="confirm-delete-source"]`),
+		waitGone(`tr[data-source="my-mods"]`),
 	)
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
@@ -1148,8 +1148,8 @@ func TestE2E_Sources_InUseNamesTheGameNotItsID(t *testing.T) {
 
 	var refusalText string
 	f.runInBrowser(t,
-		chromedp.Click(`tr[data-source="inuse-src"] [data-action="delete-source"]`, chromedp.ByQuery),
-		chromedp.Click(`tr[data-source="inuse-src"] [data-action="confirm-delete-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`tr[data-source="inuse-src"] [data-action="delete-source"]`),
+		clickWhenSettled(`tr[data-source="inuse-src"] [data-action="confirm-delete-source"]`),
 		chromedp.WaitVisible(`tr[data-source="inuse-src"] .modal__error`, chromedp.ByQuery),
 		chromedp.Text(`tr[data-source="inuse-src"] .modal__error`, &refusalText, chromedp.ByQuery),
 	)
@@ -1171,7 +1171,7 @@ func TestE2E_Setup_TabsDeepLinkAndAreKeyboardNavigable(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.SetupPath("")),
 		chromedp.WaitVisible(`[data-testid="setup-page"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-section="sources"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-section="sources"]`),
 		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
 	)
 
@@ -1257,13 +1257,13 @@ api:
 	f.runInBrowser(t,
 		chromedp.Navigate(f.SetupPath("sources")),
 		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="new-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="new-source"]`),
 		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
 		chromedp.SetValue(`.source-editor__textarea`, yaml, chromedp.ByQuery),
-		chromedp.Click(`.plan__control--inline input[type="checkbox"]`, chromedp.ByQuery),
+		clickWhenSettled(`.plan__control--inline input[type="checkbox"]`),
 		chromedp.WaitVisible(`.source-editor input[type="text"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`.source-editor input[type="text"]`, "some-mod-id", chromedp.ByQuery),
-		chromedp.Click(`[data-action="validate-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="validate-source"]`),
 		chromedp.WaitVisible(`.source-editor__report`, chromedp.ByQuery),
 	)
 
@@ -1308,11 +1308,11 @@ func TestE2E_ArchiveImport_ConflictOverwriteRoundTrip(t *testing.T) {
 		chromedp.WaitVisible(`[data-testid="setup-import-archive"]`, chromedp.ByQuery),
 		chromedp.SetUploadFiles(`[data-testid="setup-import-archive"] input[type="file"]`, []string{zipPath}, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-testid="staged-upload"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="import-archive"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="import-archive"]`),
 		chromedp.WaitVisible(`.modal[data-kind="import_archive"] .plan`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal .plan__heading--warn`, chromedp.ByQuery), // the plan previews the conflict
-		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`[data-testid="setup-import-archive"] .job-progress[data-state="failed"]`, chromedp.ByQuery),
 	)
 
@@ -1321,7 +1321,7 @@ func TestE2E_ArchiveImport_ConflictOverwriteRoundTrip(t *testing.T) {
 	assert.Equal(t, "alpha content", string(before), "a refused conflict must not have touched the deployed file")
 
 	f.runInBrowser(t,
-		chromedp.Click(`[data-testid="setup-import-archive"] button[data-action="overwrite"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-testid="setup-import-archive"] button[data-action="overwrite"]`),
 		chromedp.WaitVisible(`[data-testid="setup-import-archive"] .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 
@@ -1352,7 +1352,7 @@ func TestE2E_ArchiveImport_ConfirmModalRendersReadableUnlinkedSummary(t *testing
 		chromedp.WaitVisible(`[data-testid="setup-import-archive"]`, chromedp.ByQuery),
 		chromedp.SetUploadFiles(`[data-testid="setup-import-archive"] input[type="file"]`, []string{zipPath}, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-testid="staged-upload"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="import-archive"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="import-archive"]`),
 		chromedp.WaitVisible(`.modal[data-kind="import_archive"] .plan`, chromedp.ByQuery),
 	)
 
@@ -1368,7 +1368,7 @@ func TestE2E_ArchiveImport_ConfirmModalRendersReadableUnlinkedSummary(t *testing
 
 	var stagedText string
 	f.runInBrowser(t,
-		chromedp.Click(`.modal button[data-action="cancel"]`, chromedp.ByQuery),
+		clickWhenSettled(`.modal button[data-action="cancel"]`),
 		chromedp.Text(`[data-testid="staged-upload"]`, &stagedText, chromedp.ByQuery),
 	)
 	assert.NotContains(t, stagedText, ".zip(", "the filename and its size must not fuse together")
@@ -1401,10 +1401,10 @@ func TestE2E_ArchiveImport_SuccessDropsTheStaleDiscardSentence(t *testing.T) {
 	assert.Contains(t, beforeText, "discarded", "sanity: the sentence renders before the import runs")
 
 	f.runInBrowser(t,
-		chromedp.Click(`[data-action="import-archive"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="import-archive"]`),
 		chromedp.WaitVisible(`.modal[data-kind="import_archive"] .plan`, chromedp.ByQuery),
-		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`[data-testid="setup-import-archive"] .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 
@@ -1430,7 +1430,7 @@ func TestE2E_Adopt_SeededUntrackedModBecomesTracked(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.SetupPath("adopt")),
 		chromedp.WaitVisible(`[data-testid="setup-adopt"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="plan-adopt"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="plan-adopt"]`),
 		chromedp.WaitVisible(`.modal[data-kind="adopt"] .plan`, chromedp.ByQuery),
 	)
 
@@ -1450,8 +1450,8 @@ func TestE2E_Adopt_SeededUntrackedModBecomesTracked(t *testing.T) {
 	assert.Contains(t, row, "HandPlacedMod no source match", "the mod name and its match detail must be space-separated")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`[data-testid="setup-adopt"] .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 
@@ -1491,7 +1491,7 @@ func TestE2E_Adopt_ProbableMatchShowsItsConfidenceBand(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.SetupPath("adopt")),
 		chromedp.WaitVisible(`[data-testid="setup-adopt"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="plan-adopt"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="plan-adopt"]`),
 		chromedp.WaitVisible(`.modal[data-kind="adopt"] .plan`, chromedp.ByQuery),
 		chromedp.Text(`.modal .plan__mods li`, &row, chromedp.ByQuery),
 	)
@@ -1526,16 +1526,16 @@ func TestE2E_FirstRunCustomSourceThroughToAMappedGame(t *testing.T) {
 		// The section is a disclosure rather than always-open: a user who
 		// already has a built-in source configured should not have to scroll
 		// past a YAML editor to add their game.
-		chromedp.Click(`[data-testid="first-run-sources"] summary`, chromedp.ByQuery),
+		clickWhenSettled(`[data-testid="first-run-sources"] summary`),
 		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="new-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="new-source"]`),
 		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
 		chromedp.SetValue(`.source-editor__textarea`, yaml, chromedp.ByQuery),
 		// Save stays disabled until Validate has reported the draft valid -
 		// the editor's own rule, unchanged here.
-		chromedp.Click(`[data-action="validate-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="validate-source"]`),
 		chromedp.WaitVisible(`.source-editor__report .plan__note`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="save-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="save-source"]`),
 		// Hot-registered: the source is live in the running process, which
 		// is what lets the add form below offer it with no restart.
 		chromedp.WaitVisible(`tr[data-source="my-mods"]`, chromedp.ByQuery),
@@ -1550,7 +1550,7 @@ func TestE2E_FirstRunCustomSourceThroughToAMappedGame(t *testing.T) {
 		// A directory source's identifier is legitimately empty, so the form
 		// has to accept that - it is the shape the README's own example uses.
 		chromedp.SetValue(`input[name="add-identifier"]`, "local", chromedp.ByQuery),
-		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-game"]`),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 	)
 
@@ -1576,20 +1576,20 @@ func TestE2E_SetupGamesEditSourcesMapsAnExistingGame(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.SetupPath("sources")),
 		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="new-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="new-source"]`),
 		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
 		chromedp.SetValue(`.source-editor__textarea`, yaml, chromedp.ByQuery),
-		chromedp.Click(`[data-action="validate-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="validate-source"]`),
 		chromedp.WaitVisible(`.source-editor__report .plan__note`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="save-source"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="save-source"]`),
 		chromedp.WaitVisible(`tr[data-source="my-mods"]`, chromedp.ByQuery),
 
 		chromedp.Navigate(f.SetupPath("games")),
 		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="edit-sources"][data-game="g1"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="edit-sources"][data-game="g1"]`),
 		chromedp.WaitVisible(`[data-testid="sources-map"]`, chromedp.ByQuery),
-		chromedp.Click(`input[name="source-my-mods"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="save-sources"]`, chromedp.ByQuery),
+		clickWhenSettled(`input[name="source-my-mods"]`),
+		clickWhenSettled(`[data-action="save-sources"]`),
 		chromedp.Poll(`document.querySelector('[data-testid="setup-games"]')?.textContent.includes("my-mods")`,
 			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 	)
@@ -1651,7 +1651,7 @@ func TestE2E_ManualAdd_CuratedRowAddsWithTheAppIDAlone(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.BaseURL+"/"),
 		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="pick-installed"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="pick-installed"]`),
 		chromedp.WaitVisible(`[data-action="pick-installed-row"]`, chromedp.ByQuery),
 		chromedp.Evaluate(fmt.Sprintf(
 			`Array.from(document.querySelectorAll('[data-action="pick-installed-row"]')).find(b => b.textContent.includes(%q)).click()`,
@@ -1692,7 +1692,7 @@ func TestE2E_ManualAdd_CuratedRowAddsWithTheAppIDAlone(t *testing.T) {
 	require.False(t, submitDisabled, "clearing it returns to the app-id-alone case")
 
 	f.runInBrowser(t,
-		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-game"]`),
 		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
 	)
 
@@ -1829,7 +1829,7 @@ func TestE2E_SetupGamesDetect_RepairNoticeIsRendered(t *testing.T) {
 		chromedp.Evaluate(
 			`Array.from(document.querySelectorAll('.setup-section__actions button')).find(b => b.textContent.includes('Detect games')).click()`, nil),
 		chromedp.WaitVisible(`.setup-detect__row input[type="checkbox"]:not([disabled])`, chromedp.ByQuery),
-		chromedp.Click(`.setup-detect__row input[type="checkbox"]:not([disabled])`, chromedp.ByQuery),
+		clickWhenSettled(`.setup-detect__row input[type="checkbox"]:not([disabled])`),
 	)
 
 	// The other terminal, now: the same install path under a hand-picked id
@@ -1846,7 +1846,7 @@ func TestE2E_SetupGamesDetect_RepairNoticeIsRendered(t *testing.T) {
 	// browser, and is why this scenario is E2E rather than an httptest.
 	var notice string
 	f.runInBrowser(t,
-		chromedp.Click(`[data-action="add-detected"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="add-detected"]`),
 		chromedp.WaitVisible(`.toast .toast__detail`, chromedp.ByQuery),
 		chromedp.Text(`.toast .toast__detail`, &notice, chromedp.ByQuery),
 	)

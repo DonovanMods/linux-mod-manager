@@ -369,7 +369,7 @@ func TestE2E_WorkshopTier2_LibraryRowMenuHidesRelinkForAnExternalRow(t *testing.
 		// menu (TestE2E_RowMenuClosesOnOutsideClickAndEscape).
 		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.row-menu`, chromedp.ByQuery),
+		waitGone(`.row-menu`),
 		chromedp.Evaluate(openRowMenuJS("Managed Mod"), nil),
 		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
 		chromedp.Evaluate(rowMenuItemsJS, &managedItems),

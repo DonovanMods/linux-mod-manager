@@ -1786,8 +1786,10 @@ func newE2EFixtureWithAnUnappliedProfile(t *testing.T) e2eSearchFixture {
 // issue 334 deliberately delays by one animation so its exit has somewhere
 // to play (spa/app/motion.js). Reproduced: the panel is provably gone from
 // the document (its own querySelector says so, and the URL has changed),
-// while WaitNotPresent sits there until the harness's whole 30-second
-// timeout expires.
+// while WaitNotPresent sits there until the harness's whole timeout
+// expires. The same miss made #439's and #486's tests flake ~10%, so
+// every removal wait in this package is spelled waitGone and
+// no_wait_not_present_test.go forbids WaitNotPresent outright.
 //
 // The polling INTERVAL is explicit for a second, independent reason:
 // chromedp.Poll's default mode is requestAnimationFrame, and a headless

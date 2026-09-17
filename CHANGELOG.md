@@ -3132,6 +3132,20 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
   carry, so the release-prep commit that already runs `make man` bumps it
   too.
 
+- **The web UI's browser E2E suite no longer stalls on a close it missed
+  (#439, #486).** Sixty-four waits for a modal, menu or card to disappear
+  used `chromedp.WaitNotPresent`, which does not reliably notice a removal
+  that happens after the action before it — and in this interface nearly
+  every close waits on a server answer — so a green test could sit out the
+  whole 60-second budget about one run in ten. They all poll the page on a
+  timer now (`waitGone`), a ratchet refuses any new `WaitNotPresent`, and
+  the Setup tests' clicks wait for their button to stop moving first, so a
+  late-loading section above the form can no longer take the click. The
+  flakiest test, applying a profile from its Mission Control card, was also
+  waiting for the card's "succeeded" line — which the card takes with it
+  when the applied profile leaves nothing to report; it now waits for the
+  job to be over either way.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes
