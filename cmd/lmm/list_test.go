@@ -103,7 +103,8 @@ func TestList_NamesDisabledRefsWithNoRow(t *testing.T) {
 	out := listNonVerbose(t, svc, game)
 	assert.Contains(t, out, "No mods installed.")
 	assert.Contains(t, out, "Listed but not downloaded, switched off — 1 mod(s):\n  test:off 2.0\n")
-	assert.Contains(t, out, "lmm install --id <mod-id>")
+	assert.Contains(t, out, "lmm install -g g1 -p default -s test --id off --version 2.0",
+		"the recovery command installs the same ref the web UI's Install… does: that profile, that source, that version")
 
 	seedModWithState(t, svc, game, "live", "Live Mod", true, true)
 	out = listNonVerbose(t, svc, game)

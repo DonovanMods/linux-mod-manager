@@ -320,7 +320,7 @@ Three things clear the marker, and each is a request for that mod:
 - `lmm install` of the same mod. Asking for a mod by name is a request to have it, so the install does not leave behind a mod the next converge run would switch straight back off.
 - Installing a mod that **depends** on it. You did not name the dependency, so lmm says so before asking to proceed and again afterwards: the dependency is switched back on in that profile, because the mod you asked for cannot work without it.
 
-Enabling a mod whose files were never downloaded (an imported profile on a fresh machine) needs that download, `lmm install --id <mod-id>`, because lmm never fetches a disabled mod. `lmm list` names such mods under its table ("Listed but not downloaded, switched off"; `--json` carries them as `disabled_not_installed`), and the web UI shows them in the library and on the Profile card, each with an **Install…** that downloads the mod and switches it on.
+Enabling a mod whose files were never downloaded (an imported profile on a fresh machine) needs that download, because lmm never fetches a disabled mod. `lmm list` names such mods under its table ("Listed but not downloaded, switched off") with the exact command that installs each one — `lmm install -g <game> -p <profile> -s <source> --id <mod> --version <version>` — so the CLI installs the same ref, at the same version, into the same profile that the web UI's **Install…** does (`--json` carries the refs as `disabled_not_installed`). The web UI shows them in the library and on the Profile card, each with its own **Install…** that downloads the mod and switches it on.
 
 #### Upgrading: mods disabled before the marker existed
 
