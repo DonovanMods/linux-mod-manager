@@ -230,4 +230,7 @@ func TestDoProfileImport_ANonActiveProfileIsRecordedOnly(t *testing.T) {
 	assert.Contains(t, stdout, "alt is not the active profile of Game (default is), so the import records these mods in it")
 	assert.Contains(t, stdout, "    ✓ Recorded: Mod donly\n")
 	assert.Contains(t, stdout, "Recorded: 1 (not deployed")
+	assert.Contains(t, stdout, "  Recording test-src:donly...\n")
+	assert.NotContains(t, stdout, "Installing", "a recorded-only import installs nothing")
+	assert.NotContains(t, stdout, "installing")
 }

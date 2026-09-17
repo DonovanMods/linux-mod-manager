@@ -955,9 +955,18 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		case core.ImportSaved:
 			fmt.Printf("\n✓ Imported profile: %s\n", p.ModName)
 		case core.ImportInstalling:
-			fmt.Println("\nDownloading and installing mods...")
+			if plan.RecordedOnly {
+				fmt.Println("\nDownloading and recording mods...")
+			} else {
+				fmt.Println("\nDownloading and installing mods...")
+			}
 		case core.ImportModInstalling:
-			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
+			// #462: a recorded-only import installs nothing.
+			verb := "Installing"
+			if plan.RecordedOnly {
+				verb = "Recording"
+			}
+			fmt.Printf("  %s %s:%s...\n", verb, p.SourceID, p.ModID)
 		case core.ImportDownloading:
 			printProgressLine("\r    Downloading: %.1f%%", p.Percent)
 		case core.ImportModFailed:
