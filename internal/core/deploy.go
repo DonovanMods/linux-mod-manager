@@ -1055,6 +1055,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			return skip(fmt.Sprintf("cancelled: %v", err))
 		}
 		progressFn := func(e Event) {
+			collectDownloadWarning(e, &result.Warnings)
 			if forwardFetchStep(e, scope, emit) {
 				return
 			}
