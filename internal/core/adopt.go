@@ -285,7 +285,7 @@ func (s *Service) PlanAdopt(ctx context.Context, game *domain.Game, profileName 
 	}
 	// #462: adopting records files in the game directory as this
 	// profile's deployment, and that directory holds the active profile's.
-	if err := s.requireActiveProfile(ctx, game.ID, profileName, "adopt files into"); err != nil {
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbAdopt); err != nil {
 		return nil, err
 	}
 	scan, installedMods, err := s.scanLocal(ctx, game, ScanOptions{ProfileName: profileName, DryRun: opts.DryRun})
@@ -459,7 +459,7 @@ func (s *Service) ApplyAdoptBackfill(ctx context.Context, game *domain.Game, pla
 	result := &AdoptBackfillResult{}
 	// #462: adopting records files in the game directory as this
 	// profile's deployment, and that directory holds the active profile's.
-	if err := s.requireActiveProfile(ctx, game.ID, plan.Profile, "adopt files into"); err != nil {
+	if err := s.requireActiveProfile(ctx, game.ID, plan.Profile, VerbAdopt); err != nil {
 		return result, err
 	}
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {
@@ -552,7 +552,7 @@ func (s *Service) applyAdopt(ctx context.Context, game *domain.Game, plan *Adopt
 	result := &AdoptResult{}
 	// #462: adopting records files in the game directory as this
 	// profile's deployment, and that directory holds the active profile's.
-	if err := s.requireActiveProfile(ctx, game.ID, plan.Profile, "adopt files into"); err != nil {
+	if err := s.requireActiveProfile(ctx, game.ID, plan.Profile, VerbAdopt); err != nil {
 		return result, err
 	}
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {

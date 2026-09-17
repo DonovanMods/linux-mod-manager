@@ -137,7 +137,7 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*EnableResult, error) {
 	// #462: enabling a mod writes into the game directory, which holds the active
 	// profile's mods, so it acts for that profile alone.
-	if err := s.requireActiveProfile(ctx, game.ID, profileName, "enable a mod in"); err != nil {
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbEnable); err != nil {
 		return nil, err
 	}
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)

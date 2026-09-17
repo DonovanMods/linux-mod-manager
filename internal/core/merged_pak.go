@@ -1106,7 +1106,7 @@ func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 	result := &UpdateApplyResult{}
 	// #462: the regenerated artifact is written into the game directory,
 	// which holds the active profile's.
-	if err := s.requireActiveProfile(ctx, game.ID, profileName, "regenerate the merged artifact of"); err != nil {
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbRegenMerged); err != nil {
 		return result, err
 	}
 	// Resolved up front: Name below reports the merged artifact by the name

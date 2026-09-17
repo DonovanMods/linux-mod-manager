@@ -411,7 +411,7 @@ type UpdatePlan struct {
 func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*UpdatePlan, error) {
 	// #462: an update writes into the game directory, which holds the active
 	// profile's mods, so it acts for that profile alone.
-	if err := s.requireActiveProfile(ctx, game.ID, profileName, "update a mod in"); err != nil {
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbUpdate); err != nil {
 		return nil, err
 	}
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
@@ -445,7 +445,7 @@ func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName
 func (s *Service) PlanUpdateFrom(ctx context.Context, game *domain.Game, profileName string, upd domain.Update) (*UpdatePlan, error) {
 	// #462: an update writes into the game directory, which holds the active
 	// profile's mods, so it acts for that profile alone.
-	if err := s.requireActiveProfile(ctx, game.ID, profileName, "update a mod in"); err != nil {
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbUpdate); err != nil {
 		return nil, err
 	}
 	mod, err := s.GetInstalledMod(ctx, upd.InstalledMod.SourceID, upd.InstalledMod.ID, game.ID, profileName)
@@ -812,7 +812,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// First statement inside the op (ApplyUpdate took beginOp just above),
 	// before any lock check, hook, or side effect - a stale plan is refused
 	// having changed nothing at all, mirroring applyInstall's own placement.
-	if err := s.requireActiveProfile(ctx, game.ID, plan.Mod.ProfileName, "update a mod in"); err != nil {
+	if err := s.requireActiveProfile(ctx, game.ID, plan.Mod.ProfileName, VerbUpdate); err != nil {
 		return result, err
 	}
 	if err := s.checkPlanFresh(ctx, plan.Mod.GameID, plan.Mod.ProfileName, plan.snapshot); err != nil {

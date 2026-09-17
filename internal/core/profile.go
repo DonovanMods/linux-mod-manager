@@ -773,7 +773,7 @@ func (s *Service) refuseInactive(ctx context.Context, gameID, profileName, verb 
 // and apply (#445). A game with no profile file at all is the exception: the
 // flow creates the game's first profile, and a game's only profile is its
 // active one.
-func (s *Service) requireActiveProfile(ctx context.Context, gameID, profileName, verb string) error {
+func (s *Service) requireActiveProfile(ctx context.Context, gameID, profileName string, verb DeployVerb) error {
 	names, err := config.ListProfiles(s.configDir, gameID)
 	if err != nil {
 		return fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
@@ -781,18 +781,38 @@ func (s *Service) requireActiveProfile(ctx context.Context, gameID, profileName,
 	if len(names) == 0 {
 		return nil
 	}
-	return s.refuseInactive(ctx, gameID, profileName, verb)
+	return s.refuseInactive(ctx, gameID, profileName, string(verb))
 }
 
-// CheckDeployTarget reports whether a deploy-direction flow may act for
-// profileName in gameID (#462): nil for the game's active profile - or a
-// game with no profile yet - else ErrProfileNotActive naming `lmm profile
-// switch`, or ErrActiveProfileUnknown. It changes nothing. A frontend that
-// starts a deploy with no plan to carry the refusal - the web UI's enable
-// toggle - asks it first, so the refusal answers the request instead of
-// failing a job; the flow itself asks again.
-func (s *Service) CheckDeployTarget(ctx context.Context, gameID, profileName string) error {
-	return s.requireActiveProfile(ctx, gameID, profileName, "deploy into")
+// DeployVerb names a deploy-direction flow in its active-profile refusal
+// ("cannot <verb> profile ..."). The flows and the frontends that ask
+// CheckDeployTarget ahead of them share these, so a refusal reads the same
+// whichever of them words it (#462).
+type DeployVerb string
+
+// The deploy-direction flows requireActiveProfile gates, by the words each
+// one's refusal uses.
+const (
+	VerbInstall       DeployVerb = "install into"
+	VerbUpdate        DeployVerb = "update a mod in"
+	VerbUpdateMany    DeployVerb = "update mods in"
+	VerbRollback      DeployVerb = "roll back a mod in"
+	VerbEnable        DeployVerb = "enable a mod in"
+	VerbImportArchive DeployVerb = "import an archive into"
+	VerbAdopt         DeployVerb = "adopt files into"
+	VerbRegenMerged   DeployVerb = "regenerate the merged artifact of"
+)
+
+// CheckDeployTarget reports whether the deploy-direction flow verb names
+// may act for profileName in gameID (#462): nil for the game's active
+// profile - or a game with no profile yet - else ErrProfileNotActive naming
+// `lmm profile switch`, or ErrActiveProfileUnknown, worded as the flow
+// itself words it. It changes nothing. A frontend asks it before work the
+// flow's own refusal would come too late for - the web UI's enable toggle,
+// which has no plan to carry the refusal; the CLI's install and update,
+// ahead of their source reads - and the flow itself asks again.
+func (s *Service) CheckDeployTarget(ctx context.Context, gameID, profileName string, verb DeployVerb) error {
+	return s.requireActiveProfile(ctx, gameID, profileName, verb)
 }
 
 // profileScope is how a removal-direction flow acting for profileName may

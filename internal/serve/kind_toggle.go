@@ -84,7 +84,7 @@ func init() {
 		},
 		// Enabling deploys, which only the game's active profile may.
 		Precheck: func(ctx context.Context, s *Server, sel selection) error {
-			return s.svc.CheckDeployTarget(ctx, sel.Game.ID, sel.Profile)
+			return s.svc.CheckDeployTarget(ctx, sel.Game.ID, sel.Profile, core.VerbEnable)
 		},
 	})
 	registerToggleKind(toggleKind{

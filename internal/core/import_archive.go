@@ -275,7 +275,7 @@ func fingerprintArchive(path string) (archiveFingerprint, error) {
 func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, profileName, archivePath string, opts ImportArchiveOptions) (*ImportArchivePlan, error) {
 	// #462: an import deploys into the game directory, which holds the
 	// active profile's mods, so it acts for that profile alone.
-	if err := s.requireActiveProfile(ctx, game.ID, profileName, "import an archive into"); err != nil {
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbImportArchive); err != nil {
 		return nil, err
 	}
 	fingerprint, err := fingerprintArchive(archivePath)
@@ -532,7 +532,7 @@ func (s *Service) ApplyImportArchive(ctx context.Context, game *domain.Game, pro
 	}
 	defer release()
 
-	if err := s.requireActiveProfile(ctx, game.ID, profileName, "import an archive into"); err != nil {
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbImportArchive); err != nil {
 		return &ImportArchiveResult{}, err
 	}
 	if err := s.checkPlanFresh(ctx, game.ID, profileName, plan.snapshot); err != nil {
