@@ -1810,6 +1810,17 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   that instead of naming a purge that could be the other game's whole
   deployment.
 
+- **The mod_path refusal names `lmm profile apply` when the active
+  profile's document has moved on (#445).** A file the active profile
+  lists, recorded only by another profile, was treated as the active
+  profile's whenever the active profile recorded the same path under any
+  mod — including one its document no longer lists (you swapped one mod
+  for another that ships the same file and had not applied the change).
+  The refusal then named no apply, its purges cleared every record, and
+  the listed mod ended the move undeployed with no warning. Such a record
+  now counts only when the document lists its mod, so the refusal names
+  the apply that deploys and records the listed one.
+
 - **`lmm uninstall` keeps a cache entry another profile still uses
   (#445).** Uninstalling a mod deleted its version's cache entry even while
   another profile's row still used it — and for a local mod that entry is

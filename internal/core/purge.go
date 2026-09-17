@@ -354,7 +354,7 @@ const (
 	PurgeKeptOtherGame PurgeKeptReason = "other_game"
 	// PurgeKeptListed: the active profile's document lists the path's mod,
 	// not marked off, and no other record keeps the file for that reason -
-	// none under the active profile, none whose mod it lists, and none of
+	// none whose mod it lists, under it or another profile, and none of
 	// another game's that keeps it for that game's active profile - so the
 	// file may be live for the active profile, and the purged profile's
 	// record is its only claim to be lmm's. What a v1.30.1 switch between
@@ -579,7 +579,7 @@ func keptPath(row db.DeployedPath, profileName, live string, records []db.PathRe
 			profiles = append(profiles, r.Profile)
 		}
 	}
-	if profile, ok := listed[domain.ModKey(row.SourceID, row.ModID)]; ok && !listedHandedOn(records, profileName, live, listed) && len(others.heldForActive(row.RelativePath)) == 0 {
+	if profile, ok := listed[domain.ModKey(row.SourceID, row.ModID)]; ok && !listedHandedOn(records, profileName, listed) && len(others.heldForActive(row.RelativePath)) == 0 {
 		k.Reason, k.Profiles = PurgeKeptListed, []string{profile}
 		return k, true
 	}
@@ -594,20 +594,22 @@ func keptPath(row db.DeployedPath, profileName, live string, records []db.PathRe
 	return PurgeKeptPath{}, false
 }
 
-// listedHandedOn reports whether a path the active profile (live) lists
-// stays protected once profileName's record of it goes (#445 final gate
-// F-A): another record of it in the same game is the active profile's own -
-// which only the active profile's purge, or its deploy, decides - or names
-// a mod the active profile lists, so that record's purge keeps the file as
-// PurgeKeptListed in turn. Another game's record qualifies only as
-// otherGameRecords.heldForActive says: its purge asks about that game's
-// active profile.
-func listedHandedOn(records []db.PathRecord, profileName, live string, listed map[string]string) bool {
+// listedHandedOn reports whether a path the active profile lists stays
+// protected once profileName's record of it goes (#445 final gate F-A):
+// another record of it in the same game names a mod the active profile
+// lists - under the active profile, whose purge or deploy decides it, or
+// under another, whose purge keeps the file as PurgeKeptListed in turn. A
+// record under the active profile of a mod its document does not list
+// protects nothing (#445 gate 2, V9): the document was edited and not yet
+// applied, and the apply takes that mod's file down. Another game's record
+// qualifies only as otherGameRecords.heldForActive says: its purge asks
+// about that game's active profile.
+func listedHandedOn(records []db.PathRecord, profileName string, listed map[string]string) bool {
 	for _, r := range records {
 		if r.Profile == profileName {
 			continue
 		}
-		if _, ok := listed[domain.ModKey(r.SourceID, r.ModID)]; ok || r.Profile == live {
+		if _, ok := listed[domain.ModKey(r.SourceID, r.ModID)]; ok {
 			return true
 		}
 	}

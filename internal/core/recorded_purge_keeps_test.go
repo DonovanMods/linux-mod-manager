@@ -141,6 +141,14 @@ func (f *legacyFixture) purge(t *testing.T, profile string) (*core.PurgePlan, *c
 	return plan, result
 }
 
+// purgePlan plans a purge of profile, without applying it.
+func (f *legacyFixture) purgePlan(t *testing.T, profile string) *core.PurgePlan {
+	t.Helper()
+	plan, err := f.svc.PlanPurge(context.Background(), f.game, profile, core.PurgeOptions{})
+	require.NoError(t, err)
+	return plan
+}
+
 func readLive(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

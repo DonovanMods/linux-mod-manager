@@ -185,12 +185,25 @@ func TestRecordedPurge_AListedFileOutlivesEveryClaimantsPurge(t *testing.T) {
 	t.Run("the active profile's own record takes it over", func(t *testing.T) {
 		s := twoKeysState(t)
 		require.NoError(t, s.f.svc.ExecForTest(context.Background(),
-			`INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id) VALUES ('sky', 'alt', 'Data/a.esp', 'local', 'other')`))
+			`INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id) VALUES ('sky', 'alt', 'Data/a.esp', 'local', 'a1')`))
 
 		plan, _ := s.f.purge(t, "default")
 
 		assert.Equal(t, []core.PurgeKeptPath{{Path: "Data/a.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"alt", "survival"}}}, plan.Kept)
 		assert.Empty(t, s.f.recorded(t, "default", "a1"))
+	})
+
+	// #445 gate 2, V9: not for a mod the active profile's document no
+	// longer lists - the apply takes that file down.
+	t.Run("the active profile's record of a mod it does not list does not", func(t *testing.T) {
+		s := twoKeysState(t)
+		require.NoError(t, s.f.svc.ExecForTest(context.Background(),
+			`INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id) VALUES ('sky', 'alt', 'Data/a.esp', 'local', 'other')`))
+
+		plan, _ := s.f.purge(t, "default")
+
+		assert.Equal(t, []core.PurgeKeptPath{{Path: "Data/a.esp", Reason: core.PurgeKeptListed, Profiles: []string{"alt"}}}, plan.Kept)
+		assert.Equal(t, []string{"Data/a.esp"}, s.f.recorded(t, "default", "a1"))
 	})
 
 	// What the plan says, and what the refusal counts, for the state the
