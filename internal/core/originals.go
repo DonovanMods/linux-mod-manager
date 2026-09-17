@@ -310,12 +310,21 @@ func (s *originalsStore) forgetKept() {
 
 // takeFailures drains the pending capture failures, so a flow can put them
 // on its own result's Warnings - and, after them, one line for every path
-// removed unverified since the last drain. It ends the flow's memory of
-// the files its removals kept, too.
+// removed unverified since the last drain. A note made twice - one path,
+// one reason, from two passes of the same flow, such as `deploy --purge`'s
+// purge and deploy (#466 re-review R5) - is reported once. It ends the
+// flow's memory of the files its removals kept, too.
 func (s *originalsStore) takeFailures() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := s.failures
+	var out []string
+	seen := make(map[string]bool, len(s.failures))
+	for _, msg := range s.failures {
+		if !seen[msg] {
+			seen[msg] = true
+			out = append(out, msg)
+		}
+	}
 	out = append(out, unverifiedNotes(s.unverified)...)
 	s.failures, s.unverified, s.kept = nil, nil, nil
 	return out

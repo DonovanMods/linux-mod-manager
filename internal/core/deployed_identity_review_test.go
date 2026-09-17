@@ -621,3 +621,43 @@ func TestDeployedIdentity_VerifyReportsAPathADeployCouldNotTake(t *testing.T) {
 		assert.NotEqual(t, core.VerifyStatusDeployedBlocked, fd.Status, "%+v", fd)
 	}
 }
+
+// TestDeployedIdentity_ADeployPurgeReportsAnUncheckedFileOnce is #466
+// re-review R5: `deploy --purge` over a file that cannot be checked said
+// it was left in place twice - the purge half and the deploy half each
+// noted it - in the result's warnings and in the events.
+func TestDeployedIdentity_ADeployPurgeReportsAnUncheckedFileOnce(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	f := ledgerState(t, domain.LinkCopy)
+	require.NoError(t, os.Remove(f.kPath()))
+	require.NoError(t, os.WriteFile(f.kPath(), []byte("USER FILE"), 0o644))
+	dir := filepath.Dir(f.kPath())
+	require.NoError(t, os.Chmod(dir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	var events []string
+	result, err := f.svc.DeployProfile(context.Background(), f.game, "default", core.DeployOptions{Purge: true}, func(e core.Event) {
+		if w, ok := e.(core.WarningEvent); ok {
+			events = append(events, w.Message)
+		}
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(dir, 0o755))
+
+	assert.Equal(t, "USER FILE", readLive(t, f.kPath()))
+	assert.Equal(t, 1, countLines(result.Warnings, "Data/k.esp was left in place", "could not be checked"), "%q", result.Warnings)
+	assert.Equal(t, 1, countLines(events, "Data/k.esp was left in place", "could not be checked"), "%q", events)
+}
+
+// countLines counts the lines holding every part.
+func countLines(lines []string, parts ...string) int {
+	n := 0
+	for _, line := range lines {
+		if containsLine([]string{line}, parts...) {
+			n++
+		}
+	}
+	return n
+}
