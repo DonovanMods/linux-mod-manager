@@ -98,6 +98,9 @@ type VerifyFinding struct {
 	Recorded  string `json:"recorded,omitempty"`
 	Effective string `json:"effective,omitempty"`
 	Version   string `json:"version,omitempty"`
+	// DisplayVersion is Version as a person reads it when it is a Workshop
+	// content id (domain.Mod.DisplayVersion, #458).
+	DisplayVersion string `json:"display_version,omitempty"`
 
 	// Fixable reports whether a `verify --fix` run would ATTEMPT a repair
 	// for this row as it stands (#332). It is set from the same decision
@@ -134,7 +137,13 @@ type VerifyFinding struct {
 	//	                      mod
 	//	deployed_modified     never: a copy or hardlink the user changed is
 	//	                      theirs, and --fix leaves it (#466)
+	//	orphaned_record       only on the game's active profile: --fix drops
+	//	                      deployed-file records no installed mod owns,
+	//	                      removing nothing (#469); another profile's
+	//	                      purge judges its own
 	//	everything else       never - ok, skipped, file_count_mismatch,
+	//	                      missing_cache (no recorded file to download
+	//	                      again, #469),
 	//	                      loader_foreign_nested_tree (lmm cannot prove
 	//	                      the files are its own),
 	//	                      version_unverifiable (nothing to repair it
@@ -363,6 +372,9 @@ type verifyRun struct {
 	// adapter lets a --fix repair deploy, asked at most once per run.
 	refusalAsked bool
 	refusal      error
+	// liveAsked and liveRefusal memoise liveRepairRefusal's own half.
+	liveAsked   bool
+	liveRefusal error
 
 	// held, while set, collects the repair sub-lines downloadWarningSink
 	// would emit, for an arm whose row is not out yet (holdDetails).
@@ -395,6 +407,23 @@ func (r *verifyRun) repairRefusal() error {
 	return r.refusal
 }
 
+// liveRepairRefusal is repairRefusal for a repair that deploys the verified
+// profile's own mods - the loader re-deploy and re-layout, the merged-pak
+// resync (#462): the game directory holds the active profile's mods, so
+// such a repair runs for that profile alone, and a run on another profile
+// is told `lmm profile switch`. The version repair is not one: it re-links
+// only the live profile's rows, whichever profile runs it (liveRelinker).
+func (r *verifyRun) liveRepairRefusal() error {
+	if err := r.repairRefusal(); err != nil {
+		return err
+	}
+	if !r.liveAsked {
+		r.liveAsked = true
+		r.liveRefusal = r.svc.refuseInactive(r.ctx, r.game.ID, r.profile, "repair")
+	}
+	return r.liveRefusal
+}
+
 // refuseDeploy is the gate a verify repair that deploys passes before it
 // changes anything - repairRefusal, under the name the I4 ratchet
 // (adapter_precondition_ratchet_test.go) accepts as a gate, so a repair
@@ -402,10 +431,18 @@ func (r *verifyRun) repairRefusal() error {
 // game. Removals (convergence, the nested-tree repair) do not ask it.
 func (r *verifyRun) refuseDeploy() error { return r.repairRefusal() }
 
+// refuseLiveDeploy is refuseDeploy for a repair that deploys the verified
+// profile's own mods: liveRepairRefusal, under the name both gate ratchets
+// accept.
+func (r *verifyRun) refuseLiveDeploy() error { return r.liveRepairRefusal() }
+
 // deployRefusedReason is the FixableReason of a row whose repair would
 // deploy, on a game whose adapter refuses: the refusal itself, which
 // carries its remedy.
 func deployRefusedReason(err error) string {
+	if errors.Is(err, ErrProfileNotActive) || errors.Is(err, ErrActiveProfileUnknown) {
+		return "--fix deploys only for the game's active profile, so it leaves this as it is: " + err.Error()
+	}
 	return "lmm deploys nothing for this game while its adapter refuses, so --fix leaves this as it is: " + err.Error()
 }
 
@@ -416,11 +453,18 @@ func deployRefusedReason(err error) string {
 // neither a plain run's offer nor a --fix run's attempt holds, so the row is
 // not fixable and its reason is the refusal - never a claim that the
 // repair ran.
-func (r *verifyRun) deployRowFixability(fixable bool, reason string, attempts bool) (bool, string) {
+//
+// live says the repair deploys the verified profile's own mods, so the
+// profile has to be the active one too (liveRepairRefusal).
+func (r *verifyRun) deployRowFixability(fixable bool, reason string, attempts, live bool) (bool, string) {
 	if !fixable && !attempts {
 		return fixable, reason
 	}
-	if err := r.repairRefusal(); err != nil {
+	refusal := r.repairRefusal
+	if live {
+		refusal = r.liveRepairRefusal
+	}
+	if err := refusal(); err != nil {
 		return false, deployRefusedReason(err)
 	}
 	return fixable, reason
@@ -696,6 +740,7 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		if err := r.deployedContentPass(installedMods); err != nil {
 			return result, err
 		}
+		r.recordsPassTolerant(installedMods, files)
 		r.convergencePass()
 		return result, nil
 	}
@@ -762,6 +807,7 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	if err := r.deployedContentPass(installedMods); err != nil {
 		return result, err
 	}
+	r.recordsPassTolerant(installedMods, files)
 	r.convergencePass()
 
 	return result, nil
@@ -1310,7 +1356,8 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 		if !cacheExists {
 			r.result.Issues++
 			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing", Version: mod.Version,
-				Fixable: redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{Version: mod.Version})
+				DisplayVersion: mod.DisplayVersion,
+				Fixable:        redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{Version: mod.Version})
 			// #224 Task 4: ported verbatim from doVerify (originally lines
 			// 765-799).
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
@@ -1426,7 +1473,7 @@ func (r *verifyRun) mergedPakStalenessPass() {
 		r.result.Warnings++
 		// The resync rebuilds and deploys the artifact, so the adapter has
 		// its say (syncMergedPak asks it again before deploying).
-		fixable, reason := r.deployRowFixability(!r.opts.Fix, staleCompileRefusal(r.opts.Fix), r.opts.Fix)
+		fixable, reason := r.deployRowFixability(!r.opts.Fix, staleCompileRefusal(r.opts.Fix), r.opts.Fix, true)
 		r.finding(VerifyFinding{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile",
 			Note: staleUpd.RecompileReason, Fixable: fixable, FixableReason: reason}, VerifyEvent{})
 	}
@@ -1562,7 +1609,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 			// The repair re-links a symlink deployment into the renamed
 			// cache entry - a deploy, so the adapter has its say.
 			repairs := versionMismatchRepairs(mod, ref)
-			fixable, reason := r.deployRowFixability(repairs, versionMismatchRefusal(mod, ref), r.opts.Fix && repairs)
+			fixable, reason := r.deployRowFixability(repairs, versionMismatchRefusal(mod, ref), r.opts.Fix && repairs, false)
 			r.finding(VerifyFinding{
 				ModID: mod.ID, ModName: mod.Name, Status: "version_mismatch",
 				Recorded: recorded, Effective: effective,

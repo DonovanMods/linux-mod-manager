@@ -407,6 +407,10 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		}
 	}
 
+	// #476: what the merged-pak resync left for another game, and any
+	// original it could not put back, are this flow's to report.
+	s.takeCaptureWarnings(game.ID, OpModEdit, RelinkWarning, &result.Warnings, emit)
+
 	result.Mod = mod
 	result.Changes = changes
 	return result, nil

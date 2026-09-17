@@ -231,33 +231,54 @@ func TestApplyGameDetect_SavesGamesAndCreatesDefaultProfiles(t *testing.T) {
 	}
 }
 
-// TestApplyGameDetect_OverwritesExistingDefaultProfileMods is the core-level
-// twin of cmd/lmm's characterization tests
-// (TestDoGameDetect_RepairWipesExistingDefaultProfileMods,
-// TestDoGameAdd_OverwritesExistingDefaultProfileMods): re-running
-// ApplyGameDetect against an already-configured game wipes its default
-// profile's mod list, matching the pre-lift unconditional
-// config.SaveProfile overwrite exactly.
-func TestApplyGameDetect_OverwritesExistingDefaultProfileMods(t *testing.T) {
+// TestApplyGameDetect_RepairKeepsTheProfilesByteIdentical is #465:
+// re-running ApplyGameDetect against an already-configured game is the
+// documented repair of its paths and sources, and it used to reset the
+// default profile to `mods: []` - the desired state every `lmm profile
+// apply` converges to, silently emptied. A repair leaves every profile
+// exactly as it was, and creates a default profile only for a game with
+// none.
+func TestApplyGameDetect_RepairKeepsTheProfilesByteIdentical(t *testing.T) {
 	svc := newGameDetectTestService(t)
+	ctx := context.Background()
 	game := domain.DetectedGame{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data", NexusID: "skyrimspecialedition"}
 
-	_, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{game})
+	_, err := svc.ApplyGameDetect(ctx, []domain.DetectedGame{game})
 	require.NoError(t, err)
-	require.NoError(t, svc.NewProfileManager().UpsertMod(context.Background(), game.Slug, "default", domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.0"}))
-
-	before, err := svc.NewProfileManager().Get(context.Background(), game.Slug, "default")
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(ctx, game.Slug, "default", domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.0"}))
+	_, err = pm.Create(ctx, game.Slug, "survival")
 	require.NoError(t, err)
-	require.NotEmpty(t, before.Mods, "test setup: profile must have a mod before the repair")
+	profileFile := func(name string) string {
+		return filepath.Join(svc.ConfigDir(), "games", game.Slug, "profiles", name+".yaml")
+	}
+	before := map[string][]byte{}
+	for _, name := range []string{"default", "survival"} {
+		data, err := os.ReadFile(profileFile(name))
+		require.NoError(t, err)
+		before[name] = data
+	}
 
-	result, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{game})
+	result, err := svc.ApplyGameDetect(ctx, []domain.DetectedGame{game})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"skyrim-se"}, result.Saved)
-	assert.Equal(t, []string{"skyrim-se/default"}, result.Profiles)
+	assert.Empty(t, result.Profiles, "no profile was created or reset")
 
-	after, err := svc.NewProfileManager().Get(context.Background(), game.Slug, "default")
-	require.NoError(t, err)
-	assert.Empty(t, after.Mods, "repairing a configured game must wipe its default profile's mod list")
+	for name, want := range before {
+		got, err := os.ReadFile(profileFile(name))
+		require.NoError(t, err)
+		assert.Equal(t, string(want), string(got), "profile %s is byte-identical", name)
+	}
+
+	t.Run("a configured game with no profile gets its default one", func(t *testing.T) {
+		for name := range before {
+			require.NoError(t, os.Remove(profileFile(name)))
+		}
+		result, err := svc.ApplyGameDetect(ctx, []domain.DetectedGame{game})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"skyrim-se/default"}, result.Profiles)
+		assert.FileExists(t, profileFile("default"))
+	})
 }
 
 // TestApplyGameDetect_StopsAtFirstProfileFailure pins the stop-on-first-
@@ -704,7 +725,7 @@ func TestApplyGameDetect_RepairsTheGameAlreadyConfiguredAtTheSameInstallPath(t *
 	}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"cyberpunk-2077"}, result.Saved, "the repair keeps the id the user's profiles hang off")
-	assert.Equal(t, []string{"cyberpunk-2077/default"}, result.Profiles)
+	assert.Equal(t, []string{}, result.Profiles, "and leaves those profiles alone (#465)")
 
 	saved, err := svc.LoadGamesFromDisk()
 	require.NoError(t, err)

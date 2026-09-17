@@ -273,6 +273,11 @@ func fingerprintArchive(path string) (archiveFingerprint, error) {
 // failures of the ingest it actually performs. A plan that never extracts
 // must not claim to be extracting.
 func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, profileName, archivePath string, opts ImportArchiveOptions) (*ImportArchivePlan, error) {
+	// #462: an import deploys into the game directory, which holds the
+	// active profile's mods, so it acts for that profile alone.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, "import an archive into"); err != nil {
+		return nil, err
+	}
 	fingerprint, err := fingerprintArchive(archivePath)
 	if err != nil {
 		return nil, err
@@ -527,6 +532,9 @@ func (s *Service) ApplyImportArchive(ctx context.Context, game *domain.Game, pro
 	}
 	defer release()
 
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, "import an archive into"); err != nil {
+		return &ImportArchiveResult{}, err
+	}
 	if err := s.checkPlanFresh(ctx, game.ID, profileName, plan.snapshot); err != nil {
 		return &ImportArchiveResult{}, err
 	}
@@ -824,6 +832,9 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		result.HookWarnings = append(result.HookWarnings, fmt.Sprintf("install.after_all hook failed: %v", err))
 	}
 
+	// #476: the files the import left for another game, and any original
+	// it could not put back, are this flow's to report.
+	s.takeCaptureWarnings(game.ID, OpImport, ImportArchiveWarning, &result.Warnings, emit)
 	return result, nil
 }
 

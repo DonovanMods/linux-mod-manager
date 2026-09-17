@@ -219,13 +219,14 @@ func TestProfileImport_CrossProfileMod_CopiesTheChecksum(t *testing.T) {
 		Mods: []domain.ModReference{{SourceID: "src", ModID: "alpha", Version: "1.0.0"}}}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	// No source is registered: an AlreadyCached entry must never fetch.
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 	require.Len(t, plan.AlreadyCached, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
 
@@ -269,12 +270,13 @@ func TestProfileImport_CrossProfileMod_NoChecksumToCopy_IsHonestlyEmpty(t *testi
 		Mods: []domain.ModReference{{SourceID: "src", ModID: "alpha", Version: "1.0.0"}}}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 	require.Len(t, plan.AlreadyCached, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
 	assert.Empty(t, result.Warnings, "a row with nothing to copy is not a failure")
@@ -326,6 +328,7 @@ func TestProfileImport_CrossProfileMod_ChecksumReadFailure_IsReported(t *testing
 		Mods: []domain.ModReference{{SourceID: "src", ModID: "alpha", Version: "1.0.0"}}}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
@@ -333,7 +336,7 @@ func TestProfileImport_CrossProfileMod_ChecksumReadFailure_IsReported(t *testing
 
 	breakChecksumColumn(t, filepath.Join(dataDir, "lmm.db"))
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed, "the files are installed either way - a checksum is not the install")
 	require.NotEmpty(t, result.Warnings, "a failed READ must be reported, exactly as a failed write is")

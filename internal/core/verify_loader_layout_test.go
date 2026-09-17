@@ -48,12 +48,21 @@ func stalePreFixJotunn(t *testing.T, profiles ...string) (*core.Service, *domain
 			_, err := pm.Create(context.Background(), game.ID, profile)
 			require.NoError(t, err)
 		}
+		// Only the active profile may import (#462); the pre-fix reality
+		// this builds had every profile deploy the same files.
+		if _, err := pm.Get(context.Background(), game.ID, profile); err == nil {
+			require.NoError(t, pm.SetDefault(context.Background(), game.ID, profile))
+		}
 		// An explicit identity, so every profile shares ONE cache entry -
 		// which is the whole point of the sibling-profile case.
 		result, err := svc.ImportArchive(context.Background(), game, profile, archivePath,
 			core.ImportArchiveOptions{SourceID: domain.SourceLocal, ModID: "1138", Force: true}, nil)
 		require.NoError(t, err)
 		mod = result.Mod
+	}
+
+	if _, err := pm.Get(context.Background(), game.ID, profiles[0]); err == nil {
+		require.NoError(t, pm.SetDefault(context.Background(), game.ID, profiles[0]))
 	}
 
 	// The pre-fix reality, asserted so this fixture cannot silently start
@@ -205,29 +214,36 @@ func TestVerify_LoaderTier_ACorrectlyPlacedPluginIsNotAFinding(t *testing.T) {
 // guard the repair needs to be allowed to touch the cache at all: the entry
 // is shared by every profile of the game holding that version, so moving
 // its files out from under a sibling's deployment would leave that profile
-// linked to paths nothing provides any more.
+// linked to paths nothing provides any more. The repair runs for the active
+// profile only (#462) - a non-active profile's --fix refuses it, and leaves
+// the shared entry and every deployment exactly as they were - and it
+// re-links the active profile while the sibling's records of the old layout
+// go with its files (#444).
 func TestVerify_LoaderTier_FixRelaysOutEveryProfileSharingTheCacheEntry(t *testing.T) {
 	svc, game, mod := stalePreFixJotunn(t, "default", "second")
-	// The sibling is the live profile, so its deployment is the one in the
-	// game directory (#444: no other profile's is put back).
-	require.NoError(t, svc.NewProfileManager().SetDefault(context.Background(), game.ID, "second"))
+	ctx := context.Background()
+	require.NoError(t, svc.NewProfileManager().SetDefault(ctx, game.ID, "second"))
+	before := gameTreeForTest(t, game.InstallPath)
 
-	_, err := svc.VerifyReport(context.Background(), game, "default",
-		core.VerifyOptions{Fix: true, Force: true}, nil)
+	_, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before, gameTreeForTest(t, game.InstallPath), "default is not active: nothing is re-laid out")
+
+	_, err = svc.VerifyReport(ctx, game, "second", core.VerifyOptions{Fix: true, Force: true}, nil)
 	require.NoError(t, err)
 
-	for _, profile := range []string{"default", "second"} {
-		rows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, profile,
-			mod.SourceID, mod.ID)
+	want := map[string][]string{
+		"second":  {"BepInEx/plugins/Jotunn/Jotunn.dll", "BepInEx/plugins/Jotunn/Jotunn.xml"},
+		"default": {},
+	}
+	for profile, paths := range want {
+		rows, err := svc.GetDeployedFilesForMod(ctx, game.ID, profile, mod.SourceID, mod.ID)
 		require.NoError(t, err)
 		slashed := make([]string, 0, len(rows))
 		for _, p := range rows {
 			slashed = append(slashed, filepath.ToSlash(p))
 		}
-		assert.ElementsMatch(t, []string{
-			"BepInEx/plugins/Jotunn/Jotunn.dll",
-			"BepInEx/plugins/Jotunn/Jotunn.xml",
-		}, slashed, "profile %s must be re-linked, not left pointing at the old layout", profile)
+		assert.ElementsMatch(t, paths, slashed, "profile %s must not be left pointing at the old layout", profile)
 	}
 }
 

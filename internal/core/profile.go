@@ -767,6 +767,50 @@ func (s *Service) refuseInactive(ctx context.Context, gameID, profileName, verb 
 		ErrProfileNotActive, verb, profileName, gameID, live, profileName)
 }
 
+// requireActiveProfile refuses verb - a deploy-direction write: install,
+// update, rollback, enable, archive import, adopt - for profileName unless
+// it is gameID's active profile (#462), as refuseInactive does for deploy
+// and apply (#445). A game with no profile file at all is the exception: the
+// flow creates the game's first profile, and a game's only profile is its
+// active one.
+func (s *Service) requireActiveProfile(ctx context.Context, gameID, profileName, verb string) error {
+	names, err := config.ListProfiles(s.configDir, gameID)
+	if err != nil {
+		return fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return s.refuseInactive(ctx, gameID, profileName, verb)
+}
+
+// CheckDeployTarget reports whether a deploy-direction flow may act for
+// profileName in gameID (#462): nil for the game's active profile - or a
+// game with no profile yet - else ErrProfileNotActive naming `lmm profile
+// switch`, or ErrActiveProfileUnknown. It changes nothing. A frontend that
+// starts a deploy with no plan to carry the refusal - the web UI's enable
+// toggle - asks it first, so the refusal answers the request instead of
+// failing a job; the flow itself asks again.
+func (s *Service) CheckDeployTarget(ctx context.Context, gameID, profileName string) error {
+	return s.requireActiveProfile(ctx, gameID, profileName, "deploy into")
+}
+
+// profileScope is how a removal-direction flow acting for profileName may
+// touch gameID's game directory (#462): recordedOnly is false when
+// profileName is the active profile, live, and the flow acts on the
+// directory as it always has; it is true otherwise, and the flow may take
+// out only what profileName itself recorded putting there and nothing else
+// still claims (clearRecorded) - the rule #445 gave purge. A game whose
+// active profile cannot be told is ErrActiveProfileUnknown: any answer
+// would be a guess. A deploy-direction flow asks refuseInactive instead.
+func (s *Service) profileScope(ctx context.Context, gameID, profileName string) (live string, recordedOnly bool, err error) {
+	live, err = s.liveProfile(ctx, gameID)
+	if err != nil {
+		return "", false, err
+	}
+	return live, live != profileName, nil
+}
+
 // flaggedActiveProfile returns gameID's one profile whose file says
 // `is_default: true`, by file name, or "" when none does, several do, or a
 // profile file cannot be read - the cases where "which profile is active?"

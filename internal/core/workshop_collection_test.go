@@ -74,7 +74,7 @@ func TestPlanWorkshopCollectionImport_BuildsAProfileOfWorkshopRefs(t *testing.T)
 	assert.Equal(t, "cargo-ships", plan.Profile.Name, "the collection's own name, as a profile name")
 	assert.Equal(t, game.ID, plan.Profile.GameID)
 	require.Len(t, plan.Profile.Mods, 2)
-	assert.Equal(t, domain.ModReference{SourceID: "steamworkshop", ModID: "3617086610", External: true}, plan.Profile.Mods[0])
+	assert.Equal(t, domain.ModReference{SourceID: "steamworkshop", ModID: "3617086610", External: true, DisplayVersion: core.NoRevisionDate}, plan.Profile.Mods[0])
 	assert.Equal(t, "3512001122", plan.Profile.Mods[1].ModID)
 
 	require.NotNil(t, plan.WorkshopCollection)

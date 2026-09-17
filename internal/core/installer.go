@@ -50,6 +50,13 @@ type Installer struct {
 	// there, and the linker removes any symlink it is pointed at.
 	recordedOnly bool
 
+	// keepReplacedLinks makes an uninstall leave, and stop recording, a
+	// regular file at a path a symlink deployment recorded - the user's
+	// replacement of lmm's link (#469). Set for `lmm purge`, whose record
+	// the mod_path refusal waits on; every other removal keeps reporting
+	// such a path as an undeploy failure.
+	keepReplacedLinks bool
+
 	// refused is the adapter refusal this Installer was built under, or
 	// nil (#413). Service.newInstallerWithLinker sets it with recordedOnly;
 	// every deploy method returns it before touching anything. The flows
@@ -1364,6 +1371,13 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 			held = append(held, h)
 			continue
 		}
+		// #469: a symlink deployment is never a regular file, so one at a
+		// symlink profile's recorded path is the user's replacement of
+		// lmm's link. It stays; its record goes with the others below.
+		if i.keepReplacedLinks && i.linker.Method() == domain.LinkSymlink && replacedLink(dstPath) {
+			i.noteHeld(fmt.Sprintf("%s was left in place: it is a regular file where lmm deployed a link, so it is yours now", file))
+			continue
+		}
 
 		if err := i.linker.Undeploy(dstPath); err != nil {
 			return removed, held, fmt.Errorf("undeploying %s: %w", file, err)
@@ -1384,6 +1398,15 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 	}
 
 	return removed, held, nil
+}
+
+// replacedLink reports whether path holds a regular file - at a path a
+// symlink deployment recorded, the user's replacement of lmm's link (#469).
+// Copy and hardlink deployments are regular files themselves; telling
+// theirs from the user's needs the recorded checksum #466 adds.
+func replacedLink(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // removalPaths lists the paths, relative to game.ModPath, an uninstall of

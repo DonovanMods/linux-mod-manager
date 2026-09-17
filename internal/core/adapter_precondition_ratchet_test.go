@@ -202,6 +202,7 @@ var deployGates = map[string]bool{
 	"checkPlanFresh":            true,
 	"deployRefusal":             true,
 	"refuseDeploy":              true,
+	"refuseLiveDeploy":          true,
 }
 
 // ungatedDeployEntries are exported Service methods allowed to reach a
@@ -253,8 +254,9 @@ func receiverName(x ast.Expr) string {
 
 // coreCallGraph indexes every function in files by key, and by name for
 // resolving a call - by name only, so a call reaches every function of
-// that name (an over-approximation a ratchet can afford).
-func coreCallGraph(files []*ast.File) (map[string]*coreFunc, map[string][]string) {
+// that name (an over-approximation a ratchet can afford). A call is a gate
+// when gates names it.
+func coreCallGraph(files []*ast.File, gates map[string]bool) (map[string]*coreFunc, map[string][]string) {
 	funcs := map[string]*coreFunc{}
 	byName := map[string][]string{}
 	for _, f := range files {
@@ -294,7 +296,7 @@ func coreCallGraph(files []*ast.File) (map[string]*coreFunc, map[string][]string
 				default:
 					return true
 				}
-				c.isGate = deployGates[c.name]
+				c.isGate = gates[c.name]
 				fn.calls = append(fn.calls, c)
 				return true
 			})
@@ -347,6 +349,15 @@ func deployKind(fn *coreFunc, c *coreCall) (deploy, unclear bool) {
 // ungatedDeployPaths walks every call path from root that no gate guards,
 // returning one line per deploy it reaches.
 func ungatedDeployPaths(root string, funcs map[string]*coreFunc, byName map[string][]string) []string {
+	return ungatedPaths(root, funcs, byName, func(fn *coreFunc, c *coreCall) bool {
+		deploy, _ := deployKind(fn, c)
+		return deploy
+	})
+}
+
+// ungatedPaths walks every call path from root that no gate guards,
+// returning one line per call site reaches.
+func ungatedPaths(root string, funcs map[string]*coreFunc, byName map[string][]string, site func(*coreFunc, *coreCall) bool) []string {
 	var found []string
 	seen := map[string]bool{}
 	var walk func(key string, path []string)
@@ -361,7 +372,7 @@ func ungatedDeployPaths(root string, funcs map[string]*coreFunc, byName map[stri
 			if c.guarded || c.isGate {
 				continue
 			}
-			if deploy, _ := deployKind(fn, c); deploy {
+			if site(fn, c) {
 				found = append(found, strings.Join(path, " -> ")+" -> "+c.recv+"."+c.name)
 				continue
 			}
@@ -380,7 +391,7 @@ func ungatedDeployPaths(root string, funcs map[string]*coreFunc, byName map[stri
 // before it on the way. A new single-step flow that deploys, or a gate
 // removed from an existing one, fails here.
 func TestEverySingleStepDeployIsGated(t *testing.T) {
-	funcs, byName := coreCallGraph(parseCorePackage(t))
+	funcs, byName := coreCallGraph(parseCorePackage(t), deployGates)
 
 	var unclear []string
 	sites := map[string]bool{}
@@ -434,7 +445,7 @@ func TestEverySingleStepDeployIsGated(t *testing.T) {
 // it reaches the precondition check - so a gate that stops asking cannot
 // keep the ratchet above quiet.
 func TestEveryDeployGateAsksTheAdapter(t *testing.T) {
-	funcs, byName := coreCallGraph(parseCorePackage(t))
+	funcs, byName := coreCallGraph(parseCorePackage(t), deployGates)
 	var reaches func(key string, seen map[string]bool) bool
 	reaches = func(key string, seen map[string]bool) bool {
 		fn := funcs[key]

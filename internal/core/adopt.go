@@ -283,6 +283,11 @@ func (s *Service) PlanAdopt(ctx context.Context, game *domain.Game, profileName 
 	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
 		return nil, err
 	}
+	// #462: adopting records files in the game directory as this
+	// profile's deployment, and that directory holds the active profile's.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, "adopt files into"); err != nil {
+		return nil, err
+	}
 	scan, installedMods, err := s.scanLocal(ctx, game, ScanOptions{ProfileName: profileName, DryRun: opts.DryRun})
 	if err != nil {
 		return nil, err
@@ -305,6 +310,7 @@ func (s *Service) PlanAdopt(ctx context.Context, game *domain.Game, profileName 
 		if !opts.SkipMatch {
 			s.matchUntracked(ctx, game, &scan.Untracked[i], &plan.Matches[i])
 		}
+		s.stampDisplayVersion(scan.Untracked[i].Mod, false) // #458
 		plan.Matches[i].Untracked = scan.Untracked[i]
 	}
 
@@ -451,6 +457,11 @@ func (s *Service) ApplyAdoptBackfill(ctx context.Context, game *domain.Game, pla
 	defer release()
 
 	result := &AdoptBackfillResult{}
+	// #462: adopting records files in the game directory as this
+	// profile's deployment, and that directory holds the active profile's.
+	if err := s.requireActiveProfile(ctx, game.ID, plan.Profile, "adopt files into"); err != nil {
+		return result, err
+	}
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {
 		return result, err
 	}
@@ -539,6 +550,11 @@ func (s *Service) ApplyAdopt(ctx context.Context, game *domain.Game, plan *Adopt
 
 func (s *Service) applyAdopt(ctx context.Context, game *domain.Game, plan *AdoptPlan, sink EventSink) (*AdoptResult, error) {
 	result := &AdoptResult{}
+	// #462: adopting records files in the game directory as this
+	// profile's deployment, and that directory holds the active profile's.
+	if err := s.requireActiveProfile(ctx, game.ID, plan.Profile, "adopt files into"); err != nil {
+		return result, err
+	}
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {
 		return result, err
 	}
@@ -617,6 +633,9 @@ func (s *Service) applyAdopt(ctx context.Context, game *domain.Game, plan *Adopt
 		return result, err
 	}
 
+	// #476: what the adoption's merged-pak sync left for another game, and
+	// any original it could not put back, are this flow's to report.
+	s.takeCaptureWarnings(game.ID, OpAdopt, AdoptSyncWarning, &result.Warnings, emit)
 	return result, nil
 }
 

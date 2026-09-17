@@ -277,6 +277,16 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	if game.DeployMode != domain.DeployCompile {
 		return nil, nil
 	}
+	// #462: the merged artifact in the game directory is the active
+	// profile's. A flow acting for another profile - a recorded-only
+	// uninstall or disable, a relink, a recorded-only profile import -
+	// leaves it alone; that profile's merge set is compiled when a switch
+	// makes it active.
+	if _, recordedOnly, err := s.profileScope(ctx, game.ID, profileName); err != nil {
+		return nil, err
+	} else if recordedOnly {
+		return nil, nil
+	}
 
 	current, sources, err := s.currentMergedFingerprint(ctx, game, profileName)
 	if err != nil {
@@ -1094,6 +1104,11 @@ func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 
 func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, sink EventSink) (*UpdateApplyResult, error) {
 	result := &UpdateApplyResult{}
+	// #462: the regenerated artifact is written into the game directory,
+	// which holds the active profile's.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, "regenerate the merged artifact of"); err != nil {
+		return result, err
+	}
 	// Resolved up front: Name below reports the merged artifact by the name
 	// only the compile source knows (#256), and a regen request for a game
 	// without one is a misconfiguration worth failing loud on before

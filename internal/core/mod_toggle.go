@@ -93,6 +93,16 @@ type DisableResult struct {
 	// Warnings mirrors EnableResult.Warnings' identical rationale
 	// (#197 postsmoke fix): unconditional display, unlike Notes.
 	Warnings []string `json:"warnings,omitempty"`
+
+	// RecordedOnly is set when the profile is not the game's active one
+	// (#462): the game directory holds the active profile's mods, so the
+	// disable removed only Removed - files that profile alone recorded
+	// deploying for the mod - and left Kept, and recorded the mod as off in
+	// that profile's document. ActiveProfile names the active profile.
+	RecordedOnly  bool            `json:"recorded_only,omitzero"`
+	ActiveProfile string          `json:"active_profile,omitempty"`
+	Removed       []string        `json:"removed,omitempty"`
+	Kept          []PurgeKeptPath `json:"kept,omitempty"`
 }
 
 // EnableMod deploys an installed-but-disabled mod's files from the cache to
@@ -125,6 +135,11 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 }
 
 func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*EnableResult, error) {
+	// #462: enabling a mod writes into the game directory, which holds the active
+	// profile's mods, so it acts for that profile alone.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, "enable a mod in"); err != nil {
+		return nil, err
+	}
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
@@ -259,6 +274,14 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 		return nil, err
 	}
 
+	live, recordedOnly, err := s.profileScope(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	if recordedOnly {
+		return s.disableRecorded(ctx, game, mod, live)
+	}
+
 	if !mod.Enabled {
 		// Self-heal (#183): a mod disabled before this fix shipped can be
 		// stuck with enabled=false but deployed=true forever, since nothing
@@ -320,5 +343,53 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 	s.takeCaptureWarnings(game.ID, OpDeploy, PurgeWarning, &result.Warnings, nil)
 
 	result.Changed = true
+	return result, nil
+}
+
+// disableRecorded is disableMod for a profile that is not the game's active
+// one, live (#462, DisableResult.RecordedOnly). Such a profile's enabled bit
+// is not its intent - every switch away from it writes 0 (#444) - so the
+// document's marker is what "disabled" means here, and what Changed
+// reports; the files that profile alone recorded deploying for the mod go
+// as clearRecorded allows, whatever the row says.
+func (s *Service) disableRecorded(ctx context.Context, game *domain.Game, mod *domain.InstalledMod, live string) (*DisableResult, error) {
+	profileName := mod.ProfileName
+	result := &DisableResult{RecordedOnly: true, ActiveProfile: live}
+	wasOff := false
+	if profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
+		if ref := profile.FindRef(mod.SourceID, mod.ID); ref != nil {
+			wasOff = ref.Disabled
+		}
+	}
+	all := func(string) bool { return true }
+	cleared, err := s.clearRecorded(ctx, game, profileName, live, recordedClearOptions{
+		only:    modKeySet(mod.SourceID, mod.ID),
+		approve: all,
+		untrack: all,
+		note:    func(msg string) { result.Notes = append(result.Notes, msg) },
+		warn:    func(msg string) { result.Warnings = append(result.Warnings, msg) },
+	})
+	if cleared != nil {
+		result.Removed = cleared.removed
+		result.Kept = append(result.Kept, cleared.kept...)
+	}
+	if err != nil {
+		return result, err
+	}
+	if cleared.left[domain.ModKey(mod.SourceID, mod.ID)] == 0 && mod.Deployed {
+		if err := s.setModDeployed(ctx, mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
+			result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as not deployed: %v", err))
+		}
+	}
+	if mod.Enabled {
+		if err := s.setModEnabled(ctx, mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
+			return result, fmt.Errorf("failed to update mod status: %w", err)
+		}
+	}
+	if msg := s.recordProfileDisabled(ctx, game.ID, profileName, mod.SourceID, mod.ID, true); msg != "" {
+		result.Notes = append(result.Notes, msg)
+	}
+	s.takeCaptureWarnings(game.ID, OpPurge, PurgeWarning, &result.Warnings, nil)
+	result.Changed = !wasOff || mod.Enabled || len(result.Removed) > 0
 	return result, nil
 }

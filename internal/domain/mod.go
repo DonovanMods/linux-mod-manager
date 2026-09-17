@@ -171,6 +171,10 @@ type ModReference struct {
 	// hand simply renders as it always did.
 	External  bool      `yaml:"-" json:"external,omitzero"`
 	UpdatedAt time.Time `yaml:"-" json:"updated_at,omitzero"`
+	// DisplayVersion is Mod.DisplayVersion for the ref (#458): set when
+	// Version is a Workshop content id, whether lmm tracks the item or
+	// downloaded it itself.
+	DisplayVersion string `yaml:"-" json:"display_version,omitempty"`
 }
 
 // Mod represents a mod from any source
@@ -191,6 +195,14 @@ type Mod struct {
 	Files        []ModFile      `json:"files"`
 	Dependencies []ModReference `json:"dependencies"`
 	UpdatedAt    time.Time      `json:"updated_at,omitzero"`
+	// DisplayVersion is what a surface shows in a version's place when
+	// Version is not a version a person reads (#458): a Steam Workshop
+	// item's Version is Steam's content id whether lmm tracks the item
+	// (Tier 1) or downloaded it itself (Tier 3), and the item is shown by
+	// its revision date, YYYY-MM-DD - or "-" when lmm has no date for it.
+	// Empty for every other mod, whose Version is its display. Core stamps
+	// it on the documents it returns; it is never stored.
+	DisplayVersion string `json:"display_version,omitempty"`
 }
 
 // InstalledMod tracks a mod installed in a profile

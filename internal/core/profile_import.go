@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // --- ImportPlan/ApplyImport (Phase 6b Task 8) ---
@@ -89,6 +90,17 @@ type ImportPlan struct {
 	// ProfileImportOptions.Force) produce the authoritative error.
 	Exists bool `json:"exists"`
 
+	// RecordedOnly is set when the profile being imported into is not, and
+	// will not be, the game's active profile (#462): the game directory
+	// holds the active profile's mods, so the import records the profile's
+	// mods - its document, and an installed row per mod, downloading what
+	// the cache lacks - and deploys nothing. The mods reach the game
+	// directory when `lmm profile switch` makes the profile active.
+	// ActiveProfile names the active profile then. An import that creates a
+	// game's first profile makes it the active one, so it deploys.
+	RecordedOnly  bool   `json:"recorded_only,omitzero"`
+	ActiveProfile string `json:"active_profile,omitempty"`
+
 	// data is the raw import bytes, preserved so ApplyImport can hand them
 	// to ProfileManager.ImportWithOptions unchanged - PlanImport parses via
 	// ParseProfile purely for preview, without persisting anything.
@@ -161,6 +173,11 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 
 	_, existErr := pm.Get(ctx, game.ID, profile.Name)
 	exists := existErr == nil
+
+	live, recordedOnly, err := s.importScope(ctx, game.ID, profile.Name)
+	if err != nil {
+		return nil, err
+	}
 
 	// targetRows keeps each mod key's full installed row FOR THE PROFILE
 	// BEING IMPORTED INTO (doProfileImport tracked only Version/FileIDs),
@@ -375,12 +392,34 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		NeedsRedownload: needsRedownload,
 		Missing:         missing,
 		Exists:          exists,
+		RecordedOnly:    recordedOnly,
+		ActiveProfile:   live,
 		data:            data,
 		storedFileIDs:   storedFileIDs,
 		cachedRows:      cachedRows,
 		priorVersions:   priorVersions,
 		snapshot:        snapshot,
 	}, nil
+}
+
+// importScope is whether an import into profileName deploys (#462): it
+// does when profileName is the game's active profile, or will be - the
+// game has no profile file yet, so the import creates its first, active
+// one. Otherwise recordedOnly is set and live names the active profile. A
+// game whose active profile cannot be told is ErrActiveProfileUnknown.
+func (s *Service) importScope(ctx context.Context, gameID, profileName string) (live string, recordedOnly bool, err error) {
+	names, err := config.ListProfiles(s.configDir, gameID)
+	if err != nil {
+		return "", false, fmt.Errorf("listing profiles: %w", err)
+	}
+	if len(names) == 0 {
+		return "", false, nil
+	}
+	live, recordedOnly, err = s.profileScope(ctx, gameID, profileName)
+	if err != nil || !recordedOnly {
+		return "", false, err
+	}
+	return live, true, nil
 }
 
 // pickImportRow chooses which of a mod's rows from the OTHER saved profiles
@@ -541,6 +580,14 @@ type ProfileImportResult struct {
 	// with Reason equal to that mod's ImportModFailed event Detail verbatim
 	// (#308). omitempty: a clean import carries no key.
 	Failures []ItemFailure `json:"failures,omitempty"`
+
+	// RecordedOnly and ActiveProfile echo ImportPlan's (#462): the import
+	// deployed nothing, and Recorded - not Installed - counts the mods it
+	// recorded in the profile, each with an installed row that is not
+	// deployed.
+	RecordedOnly  bool   `json:"recorded_only,omitzero"`
+	ActiveProfile string `json:"active_profile,omitempty"`
+	Recorded      int    `json:"recorded,omitzero"`
 }
 
 // ApplyImport executes a plan produced by PlanImport: saves the profile
@@ -587,6 +634,15 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	if err := s.checkPlanFresh(ctx, game.ID, plan.Profile.Name, plan.snapshot); err != nil {
 		return result, err
 	}
+	live, recordedOnly, err := s.importScope(ctx, game.ID, plan.Profile.Name)
+	if err != nil {
+		return result, err
+	}
+	if recordedOnly != plan.RecordedOnly {
+		return result, fmt.Errorf("%w: whether %s is the active profile of %s changed since this import was planned", ErrStalePlan, plan.Profile.Name, game.ID)
+	}
+	result.RecordedOnly, result.ActiveProfile = recordedOnly, live
+	deploy := !recordedOnly
 
 	pm := s.NewProfileManager()
 	profile, err := pm.ImportWithOptions(ctx, plan.data, opts.Force)
@@ -647,7 +703,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		// call that would even succeed.
 		if row, ok := plan.cachedRows[key]; ok {
 			scope.ModName = row.Name
-			modRef, msgs, err := s.importCachedMod(ctx, game, profile.Name, installer, row, plan.priorVersions[key])
+			modRef, msgs, err := s.importCachedMod(ctx, game, profile.Name, installer, row, plan.priorVersions[key], deploy)
 			if err != nil {
 				fail(err.Error())
 				continue
@@ -659,7 +715,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 			if cerr := s.recordImportedRef(ctx, pm, game.ID, profile.Name, modRef, scope, result, emit); cerr != nil {
 				return result, cerr
 			}
-			result.Installed++
+			result.countImported(deploy)
 			emit(ModEvent{Scope: scope, Phase: ImportModInstalled})
 			continue
 		}
@@ -743,9 +799,11 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 			}
 		}
 
-		if err := s.deployImportedMod(ctx, game, installer, plan.priorVersions[key], mod, profile.Name); err != nil {
-			fail(err.Error())
-			continue
+		if deploy {
+			if err := s.deployImportedMod(ctx, game, installer, plan.priorVersions[key], mod, profile.Name); err != nil {
+				fail(err.Error())
+				continue
+			}
 		}
 
 		// Save to DB. Normalize GameID to the lmm game (see the comment on
@@ -756,7 +814,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 			UpdatePolicy: domain.UpdateNotify,
 			Enabled:      true,
 			FileIDs:      downloadedFileIDs,
-			Deployed:     true, // installer.Install above just succeeded
+			Deployed:     deploy, // installer.Install above just succeeded
 		}
 		installedMod.GameID = game.ID
 		if err := s.saveInstalledMod(ctx, installedMod); err != nil {
@@ -776,7 +834,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 			return result, cerr
 		}
 
-		result.Installed++
+		result.countImported(deploy)
 		emit(ModEvent{Scope: scope, Phase: ImportModInstalled})
 	}
 
@@ -795,8 +853,27 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 			emit(StepEvent{Scope: Scope{Op: OpImport}, Phase: ImportNote, Detail: w})
 		}
 	}
+	// #476: the files the import left for another game, and any original
+	// it could not put back, are this flow's to report - as the sync's own
+	// warnings are, on the ImportNote step.
+	var held []string
+	s.takeCaptureWarnings(game.ID, OpImport, ImportNote, &held, nil)
+	for _, w := range held {
+		result.Warnings = append(result.Warnings, w)
+		emit(StepEvent{Scope: Scope{Op: OpImport}, Phase: ImportNote, Detail: w})
+	}
 
 	return result, nil
+}
+
+// countImported counts one imported mod: installed, or - for a
+// recorded-only import (#462) - recorded.
+func (r *ProfileImportResult) countImported(deployed bool) {
+	if deployed {
+		r.Installed++
+	} else {
+		r.Recorded++
+	}
 }
 
 // deployImportedMod puts mod on disk for an import, REPLACING a live
@@ -854,13 +931,16 @@ func (s *Service) deployImportedMod(ctx context.Context, game *domain.Game, inst
 // recordFileChecksums' own failures are). Both ends of the copy report: a
 // failed READ of the source row's checksum as well as a failed write of the
 // new one (P1a re-review N2).
-func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profileName string, installer *Installer, row, prior domain.InstalledMod) (domain.ModReference, []string, error) {
+//
+// deploy is false for a recorded-only import (#462): the row is written
+// not deployed, and nothing reaches the game directory.
+func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profileName string, installer *Installer, row, prior domain.InstalledMod, deploy bool) (domain.ModReference, []string, error) {
 	mod := row.Mod
 	// Normalize GameID to the lmm game (see ApplyProfileSwitch's own
 	// identical save site for why).
 	mod.GameID = game.ID
 
-	if !row.External {
+	if !row.External && deploy {
 		// #404: the same convergence gate the install loop uses. Bytes
 		// already in the cache say nothing about what is LIVE, so an entry
 		// that needs no download can still have a live deployment of
@@ -881,7 +961,7 @@ func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profil
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 		FileIDs:      row.FileIDs,
-		Deployed:     true, // installer.Install just succeeded, or Steam has it
+		Deployed:     deploy || row.External, // installer.Install just succeeded, or Steam has it
 		External:     row.External,
 		ExternalPath: row.ExternalPath,
 	}

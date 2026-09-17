@@ -48,6 +48,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -124,6 +125,8 @@ type SnapshotRestoreMod struct {
 	// Steam's 19-digit content id - issue 269's approval note, via
 	// spa/app/version.js#displayVersion and cmd/lmm's displayModVersion.
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
+	// DisplayVersion is domain.Mod.DisplayVersion for the row (#458).
+	DisplayVersion string `json:"display_version,omitempty"`
 }
 
 // SnapshotRestorePlan is what `lmm snapshot restore --dry-run` prints and
@@ -364,13 +367,22 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 
 	// Review finding 2: if another profile is active, its deployment is
 	// part of what stands between the game directory and the recorded
-	// state, so it is planned as well. An unreadable/absent default is not
-	// an error - it means "default", which is either this profile or a
-	// profile with nothing installed.
-	if active, err := s.NewProfileManager().GetDefault(ctx, game.ID); err == nil && active != nil && active.Name != profileName {
-		activeMods, _ := s.GetInstalledMods(ctx, game.ID, active.Name)
+	// state, so it is planned as well. Which profile that is must be known,
+	// not guessed (#462, G2-4): GetDefault falls back to the first readable
+	// profile when none is marked, and purging that profile's files would
+	// leave the real active profile's in place. A game with no profile file
+	// at all is "default" (liveProfile).
+	live, err := s.liveProfile(ctx, game.ID)
+	if err != nil {
+		return nil, err
+	}
+	if live != profileName {
+		activeMods, err := s.GetInstalledMods(ctx, game.ID, live)
+		if err != nil {
+			return nil, fmt.Errorf("getting installed mods: %w", err)
+		}
 		activeToPurge, activeExternal := partitionExternal(activeMods)
-		plan.ActiveProfile = active.Name
+		plan.ActiveProfile = live
 		plan.ToPurgeActive = activeToPurge
 		plan.External = appendUnseen(plan.External, activeExternal)
 		// The freshness precondition for the active profile too, over the
@@ -475,6 +487,16 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 		}
 		plan.Mods = append(plan.Mods, row)
 	}
+	// #458: each row's version as a person reads it.
+	for i := range plan.Mods {
+		row := &plan.Mods[i]
+		key := domain.ModKey(row.SourceID, row.ModID)
+		updated := row.UpdatedAt
+		if updated.IsZero() {
+			updated = cmp.Or(recorded[key].UpdatedAt, installedByKey[key].UpdatedAt)
+		}
+		row.DisplayVersion = s.displayVersionFor(row.External, row.SourceID, updated)
+	}
 
 	plan.ProfileChanged = s.profileDiffersFromSnapshot(game.ID, doc)
 	return plan, nil
@@ -578,6 +600,15 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 	result := &SnapshotRestoreResult{Snapshot: plan.Snapshot, Profile: plan.Profile}
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {
 		return result, err
+	}
+	// #462: the plan purges the profile that was active when it was made;
+	// one that another profile has replaced since is stale.
+	live, err := s.liveProfile(ctx, game.ID)
+	if err != nil {
+		return result, err
+	}
+	if planned := cmp.Or(plan.ActiveProfile, plan.Profile); live != planned {
+		return result, fmt.Errorf("%w: the active profile of %s is %s now, not %s", ErrStalePlan, game.ID, live, planned)
 	}
 	// Re-review finding N7: the active profile is undeployed by stage 1, so
 	// its installed set is an input to this apply and gets the same

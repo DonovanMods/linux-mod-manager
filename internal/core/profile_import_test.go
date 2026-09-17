@@ -471,12 +471,13 @@ func TestApplyImportRedownloadUsesStoredFileIDs(t *testing.T) {
 	profile := &domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}}}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 	require.Len(t, plan.NeedsRedownload, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed)
 
@@ -538,12 +539,13 @@ func TestApplyImport_InstallLoop_RecordsFileVersion(t *testing.T) {
 	profile := &domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: ""}}}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 	require.Len(t, plan.NeedsRedownload, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed)
 
@@ -751,13 +753,14 @@ func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
 	}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 	require.Len(t, plan.NeedsRedownload, 1, "the version-drifted mod must be scheduled for reinstall")
 	assert.Empty(t, plan.Installed, "a drifted mod must not be classified as already-installed")
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed)
@@ -827,12 +830,13 @@ func TestApplyImport_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 	require.Len(t, plan.NeedsRedownload, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed)
@@ -979,12 +983,13 @@ func TestApplyImport_CrossProfileMod_GetsARowAndSurvivesSync(t *testing.T) {
 	}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 	require.Len(t, plan.AlreadyCached, 2)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.Installed)
 	assert.Equal(t, 0, result.Failed)
@@ -1041,12 +1046,13 @@ func TestApplyImport_CrossProfileExternalMod_IsRecordedNotFetched(t *testing.T) 
 	}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 	require.Len(t, plan.AlreadyCached, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed)
 	assert.Equal(t, 0, result.Failed, "an external row is copied, never fetched")
@@ -1102,6 +1108,7 @@ func TestPlanImport_CrossProfileMod_ClassificationIgnoresProfileOrder(t *testing
 			}
 			data, err := config.ExportProfile(profile)
 			require.NoError(t, err)
+			activateImportTarget(t, svc, game.ID, profile.Name)
 
 			// No source is registered, so a needless redownload cannot even
 			// be attempted: the bytes for 2.0.0 are cached under one of the
@@ -1111,7 +1118,7 @@ func TestPlanImport_CrossProfileMod_ClassificationIgnoresProfileOrder(t *testing
 			assert.Len(t, plan.AlreadyCached, 1, "the cached 2.0.0 entry must be found whichever profile holds it")
 			assert.Empty(t, plan.NeedsRedownload, "nothing needs re-downloading: 2.0.0 is in the cache")
 
-			result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+			result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 			require.NoError(t, err)
 			assert.Equal(t, 1, result.Installed)
 			assert.Equal(t, 0, result.Failed, "warnings: %v", result.Warnings)
@@ -1231,12 +1238,13 @@ func TestApplyImport_CrossProfilePick_ReplacesTheLiveOlderDeployment(t *testing.
 	}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 	require.Len(t, plan.NeedsRedownload, 1, "1.0 is not cached anywhere, so it has to be fetched")
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
 	assert.Equal(t, 0, result.Failed)
@@ -1361,11 +1369,12 @@ func TestApplyImport_CrossProfile_OneVersionOnDisk(t *testing.T) {
 					}
 					data, err := config.ExportProfile(profile)
 					require.NoError(t, err)
+					activateImportTarget(t, svc, game.ID, profile.Name)
 
 					plan, err := svc.PlanImport(context.Background(), game, data)
 					require.NoError(t, err)
 
-					result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+					result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 					require.NoError(t, err)
 					require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
 					assert.Equal(t, 0, result.Failed)
@@ -1444,11 +1453,12 @@ func TestApplyImport_TwoLiveOtherVersions_ConvergesTheFirstOnly(t *testing.T) {
 	}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
+	activateImportTarget(t, svc, game.ID, profile.Name)
 
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true, Force: true}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
 
@@ -1499,4 +1509,19 @@ func TestPlanImport_DisabledRefIsNeitherFetchedNorDeployed(t *testing.T) {
 	require.Len(t, imported.Mods, 1)
 	assert.True(t, imported.Mods[0].Disabled)
 	assert.Equal(t, "1.0", imported.Mods[0].Version)
+}
+
+// activateImportTarget makes name - the profile a test imports into - the
+// game's active profile, creating it first when it does not exist: an
+// import deploys only into the active profile (#462), and these tests are
+// about what that deploy does. The import then needs Force.
+func activateImportTarget(t *testing.T, svc *core.Service, gameID, name string) {
+	t.Helper()
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+	if _, err := pm.Get(ctx, gameID, name); err != nil {
+		_, err := pm.Create(ctx, gameID, name)
+		require.NoError(t, err)
+	}
+	require.NoError(t, pm.SetDefault(ctx, gameID, name))
 }

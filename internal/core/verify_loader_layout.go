@@ -100,7 +100,7 @@ func (r *verifyRun) loaderMisplacedDeployCheck(installedMods []domain.InstalledM
 		repairable := r.cacheRelayoutApplies(mod)
 		fixing := r.opts.Fix
 		r.result.Issues++
-		fixable, reason := r.deployRowFixability(repairable && !fixing, loaderRelayoutRefusal(repairable, fixing), repairable && fixing)
+		fixable, reason := r.deployRowFixability(repairable && !fixing, loaderRelayoutRefusal(repairable, fixing), repairable && fixing, true)
 		r.finding(VerifyFinding{
 			ModID: mod.ID, ModName: mod.Name, Status: "loader_deployed_outside_loader",
 			Note: fmt.Sprintf("%d file(s) this mod deploys sit outside BepInEx/, including an assembly - starting with %s - so this game's loader reads none of them",
@@ -257,7 +257,7 @@ func (r *verifyRun) repairMisplacedLoaderDeploy(mod *domain.InstalledMod, count 
 	// Undeploy, re-lay out, re-deploy: on a refused game none of it runs,
 	// and the row - which already names the refusal - stays an issue
 	// (#413).
-	if err := r.refuseDeploy(); err != nil {
+	if err := r.refuseLiveDeploy(); err != nil {
 		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("--fix did not re-lay out %s: %s", mod.Name, deployRefusedReason(err))})
 		return
 	}

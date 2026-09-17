@@ -270,8 +270,20 @@ func FindDetectedGame(games []domain.DetectedGame, appID string) (domain.Detecte
 // re-deriving it from side effects.
 type GameDetectResult struct {
 	Saved    []string `json:"saved"`    // game IDs written to games.yaml, in input order
-	Profiles []string `json:"profiles"` // "<game>/default" profiles (re)created
+	Profiles []string `json:"profiles"` // "<game>/default" profiles created
 	Warnings []string `json:"warnings"`
+	// KeptProfiles names the repaired games whose profiles were left as
+	// they were (#465): a repair creates a default profile only for a game
+	// with none, and those land in Profiles instead.
+	KeptProfiles []string `json:"kept_profiles,omitempty"`
+}
+
+// Completed is how many of the applied games finished - games.yaml written
+// and their profiles settled - which are the leading entries of Saved and of
+// the caller's selection, in apply order: each finished game adds itself to
+// exactly one of Profiles and KeptProfiles.
+func (r *GameDetectResult) Completed() int {
+	return len(r.Profiles) + len(r.KeptProfiles)
 }
 
 // ApplyGameDetect converts each of games (a caller's detect-prompt
@@ -289,11 +301,9 @@ type GameDetectResult struct {
 // order (v2 Phase 2 Task 21 review Important #1, 2026-08-28). Re-running
 // against an already-configured game - the CLI's repair path
 // (gameDetectSelectionIndices lets an explicit numeric selection name an
-// already-configured game) - unconditionally overwrites both the
-// games.yaml entry and the default profile's mod list; this mirrors 'lmm
-// game add's own overwrite semantics exactly
-// (ProfileManager.CreateOrResetDefault), preserved byte-for-byte from the
-// pre-lift cmd code (v2 Phase 2 Task 21). One narrow text difference is
+// already-configured game) - rewrites the games.yaml entry's paths and
+// sources (repairedGame) and leaves the game's profiles as they are,
+// creating a default profile only for a game with none (#465). One narrow text difference is
 // deliberately not reproduced: beginOp takes the lock before the loop, so a
 // context cancelled between the prompt read and this call now always
 // surfaces as the bare "context canceled" rather than the pre-lift
@@ -342,7 +352,8 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		// that game, applying the curated paths and sources to the id its
 		// profiles, mods and deployed links already hang off, rather than a
 		// second game over the same directory.
-		if prior := ConfiguredGameFor(existing, g); prior != nil {
+		prior := ConfiguredGameFor(existing, g)
+		if prior != nil {
 			var notice string
 			game, notice = repairedGame(prior, game)
 			// #427 review F1: the repair rewrites mod_path, which is exactly
@@ -367,6 +378,24 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		existing[game.ID] = game
 		result.Saved = append(result.Saved, game.ID)
 
+		// #465: a repair fixes the game's paths and sources and nothing
+		// else. Its profiles are the user's desired state - resetting the
+		// default one to `mods: []` silently dropped every mod it listed -
+		// so a default profile is created only for a game that has no
+		// profile at all.
+		if prior != nil {
+			none, err := pm.isFirstProfile(game.ID)
+			if err != nil {
+				return fmt.Errorf("repairing %s: %w", game.ID, err)
+			}
+			if !none {
+				if result.Profiles == nil {
+					result.Profiles = []string{} // the document's "profiles" stays a list
+				}
+				result.KeptProfiles = append(result.KeptProfiles, game.ID)
+				continue
+			}
+		}
 		if _, err := pm.CreateOrResetDefaultAfterGameSave(ctx, game.ID); err != nil {
 			return fmt.Errorf("creating default profile for %s: %w", game.ID, err)
 		}
@@ -441,8 +470,8 @@ func repairedGame(prior, detected *domain.Game) (*domain.Game, string) {
 //     ApplyGameDetect always has: stop at the first failure, and naming an
 //     already-configured one is the documented REPAIR, which rewrites the
 //     paths and sources of its games.yaml entry (see repairedGame - the
-//     rest of the entry is the user's) and resets its default profile's mod
-//     list.
+//     rest of the entry is the user's) and leaves its profiles as they are
+//     (#465) - it creates a default profile only for a game with none.
 //   - An UNCURATED row - listed because detection prefilled a source map for
 //     it, today #269's `steamworkshop: <appid>` - has no curated entry to
 //     configure from, so it takes the path `lmm game add --from-detected

@@ -59,6 +59,13 @@ func runRefusalCommand(t *testing.T, svc *core.Service, gameID, command string) 
 		result, err := svc.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, nil)
 		require.NoError(t, err, command)
 		require.Empty(t, result.Failed, command)
+	case strings.HasPrefix(command, "lmm verify --fix "):
+		// #469: drops the active profile's records no installed mod owns.
+		report, err := svc.VerifyReport(ctx, game, flag("--profile"), core.VerifyOptions{Fix: true, Force: true}, nil)
+		require.NoError(t, err, command)
+		for _, f := range report.Result.Findings {
+			require.NotEqual(t, "orphaned_record", f.Status, "%s left %+v", command, f)
+		}
 	case command == "lmm deploy --game "+gameID:
 		active, err := svc.NewProfileManager().GetDefault(ctx, gameID)
 		require.NoError(t, err)

@@ -405,6 +405,43 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #469: a link the user replaced with a file of their own.
+			"purge_kept_path_replaced_link",
+			core.PurgeKeptPath{Path: "Data/b.esp", Reason: core.PurgeKeptUserFile, Note: "you replaced lmm's link with your own file"},
+		},
+		{
+			// #469: a path the active profile's listed version no longer ships.
+			"purge_unshipped_path",
+			core.PurgeUnshippedPath{Path: "Data/old.esp", SourceID: "nexusmods", ModID: "42", Version: "2.0", Profile: "default"},
+		},
+		{
+			// #462: an uninstall from a profile that is not active.
+			"uninstall_result_recorded_only",
+			core.UninstallResult{
+				RecordedOnly: true, ActiveProfile: "default",
+				Removed: []string{"Data/alt.esp"},
+				Kept:    []core.PurgeKeptPath{{Path: "Data/shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default"}}},
+			},
+		},
+		{
+			// #462: a disable in a profile that is not active.
+			"disable_result_recorded_only",
+			core.DisableResult{
+				Changed: true, RecordedOnly: true, ActiveProfile: "default",
+				Kept: []core.PurgeKeptPath{{Path: "Data/shared.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default"}}},
+			},
+		},
+		{
+			// #462: a profile import that records and deploys nothing.
+			"profile_import_result_recorded_only",
+			core.ProfileImportResult{ProfileName: "alt", RecordedOnly: true, ActiveProfile: "default", Recorded: 2},
+		},
+		{
+			// #465: a repair that kept the game's profiles.
+			"game_detect_result_kept_profiles",
+			core.GameDetectResult{Saved: []string{"skyrim-se"}, Profiles: []string{}, Warnings: []string{}, KeptProfiles: []string{"skyrim-se"}},
+		},
+		{
 			"merged_artifact_effect",
 			core.MergedArtifactEffect{Action: core.MergedArtifactResync, Path: "zzz_LMM_Merged_P.pak"},
 		},
