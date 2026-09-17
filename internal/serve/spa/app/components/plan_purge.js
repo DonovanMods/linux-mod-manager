@@ -202,11 +202,10 @@ function RecordedPurgeView({ plan, confirmName }) {
   return html`
     <div class="plan plan--purge" data-testid="purge-recorded-only">
       <p class="plan__summary">
-        <span class="mono">${plan.profile}</span> is not the active profile
-        (<span class="mono">${plan.active_profile}</span> is). This clean-up
-        removes only the files <span class="mono">${plan.profile}</span>
-        recorded deploying that nothing else still uses. Of the files it keeps,
-        it forgets its own record - except one the active profile lists.
+        ${
+          // One string, for htm's whitespace rule (cards.js#conflictLabel).
+          `${plan.profile} is not the active profile (${plan.active_profile} is). This clean-up removes only the files ${plan.profile} recorded deploying that nothing else still uses. Of the files it keeps, it forgets its own record - except one the active profile lists.`
+        }
       </p>
       <p class="plan__note">
         No hooks run, and the profile's mod records stay.

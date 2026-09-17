@@ -102,7 +102,7 @@ func TestE2E_ProfilesModal_ActiveRowHasNoDeleteAndACleanUpListsWhatItKeeps(t *te
 	assert.Contains(t, note, "can't be deleted")
 	assert.Equal(t, "Purge…", strings.TrimSpace(defaultPurge))
 	assert.Equal(t, "Clean up…", strings.TrimSpace(altPurge))
-	assert.Contains(t, summary, "is not the active profile")
+	assert.Contains(t, summary, "alt is not the active profile (default is). This clean-up removes only the files alt recorded deploying")
 	assert.Equal(t, []string{"own.pak"}, remove)
 	assert.Equal(t, []string{"recorded: shared.pak — profile default records it too"}, kept)
 
