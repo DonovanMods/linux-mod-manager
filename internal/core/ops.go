@@ -56,7 +56,14 @@ func (s *Service) beginOp(ctx context.Context) (release func(), err error) {
 			return nil, fmt.Errorf("recording mods disabled before the upgrade in their profile files: %w", err)
 		}
 	}
-	return release, nil
+	// #466 review D3: what a flow's removals kept as the user's is that
+	// flow's to know. A flow that never drains its originals store must not
+	// hand the memory to the next one, which would write it back.
+	releaseSlot := release
+	return func() {
+		s.forgetKeptFiles()
+		releaseSlot()
+	}, nil
 }
 
 // acquireOp is beginOp's slot acquisition alone - the in-process semaphore

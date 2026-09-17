@@ -77,11 +77,19 @@ func TestCrossGame_AnActivePurgeKeepsAFileAnotherGameRecords(t *testing.T) {
 			assert.Empty(t, sky.recorded(t, "default", "k"), "sky's records go: sky2 still tracks the file")
 			assert.Equal(t, []string{"Data/a.esp"}, sky2.recorded(t, "default", "j"))
 
-			// sky2's own purge then decides its file.
+			// sky2's own purge then decides its file: a link into its cache
+			// goes; the copy the user edited differs from sky2's cached copy,
+			// so it is the user's and stays (#466 review D10).
 			plan, err = sky2.svc.PlanPurge(ctx, sky2.game, "default", core.PurgeOptions{})
 			require.NoError(t, err)
 			result, err = sky2.svc.ApplyPurge(ctx, sky2.game, plan, core.PurgeOptions{}, nil)
 			require.NoError(t, err)
+			if method == domain.LinkCopy {
+				assert.Equal(t, []core.PurgeKeptPath{{Path: "Data/a.esp", Reason: core.PurgeKeptUserFile,
+					Note: "it differs from the mod's cached copy, and lmm recorded no checksum when it deployed it"}}, result.Kept)
+				assert.Equal(t, before, liveBytes(t, live))
+				return
+			}
 			assert.Empty(t, result.Kept)
 			assert.NoFileExists(t, live)
 		})
@@ -115,7 +123,12 @@ func TestCrossGame_AnUninstallKeepsAFileAnotherGameRecords(t *testing.T) {
 
 	assert.Equal(t, "sky2 a, USER-EDITED", liveBytes(t, live))
 	assert.NoFileExists(t, filepath.Join(sky.game.ModPath, "Data", "k.esp"))
-	assert.Equal(t, []string{"Data/a.esp was left in place: game sky2 records it too"}, result.Warnings)
+	assert.Equal(t, []string{
+		"Data/a.esp was left in place: game sky2 records it too",
+		// The fixture's rows predate fingerprints (#466), but Data/k.esp
+		// is still the mod's cached copy, which proves it lmm's (#466
+		// review D10).
+	}, result.Warnings)
 	assert.Equal(t, []string{"Data/a.esp"}, sky2.recorded(t, "default", "j"))
 }
 

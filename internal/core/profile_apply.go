@@ -293,6 +293,12 @@ func outcomeOf(im *domain.InstalledMod, outcome ProfileApplyOutcomeKind) Profile
 // ErrProfileNotActive, and a game whose profile files do not say which
 // profile is active with ErrActiveProfileUnknown.
 func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profileName string) (*ProfileApplyPlan, error) {
+	// #451 F3: a converge plan must not promise what its Apply refuses -
+	// currentMarkedSnapshot (the freshness precondition this plan's Apply
+	// checks) deliberately does NOT ask this, so it is asked here instead.
+	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+		return nil, err
+	}
 	if err := s.refuseInactive(ctx, game.ID, profileName, "apply"); err != nil {
 		// A profile that does not exist is that, not a profile to switch
 		// to. Listed, not loaded: the plan's own load is the read it
@@ -682,6 +688,14 @@ func (s *Service) ApplyProfileApply(ctx context.Context, game *domain.Game, plan
 	defer release()
 	if plan == nil {
 		return &ProfileApplyResult{}, errors.New("profile apply plan is nil: call PlanProfileApply first")
+	}
+	// #451 F3: checked BEFORE any mutation - checkPlanFresh's own
+	// currentMarkedSnapshot deliberately does not ask this (so `profile
+	// sync`, which is DB-only, is unaffected), which used to let this flow's
+	// disable loop run and only fail later, in the enable/install loop's
+	// Installer call - disabling a mod without ever redeploying it.
+	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+		return &ProfileApplyResult{}, err
 	}
 	// #462: re-checked here, since the active profile can change between a
 	// plan and its apply. Snapshot restore's converge step calls

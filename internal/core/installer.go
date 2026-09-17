@@ -68,6 +68,25 @@ type Installer struct {
 	// before anything is touched. Nil - an Installer built without a
 	// Service - asks nothing.
 	otherGames func(context.Context, *domain.Game) (*otherGameRecords, error)
+
+	// keptUser is the record of each path (slash form) a removal through
+	// this Installer left because the file there is the user's (#466), so a
+	// deploy through the same Installer leaves it too, and records it
+	// again. An Installer with an originals store keeps this on the store
+	// instead (rememberKept), where every Installer of the running flow
+	// sees it - `lmm deploy --purge` purges and deploys through two.
+	keptUser map[string]keptFile
+
+	// lastSkipped is how many deployable paths the last Install left as
+	// they were - another game's, the user's, or content lmm could not
+	// preserve - so a flow can count only the files it wrote (#466 review
+	// D7).
+	lastSkipped int
+
+	// cacheRoots is every directory lmm-owned content for the game lives
+	// under (Service.cacheRoots): a link into one is lmm's (#466 review
+	// F1). Nil - an Installer built without a Service - has none.
+	cacheRoots []string
 }
 
 // NewInstaller creates a new installer
@@ -112,18 +131,19 @@ func (i *Installer) setAdapter(a adapter.GameAdapter) { i.adapter = a }
 // that is already a real file, which on a normal deploy is nothing at all,
 // so this costs a stat per file and no more.
 //
-// A capture failure does NOT fail the deploy - a backup that blocks the
-// operation it exists to protect is worse than no backup - but it is not
-// silent either: the store records it on the always-on user channel and on
-// the pending list the running flow drains onto its result's Warnings
-// (review finding 5; the diagnostic Warn line stays for the log).
-func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, profileName, relPath, dstPath string, mod *domain.Mod) {
+// A capture failure does not fail the deploy, but since #466 review D4 it
+// does stop the deploy of that path: the file lmm could not preserve is
+// left where it is, the other files go ahead, and the returned error is
+// what the caller reports (uncapturableOverwriteNote) on the pending list
+// the running flow drains onto its result's Warnings. The diagnostic Warn
+// line stays for the log. A nil error is a capture made, or none needed.
+func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, profileName, relPath, dstPath string, mod *domain.Mod) error {
 	if i.originals == nil {
-		return
+		return nil
 	}
 	info, err := os.Lstat(dstPath)
 	if err != nil || !info.Mode().IsRegular() {
-		return
+		return nil
 	}
 	if i.db != nil {
 		// Game-scoped, not profile-scoped (#350 review minor 7): the
@@ -132,7 +152,7 @@ func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, prof
 		// A's own file as stock content.
 		owned, err := i.db.AnyProfileOwnsFile(ctx, game.ID, filepath.ToSlash(relPath))
 		if err == nil && owned {
-			return
+			return nil
 		}
 	}
 	row := OriginalFile{
@@ -143,11 +163,11 @@ func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, prof
 		row.SourceID, row.ModID = mod.SourceID, mod.ID
 	}
 	if err := i.originals.capture(row, dstPath); err != nil {
-		i.log.Warn("could not preserve the file this deploy replaces; it will not be restorable from a snapshot",
+		i.log.Warn("could not preserve the file this deploy would replace, so it is left in place",
 			"path", dstPath, "err", err)
-		i.originals.noteFailure(fmt.Sprintf(
-			"could not preserve %s before replacing it; it will not be restorable from a snapshot: %v", dstPath, err))
+		return err
 	}
+	return nil
 }
 
 // restoreReplacedOriginal puts back whatever lmm displaced at relPath, at
@@ -203,14 +223,19 @@ func (i *Installer) notLinkerOwned(game *domain.Game, file string) bool {
 
 // heldPath is a path a removal or an overwrite left as it is because other
 // games whose mod directories overlap this one record it (#445 gate 2,
-// G2-1).
+// G2-1), or - userReason set - because the file there is the user's
+// (#466).
 type heldPath struct {
-	path  string
-	games []string
+	path       string
+	games      []string
+	userReason string
 }
 
 // removalNote is what a removal that left h reports.
 func (h heldPath) removalNote() string {
+	if h.userReason != "" {
+		return userFileNote(h.path, h.userReason)
+	}
 	return fmt.Sprintf("%s was left in place: %s records it too", h.path, gamesText(h.games))
 }
 
@@ -260,6 +285,289 @@ func (i *Installer) noteHeld(msg string) {
 	if i.originals != nil {
 		i.originals.note(msg)
 	}
+}
+
+// refuseStranded refuses a deploy while game has files recorded under a
+// mod_path other than its current one (#451): deploying here would upsert
+// their records onto this mod_path and orphan the files where they are.
+// The refusal is ModPathProblem's, naming both ways out.
+func (i *Installer) refuseStranded(ctx context.Context, game *domain.Game) error {
+	problem, err := modPathMovedProblem(ctx, i.db, game)
+	if err != nil {
+		return err
+	}
+	if problem != nil {
+		return problem
+	}
+	return nil
+}
+
+// deployedFingerprint is the fingerprint a deploy records for the file it
+// just wrote at dstPath (#466): none for a symlink, whose link is its
+// identity, and none when the file cannot be read back - that row is then
+// unverified, removed as rows always were.
+func (i *Installer) deployedFingerprint(dstPath string) *db.FileFingerprint {
+	if i.linker.Method() == domain.LinkSymlink {
+		return nil
+	}
+	fp, err := fingerprintFile(dstPath)
+	if err != nil {
+		i.log.Warn("could not fingerprint a deployed file; a removal will not be able to tell it from yours", "path", dstPath, "err", err)
+		return nil
+	}
+	return fp
+}
+
+// heldFingerprint is the fingerprint a deploy records for file, a path it
+// left because another game records it (#466 review D5): the content on
+// disk when it is what that game deployed, otherwise that game's record of
+// what it deployed - so this game's own removals can still tell a changed
+// file from lmm's. None when that game fingerprinted nothing.
+func (i *Installer) heldFingerprint(ctx context.Context, others *otherGameRecords, file, dstPath string) *db.FileFingerprint {
+	if i.linker.Method() == domain.LinkSymlink {
+		return nil
+	}
+	theirs, err := others.fingerprints(ctx, file)
+	if err != nil || len(theirs) == 0 {
+		return nil
+	}
+	if live, err := fingerprintFile(dstPath); err == nil {
+		for _, st := range theirs {
+			if st.Fingerprint.Checksum == live.Checksum {
+				return live
+			}
+		}
+	}
+	return theirs[0].Fingerprint
+}
+
+// recordDeployed records file as mod's, deployed under game's current
+// mod_path with fingerprint fp (nil for none).
+func (i *Installer) recordDeployed(ctx context.Context, game *domain.Game, profileName, file string, mod *domain.Mod, fp *db.FileFingerprint) error {
+	return i.db.RecordDeployedFile(ctx, db.DeployedFileRecord{
+		GameID: game.ID, Profile: profileName, RelativePath: file,
+		SourceID: mod.SourceID, ModID: mod.ID,
+		ModPath: recordRoot(game), Fingerprint: fp,
+	})
+}
+
+// judgeFor is the deployedJudge an Installer asks about game's paths on
+// behalf of profileName. others is what the overlapping games record;
+// cached, when set, is the cache entry of the mod whose deployment is being
+// removed, which is the proof a record with no fingerprint still has.
+func (i *Installer) judgeFor(game *domain.Game, profileName string, others *otherGameRecords, cached *cachedMod) deployedJudge {
+	jd := deployedJudge{db: i.db, game: game, profile: profileName, cacheRoots: i.cacheRoots, others: others}
+	if cached != nil {
+		jd.cached = cached.fileFor
+	}
+	return jd
+}
+
+// cachedMod is one version of a mod in a cache: what a removal of that
+// deployment compares an unfingerprinted file with (#466 review D10).
+// method is how that deployment was made: only a copy or a hard link is
+// compared - a regular file where a symlink deployment's link should be is
+// #469's state, which keeps today's handling.
+type cachedMod struct {
+	cache  *cache.Cache
+	game   *domain.Game
+	mod    *domain.Mod
+	method domain.LinkMethod
+}
+
+// fileFor is c's cached copy of rel when st records c's mod, the
+// deployment was a copy or a hard link, and the copy is a regular file on
+// disk, otherwise "".
+func (c *cachedMod) fileFor(st db.DeployedFileState, rel string) string {
+	if c == nil || c.cache == nil || c.method == domain.LinkSymlink || st.SourceID != c.mod.SourceID || st.ModID != c.mod.ID {
+		return ""
+	}
+	path := c.cache.GetFilePath(c.game.ID, c.mod.SourceID, c.mod.ID, c.mod.Version, filepath.FromSlash(rel))
+	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return path
+}
+
+// removalCheck is keepOnRemoval's answer.
+type removalCheck struct {
+	// keep: leave the file, and report held.
+	keep bool
+	held heldPath
+	// keepRecord: leave the path's record too - the file could not be
+	// judged at all (#466 review D3), so nothing about it may change.
+	keepRecord bool
+	// unverified: the file goes with no content to compare; legacy says
+	// its records predate schema v18.
+	unverified, legacy bool
+}
+
+// keepOnRemoval reports whether a removal must leave dstPath where it is
+// because the file there is not provably lmm's (#466); the Installer
+// remembers it for a deploy that follows (keptUser).
+func (i *Installer) keepOnRemoval(ctx context.Context, jd deployedJudge, file, dstPath string) removalCheck {
+	j := jd.judge(ctx, file, dstPath)
+	switch j.verdict {
+	case deployedUsers:
+		rel := filepath.ToSlash(file)
+		i.rememberKept(rel, keptFile{record: j.kept, reason: j.reason, sharesCache: j.sharesCache})
+		if !j.unchecked && j.recorded && (j.regular || j.kept != nil) {
+			// Its record goes: a later deploy that sets it aside says so.
+			i.markKeptUser(rel)
+		}
+		return removalCheck{keep: true, held: heldPath{path: rel, userReason: j.reason}, keepRecord: j.unchecked}
+	case deployedUnverified:
+		return removalCheck{unverified: true, legacy: j.legacy}
+	}
+	return removalCheck{}
+}
+
+// keptFile is what a removal remembers about a path it left as the
+// user's: the fingerprinted record it was judged against (nil when the keep
+// rested on none), and why.
+type keptFile struct {
+	record      *db.DeployedFileState
+	reason      string
+	sharesCache bool
+}
+
+// rememberKept records that a removal left rel as the user's (keptUser).
+func (i *Installer) rememberKept(rel string, kf keptFile) {
+	if i.originals != nil {
+		i.originals.rememberKept(rel, kf)
+		return
+	}
+	if i.keptUser == nil {
+		i.keptUser = make(map[string]keptFile)
+	}
+	i.keptUser[rel] = kf
+}
+
+// markKeptUser marks rel in the originals store as a file a removal left
+// as the user's and stopped tracking (originalsStore.markKeptUser).
+func (i *Installer) markKeptUser(rel string) {
+	if i.originals != nil {
+		i.originals.markKeptUser(filepath.ToSlash(rel))
+	}
+}
+
+// keptBefore is rememberKept's answer for rel.
+func (i *Installer) keptBefore(rel string) (keptFile, bool) {
+	if i.originals != nil {
+		return i.originals.keptBefore(rel)
+	}
+	kf, ok := i.keptUser[rel]
+	return kf, ok
+}
+
+// noteUnverified puts rel on the flow's unverified report.
+func (i *Installer) noteUnverified(rel string, legacy bool) {
+	if i.originals != nil {
+		i.originals.noteUnverified(filepath.ToSlash(rel), legacy)
+	}
+}
+
+// deployCheck is keepOnDeploy's answer.
+type deployCheck struct {
+	// keep: the deploy leaves the path as it is.
+	keep bool
+	// restore is the record the deploy writes for a kept path: the
+	// fingerprinted record it was judged against. Nil writes nothing, and
+	// leaves whatever record the path had as it was (#466 review F6).
+	restore *db.DeployedFileState
+	// preserve: the path holds content lmm has no record of, which the
+	// deploy may replace only once captureOriginal has preserved it (#466
+	// review D4).
+	preserve bool
+}
+
+// keepOnDeploy reports whether a deploy must leave dstPath as it is (#466)
+// and notes why: a file a removal in this flow kept as the user's, a
+// recorded file that is no longer provably lmm's, a link or directory lmm
+// did not make (review D2), or an unrecorded file the originals store
+// cannot preserve because it already holds an earlier original of the
+// path.
+func (i *Installer) keepOnDeploy(ctx context.Context, jd deployedJudge, file, dstPath string) deployCheck {
+	rel := filepath.ToSlash(file)
+	if kf, ok := i.keptBefore(rel); ok {
+		if _, err := os.Lstat(dstPath); !errors.Is(err, fs.ErrNotExist) {
+			i.noteHeld(userFileOverwriteNote(rel, kf.reason, kf.sharesCache))
+			return deployCheck{keep: true, restore: kf.record}
+		}
+	}
+	if i.db == nil {
+		return deployCheck{}
+	}
+	j := jd.judge(ctx, file, dstPath)
+	switch {
+	case j.verdict != deployedUsers:
+		return deployCheck{}
+	case !j.regular && j.kept == nil:
+		// A link or directory no record of the acting profile names
+		// (#466 re-review R1): the originals store cannot preserve it.
+		i.noteHeld(uncapturableOverwriteNote(rel, j.reason))
+		return deployCheck{keep: true}
+	case j.recorded:
+		i.noteHeld(userFileOverwriteNote(rel, j.reason, j.sharesCache))
+		return deployCheck{keep: true, restore: j.kept}
+	case !j.regular:
+		i.noteHeld(uncapturableOverwriteNote(rel, j.reason))
+		return deployCheck{keep: true}
+	case i.originals == nil:
+		return deployCheck{}
+	}
+	// Unrecorded content: captureOriginal preserves it before the deploy
+	// replaces it - unless the store already holds an original of the path,
+	// which a capture would leave as it is, or cannot say whether it does.
+	held, err := i.originals.holds(OriginalRootModPath, rel)
+	switch {
+	case err != nil:
+		i.originals.noteFailure(uncapturableOverwriteNote(rel, fmt.Sprintf("the originals store could not be read: %v", err)))
+		return deployCheck{keep: true}
+	case held:
+		i.noteHeld(unpreservedOverwriteNote(rel))
+		return deployCheck{keep: true}
+	}
+	return deployCheck{preserve: true}
+}
+
+// deployOver deploys srcPath at dstPath once keepOnDeploy has judged what
+// is there replaceable. A link there is then lmm's own, and it is removed
+// first: a linker never writes through one (#466 review D2).
+func (i *Installer) deployOver(srcPath, dstPath string) error {
+	if info, err := os.Lstat(dstPath); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		if err := os.Remove(dstPath); err != nil {
+			return fmt.Errorf("removing the link lmm deployed: %w", err)
+		}
+	}
+	return i.linker.Deploy(srcPath, dstPath)
+}
+
+// preserveBeforeDeploy preserves what is at dstPath before a deploy
+// replaces it (#350), and reports whether the deploy may go ahead: a path
+// whose unrecorded content could not be preserved is left (#466 review D4).
+func (i *Installer) preserveBeforeDeploy(ctx context.Context, game *domain.Game, profileName, file, dstPath string, mod *domain.Mod, check deployCheck) bool {
+	err := i.captureOriginal(ctx, game, profileName, file, dstPath, mod)
+	if err == nil {
+		// #466 review F5: a file an earlier removal left as the user's is
+		// now set aside, and the user was told it was kept - so say where
+		// it went.
+		if check.preserve && i.originals.takeKeptUser(filepath.ToSlash(file)) {
+			i.noteHeld(fmt.Sprintf("%s is the file you changed, which lmm left in place when it last removed the mod; this deploy set it aside and put the mod's version there - `lmm purge` puts yours back",
+				filepath.ToSlash(file)))
+		}
+		return true
+	}
+	if check.preserve {
+		i.originals.noteFailure(uncapturableOverwriteNote(file, err.Error()))
+		return false
+	}
+	// A file lmm has a record of was never the store's to keep; the failed
+	// capture of one (a record under another profile of the game) is a
+	// note, as it always was.
+	i.originals.noteFailure(fmt.Sprintf(
+		"could not preserve %s before replacing it; it will not be restorable from a snapshot: %v", dstPath, err))
+	return true
 }
 
 // foreignFile reports whether dstPath holds content lmm did not put there:
@@ -313,6 +621,9 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	if i.refused != nil {
 		return i.refused
 	}
+	if err := i.refuseStranded(ctx, game); err != nil {
+		return err
+	}
 	// Check if mod is cached
 	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
 		return fmt.Errorf("mod not in cache: %s/%s@%s", mod.SourceID, mod.ID, mod.Version)
@@ -346,6 +657,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	}
 
 	var deployed []string
+	i.lastSkipped = 0
 	for _, file := range files {
 		select {
 		case <-ctx.Done():
@@ -362,8 +674,20 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		// of that game's keeps it for this one.
 		if held, ok := heldElsewhere(others, file, dstPath); ok {
 			i.noteHeld(held.overwriteNote())
+			i.lastSkipped++
 			if i.db != nil {
-				if err := i.db.SaveDeployedFile(ctx, game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
+				if err := i.recordDeployed(ctx, game, profileName, file, mod, i.heldFingerprint(ctx, others, file, dstPath)); err != nil {
+					return fmt.Errorf("tracking deployed file %s: %w", file, err)
+				}
+			}
+			continue
+		}
+		// #466: nor the user's.
+		check := i.keepOnDeploy(ctx, i.judgeFor(game, profileName, others, nil), file, dstPath)
+		if check.keep {
+			i.lastSkipped++
+			if check.restore != nil {
+				if err := i.recordDeployed(ctx, game, profileName, file, mod, check.restore.Fingerprint); err != nil {
 					return fmt.Errorf("tracking deployed file %s: %w", file, err)
 				}
 			}
@@ -371,9 +695,12 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		}
 
 		// #350: preserve whatever is there before the deploy replaces it.
-		i.captureOriginal(ctx, game, profileName, file, dstPath, mod)
+		if !i.preserveBeforeDeploy(ctx, game, profileName, file, dstPath, mod, check) {
+			i.lastSkipped++
+			continue
+		}
 
-		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
+		if err := i.deployOver(srcPath, dstPath); err != nil {
 			rollbackErr := rollbackDeploy(i.linker, game.ModPath, deployed)
 			// A rolled-back install must leave no hole either: every file
 			// it removed on the way out gets its original back, including
@@ -391,7 +718,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 
 		// Track file ownership in database (for conflict detection)
 		if i.db != nil {
-			if err := i.db.SaveDeployedFile(ctx, game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
+			if err := i.recordDeployed(ctx, game, profileName, file, mod, i.deployedFingerprint(dstPath)); err != nil {
 				// Roll back only the file that failed to track; leave previously
 				// deployed+tracked files and DB records intact.
 				rollbackErr := rollbackDeploy(i.linker, game.ModPath, []string{file})
@@ -444,6 +771,9 @@ func (i *Installer) ReplaceWithOldCache(ctx context.Context, game *domain.Game, 
 func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string, oldFileIDs, newFileIDs []string) error {
 	if i.refused != nil {
 		return i.refused
+	}
+	if err := i.refuseStranded(ctx, game); err != nil {
+		return err
 	}
 	if !oldCache.Exists(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version) {
 		return fmt.Errorf("old mod not in cache: %s/%s@%s", oldMod.SourceID, oldMod.ID, oldMod.Version)
@@ -519,6 +849,24 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		newSet[file] = true
 	}
 
+	// #466 review D9: the old deployment's records exactly as they are, so
+	// a failure below puts them back as they were - fingerprints and all -
+	// and so a path this replace leaves as the user's keeps its record.
+	var oldRecords map[string]db.DeployedFileRecord
+	if i.db != nil {
+		records, err := i.db.DeployedFileRecordsForMod(ctx, game.ID, profileName, oldMod.SourceID, oldMod.ID)
+		if err != nil {
+			return fmt.Errorf("reading file tracking: %w", err)
+		}
+		oldRecords = make(map[string]db.DeployedFileRecord, len(records))
+		for _, rec := range records {
+			oldRecords[rec.RelativePath] = rec
+		}
+	}
+	// keepRecords is the old-side paths whose records stay exactly as they
+	// are: a file this replace could not judge (#466 review D3).
+	keepRecords := make(map[string]bool)
+
 	var removedOld []string
 	for _, file := range oldFiles {
 		if newSet[file] {
@@ -544,6 +892,17 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 			i.log.Debug("leaving a file this update does not own where it is", "path", dstPath)
 			continue
 		}
+		// #466: nor the user's - asked before whether another game
+		// records it, so a changed file is reported as the user's (review
+		// D5).
+		rc := i.keepOnRemoval(ctx, i.judgeFor(game, profileName, others, &cachedMod{cache: oldCache, game: game, mod: oldMod, method: i.linker.Method()}), file, dstPath)
+		if rc.keep {
+			i.noteHeld(rc.held.removalNote())
+			if rc.keepRecord {
+				keepRecords[file] = true
+			}
+			continue
+		}
 		// #445 gate 2, G2-1: nor one another game records.
 		if held, ok := heldElsewhere(others, file, dstPath); ok {
 			i.noteHeld(held.removalNote())
@@ -554,6 +913,9 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 				return &domain.DeployError{Op: fmt.Sprintf("removing obsolete file %s", file), Primary: err, Rollback: rollbackErr}
 			}
 			return fmt.Errorf("removing obsolete file %s: %w", file, err)
+		}
+		if rc.unverified {
+			i.noteUnverified(file, rc.legacy)
 		}
 		removedOld = append(removedOld, file)
 	}
@@ -572,6 +934,14 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	}
 
 	var replacedOrAdded []string
+	// What the DB loop below records for each new-side path: the
+	// fingerprint of the file this loop wrote, or - for a path it left as
+	// the user's (#466) - the record that path is kept under, or no record
+	// at all (skipped).
+	fingerprints := make(map[string]*db.FileFingerprint)
+	kept := make(map[string]*db.DeployedFileState)
+	skipped := make(map[string]bool)
+	newJudge := i.judgeFor(game, profileName, others, nil)
 	for _, file := range newFiles {
 		select {
 		case <-ctx.Done():
@@ -589,6 +959,17 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		// records it.
 		if held, ok := heldElsewhere(others, file, dstPath); ok {
 			i.noteHeld(held.overwriteNote())
+			fingerprints[file] = i.heldFingerprint(ctx, others, file, dstPath)
+			continue
+		}
+		// #466: nor the user's.
+		check := i.keepOnDeploy(ctx, newJudge, file, dstPath)
+		if check.keep {
+			if check.restore != nil {
+				kept[file] = check.restore
+			} else {
+				skipped[file] = true
+			}
 			continue
 		}
 		// #350: a replace can also land on a file lmm does not own - a
@@ -599,8 +980,11 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		// removing it, and restoreOldFiles only ever puts lmm's own files
 		// back. What that loop DOES need is the release, which is at the
 		// end of this function - see the comment there.
-		i.captureOriginal(ctx, game, profileName, file, dstPath, newMod)
-		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
+		if !i.preserveBeforeDeploy(ctx, game, profileName, file, dstPath, newMod, check) {
+			skipped[file] = true
+			continue
+		}
+		if err := i.deployOver(srcPath, dstPath); err != nil {
 			cleanupErr := i.linker.Undeploy(dstPath)
 			rollbackFiles := append(append([]string(nil), replacedOrAdded...), file)
 			rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, rollbackFiles, oldSet)
@@ -610,21 +994,55 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 			return fmt.Errorf("deploying %s: %w", file, err)
 		}
 		replacedOrAdded = append(replacedOrAdded, file)
+		fingerprints[file] = i.deployedFingerprint(dstPath)
 	}
 
 	if i.db != nil {
+		restoreOldRecords := func() {
+			_ = i.db.DeleteDeployedFiles(ctx, game.ID, profileName, newMod.SourceID, newMod.ID)
+			for _, rec := range oldRecords {
+				_ = i.db.RecordDeployedFile(ctx, rec)
+			}
+		}
 		if err := i.db.DeleteDeployedFiles(ctx, game.ID, profileName, oldMod.SourceID, oldMod.ID); err != nil {
 			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
 				return &domain.DeployError{Op: "resetting file tracking", Primary: err, Rollback: rollbackErr}
 			}
 			return fmt.Errorf("resetting file tracking: %w", err)
 		}
+		// What is written: each new-side path this replace deployed or
+		// kept with a fingerprinted record; each path it left with no
+		// record to write (#466 review F6) or could not judge keeps its old
+		// record exactly as it was, under the new mod.
+		var records []db.DeployedFileRecord
+		written := make(map[string]bool)
 		for _, file := range newFiles {
-			if err := i.db.SaveDeployedFile(ctx, game.ID, profileName, file, newMod.SourceID, newMod.ID); err != nil {
-				_ = i.db.DeleteDeployedFiles(ctx, game.ID, profileName, newMod.SourceID, newMod.ID)
-				for _, oldFile := range oldRestorable {
-					_ = i.db.SaveDeployedFile(ctx, game.ID, profileName, oldFile, oldMod.SourceID, oldMod.ID)
+			rec := db.DeployedFileRecord{
+				GameID: game.ID, Profile: profileName, RelativePath: file,
+				SourceID: newMod.SourceID, ModID: newMod.ID,
+				ModPath: recordRoot(game), Fingerprint: fingerprints[file],
+			}
+			if restore := kept[file]; restore != nil {
+				rec.Fingerprint = restore.Fingerprint
+			} else if skipped[file] {
+				old, ok := oldRecords[file]
+				if !ok {
+					continue
 				}
+				rec.ModPath, rec.Fingerprint = old.ModPath, old.Fingerprint
+			}
+			records = append(records, rec)
+			written[file] = true
+		}
+		for file := range keepRecords {
+			if old, ok := oldRecords[file]; ok && !written[file] {
+				records = append(records, old)
+			}
+		}
+		for _, rec := range records {
+			if err := i.db.RecordDeployedFile(ctx, rec); err != nil {
+				file := rec.RelativePath
+				restoreOldRecords()
 				if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
 					return &domain.DeployError{Op: fmt.Sprintf("tracking deployed file %s", file), Primary: err, Rollback: rollbackErr}
 				}
@@ -880,6 +1298,21 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 	if err != nil {
 		return nil, nil, err
 	}
+	// #451: rows recorded under another mod_path stay; only a purge knows
+	// how to clear them.
+	stranded, err := strandedRoots(ctx, i.db, game)
+	if err != nil {
+		return nil, nil, err
+	}
+	keepRoots := make([]string, len(stranded))
+	for j, r := range stranded {
+		keepRoots[j] = r.ModPath
+	}
+
+	jd := i.judgeFor(game, profileName, others, &cachedMod{cache: i.cache, game: game, mod: mod, method: i.linker.Method()})
+	// keepPaths is the paths whose records stay: files this removal could
+	// not judge (#466 review D3).
+	var keepPaths []string
 
 	// Undeploy each file
 	var removed []string
@@ -914,6 +1347,18 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 			i.log.Debug("leaving a file this mod does not own where it is", "path", dstPath)
 			continue
 		}
+		// #466: nor the user's - a copy or hardlink whose content is no
+		// longer what lmm deployed. Asked before whether another game
+		// records the file, so a changed one is reported, and kept, as the
+		// user's (review D5).
+		rc := i.keepOnRemoval(ctx, jd, file, dstPath)
+		if rc.keep {
+			held = append(held, rc.held)
+			if rc.keepRecord {
+				keepPaths = append(keepPaths, file)
+			}
+			continue
+		}
 		// #445 gate 2, G2-1: nor one another game records.
 		if h, ok := heldElsewhere(others, file, dstPath); ok {
 			held = append(held, h)
@@ -923,6 +1368,9 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 		if err := i.linker.Undeploy(dstPath); err != nil {
 			return removed, held, fmt.Errorf("undeploying %s: %w", file, err)
 		}
+		if rc.unverified {
+			i.noteUnverified(file, rc.legacy)
+		}
 		removed = append(removed, file)
 		// lmm's own file is gone; whatever it displaced goes back.
 		i.restoreReplacedOriginal(file, dstPath)
@@ -930,7 +1378,7 @@ func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domai
 
 	// Remove file ownership records from database
 	if i.db != nil {
-		if err := i.db.DeleteDeployedFiles(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+		if err := i.db.DeleteDeployedFilesExcept(ctx, game.ID, profileName, mod.SourceID, mod.ID, keepRoots, keepPaths); err != nil {
 			return removed, held, fmt.Errorf("removing file tracking: %w", err)
 		}
 	}

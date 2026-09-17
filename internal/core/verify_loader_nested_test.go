@@ -31,9 +31,11 @@ func TestVerify_ANestedBepInExTreeLmmLeftBehindIsRepaired(t *testing.T) {
 	ctx := context.Background()
 	svc, game := newRefusedBepInExGame(t, nil)
 
-	moved := *game
-	moved.ModPath = game.InstallPath
-	require.NoError(t, svc.SaveGame(ctx, &moved))
+	// By hand: `lmm game edit` refuses the move under a deployment. The
+	// rows are made to predate recorded mod_paths (#451), as a v1
+	// deployment's do, so nothing tells lmm the files are under the old one.
+	require.NoError(t, svc.ExecForTest(ctx, `UPDATE deployed_files SET mod_path = NULL`))
+	handEditModPath(t, svc, "mod_path: "+game.ModPath, "mod_path: "+game.InstallPath)
 	game, err := svc.GetGame(game.ID)
 	require.NoError(t, err)
 	plan, err := svc.PlanDeploy(ctx, game, "default", core.DeployOptions{})

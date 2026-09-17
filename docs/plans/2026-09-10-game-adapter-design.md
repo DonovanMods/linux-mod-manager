@@ -702,3 +702,16 @@ production's.
 Fifth, **the Importer carries no bypass note of its own.** Its one production caller is
 `ApplyImportArchive`, whose plan already carries the note into the result and the event
 stream. A second copy reached only the log.
+
+### Amendment — guidance capability dropped (2026-09-17, #443)
+
+The owner decision #443 asked for was taken on its recorded recommendation:
+no second adapter is planned for 2.0, so the `Guide` capability (§1's table,
+§5's guidance surfaces) is **dropped** rather than wired. `adapter.Guide`,
+`GuidanceNote`, the `adapter.Guidance` helper and `bepinex`'s
+implementation are gone. The three notes it held ("not installed",
+"installed but not declared", "has never run") are folded into core's
+`LoaderStatus.Warnings`, which `lmm game show` and the web loader panel
+already render - so nothing a user could read is lost, and `LoaderStatus`
+stays the one place the launch option is computed. `docs/adapters.md`
+carries the current contract.

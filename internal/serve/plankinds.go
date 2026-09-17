@@ -158,9 +158,18 @@ func planErrorStatus(err error) int {
 		loader       *core.LoaderRequiredError
 		refused      *core.AdapterRefusedError
 		precondition *core.AdapterPreconditionError
+		moved        *core.ModPathMissingError
 	)
+
 	switch {
 	case errors.As(err, &loader), errors.As(err, &refused), errors.As(err, &precondition):
+		return http.StatusConflict
+	// #451: a mod_path hand-edited out from under recorded deployments is
+	// the same kind of refusal as the three below - the request is fine,
+	// the game's current state refuses it until the user resolves it (`lmm
+	// game edit --mod-path` back, or a purge) - so it gets the same 409
+	// rather than the default 500.
+	case errors.As(err, &moved):
 		return http.StatusConflict
 	case core.IsGameIdentifierInvalid(err):
 		return http.StatusBadRequest

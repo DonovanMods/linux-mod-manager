@@ -7,8 +7,7 @@ package adapter
 // §1, §6).
 //
 // It implements ONLY GameAdapter's three required methods. It has no
-// FileRouter, no Preconditioner, no Verifier, no Guide and no
-// MergeCompiler, so every capability core type-asserts for is absent and
+// FileRouter, no Preconditioner, no Verifier and no MergeCompiler, so every capability core type-asserts for is absent and
 // every seam takes its identity branch. Its NormalizeArchive returns the
 // zero Layout for every input, whose Applies is false and whose Rewrite is
 // the identity function - so an archive lands in the cache exactly where

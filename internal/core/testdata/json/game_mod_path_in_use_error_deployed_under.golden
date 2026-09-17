@@ -1,0 +1,16 @@
+{
+  "game_id": "skyrim-se",
+  "mod_path": "/games/skyrim-se/Mods",
+  "new_mod_path": "/games/skyrim-se/Other",
+  "deployed_under": [
+    "/games/skyrim-se/Data"
+  ],
+  "deployed_files": 3,
+  "profiles": [
+    {
+      "profile": "default",
+      "deployed_files": 3
+    }
+  ],
+  "active_profile": "default"
+}

@@ -444,6 +444,10 @@ func TestService_UninstallMod_UndeployFailure_RecordedAsNoteWithHistoricalPrefix
 	// anything that is not its own symlink, and a directory is not the
 	// foreign-FILE case #350 now leaves in place.
 	require.NoError(t, os.MkdirAll(filepath.Join(gameDir, "plugin.esp"), 0755))
+	// #466: a link or directory lmm has no record of is the user's, and is
+	// never attempted; the deploy this fixture stands for recorded it.
+	require.NoError(t, svc.ExecForTest(context.Background(),
+		`INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id) VALUES ('g1', 'default', 'plugin.esp', 'src', '1')`))
 
 	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
 	require.NoError(t, err, "an undeploy failure must not fail the uninstall")

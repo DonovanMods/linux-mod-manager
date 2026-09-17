@@ -367,6 +367,20 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #451, #466 review F2: a purge of the active profile with no
+			// mod left, whose files are still under a mod_path the game no
+			// longer uses - the plan names each file it removes there, and
+			// the one it leaves.
+			"purge_plan_stranded",
+			core.PurgePlan{
+				Profile:  "default",
+				Mods:     []domain.InstalledMod{},
+				Stranded: []core.PurgeStrandedPath{{Path: "Data/plugin.esp", ModPath: "/games/skyrim-se/OldData"}},
+				Kept: []core.PurgeKeptPath{{Path: "Data/edited.esp", Reason: core.PurgeKeptUserFile,
+					Note: "its content changed after lmm deployed it", ModPath: "/games/skyrim-se/OldData"}},
+			},
+		},
+		{
 			"purge_result_recorded_only",
 			core.PurgeResult{
 				Purged:       1,
@@ -385,6 +399,9 @@ func TestJSONGoldens(t *testing.T) {
 				{Path: "Data/listed.esp", Reason: core.PurgeKeptListed, Profiles: []string{"survival"}},
 				{Path: "Data/shared.esp", Reason: core.PurgeKeptOtherGame, Games: []string{"skyrim-vr"}},
 				{Path: "BepInEx/config/m.cfg", Reason: core.PurgeKeptUserFile},
+				// #466, #451: a copy the user changed, under a mod_path the
+				// game no longer uses.
+				{Path: "Data/edited.esp", Reason: core.PurgeKeptUserFile, Note: "its content changed after lmm deployed it", ModPath: "/games/skyrim-se/OldData"},
 			},
 		},
 		{
@@ -1901,6 +1918,31 @@ func TestJSONGoldens(t *testing.T) {
 			core.ModPathMissingError{
 				GameID: "skyrim-se", ModPath: "/old-library/skyrim-se/Data", Reason: "does not exist",
 				InstallPath: "/games/skyrim-se", OutsideInstallPath: true,
+			},
+		},
+		{
+			// #451: a mod_path changed behind lmm's back, with files still
+			// deployed under the old one.
+			"mod_path_moved_error",
+			core.ModPathMissingError{
+				GameID: "skyrim-se", ModPath: "/games/skyrim-se/Mods", Reason: "is not where lmm deployed its files",
+				DeployedFiles: 3,
+				DeployedUnder: []core.DeployedUnder{{ModPath: "/games/skyrim-se/Data", Files: 3, Profiles: []string{"default", "survival"}}},
+			},
+		},
+		{
+			"deployed_under",
+			core.DeployedUnder{ModPath: "/games/skyrim-se/Data", Files: 3, Profiles: []string{"default"}},
+		},
+		{
+			// #451: a move refused while files are deployed under a
+			// mod_path other than the current one.
+			"game_mod_path_in_use_error_deployed_under",
+			core.GameModPathInUseError{
+				GameID: "skyrim-se", ModPath: "/games/skyrim-se/Mods", NewModPath: "/games/skyrim-se/Other",
+				DeployedUnder: []string{"/games/skyrim-se/Data"},
+				DeployedFiles: 3, ActiveProfile: "default",
+				Profiles: []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 3}},
 			},
 		},
 		{

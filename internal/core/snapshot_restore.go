@@ -324,6 +324,10 @@ type snapshotRestorePartialDetails struct {
 // what makes "this version can no longer be served" a fact the user sees
 // BEFORE the purge rather than a surprise afterwards.
 func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, name string) (*SnapshotRestorePlan, error) {
+	// #451 F3: a dry run must not promise what its own Apply refuses.
+	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+		return nil, err
+	}
 	doc, err := s.LoadSnapshot(ctx, game.ID, name)
 	if err != nil {
 		return nil, err
@@ -563,7 +567,11 @@ func (s *Service) ApplySnapshotRestore(ctx context.Context, game *domain.Game, p
 	if plan == nil {
 		return &SnapshotRestoreResult{}, errors.New("snapshot restore plan is nil: call PlanSnapshotRestore first")
 	}
-	return s.applySnapshotRestore(ctx, game, plan, opts, sink)
+	result, err := s.applySnapshotRestore(ctx, game, plan, opts, sink)
+	// #466 review D3: whatever the restore's removals and deploys left in
+	// place and did not already report is this restore's to report.
+	s.takeCaptureWarnings(game.ID, OpSnapshotRestore, SnapshotWarning, &result.Warnings, sink)
+	return result, err
 }
 
 func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, plan *SnapshotRestorePlan, opts SnapshotRestoreOptions, sink EventSink) (*SnapshotRestoreResult, error) {

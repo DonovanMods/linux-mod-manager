@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // VerifyTier selects how much of the verify engine's work runs: VerifyLocal
@@ -130,6 +132,8 @@ type VerifyFinding struct {
 	//	                      tree (#413); a ModFilter run leaves every
 	//	                      nested tree alone, since none belongs to one
 	//	                      mod
+	//	deployed_modified     never: a copy or hardlink the user changed is
+	//	                      theirs, and --fix leaves it (#466)
 	//	everything else       never - ok, skipped, file_count_mismatch,
 	//	                      loader_foreign_nested_tree (lmm cannot prove
 	//	                      the files are its own),
@@ -545,7 +549,22 @@ func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile st
 		}
 		defer release()
 	}
-	return s.verifyMemoized(ctx, game, profile, opts, sink)
+	result, err := s.verifyMemoized(ctx, game, profile, opts, sink)
+	if opts.Fix {
+		// A --fix repair removes and deploys through the Installer, which
+		// reports a file it left as the user's (#466) - and a path another
+		// game holds - on the flow's pending list. Those are this run's, so
+		// they are said here as repair details rather than left for
+		// whichever flow drains the list next.
+		if store := s.originalsStoreFor(game.ID); store != nil {
+			for _, msg := range store.takeFailures() {
+				if sink != nil {
+					sink(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: msg})
+				}
+			}
+		}
+	}
+	return result, err
 }
 
 // verifyMemoized is verify plus #336's memo: an installation whose
@@ -674,6 +693,9 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		// path below.
 		r.adapterPass(installedMods)
 		r.loaderPass(installedMods)
+		if err := r.deployedContentPass(installedMods); err != nil {
+			return result, err
+		}
 		r.convergencePass()
 		return result, nil
 	}
@@ -737,9 +759,167 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	// #359: after the per-file walk, so the loader's "did it run?" question
 	// is asked about the deployment the passes above have just described.
 	r.loaderPass(installedMods)
+	if err := r.deployedContentPass(installedMods); err != nil {
+		return result, err
+	}
 	r.convergencePass()
 
 	return result, nil
+}
+
+// VerifyStatusDeployedModified is the status of a verify row for a copy or
+// hardlink the profile deployed whose content is no longer what lmm wrote
+// there (#466) - the user replaced or edited it. Every removal keeps such a
+// file and every deploy leaves it, so --fix does too: the row is never
+// fixable, and its note says how to take the mod's version back.
+const VerifyStatusDeployedModified = "deployed_modified"
+
+// deployedModifiedRemedy is VerifyStatusDeployedModified's remedy: delete
+// the file and redeploy, or - for a hard link that is still the mod's
+// cached copy, which the edit changed too - reinstall (#466 review D8).
+func deployedModifiedRemedy(sharesCache bool) string {
+	if sharesCache {
+		return "it is a hard link to the mod's cached copy, so that copy changed too; run `lmm install --force` for the mod to extract its own version again"
+	}
+	return "delete it, then run `lmm deploy`, to take the mod's version"
+}
+
+// deployedContentPass reports every file this profile deployed, under the
+// game's current mod_path, that is no longer provably lmm's (#466):
+// VerifyStatusDeployedModified. A file that is missing is not this pass's
+// row, and neither is one with no fingerprint to compare - there is nothing
+// to say about it. A file that could not be read to compare is reported
+// the same way, since it is left alone the same way. Only a cancellation
+// ends the run; a listing that fails is a skipped row.
+func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) error {
+	rows, err := r.svc.db.ListDeployedFiles(r.ctx, r.game.ID, r.profile)
+	if err != nil {
+		// Tolerated like every other pass's read failure: a skipped row,
+		// not a verify that reports nothing.
+		if cerr := r.ctx.Err(); cerr != nil {
+			return cerr
+		}
+		r.result.Warnings++
+		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("deployed content: listing deployed files: %v", err)}, VerifyEvent{})
+		return nil
+	}
+	names := make(map[string]string, len(installedMods))
+	byKey := make(map[string]*cachedMod, len(installedMods))
+	gameCache := r.svc.GetGameCache(r.game)
+	for i, m := range installedMods {
+		names[domain.ModKey(m.SourceID, m.ID)] = m.Name
+		byKey[domain.ModKey(m.SourceID, m.ID)] = &cachedMod{cache: gameCache, game: r.game, mod: &installedMods[i].Mod, method: m.LinkMethod}
+	}
+	jd := deployedJudge{
+		db: r.svc.db, game: r.game, profile: r.profile, cacheRoots: r.svc.cacheRoots(r.game),
+		cached: func(st db.DeployedFileState, rel string) string {
+			return byKey[domain.ModKey(st.SourceID, st.ModID)].fileFor(st, rel)
+		},
+	}
+	for _, row := range rows {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		if r.opts.ModFilter != "" && row.ModID != r.opts.ModFilter {
+			continue
+		}
+		if !underCurrentRoot(r.game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(row.RelativePath)) {
+			continue
+		}
+		dst := filepath.Join(r.game.ModPath, filepath.FromSlash(row.RelativePath))
+		j := jd.judge(r.ctx, row.RelativePath, dst)
+		if j.verdict != deployedUsers {
+			continue
+		}
+		r.result.Warnings++
+		r.finding(VerifyFinding{
+			ModID:         row.ModID,
+			ModName:       names[domain.ModKey(row.SourceID, row.ModID)],
+			FileID:        row.RelativePath,
+			Status:        VerifyStatusDeployedModified,
+			Note:          fmt.Sprintf("%s: %s, so lmm leaves it as yours", row.RelativePath, j.reason),
+			FixableReason: "--fix never writes over a file you changed - " + deployedModifiedRemedy(j.sharesCache),
+		}, VerifyEvent{})
+	}
+	return r.blockedPathsPass(installedMods, rows)
+}
+
+// VerifyStatusDeployedBlocked is the status of a verify row for a path a
+// deployed mod ships that lmm did not deploy because something it could
+// not preserve is there (#466 review D6): a file whose original the
+// originals store already holds, a link or directory lmm did not make, or
+// a file it could not copy. The deploy left it and recorded nothing, so no
+// other pass sees it. Never fixable: --fix writes over nothing it cannot
+// preserve either.
+const VerifyStatusDeployedBlocked = "deployed_blocked"
+
+// blockedPathsPass reports VerifyStatusDeployedBlocked for every path a
+// deployed, enabled mod of the profile ships - one it has recorded others
+// of, so its deployment is lmm's to describe - that no profile of the game
+// records under its current mod_path and that holds something. A mod whose
+// cache entry cannot be listed says nothing here; the other passes report
+// it.
+func (r *verifyRun) blockedPathsPass(installedMods []domain.InstalledMod, rows []db.DeployedPath) error {
+	a, err := r.svc.AdapterFor(r.game)
+	if err != nil {
+		return nil //nolint:nilerr // adapterPass reports the refusal
+	}
+	records, err := r.svc.db.DeployedPathRecords(r.ctx, r.game.ID)
+	if err != nil {
+		if cerr := r.ctx.Err(); cerr != nil {
+			return cerr
+		}
+		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("deployed content: listing deployed files: %v", err)}, VerifyEvent{})
+		return nil
+	}
+	recordedHere := func(rel string) bool {
+		for _, rec := range records[rel] {
+			if underCurrentRoot(r.game, rec.ModPath) {
+				return true
+			}
+		}
+		return false
+	}
+	withRows := make(map[string]bool)
+	for _, row := range rows {
+		withRows[domain.ModKey(row.SourceID, row.ModID)] = true
+	}
+	gameCache := r.svc.GetGameCache(r.game)
+	installer := r.svc.getInstaller(r.game)
+	for _, m := range installedMods {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		if !m.Enabled || !m.Deployed || !withRows[domain.ModKey(m.SourceID, m.ID)] {
+			continue
+		}
+		if r.opts.ModFilter != "" && m.ID != r.opts.ModFilter {
+			continue
+		}
+		files, err := deployableFiles(gameCache, a, r.game, m.SourceID, m.ID, m.Version)
+		if err != nil {
+			continue
+		}
+		for _, file := range files {
+			rel := filepath.ToSlash(file)
+			if installer.notLinkerOwned(r.game, rel) || recordedHere(rel) {
+				continue
+			}
+			if _, err := os.Lstat(filepath.Join(r.game.ModPath, file)); err != nil {
+				continue
+			}
+			r.result.Warnings++
+			r.finding(VerifyFinding{
+				ModID:         m.ID,
+				ModName:       m.Name,
+				FileID:        rel,
+				Status:        VerifyStatusDeployedBlocked,
+				Note:          fmt.Sprintf("%s: not deployed - lmm did not put what is there, and could not preserve it to put the mod's file in its place", rel),
+				FixableReason: "--fix never writes over what it cannot preserve - move it aside, then run `lmm deploy`, to take the mod's version",
+			}, VerifyEvent{})
+		}
+	}
+	return nil
 }
 
 // adapterPass appends the game adapter's read-only findings to the result.

@@ -31,8 +31,11 @@
 //	FileRouter        BepInEx/config/** seeding (#358 (b)), route.go
 //	ArchiveClaimer    the loader precondition (#359/#424), claim.go
 //	Verifier          verify's loader REPORTING tier (#359), verify.go
-//	Guide             the setup guidance (#359), guide.go - implemented, but
-//	                  not rendered by any frontend yet (see adapter.GuidanceNote)
+//
+// The setup guidance - install the loader, declare it, set the launch
+// option - is core's LoaderStatus (`lmm game show`, the web loader panel),
+// which knows the game's effective bootstrap; the seam's guidance
+// capability that duplicated it was dropped before 2.0 (#443).
 //
 // See docs/plans/2026-09-09-bepinex-spike.md for the evidence behind every
 // rule and docs/adapters.md for how the pieces fit together.
@@ -74,5 +77,4 @@ var (
 	_ adapter.FileRouter     = (*Adapter)(nil)
 	_ adapter.ArchiveClaimer = (*Adapter)(nil)
 	_ adapter.Verifier       = (*Adapter)(nil)
-	_ adapter.Guide          = (*Adapter)(nil)
 )

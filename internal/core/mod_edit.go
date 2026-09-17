@@ -211,7 +211,13 @@ func (s *Service) ApplyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		return nil, err
 	}
 	defer release()
-	return s.applyRelinkMod(ctx, game, plan, opts, sink)
+	result, err := s.applyRelinkMod(ctx, game, plan, opts, sink)
+	// #466 review D3: a merged-artifact resync removes and deploys files,
+	// so what it left in place is this edit's to report.
+	if result != nil {
+		s.takeCaptureWarnings(game.ID, OpModEdit, RelinkWarning, &result.Warnings, sink)
+	}
+	return result, err
 }
 
 func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *RelinkPlan, opts RelinkOptions, sink EventSink) (*RelinkResult, error) {

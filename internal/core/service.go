@@ -2130,12 +2130,21 @@ func (s *Service) ReloadGames() (bool, error) {
 // in-memory game set atomically. It replaces an existing entry with the
 // same ID. Readers (GetGame, ListGames, SourcesForGame, …) may run
 // concurrently with it.
+//
+// Replacing an entry is refused, as `lmm game edit --mod-path` is
+// (refuseModPathMove), when it would move the game's mod_path out from
+// under files deployed there (#451).
 func (s *Service) SaveGame(ctx context.Context, game *domain.Game) error {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
+	if prior, ok := s.game(game.ID); ok {
+		if err := s.refuseModPathMove(ctx, prior, game.ModPath); err != nil {
+			return err
+		}
+	}
 	return s.saveGame(ctx, game)
 }
 
@@ -2295,6 +2304,8 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	// #445 gate 2, G2-1: and none of them removes or replaces a file
 	// another game records.
 	installer.otherGames = s.otherGamesRecording
+	// #466 review F1: a link into the game's cache is lmm's.
+	installer.cacheRoots = s.cacheRoots(game)
 	// #353: and every Installer routes its deployable files through the
 	// game's adapter. A resolution failure is reported by the flow's own
 	// AdapterFor call (every flow that reaches an Installer makes one);

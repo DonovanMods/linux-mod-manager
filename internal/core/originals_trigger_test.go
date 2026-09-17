@@ -464,12 +464,22 @@ func TestDeploy_AFailedCaptureIsVisibleAtDefaultVerbosity(t *testing.T) {
 		})
 	require.NoError(t, err, "a failed capture is a warning, never a refusal")
 
-	assert.Contains(t, strings.Join(result.Warnings, "\n"), "could not preserve",
+	// #466 review D4 (coordinator ruling, overriding the original "the
+	// deploy goes ahead"): a file lmm could not preserve is not replaced.
+	data, err := os.ReadFile(stock)
+	require.NoError(t, err)
+	assert.Equal(t, "as the game shipped", string(data), "the file lmm could not preserve is left in place")
+	assert.Equal(t, 1, result.Deployed, "the mod still counts as deployed; only its one path was skipped")
+	assert.Contains(t, strings.Join(result.Warnings, "\n"), "Data/shipped.esp was not replaced",
 		"the deploy result must name the file it could not preserve")
-	assert.Contains(t, strings.Join(warnings, "\n"), "could not preserve",
+	assert.Contains(t, strings.Join(result.Warnings, "\n"), "could not be preserved")
+	assert.Contains(t, strings.Join(warnings, "\n"), "could not be preserved",
 		"and it must reach a live progress stream as a WarningEvent")
-	assert.Contains(t, warned.String(), "could not preserve",
+	assert.Contains(t, warned.String(), "could not be preserved",
 		"and the always-on user channel, since the CLI's default log level discards logs")
+	files, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
+	require.NoError(t, err)
+	assert.Empty(t, files, "no record claims the path lmm did not write")
 }
 
 // TestUninstall_PutsBackTheFileItReplaced is the coordinator's ruling on

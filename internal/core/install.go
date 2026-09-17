@@ -1873,6 +1873,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		emit(StepEvent{Scope: scope, Phase: InstallDepFileSelected, File: file})
 
 		progressFn := func(e Event) {
+			collectDownloadWarning(e, &result.Warnings)
 			if forwardFetchStep(e, scope, emit) {
 				return
 			}
@@ -2253,6 +2254,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 			emit(StepEvent{Scope: fileScope, Phase: InstallDownloadStarted, File: file})
 
 			progressFn := func(e Event) {
+				collectDownloadWarning(e, &result.Warnings)
 				if forwardFetchStep(e, fileScope, emit) {
 					return
 				}

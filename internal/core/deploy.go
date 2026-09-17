@@ -336,6 +336,9 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
+	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+		return nil, err
+	}
 	snapshot, err := s.snapshotOf(game.ID, installedMods)
 	if err != nil {
 		return nil, err
@@ -1055,6 +1058,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			return skip(fmt.Sprintf("cancelled: %v", err))
 		}
 		progressFn := func(e Event) {
+			collectDownloadWarning(e, &result.Warnings)
 			if forwardFetchStep(e, scope, emit) {
 				return
 			}

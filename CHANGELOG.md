@@ -62,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lmm game show` and the web loader panel say what a BepInEx game still
+  lacks (#443).** Their loader warnings now name the missing step: BepInEx
+  is not installed (with the build this game needs - the Linux archive or
+  the Windows pack - and that lmm does not download it), it is installed
+  but not declared (with the `lmm game edit <game> --loader bepinex` that
+  declares it), or it has never run (so the launch option shown above is
+  the likely cause). These were an adapter "guidance" capability that
+  nothing displayed; that capability is gone from the adapter contract
+  (`docs/adapters.md`).
 - **The BepInEx/adapter contradiction warning printed at startup is one
   line (#456).** A game that declares the BepInEx loader while its adapter
   is another one was reported on stderr by **every** `lmm` command in a
@@ -1646,6 +1655,73 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   game's `games.yaml` entry, or `lmm game edit <game> --adapter <name>`),
   with nothing to confirm.
 
+- **A copied or hard-linked file you replaced is no longer deleted (#466).**
+  Under `link_method: copy` or `hardlink`, a purge, uninstall, `lmm mod
+disable`, rollback, profile switch or apply, and `lmm verify --fix` deleted
+  whatever sat at a deployed path - your own file included, with no backup.
+  lmm now records a checksum of every copy it deploys and compares before it
+  removes anything: a file that changed is left in place and reported
+  ("... was left in place: its content changed after lmm deployed it, so lmm
+  treats it as yours"), and a purge stops tracking it. A deploy does not
+  write over it either, and says how to take the mod's version back (delete
+  the file, deploy again). `lmm verify` reports it as a new
+  `deployed_modified` row, which `--fix` leaves alone. A file lmm cannot
+  read to compare is kept too, with its record. Files deployed before this
+  version have no checksum yet: they are compared with the mod's cached copy
+  instead, and only when that copy is gone too are they removed as before,
+  reported once per run as "removed unverified (deployed before checksums
+  were recorded)"; they get a checksum on their next deploy. The purge's
+  `--json` document carries the reason in each kept path's new `note`.
+  On vfat, exFAT, NTFS and FUSE mounts (a Steam Deck SD card) lmm always
+  compares content, since a size and timestamp prove nothing there. lmm no
+  longer writes through a link it did not make (a copy deploy used to
+  overwrite whatever your link pointed at, outside the game directory), nor
+  replaces a file it could not back up first: both are left in place, said
+  so, and shown by `lmm verify` as `deployed_blocked`. Redeploying a
+  hard-linked mod by copy no longer empties the mod's cached file. A file a
+  purge left as yours that a later deploy sets aside is reported, and `lmm
+purge` puts it back. With two games sharing a directory, purging both no
+  longer deletes a file you changed; `lmm import` over a file you changed
+  says so and counts only the files it wrote (#476); and a hard link you
+  edited in place names `lmm install --force` as the way back. A copy deploy
+  now writes a new file and moves it into place, so the directory must be
+  writable, and a replaced file is a new file with the mod file's
+  permissions, owned by you (the old file's extended attributes and ACLs are
+  not carried over).
+- **Changing `mod_path` by hand no longer strands deployed files (#451).**
+  lmm now records the `mod_path` each file was deployed under. After a
+  `games.yaml` edit made with files deployed, `lmm game show`,
+  `lmm game list`, `lmm status`, `lmm verify` and the web UI say where the
+  files are and what `mod_path` is now, and every deploy refuses until you
+  either set it back (`lmm game edit <game> --mod-path <old path>`) or run
+  `lmm purge`, which now removes the files from where they were deployed
+  (`--json`: `removed_paths`, and `mod_path` on a kept path). Before, a
+  deploy there quietly took the files' records over and left the files
+  behind for good. `lmm game edit --mod-path` also names the old directory
+  when it refuses a move, and always allows moving back to it. The
+  mod_path problem document gains `deployed_under`. `lmm purge` still
+  clears those files when no mod is left installed, and its preview names
+  each one (plan `--json`: `stranded`). `lmm profile apply`, and the dry
+  runs of `profile switch`, `profile import`, `lmm import` and `snapshot
+restore`, refuse before changing anything, and the web API answers the
+  refusal with 409 instead of 500.
+- **`lmm source index prune` keeps an index a truncated `games.yaml` hides
+  (#468).** A `games.yaml` cut off in the middle of a Thunderstore
+  community slug still reads as valid, so the index the game really uses
+  looked unused and was deleted (and re-downloaded on the next search). An
+  index whose name extends a mapped slug that has no index of its own is
+  now kept, and the prune says why; `--all` still removes it. A cut that
+  drops a game's mapping entirely, or shortens it to a slug that happens to
+  have its own index, is caught too: while a game still installs mods from
+  the source (or a profile lists one) and games.yaml maps it to nothing, or
+  to the start of an index's name, that index is kept.
+- **A downloaded BepInEx archive's layout warning reaches `--json` (#464).**
+  Installing a BepInEx-shaped archive into a game whose `mod_path` is not
+  its install path was never silent - with no BepInEx it is refused, and
+  with BepInEx installed it deploys as packaged with a warning naming the
+  steps that make lmm lay it out - but on the download path that warning
+  reached only the terminal. `lmm install --json` and `lmm deploy --json`
+  now carry it in `warnings`.
 - **lmm writes a profile to its own file, safely, and keeps what you wrote
   in it (#441).**
   - A profile copied by hand (`default.yaml` → `vanilla.yaml`, `name:`

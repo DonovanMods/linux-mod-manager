@@ -202,6 +202,18 @@ func fetchProgressSink(sink EventSink) source.FetchProgressFunc {
 	}
 }
 
+// collectDownloadWarning appends e's message to warnings when e is a
+// download-time warning (DownloadWarning), and reports nothing either way:
+// a flow whose result is a --json document calls it ahead of
+// forwardFetchStep, so the warning a frontend shows live - the per-archive
+// BepInEx notice among them (#464) - is in the document too. A --json run
+// passes no sink at all, so without this the warning reached only the log.
+func collectDownloadWarning(e Event, warnings *[]string) {
+	if w, ok := e.(WarningEvent); ok && w.Phase == DownloadWarning {
+		*warnings = append(*warnings, w.Message)
+	}
+}
+
 // isWorkshopFetch reports whether p is one of the phases a source.Fetcher
 // produces.
 func (p DeployPhase) isWorkshopFetch() bool {

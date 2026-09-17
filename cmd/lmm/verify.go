@@ -184,8 +184,11 @@ status is one of "ok", "missing", "no_checksum",
 "version_unverifiable", "stale_compile", "stale_deployment",
 "fixed_stale_deployment", "conversion_failed", "needs_reingest",
 "fixed_needs_reingest", "external_missing", "mod_path_missing" (the
-game's mod_path is not a directory while it has mods to deploy - a
-warning whose note names the repair), or one of the loader tier's own rows -
+game's mod_path is not a directory while it has mods to deploy, or is not
+the one lmm deployed files under - a warning whose note names the repair),
+"deployed_modified" (a copied or hard-linked file whose content changed
+after lmm deployed it - a warning --fix leaves alone, since the file is
+yours), or one of the loader tier's own rows -
 "loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
 "loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
 "fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",
@@ -527,6 +530,18 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 	case "mod_path_missing":
 		// #427: the game's mod_path is gone; the note names the repair.
 		fmt.Printf("%s mod_path - %s\n", colorYellow("?"), f.Note)
+
+	case core.VerifyStatusDeployedModified:
+		// #466: a copy or hardlink the user changed; the note names it and
+		// the fixable reason says how to take the mod's version back.
+		fmt.Printf("%s %s - CHANGED SINCE DEPLOY (%s)\n", colorYellow("?"), f.ModName, f.Note)
+		fmt.Printf("  %s\n", f.FixableReason)
+
+	case core.VerifyStatusDeployedBlocked:
+		// #466: a path the mod ships that lmm left, because what is there
+		// could not be preserved first.
+		fmt.Printf("%s %s - NOT DEPLOYED (%s)\n", colorYellow("?"), f.ModName, f.Note)
+		fmt.Printf("  %s\n", f.FixableReason)
 
 	case "external_missing":
 		// #269/#429: counted as an issue, and until this arm printed

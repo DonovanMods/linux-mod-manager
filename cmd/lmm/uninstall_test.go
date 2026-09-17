@@ -138,11 +138,25 @@ func setupDoUninstallTest(t *testing.T) (*core.Service, *domain.Game) {
 	// row is content lmm did not put there, and the undeploy now leaves it
 	// alone rather than deleting it. A directory is still an undeploy
 	// failure and nothing else, which is what these tests are about.
-	require.NoError(t, os.MkdirAll(filepath.Join(gameDir, "plugin.esp"), 0755))
 	pm := svc.NewProfileManager()
 	_, err = pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.NoError(t, pm.AddMod(context.Background(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+	// #466: a link or directory lmm has no record of is the user's, and an
+	// uninstall leaves it untouched - so the mod is deployed first, and its
+	// recorded link is what the directory replaces.
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(gameDir, "plugin.esp")))
+	require.NoError(t, os.MkdirAll(filepath.Join(gameDir, "plugin.esp"), 0755))
+	// The row as the goldens recorded it: installed, not marked deployed.
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
 
 	oldSource, oldProfile, oldKeep, oldForce, oldDryRun :=
 		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, uninstallDryRun

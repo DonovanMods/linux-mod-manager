@@ -1,9 +1,8 @@
 package bepinex
 
 // The capabilities U3 (#413) moved behind the seam, each tested at the
-// interface core actually calls: ClaimArchive (the loader precondition),
-// Verify (the loader INSTALLATION tier) and Guidance (the bootstrap
-// advice). The layout table has its own file, moved from internal/core
+// interface core actually calls: ClaimArchive (the loader precondition) and
+// Verify (the loader INSTALLATION tier). The layout table has its own file, moved from internal/core
 // unmodified but for the package clause.
 
 import (
@@ -241,46 +240,6 @@ func treeOf(t *testing.T, root string) []string {
 		return nil
 	}))
 	return out
-}
-
-// TestGuidance_NamesWhatIsStillMissing walks the three states a user meets
-// on the way to a working BepInEx install, in order.
-func TestGuidance_NamesWhatIsStillMissing(t *testing.T) {
-	declared := &domain.GameLoader{Kind: domain.LoaderKindBepInEx}
-
-	t.Run("nothing installed", func(t *testing.T) {
-		notes := New().Guidance(bepinexGame(t.TempDir(), declared))
-		require.Len(t, notes, 1)
-		assert.Contains(t, notes[0].Title, "not installed")
-	})
-
-	t.Run("installed but never run", func(t *testing.T) {
-		root := t.TempDir()
-		install(t, root, "5.4.23.5", domain.LoaderBootstrapNative, false)
-		notes := New().Guidance(bepinexGame(root, declared))
-		require.Len(t, notes, 1)
-		assert.Contains(t, notes[0].Title, "has not run")
-		assert.Contains(t, notes[0].Body, "lmm game show valheim",
-			"the exact launch string lives in LoaderStatus, so the note names the command that prints it")
-	})
-
-	t.Run("installed but undeclared", func(t *testing.T) {
-		root := t.TempDir()
-		install(t, root, "5.4.23.5", domain.LoaderBootstrapNative, true)
-		notes := New().Guidance(bepinexGame(root, nil))
-		require.Len(t, notes, 1)
-		assert.Equal(t, undeclaredNotice(bepinexGame(root, nil)), notes[0].Body)
-	})
-
-	t.Run("a working install has nothing to say", func(t *testing.T) {
-		root := t.TempDir()
-		install(t, root, "5.4.23.5", domain.LoaderBootstrapNative, true)
-		assert.Empty(t, New().Guidance(bepinexGame(root, declared)))
-	})
-
-	t.Run("a nil game is not a panic", func(t *testing.T) {
-		assert.Empty(t, New().Guidance(nil))
-	})
 }
 
 // TestNormalizeArchive_NoticesAnUndeclaredLoaderOnlyWhenItActed is #424's
