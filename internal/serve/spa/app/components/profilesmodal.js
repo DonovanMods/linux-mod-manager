@@ -26,6 +26,7 @@
 
 import { html, useEffect, useState } from "../render.js";
 import { Modal } from "./modal.js";
+import { codeSpans } from "../errortext.js";
 import {
   createProfile,
   deleteProfile,
@@ -75,6 +76,22 @@ export function ProfilesModal({ modal, state, actions }) {
       openerSelector=".profile-picker__trigger"
     >
       ${error && html`<p class="modal__error">Couldn't load profiles: ${error}</p>`}
+      ${
+        /* Issue 463 (core issues 446 and 441): the listing's own warnings - a game whose
+        profile files mark no active profile or several, a file whose
+        name: disagrees with its file name. */ ""
+      }
+      ${
+        (state.profiles?.warnings ?? []).length > 0 &&
+        html`<ul class="plan__warnings" data-testid="profiles-warnings">
+          ${state.profiles.warnings.map(
+            (w, i) =>
+              html`<li key=${i} class="plan__note plan__note--warn">
+                ${codeSpans(w)}
+              </li>`,
+          )}
+        </ul>`
+      }
 
       <ul class="profiles-list" data-testid="profiles-list">
         ${profiles.map(
@@ -167,12 +184,20 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
   // deep"), exactly as Import already does.
   const rowContext = { game: context.game, profile: profile.name };
 
+  // Issue 463 (core issue 445): purging a profile that is not the active one is a
+  // recorded-only clean-up - the plan lists what it removes and what it
+  // keeps - so the control says "Clean up…" there, and "Purge…" only on
+  // the active profile, whose purge undeploys the game directory.
+  const active = profile.is_default;
+
   function purgeProfile() {
     actions.openPlan({
       kind: "purge",
       origin: `profile:${profile.name}:purge`,
-      title: `Purge ${profile.name}`,
-      confirmLabel: "Purge",
+      title: active
+        ? `Purge ${profile.name}`
+        : `Clean up ${profile.name}'s deployed files`,
+      confirmLabel: active ? "Purge" : "Clean up",
       options: {},
       context: rowContext,
       openerSelector: `[data-action="purge-profile"][data-profile="${profile.name}"]`,
@@ -306,20 +331,40 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
           class="button button--small button--danger"
           data-action="purge-profile"
           data-profile=${profile.name}
+          title=${
+            active
+              ? "Undeploy this profile's mods from the game directory"
+              : "Remove only the files this profile deployed that nothing else uses"
+          }
           disabled=${busy}
           onClick=${purgeProfile}
         >
-          Purge…
+          ${active ? "Purge…" : "Clean up…"}
         </button>
-        <button
-          type="button"
-          class="button button--small button--danger"
-          disabled=${busy}
-          onClick=${() => setMode("deleting")}
-        >
-          Delete
-        </button>
+        ${
+          !active &&
+          html`<button
+            type="button"
+            class="button button--small button--danger"
+            data-action="delete-profile"
+            data-profile=${profile.name}
+            disabled=${busy}
+            onClick=${() => setMode("deleting")}
+          >
+            Delete
+          </button>`
+        }
       </span>
+      ${
+        active &&
+        html`<p
+          class="profiles-row__note empty-state__hint"
+          data-testid="active-profile-note"
+        >
+          The active profile can't be deleted: its mods are the ones in the game
+          directory. Switch to another profile first.
+        </p>`
+      }
       ${error && html`<p class="modal__error">${error}</p>`}
     </li>
   `;

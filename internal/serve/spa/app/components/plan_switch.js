@@ -16,6 +16,8 @@
 // "install 1.4" alone.
 
 import { html } from "../render.js";
+import { codeSpans } from "../errortext.js";
+import { PlanWarnings } from "./planwarnings.js";
 
 /** refLabel names a domain.ModReference the same way plan_profile_import.js
  * does - it carries no display name of its own, so "source:mod @ version"
@@ -53,12 +55,33 @@ export function SwitchPlanView({ plan }) {
   const toInstall = plan.to_install ?? [];
   const priorVersions = plan.prior_versions ?? {};
 
+  // Issue 463: with no single profile marked active (core issue 445, review F2), the
+  // switch can only MARK its target - there is no "from" to take down.
+  // The plan says so, and so does this preview, with what to run after.
+  if (plan.flag_only) {
+    return html`
+      <div class="plan plan--switch" data-testid="switch-flag-only">
+        <p class="plan__summary">
+          Marking <span class="mono">${plan.to}</span> as the active profile.
+          Nothing is deployed or removed.
+        </p>
+        <${PlanWarnings} warnings=${plan.warnings} />
+        <p class="plan__note" data-testid="switch-flag-only-recovery">
+          ${codeSpans(
+            `Afterwards, apply ${plan.to} (the Profile card's Apply profile…, or \`lmm profile apply ${plan.to} --game ${plan.game_id}\`) to deploy its mods, then purge each other profile from Manage profiles (\`lmm purge -p <profile> --game ${plan.game_id}\`) to clear the files it recorded - a purge of a profile that is not active keeps what ${plan.to} uses.`,
+          )}
+        </p>
+      </div>
+    `;
+  }
+
   return html`
     <div class="plan plan--switch">
       <p class="plan__summary">
         Switching from <span class="mono">${plan.from}</span> to${" "}
         <span class="mono">${plan.to}</span>.
       </p>
+      <${PlanWarnings} warnings=${plan.warnings} />
 
       ${
         plan.already_active &&

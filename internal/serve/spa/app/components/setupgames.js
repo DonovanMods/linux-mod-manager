@@ -8,6 +8,7 @@ import {
   listGames,
   listSources,
   updateGameSources,
+  updateGameModPath,
   post,
   del,
 } from "../api.js";
@@ -20,6 +21,8 @@ import {
   updateGameLoader,
 } from "./gameloader.js";
 import { GameDetectSection, GameAddForm } from "./gameadd.js";
+import { ModPathEditor, ModPathWarning } from "./modpath.js";
+import { AdapterCell } from "./adaptercell.js";
 
 /** setDefaultGame/clearDefaultGame are this section's own two mutations -
  * thin single-step writes (api_games.go, issue 333) with nothing to preview, the
@@ -28,7 +31,13 @@ const setDefaultGame = (id) =>
   post(`/api/v1/games/${encodeURIComponent(id)}/set-default`);
 const clearDefaultGame = () => del("/api/v1/games/default");
 
-export function SetupGames({ actions, game, profile }) {
+export function SetupGames({
+  actions,
+  game,
+  profile,
+  editModPath = "",
+  suggestedModPath = "",
+}) {
   const [games, setGames] = useState(null);
   const [error, setError] = useState(null);
   const [showDetect, setShowDetect] = useState(false);
@@ -52,15 +61,39 @@ export function SetupGames({ actions, game, profile }) {
   // Bumped after a loader save so the open panel re-reads the game directory
   // instead of guessing what changed.
   const [loaderKey, setLoaderKey] = useState(0);
+  // Which row's MOD PATH is open (issue 460), its draft, and the answer its
+  // last save got. A deep link (router.js#modPathEditPath - every "Set mod
+  // path…" action outside this table) opens it on arrival, prefilled with
+  // core's suggestion when the link carries one.
+  const [editingModPath, setEditingModPath] = useState(null); // {id, value}
+  const [modPathError, setModPathError] = useState(null); // {id, message, field, details}
 
   async function reload() {
     try {
-      setGames(await listGames());
+      const rows = await listGames();
+      setGames(rows);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
   }
+
+  useEffect(() => {
+    if (!editModPath) return;
+    setEditingModPath((current) =>
+      current?.id === editModPath
+        ? current
+        : { id: editModPath, value: suggestedModPath, deepLinked: true },
+    );
+  }, [editModPath, suggestedModPath]);
+
+  // A deep link with no suggestion prefills the game's current mod_path,
+  // once the rows are in - the value the user is about to correct.
+  useEffect(() => {
+    if (!games || !editingModPath?.deepLinked || editingModPath.value) return;
+    const row = games.find((g) => g.id === editingModPath.id);
+    if (row) setEditingModPath({ id: row.id, value: row.mod_path ?? "" });
+  }, [games, editingModPath]);
 
   useEffect(() => {
     reload();
@@ -108,6 +141,52 @@ export function SetupGames({ actions, game, profile }) {
       setRowError({
         id: editingLoader.id,
         message: err instanceof ApiError ? err.message : String(err),
+      });
+    } finally {
+      setBusyID(null);
+    }
+  }
+
+  function toggleModPathEditor(g) {
+    setModPathError(null);
+    setEditingModPath(
+      editingModPath?.id === g.id
+        ? null
+        : { id: g.id, value: g.mod_path ?? "" },
+    );
+  }
+
+  // openOrFocusModPath is the row warning's and the loader panel's own
+  // "Set mod path…" action (review F4): when that row's editor is not open
+  // yet, it opens it (ModPathEditor's own mount effect then takes focus);
+  // when it is ALREADY open, toggling would close it, so the action instead
+  // moves focus into the input that is already on screen - never a silent
+  // no-op for a click the user just made.
+  function openOrFocusModPath(g) {
+    if (editingModPath?.id === g.id) {
+      document.getElementById(`mod-path-${g.id}`)?.focus();
+      return;
+    }
+    toggleModPathEditor(g);
+  }
+
+  async function saveModPath() {
+    if (!editingModPath) return;
+    const { id, value } = editingModPath;
+    setBusyID(id);
+    setModPathError(null);
+    try {
+      await updateGameModPath(id, value);
+      setEditingModPath(null);
+      await reload();
+      await actions.reloadStatus();
+    } catch (err) {
+      const api = err instanceof ApiError;
+      setModPathError({
+        id,
+        message: api ? err.message : String(err),
+        field: api ? (err.details?.field ?? "") : "",
+        details: api ? err.details : null,
       });
     } finally {
       setBusyID(null);
@@ -163,7 +242,9 @@ export function SetupGames({ actions, game, profile }) {
   // deploy_mode: compile, bepinex for a game with BepInEx), where `adapter`
   // is only what games.yaml says. An absent `effective_adapter` IS the
   // generic-files identity, so the cell names it rather than leaving a
-  // blank - there is no such thing as a game with no adapter.
+  // blank - there is no such thing as a game with no adapter. A game core
+  // refuses (`adapter_error`, issue 449) is the exception: it uses none, and
+  // the cell says so (adaptercell.js).
   return html`
     <div class="setup-section" data-testid="setup-games">
       <table class="setup-table">
@@ -188,10 +269,26 @@ export function SetupGames({ actions, game, profile }) {
                 <td class="col--path mono" title=${g.install_path}>
                   ${g.install_path}
                 </td>
-                <td class="col--path mono" title=${g.mod_path}>
-                  ${g.mod_path}
+                <td class="col--path" title=${g.mod_path}>
+                  <span class="mono">${g.mod_path}</span>${" "}
+                  <button
+                    type="button"
+                    class="button button--small"
+                    data-action="edit-mod-path"
+                    data-game=${g.id}
+                    aria-expanded=${editingModPath?.id === g.id ? "true" : "false"}
+                    disabled=${busyID === g.id}
+                    onClick=${() => toggleModPathEditor(g)}
+                  >
+                    ${editingModPath?.id === g.id ? "Cancel" : "Edit mod path…"}
+                  </button>
+                  <${ModPathWarning}
+                    error=${g.mod_path_error}
+                    gameID=${g.id}
+                    onSetModPath=${() => openOrFocusModPath(g)}
+                  />
                 </td>
-                <td class="mono">${g.effective_adapter || "generic-files"}</td>
+                <td><${AdapterCell} game=${g} /></td>
                 <td>
                   <span class="mono"
                     >${Object.keys(g.source_ids ?? {}).join(", ") || "—"}</span
@@ -250,7 +347,7 @@ export function SetupGames({ actions, game, profile }) {
               ${
                 editing?.id === g.id &&
                 html`<tr key=${`${g.id}-sources`} class="setup-table__editor">
-                  <td colspan="6">
+                  <td colspan="7">
                     <${SourcesMapEditor}
                       sources=${sources}
                       value=${editing.map}
@@ -270,9 +367,24 @@ export function SetupGames({ actions, game, profile }) {
                 </tr>`
               }
               ${
+                editingModPath?.id === g.id &&
+                html`<tr key=${`${g.id}-mod-path`} class="setup-table__editor">
+                  <td colspan="7">
+                    <${ModPathEditor}
+                      gameID=${g.id}
+                      value=${editingModPath.value}
+                      busy=${busyID === g.id}
+                      error=${modPathError?.id === g.id ? modPathError : null}
+                      onChange=${(value) => setEditingModPath({ id: g.id, value })}
+                      onSave=${saveModPath}
+                    />
+                  </td>
+                </tr>`
+              }
+              ${
                 editingLoader?.id === g.id &&
                 html`<tr key=${`${g.id}-loader`} class="setup-table__editor">
-                  <td colspan="6">
+                  <td colspan="7">
                     <${GameLoaderEditor}
                       value=${editingLoader.draft}
                       disabled=${busyID === g.id}
@@ -289,6 +401,7 @@ export function SetupGames({ actions, game, profile }) {
                     </button>
                     <${GameLoaderPanel}
                       gameID=${g.id}
+                      onSetModPath=${() => openOrFocusModPath(g)}
                       refreshKey=${loaderKey}
                     />
                   </td>

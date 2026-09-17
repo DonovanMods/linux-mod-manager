@@ -151,6 +151,8 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
             actions=${actions}
             game=${route.game}
             profile=${route.profile}
+            editModPath=${route.editModPath}
+            suggestedModPath=${route.suggestedModPath}
           />`
         }
         ${section === "auth" && html`<${SetupAuth} />`}

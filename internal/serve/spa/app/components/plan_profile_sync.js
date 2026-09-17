@@ -16,6 +16,7 @@
 
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
+import { PlanWarnings } from "./planwarnings.js";
 
 /** refKey is the plan's own map key for a ModReference. */
 function refKey(ref) {
@@ -62,6 +63,12 @@ export function ProfileSyncPlanView({ plan }) {
         with what is actually installed.
       </p>
 
+      ${
+        /* Issue 463 (core issue 444): the mods sync KEEPS in the profile although
+        their installed row and the profile disagree - the user's to
+        settle, so they are on screen before Confirm. */ ""
+      }
+      <${PlanWarnings} warnings=${plan.warnings} testID="sync-warnings" />
       ${
         plan.missing &&
         html`<p class="plan__note">

@@ -1120,6 +1120,9 @@ type e2eSearchSource struct {
 	// that suddenly reported updates would change what those screens show.
 	updatable   bool
 	urlRequests atomic.Int64
+	// deps is each mod's dependency list, by mod id - empty for every mod
+	// but the ones a dependency scenario adds (#448).
+	deps map[string][]domain.ModReference
 }
 
 func newE2ESearchSource(t *testing.T, id string) *e2eSearchSource {
@@ -1200,8 +1203,8 @@ func (s *e2eSearchSource) GetMod(_ context.Context, _, modID string) (*domain.Mo
 	return &mod, nil
 }
 
-func (s *e2eSearchSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
-	return nil, nil
+func (s *e2eSearchSource) GetDependencies(_ context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
+	return s.deps[mod.ID], nil
 }
 
 func (s *e2eSearchSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {

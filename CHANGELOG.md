@@ -1597,7 +1597,54 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   changelog field; a source without it, or a failed live fetch, simply
   omits the section rather than failing the command (#87).
 
+- **A mod your profile lists switched off but never downloaded is no
+  longer invisible (#440).** An imported profile on a fresh machine lists
+  such mods without installing them; `lmm list` now names them under its
+  table (and `--json` carries them as `disabled_not_installed`), and the web
+  UI's library and Profile card show each one as off and not downloaded,
+  with **Install…** to download it and switch it on. The Profile card no
+  longer counts them as mods **Apply profile** would install.
+
+- **The web UI edits a game's mod path and flags one that needs repair
+  (#460).** Setup → Games gains **Edit mod path…**: a rejected value is
+  marked on the field, and a move refused because files are still deployed
+  under the old directory lists the steps that clear it, in order. A game
+  whose mod path lmm deployed into has gone now shows a warning with **Set
+  mod path…** on Mission Control, in the Health card, the Games table, the
+  loader panel and the game chooser; Steam detection marks it **needs
+  repair** instead of "already configured". The Health card also says how
+  many mods it checked, how many are Steam Workshop items checked only for
+  presence, and how many have nothing recorded to compare.
+
 ### Fixed
+
+- **The web UI's install confirmation lists the dependencies it switches
+  back on (#448).** Installing a mod whose dependency the profile has
+  switched off turns that dependency on again; the confirmation now says so,
+  by name, before you confirm — as the CLI does.
+
+- **The web UI's Games table no longer shows `generic-files` for a game
+  whose adapter lmm refuses (#449).** The cell names the configured adapter,
+  marked **refused**, with lmm's reason and the command that fixes it; the
+  game's loader panel shows the same.
+
+- **The web UI's profiles modal and plans follow the active-profile rules
+  (#463).** The active profile no longer offers **Delete**, and says why; a
+  non-active profile's purge is **Clean up…**, previewing the files it will
+  remove and each file it keeps with the reason ("kept your file; lmm no
+  longer tracks it" for one that is yours). The modal shows the profile
+  listing's warnings, the sync preview shows the mods it keeps and why, and
+  a switch in a game with no single active profile says it only marks the
+  target — before you confirm and again when it finishes, with the commands
+  that complete it.
+
+- **The web UI reports a game whose adapter lmm refuses as that refusal,
+  not a server error (#461).** Deploy, install, updates, profile apply,
+  profile sync, mod edit, adopt and archive import on such a game used to
+  fail their plan with a 500; they answer 409 with the refusal now, and the
+  confirmation dialog shows lmm's sentence and where to fix it (the
+  game's `games.yaml` entry, or `lmm game edit <game> --adapter <name>`),
+  with nothing to confirm.
 
 - **lmm writes a profile to its own file, safely, and keeps what you wrote
   in it (#441).**

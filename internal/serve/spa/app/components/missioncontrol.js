@@ -24,6 +24,7 @@ import { Library } from "./library.js";
 import { ModPanel } from "./modpanel.js";
 import { OmnibarResults } from "./omnibarresults.js";
 import { SnapshotsCard } from "./snapshots.js";
+import { ModPathWarning } from "./modpath.js";
 
 /** goToChooser is the error state's escape hatch: a click, not just advice
  * to edit the URL bar, back to a context that does resolve. */
@@ -170,6 +171,16 @@ export function MissionControl({ state, onThemeChange, actions }) {
         <h1 class="visually-hidden">
           ${status.name ?? route.game} — ${route.profile}
         </h1>
+        ${
+          /* issue 460: a mod_path that needs the user is the first thing on
+          the page - every deploy into this game is at stake - with the
+          action that repairs it. */ ""
+        }
+        <${ModPathWarning}
+          error=${status.mod_path_error}
+          gameID=${route.game}
+          route=${route}
+        />
         <${AttentionCards}
           state=${state}
           updates=${updates}

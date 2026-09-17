@@ -27,6 +27,7 @@ import { mutationLabel, progressText } from "../progress.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { AddModsMenu } from "./addmodsmenu.js";
+import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import { InlineJob } from "./jobprogress.js";
 
 const FILTER_LABELS = {
@@ -671,10 +672,19 @@ export function Library({
     `;
   }
 
+  // Issue 440: what the profile lists, switched off, and never downloaded.
+  const listedOff = html`<${ListedOffList}
+    refs=${listedOffRefs(mods)}
+    state=${state}
+    actions=${actions}
+    heading="Listed in this profile, switched off, not downloaded"
+  />`;
+
   if ((mods.mods ?? []).length === 0) {
     return html`
       <section class="library">
         <h2 class="section-header">Library</h2>
+        ${listedOff}
         <div class="empty-state">
           <p>No mods installed yet.</p>
           <p class="empty-state__hint">
@@ -1108,6 +1118,7 @@ export function Library({
               </table>
             `
       }
+      ${listedOff}
       ${
         selected.size > 0 &&
         html`

@@ -126,6 +126,9 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
   const games = listing?.games ?? [];
   const hasUnknown = games.some((g) => !g.known);
   const hasWorkshop = games.some((g) => !g.known && g.workshop_items > 0);
+  const needsRepair = games.some(
+    (g) => g.already_configured && g.mod_path_error,
+  );
 
   return html`
     <div class="setup-detect" data-testid="setup-detect">
@@ -166,6 +169,15 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
         </p>`
       }
       ${
+        needsRepair &&
+        html`<p class="empty-state__hint" data-testid="detect-needs-repair">
+          A game marked "needs repair" is configured already, and its mod path
+          needs you: fix it with "Set mod path…" in the Games table above.
+          Adding it again would reset its profile, so it cannot be selected
+          here.
+        </p>`
+      }
+      ${
         hasWorkshop &&
         html`<p class="empty-state__hint">
           A game listed with Steam Workshop items is here because Steam has
@@ -194,23 +206,12 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
                             />
                             ${g.name}
                             <span class="badge badge--policy">Known</span>
-                            ${
-                              g.already_configured &&
-                              html`<span class="badge"
-                                >already configured</span
-                              >`
-                            }
+                            ${configuredBadge(g)}
                           </label>
                         `
                       : html`
                           <span class="setup-detect__name">
-                            ${g.name}
-                            ${
-                              g.already_configured &&
-                              html`<span class="badge"
-                                >already configured</span
-                              >`
-                            }
+                            ${g.name} ${configuredBadge(g)}
                           </span>
                         `
                   }
@@ -255,6 +256,26 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
       }
     </div>
   `;
+}
+
+/**
+ * configuredBadge marks a detected row whose game is already configured
+ * (issue 460): "needs repair" when that game's mod_path needs attention
+ * (GameDetectEntry.mod_path_error, whose sentence is the badge's title),
+ * "already configured" otherwise. Either way the row stays unselectable -
+ * adding it again resets its profile, which repairs nothing.
+ */
+function configuredBadge(g) {
+  if (!g.already_configured) return null;
+  if (g.mod_path_error) {
+    return html`<span
+      class="badge badge--warn"
+      data-testid="needs-repair"
+      title=${g.mod_path_error}
+      >needs repair</span
+    >`;
+  }
+  return html`<span class="badge">already configured</span>`;
 }
 
 /**
@@ -761,10 +782,7 @@ export function GameAddForm({
                           ${g.name}
                         </button>
                         ${g.known && html`<span class="badge badge--policy">Known</span>`}
-                        ${
-                          g.already_configured &&
-                          html`<span class="badge">already configured</span>`
-                        }
+                        ${configuredBadge(g)}
                         <span
                           class="mono setup-detect__path"
                           title=${g.install_path}

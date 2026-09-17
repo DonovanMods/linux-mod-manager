@@ -1424,8 +1424,8 @@ Confirm will submit.
 
 The **Setup page** (`/g/{game}/{profile}/setup`) holds everything
 administrative, in five sections: **Games** (the configured games table with
-its sources, **Edit sources…** per row, Steam detection, manual add,
-set/clear the default), **Authentication**
+its sources, **Edit sources…**, **Edit mod path…** and **Edit loader…** per
+row, Steam detection, manual add, set/clear the default), **Authentication**
 (per-source status, log in and out, the environment variable each source
 reads shown beside its field, orphaned-token removal), **Sources**
 (a line-numbered YAML editor for custom sources with validate-then-save and
@@ -1464,6 +1464,18 @@ an optional override you can layer on top — the same thing `lmm game add
 still needs a source and identifier, because nothing on disk supplies them. If the scan that offered a game goes
 stale (it was uninstalled between the scan and the submit), the form says
 so by name and offers a **Rescan** rather than a dead end.
+
+A game whose **mod path** needs you — lmm deployed files into a directory
+that has since gone — is flagged wherever the game is shown: a warning at
+the top of Mission Control, a row in the Health card, the Games table, the
+game's loader panel and the game chooser, each with **Set mod path…**,
+which opens that row's editor. Saving a new mod path while files are still
+deployed under the old one is refused, and the refusal lists what to do in
+order: record any files the active profile lists but only another profile
+records (`lmm profile apply` / `lmm deploy`), purge each profile with files
+there, save the new path again, then deploy. Steam detection marks such a
+game **needs repair** and never offers it for re-adding, which would reset
+its profile.
 
 ### Flows
 
@@ -1513,6 +1525,18 @@ shortcuts** help (`?`), and a batch-uninstall confirm.
 step keeps **Purge** disabled until you type the profile's own name back,
 because it undeploys the whole profile and, with its own option set,
 removes every mod record behind it.
+
+The profiles modal follows the active-profile rules: the active profile has
+no **Delete** (its mods are the ones in the game directory — switch first),
+and every other profile's purge is labelled **Clean up…**, because it
+removes only the files that profile deployed which nothing else uses; its
+preview lists what it will remove and each file it keeps, with the reason
+(another profile or game records it, the active profile lists its mod, or it
+is your file and lmm no longer tracks it). The modal shows the listing's own
+warnings (no profile, or several, marked active); a sync previews the mods
+it keeps despite a disagreement; and a switch in a game with no single
+active profile says it will only mark its target, then finishes with the
+commands that finish the job.
 
 ### Keyboard
 

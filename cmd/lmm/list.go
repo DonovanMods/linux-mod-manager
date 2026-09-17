@@ -79,6 +79,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 
 	if len(mods) == 0 {
 		fmt.Println("No mods installed.")
+		printDisabledNotInstalled(game.ID, profileName, list.DisabledNotInstalled)
 		return nil
 	}
 
@@ -247,8 +248,41 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	if err := printTable(&buf, 2, rowColor); err != nil {
 		return fmt.Errorf("writing table: %w", err)
 	}
+	printDisabledNotInstalled(game.ID, profileName, list.DisabledNotInstalled)
 
 	return nil
+}
+
+// printDisabledNotInstalled lists the refs the profile marks disabled and
+// never downloaded (#440) under the table: they are part of the profile,
+// switched off, and have no installed row for the table to show - an
+// imported profile on a fresh machine. Enabling one needs its download.
+//
+// Each ref's own recovery command names the profile, source and version it
+// is actually listed at, so running it installs the exact same thing the
+// web UI's Install… does (review F2) - a bare `lmm install --id <mod-id>`
+// installs into the active profile at the latest version instead, which is
+// rarely the same ref.
+func printDisabledNotInstalled(gameID, profileName string, refs []domain.ModReference) {
+	if len(refs) == 0 {
+		return
+	}
+	fmt.Printf("\nListed but not downloaded, switched off — %d mod(s):\n", len(refs))
+	for _, ref := range refs {
+		line := "  " + domain.ModKey(ref.SourceID, ref.ModID)
+		if ref.Version != "" {
+			line += " " + ref.Version
+		}
+		fmt.Println(line)
+	}
+	fmt.Println("Enabling one downloads it:")
+	for _, ref := range refs {
+		cmd := fmt.Sprintf("lmm install -g %s -p %s -s %s --id %s", gameID, profileName, ref.SourceID, ref.ModID)
+		if ref.Version != "" {
+			cmd += " --version " + ref.Version
+		}
+		fmt.Println("  " + cmd)
+	}
 }
 
 // modStateLabel names a mod's state when it is NOT the ordinary one

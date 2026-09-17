@@ -25,6 +25,7 @@ import { html } from "../render.js";
 import { Modal } from "./modal.js";
 import { ErrorDetails } from "./errordetails.js";
 import { planRendererFor } from "./planrenderers.js";
+import { codeSpans } from "../errortext.js";
 
 /**
  * ConfirmPlanModal renders whatever the store's `modal` slice holds, which
@@ -95,6 +96,15 @@ export function ConfirmPlanModal({ modal, state, actions }) {
   const nameTyped =
     !requiredName || (modal.confirmationText ?? "").trim() === requiredName;
 
+  // Issue 461 (review F1): a flag-only switch (plan_switch.js's own
+  // plan.flag_only branch) only marks a profile active - it deploys and
+  // removes nothing - so its Confirm cannot keep the "Switch and deploy"
+  // label topbar.js sets before the plan even exists. The plan is the
+  // thing that knows which case this is, so it overrides the label rather
+  // than the opener guessing up front.
+  const effectiveConfirmLabel =
+    kind === "switch" && plan?.flag_only ? "Mark as active" : confirmLabel;
+
   const footer =
     status === "error"
       ? html`
@@ -124,7 +134,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
             disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || !nameTyped}
             onClick=${actions.confirmPlan}
           >
-            ${busy ? "Starting…" : (confirmLabel ?? "Confirm")}
+            ${busy ? "Starting…" : (effectiveConfirmLabel ?? "Confirm")}
           </button>
         `;
 
@@ -142,7 +152,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
           : status === "error"
             ? html`
                 <div class="modal__error">
-                  <p>${error}</p>
+                  <p>${codeSpans(error)}</p>
                   <${ErrorDetails} details=${details} />
                 </div>
               `

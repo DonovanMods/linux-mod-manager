@@ -6,8 +6,9 @@
 // (issue 332) wires the per-row and batch actions themselves.
 
 import { html, useState } from "../render.js";
-import { findingLabel } from "../verify.js";
+import { findingLabel, findingSubject } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
+import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import {
   EXTERNAL_UPDATE_NOTE,
   countOf,
@@ -16,6 +17,8 @@ import {
 } from "../modrows.js";
 import { displayVersion, displayUpdateTarget } from "../version.js";
 import { relativeTime } from "../relativetime.js";
+import { navigate, modPathEditPath } from "../router.js";
+import { codeSpans } from "../errortext.js";
 import { conflictLabel } from "../conflicts.js";
 
 // UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
@@ -90,6 +93,7 @@ export function AttentionCards({
   );
   const conflictRows = conflicts?.conflicts ?? [];
   const hasError = Boolean(errors.updates || errors.health || errors.conflicts);
+  const listedOff = listedOffRefs(mods);
   const notInstalled = notInstalledCount(state, mods);
   const notListed = notListedCount(state, mods);
 
@@ -99,6 +103,7 @@ export function AttentionCards({
     conflictRows.length === 0 &&
     notInstalled === 0 &&
     notListed === 0 &&
+    listedOff.length === 0 &&
     !hasError
   ) {
     return null;
@@ -129,11 +134,12 @@ export function AttentionCards({
         />`
       }
       ${
-        (notInstalled > 0 || notListed > 0) &&
+        (notInstalled > 0 || notListed > 0 || listedOff.length > 0) &&
         html`<${ProfileCard}
           state=${state}
           notInstalled=${notInstalled}
           notListed=${notListed}
+          listedOff=${listedOff}
           actions=${actions}
         />`
       }
@@ -418,6 +424,8 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
       : `Last verified ${checked}`
     : "";
 
+  const coverage = verifyCoverage(result);
+
   return html`
     <div class="card card--health">
       <h2 class="card__title">
@@ -427,6 +435,12 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
         lastVerified &&
         html`<p class="card__meta" data-testid="health-last-verified">
           ${lastVerified}
+        </p>`
+      }
+      ${
+        coverage &&
+        html`<p class="card__meta" data-testid="health-coverage">
+          ${coverage}
         </p>`
       }
       ${
@@ -441,16 +455,22 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                 ${findings.map(
                   (f, i) => html`
                     <li
-                      key=${f.mod_id + "/" + (f.file_id || i)}
+                      key=${(f.mod_id || f.status) + "/" + (f.file_id || i)}
                       class="card__row"
+                      data-status=${f.status}
                     >
-                      <span
-                        class="card__row-name"
-                        title=${f.mod_name || f.mod_id}
-                        >${f.mod_name || f.mod_id}</span
+                      <span class="card__row-name" title=${findingSubject(f)}
+                        >${findingSubject(f)}${
+                          f.external &&
+                          html` <span
+                            class="badge"
+                            data-testid="finding-external"
+                            >Steam</span
+                          >`
+                        }</span
                       >
                       <span class="card__row-detail" title=${findingLabel(f)}
-                        >${findingLabel(f)}</span
+                        >${codeSpans(findingLabel(f))}</span
                       >
                       ${
                         f.fixable
@@ -468,11 +488,27 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                                 Repair
                               </button>
                             <//>`
-                          : html`<span
-                              class="card__row-detail"
-                              title=${notFixableReason(f)}
-                              >Not fixable: ${notFixableReason(f)}</span
-                            >`
+                          : f.status === "mod_path_missing"
+                            ? html`<button
+                                type="button"
+                                class="button button--small"
+                                data-action="set-mod-path"
+                                onClick=${() =>
+                                  navigate(
+                                    modPathEditPath(
+                                      state.route.game,
+                                      state.route.profile,
+                                      state.route.game,
+                                    ),
+                                  )}
+                              >
+                                Set mod path…
+                              </button>`
+                            : html`<span
+                                class="card__row-detail"
+                                title=${notFixableReason(f)}
+                                >Not fixable: ${notFixableReason(f)}</span
+                              >`
                       }
                     </li>
                   `,
@@ -508,6 +544,27 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
   `;
 }
 
+/** verifyCoverage is the Health card's "what was checked" line (issues 460
+ * and 429): core.VerifyResult's mods/external/unverified counts, said the way
+ * a reader needs them - N Steam Workshop items checked only for presence
+ * (lmm never deployed their files), M mods with no recorded file to
+ * compare. Empty when neither applies. One string, for htm's whitespace
+ * rule (conflictLabel). */
+export function verifyCoverage(result) {
+  const external = result?.external ?? 0;
+  const unverified = result?.unverified ?? 0;
+  const parts = [];
+  if (external > 0) {
+    parts.push(`${external} tracked from Steam, checked for presence`);
+  }
+  if (unverified > 0) {
+    parts.push(`${unverified} with nothing to compare`);
+  }
+  if (parts.length === 0) return "";
+  const mods = result?.mods ?? 0;
+  return `${mods} mod${mods === 1 ? "" : "s"} checked: ${parts.join("; ")}`;
+}
+
 /** notInstalledCount is how many of the current profile's listed mods have
  * no install behind them - the number `lmm profile apply` exists to bring
  * to zero, and the only thing the Profile card renders on.
@@ -535,7 +592,13 @@ function notInstalledCount(state, mods) {
     (p) => p.name === profileName,
   );
   if (!summary) return 0;
-  return Math.max(0, summary.mod_count - (mods?.mods?.length ?? 0));
+  // Issue 440: a ref the document marks off with nothing installed is not
+  // something `lmm profile apply` installs - lmm never fetches a disabled
+  // mod - so it is not counted here; the card lists it on its own.
+  return Math.max(
+    0,
+    summary.mod_count - (mods?.mods?.length ?? 0) - listedOffRefs(mods).length,
+  );
 }
 
 /** notListedCount is the OTHER direction of the same subtraction (C-3):
@@ -572,14 +635,17 @@ export function notListedCount(state, mods) {
  * what is installed. Which of the two is offered depends on which way the
  * drift runs; Sync is offered either way, because it is the one that can
  * answer both buckets at once. */
-function ProfileCard({ state, notInstalled, notListed, actions }) {
+function ProfileCard({ state, notInstalled, notListed, listedOff, actions }) {
   // ONE string rather than three adjacent interpolations: htm collapses
   // JSX-style whitespace between them, which silently fuses "profile" and
   // "is" into "profileis" (the same trap conflictLabel below documents).
   const sentence =
     notInstalled > 0
       ? `${notInstalled} mod${notInstalled === 1 ? "" : "s"} in this profile ${notInstalled === 1 ? "is" : "are"} not installed`
-      : `${notListed} installed mod${notListed === 1 ? "" : "s"} ${notListed === 1 ? "is" : "are"} not in this profile's load order`;
+      : notListed > 0
+        ? `${notListed} installed mod${notListed === 1 ? "" : "s"} ${notListed === 1 ? "is" : "are"} not in this profile's load order`
+        : "";
+  const offSentence = `${listedOff.length} mod${listedOff.length === 1 ? "" : "s"} in this profile ${listedOff.length === 1 ? "is" : "are"} switched off and not downloaded`;
 
   function apply() {
     actions.openPlan({
@@ -603,12 +669,24 @@ function ProfileCard({ state, notInstalled, notListed, actions }) {
 
   return html`
     <div class="card card--profile">
-      <h2 class="card__title">${`◎ Profile (${notInstalled || notListed})`}</h2>
+      <h2 class="card__title">
+        ${`◎ Profile (${(notInstalled || notListed) + listedOff.length})`}
+      </h2>
       <ul class="card__list">
-        <li class="card__row">
-          <span class="card__row-name">${sentence}</span>
-        </li>
+        ${
+          sentence &&
+          html`<li class="card__row">
+            <span class="card__row-name">${sentence}</span>
+          </li>`
+        }
+        ${
+          listedOff.length > 0 &&
+          html`<li class="card__row" data-testid="profile-listed-off">
+            <span class="card__row-name">${offSentence}</span>
+          </li>`
+        }
       </ul>
+      <${ListedOffList} refs=${listedOff} state=${state} actions=${actions} />
       <div class="card__actions">
         ${
           notInstalled > 0 &&

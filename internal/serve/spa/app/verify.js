@@ -7,6 +7,14 @@
 // still printing the raw status slug beside a card rendering the same
 // finding as prose.
 
+/** findingSubject names what a finding is about: its mod, or - for a
+ * game-level row with no mod (issue 460: `mod_path_missing`) - the game's
+ * mod path. */
+export function findingSubject(f) {
+  if (f.status === "mod_path_missing") return "Mod path";
+  return f.mod_name || f.mod_id || f.status.replaceAll("_", " ");
+}
+
 /** findingLabel prefers a finding's own note (already human-worded, e.g. a
  * repair failure's reason) and falls back to the status verbatim, appending
  * the recorded/source versions VerifyFinding carries for a version_mismatch

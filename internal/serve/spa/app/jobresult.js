@@ -14,10 +14,20 @@ import { jobStatus } from "./api.js";
 import { resultTally } from "./progress.js";
 
 // tallyCache is a page-lifetime Map from job id to its own (possibly null)
-// tally, so the SAME finished job showing in two places at once (a row's
+// read of the result - {tally, warnings} - so the SAME finished job showing in two places at once (a row's
 // own InlineJob AND the tray's entry for it) fetches its result exactly
 // once, and neither ever re-fetches on a later re-render.
 const tallyCache = new Map();
+
+// pendingReads is a job id's in-flight read, while one is outstanding.
+// useJobResultTally and useJobResultWarnings are two SEPARATE hooks called
+// on the SAME jobID in the SAME render (jobprogress.js's JobProgress), so
+// their effects both fire before either's fetch has resolved - tallyCache
+// alone is not enough, since it is only filled once a fetch's .then runs.
+// Caching the promise itself closes that window: the second hook finds the
+// first's request already in flight and awaits it instead of starting its
+// own.
+const pendingReads = new Map();
 
 /**
  * useJobResultTally returns jobID's own resultTally, or null while the job
@@ -29,32 +39,61 @@ const tallyCache = new Map();
  * everywhere else in this application.
  */
 export function useJobResultTally(jobID, jobState) {
-  const [tally, setTally] = useState(() => tallyCache.get(jobID) ?? null);
+  return useJobResultRead(jobID, jobState)?.tally ?? null;
+}
+
+/**
+ * useJobResultWarnings returns the finished job's own result warnings - the
+ * sentences a result carries for the user to act on (issue 463: a flag-only
+ * profile switch's recovery notice) - or an empty list. Same fetch, same
+ * cache, same unconditional-call rule as useJobResultTally.
+ */
+export function useJobResultWarnings(jobID, jobState) {
+  return useJobResultRead(jobID, jobState)?.warnings ?? NO_WARNINGS;
+}
+
+const NO_WARNINGS = [];
+
+/** readResult is what the cache holds for one finished job's result. */
+function readResult(result) {
+  const warnings = Array.isArray(result?.warnings)
+    ? result.warnings.filter((w) => typeof w === "string" && w !== "")
+    : NO_WARNINGS;
+  return { tally: resultTally(result), warnings };
+}
+
+function useJobResultRead(jobID, jobState) {
+  const [read, setRead] = useState(() => tallyCache.get(jobID) ?? null);
 
   useEffect(() => {
     if (!jobID || jobState === "running") return;
     if (tallyCache.has(jobID)) {
-      setTally(tallyCache.get(jobID));
+      setRead(tallyCache.get(jobID));
       return;
     }
     let cancelled = false;
-    jobStatus(jobID).then(
-      (status) => {
-        const computed = resultTally(status.result);
-        tallyCache.set(jobID, computed);
-        if (!cancelled) setTally(computed);
-      },
-      () => {
-        // A job the registry has already evicted (jobs.go's retention
-        // limit) - honestly null, same as jobhistory.js's own "a gap in
-        // history is honest, a blank page over one missing job is not".
-        if (!cancelled) setTally(null);
-      },
-    );
+    let read = pendingReads.get(jobID);
+    if (!read) {
+      read = jobStatus(jobID).then(
+        (status) => readResult(status.result),
+        () => {
+          // A job the registry has already evicted (jobs.go's retention
+          // limit) - honestly null, same as jobhistory.js's own "a gap in
+          // history is honest, a blank page over one missing job is not".
+          return null;
+        },
+      );
+      pendingReads.set(jobID, read);
+      read.finally(() => pendingReads.delete(jobID));
+    }
+    read.then((computed) => {
+      tallyCache.set(jobID, computed);
+      if (!cancelled) setRead(computed);
+    });
     return () => {
       cancelled = true;
     };
   }, [jobID, jobState]);
 
-  return tally;
+  return read;
 }

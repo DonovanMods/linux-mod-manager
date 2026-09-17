@@ -50,10 +50,19 @@ type ModListing struct {
 
 // ModList is everything `lmm list` renders: the mods installed in one
 // profile, in the profile's load order.
+//
+// DisabledNotInstalled names the refs the profile document marks
+// `disabled: true` that have no installed row (#440), in load order, each by
+// its first copy (#457): what an imported profile on a fresh machine lists
+// but never downloaded, because lmm never fetches a disabled mod. They are
+// part of the profile, switched off and not downloaded - enabling one needs
+// the download (`lmm install`). Absent when there are none, so every other
+// listing is byte-identical to what it was.
 type ModList struct {
-	GameID  string       `json:"game_id"`
-	Profile string       `json:"profile"`
-	Mods    []ModListing `json:"mods"`
+	GameID               string                `json:"game_id"`
+	Profile              string                `json:"profile"`
+	Mods                 []ModListing          `json:"mods"`
+	DisabledNotInstalled []domain.ModReference `json:"disabled_not_installed,omitempty"`
 }
 
 // ListMods returns the mods installed in profileName, in the profile's load
@@ -107,6 +116,23 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 			row.ConvertPaks = &v
 		}
 		list.Mods[i] = row
+	}
+	if profile != nil {
+		installed := make(map[string]bool, len(mods))
+		for _, mod := range mods {
+			installed[domain.ModKey(mod.SourceID, mod.ID)] = true
+		}
+		seen := map[string]bool{}
+		for _, ref := range profile.Mods {
+			key := domain.ModKey(ref.SourceID, ref.ModID)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if ref.Disabled && !installed[key] {
+				list.DisabledNotInstalled = append(list.DisabledNotInstalled, ref)
+			}
+		}
 	}
 	return list, nil
 }

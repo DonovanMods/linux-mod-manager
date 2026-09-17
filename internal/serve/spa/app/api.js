@@ -351,6 +351,14 @@ export const addGame = (spec) => post("/api/v1/games", spec);
 export const updateGameSources = (gameID, sources) =>
   put(`/api/v1/games/${encodeURIComponent(gameID)}`, { sources });
 
+/** Moves a game's mod_path (issues 460 and 427): `lmm game edit --mod-path`.
+ * A 400 names the field (details.field === "mod_path"); a 409 is
+ * core.GameModPathInUseError, whose details carry the ordered steps that
+ * clear it. The answer is the game's row, which carries mod_path_error when
+ * the new directory does not exist yet - still a valid save. */
+export const updateGameModPath = (gameID, modPath) =>
+  put(`/api/v1/games/${encodeURIComponent(gameID)}`, { mod_path: modPath });
+
 /** Reads ONE game's full document: core.GameDetail - the same row
  * `lmm game list` prints, plus the mod-loader report (issue 359).
  *
