@@ -250,6 +250,15 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
 	if len(searchResult.Mods) == 0 {
+		// What the source says about an empty answer - a filter that hid
+		// every match (T3 review F12) - is the only explanation there is.
+		var why []string
+		for _, w := range searchResult.Warnings {
+			why = append(why, w.Error())
+		}
+		if len(why) > 0 {
+			return nil, fmt.Errorf("no mods found matching \"%s\" (%s)", query, strings.Join(why, "; "))
+		}
 		return nil, fmt.Errorf("no mods found matching \"%s\"", query)
 	}
 
@@ -705,12 +714,12 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		case core.InstallDownloading:
 			if p.TotalBytes > 0 {
 				bar := progressBar(p.Percent, 30)
-				fmt.Printf("\r  [%s] %.1f%% (%s / %s)", bar, p.Percent, formatSize(p.Downloaded), formatSize(p.TotalBytes))
+				printProgressLine("\r  [%s] %.1f%% (%s / %s)", bar, p.Percent, formatSize(p.Downloaded), formatSize(p.TotalBytes))
 			} else {
-				fmt.Printf("\r  Downloaded %s", formatSize(p.Downloaded))
+				printProgressLine("\r  Downloaded %s", formatSize(p.Downloaded))
 			}
 		case core.InstallDownloadDone:
-			fmt.Println()
+			finishProgressLine()
 		case core.WorkshopFetchStarted, core.WorkshopFetchProgress, core.WorkshopFetchDone:
 			// A source.Fetcher's shell-out replaces the download bar above
 			// with its own readout, and the terminal is where a
@@ -902,9 +911,9 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 			fmt.Printf("  File: %s\n", displayFileLabel(*p.File))
 		case core.InstallDepDownloading:
 			bar := progressBar(p.Percent, 20)
-			fmt.Printf("\r  [%s] %.1f%%", bar, p.Percent)
+			printProgressLine("\r  [%s] %.1f%%", bar, p.Percent)
 		case core.InstallDepDownloadDone:
-			fmt.Println()
+			finishProgressLine()
 		case core.InstallDepSkipped:
 			// Detail already carries its restored, failure-type-specific,
 			// fully-prefixed text verbatim ("Skipped: ..." for a hook
@@ -1150,9 +1159,9 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			fmt.Printf("  File: %s\n", displayFileLabel(*p.File))
 		case core.InstallDepDownloading:
 			bar := progressBar(p.Percent, 20)
-			fmt.Printf("\r  [%s] %.1f%%", bar, p.Percent)
+			printProgressLine("\r  [%s] %.1f%%", bar, p.Percent)
 		case core.InstallDepDownloadDone:
-			fmt.Println()
+			finishProgressLine()
 		case core.InstallDepSkipped:
 			// Detail already carries its failure-type-specific, fully
 			// prefixed text verbatim ("Skipped: ..." for a hook failure,

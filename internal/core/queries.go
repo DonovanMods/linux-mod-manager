@@ -652,6 +652,7 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 			return nil, err
 		}
 		found = result.Mods
+		report.Warnings = sourceWarnings(opts.SourceID, result.Warnings)
 		report.HasMore = sourceHasMore(result, opts.Page, opts.PageSize)
 	}
 

@@ -79,6 +79,15 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/sources/{id}/definition", s.wrap(s.handleAPISourceDefinition))
 	s.mux.Handle("PUT /api/v1/sources/{id}", s.wrap(s.handleAPISourceSave))
 	s.mux.Handle("DELETE /api/v1/sources/{id}", s.wrap(s.handleAPISourceDelete))
+	// The local-index surface (api_source_index.go, #410): one game's index
+	// for a source that searches a local copy (Thunderstore) and its
+	// rebuild, then every index on disk and the prune - settings-class
+	// single-step routes answering the core documents `lmm source index`
+	// emits.
+	s.mux.Handle("GET /api/v1/sources/{id}/index", s.wrap(s.handleAPISourceIndex))
+	s.mux.Handle("POST /api/v1/sources/{id}/index", s.wrap(s.handleAPISourceIndexRefresh))
+	s.mux.Handle("GET /api/v1/indexes", s.wrap(s.handleAPIIndexes))
+	s.mux.Handle("POST /api/v1/indexes/prune", s.wrap(s.handleAPIIndexesPrune))
 	// The Setup surface's credential half (api_auth.go). All three answer
 	// the same app.AuthStatusReport document `lmm auth status --json`
 	// emits - the writes with it RE-READ, so a mutation never needs a

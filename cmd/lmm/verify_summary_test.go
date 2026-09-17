@@ -61,11 +61,11 @@ func setupVerifySummaryGame(t *testing.T, adapterName string) (*cobra.Command, *
 // and the result the text is meant to summarise.
 func verifyTally(t *testing.T, cmd *cobra.Command, svc *core.Service, game *domain.Game) (string, *core.VerifyResult) {
 	t.Helper()
-	text := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	text := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
 	jsonOutput = true
 	defer func() { jsonOutput = false }()
-	doc := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	doc := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	var report core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(doc), &report))
 	return text, report.Result

@@ -465,6 +465,39 @@ export const saveSource = (id, yaml) =>
 export const deleteSource = (id) =>
   del(`/api/v1/sources/${encodeURIComponent(id)}`);
 
+/** sourceIndexPath is one game's index route for a source that searches a
+ * local copy of its catalogue (api_source_index.go, issue 410). The game is
+ * the lmm game id; the index it names is that game's own mapping. */
+function sourceIndexPath(sourceID, gameID) {
+  return `/api/v1/sources/${encodeURIComponent(sourceID)}/index?game=${encodeURIComponent(gameID)}`;
+}
+
+/** Reads one game's index for sourceID: core.IndexStatus. A source that
+ * keeps no index is a 404. */
+export const getSourceIndex = (sourceID, gameID) =>
+  get(sourceIndexPath(sourceID, gameID));
+
+/** Brings one game's index up to date - force rebuilds even a current one
+ * (`lmm source index --refresh`). Answers core.IndexReport; an index that
+ * could not be had at all is a 502 whose details say which and why. */
+export const refreshSourceIndex = (sourceID, gameID, force) =>
+  post(sourceIndexPath(sourceID, gameID), force ? { refresh: true } : {});
+
+/** Lists every local source index on disk, and every mapped one not built
+ * yet, with the games that use each: core.SourceIndexListing (`lmm source
+ * index --all`). */
+export const listSourceIndexes = () => get("/api/v1/indexes");
+
+/** Prunes local source indexes (`lmm source index prune`), answering
+ * core.IndexPruneReport. dryRun previews; only - a preview's removal keys -
+ * binds a confirmed run to exactly what the preview listed. */
+export const pruneSourceIndexes = ({ all, dryRun, only } = {}) =>
+  post("/api/v1/indexes/prune", {
+    ...(all ? { all: true } : {}),
+    ...(dryRun ? { dry_run: true } : {}),
+    ...(only ? { only } : {}),
+  });
+
 // maxUploadBytes mirrors the server's own cap (uploads.go's maxUploadBytes)
 // so an oversized file is refused before a multi-gigabyte upload even
 // starts, rather than after streaming it all the way to a 413.

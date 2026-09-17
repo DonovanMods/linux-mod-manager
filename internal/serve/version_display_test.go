@@ -69,6 +69,9 @@ type versionAllowance struct {
 // If the reason is "this row can never be external", say why core makes that
 // true; if it cannot be said, the read belongs in version.js#displayVersion.
 var allowedRawVersionReads = map[string]map[string]versionAllowance{
+	"failures.js": {
+		"version": {1, "loaderSetupFor reads core.LoaderRequiredError's version - the BepInEx LOADER version a package asked for (\"5.4.2100\"), never a mod's version, so no external content id can reach it."},
+	},
 	"modrows.js": {
 		"version": {1, "lockedNote's fallback, reached only past its own `installed_mod?.external` early return - a locked EXTERNAL row says the bare word 'locked', because its lock target IS the content id."},
 	},

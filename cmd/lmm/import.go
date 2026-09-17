@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -135,7 +136,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 
 	// No args = scan mode
 	if len(args) == 0 {
-		return runImportScan(cmd, game, service, profileName)
+		return runImportScan(ctx, game, service, profileName)
 	}
 
 	// Single arg = import specific archive
@@ -369,8 +370,10 @@ func renderImportArchivePlan(plan *core.ImportArchivePlan, game *domain.Game, pr
 // confirmation prompt, and kept on a decline), confirms, and applies the
 // adoption. Every printed line comes from the plan, the results, or the
 // event stream; the engine itself lives in internal/core/adopt.go.
-func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service, profileName string) error {
-	ctx := cmd.Context()
+//
+// ctx is the one withServiceOpts hands the command, which prints what a
+// source lookup is waiting on (T3 review F2) - never cmd.Context().
+func runImportScan(ctx context.Context, game *domain.Game, service *core.Service, profileName string) error {
 
 	// The caveat and the "Scanning..." notice print BEFORE any core call, as
 	// they always have for the scan failure this preserves exactly: a game
@@ -471,14 +474,22 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 
 	if !jsonOutput && !plan.SkipMatch {
 		fmt.Println("Looking up mods on configured sources...")
+		// A lookup that could not be made at all is said, not only under
+		// --verbose (T3 review F2): otherwise the mods simply read "local",
+		// with nothing telling the user lmm never got to ask. The reason
+		// is printed once per distinct failure, not once per mod.
+		var lookupFailures []string
 		for _, m := range plan.Matches {
 			if m.Untracked.Mod == nil {
 				continue
 			}
 			switch {
 			case m.Error != "":
+				fmt.Printf("  ! %s -> local (lookup failed)\n", m.Untracked.FileName)
 				if verbose {
 					fmt.Printf("  %s: lookup failed: %s\n", m.Untracked.FileName, m.Error)
+				} else if !slices.Contains(lookupFailures, m.Error) {
+					lookupFailures = append(lookupFailures, m.Error)
 				}
 			case m.Mod != nil:
 				// #27: matching scores candidates now, so a match that is
@@ -498,6 +509,9 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 			default:
 				fmt.Printf("  ○ %s -> local (no match)\n", m.Untracked.FileName)
 			}
+		}
+		for _, reason := range lookupFailures {
+			fmt.Printf("  Lookup failed: %s\n", reason)
 		}
 		fmt.Println()
 	}

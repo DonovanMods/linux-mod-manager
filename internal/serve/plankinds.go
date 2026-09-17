@@ -139,8 +139,23 @@ var errBadPlanRequest = errors.New("invalid plan request")
 // refuses it until a switch. So does any deploy, purge or switch in a game
 // whose profile files do not say which profile is active (#445 review F2):
 // the files have to be fixed first.
+//
+// Three refusals are the user's game or configuration rather than the
+// server (#423, #410). A mod that needs a loader the game does not declare
+// is 409: the request is fine, the game's current state refuses it, and
+// the user resolves that and asks again - the envelope's details carry the
+// setup steps that say how. A game whose identifier for the source is
+// missing or malformed is 400, and an index that could not be had is 502,
+// exactly as the search and the index routes answer them.
 func planErrorStatus(err error) int {
+	var loader *core.LoaderRequiredError
 	switch {
+	case errors.As(err, &loader):
+		return http.StatusConflict
+	case core.IsGameIdentifierInvalid(err):
+		return http.StatusBadRequest
+	case core.IsIndexUnavailable(err):
+		return http.StatusBadGateway
 	case errors.Is(err, errBadPlanRequest):
 		return http.StatusBadRequest
 	case errors.Is(err, core.ErrProfileNotActive), errors.Is(err, core.ErrActiveProfileUnknown):

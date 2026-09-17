@@ -596,6 +596,14 @@ type fakeInstallSource struct {
 	// beforeDownload, when set, runs as a download URL is handed out - a
 	// test's way to change the world in the middle of a flow.
 	beforeDownload func()
+
+	// searchWarnings is what Search reports beside its results.
+	searchWarnings []error
+
+	// notice, when set, is raised on the call's context by GetDownloadURL -
+	// the observable form of "this command handed the
+	// source the context it was given" (T3 review F2).
+	notice *source.Notice
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
@@ -629,9 +637,9 @@ func (s *fakeInstallSource) ExchangeToken(ctx context.Context, code string) (*so
 }
 func (s *fakeInstallSource) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
 	if s.searchResults != nil {
-		return source.SearchResult{Mods: s.searchResults, TotalCount: len(s.searchResults)}, nil
+		return source.SearchResult{Mods: s.searchResults, TotalCount: len(s.searchResults), Warnings: s.searchWarnings}, nil
 	}
-	return source.SearchResult{}, nil
+	return source.SearchResult{Warnings: s.searchWarnings}, nil
 }
 func (s *fakeInstallSource) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
 	if mod, ok := s.mods[modID]; ok {
@@ -657,6 +665,9 @@ func (s *fakeInstallSource) GetDownloadURL(ctx context.Context, mod *domain.Mod,
 		s.beforeDownload()
 	}
 	s.receivedGameDownloadIDs = append(s.receivedGameDownloadIDs, mod.GameID)
+	if s.notice != nil {
+		source.Notify(ctx, *s.notice)
+	}
 	return s.srv.URL + "/" + fileID, nil
 }
 func (s *fakeInstallSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
@@ -1900,4 +1911,22 @@ func TestSearchAndSelectMods_EOFNamesTheSameRemedyAsJSON(t *testing.T) {
 	assert.NotContains(t, selErr.Error(), "EOF")
 	require.ErrorIs(t, selErr, core.ErrConfirmationRequired)
 	assert.Contains(t, selErr.Error(), "--id")
+}
+
+// TestDoInstall_ASearchThatFoundNothingSaysWhatWasHidden is T3 review F12:
+// `lmm install <an NSFW package's id>` said "no mods found" with nothing
+// about the filter that hid it.
+func TestDoInstall_ASearchThatFoundNothingSaysWhatWasHidden(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installModID = ""
+	src.searchWarnings = []error{errors.New("1 package marked NSFW matches this search and is hidden")}
+
+	var err error
+	_ = captureStdout(t, func() error {
+		err = doInstall(context.Background(), svc, game, []string{"Umlaut-Cafe_Mod"})
+		return nil
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `no mods found matching "Umlaut-Cafe_Mod"`)
+	assert.Contains(t, err.Error(), "1 package marked NSFW matches this search and is hidden")
 }

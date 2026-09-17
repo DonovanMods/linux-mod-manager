@@ -21,6 +21,11 @@ type SearchResult struct {
 	TotalCount int // Total results available (0 if unknown)
 	Page       int
 	PageSize   int
+	// Warnings are problems that did NOT stop this source answering - a
+	// local index whose refresh failed, served from the copy on disk
+	// (#360 §2.4). The results are real; a frontend reports these beside
+	// them rather than instead of them. nil for almost every search.
+	Warnings []error
 }
 
 // SearchQuery contains parameters for searching mods.
@@ -443,6 +448,42 @@ type LocalIndexSource interface {
 	RefreshIndex(ctx context.Context, sourceGameID string, force bool, progress IndexProgressFunc) (IndexStatus, error)
 }
 
+// CachedIndex is one index directory a LocalIndexSource keeps on disk,
+// usable or not (#410) - what `lmm source index --all` lists and what
+// `lmm source index prune` may remove.
+type CachedIndex struct {
+	GameID    string    // the source's own game id the directory is named for
+	Present   bool      // a usable index of the current format
+	Packages  int       // what its watermark says it holds (0 when unreadable)
+	FetchedAt time.Time // when it was last confirmed current; zero when unknown
+	Bytes     int64     // everything in the directory
+	// Removable reports whether the directory is PROVABLY this source's
+	// index and nothing else - the only thing a prune may delete. Reason
+	// says why not when it is false.
+	Removable bool
+	Reason    string
+}
+
+// IndexInventory is implemented by a LocalIndexSource that can enumerate
+// and delete its own index directories (#410).
+//
+// Deletion is FAIL-CLOSED by contract: RemoveIndex removes a directory only
+// when it can prove, at the moment of removal, that everything in it is
+// this source's own index - never following a symbolic link, never
+// removing anything it did not write - and refuses otherwise with nothing
+// removed. The POLICY of which indexes to remove (unused ones, old ones)
+// is core's; this is only the safe mechanism.
+//
+// ifFetchedAt, when non-zero, is the FetchedAt the caller's decision was
+// made from: a removal decided on an index's age must not survive a refresh
+// that happened in between, so RemoveIndex refuses once the index on disk
+// is no longer that one (#410 review). Zero asks for no such check - the
+// caller is removing the index whatever its age.
+type IndexInventory interface {
+	CachedIndexes(ctx context.Context) ([]CachedIndex, error)
+	RemoveIndex(ctx context.Context, sourceGameID string, ifFetchedAt time.Time) (freed int64, err error)
+}
+
 // LoaderRequirer is implemented by sources whose package metadata SAYS a
 // mod needs a mod LOADER in the game root - today, a Thunderstore package
 // declaring a dependency on a BepInExPack (#360 §3.4).
@@ -487,6 +528,15 @@ type LoaderRequirer interface {
 // Lives here rather than in the concrete source so core can classify it
 // without importing the package (the ErrInvalidReference precedent).
 var ErrIndexUnavailable = errors.New("source index is unavailable")
+
+// GameIdentifierValidator is implemented by a source whose game identifier
+// has a fixed shape (#410) - a Thunderstore community slug - so core can
+// refuse a malformed games.yaml value before it reaches any path or URL,
+// with the game and the value named. The error must wrap
+// ErrGameIdentifierInvalid.
+type GameIdentifierValidator interface {
+	ValidateGameIdentifier(id string) error
+}
 
 // ErrGameIdentifierInvalid reports that a game's per-source mapped value
 // (games.yaml's `sources: {<id>: <value>}`) is missing or malformed for a

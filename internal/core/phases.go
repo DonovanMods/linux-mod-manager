@@ -917,6 +917,17 @@ const (
 	// that nothing was deployed or removed and what to run next; it is also
 	// the SwitchResult's Warnings entry.
 	SwitchFlagOnly
+
+	// SourceRetrying (#436): a network request failed in a way worth
+	// retrying - a throttle, a server error, no answer - and lmm is waiting
+	// before the next attempt. The event's message is the sentence both
+	// frontends print ("Rate limited by Thunderstore; retrying in 12s
+	// (attempt 2 of 3).").
+	SourceRetrying
+	// SourceSuspended (#436): lmm is refusing to ask a host anything until
+	// a stated time - a circuit breaker after repeated failures, or a
+	// throttle that asked for a longer wait than lmm sits through.
+	SourceSuspended
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -974,6 +985,8 @@ var deployPhaseNames = [...]string{
 	DeployOffStillDeployed: "deploy_off_still_deployed",
 
 	SwitchFlagOnly: "switch_flag_only",
+
+	SourceRetrying: "source_retrying", SourceSuspended: "source_suspended",
 }
 
 // String returns the phase's wire name.

@@ -1,0 +1,29 @@
+{
+  "dry_run": true,
+  "all": false,
+  "entries": [
+    {
+      "source": "thunderstore",
+      "game": "content-warning",
+      "bytes": 4096000,
+      "fetched_at": "2026-09-16T09:00:00Z",
+      "mapped_by": [],
+      "action": "remove",
+      "reason": "no game uses it"
+    },
+    {
+      "source": "thunderstore",
+      "game": "lethal-company",
+      "bytes": 239075328,
+      "fetched_at": "2026-09-16T09:00:00Z",
+      "mapped_by": [
+        "lethal"
+      ],
+      "action": "keep",
+      "reason": "used by lethal"
+    }
+  ],
+  "removed": 1,
+  "freed_bytes": 4096000,
+  "warnings": []
+}

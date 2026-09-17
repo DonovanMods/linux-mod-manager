@@ -533,3 +533,136 @@ Approved as written. The two open questions are answered as recommended:
 - **Decision 4 (`Auth: false`)** must not break the auth surfaces: `lmm auth status` and the
   setup card list the source with "no credential needed", not as unauthenticated.
 - Units T1 → T2 → T3 run sequentially as designed; each is its own story issue under #360.
+
+---
+
+## Amended by T3 (#410, with #436 and #423), 2026-09-16
+
+What T3 shipped differs from §2.4, §2.7, §2.8, §4 and §5 in these ways. Each
+is recorded here so nobody goes looking for the surface the original text
+names.
+
+- **There is no `lmm cache` command.** §2.8 and §4.1 assumed one; lmm has
+  never had it. The coordinator ruled (option A) that the footprint and the
+  pruning live beside the index instead: `lmm source index --all` lists every
+  index on disk (community, packages, size, fetched, the games that map it),
+  and `lmm source index prune [--all] [--dry-run] [-y]` applies §2.8's rules.
+  Core gains `ListSourceIndexes` and `PruneSourceIndexes`
+  (`internal/core/source_index_prune.go`); the source gains
+  `source.IndexInventory` (`CachedIndexes`, `RemoveIndex`). Web parity is two
+  more settings-class routes, `GET /api/v1/indexes` and
+  `POST /api/v1/indexes/prune`, and the Setup page's index section (whose tab
+  is now "Sources").
+- **Prune is fail-closed** (the coordinator's conditions): games.yaml is
+  re-read and an unreadable one removes nothing, even with `--all`, while a
+  missing one removes nothing without `--all`; a game
+  that maps the source to an empty or malformed identifier keeps every
+  unused index; a source that cannot list its indexes is a warning; the
+  source removes a directory only when every entry is a regular file it
+  wrote (`index.json`, `packages.jsonl`, `watermark.json`, `.lock`, staging
+  files), file by file and then a plain rmdir, under both build locks,
+  through directory handles (`os.Root`) proved to be the directories that
+  were inspected, and never through a symbolic link; a removal decided on an
+  index's age carries that age as a precondition re-checked under the lock - a symlinked `_thunderstore` root refuses
+  everything, while a symlinked cache directory above it is allowed. A dry
+  run's removal keys (`IndexPruneOptions.Only`) bound the confirmed run, so
+  `--dry-run` lists exactly what the real run removes. `--all` removes a
+  mapped, fresh index too, after a confirmation. `lockCommunity` now
+  re-checks that the locked file is still the one at the path, so a lock
+  file a prune removed under its holder cannot let two builds run at once.
+- **The typed errors are core's.** `core.IndexUnavailableError`
+  (`{source, game, reason, retry_at?}`, HTTP 502) and
+  `core.GameIdentifierError` (`{game_id, source, value}`, HTTP 400), with
+  `core.IsIndexUnavailable` and `core.IsGameIdentifierInvalid` - the second
+  named for the cross-source sentinel T2 generalised, not
+  `IsCommunityNotConfigured`. A source with a fixed identifier shape
+  implements the new `source.GameIdentifierValidator`, so core refuses a
+  malformed mapping with the game named, and the index surface refuses a
+  game that does not map the source at all rather than indexing whatever
+  community shares the game's id. The same statuses answer a search and a
+  plan; a plan refused by `LoaderRequiredError` is 409 (#423).
+- **§2.4's stale-index warning** travels as `source.SearchResult.Warnings`,
+  which core copies into `SearchReport.Warnings` on both search paths.
+- **§2.7's readout comes from the source**, not from `lmm search`. A cold
+  build a source does for itself raises a `source.Notice` on the call's
+  context (`source.WithNotices`, the `net/http/httptrace` shape), and so do
+  a throttled retry and a suspended host (#436). `core.WithSourceNotices`
+  renders them as events; `withServiceOpts` prints them to stderr for every
+  command (so `lmm import`'s scan-mode matching gets the line - T1 review
+  #8), and every web UI job's context carries its own sink. The search page
+  and the omnibar show the cold-build line by asking the index route about
+  the indexes the game maps.
+- **T1 review #7 and nit 10, decided:** a package with `has_nsfw_content` is
+  marked with a synthetic `NSFW` category and left out of results unless the
+  query asks for that category or tag; `Deprecated` filters the same way;
+  neither word is searchable text. Index schema 3 carries the flag as a
+  ninth row element (after the offsets), so every existing index rebuilds
+  once.
+- **Rate limits (#436).** Thunderstore documents none for the listing or
+  the download endpoint: the API docs state none, and the server's own
+  Django REST settings configure no default throttle - the only throttle in
+  its code is 6/minute on the experimental legacy-profile upload. The
+  listing is a precomputed blob answering conditional GETs (503 when it is
+  missing). So the retry policy is pinned to that per-minute window: a
+  `Retry-After` is a floor (it was being jittered below), read in both
+  forms, waited out up to a minute and otherwise refused and remembered. A
+  30-second stall window sits under the retries for the index, and core's
+  download client - which had no timeout at all - gets a one-minute one.
+- **§5's "no E2E"** did not survive T3: the index rows, the prune preview,
+  the cold-build notice, the throttle readout on a job and the loader setup
+  steps are browser claims, and each has one (`e2e_source_index_test.go`).
+
+### Adversarial-review fix round (T3 review F1-F12), 2026-09-16
+
+These change what the amendment above describes:
+
+- **A stall is never a cancellation (F1).** Go's HTTP/2 transport - the
+  protocol thunderstore.io speaks - reports the stall guard's cancellation
+  as a bare `context.Canceled`, which the stall error used to wrap, so the
+  CLI printed "Cancelled." and exited 2 with no `--json` document. The
+  stall error now carries only the stall (`httpclient.StallError`), a
+  stalled retry is its own notice reason (`source.RetryStalled`), and
+  `Execute` treats `context.Canceled` as the user's only when the
+  command's own context is done. HTTP/2 tests cover it at every layer.
+- **Holds are persisted and scoped (F3, F9, decided).**
+  `<cache>/_thunderstore/.holds.json`, changed under a flock
+  (`.holds.lock`) and published with a rename, keeps the host's hold and
+  each community's, with the failure streak behind each. A new process
+  reads it before it asks. 429 and 5xx hold the host; a 404/410 or a
+  document that is not a package list, or will not parse, holds only that
+  community; a stalled or truncated transfer holds neither. A wait the
+  host named is not lifted by an unrelated success. The file is advisory:
+  unreadable, malformed, or holding a wait past a day, it holds nothing.
+  `source.HoldReporter` lists the holds for the frontends
+  (`SourceIndexListing.holds`, `IndexStatus.retry_at`/`hold_reason`).
+- **`Retry-After` (F8)** is read by one function (`httpclient.RetryAfter`),
+  capped at a day in both forms before it becomes a duration. The
+  one-minute window bounds a request's total wait, not each wait.
+- **Prune doubts games.yaml (F4).** Beyond missing and unreadable, a file
+  that is empty, whose only top-level key is not `games`, whose game
+  blocks hold keys a game does not have or are not maps, whose block count
+  differs from what was loaded, or that omits a game whose profiles exist,
+  keeps every index without `--all`. The games the Service loaded also
+  count as mapped.
+- **Ownership is proved, not assumed (F6).** A staging name must be the
+  prefix plus `os.CreateTemp`'s decimal suffix, and every file must begin
+  with what lmm writes there (or be empty); `.lock` must be empty.
+- **The lock is opened with `openat(2)` and `O_NOFOLLOW` (F5).** `os.Root`
+  follows an in-directory link even when asked not to, so a `.lock` link
+  made `RemoveIndex` lock `index.json` and spin. `acquireLock`'s loop is
+  bounded by the context and the lock deadline.
+- **A symlinked `_thunderstore` is listed, not hidden (F7)**, with every
+  entry refused for removal; a source that cannot list its directories
+  still lists the indexes its games map. `SourceIndexEntry.keep_reason`
+  says why a prune would keep an index.
+- **Prune UX (F11).** An index lmm cannot write to is not removable, so the
+  dry run says so; a run that fails an index exits 1; the `--all` question
+  no longer follows "Nothing was removed (dry run)."; the web prune route
+  refuses a removal without an `only` list (an empty or form-encoded body
+  was an unbound prune); the web result names indexes the confirmed run
+  kept after all.
+- **Notices reach every command (F2).** `lmm import`'s scan and
+  `lmm verify --fix` ran on `cmd.Context()`; they take the command's
+  context now, and `Execute` installs the printer on the root context too.
+- **The web UI shows holds outside jobs (F10)** on the Setup page's
+  Sources card, and the search page renders an index failure's details.

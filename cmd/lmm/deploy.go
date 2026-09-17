@@ -235,11 +235,11 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		case core.DeployRedownloading:
 			fmt.Printf("  %s %s - cache missing, re-downloading...\n", colorYellow("⚠"), p.ModName)
 		case core.DeployDownloading:
-			fmt.Printf("\r  ⬇ %s: %.1f%%", p.ModName, p.Percent)
+			printProgressLine("\r  ⬇ %s: %.1f%%", p.ModName, p.Percent)
 		case core.DeployDownloadDone:
-			fmt.Println()
+			finishProgressLine()
 		case core.DeployDownloadFailed:
-			fmt.Println()
+			finishProgressLine()
 			fmt.Printf("  %s %s - %s\n", colorRed("✗"), p.ModName, p.Detail)
 			fmt.Println()
 		case core.DeploySkipped:

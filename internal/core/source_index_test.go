@@ -244,3 +244,49 @@ func TestRefreshSourceIndex_IsCancellable(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Zero(t, indexed.refresh, "a cancelled caller never reaches the source")
 }
+
+// heldIndexedSource is an indexed source holding requests off.
+type heldIndexedSource struct {
+	*indexedSource
+	holds []source.Hold
+}
+
+func (s *heldIndexedSource) Holds(context.Context) []source.Hold { return s.holds }
+
+// TestSourceIndexStatus_SaysWhenTheSourceWillAskAgain: `lmm source index`
+// and the web UI's index card show a hold on the host, or on this game's
+// own index, whichever ends later - and nothing for another game's (T3
+// review F3/F10).
+func TestSourceIndexStatus_SaysWhenTheSourceWillAskAgain(t *testing.T) {
+	at := time.Date(2026, 9, 16, 12, 10, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		holds      []source.Hold
+		wantAt     time.Time
+		wantReason string
+	}{
+		"none":             {},
+		"host":             {holds: []source.Hold{{Until: at, Reason: "rate limited"}}, wantAt: at, wantReason: "rate limited"},
+		"this community":   {holds: []source.Hold{{GameID: "lethal-company", Until: at, Reason: "not found"}}, wantAt: at, wantReason: "not found"},
+		"another one only": {holds: []source.Hold{{GameID: "repo", Until: at, Reason: "not found"}}},
+		"the later of two": {
+			holds:  []source.Hold{{Until: at, Reason: "rate limited"}, {GameID: "lethal-company", Until: at.Add(time.Minute), Reason: "not found"}},
+			wantAt: at.Add(time.Minute), wantReason: "not found",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, svc.Close()) })
+			svc.RegisterSource(&heldIndexedSource{indexedSource: newIndexedSource("ts"), holds: tc.holds})
+			require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+				ID: "lethal", Name: "Lethal", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+				SourceIDs: map[string]string{"ts": "lethal-company"},
+			}))
+
+			status, err := svc.SourceIndexStatus(t.Context(), "ts", "lethal")
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantAt, status.RetryAt)
+			assert.Equal(t, tc.wantReason, status.HoldReason)
+		})
+	}
+}

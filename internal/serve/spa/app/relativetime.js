@@ -30,12 +30,32 @@ const DAY = 24 * HOUR;
 export function relativeTime(value, now = Date.now()) {
   const ms = Date.parse(value);
   if (Number.isNaN(ms)) return "";
+  return pastPhrase(now - ms, ms);
+}
 
-  const elapsed = now - ms;
+/**
+ * countdown renders value as the wait until it - "in 9 minutes" - for a
+ * moment deliberately ahead of now, such as a source.Hold's retry_at
+ * (sourceindexes.js, issue 436). "" once it has passed or is unparsable.
+ *
+ * Its own function rather than a future branch of relativeTime: a
+ * timestamp a second ahead there is clock skew between server and browser
+ * and reads "just now", while a hold a second ahead is still a wait.
+ */
+export function countdown(value, now = Date.now()) {
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms) || ms <= now) return "";
+  return futurePhrase(ms - now);
+}
+
+/** pastPhrase is relativeTime's phrase for an age; a slightly negative one
+ * (clock skew) is "just now". */
+function pastPhrase(elapsed, ms) {
   if (elapsed < MINUTE) return "just now";
-  if (elapsed < HOUR) return plural(Math.floor(elapsed / MINUTE), "minute");
-  if (elapsed < DAY) return plural(Math.floor(elapsed / HOUR), "hour");
-  if (elapsed < 7 * DAY) return plural(Math.floor(elapsed / DAY), "day");
+  if (elapsed < HOUR)
+    return plural(Math.floor(elapsed / MINUTE), "minute", "ago");
+  if (elapsed < DAY) return plural(Math.floor(elapsed / HOUR), "hour", "ago");
+  if (elapsed < 7 * DAY) return plural(Math.floor(elapsed / DAY), "day", "ago");
 
   // Past a week an age stops being useful and a date starts being: "23
   // days ago" is a number to decode, "12 Sep" is a fact.
@@ -46,9 +66,21 @@ export function relativeTime(value, now = Date.now()) {
   })}`;
 }
 
-/** plural is the "N units ago" phrase, built as ONE string - htm collapses
- * whitespace between adjacent interpolations, so a caller that assembled
- * this in a template would silently fuse the number to the unit. */
-function plural(count, unit) {
-  return `${count} ${unit}${count === 1 ? "" : "s"} ago`;
+/** futurePhrase is a countdown to a moment not yet reached. */
+function futurePhrase(remaining) {
+  if (remaining < MINUTE) return "any moment now";
+  if (remaining < HOUR)
+    return plural(Math.floor(remaining / MINUTE), "minute", "in");
+  if (remaining < DAY)
+    return plural(Math.floor(remaining / HOUR), "hour", "in");
+  return plural(Math.floor(remaining / DAY), "day", "in");
+}
+
+/** plural is the "N units ago"/"in N units" phrase, built as ONE string -
+ * htm collapses whitespace between adjacent interpolations, so a caller
+ * that assembled this in a template would silently fuse the number to the
+ * unit. */
+function plural(count, unit, dir) {
+  const phrase = `${count} ${unit}${count === 1 ? "" : "s"}`;
+  return dir === "in" ? `in ${phrase}` : `${phrase} ago`;
 }

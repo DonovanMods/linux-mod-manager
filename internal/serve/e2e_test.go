@@ -6000,7 +6000,7 @@ func TestE2E_EveryRouteRendersItsSectionsAsHeadings(t *testing.T) {
 	for _, s := range []struct{ key, label string }{
 		{"games", "Games"},
 		{"auth", "Authentication"},
-		{"sources", "Custom sources"},
+		{"sources", "Sources"},
 		{"archive", "Archive import"},
 		{"adopt", "Adopt"},
 	} {

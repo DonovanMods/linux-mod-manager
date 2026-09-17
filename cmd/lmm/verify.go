@@ -232,7 +232,7 @@ func init() {
 
 func runVerify(cmd *cobra.Command, args []string) error {
 	return withGameReportService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
-		return doVerify(cmd, svc, game, args)
+		return doVerify(ctx, svc, game, args)
 	})
 }
 
@@ -245,8 +245,11 @@ func runVerify(cmd *cobra.Command, args []string) error {
 // repairs, the deploy-convergence sweep - now lives in
 // internal/core/verify.go, verify_repair.go, and verify_helpers.go
 // (#224 Tasks 2-6); this function owns none of it anymore.
-func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []string) error {
-	profile, err := resolveProfile(cmd.Context(), svc, game.ID, verifyProfile)
+//
+// ctx is the one withServiceOpts hands the command, which prints what a
+// --fix re-download is waiting on (T3 review F2) - never cmd.Context().
+func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []string) error {
+	profile, err := resolveProfile(ctx, svc, game.ID, verifyProfile)
 	if err != nil {
 		return err
 	}
@@ -261,7 +264,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	// even for the shape that would otherwise qualify. The memo exists for
 	// the web UI's repeated hydrates, not for a typed command.
 	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter, Force: true}
-	report, err := svc.VerifyReport(cmd.Context(), game, profile, opts, func(e core.Event) {
+	report, err := svc.VerifyReport(ctx, game, profile, opts, func(e core.Event) {
 		ev, ok := e.(core.VerifyEvent)
 		if !ok {
 			return

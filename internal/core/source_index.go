@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
@@ -48,6 +49,12 @@ type IndexStatus struct {
 	FetchedAt time.Time `json:"fetched_at,omitzero"`
 	Bytes     int64     `json:"bytes"`
 	Stale     bool      `json:"stale"`
+	// RetryAt, when set, is when lmm will next ask the source's host about
+	// this index - it is holding requests off (T3 review F3), for the
+	// reason HoldReason gives. A hold on the whole host and one on this
+	// index alone both count; the later wins.
+	RetryAt    time.Time `json:"retry_at,omitzero"`
+	HoldReason string    `json:"hold_reason,omitempty"`
 }
 
 // IndexReport is what a refresh did, as a frontend shows it (#360).
@@ -71,8 +78,9 @@ type IndexReport struct {
 
 // SourceIndexStatus reports what sourceID has cached for gameID, or nil
 // when that source keeps no local index at all - which is how a frontend
-// decides whether the index surface exists for it. An unknown source is the
-// only error case.
+// decides whether the index surface exists for it. An unknown source, an
+// unknown game, and a game that does not name its identifier for the
+// source (a *GameIdentifierError) are the error cases.
 //
 // A READ: it takes no mutation slot and makes no request. A source with a
 // stale index says so here rather than quietly refreshing it, because a
@@ -86,7 +94,7 @@ func (s *Service) SourceIndexStatus(ctx context.Context, sourceID, gameID string
 	if !ok {
 		return nil, nil //nolint:nilnil // "this source keeps no index" is an ANSWER, not a failure - see the doc comment
 	}
-	indexGameID, err := s.sourceGameID(src, gameID)
+	indexGameID, err := s.indexGameID(src, gameID)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +103,11 @@ func (s *Service) SourceIndexStatus(ctx context.Context, sourceID, gameID string
 		return nil, fmt.Errorf("reading the %s index: %w", sourceID, err)
 	}
 	report := indexStatusOf(sourceID, status)
+	for _, h := range indexHolds(ctx, src) {
+		if (h.Game == "" || h.Game == indexGameID) && h.RetryAt.After(report.RetryAt) {
+			report.RetryAt, report.HoldReason = h.RetryAt, h.Reason
+		}
+	}
 	return &report, nil
 }
 
@@ -126,7 +139,7 @@ func (s *Service) RefreshSourceIndex(ctx context.Context, sourceID, gameID strin
 	}
 	defer release()
 
-	sourceGameID, err := s.sourceGameID(src, gameID)
+	sourceGameID, err := s.indexGameID(src, gameID)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +160,7 @@ func (s *Service) RefreshSourceIndex(ctx context.Context, sourceID, gameID strin
 	if refreshErr != nil && !after.Present {
 		// Nothing usable on disk and nothing to be had: the caller has no
 		// index, which is a failure however it is worded.
-		return nil, refreshErr
+		return nil, classifyIndexError(sourceID, sourceGameID, refreshErr)
 	}
 
 	report := &IndexReport{
@@ -207,6 +220,26 @@ func indexPhase(phase string) DeployPhase {
 	}
 }
 
+// indexGameID is sourceGameID for the index surface, which is always about
+// a game lmm manages AND a source that game uses: an unknown game is not
+// found, and a game that does not map the source at all has no index for
+// it - asking would index whatever community happens to share the lmm
+// game's name, the guess sourceGameID's empty-mapping rule exists to stop.
+func (s *Service) indexGameID(src source.ModSource, gameID string) (string, error) {
+	game, ok := s.game(gameID)
+	if !ok {
+		return "", fmt.Errorf("%w: %s", domain.ErrGameNotFound, gameID)
+	}
+	if _, mapped := game.SourceIDs[src.ID()]; !mapped {
+		return "", &GameIdentifierError{
+			GameID: gameID, Source: src.ID(),
+			Err: fmt.Errorf("game %q does not use source %q; add it with 'lmm game edit %s --source %s=<identifier>': %w",
+				gameID, src.ID(), gameID, src.ID(), source.ErrGameIdentifierInvalid),
+		}
+	}
+	return s.sourceGameID(src, gameID)
+}
+
 // sourceGameID translates lmm's game id into the identifier src knows the
 // game by: games.yaml's `sources: {<id>: <value>}`, which is a NexusMods
 // slug, a CurseForge numeric id, a Thunderstore community.
@@ -227,20 +260,40 @@ func indexPhase(phase string) DeployPhase {
 //
 // The refusal carries the command that fixes it, because the identifier is
 // not derivable from anything lmm knows and both frontends print the error
-// verbatim.
+// verbatim. It is a *GameIdentifierError (#410), so a frontend also gets
+// the game, the source and the value as data.
+//
+// A source with a fixed identifier shape (source.GameIdentifierValidator)
+// has a mapped value checked here too, so a malformed one is refused with
+// the game named before it reaches any path or URL.
 func (s *Service) sourceGameID(src source.ModSource, gameID string) (string, error) {
 	sourceID := src.ID()
-	if game, ok := s.game(gameID); ok {
-		if id, ok := game.SourceIDs[sourceID]; ok {
-			if id != "" {
-				return id, nil
-			}
-			if !source.IgnoresGameIdentifier(src) {
-				return "", fmt.Errorf(
-					"game %q maps source %q to an empty identifier; set it with 'lmm game edit %s --source %s=<identifier>': %w",
-					gameID, sourceID, gameID, sourceID, source.ErrGameIdentifierInvalid)
+	game, ok := s.game(gameID)
+	if !ok {
+		return gameID, nil
+	}
+	id, mapped := game.SourceIDs[sourceID]
+	switch {
+	case !mapped:
+		return gameID, nil
+	case id == "" && source.IgnoresGameIdentifier(src):
+		return gameID, nil
+	case id == "":
+		return "", &GameIdentifierError{
+			GameID: gameID, Source: sourceID,
+			Err: fmt.Errorf(
+				"game %q maps source %q to an empty identifier; set it with 'lmm game edit %s --source %s=<identifier>': %w",
+				gameID, sourceID, gameID, sourceID, source.ErrGameIdentifierInvalid),
+		}
+	}
+	if v, ok := src.(source.GameIdentifierValidator); ok {
+		if err := v.ValidateGameIdentifier(id); err != nil {
+			return "", &GameIdentifierError{
+				GameID: gameID, Source: sourceID, Value: id,
+				Err: fmt.Errorf("game %q maps source %q to %q, which it cannot use; set it with 'lmm game edit %s --source %s=<identifier>': %w",
+					gameID, sourceID, id, gameID, sourceID, err),
 			}
 		}
 	}
-	return gameID, nil
+	return id, nil
 }

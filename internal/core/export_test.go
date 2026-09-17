@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
@@ -324,4 +326,10 @@ func (s *Service) ExecForTest(ctx context.Context, query string, args ...any) er
 // GetFileChecksumForTest reads one file's stored checksum for a row.
 func (s *Service) GetFileChecksumForTest(ctx context.Context, sourceID, modID, gameID, profileName, fileID string) (string, error) {
 	return s.db.GetFileChecksum(ctx, sourceID, modID, gameID, profileName, fileID)
+}
+
+// NoticeTextAtForTest exposes noticeText with a fixed clock, so the
+// suspension sentence's "in 4m30s" is asserted rather than approximated.
+func NoticeTextAtForTest(n source.Notice, now time.Time) string {
+	return noticeText(n, now)
 }

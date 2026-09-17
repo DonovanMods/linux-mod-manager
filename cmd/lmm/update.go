@@ -692,7 +692,7 @@ func batchProgress(service *core.Service, updates []domain.Update) func(core.Eve
 			fmt.Printf("  %s %s: %s\n", colorRed("✗"), p.ModName, p.Detail)
 		case core.UpdateDownloading:
 			if verbose && !jsonOutput {
-				fmt.Printf("\r  Downloading: %.1f%%", p.Percent)
+				printProgressLine("\r  Downloading: %.1f%%", p.Percent)
 			}
 		case core.UpdateDownloadDone:
 			if verbose && !jsonOutput {
@@ -926,7 +926,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		switch p.Phase {
 		case core.UpdateDownloading:
 			if verbose && !jsonOutput {
-				fmt.Printf("\r  Downloading: %.1f%%", p.Percent)
+				printProgressLine("\r  Downloading: %.1f%%", p.Percent)
 			}
 		case core.UpdateDownloadDone:
 			if verbose && !jsonOutput {
