@@ -358,3 +358,38 @@ func TestModPathMoved_EveryDryRunPlanRefuses(t *testing.T) {
 		})
 	}
 }
+
+// TestModPathMoved_APurgePlanIsStaleOnceTheModPathMovesAgain is #466
+// re-review R2: a purge plan names its files relative to the mod_path it
+// was computed against, and approves the stranded ones by path. A mod_path
+// moved between the plan and its apply - even back to where the files
+// are - makes that preview wrong, so the apply refuses rather than acting
+// on it, whether it is handed the plan-time game or the current one.
+func TestModPathMoved_APurgePlanIsStaleOnceTheModPathMovesAgain(t *testing.T) {
+	ctx := context.Background()
+	f, oldPath, newPath := movedState(t, domain.LinkCopy)
+	plan, err := f.svc.PlanPurge(ctx, f.game, "default", core.PurgeOptions{})
+	require.NoError(t, err)
+	require.Len(t, plan.Stranded, 2)
+	planned := f.game
+
+	handEditModPath(t, f.svc, newPath, oldPath)
+	current, err := f.svc.GetGame("sky")
+	require.NoError(t, err)
+	require.Equal(t, oldPath, current.ModPath)
+
+	for name, game := range map[string]*domain.Game{"plan-time game": planned, "current game": current} {
+		t.Run(name, func(t *testing.T) {
+			_, err := f.svc.ApplyPurge(ctx, game, plan, core.PurgeOptions{}, nil)
+			require.ErrorIs(t, err, core.ErrStalePlan)
+			assert.Contains(t, err.Error(), "mod_path")
+			assert.FileExists(t, filepath.Join(oldPath, "Data", "k.esp"), "a stale plan removes nothing")
+		})
+	}
+
+	fresh, err := f.svc.PlanPurge(ctx, current, "default", core.PurgeOptions{})
+	require.NoError(t, err)
+	_, err = f.svc.ApplyPurge(ctx, current, fresh, core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(oldPath, "Data", "k.esp"), "a fresh plan goes through")
+}

@@ -303,6 +303,10 @@ type PurgePlan struct {
 	// snapshot is Ruling 5's precondition: the installed-mod set this plan
 	// was computed from, re-derived and compared by ApplyPurge.
 	snapshot installedSnapshot `json:"-"`
+	// root is the game's mod_path (recordRoot) the plan was computed
+	// against: its paths, and which of them are stranded, are relative to
+	// it (#466 re-review R2).
+	root string
 }
 
 // PurgeKeptPath is a path a recorded-only purge (#445) leaves in place, and
@@ -440,6 +444,7 @@ func (s *Service) PlanPurge(ctx context.Context, game *domain.Game, profileName 
 		}
 		// A removal: the adapter has no say (removalSnapshotOf).
 		plan.snapshot = removalSnapshotOf(installed)
+		plan.root = recordRoot(game)
 		return plan, nil
 	}
 	installed, err := s.GetInstalledMods(ctx, game.ID, profileName)
@@ -459,6 +464,7 @@ func (s *Service) PlanPurge(ctx context.Context, game *domain.Game, profileName 
 		MergedArtifact: s.mergedArtifactEffectForPurge(ctx, game, profileName),
 		// A removal: the adapter has no say (removalSnapshotOf).
 		snapshot: removalSnapshotOf(installed),
+		root:     recordRoot(game),
 	}
 	// #451: what the profile deployed under a mod_path the game no longer
 	// uses goes too, and the plan says which files.
@@ -508,6 +514,9 @@ func (s *Service) ApplyPurge(ctx context.Context, game *domain.Game, plan *Purge
 		if err := s.checkRemovalPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
 			return &PurgeResult{}, err
 		}
+		if err := s.checkPurgeRootFresh(game, plan); err != nil {
+			return &PurgeResult{}, err
+		}
 		return s.purgeRecorded(ctx, game, plan, sink)
 	}
 	// A plan that is not recorded-only acts on the live directory for its
@@ -518,7 +527,27 @@ func (s *Service) ApplyPurge(ctx context.Context, game *domain.Game, plan *Purge
 	if err := s.checkRemovalPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
 		return &PurgeResult{}, err
 	}
+	if err := s.checkPurgeRootFresh(game, plan); err != nil {
+		return &PurgeResult{}, err
+	}
 	return s.purgeProfile(ctx, game, plan.Profile, plan.Mods, plan, opts, sink)
+}
+
+// checkPurgeRootFresh refuses plan with ErrStalePlan when the game's
+// mod_path is no longer the one it was computed against (#466 re-review
+// R2): the game ApplyPurge was handed, and the one the Service holds now -
+// a frontend may hand back the plan-time game.
+func (s *Service) checkPurgeRootFresh(game *domain.Game, plan *PurgePlan) error {
+	roots := []string{recordRoot(game)}
+	if current, ok := s.game(game.ID); ok {
+		roots = append(roots, recordRoot(current))
+	}
+	for _, root := range roots {
+		if root != plan.root {
+			return fmt.Errorf("%w: %s's mod_path changed from %q to %q since this purge was planned", ErrStalePlan, game.ID, plan.root, root)
+		}
+	}
+	return nil
 }
 
 // refuseRecordedUninstall refuses --uninstall for a recorded-only purge of
