@@ -9,6 +9,7 @@ package serve_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/chromedp/cdproto/runtime"
@@ -97,6 +98,15 @@ func TestE2E_RichTextParser_Table(t *testing.T) {
 			`[{"t":"pre","text":"**not bold** [x](https://e.example)"}]`},
 		{"markdown unclosed fence is text", "```\nnope", "markdown",
 			`[{"t":"p","c":["` + "```" + `",{"t":"br"},"nope"]}]`},
+
+		// Nesting past 32 levels is text (the review's stack overflow).
+		{"bbcode nesting past the cap is text",
+			strings.Repeat("[b]", 33) + "x" + strings.Repeat("[/b]", 33), "bbcode",
+			`[{"t":"p","c":[` + strings.Repeat(`{"t":"strong","c":[`, 32) + `"[b]x"` +
+				strings.Repeat(`]}`, 32) + `,"[/b]"]}]`},
+		{"markdown quotes past the cap are text", strings.Repeat(">", 33) + " x", "markdown",
+			`[` + strings.Repeat(`{"t":"blockquote","c":[`, 32) + `{"t":"p","c":["> x"]}` +
+				strings.Repeat(`]}`, 32) + `]`},
 	}
 
 	f := newE2EFixture(t)
@@ -219,5 +229,184 @@ func TestE2E_ModDescription_RendersBBCodeAsSafeElements(t *testing.T) {
 	assert.NotContains(t, got.Text, "[b]")
 	assert.NotContains(t, got.Text, "[size")
 	assert.Equal(t, "alert(2)Nice", got.Quote, "the cleaner strips the tag; its text stays inert text")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// richTextRender is what renderInDetachedDiv reports about one input: the
+// DOM RichText built for it in a detached div, or the exception it threw.
+type richTextRender struct {
+	Error      string `json:"error"`
+	Family     string `json:"family"`
+	Oversize   bool   `json:"oversize"`
+	Note       string `json:"note"`
+	Text       string `json:"text"`
+	Depth      int    `json:"depth"`
+	Imgs       int    `json:"imgs"`
+	Scripts    int    `json:"scripts"`
+	Styled     int    `json:"styled"`
+	OnAttrs    int    `json:"onAttrs"`
+	BadAnchors int    `json:"badAnchors"`
+	Ms         int    `json:"ms"`
+}
+
+// renderInDetachedDiv renders each input through RichText into a detached
+// div, best of three for the timing, and reports what came out.
+func renderInDetachedDiv(t *testing.T, f e2eFixture, inputs []string) []richTextRender {
+	t.Helper()
+	payload, err := json.Marshal(inputs)
+	require.NoError(t, err)
+	var got []richTextRender
+	f.runInBrowser(t, chromedp.Evaluate(`(async () => {
+		const { RichText } = await import("/static/app/richtext.js");
+		const { h, render } = await import("/static/app/render.js");
+		const depthOf = (root) => {
+			let max = 0;
+			const stack = [[root, 0]];
+			while (stack.length > 0) {
+				const [el, d] = stack.pop();
+				if (d > max) max = d;
+				for (const child of el.children) stack.push([child, d + 1]);
+			}
+			return max;
+		};
+		return `+string(payload)+`.map((s) => {
+			const r = {};
+			let div;
+			try {
+				let best = Infinity;
+				for (let run = 0; run < 3; run++) {
+					div = document.createElement("div");
+					const t0 = performance.now();
+					render(h(RichText, { text: s }), div);
+					best = Math.min(best, performance.now() - t0);
+				}
+				r.ms = Math.round(best);
+			} catch (e) {
+				r.error = String(e);
+				return r;
+			}
+			const all = (sel) => Array.from(div.querySelectorAll(sel));
+			const root = div.firstElementChild;
+			r.family = root?.dataset.family ?? "";
+			r.oversize = root?.dataset.oversize === "true";
+			r.note = div.querySelector(".richtext__note")?.textContent ?? "";
+			r.text = div.textContent.slice(0, 200);
+			r.depth = depthOf(div);
+			r.imgs = all("img").length;
+			r.scripts = all("script").length;
+			r.styled = all("[style]").length;
+			r.onAttrs = all("*").filter((e) =>
+				Array.from(e.attributes).some((a) => /^on/i.test(a.name))).length;
+			r.badAnchors = all("a").filter((a) =>
+				a.rel !== "noopener noreferrer" || a.target !== "_blank" ||
+				!a.querySelector(".richtext__external") ||
+				!/^https?:\/\//.test(a.getAttribute("href"))).length;
+			return r;
+		});
+	})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
+	require.Len(t, got, len(inputs))
+	return got
+}
+
+// TestE2E_RichText_HostileInputRendersInertAndNeverThrows renders the
+// review's hostile battery (issue 419): every injection vector stays inert
+// text, and markup nested far deeper than any description needs still
+// renders - nesting past the parser's cap is literal text, so neither the
+// parser nor the render recurses without bound.
+func TestE2E_RichText_HostileInputRendersInertAndNeverThrows(t *testing.T) {
+	rep := strings.Repeat
+	cases := []struct{ name, in, family string }{
+		{"bbcode javascript url", "[url=javascript:alert(1)]x[/url]", "bbcode"},
+		{"bbcode javascript url after a space", "[url= javascript:alert(1)]x[/url]", "bbcode"},
+		{"bbcode quoted javascript url", `[url="javascript:alert(1)"]x[/url]`, "bbcode"},
+		{"bbcode javascript url body", "[url]javascript:alert(1)[/url]", "bbcode"},
+		{"bbcode javascript image", "[img]javascript:alert(1)[/img]", "bbcode"},
+		{"bbcode data url", "[url=data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==]x[/url]", "bbcode"},
+		{"bbcode nested links", "[b][url=https://a.example][i]x[/i][url=https://b.example]y[/url][/url][/b]", "bbcode"},
+		{"bbcode unbalanced", "[b][i][u]x[/b][/u][/i][/list][*]", "bbcode"},
+		{"bbcode script text", "[b]<script>alert(1)</script>[/b]", "bbcode"},
+		{"bbcode img onerror text", `[quote]<img src=x onerror=alert(1)>[/quote]`, "bbcode"},
+		{"bbcode colour and size", "[color=red][size=99]x[/size][/color][color=\" style=\"x]y[/color]", "bbcode"},
+		{"bbcode quote and code", "[quote][url=https://a.example]q[/url][/quote][code][url=https://a.example]c[/url][/code]", "bbcode"},
+		{"bbcode attribute injection", `[url=https://a.example/" onclick="alert(1)]x[/url]`, "bbcode"},
+		{"bbcode attribute after a space", `[url=https://a.example/ onmouseover=alert(1)]x[/url]`, "bbcode"},
+		{"bbcode rtl override", "[b]‮evil‬[/b] [url=https://a.example/‮]x[/url]", "bbcode"},
+		{"bbcode entities", "[b]&lt;script&gt;alert(1)&lt;/script&gt;[/b]", "bbcode"},
+		{"bbcode backslash url", `[url=https:\\evil.example]x[/url]`, "bbcode"},
+		{"bbcode credentials url", `[url=https://nexusmods.com@evil.example]x[/url]`, "bbcode"},
+		{"markdown javascript link", "# t\n[x](javascript:alert(1))", "markdown"},
+		{"markdown mixed-case javascript link", "# t\n[x](JaVaScRiPt:alert(1))", "markdown"},
+		{"markdown data link", "# t\n[x](data:text/html,<script>alert(1)</script>)", "markdown"},
+		{"markdown reference link", "# t\n[x][1]\n\n[1]: javascript:alert(1)", "markdown"},
+		{"markdown script text", "# t\n<script>alert(1)</script>\n**<img src=x onerror=alert(1)>**", "markdown"},
+		{"markdown javascript image", "# t\n![a](javascript:alert(1))", "markdown"},
+		{"markdown autolink", "# t\n<https://a.example> https://b.example", "markdown"},
+		{"markdown nested link", "# t\n[[inner](https://a.example)](https://b.example)", "markdown"},
+		{"markdown attribute injection", "# t\n[x](https://a.example\"onclick=\"alert(1))", "markdown"},
+
+		// Depth: each of these threw "Maximum call stack size exceeded".
+		{"100 KB of nested lists", rep("[list][*]", 100000/9), "bbcode"},
+		{"33k nested bold", rep("[b]", 33000) + "x" + rep("[/b]", 33000), "bbcode"},
+		{"33k nested quotes", rep("[quote]", 33000) + "x" + rep("[/quote]", 33000), "bbcode"},
+		{"33k nested links", rep("[url=https://a.example]", 33000) + "x" + rep("[/url]", 33000), "bbcode"},
+		{"50k quote markers", rep(">", 50000) + " x", "markdown"},
+		{"50k spaced quote markers", rep("> ", 50000) + "x", "markdown"},
+		{"50k nested emphasis", rep("**~~", 50000) + "x" + rep("~~**", 50000), "markdown"},
+	}
+	f := newE2EFixture(t)
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		pollUntil(`document.querySelector('.mission-control[data-hydrated="true"]') !== null`),
+	)
+	inputs := make([]string, 0, len(cases))
+	for _, c := range cases {
+		inputs = append(inputs, c.in)
+	}
+	got := renderInDetachedDiv(t, f, inputs)
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := got[i]
+			require.Empty(t, r.Error, "RichText never throws")
+			assert.Equal(t, c.family, r.Family)
+			assert.NotEmpty(t, r.Text)
+			assert.LessOrEqual(t, r.Depth, 128, "the rendered tree stays shallow")
+			assert.Zero(t, r.Imgs)
+			assert.Zero(t, r.Scripts)
+			assert.Zero(t, r.Styled)
+			assert.Zero(t, r.OnAttrs)
+			assert.Zero(t, r.BadAnchors)
+		})
+	}
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ModDescription_DeeplyNestedStillRendersThePage opens the full mod
+// page of a mod whose description nests 20,000 bold tags (140 KB). The
+// render used to overflow the stack, leaving the page stuck on "Loading
+// versions…" with no description (issue 419).
+func TestE2E_ModDescription_DeeplyNestedStillRendersThePage(t *testing.T) {
+	desc := strings.Repeat("[b]", 20000) + "deep words" + strings.Repeat("[/b]", 20000)
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod: domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0",
+			Author: "Ada", Summary: "s", Description: desc},
+		Files: []domain.DownloadableFile{{ID: "f1", Version: "1.0"}},
+	})
+	f := newE2EFixtureFromSource(t, src)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0",
+			Author: "Ada", Summary: "s", Description: desc, GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+
+	var text string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		pollUntil(`document.querySelector(".mod-page__description") !== null`),
+		pollUntil(`!document.getElementById("app").innerText.includes("Loading versions")`),
+		chromedp.Evaluate(`document.querySelector(".mod-page__description").textContent`, &text),
+	)
+	assert.Contains(t, text, "deep words")
 	assert.Empty(t, f.BrowserErrors())
 }

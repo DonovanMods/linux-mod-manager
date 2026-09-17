@@ -25,6 +25,11 @@
 //   - Markup this file does not recognise - an unknown tag, an unclosed or
 //     stray one - stays literal text.
 //
+// ROBUSTNESS: nesting is capped at MAX_DEPTH in both parsers - a further
+// opening tag or quote marker is literal text - so no walk over the tree,
+// and no render of it, recurses without bound; and parseRichText falls back
+// to plain paragraphs if anything below it throws anyway.
+//
 // Node shapes (what the table tests in e2e_richtext_test.go compare):
 //   string                              text
 //   { t: "p" | "blockquote" | "ul" | "ol" | "li" | "strong" | "em" | "u" |
@@ -61,6 +66,11 @@ const BB_TAG =
 
 const BB_DETECT = new RegExp(BB_TAG.source, "i");
 
+// MAX_DEPTH is how deeply markup may nest: open BBCode tags, or Markdown
+// quote levels. Past it, a further opener is text (issue 419: 33,000
+// nested [b] tags overflowed the stack).
+const MAX_DEPTH = 32;
+
 // Markdown signals, one per construct: a line that opens a heading, a list
 // item, a quote or a fence; or an inline link, strong run or code span.
 const MD_DETECT =
@@ -85,11 +95,16 @@ export function detectFamily(text) {
  */
 export function parseRichText(text) {
   const s = String(text ?? "").replace(/\r\n?/g, "\n");
-  const family = detectFamily(s);
-  if (!s.trim()) return { family, nodes: [] };
-  if (family === "bbcode") return { family, nodes: parseBBCode(s) };
-  if (family === "markdown") return { family, nodes: parseMarkdown(s) };
-  return { family, nodes: plainParagraphs(s) };
+  try {
+    const family = detectFamily(s);
+    if (!s.trim()) return { family, nodes: [] };
+    if (family === "bbcode") return { family, nodes: parseBBCode(s) };
+    if (family === "markdown") return { family, nodes: parseMarkdown(s, 0) };
+    return { family, nodes: plainParagraphs(s) };
+  } catch {
+    // The parsers are written not to throw; this makes it a guarantee.
+    return { family: "plain", nodes: plainParagraphs(s) };
+  }
 }
 
 // plainParagraphs is the page's long-standing rendering: blank-line
@@ -149,7 +164,7 @@ function parseBBCode(s) {
   let last = 0;
   let m;
   while ((m = re.exec(s)) !== null) {
-    if (m.index > last) top().c.push(s.slice(last, m.index));
+    if (m.index > last) pushAll(top().c, [s.slice(last, m.index)]);
     last = re.lastIndex;
     const [raw, slash, rawName, arg = ""] = m;
     const name = rawName.toLowerCase();
@@ -157,21 +172,21 @@ function parseBBCode(s) {
     if (slash) {
       const at = findOpen(stack, name);
       if (at < 0) {
-        top().c.push(raw); // a stray closing tag is text
+        pushAll(top().c, [raw]); // a stray closing tag is text
         continue;
       }
       // Anything opened inside it and never closed unwinds as text.
       while (stack.length - 1 > at) unwind(stack);
       const frame = stack.pop();
-      top().c.push(...closeBB(frame, raw));
+      pushAll(top().c, closeBB(frame, raw));
       continue;
     }
 
     if (name === "*") {
       // An item runs to the next item or to its list's end.
       const listAt = findOpen(stack, "list");
-      if (listAt < 0) {
-        top().c.push(raw);
+      if (listAt < 0 || listAt >= MAX_DEPTH) {
+        pushAll(top().c, [raw]);
         continue;
       }
       // Whatever the previous item left open ends with it.
@@ -180,24 +195,30 @@ function parseBBCode(s) {
       continue;
     }
     if (name === "line") {
-      top().c.push({ t: "hr" });
+      pushAll(top().c, [{ t: "hr" }]);
       continue;
     }
     if (name === "code") {
       // A code block is verbatim: nothing inside it is markup.
       const end = s.toLowerCase().indexOf("[/code]", last);
       if (end < 0) {
-        top().c.push(raw);
+        pushAll(top().c, [raw]);
         continue;
       }
-      top().c.push({ t: "pre", text: trimBlankLines(s.slice(last, end)) });
+      pushAll(top().c, [
+        { t: "pre", text: trimBlankLines(s.slice(last, end)) },
+      ]);
       last = end + "[/code]".length;
       re.lastIndex = last;
       continue;
     }
+    if (stack.length > MAX_DEPTH) {
+      pushAll(top().c, [raw]); // nested past the cap: text
+      continue;
+    }
     stack.push({ name, raw, arg, c: [] });
   }
-  if (last < s.length) top().c.push(s.slice(last));
+  if (last < s.length) pushAll(top().c, [s.slice(last)]);
   while (stack.length > 1) unwind(stack);
   return blockify(root.c);
 }
@@ -218,10 +239,25 @@ function unwind(stack) {
   const parent = stack[stack.length - 1];
   if (frame.name === "*" || frame.name === "list") {
     // A list whose [/list] never came still ends where the text does.
-    parent.c.push(...closeBB(frame, ""));
+    pushAll(parent.c, closeBB(frame, ""));
     return;
   }
-  parent.c.push(frame.raw, ...frame.c);
+  pushAll(parent.c, [frame.raw]);
+  pushAll(parent.c, frame.c);
+}
+
+// pushAll appends nodes to out, joining adjacent text, one at a time: a
+// spread of a long run would overflow the argument stack, and unjoined
+// literal tags would make that run long.
+function pushAll(out, nodes) {
+  for (const n of nodes) {
+    if (n === "" || n == null) continue;
+    if (typeof n === "string" && typeof out[out.length - 1] === "string") {
+      out[out.length - 1] += n;
+    } else {
+      out.push(n);
+    }
+  }
 }
 
 // closeBB turns a closed frame into the nodes it stands for.
@@ -296,7 +332,7 @@ const MD_QUOTE = /^[ \t]*>[ \t]?(.*)$/;
 const MD_BULLET = /^[ \t]*[-*+][ \t]+(.*)$/;
 const MD_NUMBER = /^[ \t]*\d+[.)][ \t]+(.*)$/;
 
-function parseMarkdown(s) {
+function parseMarkdown(s, depth) {
   const lines = s.split("\n");
   const out = [];
   let para = [];
@@ -339,7 +375,7 @@ function parseMarkdown(s) {
       out.push({ t: "hr" });
       continue;
     }
-    if (MD_QUOTE.test(line)) {
+    if (depth < MAX_DEPTH && MD_QUOTE.test(line)) {
       flush();
       const body = [];
       while (i < lines.length && (m = MD_QUOTE.exec(lines[i]))) {
@@ -347,7 +383,10 @@ function parseMarkdown(s) {
         i++;
       }
       i--;
-      out.push({ t: "blockquote", c: parseMarkdown(body.join("\n")) });
+      out.push({
+        t: "blockquote",
+        c: parseMarkdown(body.join("\n"), depth + 1),
+      });
       continue;
     }
     const list = MD_BULLET.test(line)
@@ -396,7 +435,7 @@ function mdInlineLines(lines) {
   const out = [];
   lines.forEach((line, i) => {
     if (i > 0) out.push({ t: "br" });
-    out.push(...mdInline(line));
+    for (const n of mdInline(line)) out.push(n);
   });
   return out;
 }
@@ -407,9 +446,11 @@ function mdInlineLines(lines) {
 const MD_INLINE =
   /`([^`\n]+)`|(?<!\[)!\[([^\]\n]*)\]\(([^)\s]+)\)|(?<!\[)\[(?!!\[)([^\]\n]+)\]\(([^)\s]+)\)|\*\*(?=\S)([^\n]*?\S)\*\*|__(?=\S)([^\n]*?\S)__|~~(?=\S)([^\n]*?\S)~~|\*(?=[^\s*])([^\n*]*?[^\s*])\*|(?<![A-Za-z0-9])_(?=[^\s_])([^\n_]*?[^\s_])_(?![A-Za-z0-9])|\[!\[([^\]\n]*)\]\(([^)\s]+)\)\]\(([^)\s]+)\)/;
 
-function mdInline(text, inLink = false) {
+function mdInline(text, inLink = false, depth = 0) {
+  if (depth >= MAX_DEPTH) return [text]; // nested past the cap: text
   const out = [];
   let rest = text;
+  const inner = (t, link) => mdInline(t, link, depth + 1);
   while (rest) {
     const m = MD_INLINE.exec(rest);
     if (!m) {
@@ -432,13 +473,13 @@ function mdInline(text, inLink = false) {
       out.push(href ? { t: "img", href, alt: m[2] } : m[0]);
     } else if (m[5] !== undefined) {
       const href = inLink ? "" : safeHref(m[5]);
-      out.push(href ? { t: "a", href, c: mdInline(m[4], true) } : m[0]);
+      out.push(href ? { t: "a", href, c: inner(m[4], true) } : m[0]);
     } else if (m[6] !== undefined || m[7] !== undefined) {
-      out.push({ t: "strong", c: mdInline(m[6] ?? m[7], inLink) });
+      out.push({ t: "strong", c: inner(m[6] ?? m[7], inLink) });
     } else if (m[8] !== undefined) {
-      out.push({ t: "s", c: mdInline(m[8], inLink) });
+      out.push({ t: "s", c: inner(m[8], inLink) });
     } else {
-      out.push({ t: "em", c: mdInline(m[9] ?? m[10], inLink) });
+      out.push({ t: "em", c: inner(m[9] ?? m[10], inLink) });
     }
   }
   return mergeText(out);
@@ -553,23 +594,37 @@ function externalLink(href, children) {
       rel: "noopener noreferrer",
       target: "_blank",
     },
-    ...children,
+    children,
     h("span", { class: "richtext__external", "aria-hidden": "true" }, " ↗"),
     h("span", { class: "visually-hidden" }, " (opens in a new tab)"),
   );
 }
 
-function renderNode(n, key) {
+// RENDER_DEPTH bounds the element tree whatever the parsers hand over; the
+// caps above keep a parsed tree well inside it, so this is a backstop.
+const RENDER_DEPTH = 96;
+
+// flatText is a subtree's words, gathered without recursion.
+function flatText(node) {
+  const parts = [];
+  const stack = [node];
+  while (stack.length > 0) {
+    const n = stack.pop();
+    if (typeof n === "string") parts.push(n);
+    else if (n?.c) for (let i = n.c.length - 1; i >= 0; i--) stack.push(n.c[i]);
+    else if (n?.text) parts.push(n.text);
+  }
+  return parts.join("");
+}
+
+function renderNode(n, key, depth = 0) {
   if (typeof n === "string") return n;
-  const kids = () => (n.c ?? []).map(renderNode);
-  if (PLAIN_TAGS[n.t]) return h(PLAIN_TAGS[n.t], { key }, ...kids());
+  if (depth >= RENDER_DEPTH) return flatText(n);
+  const kids = () => (n.c ?? []).map((c, i) => renderNode(c, i, depth + 1));
+  if (PLAIN_TAGS[n.t]) return h(PLAIN_TAGS[n.t], { key }, kids());
   switch (n.t) {
     case "h":
-      return h(
-        `h${n.level + 2}`,
-        { key, class: "richtext__heading" },
-        ...kids(),
-      );
+      return h(`h${n.level + 2}`, { key, class: "richtext__heading" }, kids());
     case "pre":
       return h(
         "pre",
@@ -599,7 +654,7 @@ function renderNode(n, key) {
  * renderRichText maps parseRichText's nodes onto allow-listed elements.
  */
 export function renderRichText(nodes) {
-  return nodes.map(renderNode);
+  return nodes.map((n, i) => renderNode(n, i));
 }
 
 /**
@@ -612,6 +667,6 @@ export function RichText({ text, class: className = "" }) {
   return h(
     "div",
     { class: `richtext ${className}`.trim(), "data-family": family },
-    ...renderRichText(nodes),
+    renderRichText(nodes),
   );
 }
