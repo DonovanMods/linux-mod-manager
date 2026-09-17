@@ -174,6 +174,7 @@ func TestE2E_ModDescription_RendersBBCodeAsSafeElements(t *testing.T) {
 		Em       []string `json:"em"`
 		Links    []string `json:"links"`
 		Rels     []string `json:"rels"`
+		Titles   []string `json:"titles"`
 		Targets  []string `json:"targets"`
 		Imgs     int      `json:"imgs"`
 		Scripts  int      `json:"scripts"`
@@ -195,6 +196,7 @@ func TestE2E_ModDescription_RendersBBCodeAsSafeElements(t *testing.T) {
 				em: all("em").map((e) => e.textContent),
 				links: all("a").map((e) => e.getAttribute("href")),
 				rels: all("a").map((e) => e.getAttribute("rel")),
+				titles: all("a").map((e) => e.getAttribute("title")),
 				targets: all("a").map((e) => e.getAttribute("target")),
 				imgs: all("img").length,
 				scripts: all("script").length,
@@ -214,6 +216,8 @@ func TestE2E_ModDescription_RendersBBCodeAsSafeElements(t *testing.T) {
 		"https://www.nexusmods.com/x",
 		"https://staticdelivery.nexusmods.com/shot.png",
 	}, got.Links, "only http(s) targets become links; the javascript: one stays text")
+	assert.Equal(t, []string{"www.nexusmods.com", "staticdelivery.nexusmods.com"}, got.Titles,
+		"a link's title names the host it really goes to")
 	for _, rel := range got.Rels {
 		assert.Equal(t, "noopener noreferrer", rel)
 	}
@@ -300,7 +304,8 @@ func renderInDetachedDiv(t *testing.T, f e2eFixture, inputs []string) []richText
 			r.badAnchors = all("a").filter((a) =>
 				a.rel !== "noopener noreferrer" || a.target !== "_blank" ||
 				!a.querySelector(".richtext__external") ||
-				!/^https?:\/\//.test(a.getAttribute("href"))).length;
+				!/^https?:\/\//.test(a.getAttribute("href")) ||
+				a.title !== new URL(a.href).host).length;
 			return r;
 		});
 	})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))

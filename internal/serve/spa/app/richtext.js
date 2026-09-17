@@ -608,12 +608,23 @@ const PLAIN_TAGS = {
   code: "code",
 };
 
+// hostOf is the host a vetted href really goes to - shown as the link's
+// title, since a label (or "https://site@elsewhere") can hide it.
+function hostOf(href) {
+  try {
+    return new URL(href).host;
+  } catch {
+    return "";
+  }
+}
+
 function externalLink(href, children) {
   return h(
     "a",
     {
       class: "richtext__link",
       href,
+      title: hostOf(href),
       rel: "noopener noreferrer",
       target: "_blank",
     },
