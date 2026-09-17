@@ -65,6 +65,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // OriginalRoot names which of a game's two directories an original's
@@ -180,6 +182,9 @@ type originalsStore struct {
 	// fingerprint to check them against (#466); a drain reports them as
 	// one line.
 	unverified []string
+	// kept is Installer.keptUser for every Installer of the running flow,
+	// cleared by the same drain.
+	kept map[string]db.DeployedFileState
 }
 
 // snapshotsDirFor returns a game's snapshot directory,
@@ -226,6 +231,25 @@ func (s *originalsStore) note(msg string) {
 	s.mu.Unlock()
 }
 
+// rememberKept records that a removal left rel as the user's (#466).
+func (s *originalsStore) rememberKept(rel string, st db.DeployedFileState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.kept == nil {
+		s.kept = make(map[string]db.DeployedFileState)
+	}
+	s.kept[rel] = st
+}
+
+// keptBefore reports whether a removal in the running flow left rel as the
+// user's, and the record it was judged against.
+func (s *originalsStore) keptBefore(rel string) (db.DeployedFileState, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.kept[rel]
+	return st, ok
+}
+
 // noteUnverified records rel as removed without a content check (#466).
 func (s *originalsStore) noteUnverified(rel string) {
 	s.mu.Lock()
@@ -235,7 +259,8 @@ func (s *originalsStore) noteUnverified(rel string) {
 
 // takeFailures drains the pending capture failures, so a flow can put them
 // on its own result's Warnings - and, after them, one line for every path
-// removed unverified since the last drain.
+// removed unverified since the last drain. It ends the flow's memory of
+// the files its removals kept, too.
 func (s *originalsStore) takeFailures() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -243,7 +268,7 @@ func (s *originalsStore) takeFailures() []string {
 	if len(s.unverified) > 0 {
 		out = append(out, unverifiedNote(s.unverified))
 	}
-	s.failures, s.unverified = nil, nil
+	s.failures, s.unverified, s.kept = nil, nil, nil
 	return out
 }
 

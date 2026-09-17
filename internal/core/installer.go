@@ -71,8 +71,10 @@ type Installer struct {
 
 	// keptUser is the record of each path (slash form) a removal through
 	// this Installer left because the file there is the user's (#466), so a
-	// deploy through the same Installer - deploy's and verify --fix's
-	// undeploy-then-install - leaves it too, and records it again.
+	// deploy through the same Installer leaves it too, and records it
+	// again. An Installer with an originals store keeps this on the store
+	// instead (rememberKept), where every Installer of the running flow
+	// sees it - `lmm deploy --purge` purges and deploys through two.
 	keptUser map[string]db.DeployedFileState
 }
 
@@ -328,15 +330,34 @@ func (i *Installer) keepOnRemoval(ctx context.Context, game *domain.Game, file, 
 		if j.kept != nil {
 			st = *j.kept
 		}
-		if i.keptUser == nil {
-			i.keptUser = make(map[string]db.DeployedFileState)
-		}
-		i.keptUser[rel] = st
+		i.rememberKept(rel, st)
 		return heldPath{path: rel, userReason: j.reason}, true, false
 	case deployedUnverified:
 		return heldPath{}, false, true
 	}
 	return heldPath{}, false, false
+}
+
+// rememberKept records that a removal left rel as the user's, with the
+// record it was judged against (keptUser).
+func (i *Installer) rememberKept(rel string, st db.DeployedFileState) {
+	if i.originals != nil {
+		i.originals.rememberKept(rel, st)
+		return
+	}
+	if i.keptUser == nil {
+		i.keptUser = make(map[string]db.DeployedFileState)
+	}
+	i.keptUser[rel] = st
+}
+
+// keptBefore is rememberKept's answer for rel.
+func (i *Installer) keptBefore(rel string) (db.DeployedFileState, bool) {
+	if i.originals != nil {
+		return i.originals.keptBefore(rel)
+	}
+	st, ok := i.keptUser[rel]
+	return st, ok
 }
 
 // noteUnverified puts rel on the flow's one unverified report.
@@ -354,7 +375,7 @@ func (i *Installer) noteUnverified(rel string) {
 // the deploy writes back for the path, or nil to write none.
 func (i *Installer) keepOnDeploy(ctx context.Context, game *domain.Game, file, dstPath string) (restore *db.DeployedFileState, keep bool) {
 	rel := filepath.ToSlash(file)
-	if st, ok := i.keptUser[rel]; ok {
+	if st, ok := i.keptBefore(rel); ok {
 		if _, err := os.Lstat(dstPath); !errors.Is(err, fs.ErrNotExist) {
 			i.noteHeld(userFileOverwriteNote(rel, "it was left as yours when lmm undeployed the mod"))
 			return &st, true

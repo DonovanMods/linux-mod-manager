@@ -237,6 +237,27 @@ func TestDeployedIdentity_ADeployDoesNotOverwriteAFileTheUserReplaced(t *testing
 	}
 }
 
+// TestDeployedIdentity_ADeployWithPurgeDoesNotOverwriteAFileTheUserReplaced:
+// `lmm deploy --purge` purges and deploys through two Installers, and the
+// deploy half must still leave the file its purge half kept.
+func TestDeployedIdentity_ADeployWithPurgeDoesNotOverwriteAFileTheUserReplaced(t *testing.T) {
+	ctx := context.Background()
+	f := ledgerState(t, domain.LinkCopy)
+	require.NoError(t, os.WriteFile(f.kPath(), []byte("USER FILE"), 0o644))
+
+	result, err := f.svc.DeployProfile(ctx, f.game, "default", core.DeployOptions{Purge: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "USER FILE", readLive(t, f.kPath()))
+	assert.Equal(t, "mod k2", readLive(t, filepath.Join(f.game.ModPath, "Data", "k2.esp")))
+	assert.True(t, containsLine(result.Warnings, "Data/k.esp was not replaced"), "%q", result.Warnings)
+
+	// And the next deploy still knows it is the user's.
+	result, err = f.svc.DeployProfile(ctx, f.game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "USER FILE", readLive(t, f.kPath()))
+	assert.True(t, containsLine(result.Warnings, "Data/k.esp was not replaced"), "%q", result.Warnings)
+}
+
 // TestDeployedIdentity_VerifyReportsAChangedFileAndFixLeavesIt: verify
 // reports the mismatch as its own finding, and --fix never writes over it.
 func TestDeployedIdentity_VerifyReportsAChangedFileAndFixLeavesIt(t *testing.T) {

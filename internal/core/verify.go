@@ -548,7 +548,22 @@ func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile st
 		}
 		defer release()
 	}
-	return s.verifyMemoized(ctx, game, profile, opts, sink)
+	result, err := s.verifyMemoized(ctx, game, profile, opts, sink)
+	if opts.Fix {
+		// A --fix repair removes and deploys through the Installer, which
+		// reports a file it left as the user's (#466) - and a path another
+		// game holds - on the flow's pending list. Those are this run's, so
+		// they are said here as repair details rather than left for
+		// whichever flow drains the list next.
+		if store := s.originalsStoreFor(game.ID); store != nil {
+			for _, msg := range store.takeFailures() {
+				if sink != nil {
+					sink(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: msg})
+				}
+			}
+		}
+	}
+	return result, err
 }
 
 // verifyMemoized is verify plus #336's memo: an installation whose
