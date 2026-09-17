@@ -14,35 +14,78 @@ package serve_test
 // querySelector) instead, and this test keeps it that way.
 
 import (
+	"go/scanner"
+	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
+	"slices"
 	"testing"
 )
 
-var waitNotPresentCall = regexp.MustCompile(`\bchromedp\.WaitNotPresent\s*\(`)
+// waitNotPresentLines returns the 1-based lines of src that use
+// chromedp.WaitNotPresent: any identifier token of that name, so a call, an
+// alias or a selector split across lines all count, while a comment or a
+// string that merely names it is not a token at all.
+func waitNotPresentLines(src []byte) []int {
+	fset := token.NewFileSet()
+	file := fset.AddFile("", fset.Base(), len(src))
+	var s scanner.Scanner
+	s.Init(file, src, nil, 0) // mode 0: comments are skipped
+	var lines []int
+	for {
+		pos, tok, lit := s.Scan()
+		if tok == token.EOF {
+			return lines
+		}
+		if tok == token.IDENT && lit == "WaitNotPresent" {
+			lines = append(lines, fset.Position(pos).Line)
+		}
+	}
+}
 
-// TestE2EWaitsForARemovalWithWaitGone fails on any chromedp.WaitNotPresent
-// call in this package's Go files; comments that name it are fine.
+// TestE2EWaitsForARemovalWithWaitGone fails on any use of
+// chromedp.WaitNotPresent in this package's Go files; comments and strings
+// that name it are fine.
 func TestE2EWaitsForARemovalWithWaitGone(t *testing.T) {
 	matches, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range matches {
-		if filepath.Base(path) == "no_wait_not_present_test.go" {
-			continue
-		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for i, line := range strings.Split(string(data), "\n") {
-			code, _, _ := strings.Cut(line, "//")
-			if waitNotPresentCall.MatchString(code) {
-				t.Errorf("%s:%d: chromedp.WaitNotPresent misses an asynchronous removal and burns the whole e2eTimeout; use waitGone(sel)", path, i+1)
-			}
+		for _, line := range waitNotPresentLines(data) {
+			t.Errorf("%s:%d: chromedp.WaitNotPresent misses an asynchronous removal and burns the whole e2eTimeout; use waitGone(sel)", path, line)
 		}
+	}
+}
+
+// TestWaitNotPresentLines_FindsEveryUse pins the ratchet's scanner: a use
+// hidden behind a "//" inside a string, or behind an alias, is still a use;
+// a mention in a comment or a string is not.
+func TestWaitNotPresentLines_FindsEveryUse(t *testing.T) {
+	const head = "package p\n\nimport \"github.com/chromedp/chromedp\"\n\n"
+	cases := []struct {
+		name, body string
+		want       []int
+	}{
+		{"a call", "var a = chromedp.WaitNotPresent(`x`)\n", []int{5}},
+		{"a call after a URL string", "var a, b = \"http://x\", chromedp.WaitNotPresent(`x`)\n", []int{5}},
+		{"an alias", "var wait = chromedp.WaitNotPresent\n", []int{5}},
+		{"a spaced selector", "var a = chromedp.\n\tWaitNotPresent(`x`)\n", []int{6}},
+		{"a line comment", "// chromedp.WaitNotPresent(`x`) is banned\nvar a = 1\n", nil},
+		{"a block comment", "/* chromedp.WaitNotPresent(`x`) */\nvar a = 1\n", nil},
+		{"a string", "var a = \"chromedp.WaitNotPresent(x)\"\n", nil},
+		{"a raw string", "var a = `chromedp.WaitNotPresent(x)`\n", nil},
+		{"waitGone", "var a = waitGone(`x`)\n", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := waitNotPresentLines([]byte(head + c.body)); !slices.Equal(got, c.want) {
+				t.Errorf("waitNotPresentLines = %v, want %v", got, c.want)
+			}
+		})
 	}
 }
