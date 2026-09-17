@@ -294,6 +294,7 @@ func (c *CurseForge) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain
 			IsPrimary:   i == 0, // First file is typically the latest/main
 			Category:    releaseTypeName(f.ReleaseType),
 			Description: "", // CurseForge doesn't have per-file descriptions
+			UploadedAt:  f.FileDate,
 		}
 	}
 

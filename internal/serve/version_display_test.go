@@ -101,7 +101,7 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 		"version": {4, "core.ProfileApplyPlan's three buckets, no longer a gap. ToDisable and ToEnable are safe outright: pass 1's `if im.External { plan.ExternalUnchanged++; continue }` classifies an INSTALLED row (internal/core/profile_apply.go), and that is one read. ToInstall's two both sit past installVersion's own `if (entry.external) return displayVersion(entry.ref)` early return - pass 2 builds the external entry from a tracking row and PlanProfileApply stamps that ref's external/updated_at right there (P1a review F5), so the shared helper answers for it - and TestE2E_Workshop_ProfileApplyPlanShowsTheTrackedItemAsTracked drives that branch in a real browser, so the claim is executed rather than merely written down (P1a re-review N4). The fourth is `replaces.version`, an installed row this apply converges away from, which pass 2 never sets on an external entry."},
 	},
 	"components/plan_install.js": {
-		"version": {7, "Source-side file and version lists on core.InstallPlan. PlanInstall refuses a mod already tracked from Steam as its FIRST statement (issue 269's install-exclusivity gate), so an external mod never reaches this renderer."},
+		"version": {8, "Source-side file and version lists on core.InstallPlan (versionUploadedAt matches a file to its version for the picker's date, issue 433). PlanInstall refuses a mod already tracked from Steam as its FIRST statement (issue 269's install-exclusivity gate), so an external mod never reaches this renderer."},
 	},
 	"components/plan_import_archive.js": {
 		"version": {1, "The mod an archive import creates. Adopt is the only producer of an external row, and it takes no archive."},

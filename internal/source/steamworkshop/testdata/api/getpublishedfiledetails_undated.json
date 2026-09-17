@@ -1,0 +1,20 @@
+{
+  "response": {
+    "result": 1,
+    "resultcount": 1,
+    "publishedfiledetails": [
+      {
+        "publishedfileid": "3617086699",
+        "result": 1,
+        "creator": "76561198000000000",
+        "consumer_app_id": 1133870,
+        "file_size": "1024",
+        "file_url": "",
+        "hcontent_file": "7987119735124790000",
+        "title": "Undated Workshop Item",
+        "description": "Valve reported no time_updated for this one.",
+        "tags": []
+      }
+    ]
+  }
+}

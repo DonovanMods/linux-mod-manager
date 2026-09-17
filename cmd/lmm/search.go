@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -272,13 +273,26 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return emitJSON(report)
 	}
 
-	// Print results
+	// Print results. The UPDATED column (#433) appears only when at least
+	// one hit carries a date: a source that reports none (and a search
+	// over only such sources) adds no column of dashes.
+	showUpdated := false
+	for _, mod := range mods {
+		if displayAge(mod.UpdatedAt, cliNow()) != "" {
+			showUpdated = true
+			break
+		}
+	}
+	header, separator := "ID\tNAME\tAUTHOR\tVERSION\t", "--\t----\t------\t-------\t"
+	if showUpdated {
+		header, separator = header+"UPDATED\t", separator+"-------\t"
+	}
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION\tSOURCE\t"); err != nil {
+	if _, err := fmt.Fprintln(w, header+"SOURCE\t"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
-	if _, err := fmt.Fprintln(w, "--\t----\t------\t-------\t------\t"); err != nil {
+	if _, err := fmt.Fprintln(w, separator+"------\t"); err != nil {
 		return fmt.Errorf("writing separator: %w", err)
 	}
 
@@ -296,19 +310,23 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 			installedMark = "[installed]"
 		}
 		installedRows = append(installedRows, installed)
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		// displayModVersion, never the raw field: since Tier 2 (#269 W2) a
+		// hit can be a Steam Workshop item, whose Version is the 19-digit
+		// content id. core.SearchHit.External is stamped for exactly this -
+		// a catalog document has no installed row to read the fact from.
+		cells := []string{
 			mod.ID,
 			truncate(mod.Name, 40),
 			truncate(mod.Author, 20),
-			// displayModVersion, never the raw field: since Tier 2 (#269
-			// W2) a hit can be a Steam Workshop item, whose Version is the
-			// 19-digit content id. core.SearchHit.External is stamped for
-			// exactly this - a catalog document has no installed row to
-			// read the fact from.
 			displayModVersion(mod.External, mod.Version, mod.UpdatedAt),
-			mod.SourceID,
-			installedMark,
-		); err != nil {
+		}
+		if showUpdated {
+			// "-", not a blank cell, for an undated hit beside dated ones:
+			// the column says this source reported no date.
+			cells = append(cells, cmp.Or(displayAge(mod.UpdatedAt, cliNow()), "-"))
+		}
+		cells = append(cells, mod.SourceID, installedMark)
+		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}

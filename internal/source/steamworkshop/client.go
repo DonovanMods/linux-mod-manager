@@ -384,10 +384,17 @@ func modFromDetails(d itemDetails, gameID string) domain.Mod {
 	if len(d.Tags) > 0 {
 		mod.Category = d.Tags[0].Tag
 	}
-	if d.TimeUpdated > 0 {
-		mod.UpdatedAt = time.Unix(d.TimeUpdated, 0).UTC()
-	}
+	mod.UpdatedAt = revisionTime(d)
 	return mod
+}
+
+// revisionTime is the item's time_updated as a UTC time, or the zero time
+// when Valve reports none.
+func revisionTime(d itemDetails) time.Time {
+	if d.TimeUpdated <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(d.TimeUpdated, 0).UTC()
 }
 
 // contentVersion is an item's version identity as the API reports it: the

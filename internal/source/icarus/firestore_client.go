@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 const defaultFirestoreBaseURL = "https://firestore.googleapis.com/v1"
@@ -17,6 +18,20 @@ const defaultFirestoreBaseURL = "https://firestore.googleapis.com/v1"
 type firestoreDoc struct {
 	ID     string
 	Fields map[string]any
+	// UpdateTime is the document's own `updateTime` metadata (RFC 3339):
+	// when the catalog entry last changed, the one date the catalog has
+	// (#433). Zero when absent or unparsable.
+	UpdateTime time.Time
+}
+
+// parseUpdateTime reads Firestore's updateTime; anything unparsable is the
+// zero time - a missing date, never a failed listing.
+func parseUpdateTime(s string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 type firestoreClient struct {
@@ -50,8 +65,9 @@ func (c *firestoreClient) listCollection(ctx context.Context, collection string)
 		}
 		var page struct {
 			Documents []struct {
-				Name   string         `json:"name"`
-				Fields map[string]any `json:"fields"`
+				Name       string         `json:"name"`
+				Fields     map[string]any `json:"fields"`
+				UpdateTime string         `json:"updateTime"`
 			} `json:"documents"`
 			NextPageToken string `json:"nextPageToken"`
 		}
@@ -59,7 +75,7 @@ func (c *firestoreClient) listCollection(ctx context.Context, collection string)
 			return nil, fmt.Errorf("listing %s: %w", collection, err)
 		}
 		for _, d := range page.Documents {
-			all = append(all, firestoreDoc{ID: lastPathSegment(d.Name), Fields: decodeFields(d.Fields)})
+			all = append(all, firestoreDoc{ID: lastPathSegment(d.Name), Fields: decodeFields(d.Fields), UpdateTime: parseUpdateTime(d.UpdateTime)})
 		}
 		if page.NextPageToken == "" {
 			break
@@ -73,13 +89,14 @@ func (c *firestoreClient) listCollection(ctx context.Context, collection string)
 func (c *firestoreClient) getDocument(ctx context.Context, collection, docID string) (*firestoreDoc, error) {
 	url := fmt.Sprintf("%s/%s/%s", c.documentsURL(), collection, docID)
 	var doc struct {
-		Name   string         `json:"name"`
-		Fields map[string]any `json:"fields"`
+		Name       string         `json:"name"`
+		Fields     map[string]any `json:"fields"`
+		UpdateTime string         `json:"updateTime"`
 	}
 	if err := c.getJSON(ctx, url, &doc); err != nil {
 		return nil, fmt.Errorf("fetching %s/%s: %w", collection, docID, err)
 	}
-	return &firestoreDoc{ID: lastPathSegment(doc.Name), Fields: decodeFields(doc.Fields)}, nil
+	return &firestoreDoc{ID: lastPathSegment(doc.Name), Fields: decodeFields(doc.Fields), UpdateTime: parseUpdateTime(doc.UpdateTime)}, nil
 }
 
 func (c *firestoreClient) getJSON(ctx context.Context, url string, out any) error {

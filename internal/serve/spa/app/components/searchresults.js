@@ -12,6 +12,7 @@
 
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
+import { absoluteTime, updatedPhrase } from "../relativetime.js";
 import { navigate } from "../router.js";
 import { codeSpans } from "../errortext.js";
 import { InlineJob } from "./jobprogress.js";
@@ -73,6 +74,10 @@ function formatDownloads(n) {
 export function SourceResultRow({ hit, state, actions, detailed }) {
   const origin = installOrigin(hit.source_id, hit.id);
   const downloads = detailed ? formatDownloads(hit.downloads) : "";
+  // Issue 433: when the source last changed the mod - an age, with the exact
+  // moment on hover. The cell renders empty for an undated hit, so the
+  // columns still line up down the list.
+  const updated = updatedPhrase(hit.updated_at);
 
   return html`
     <li
@@ -102,6 +107,12 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
           hit.author &&
           html`<span class="search-result__author">${hit.author}</span>`
         }
+        <span
+          class="search-result__updated"
+          data-testid="search-result-updated"
+          title=${updated ? absoluteTime(hit.updated_at) : undefined}
+          >${updated}</span
+        >
         ${
           downloads &&
           html`<span class="search-result__downloads">${downloads}</span>`

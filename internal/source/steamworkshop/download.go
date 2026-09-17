@@ -38,13 +38,14 @@ func (s *Source) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.Dow
 		return nil, fmt.Errorf("source %q: %w", sourceID, err)
 	}
 	return []domain.DownloadableFile{{
-		ID:        d.PublishedFileID,
-		Name:      d.Title,
-		FileName:  downloadFileName(d),
-		Version:   contentVersion(d),
-		Size:      int64(d.FileSize),
-		IsPrimary: true,
-		Category:  "MAIN",
+		ID:         d.PublishedFileID,
+		Name:       d.Title,
+		FileName:   downloadFileName(d),
+		Version:    contentVersion(d),
+		Size:       int64(d.FileSize),
+		IsPrimary:  true,
+		Category:   "MAIN",
+		UploadedAt: revisionTime(d),
 	}}, nil
 }
 

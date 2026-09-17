@@ -285,6 +285,20 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
 
 ### Added
 
+- **Search results and the install picker show when a mod was last
+  updated (#433).** `lmm search` has an `UPDATED` column — an age for
+  anything from the last week, the date after that — shown whenever at
+  least one result has a date, with `-` for a result whose source reports
+  none. The interactive install list and its file picker show the same fact
+  per mod and per file, and the web UI's search results, omnibar results
+  and install dialog show it as "Updated 3 hours ago" with the exact time on
+  hover. NexusMods search results now carry their date (the search never
+  asked for it), a file's upload date is recorded for NexusMods, CurseForge,
+  Thunderstore and Steam Workshop (`uploaded_at` on the file documents, in
+  `--json` too), the Icarus catalog reports each entry's last change, and a
+  `directory` source dates a mod by its folder's or archive's modification
+  time.
+
 - **`lmm game edit <id> --mod-path <path>` (#427, #456).** A game's
   `mod_path` could only be changed by editing `games.yaml` by hand. It is
   now a command, and `PUT /api/v1/games/{id}` takes a `mod_path` member for

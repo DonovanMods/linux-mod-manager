@@ -2443,10 +2443,12 @@ Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop
 
 ```text
 $ lmm search bigger --game baldurs-gate-3
-ID                  NAME             AUTHOR   VERSION  SOURCE
---                  ----             ------   -------  ------
-BiggerBackpack-2.1  Bigger Backpack  donovan  2.1      donovan-mods
+ID                  NAME             AUTHOR   VERSION  UPDATED     SOURCE
+--                  ----             ------   -------  -------     ------
+BiggerBackpack-2.1  Bigger Backpack  donovan  2.1      2026-07-01  donovan-mods
 ```
+
+The `UPDATED` column is when the source last changed the mod: an age for anything from the last week (`3h ago`, `2d ago`), the date (UTC) for anything older. It appears only when at least one result has a date; a result whose source reports none shows `-`. NexusMods, CurseForge, Thunderstore, Steam Workshop and the Icarus catalog report one; a `manifest` source reports its `updated_at`, an `api` source whatever its `updated_at` mapping names, and a `directory` source the time the mod's folder or archive last changed on disk. The install picker shows each file's own date the same way, and the web UI shows it on search results and in the install dialog, with the exact time on hover.
 
 If one source fails, its failure is reported as a warning on stderr and the other sources' results are still returned — a flaky manifest URL doesn't hide results from a source that responded:
 

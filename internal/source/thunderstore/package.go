@@ -65,13 +65,14 @@ func (s *Source) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.Dow
 	files := make([]domain.DownloadableFile, 0, len(rec.Versions))
 	for i, v := range rec.Versions {
 		files = append(files, domain.DownloadableFile{
-			ID:        v.Version,
-			Name:      display + " " + v.Version,
-			FileName:  fmt.Sprintf("%s-%s-%s.zip", ns, name, v.Version),
-			Version:   v.Version,
-			Size:      v.FileSize,
-			IsPrimary: i == 0,
-			Category:  "MAIN",
+			ID:         v.Version,
+			Name:       display + " " + v.Version,
+			FileName:   fmt.Sprintf("%s-%s-%s.zip", ns, name, v.Version),
+			Version:    v.Version,
+			Size:       v.FileSize,
+			IsPrimary:  i == 0,
+			Category:   "MAIN",
+			UploadedAt: parseTimestamp(v.DateCreated),
 		})
 	}
 	return files, nil

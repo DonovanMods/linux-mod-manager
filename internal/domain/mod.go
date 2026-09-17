@@ -89,6 +89,11 @@ type DownloadableFile struct {
 	Category    string `json:"category,omitempty"`    // Category: "MAIN", "OPTIONAL", "UPDATE", etc.
 	Description string `json:"description,omitempty"` // File description
 	SHA256      string `json:"sha256,omitempty"`      // Expected SHA-256 of the download (hex); empty = source declares no checksum
+	// UploadedAt is when the source published this file (or, for a source
+	// whose "files" are versions, that version), for the install picker's
+	// date column (#433). Zero when the source reports none; omitzero, so
+	// such a file's document is unchanged.
+	UploadedAt time.Time `json:"uploaded_at,omitzero"`
 }
 
 // EffectiveInstalledVersion resolves the version string that describes what

@@ -251,6 +251,22 @@ func TestInstallFileRow(t *testing.T) {
 	assert.Equal(t, "  [1] Mod_P.pak (PAK, 0 B)", installFileRow(0, noDesc))
 }
 
+// TestInstallFileRow_ShowsTheFilesDate is #433's install-picker half: a
+// file the source dates carries its date after the size, and an undated
+// one reads exactly as before.
+func TestInstallFileRow_ShowsTheFilesDate(t *testing.T) {
+	orig := cliNow
+	cliNow = func() time.Time { return time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { cliNow = orig })
+
+	dated := domain.DownloadableFile{FileName: "m-1.1.zip", Category: "MAIN", IsPrimary: true, UploadedAt: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)}
+	assert.Equal(t, "  [1] m-1.1.zip (MAIN, 0 B, 2024-01-15) <- default", installFileRow(0, dated))
+	recent := domain.DownloadableFile{FileName: "m-1.2.zip", Category: "MAIN", UploadedAt: time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)}
+	assert.Equal(t, "  [2] m-1.2.zip (MAIN, 0 B, 1d ago)", installFileRow(1, recent))
+	undated := domain.DownloadableFile{FileName: "m-1.0.zip", Category: "MAIN"}
+	assert.Equal(t, "  [3] m-1.0.zip (MAIN, 0 B)", installFileRow(2, undated))
+}
+
 // TestInstallCmd_ShowArchivedFlag tests the show-archived flag exists
 func TestInstallCmd_ShowArchivedFlag(t *testing.T) {
 	flag := installCmd.Flags().Lookup("show-archived")
