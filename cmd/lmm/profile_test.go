@@ -509,13 +509,17 @@ func TestDoProfileSwitch_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *te
 
 	var out string
 	withStdin(t, "y\n", func() {
-		out = captureStdout(t, func() error {
+		out, _, err = captureStdoutAndStderr(t, func() error {
 			return doProfileSwitch(context.Background(), svc, game, "target")
 		})
 	})
 
+	// #471: a failed undeploy is a failed mod, not a disable.
+	var incomplete *core.ProfileSwitchIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	assert.Contains(t, err.Error(), "src:1): undeploy failed")
 	assert.Contains(t, out, "  Warning: failed to undeploy Test Mod: ")
-	assert.Contains(t, out, "  ✓ Disabled: Test Mod\n")
+	assert.NotContains(t, out, "✓ Disabled: Test Mod")
 }
 
 // switchLockRefusalFixture seeds the one scenario every #294 switch capture

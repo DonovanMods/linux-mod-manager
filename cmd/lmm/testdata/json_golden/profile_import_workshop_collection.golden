@@ -28,6 +28,8 @@
     "skipped": 2,
     "notes": [
       "1 item(s) are not subscribed: subscribe in Steam and re-run `lmm import --workshop`"
-    ]
+    ],
+    "recorded_only": true,
+    "active_profile": "default"
   }
 }

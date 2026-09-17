@@ -332,10 +332,12 @@ func TestDoPurge_Verbose_UndeployDiagnosticPrintsInline(t *testing.T) {
 	svc, game := setupDoPurgeTest(t)
 	seedPurgeableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 
-	// Corrupt the deployed symlink into a plain file so Uninstall fails.
+	// A DIRECTORY where the symlink linker expects its link, so Uninstall
+	// fails. (A regular file there is the user's replacement of the link,
+	// which a purge keeps and stops recording - #469.)
 	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(deployedPath, "obstruction"), 0o755))
 
 	oldVerbose := verbose
 	verbose = true

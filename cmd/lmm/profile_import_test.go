@@ -149,6 +149,7 @@ func TestDoProfileImport_InstalledUnderAnotherProfile_AddsItToThisOne(t *testing
 		Enabled:      true,
 	}))
 
+	activateImportTarget(t, svc, game)
 	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
 
 	profileImportYes = true
@@ -197,6 +198,7 @@ func TestDoProfileImport_NeedsRedownload_ReinstallsUsingStoredFileIDs(t *testing
 		FileIDs:      []string{"extra"},
 	}))
 
+	activateImportTarget(t, svc, game)
 	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
 
 	var out string
@@ -307,7 +309,7 @@ func TestDoProfileImport_PromptDeclined_NoInstallHappens(t *testing.T) {
 
 // TestDoProfileImport_NoInstallFlag_SkipsPromptEntirely pins --no-install:
 // no stdin interaction at all (proven by a stdin pipe that is never written
-// to), and the count-bearing "Skipped installing N mod(s)" message.
+// to), and one line per pending mod saying nothing was installed (#472).
 func TestDoProfileImport_NoInstallFlag_SkipsPromptEntirely(t *testing.T) {
 	svc, game, src := setupDoProfileImportTest(t)
 	profileImportNoInstall = true
@@ -357,12 +359,12 @@ func TestDoProfileImport_NoInstallFlag_SkipsPromptEntirely(t *testing.T) {
 	assert.Equal(t, "Importing profile: target\n"+
 		"\n"+
 		"Found 1 mod(s) in profile.\n"+
-		"  ↓ 1 need to be downloaded:\n"+
+		"  - 1 recorded in the profile only (--no-install: not installed or deployed):\n"+
 		"    - test-src:mod1 v1.0\n"+
 		"\n"+
 		"✓ Imported profile: target\n"+
 		"\n"+
-		"Skipped installing 1 mod(s). Use 'lmm profile switch target' to install them later, or 'lmm profile apply target' if it is already the active profile.\n", out)
+		"Nothing was installed or deployed. Use 'lmm profile switch target' to install them later, or 'lmm profile apply target' if it is already the active profile.\n", out)
 
 	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	assert.Error(t, err)
@@ -485,12 +487,12 @@ func TestDoProfileImport_ForceOverwritesExistingProfile(t *testing.T) {
 	assert.Equal(t, "Importing profile: target\n"+
 		"\n"+
 		"Found 1 mod(s) in profile.\n"+
-		"  ↓ 1 need to be downloaded:\n"+
+		"  - 1 recorded in the profile only (--no-install: not installed or deployed):\n"+
 		"    - test-src:new-mod v1.0\n"+
 		"\n"+
 		"✓ Imported profile: target\n"+
 		"\n"+
-		"Skipped installing 1 mod(s). Use 'lmm profile switch target' to install them later, or 'lmm profile apply target' if it is already the active profile.\n", out)
+		"Nothing was installed or deployed. Use 'lmm profile switch target' to install them later, or 'lmm profile apply target' if it is already the active profile.\n", out)
 
 	saved, err := pm.Get(context.Background(), game.ID, "target")
 	require.NoError(t, err)
@@ -630,4 +632,18 @@ func TestDoProfileImport_PerItemFailure_PlainOutputIsUnchanged(t *testing.T) {
 		"Installed: 1\n"+
 		"Failed: 1\n",
 		stripDownloadProgress(out))
+}
+
+// activateImportTarget makes "target" - the profile these tests import into
+// - the game's active profile beside "default": an import deploys only into
+// the active profile (#462), and these tests are about what it deploys. The
+// import then replaces the file, so it needs --force.
+func activateImportTarget(t *testing.T, svc *core.Service, game *domain.Game) {
+	t.Helper()
+	ctx := context.Background()
+	pm := getProfileManager(svc)
+	_, err := pm.Create(ctx, game.ID, "target")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "target"))
+	profileImportForce = true
 }

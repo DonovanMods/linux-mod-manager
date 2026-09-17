@@ -1508,8 +1508,11 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_ListFails_WarnsOnce(t *test
 	assert.Equal(t, 1, strings.Count(out, "Warning"), "the pm.List failure must be surfaced exactly once, not once per (nonexistent) sibling")
 
 	// PR #128 Copilot review round 4: a pm.List failure counts as exactly
-	// one warning in the actual counter, not just in the printed text.
-	assert.Contains(t, out, "1 warning(s)", "the pm.List failure must count as exactly one warning")
+	// one warning in the actual counter, not just in the printed text. The
+	// second is the convergence pass, which removes nothing while lmm
+	// cannot list the profiles to tell which is active (#462).
+	assert.Contains(t, out, "2 warning(s)", "the pm.List failure must count as exactly one warning")
+	assert.Contains(t, out, "? convergence: resolving the active profile for g1")
 
 	// The primary repair (by-path, unaffected by the missing read bit on
 	// the shared directory) must still have gone through.

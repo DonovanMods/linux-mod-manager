@@ -430,7 +430,7 @@ func renderSnapshotRestorePlan(service *core.Service, plan *core.SnapshotRestore
 			detail = " (will download)"
 		}
 		fmt.Printf("  - %s %s%s\n", snapshotModLabel(m.Name, m.SourceID, m.ModID),
-			displayModVersion(workshopVersioned(service, m.External, m.SourceID), m.Version, m.UpdatedAt), detail)
+			displayModVersion(workshopVersioned(service, &domain.Mod{SourceID: m.SourceID, DisplayVersion: m.DisplayVersion}, m.External), m.Version, m.UpdatedAt), detail)
 	}
 	if plan.ProfileChanged {
 		fmt.Printf("\nThe profile %s will be rewritten from the snapshot.\n", plan.Profile)

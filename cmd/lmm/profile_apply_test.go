@@ -248,9 +248,9 @@ func TestDoProfileApply_InstallLoop_PerModErrorsContinue(t *testing.T) {
 }
 
 // TestDoProfileApply_VerboseNotePath_UndeployFailurePrintsUnderVerbose pins
-// the disable loop's --verbose-only warning (a failed Uninstall) and the
-// fact that the mod is still reported as disabled afterwards - the CLI twin
-// of core's SwitchDisableNote contract.
+// the disable loop's --verbose-only warning (a failed Uninstall) - and,
+// since #471, that the mod is NOT reported as disabled: the apply fails
+// naming it, as a failed enable does.
 func TestDoProfileApply_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
@@ -267,12 +267,16 @@ func TestDoProfileApply_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *tes
 	applyYes(t)
 	applyVerbose(t, true)
 
-	out := captureStdout(t, func() error {
+	out, _, err := captureStdoutAndStderr(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
 
+	var incomplete *core.ProfileApplyIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	assert.Contains(t, err.Error(), "src:1): undeploy failed")
+	assert.Equal(t, exitError, exitCodeFor(err))
 	assert.Contains(t, out, "  Warning: failed to undeploy Test Mod: ")
-	assert.Contains(t, out, "  ✓ Disabled: Test Mod\n")
+	assert.NotContains(t, out, "✓ Disabled: Test Mod")
 }
 
 // applyLockRefusalFixture seeds the one scenario every #294 apply capture

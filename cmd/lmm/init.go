@@ -225,14 +225,14 @@ func initStepGames(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader
 		selected[i] = known[n-1]
 	}
 	result, applyErr := service.ApplyGameDetect(ctx, selected)
-	for i := range result.Profiles {
+	for i := range result.Completed() {
 		cmd.Printf("  Added %s (%s)\n", selected[i].Name, selected[i].Slug)
 	}
 	for _, w := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 	if applyErr != nil {
-		// Partial success is the honest report: result.Profiles named
+		// Partial success is the honest report: result.Completed() counted
 		// exactly what did land, and the games that did not are still
 		// addable by hand.
 		cmd.Printf("  Stopped adding games: %v\n", applyErr)

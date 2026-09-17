@@ -24,12 +24,19 @@ func TestDoInstall_ProfileWriteFailure_PrintsNotesAndSuppressesAddedToProfile(t 
 		[]domain.DownloadableFile{{ID: "main", Name: "Test Mod", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN"}})
 	src.AddDownload("main", []byte("mod-bytes"))
 
-	// An unparseable profile file: pm.Get fails with a YAML error (not
-	// ErrProfileNotFound), so the create is refused and the UpsertMod that
-	// would record the ref cannot run either.
+	// A profile file lmm can read and cannot write: the directory and the
+	// file are read-only, so the UpsertMod that would record the ref fails.
+	// (An unreadable profile file refuses the install outright since #462:
+	// lmm cannot tell which profile is active.)
+	if os.Getuid() == 0 {
+		t.Skip("root can write a read-only file")
+	}
 	profileDir := filepath.Join(configDir, "games", "g1", "profiles")
 	require.NoError(t, os.MkdirAll(profileDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(profileDir, "default.yaml"), []byte("\tnot: [valid\n"), 0o644))
+	path := filepath.Join(profileDir, "default.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("name: default\ngame_id: g1\nmods: []\nis_default: true\n"), 0o444))
+	require.NoError(t, os.Chmod(profileDir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(profileDir, 0o755) })
 
 	out := captureStdout(t, func() error { return doInstall(context.Background(), svc, game, nil) })
 
