@@ -1744,9 +1744,15 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   step `lmm game edit --mod-path` names to record a file a v1.30.1 switch
   left live under another profile's record. Such a mod is now deployed
   from the cache and the profile gets its own row, with the other row's
-  checksums, as `lmm profile switch` and `lmm profile import` already do. A
-  mod whose listed version is not in the cache, or with another version
-  live, is still fetched.
+  checksums, as `lmm profile switch` and `lmm profile import` already do.
+  That row is the profile's own: its link method, the `notify` update
+  policy and no update history, never the other profile's (an `auto`
+  policy used to be copied across). The plan, `--dry-run` included, shows
+  the version picked and whose cache it comes from
+  (`+ Mod (id) v2.0, from profile survival's cache`), and the game's
+  adapter has its say on such a mod as on the profile's own. A mod whose
+  listed version is not in the cache, or with another version live, is
+  still fetched.
 
 - **`lmm profile apply` acts for the active profile only (#462, for
   apply).** An apply deploys, and the game directory holds the active

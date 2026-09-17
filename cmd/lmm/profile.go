@@ -1382,7 +1382,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		if len(plan.ToEnable) > 0 {
 			fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
 			for _, im := range plan.ToEnable {
-				fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
+				fmt.Printf("  + %s (%s)%s\n", im.Name, im.ID, borrowedFrom(im, profileName))
 			}
 		}
 
@@ -1526,6 +1526,20 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 
 	fmt.Printf("\n✓ Applied profile: %s\n", profileName)
 	return nil
+}
+
+// borrowedFrom is the suffix of a "Will enable" line for a mod the apply
+// deploys from another profile's cache (#445 final gate F-D): the version
+// it picked, and whose cache that is. A mod of the profile's own has none.
+func borrowedFrom(im domain.InstalledMod, profile string) string {
+	if im.ProfileName == profile {
+		return ""
+	}
+	version := ""
+	if shown := displayModVersion(im.External, im.Version, im.UpdatedAt); shown != "" && shown != "-" {
+		version = " v" + shown
+	}
+	return fmt.Sprintf("%s, from profile %s's cache", version, im.ProfileName)
 }
 
 // installLaterHint names the commands that install an imported profile's

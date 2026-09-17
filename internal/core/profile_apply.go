@@ -49,8 +49,11 @@ type ProfileApplyPlan struct {
 	// It also holds a listed mod with no row under Profile that another
 	// profile of the game has, at the listed version and fully cached
 	// (cachedRowElsewhere): that row, whose ProfileName is the other
-	// profile's. The apply deploys it from the cache and gives Profile its
-	// own copy of the row, rather than fetching the mod (#445 audit).
+	// profile's - how a frontend tells the version picked and whose cache
+	// it comes from. The apply deploys it from the cache and gives Profile
+	// a row of its own, rather than fetching the mod (#445 audit): Profile's
+	// link method, the notify policy and no update history, whatever the
+	// other profile's row says (copyRowToProfile).
 	ToEnable []domain.InstalledMod `json:"to_enable"`
 
 	// ToInstall is the (re)install list, in the order doProfileApply built
@@ -474,6 +477,13 @@ func (s *Service) planProfileApply(ctx context.Context, game *domain.Game, profi
 
 	plan.NoChanges = len(plan.ToDisable) == 0 && len(plan.ToEnable) == 0 && len(plan.ToInstall) == 0
 
+	// The snapshot below asks the adapter about this profile's rows; the
+	// rows it borrows from another profile's cache are deployed as its own,
+	// so the adapter has its say on them too (#445 final gate F-D).
+	if err := s.checkBorrowedPreconditions(game.ID, profileName, installedMods, plan.ToEnable); err != nil {
+		return nil, err
+	}
+
 	for i := range plan.ToInstall {
 		s.resolveProfileApplyInstall(ctx, game, &plan.ToInstall[i])
 	}
@@ -588,6 +598,23 @@ func cachedRowElsewhere(gameCache *cache.Cache, gameID string, ref domain.ModRef
 	return row, true
 }
 
+// checkBorrowedPreconditions asks game's adapter about profileName's
+// installed rows together with the rows toEnable borrows from another
+// profile's cache (cachedRowElsewhere) - nothing when it borrows none,
+// since the plan's snapshot already asks about installed alone.
+func (s *Service) checkBorrowedPreconditions(gameID, profileName string, installed, toEnable []domain.InstalledMod) error {
+	mods := slices.Clone(installed)
+	for _, im := range toEnable {
+		if im.ProfileName != profileName {
+			mods = append(mods, im)
+		}
+	}
+	if len(mods) == len(installed) {
+		return nil
+	}
+	return s.checkAdapterPreconditions(gameID, mods)
+}
+
 // externalRowsElsewhere collects the EXTERNAL installed rows (#269) of every
 // saved profile of gameID EXCEPT exceptProfile, keyed by domain.ModKey.
 //
@@ -673,6 +700,17 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 	result := &ProfileApplyResult{}
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {
 		return result, err
+	}
+	// The freshness check asks the adapter about this profile's rows only;
+	// it has its say on the borrowed ones again too, as at the plan.
+	if slices.ContainsFunc(plan.ToEnable, func(im domain.InstalledMod) bool { return im.ProfileName != plan.Profile }) {
+		installed, err := s.GetInstalledMods(ctx, plan.GameID, plan.Profile)
+		if err != nil {
+			return result, fmt.Errorf("loading installed mods: %w", err)
+		}
+		if err := s.checkBorrowedPreconditions(plan.GameID, plan.Profile, installed, plan.ToEnable); err != nil {
+			return result, err
+		}
 	}
 
 	// doProfileApply returned before the merged-pak sync when all three
@@ -769,7 +807,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			// Another profile's row (cachedRowElsewhere): this profile gets
 			// its own copy, enabled and deployed, as a switch mints one
 			// (#60) and an import copies one (#371).
-			for _, msg := range s.copyRowToProfile(ctx, game, im, plan.Profile) {
+			for _, msg := range s.copyRowToProfile(ctx, game, im, plan.Profile, installer.linker.Method()) {
 				warn(scope, SwitchInstallWarning, msg)
 			}
 		} else if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.Profile, true); err != nil {
@@ -961,22 +999,33 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 	return result, nil
 }
 
-// copyRowToProfile saves row - another profile's - as profile's own,
-// enabled and deployed, with row's checksums (rowChecksums). What goes
-// wrong comes back as messages without a "Warning: " prefix, the form the
-// flow's Warnings take.
-func (s *Service) copyRowToProfile(ctx context.Context, game *domain.Game, row domain.InstalledMod, profile string) []string {
+// copyRowToProfile saves the mod of row - another profile's - as
+// profile's own, enabled and deployed with method, with row's file IDs and
+// checksums (rowChecksums). The row is built fresh, as importCachedMod
+// builds one (#445 final gate F-D): what row says about ITS profile - its
+// link method, its update policy, its update history - is not profile's.
+// ManualDownload is a fact about the mod, so it is kept. What goes wrong
+// comes back as messages without a "Warning: " prefix, the form the flow's
+// Warnings take.
+func (s *Service) copyRowToProfile(ctx context.Context, game *domain.Game, row domain.InstalledMod, profile string, method domain.LinkMethod) []string {
 	checksums, read := s.rowChecksums(ctx, game, row)
 	msgs := make([]string, 0, len(read))
 	for _, msg := range read {
 		msgs = append(msgs, strings.TrimPrefix(msg, "Warning: "))
 	}
-	copied := row
-	copied.ProfileName = profile
-	copied.GameID = game.ID
-	copied.Enabled = true
-	copied.Deployed = true
-	if err := s.saveInstalledMod(ctx, &copied); err != nil {
+	mod := row.Mod
+	mod.GameID = game.ID
+	copied := &domain.InstalledMod{
+		Mod:            mod,
+		ProfileName:    profile,
+		UpdatePolicy:   domain.UpdateNotify,
+		Enabled:        true,
+		Deployed:       true,
+		LinkMethod:     method,
+		FileIDs:        row.FileIDs,
+		ManualDownload: row.ManualDownload,
+	}
+	if err := s.saveInstalledMod(ctx, copied); err != nil {
 		return append(msgs, fmt.Sprintf("could not record %s under %s: %v", row.Name, profile, err))
 	}
 	return append(msgs, s.recordFileChecksums(ctx, row.SourceID, row.ID, game.ID, profile, checksums)...)
