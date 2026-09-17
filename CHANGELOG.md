@@ -3166,8 +3166,9 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
   column, so the "Pick an installed game…" list cut its install paths short
   even on a wide screen, and its game names did not line up. The form now
   follows the width of its panel, the installed-games lists (the picker and
-  "Detect games…") set names and paths in aligned columns, and a long path
-  wraps instead of being cut off. Neither list offers a game you have
+  "Detect games…") set names and paths in aligned columns, a long path
+  wraps instead of being cut off, and a very long game name wraps between
+  words rather than squeezing every path beside it. Neither list offers a game you have
   already configured any more — it says how many it left out — and each
   row of the Games table has an **Edit…** button that opens its sources,
   mod path and loader editors together. A configured game whose mod path

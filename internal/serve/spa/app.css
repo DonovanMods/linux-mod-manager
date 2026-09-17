@@ -2873,10 +2873,15 @@ select {
 /* Games: detect + manual add (gameadd.js), shared by the first-run flow.
    Issue 421: the list is ONE grid and every row a subgrid of it, so the
    names line up in a column however long each is, and the path column
-   takes whatever width the page has rather than a fixed share of it. */
+   takes whatever width the page has rather than a fixed share of it. The
+   name column stops growing at 40% and the path keeps at least 12rem (or
+   the whole list, if that is narrower), so one very long name wraps
+   rather than starving every path beside it to a few characters a line. */
 .setup-detect__list {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) auto auto;
+  grid-template-columns:
+    fit-content(40%) minmax(min(12rem, 100%), 1fr)
+    auto auto;
   column-gap: var(--space-3);
   margin: 0 0 var(--space-3);
   padding: 0;
@@ -2892,16 +2897,18 @@ select {
 }
 
 /* First-run readiness item 9: the game name must never wrap mid-word to
-   make room for the path beside it - it gets its own natural width and
-   the path (usually much longer) gives way instead. Issue 421: it gives
-   way by WRAPPING, not by an ellipsis - a truncated install path is the
-   one fact that tells two copies of a game apart - and keeps its `title`. */
+   make room for the path beside it - it gets its natural width up to the
+   column's ceiling, and past that wraps only between words - and the path
+   (usually much longer) gives way instead. Issue 421: it gives way by
+   WRAPPING, not by an ellipsis - a truncated install path is the one fact
+   that tells two copies of a game apart - and keeps its `title`. */
 .setup-detect__name {
   display: flex;
   grid-column: 1;
   align-items: center;
   gap: var(--space-2);
-  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .setup-detect__action {

@@ -16,71 +16,109 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// pickerLayoutJS measures the open installed-games list: whether any name
-// or path is clipped, how many distinct left edges the names and the paths
-// have (one each when they form columns), and whether the form reaches past
-// the viewport.
-const pickerLayoutJS = `(() => {
-	const list = document.querySelector('[data-testid="setup-add-picker"] .setup-detect__list');
+// listLayoutJS measures one open installed-games list, named by its
+// container selector (%q): whether any name or path is clipped, whether any
+// word of a name wraps across lines, how many distinct left edges the names
+// and the paths have (one each when they form columns), the narrowest path,
+// and whether the form or the page reaches past the viewport.
+const listLayoutJS = `(() => {
+	const list = document.querySelector(%q + ' .setup-detect__list');
 	const clipped = (el) => el.scrollWidth > el.clientWidth + 1;
 	const names = [...list.querySelectorAll(".setup-detect__name")];
 	const paths = [...list.querySelectorAll(".setup-detect__path")];
 	const lefts = (els) => new Set(els.map((e) => Math.round(e.getBoundingClientRect().left))).size;
-	const form = document.querySelector('[data-testid="setup-add-game"]').getBoundingClientRect();
+	// A word laid out on one line has one client rect; split mid-word, two.
+	const splitWords = (el) => {
+		let split = 0;
+		const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+			for (const m of node.data.matchAll(/\S+/g)) {
+				const range = document.createRange();
+				range.setStart(node, m.index);
+				range.setEnd(node, m.index + m[0].length);
+				const lines = new Set([...range.getClientRects()].map((r) => Math.round(r.top)));
+				if (lines.size > 1) split++;
+			}
+		}
+		return split;
+	};
+	const add = document.querySelector('[data-testid="setup-add-game"]');
+	const form = add ? add.getBoundingClientRect() : null;
 	return {
 		rows: names.length,
 		clippedNames: names.filter(clipped).length,
+		splitNameWords: names.reduce((n, el) => n + splitWords(el), 0),
 		clippedPaths: paths.filter(clipped).length,
 		nameColumns: lefts(names),
 		pathColumns: lefts(paths),
-		formWidth: Math.round(form.width),
-		overflows: form.right > window.innerWidth + 1,
+		narrowestPath: Math.round(Math.min(...paths.map((p) => p.getBoundingClientRect().width))),
+		listOverflows: list.scrollWidth > list.clientWidth + 1,
+		formWidth: form ? Math.round(form.width) : 0,
+		overflows: (form !== null && form.right > window.innerWidth + 1) ||
+			document.documentElement.scrollWidth > window.innerWidth,
 	};
 })()`
 
-type pickerLayout struct {
-	Rows         int  `json:"rows"`
-	ClippedNames int  `json:"clippedNames"`
-	ClippedPaths int  `json:"clippedPaths"`
-	NameColumns  int  `json:"nameColumns"`
-	PathColumns  int  `json:"pathColumns"`
-	FormWidth    int  `json:"formWidth"`
-	Overflows    bool `json:"overflows"`
+type listLayout struct {
+	Rows           int  `json:"rows"`
+	ClippedNames   int  `json:"clippedNames"`
+	SplitNameWords int  `json:"splitNameWords"`
+	ClippedPaths   int  `json:"clippedPaths"`
+	NameColumns    int  `json:"nameColumns"`
+	PathColumns    int  `json:"pathColumns"`
+	NarrowestPath  int  `json:"narrowestPath"`
+	ListOverflows  bool `json:"listOverflows"`
+	FormWidth      int  `json:"formWidth"`
+	Overflows      bool `json:"overflows"`
 }
 
+// longDetectName is a game name long enough that, given its natural width,
+// it starved the path column beside it to a few characters a line.
+const longDetectName = "The Elder Scrolls V: Skyrim Special Edition Anniversary Upgrade Deluxe"
+
 // TestE2E_AddGamePicker_IsFluidAlignedAndUntruncated opens the first-run
-// picker (two unconfigured games, different name lengths) at a narrow and a
-// wide viewport.
+// detect list and picker (three unconfigured games, one with a very long
+// name) at a narrow and a wide viewport.
 func TestE2E_AddGamePicker_IsFluidAlignedAndUntruncated(t *testing.T) {
 	f := newE2EFixtureNoGames(t)
-	writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+	steam := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+	writeSteamAppManifest(t, steam.SteamRoot, "777777",
+		"SkyrimSpecialEditionAnniversaryUpgradeDeluxe", longDetectName)
 
-	measure := func(width int) pickerLayout {
-		var got pickerLayout
+	measure := func(width int) (detect, picker listLayout) {
 		f.runInBrowser(t,
 			chromedp.EmulateViewport(int64(width), 1000),
 			chromedp.Navigate(f.BaseURL+"/"),
-			chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
+			pollUntil(`document.querySelectorAll('[data-testid="setup-detect"] .setup-detect__row').length === 3`),
+			chromedp.Evaluate(fmt.Sprintf(listLayoutJS, `[data-testid="setup-detect"]`), &detect),
+			pollUntil(`document.querySelector('[data-testid="setup-add-game"]') !== null`),
 			clickWhenSettled(`[data-action="pick-installed"]`),
-			pollUntil(`document.querySelectorAll('[data-action="pick-installed-row"]').length === 2`),
-			chromedp.Evaluate(pickerLayoutJS, &got),
+			pollUntil(`document.querySelectorAll('[data-action="pick-installed-row"]').length === 3`),
+			chromedp.Evaluate(fmt.Sprintf(listLayoutJS, `[data-testid="setup-add-picker"]`), &picker),
 		)
-		return got
+		return detect, picker
 	}
 
-	narrow := measure(800)
-	wide := measure(1600)
-
-	for name, got := range map[string]pickerLayout{"800px": narrow, "1600px": wide} {
-		assert.Equal(t, 2, got.Rows, name)
-		assert.Zero(t, got.ClippedNames, "%s: a game name is never cut off", name)
-		assert.Zero(t, got.ClippedPaths, "%s: an install path wraps rather than being cut off", name)
-		assert.Equal(t, 1, got.NameColumns, "%s: the names start on one line", name)
-		assert.Equal(t, 1, got.PathColumns, "%s: the paths form a column beside them", name)
-		assert.False(t, got.Overflows, "%s: the form stays inside the viewport", name)
+	for _, width := range []int{800, 1600} {
+		detect, picker := measure(width)
+		for list, got := range map[string]listLayout{"detect": detect, "picker": picker} {
+			name := fmt.Sprintf("%dpx %s", width, list)
+			assert.Equal(t, 3, got.Rows, name)
+			assert.Zero(t, got.ClippedNames, "%s: a game name is never cut off", name)
+			assert.Zero(t, got.SplitNameWords, "%s: a game name never wraps mid-word", name)
+			assert.Zero(t, got.ClippedPaths, "%s: an install path wraps rather than being cut off", name)
+			assert.Equal(t, 1, got.NameColumns, "%s: the names start on one line", name)
+			assert.Equal(t, 1, got.PathColumns, "%s: the paths form a column beside them", name)
+			assert.GreaterOrEqual(t, got.NarrowestPath, 150,
+				"%s: a long name does not starve the path column", name)
+			assert.False(t, got.ListOverflows, "%s: the list fits its box", name)
+			assert.False(t, got.Overflows, "%s: nothing reaches past the viewport", name)
+		}
+		if width == 800 {
+			assert.Greater(t, picker.FormWidth, 480,
+				"the form follows its panel's width rather than a fixed 30rem")
+		}
 	}
-	assert.Greater(t, narrow.FormWidth, 480,
-		"the form follows its panel's width rather than a fixed 30rem")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 

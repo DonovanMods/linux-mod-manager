@@ -309,16 +309,21 @@ func TestE2E_FirstRunDetect_AddsTheGameAndLandsOnMissionControl(t *testing.T) {
 		`document.querySelectorAll('.setup-detect__row .badge--policy').length`, &knownBadgeCount))
 	assert.Equal(t, 1, knownBadgeCount, "exactly the curated row is badged Known")
 
-	// First-run readiness item 9: the game name must get its own room
-	// (never wrap mid-word) and the path - the full value still available
-	// via `title` - is what truncates instead.
-	var nameWhiteSpace, pathTitle string
+	// First-run readiness item 9: the game name must never wrap mid-word -
+	// past its column's ceiling it wraps only between words (the laid-out
+	// check, with a very long name, is TestE2E_AddGamePicker_IsFluid…) -
+	// and the path, its full value still available via `title`, is what
+	// gives way instead.
+	var nameWrap, pathTitle string
 	f.runInBrowser(t,
-		chromedp.Evaluate(`getComputedStyle(document.querySelector('.setup-detect__name')).whiteSpace`, &nameWhiteSpace),
+		chromedp.Evaluate(`(() => {
+			const s = getComputedStyle(document.querySelector('.setup-detect__name'));
+			return s.overflowWrap + " " + s.wordBreak;
+		})()`, &nameWrap),
 		chromedp.AttributeValue(`.setup-detect__path`, "title", &pathTitle, nil, chromedp.ByQuery),
 	)
-	assert.Equal(t, "nowrap", nameWhiteSpace, "the game name must never wrap mid-word")
-	assert.NotEmpty(t, pathTitle, "the truncated path must carry its full value via title")
+	assert.Equal(t, "normal normal", nameWrap, "the game name must never wrap mid-word")
+	assert.NotEmpty(t, pathTitle, "the wrapped path must carry its full value via title")
 
 	f.runInBrowser(t,
 		clickWhenSettled(`.setup-detect__row input[type="checkbox"]`),
