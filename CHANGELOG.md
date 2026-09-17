@@ -1781,6 +1781,22 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   failure, and `from_profile` for a mod deployed from another profile's
   cache. The web UI's Apply job fails with the same message.
 
+- **`lmm uninstall` keeps a cache entry another profile still uses
+  (#445).** Uninstalling a mod deleted its version's cache entry even while
+  another profile's row still used it — and for a local mod that entry is
+  the only copy, so the other profile was left with a mod it could never
+  deploy again (its switch failed with "source not found: local"). Since
+  `lmm profile apply` deploys a mod from another profile's cache, two rows
+  on one entry are the ordinary state. The entry is now removed only when
+  no other row has that version, or rolls back to it — in any profile of
+  the game, or of another game whose `cache_path` is the same directory
+  (a row of a game that is no longer configured keeps it too). The dry run
+  says `Cache entry kept: profile <name> still uses it` instead of
+  `Cache entry would be deleted`, the uninstall says `Cache files kept`,
+  and the plan and result carry `cache_used_by`. An install that replaces
+  a version clears the old version's entry under the same rule, and notes
+  (`--verbose`) the one it kept.
+
 - **`lmm profile apply` records the mods it switches on as deployed
   (#467).** Their rows kept saying "not deployed" while the files were
   live, so a later `lmm profile switch` that moved one of those mods to
