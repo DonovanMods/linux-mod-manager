@@ -146,6 +146,12 @@ export function toggleRequestFor(state, modKey) {
   return state.toggleRequests?.[ledgerKey(state.route ?? {}, modKey)];
 }
 
+/** toggleEntryInContext reports whether entry was opened for route's
+ * context (game and profile). */
+export function toggleEntryInContext(entry, route) {
+  return ledgerKey(route ?? {}, entry.modKey) === entry.key;
+}
+
 /** ledgerKey is an entry's key: the context and the mod, unambiguously
  * joined (a profile name may contain any separator a string could use). */
 function ledgerKey(context, modKey) {

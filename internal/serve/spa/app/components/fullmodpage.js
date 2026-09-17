@@ -146,7 +146,16 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   // and one more (issue 432): the library document is what a toggle
   // request settles on (toggleack.js), so a control reading anything else
   // could show a value the request was never checked against.
-  const enabled = listing?.enabled ?? installedMod.enabled;
+  //
+  // Unless the listing is the OLDER of the two (issue 454 N1): a page
+  // re-read after a job whose library read failed keeps the library
+  // document from before the job, while its files report is from after
+  // it. The request has settled by then ("could not be read"), so nothing
+  // is checked against either, and the fresher answer is the true one.
+  const listingIsFresher =
+    (state.docStamps?.mods ?? 0) >= (modPage.filesStamp ?? 0);
+  const enabled =
+    (listingIsFresher ? listing?.enabled : undefined) ?? installedMod.enabled;
   const settingsRow = settingsSource && {
     source_id: sourceID,
     id: modID,

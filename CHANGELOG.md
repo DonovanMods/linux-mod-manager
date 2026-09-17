@@ -3182,6 +3182,15 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
   buttons and fields are likewise shown in muted colours rather than at
   half strength.
 
+- **An enable/disable whose follow-up read fails no longer leaves a wrong or
+  stuck control (#454).** On a mod's full page, a toggle whose library
+  re-read failed kept showing the button from before the change ("Disable"
+  on a mod that was now disabled); the page now shows the fresher answer it
+  already had, and asks the server again a few seconds later. In the
+  library, a toggle whose status read failed used to sit pending for a full
+  minute and then report that the server had not answered; it now settles
+  as soon as the library itself has been re-read.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

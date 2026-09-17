@@ -62,6 +62,10 @@ import (
 //     lateAnswers counts it. stallMod, when set, confines the stall to that
 //     mod's start;
 //
+// GET /api/v1/mods answers a 500 while failMods is set, and GET
+// /api/v1/status (scoped or not) while failStatus is set (issue 454);
+// modsReads counts every library read that reached the wire.
+//
 // GET /api/v1/mods is held while holdMods is set: releaseNextMods answers
 // the oldest read still held, releaseMods every read, held or to come.
 // modsHeld counts the reads held, modsAnswered the held reads since
@@ -117,6 +121,9 @@ type toggleWire struct {
 	modsAnswered atomic.Int64
 	modsQueue    []chan struct{} // guarded by mu
 	updatesReads atomic.Int64
+	modsReads    atomic.Int64
+	failMods     atomic.Bool
+	failStatus   atomic.Bool
 
 	withholdDone    atomic.Bool
 	withholdStarted atomic.Bool
@@ -232,7 +239,27 @@ func (w *toggleWire) serveStalled(rw http.ResponseWriter, r *http.Request, mode 
 	_, _ = rw.Write(answer.Body.Bytes())
 }
 
+// serveInjectedFailure answers the error envelope a failing handler would.
+func serveInjectedFailure(rw http.ResponseWriter) {
+	rw.Header().Set("Content-Type", "application/json")
+	rw.WriteHeader(http.StatusInternalServerError)
+	_, _ = rw.Write([]byte(`{"error":"injected failure"}`))
+}
+
+func (w *toggleWire) serveStatus(rw http.ResponseWriter, r *http.Request) {
+	if w.failStatus.Load() {
+		serveInjectedFailure(rw)
+		return
+	}
+	w.proxy.ServeHTTP(rw, r)
+}
+
 func (w *toggleWire) serveMods(rw http.ResponseWriter, r *http.Request) {
+	w.modsReads.Add(1)
+	if w.failMods.Load() {
+		serveInjectedFailure(rw)
+		return
+	}
 	if w.holdMods.Load() {
 		mine := make(chan struct{})
 		w.mu.Lock()
@@ -403,6 +430,7 @@ func newToggleWireFixture(t *testing.T, src *fakeSource, pass int64) (e2eFixture
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/mods/{source}/{id}/{action}", w.serveToggle)
 	mux.HandleFunc("GET /api/v1/mods", w.serveMods)
+	mux.HandleFunc("GET /api/v1/status", w.serveStatus)
 	mux.HandleFunc("GET /api/v1/updates", w.serveUpdates)
 	mux.HandleFunc("GET /api/v1/events", w.serveEvents)
 	mux.HandleFunc("GET /api/v1/jobs/{id}", w.serveJobLookup)
