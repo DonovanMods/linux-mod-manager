@@ -179,6 +179,18 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if err != nil {
 		return err
 	}
+	// #462: an update is refused for a profile that is not the game's
+	// active one. Ask before the source check, so the refusal is not
+	// printed under an update table the run was never going to apply. A
+	// plain check - and --all --dry-run, which is one - still runs.
+	if len(args) > 0 {
+		err = service.CheckDeployTarget(ctx, game.ID, profileName, core.VerbUpdate)
+	} else if updateAll && !updateDryRun {
+		err = service.CheckDeployTarget(ctx, game.ID, profileName, core.VerbUpdateMany)
+	}
+	if err != nil {
+		return err
+	}
 
 	// Get installed mods
 	installed, err := service.GetInstalledMods(ctx, game.ID, profileName)

@@ -73,11 +73,13 @@ func TestDoInstall_RefusesANonActiveProfile(t *testing.T) {
 	before := dirNames(t, game.ModPath)
 	setFlag(t, &installProfile, "alt")
 
-	_, _, err := captureStdoutAndStderr(t, func() error {
+	stdout, _, err := captureStdoutAndStderr(t, func() error {
 		return doInstall(context.Background(), svc, game, []string{"mod1"})
 	})
 
 	requireRefusedForAlt(t, err, game, before)
+	assert.Contains(t, err.Error(), "cannot install into profile")
+	assert.Empty(t, stdout, "the refusal comes before the mod is fetched and its dependencies resolved")
 }
 
 func TestDoModEnable_RefusesANonActiveProfile(t *testing.T) {
@@ -109,16 +111,47 @@ func TestDoUpdateRollback_RefusesANonActiveProfile(t *testing.T) {
 }
 
 func TestDoUpdate_RefusesANonActiveProfile(t *testing.T) {
-	svc, game, _ := setupDoUpdateTest(t)
-	seedAltProfile(t, svc, game, "test-src")
-	before := dirNames(t, game.ModPath)
-	setFlag(t, &updateProfile, "alt")
+	for _, tc := range []struct {
+		name string
+		all  bool
+		args []string
+		verb string
+	}{
+		{"one mod", false, []string{"altonly"}, "cannot update a mod in profile"},
+		{"--all", true, nil, "cannot update mods in profile"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, game, src := setupDoUpdateTest(t)
+			seedAltProfile(t, svc, game, "test-src")
+			src.AddMod(&domain.Mod{ID: "altonly", SourceID: "test-src", Name: "Mod altonly", Version: "2.0", GameID: game.ID}, nil)
+			before := dirNames(t, game.ModPath)
+			setFlag(t, &updateProfile, "alt")
+			setFlag(t, &updateAll, tc.all)
 
-	_, _, err := captureStdoutAndStderr(t, func() error {
-		return doUpdate(context.Background(), svc, game, []string{"altonly"})
+			stdout, _, err := captureStdoutAndStderr(t, func() error {
+				return doUpdate(context.Background(), svc, game, tc.args)
+			})
+
+			requireRefusedForAlt(t, err, game, before)
+			assert.Contains(t, err.Error(), tc.verb)
+			assert.Empty(t, stdout, "the refusal comes before the update check and its table")
+			assert.Zero(t, src.checkUpdatesCalls, "no source was asked for updates")
+		})
+	}
+
+	t.Run("a plain check still runs", func(t *testing.T) {
+		svc, game, src := setupDoUpdateTest(t)
+		seedAltProfile(t, svc, game, "test-src")
+		setFlag(t, &updateProfile, "alt")
+		setFlag(t, &updateAll, false)
+
+		_, _, err := captureStdoutAndStderr(t, func() error {
+			return doUpdate(context.Background(), svc, game, nil)
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, 1, src.checkUpdatesCalls)
 	})
-
-	requireRefusedForAlt(t, err, game, before)
 }
 
 func TestDoImport_RefusesANonActiveProfile(t *testing.T) {
