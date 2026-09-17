@@ -63,6 +63,16 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #433: uploaded_at, the file's own date for the install
+			// picker, present only when the source reports one.
+			"downloadable_file_dated",
+			domain.DownloadableFile{
+				ID: "file-2", Name: "Main File", FileName: "sample-mod-1.2.4.zip",
+				Version: "1.2.4", Size: 1024, IsPrimary: true, Category: "MAIN",
+				UploadedAt: time.Date(2026, 9, 1, 8, 30, 0, 0, time.UTC),
+			},
+		},
+		{
 			"mod_reference",
 			domain.ModReference{
 				SourceID: "nexusmods",
