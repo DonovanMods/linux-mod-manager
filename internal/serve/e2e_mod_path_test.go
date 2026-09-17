@@ -62,6 +62,7 @@ func TestE2E_MissingModPath_FlaggedWithTheRepairEverywhere(t *testing.T) {
 	assert.Contains(t, banner, f.Game.ModPath+" does not exist, but lmm recorded 2 deployed file(s) under it")
 	assert.Contains(t, banner, "Set mod path…")
 	assert.Contains(t, healthRow, "Mod path")
+	assert.NotContains(t, healthRow, "`", "the note's commands are set as code, not wrapped in backticks")
 	assert.Contains(t, healthRow, "Set mod path…", "the row's action is the repair, not a dead 'Not fixable'")
 	assert.Equal(t, f.Game.ModPath, value, "with no suggestion the editor starts from the current value")
 	assert.Contains(t, rowWarning, "does not exist")
@@ -85,7 +86,7 @@ func TestE2E_ModPathEditor_MarksARejectedValueAndOrdersTheRefusal(t *testing.T) 
 			chromedp.SendKeys(`input[name="mod-path"]`, v, chromedp.ByQuery),
 		}
 	}
-	var invalid string
+	var invalid, title string
 	var ok bool
 	var steps []string
 	f.runInBrowser(t,
@@ -104,7 +105,9 @@ func TestE2E_ModPathEditor_MarksARejectedValueAndOrdersTheRefusal(t *testing.T) 
 		chromedp.Click(`button[data-action="save-mod-path"]`, chromedp.ByQuery),
 		pollUntil(`document.querySelector('[data-testid="mod-path-in-use"]') !== null`),
 		chromedp.Evaluate(`[...document.querySelectorAll('.mod-path-in-use__step')].map(li => li.dataset.command)`, &steps),
+		textContent(`.mod-path-in-use__title`, &title),
 	)
+	assert.Contains(t, title, "2 file(s) are deployed under "+f.Game.ModPath+", so")
 	assert.True(t, ok)
 	assert.Equal(t, "true", invalid)
 	assert.Equal(t, []string{

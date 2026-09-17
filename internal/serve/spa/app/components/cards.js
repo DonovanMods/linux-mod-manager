@@ -18,6 +18,7 @@ import {
 import { displayVersion, displayUpdateTarget } from "../version.js";
 import { relativeTime } from "../relativetime.js";
 import { navigate, modPathEditPath } from "../router.js";
+import { codeSpans } from "../errortext.js";
 import { conflictLabel } from "../conflicts.js";
 
 // UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
@@ -469,7 +470,7 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                         }</span
                       >
                       <span class="card__row-detail" title=${findingLabel(f)}
-                        >${findingLabel(f)}</span
+                        >${codeSpans(findingLabel(f))}</span
                       >
                       ${
                         f.fixable

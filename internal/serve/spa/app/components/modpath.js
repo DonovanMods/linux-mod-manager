@@ -152,9 +152,11 @@ export function ModPathInUse({ details, message }) {
   return html`
     <div class="mod-path-in-use" data-testid="mod-path-in-use">
       <p class="mod-path-in-use__title">
-        ${details.deployed_files} file(s) are deployed under
-        ${details.mod_path}, so lmm will not move the mod path yet. In this
-        order:
+        ${
+          // One string: htm drops the whitespace between a line break and
+          // an interpolation, which fused "under" to the path.
+          `${details.deployed_files} file(s) are deployed under ${details.mod_path}, so lmm will not move the mod path yet. In this order:`
+        }
       </p>
       <ol class="mod-path-in-use__steps">
         ${steps.map(
