@@ -64,9 +64,6 @@ func TestVerify_ChecksumlessImportedModsAreCountedNotEmpty(t *testing.T) {
 		Mod:         domain.Mod{ID: "imp", SourceID: domain.SourceLocal, Name: "Imported", Version: "1.0", GameID: game.ID},
 		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
 	}))
-	// Its bytes are cached: a row whose cache entry is gone is a finding of
-	// its own (#469, TestVerify_ARowWhoseCacheEntryIsGoneIsAFinding).
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, domain.SourceLocal, "imp", "1.0", "imp.esp", []byte("imp")))
 	seedProfileWithMod(t, svc, game.ID, "default", domain.SourceLocal, "imp", "1.0")
 
 	report, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Force: true}, nil)

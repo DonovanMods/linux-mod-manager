@@ -151,13 +151,17 @@ func TestModPathRefusal_AListedVersionThatNoLongerShipsThePathIsClearable(t *tes
 }
 
 // TestVerify_ARowWhoseCacheEntryIsGoneIsAFinding is #469's D2: a mod with no
-// file record was never checked against the cache at all.
+// file record was never checked against the cache at all. The row models a
+// downloaded mod - a source other than local, a version, not adopted in
+// place - since only such a row ever had a cache entry to lose.
 func TestVerify_ARowWhoseCacheEntryIsGoneIsAFinding(t *testing.T) {
 	ctx := context.Background()
 	f := newLegacyFixture(t, &domain.Game{ID: "sky", Name: "Sky", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink})
-	f.profile(t, "default", true, "a")
-	f.deployed(t, "default", "a", domain.LinkSymlink, map[string]string{"Data/a.esp": "mod a"}, nil)
-	require.NoError(t, f.svc.GetGameCache(f.game).Delete("sky", "local", "a", "unknown"))
+	f.profile(t, "default", true)
+	require.NoError(t, f.svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "a", SourceID: "acme", Name: "A", Version: "1.0", GameID: "sky"},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, Deployed: true,
+	}))
 
 	report, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Force: true}, nil)
 
@@ -165,9 +169,50 @@ func TestVerify_ARowWhoseCacheEntryIsGoneIsAFinding(t *testing.T) {
 	gone := findingWithStatus(report.Result, "missing_cache")
 	require.NotNil(t, gone, "statuses were %v", findingStatuses(report.Result))
 	assert.Equal(t, "a", gone.ModID)
+	assert.Equal(t, "version 1.0 is not in the cache any more", gone.Note)
 	assert.False(t, gone.Fixable)
+	assert.Contains(t, gone.FixableReason, "--source acme")
 	assert.Contains(t, gone.FixableReason, "uninstall it")
 	assert.Positive(t, report.Result.Issues)
+}
+
+// TestVerify_AModAdoptedInPlaceIsNotMissingItsCache: `lmm import` adopts a
+// mod on a non-copy game in place and writes no cache entry by design
+// (adoptScannedMod), so the D2 pass above must not call that entry "gone" -
+// nor name `lmm install --source local`, which can install nothing.
+func TestVerify_AModAdoptedInPlaceIsNotMissingItsCache(t *testing.T) {
+	ctx := context.Background()
+	for _, mode := range []domain.DeployMode{domain.DeployExtract, domain.DeployCompile} {
+		t.Run(mode.String(), func(t *testing.T) {
+			svc, game := newAdoptTestService(t)
+			game.DeployMode = mode
+			require.NoError(t, svc.SaveGame(ctx, game))
+			require.NoError(t, os.MkdirAll(filepath.Join(game.ModPath, "CoolMod"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "CoolMod", "cool.esp"), []byte("cool"), 0o644))
+
+			plan, err := svc.PlanAdopt(ctx, game, "default", core.AdoptOptions{SkipMatch: true})
+			require.NoError(t, err)
+			require.NotEmpty(t, plan.Scan.Untracked, "the scan must see the folder")
+			_, err = svc.ApplyAdopt(ctx, game, plan, nil)
+			require.NoError(t, err)
+			installed, err := svc.GetInstalledMods(ctx, game.ID, "default")
+			require.NoError(t, err)
+			require.NotEmpty(t, installed, "the adoption must record the mod")
+			// A source-matched adoption is in place too: ManualDownload with
+			// a real source and version, still no cache entry.
+			require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+				Mod:         domain.Mod{ID: "42", SourceID: "acme", Name: "Matched", Version: "1.0", GameID: game.ID},
+				ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, Deployed: true,
+				ManualDownload: true,
+			}))
+
+			report, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Force: true}, nil)
+
+			require.NoError(t, err)
+			assert.Nil(t, findingWithStatus(report.Result, "missing_cache"), "statuses were %v", findingStatuses(report.Result))
+			assert.Zero(t, report.Result.Issues, "statuses were %v", findingStatuses(report.Result))
+		})
+	}
 }
 
 // TestSaveGame_RefusesOnlyAnEditThatMovesTheModPath is #451's comment:

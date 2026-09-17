@@ -21,7 +21,8 @@ import (
 //   - missing_cache: an installed mod with no file record whose cache entry
 //     is gone (#469's D2) - the per-file walk checks only mods with a file
 //     record, so nothing noticed. It is an issue with no automatic repair:
-//     there is no recorded file to download again.
+//     there is no recorded file to download again. A mod that may never
+//     have had an entry (adoptedInPlace) is not one.
 func (r *verifyRun) recordsPass(installedMods []domain.InstalledMod, files []DeployedFile) error {
 	rows, err := r.svc.db.ListDeployedFiles(r.ctx, r.game.ID, r.profile)
 	if err != nil {
@@ -60,7 +61,7 @@ func (r *verifyRun) recordsPass(installedMods []domain.InstalledMod, files []Dep
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}
-		if mod.External || withFiles[domain.ModKey(mod.SourceID, mod.ID)] ||
+		if mod.External || adoptedInPlace(r.game, mod) || withFiles[domain.ModKey(mod.SourceID, mod.ID)] ||
 			(r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter) ||
 			gameCache.Exists(r.game.ID, mod.SourceID, mod.ID, mod.Version) {
 			continue
@@ -78,6 +79,17 @@ func (r *verifyRun) recordsPass(installedMods []domain.InstalledMod, files []Dep
 		}, VerifyEvent{Version: mod.Version})
 	}
 	return nil
+}
+
+// adoptedInPlace reports whether mod may never have had a cache entry, so
+// that recordsPass has no entry to call gone: a local mod (no source to
+// reinstall from - `lmm install --source local` installs nothing), a mod
+// with no version, or a mod `lmm import` adopted in place on a game that is
+// not in copy mode (adoptScannedMod writes a cache entry for copy mode
+// only).
+func adoptedInPlace(game *domain.Game, mod domain.InstalledMod) bool {
+	return mod.SourceID == domain.SourceLocal || mod.Version == "" ||
+		(mod.ManualDownload && game.DeployMode != domain.DeployCopy)
 }
 
 // recordsPassTolerant runs recordsPass, reporting a failure as a "skipped"

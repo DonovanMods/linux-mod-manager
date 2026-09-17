@@ -257,9 +257,9 @@ func newE2EFixtureFromSource(t *testing.T, src *fakeSource) e2eFixture {
 // with distinguishable names and enabled states - enough to prove the
 // library's filter and sort controls actually narrow/reorder the DOM,
 // without needing the fuller health/conflict machinery
-// newE2EFixtureWithAttention sets up. Each has its cache entry and no
-// recorded file, so none of the three trips a verify finding of its own
-// (a row with no cache entry at all is one since #469).
+// newE2EFixtureWithAttention sets up. Each models a mod downloaded from
+// the fake source, so each has the cache entry such a download leaves (and
+// no recorded file): none of the three trips a verify finding of its own.
 func newE2EFixtureWithLibrarySample(t *testing.T) e2eFixture {
 	t.Helper()
 
