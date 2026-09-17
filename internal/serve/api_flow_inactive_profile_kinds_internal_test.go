@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -81,6 +82,29 @@ func TestFlowInactiveProfile_DisableRemovesOnlyItsOwn(t *testing.T) {
 	profile, err := svc.NewProfileManager().Get(t.Context(), game.ID, "alt")
 	require.NoError(t, err)
 	assert.True(t, profile.FindRef(fixtureSourceID, "m1").Disabled)
+}
+
+// TestFlowInactiveProfile_DisableWithNoKnownActiveProfileIsRefusedUpFront:
+// a disable for a game whose active profile cannot be told fails however it
+// runs, so it answers the request - as `lmm mod disable` does - instead of
+// starting a job that fails.
+func TestFlowInactiveProfile_DisableWithNoKnownActiveProfileIsRefusedUpFront(t *testing.T) {
+	s, svc, game := mixedFlowServer(t)
+	path := filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles", "default.yaml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte(strings.ReplaceAll(string(data), "is_default: true\n", "")), 0o644))
+
+	rec := doAPI(s, http.MethodPost, altScoped("/api/v1/mods/"+fixtureSourceID+"/m1/disable", game), "")
+
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	var envelope apiErrorEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+	assert.Contains(t, envelope.Error, core.ErrActiveProfileUnknown.Error())
+	assert.Empty(t, s.jobs.list(), "no job started")
+	profile, err := svc.NewProfileManager().Get(t.Context(), game.ID, "alt")
+	require.NoError(t, err)
+	assert.False(t, profile.FindRef(fixtureSourceID, "m1").Disabled, "alt's document is as it was")
 }
 
 func TestFlowInactiveProfile_UninstallIsRecordedOnly(t *testing.T) {

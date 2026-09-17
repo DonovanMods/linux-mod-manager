@@ -815,6 +815,17 @@ func (s *Service) CheckDeployTarget(ctx context.Context, gameID, profileName str
 	return s.requireActiveProfile(ctx, gameID, profileName, verb)
 }
 
+// CheckRemovalTarget reports whether a removal-direction flow - uninstall,
+// disable - can run for profileName in gameID at all (#462): nil when the
+// game's active profile can be told, whether or not it is profileName (a
+// non-active profile's removal runs recorded-only), else
+// ErrActiveProfileUnknown. It changes nothing; the web UI's disable toggle
+// asks it so that refusal answers the request instead of failing a job.
+func (s *Service) CheckRemovalTarget(ctx context.Context, gameID, profileName string) error {
+	_, _, err := s.profileScope(ctx, gameID, profileName)
+	return err
+}
+
 // profileScope is how a removal-direction flow acting for profileName may
 // touch gameID's game directory (#462): recordedOnly is false when
 // profileName is the active profile, live, and the flow acts on the

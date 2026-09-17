@@ -92,6 +92,12 @@ func init() {
 		Apply: func(ctx context.Context, s *Server, sel selection, sourceID, modID string) (any, error) {
 			return s.svc.DisableMod(ctx, sel.Game, sel.Profile, sourceID, modID)
 		},
+		// A non-active profile's disable runs recorded-only, so it still
+		// starts a job; only a game whose active profile cannot be told is
+		// refused here.
+		Precheck: func(ctx context.Context, s *Server, sel selection) error {
+			return s.svc.CheckRemovalTarget(ctx, sel.Game.ID, sel.Profile)
+		},
 	})
 }
 
