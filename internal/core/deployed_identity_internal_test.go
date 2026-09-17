@@ -200,3 +200,34 @@ func TestBeginOp_AFlowsKeptFilesEndWithIt(t *testing.T) {
 	_, ok = store.keptBefore("Data/k.esp")
 	assert.False(t, ok, "the next flow judges the file again")
 }
+
+// TestJudgeLink_OnlyTheActingProfilesRecordsMakeALinkLmms (#466 re-review
+// R1): a link outside the cache that only another profile records, with no
+// fingerprint, is the user's for this profile - kept with nothing to
+// restore - while a judge acting for no profile still counts every record.
+func TestJudgeLink_OnlyTheActingProfilesRecordsMakeALinkLmms(t *testing.T) {
+	ctx := context.Background()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	root := t.TempDir()
+	game := &domain.Game{ID: "g", ModPath: root}
+	precious := filepath.Join(t.TempDir(), "precious.txt")
+	require.NoError(t, os.WriteFile(precious, []byte("PRECIOUS"), 0o644))
+	dst := filepath.Join(root, "k.esp")
+	require.NoError(t, os.Symlink(precious, dst))
+	require.NoError(t, database.RecordDeployedFile(ctx, db.DeployedFileRecord{
+		GameID: "g", Profile: "sym", RelativePath: "k.esp", SourceID: "s", ModID: "m", ModPath: root,
+	}))
+
+	j := deployedJudge{db: database, game: game, profile: "default"}.judge(ctx, "k.esp", dst)
+	assert.Equal(t, deployedUsers, j.verdict)
+	assert.True(t, j.recorded, "a deploy writes no record of its own over it")
+	assert.Nil(t, j.kept, "and restores none")
+	assert.Contains(t, j.reason, "it is a link")
+
+	assert.Equal(t, deployedOurs, deployedJudge{db: database, game: game, profile: "sym"}.judge(ctx, "k.esp", dst).verdict,
+		"sym's own link deployment")
+	assert.Equal(t, deployedOurs, deployedJudge{db: database, game: game}.judge(ctx, "k.esp", dst).verdict,
+		"a judge acting for no profile counts every record")
+}

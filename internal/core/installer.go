@@ -411,7 +411,7 @@ func (i *Installer) keepOnRemoval(ctx context.Context, jd deployedJudge, file, d
 	case deployedUsers:
 		rel := filepath.ToSlash(file)
 		i.rememberKept(rel, keptFile{record: j.kept, reason: j.reason, sharesCache: j.sharesCache})
-		if !j.unchecked && j.recorded {
+		if !j.unchecked && j.recorded && (j.regular || j.kept != nil) {
 			// Its record goes: a later deploy that sets it aside says so.
 			i.markKeptUser(rel)
 		}
@@ -502,6 +502,11 @@ func (i *Installer) keepOnDeploy(ctx context.Context, jd deployedJudge, file, ds
 	switch {
 	case j.verdict != deployedUsers:
 		return deployCheck{}
+	case !j.regular && j.kept == nil:
+		// A link or directory no record of the acting profile names
+		// (#466 re-review R1): the originals store cannot preserve it.
+		i.noteHeld(uncapturableOverwriteNote(rel, j.reason))
+		return deployCheck{keep: true}
 	case j.recorded:
 		i.noteHeld(userFileOverwriteNote(rel, j.reason, j.sharesCache))
 		return deployCheck{keep: true, restore: j.kept}

@@ -272,10 +272,12 @@ func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudg
 // A link into the game's cache is lmm's whatever the records say - it
 // holds nothing of the user's. Anything else is lmm's only on a record
 // under the game's current mod_path that fingerprints nothing - a link
-// deployment's record - the acting profile's own records deciding when it
-// has any (#466 review F1). With no record at all it is the user's (review
-// D2): a link lmm did not make may point anywhere, and a deploy that wrote
-// through it would overwrite whatever it points at.
+// deployment's record - of the acting profile (#466 review F1, re-review
+// R1): another profile's link deployment says nothing about what is at the
+// path now, and a link lmm made is one into the cache. A judge acting for
+// no profile counts every record. With no record at all it is the user's
+// (review D2): a link lmm did not make may point anywhere, and a deploy
+// that wrote through it would overwrite whatever it points at.
 func (jd deployedJudge) judgeLink(j deployedJudgement, info fs.FileInfo, states []db.DeployedFileState, dst string) deployedJudgement {
 	if info.Mode()&fs.ModeSymlink != 0 && jd.linksIntoCache(dst) {
 		j.verdict = deployedOurs
@@ -287,8 +289,15 @@ func (jd deployedJudge) judgeLink(j deployedJudgement, info fs.FileInfo, states 
 		return j
 	}
 	deciding := states
-	if own := statesOf(states, jd.profile); len(own) > 0 {
-		deciding = own
+	if jd.profile != "" {
+		deciding = statesOf(states, jd.profile)
+	}
+	if len(deciding) == 0 {
+		// Recorded, so a deploy writes no record of its own, but by no
+		// record of this profile's: kept, and nothing restored.
+		j.verdict = deployedUsers
+		j.reason = fmt.Sprintf("it is %s the %s profile has no record of deploying", describeMode(info.Mode()), jd.profile)
+		return j
 	}
 	for _, st := range deciding {
 		if st.Fingerprint == nil {

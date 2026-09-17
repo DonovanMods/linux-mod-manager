@@ -258,6 +258,70 @@ func TestDeployedIdentity_ADeployNeverWritesThroughAUsersLink(t *testing.T) {
 			})
 		}
 	}
+
+	// #466 re-review R1: another profile's record of the path, with no
+	// fingerprint, made the user's link lmm's, and the import replaced it.
+	t.Run("import over another profile's unfingerprinted record", func(t *testing.T) {
+		f, precious := otherProfilesLinkState(t)
+		archive := zipOf(t, map[string]string{"Data/k.esp": "imported k", "Data/k3.esp": "imported k3"})
+		plan, err := f.svc.PlanImportArchive(ctx, f.game, "default", archive, core.ImportArchiveOptions{})
+		require.NoError(t, err)
+		result, err := f.svc.ApplyImportArchive(ctx, f.game, "default", plan, core.ImportArchiveOptions{}, nil)
+		require.NoError(t, err)
+
+		assert.Equal(t, "PRECIOUS", readLive(t, precious), "the link's target is untouched")
+		target, err := os.Readlink(f.kPath())
+		require.NoError(t, err, "the user's link is still there")
+		assert.Equal(t, precious, target)
+		assert.True(t, containsLine(result.Warnings, "Data/k.esp was not replaced", "could not be preserved", "it is a link"), "%q", result.Warnings)
+		assert.Equal(t, 1, result.Deployed, "the archive's other file is the only one written")
+	})
+}
+
+// otherProfilesLinkState is the #466 re-review R1 state: F1's mixed-method
+// profiles, switched back to default, with mod k then uninstalled there -
+// so only profile sym's unfingerprinted records of k's paths remain - and
+// the user's own link at Data/k.esp, pointing outside the game.
+func otherProfilesLinkState(t *testing.T) (f *legacyFixture, precious string) {
+	t.Helper()
+	ctx := context.Background()
+	f = mixedMethodState(t)
+	plan, err := f.svc.PlanProfileSwitch(ctx, f.game, "default")
+	require.NoError(t, err)
+	_, err = f.svc.ApplyProfileSwitch(ctx, f.game, plan, nil)
+	require.NoError(t, err)
+	_, err = f.svc.UninstallMod(ctx, f.game, "default", "local", "k", core.UninstallOptions{Force: true})
+	require.NoError(t, err)
+	require.Empty(t, f.fingerprinted(t, "default"))
+	require.Equal(t, map[string]bool{"Data/k.esp": false, "Data/k2.esp": false}, f.fingerprinted(t, "sym"))
+	_, err = os.Lstat(f.kPath())
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	precious = filepath.Join(t.TempDir(), "precious.txt")
+	require.NoError(t, os.WriteFile(precious, []byte("PRECIOUS"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Dir(f.kPath()), 0o755))
+	require.NoError(t, os.Symlink(precious, f.kPath()))
+	return f, precious
+}
+
+// TestDeployedIdentity_ARemovalLeavesAUsersLinkAnotherProfileRecords is
+// R1's removal side: an uninstall in a profile with no record of the path
+// does not take another profile's unfingerprinted record as proof that the
+// user's link is lmm's.
+func TestDeployedIdentity_ARemovalLeavesAUsersLinkAnotherProfileRecords(t *testing.T) {
+	ctx := context.Background()
+	f, precious := otherProfilesLinkState(t)
+	f.cachedOnly(t, "default", "k", domain.LinkCopy, map[string]string{"Data/k.esp": "mod k", "Data/k2.esp": "mod k2"})
+
+	result, err := f.svc.UninstallMod(ctx, f.game, "default", "local", "k", core.UninstallOptions{Force: true})
+	require.NoError(t, err)
+
+	target, err := os.Readlink(f.kPath())
+	require.NoError(t, err, "the user's link is still there")
+	assert.Equal(t, precious, target)
+	assert.Equal(t, "PRECIOUS", readLive(t, precious))
+	assert.True(t, containsLine(result.Warnings, "Data/k.esp was left in place", "link"), "%q", result.Warnings)
+	assert.Equal(t, map[string]bool{"Data/k.esp": false, "Data/k2.esp": false}, f.fingerprinted(t, "sym"), "sym's records are sym's")
 }
 
 func TestDeployedIdentity_ADeployKeepsAnUntrackedFileItCannotRead(t *testing.T) {
