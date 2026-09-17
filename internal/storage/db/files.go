@@ -22,21 +22,153 @@ type FileConflict struct {
 	ModID        string
 }
 
-// SaveDeployedFile records that a file is deployed by a specific mod.
+// SaveDeployedFile records that a file is deployed by a specific mod, with
+// no fingerprint and no recorded mod_path (RecordDeployedFile).
 // Uses upsert to handle overwrites (new mod takes ownership).
 func (d *DB) SaveDeployedFile(ctx context.Context, gameID, profileName, relativePath, sourceID, modID string) error {
+	return d.RecordDeployedFile(ctx, DeployedFileRecord{
+		GameID: gameID, Profile: profileName, RelativePath: relativePath,
+		SourceID: sourceID, ModID: modID,
+	})
+}
+
+// FileFingerprint identifies the content a copy or hardlink deployment
+// wrote at a path (#466): its hex SHA-256, its length, and its modification
+// time in Unix nanoseconds. Size and MTime are the cheap pre-check; Checksum
+// is the proof.
+type FileFingerprint struct {
+	Checksum string
+	Size     int64
+	MTime    int64
+}
+
+// DeployedFileRecord is one deployed_files row as a deploy writes it.
+type DeployedFileRecord struct {
+	GameID       string
+	Profile      string
+	RelativePath string
+	SourceID     string
+	ModID        string
+	// ModPath is the absolute mod_path RelativePath was deployed under
+	// (#451); empty records none.
+	ModPath string
+	// Fingerprint is the content a copy or hardlink deployment wrote; nil
+	// for a symlink deployment, or a row written without deploying.
+	Fingerprint *FileFingerprint
+}
+
+// RecordDeployedFile upserts rec: a path already recorded for the game and
+// profile changes hands to rec's mod, and its fingerprint and mod_path are
+// replaced by rec's - cleared when rec carries none, since whatever the
+// old row described is no longer what the new one does.
+func (d *DB) RecordDeployedFile(ctx context.Context, rec DeployedFileRecord) error {
+	var checksum, modPath sql.NullString
+	var size, mtime sql.NullInt64
+	if fp := rec.Fingerprint; fp != nil && fp.Checksum != "" {
+		checksum = sql.NullString{String: fp.Checksum, Valid: true}
+		size = sql.NullInt64{Int64: fp.Size, Valid: true}
+		mtime = sql.NullInt64{Int64: fp.MTime, Valid: true}
+	}
+	if rec.ModPath != "" {
+		modPath = sql.NullString{String: rec.ModPath, Valid: true}
+	}
 	_, err := d.ExecContext(ctx, `
-		INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id, checksum, size, mtime, mod_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(game_id, profile_name, relative_path) DO UPDATE SET
 			source_id = excluded.source_id,
 			mod_id = excluded.mod_id,
+			checksum = excluded.checksum,
+			size = excluded.size,
+			mtime = excluded.mtime,
+			mod_path = excluded.mod_path,
 			deployed_at = CURRENT_TIMESTAMP
-	`, gameID, profileName, relativePath, sourceID, modID)
+	`, rec.GameID, rec.Profile, rec.RelativePath, rec.SourceID, rec.ModID, checksum, size, mtime, modPath)
 	if err != nil {
 		return fmt.Errorf("saving deployed file: %w", err)
 	}
 	return nil
+}
+
+// DeployedFileState is one profile's record of a path: the fingerprint it
+// was deployed with (nil when none was recorded), when the row was last
+// written, and the mod_path it was deployed under ("" when none was
+// recorded).
+type DeployedFileState struct {
+	Profile     string
+	SourceID    string
+	ModID       string
+	ModPath     string
+	Fingerprint *FileFingerprint
+	DeployedAt  time.Time
+}
+
+// DeployedFileStates returns every profile's record of relativePath in
+// gameID, sorted by profile - what a removal compares the file on disk
+// against (#466).
+func (d *DB) DeployedFileStates(ctx context.Context, gameID, relativePath string) (states []DeployedFileState, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT profile_name, source_id, mod_id, mod_path, checksum, size, mtime, deployed_at FROM deployed_files
+		WHERE game_id = ? AND relative_path = ?
+		ORDER BY profile_name
+	`, gameID, relativePath)
+	if err != nil {
+		return nil, fmt.Errorf("querying deployed file states: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+	for rows.Next() {
+		var st DeployedFileState
+		var modPath, checksum sql.NullString
+		var size, mtime sql.NullInt64
+		if err := rows.Scan(&st.Profile, &st.SourceID, &st.ModID, &modPath, &checksum, &size, &mtime, &st.DeployedAt); err != nil {
+			return nil, fmt.Errorf("scanning deployed file state: %w", err)
+		}
+		st.ModPath = modPath.String
+		if checksum.Valid && checksum.String != "" {
+			st.Fingerprint = &FileFingerprint{Checksum: checksum.String, Size: size.Int64, MTime: mtime.Int64}
+		}
+		states = append(states, st)
+	}
+	return states, rows.Err()
+}
+
+// DeployedRoot is how many deployed_files rows one profile of a game has
+// under one recorded mod_path ("" for rows that recorded none).
+type DeployedRoot struct {
+	Profile string
+	ModPath string
+	Files   int
+}
+
+// DeployedFileRoots returns gameID's deployed_files rows counted per
+// profile and recorded mod_path, sorted by profile then mod_path (#451).
+func (d *DB) DeployedFileRoots(ctx context.Context, gameID string) (roots []DeployedRoot, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT profile_name, COALESCE(mod_path, ''), COUNT(*) FROM deployed_files
+		WHERE game_id = ?
+		GROUP BY profile_name, COALESCE(mod_path, '')
+		ORDER BY profile_name, COALESCE(mod_path, '')
+	`, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("counting deployed file roots: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+	for rows.Next() {
+		var r DeployedRoot
+		if err := rows.Scan(&r.Profile, &r.ModPath, &r.Files); err != nil {
+			return nil, fmt.Errorf("scanning deployed file root: %w", err)
+		}
+		roots = append(roots, r)
+	}
+	return roots, rows.Err()
 }
 
 // GetLastDeployTime returns the most recent deployed_at recorded for
@@ -287,6 +419,9 @@ type DeployedPath struct {
 	RelativePath string
 	SourceID     string
 	ModID        string
+	// ModPath is the mod_path the row was deployed under (#451), or ""
+	// when it recorded none.
+	ModPath string
 }
 
 // ListDeployedFiles returns every tracked path for gameID/profileName,
@@ -296,7 +431,7 @@ type DeployedPath struct {
 // as the profile's deployed-files manifest (#350).
 func (d *DB) ListDeployedFiles(ctx context.Context, gameID, profileName string) (files []DeployedPath, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT relative_path, source_id, mod_id FROM deployed_files
+		SELECT relative_path, source_id, mod_id, COALESCE(mod_path, '') FROM deployed_files
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY relative_path
 	`, gameID, profileName)
@@ -311,7 +446,7 @@ func (d *DB) ListDeployedFiles(ctx context.Context, gameID, profileName string) 
 
 	for rows.Next() {
 		var f DeployedPath
-		if err := rows.Scan(&f.RelativePath, &f.SourceID, &f.ModID); err != nil {
+		if err := rows.Scan(&f.RelativePath, &f.SourceID, &f.ModID, &f.ModPath); err != nil {
 			return nil, fmt.Errorf("scanning deployed file: %w", err)
 		}
 		files = append(files, f)

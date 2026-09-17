@@ -12,6 +12,7 @@ import (
 // transaction (see migrate).
 type migrationExec interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 func (d *DB) migrate(ctx context.Context) error {
@@ -44,6 +45,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV15,
 		migrateV16,
 		migrateV17,
+		migrateV18,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -376,4 +378,46 @@ func migrateV17(ctx context.Context, d migrationExec) error {
 		)
 	`, MetaProfileDisabledBackfill, time.Now().UTC().Format(time.RFC3339))
 	return err
+}
+
+// migrateV18 gives deployed_files what a removal needs to tell lmm's file
+// from the user's, and where the file is.
+//
+// checksum (hex SHA-256), size and mtime (Unix nanoseconds) fingerprint the
+// content a copy or hardlink deployment wrote (#466): under those methods
+// the deployed path is a regular file, so without them a file the user
+// replaced looks exactly like lmm's own and a purge deleted it. A symlink
+// deployment leaves them NULL - its link target is its identity.
+//
+// mod_path is the absolute mod_path the row's relative_path was deployed
+// under (#451), so a mod_path changed behind lmm's back (a games.yaml hand
+// edit) is detected rather than silently stranding the files.
+//
+// Every existing row keeps NULL in all four: nothing is backfilled. A
+// NULL fingerprint is reported as unverified and removed as before; a NULL
+// mod_path is taken to be the game's current one, as it always was. The
+// next deploy of the path fills them in.
+//
+// Each column is added only when it is missing, so a schema_migrations
+// table that lost its record of v18 re-runs it harmlessly.
+func migrateV18(ctx context.Context, d migrationExec) error {
+	for _, col := range []struct{ name, decl string }{
+		{"checksum", "TEXT"},
+		{"size", "INTEGER"},
+		{"mtime", "INTEGER"},
+		{"mod_path", "TEXT"},
+	} {
+		var n int
+		if err := d.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM pragma_table_info('deployed_files') WHERE name = ?`, col.name).Scan(&n); err != nil {
+			return fmt.Errorf("inspecting deployed_files: %w", err)
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := d.ExecContext(ctx, "ALTER TABLE deployed_files ADD COLUMN "+col.name+" "+col.decl); err != nil {
+			return fmt.Errorf("adding deployed_files.%s: %w", col.name, err)
+		}
+	}
+	return nil
 }
