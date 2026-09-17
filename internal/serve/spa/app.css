@@ -2331,6 +2331,14 @@ select {
   margin-top: 0;
 }
 
+/* A description too long to parse as markup says why it reads as plain
+   text. */
+.richtext__note {
+  color: var(--text-muted);
+  font-size: 0.9em;
+  font-style: italic;
+}
+
 .richtext p,
 .richtext ul,
 .richtext ol,

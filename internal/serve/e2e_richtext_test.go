@@ -344,14 +344,15 @@ func TestE2E_RichText_HostileInputRendersInertAndNeverThrows(t *testing.T) {
 		{"markdown nested link", "# t\n[[inner](https://a.example)](https://b.example)", "markdown"},
 		{"markdown attribute injection", "# t\n[x](https://a.example\"onclick=\"alert(1))", "markdown"},
 
-		// Depth: each of these threw "Maximum call stack size exceeded".
+		// Depth, each under the 256 KB plain-text cap so the parser sees it;
+		// the first five threw "Maximum call stack size exceeded".
 		{"100 KB of nested lists", rep("[list][*]", 100000/9), "bbcode"},
 		{"33k nested bold", rep("[b]", 33000) + "x" + rep("[/b]", 33000), "bbcode"},
-		{"33k nested quotes", rep("[quote]", 33000) + "x" + rep("[/quote]", 33000), "bbcode"},
-		{"33k nested links", rep("[url=https://a.example]", 33000) + "x" + rep("[/url]", 33000), "bbcode"},
+		{"15k nested quotes", rep("[quote]", 15000) + "x" + rep("[/quote]", 15000), "bbcode"},
+		{"8k nested links", rep("[url=https://a.example]", 8000) + "x" + rep("[/url]", 8000), "bbcode"},
 		{"50k quote markers", rep(">", 50000) + " x", "markdown"},
 		{"50k spaced quote markers", rep("> ", 50000) + "x", "markdown"},
-		{"50k nested emphasis", rep("**~~", 50000) + "x" + rep("~~**", 50000), "markdown"},
+		{"30k nested emphasis", rep("**~~", 30000) + "x" + rep("~~**", 30000), "markdown"},
 	}
 	f := newE2EFixture(t)
 	f.runInBrowser(t,
@@ -375,6 +376,61 @@ func TestE2E_RichText_HostileInputRendersInertAndNeverThrows(t *testing.T) {
 			assert.Zero(t, r.Styled)
 			assert.Zero(t, r.OnAttrs)
 			assert.Zero(t, r.BadAnchors)
+		})
+	}
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_RichText_ShapedInputRendersQuickly pins the review's slow shapes
+// (issue 419): unclosed tags, unclosed code blocks, unterminated arguments
+// and emphasis runs that never close each parsed in time quadratic in their
+// length, and RichText parsed again on every render. Each now parses and
+// renders in well under half a second; a description over 256 KB is shown
+// as plain text, with a note saying so.
+func TestE2E_RichText_ShapedInputRendersQuickly(t *testing.T) {
+	rep := strings.Repeat
+	const budgetMs = 500
+	realisticBB := rep("[b]Features[/b]\n[list][*]Adds [i]more[/i] room\n[*]See [url=https://example.com/a]the docs[/url]\n[/list]\n[quote]Nice[/quote]\n\n", 12000)
+	cases := []struct {
+		name, in, family string
+		oversize         bool
+	}{
+		{"40k unclosed bold", rep("[b]x", 40000), "bbcode", false},
+		{"40k unclosed code", rep("[code]", 40000), "bbcode", false},
+		{"40k unterminated url arguments", rep("[url=a", 40000), "plain", false},
+		{"40k stray closing tags", "[b]" + rep("[/i]", 40000), "bbcode", false},
+		{"40k unclosed strong runs", "# t\n" + rep("**a ", 40000), "markdown", false},
+		{"40k unclosed strong runs, no heading", rep("**a ", 40000), "markdown", false},
+		{"40k open brackets", "# t\n" + rep("[a", 40000), "markdown", false},
+		{"40k open brackets, no heading", rep("[a", 40000), "plain", false},
+		{"40k open link targets", "# t\n" + rep("[a](b", 40000), "markdown", false},
+		{"20k list items with continuations", "# t\n" + rep("- a\n  b\n", 20000), "markdown", false},
+		{"1 MB realistic BBCode", realisticBB, "plain", true},
+		{"1 MB plain text", rep("Just some words on a line.\n", 40000), "plain", true},
+	}
+	f := newE2EFixture(t)
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		pollUntil(`document.querySelector('.mission-control[data-hydrated="true"]') !== null`),
+	)
+	inputs := make([]string, 0, len(cases))
+	for _, c := range cases {
+		inputs = append(inputs, c.in)
+	}
+	got := renderInDetachedDiv(t, f, inputs)
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := got[i]
+			require.Empty(t, r.Error)
+			t.Logf("%d bytes rendered in %d ms", len(c.in), r.Ms)
+			assert.Less(t, r.Ms, budgetMs)
+			assert.Equal(t, c.family, r.Family)
+			assert.Equal(t, c.oversize, r.Oversize)
+			if c.oversize {
+				assert.Contains(t, r.Note, "plain text")
+			} else {
+				assert.Empty(t, r.Note)
+			}
 		})
 	}
 	assert.Empty(t, f.BrowserErrors())

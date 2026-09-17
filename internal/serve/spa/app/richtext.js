@@ -41,7 +41,7 @@
 //   { t: "img", href, alt }             an image, rendered as a link
 //   { t: "br" } | { t: "hr" }
 
-import { h } from "./render.js";
+import { h, useMemo } from "./render.js";
 
 /**
  * safeHref returns href as a normalised absolute http(s) URL, or "" when it
@@ -61,10 +61,20 @@ export function safeHref(href) {
 
 // A BBCode tag this file knows. Anything bracketed that is not one of these
 // is ordinary text ("[WIP]", "[1.2]").
+// An argument stops at "[" as well as "]": every candidate tag starts with
+// one, so an unterminated "[url=" scans only to the next candidate.
 const BB_TAG =
-  /\[(\/?)(b|i|u|s|strike|url|img|list|\*|quote|code|size|color|colour|font|center|left|right|justify|spoiler|heading|line|youtube|h1|h2|h3)(?:=([^\]\n]*))?\]/gi;
+  /\[(\/?)(b|i|u|s|strike|url|img|list|\*|quote|code|size|color|colour|font|center|left|right|justify|spoiler|heading|line|youtube|h1|h2|h3)(?:=([^[\]\n]{0,2048}))?\]/gi;
 
 const BB_DETECT = new RegExp(BB_TAG.source, "i");
+
+// Every open-ended run in the patterns above and below is bounded (2048
+// characters): an unbounded one rescans to the end of the line from each
+// candidate that never closes, which is quadratic on a long line.
+
+// MAX_BYTES is the longest description parsed as markup. A longer one is
+// shown as plain text, with a note saying so.
+const MAX_BYTES = 256 * 1024;
 
 // MAX_DEPTH is how deeply markup may nest: open BBCode tags, or Markdown
 // quote levels. Past it, a further opener is text (issue 419: 33,000
@@ -74,7 +84,7 @@ const MAX_DEPTH = 32;
 // Markdown signals, one per construct: a line that opens a heading, a list
 // item, a quote or a fence; or an inline link, strong run or code span.
 const MD_DETECT =
-  /(^|\n)[ \t]*(#{1,6}[ \t]+\S|[-*+][ \t]+\S|\d+[.)][ \t]+\S|>[ \t]?\S|```|(-{3,}|\*{3,}|_{3,})[ \t]*(\n|$))|!?\[[^\]\n]+\]\([^)\s]+\)|\*\*\S[^\n]*?\*\*|__\S[^\n]*?__|`[^`\n]+`/;
+  /(^|\n)[ \t]*(#{1,6}[ \t]+\S|[-*+][ \t]+\S|\d+[.)][ \t]+\S|>[ \t]?\S|```|(-{3,}|\*{3,}|_{3,})[ \t]*(\n|$))|!?\[[^\]\n]{1,2048}\]\([^)\s]{1,2048}\)|\*\*\S[^\n]{0,2048}?\*\*|__\S[^\n]{0,2048}?__|`[^`\n]{1,2048}`/;
 
 /**
  * detectFamily names the markup a description is written in: "bbcode",
@@ -89,12 +99,16 @@ export function detectFamily(text) {
 }
 
 /**
- * parseRichText turns a description into { family, nodes }. It never
- * throws on what a description contains, and an empty description yields
- * no nodes.
+ * parseRichText turns a description into { family, nodes }, plus
+ * oversize: true when it was too long to parse as markup. It never throws
+ * on what a description contains, and an empty description yields no
+ * nodes.
  */
 export function parseRichText(text) {
   const s = String(text ?? "").replace(/\r\n?/g, "\n");
+  if (s.length > MAX_BYTES) {
+    return { family: "plain", nodes: plainParagraphs(s), oversize: true };
+  }
   try {
     const family = detectFamily(s);
     if (!s.trim()) return { family, nodes: [] };
@@ -161,6 +175,11 @@ function parseBBCode(s) {
   const stack = [root];
   const top = () => stack[stack.length - 1];
   const re = new RegExp(BB_TAG.source, "gi");
+  // Where the next [/code] at or after `last` is: -1 once none is left.
+  // Remembered, so a run of unclosed [code] tags searches the rest of the
+  // text once rather than once each.
+  const codeEnd = /\[\/code\]/gi;
+  let nextCodeEnd = -2;
   let last = 0;
   let m;
   while ((m = re.exec(s)) !== null) {
@@ -200,7 +219,11 @@ function parseBBCode(s) {
     }
     if (name === "code") {
       // A code block is verbatim: nothing inside it is markup.
-      const end = s.toLowerCase().indexOf("[/code]", last);
+      if (nextCodeEnd !== -1 && nextCodeEnd < last) {
+        codeEnd.lastIndex = last;
+        nextCodeEnd = codeEnd.exec(s)?.index ?? -1;
+      }
+      const end = nextCodeEnd;
       if (end < 0) {
         pushAll(top().c, [raw]);
         continue;
@@ -444,7 +467,7 @@ function mdInlineLines(lines) {
 // 1 code, 2-3 image, 4-5 link, 6 strong(*), 7 strong(_), 8 strike, 9 em(*),
 // 10 em(_), 11-13 a linked image (a README badge: [![alt](img)](link)).
 const MD_INLINE =
-  /`([^`\n]+)`|(?<!\[)!\[([^\]\n]*)\]\(([^)\s]+)\)|(?<!\[)\[(?!!\[)([^\]\n]+)\]\(([^)\s]+)\)|\*\*(?=\S)([^\n]*?\S)\*\*|__(?=\S)([^\n]*?\S)__|~~(?=\S)([^\n]*?\S)~~|\*(?=[^\s*])([^\n*]*?[^\s*])\*|(?<![A-Za-z0-9])_(?=[^\s_])([^\n_]*?[^\s_])_(?![A-Za-z0-9])|\[!\[([^\]\n]*)\]\(([^)\s]+)\)\]\(([^)\s]+)\)/;
+  /`([^`\n]{1,2048})`|(?<!\[)!\[([^\]\n]{0,2048})\]\(([^)\s]{1,2048})\)|(?<!\[)\[(?!!\[)([^\]\n]{1,2048})\]\(([^)\s]{1,2048})\)|\*\*(?=\S)([^\n]{0,2048}?\S)\*\*|__(?=\S)([^\n]{0,2048}?\S)__|~~(?=\S)([^\n]{0,2048}?\S)~~|\*(?=[^\s*])([^\n*]{0,2048}?[^\s*])\*|(?<![A-Za-z0-9])_(?=[^\s_])([^\n_]{0,2048}?[^\s_])_(?![A-Za-z0-9])|\[!\[([^\]\n]{0,2048})\]\(([^)\s]{1,2048})\)\]\(([^)\s]{1,2048})\)/;
 
 function mdInline(text, inLink = false, depth = 0) {
   if (depth >= MAX_DEPTH) return [text]; // nested past the cap: text
@@ -662,11 +685,26 @@ export function renderRichText(nodes) {
  * container that carries the detected family for styling and for tests.
  */
 export function RichText({ text, class: className = "" }) {
-  const { family, nodes } = parseRichText(text);
+  // The page re-renders on every store update; the text rarely changes.
+  const { family, nodes, oversize } = useMemo(
+    () => parseRichText(text),
+    [text],
+  );
   if (nodes.length === 0) return null;
   return h(
     "div",
-    { class: `richtext ${className}`.trim(), "data-family": family },
+    {
+      class: `richtext ${className}`.trim(),
+      "data-family": family,
+      "data-oversize": oversize ? "true" : undefined,
+    },
+    oversize
+      ? h(
+          "p",
+          { class: "richtext__note" },
+          "This description is too long to format, so it is shown as plain text.",
+        )
+      : null,
     renderRichText(nodes),
   );
 }

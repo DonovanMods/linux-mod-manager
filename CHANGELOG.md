@@ -1626,7 +1626,10 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   must be `http`/`https` (anything else stays literal text); an image
   becomes a link to the image rather than something the page loads; and a
   description's own sizes, colours and fonts are ignored. Markup lmm does
-  not recognise stays as text. `lmm mod show` is unchanged.
+  not recognise stays as text, as does markup nested more than 32 levels
+  deep, and a description over 256 KB is shown as plain text with a note
+  saying so, so a hostile description cannot stall or break the page.
+  `lmm mod show` is unchanged.
 
 ### Fixed
 
