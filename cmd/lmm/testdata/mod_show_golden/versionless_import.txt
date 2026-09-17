@@ -1,5 +1,9 @@
 ============================================================
-Mod A
+Rooted
 ============================================================
-ID: a  Version: 1.5
+ID: <ID>
 
+
+Installed (profile: default)
+  Update policy: notify
+  Lock: none

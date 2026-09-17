@@ -1661,6 +1661,18 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A mod imported without a version no longer reads "vunknown", and a mod
+  with no author no longer prints an empty `Author:` (#459).** `lmm import`
+  records an archive whose name carries no version at the version
+  `unknown`, and `lmm mod show` printed `Installed: vunknown`, `lmm mod
+set-update --pin` printed `(vunknown)`, and the `mod show` header ended in
+  `Author: ` with nothing after it. Every CLI line that labels a version now
+  treats that placeholder as no version at all — `Installed (profile:
+default)`, a pin with no version in brackets, `is already up to date.` —
+  and the `mod show` header leaves out a version or author it does not
+  have. `lmm list` and `--json` still show `unknown`, which is what lmm
+  records.
+
 - **The web UI's install confirmation lists the dependencies it switches
   back on (#448).** Installing a mod whose dependency the profile has
   switched off turns that dependency on again; the confirmation now says so,

@@ -720,7 +720,7 @@ func planRefLine(ref domain.ModReference) string {
 	if ref.DisplayVersion != "" {
 		shown = ref.DisplayVersion
 	}
-	if shown == "" || shown == core.NoRevisionDate {
+	if core.VersionText(&domain.Mod{Version: shown}) == "" || shown == core.NoRevisionDate {
 		return fmt.Sprintf("%s:%s", ref.SourceID, ref.ModID)
 	}
 	if workshop {

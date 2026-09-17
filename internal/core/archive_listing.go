@@ -303,7 +303,7 @@ func payloadName(members []archiveMember) (string, bool) {
 // branches.
 func trimVersionSuffix(filename, version string) string {
 	modName := strings.TrimSuffix(filename, filepath.Ext(filename))
-	if version != "" && version != "unknown" {
+	if version != "" && version != VersionUnknown {
 		if idx := strings.LastIndex(modName, version); idx > 0 {
 			modName = strings.TrimRight(modName[:idx], "-_ ")
 		}
