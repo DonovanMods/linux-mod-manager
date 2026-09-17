@@ -238,21 +238,47 @@ type ProfileApplyIncompleteError struct {
 
 // Error names the profile and every failed mod with its reason.
 func (e *ProfileApplyIncompleteError) Error() string {
-	failures := make([]string, len(e.Result.Failed))
-	for i, f := range e.Result.Failed {
+	return fmt.Sprintf("profile %q was not fully applied - %d mod(s) failed: %s",
+		e.Profile, len(e.Result.Failed), failedModsText(e.Result.Failed))
+}
+
+// Details returns the whole ProfileApplyResult for a frontend's error
+// envelope's "details" field.
+func (e *ProfileApplyIncompleteError) Details() any { return e.Result }
+
+// ProfileSwitchIncompleteError is ApplyProfileSwitch's error when the
+// switch ran to the end - Profile is now the active profile - but could not
+// install or deploy every mod (#470's twin, #445 second gate): Result is the
+// whole outcome, and Error names each failed mod, so no frontend reports
+// the switch as done. Details() any is the whole result, as
+// ProfileApplyIncompleteError's is.
+type ProfileSwitchIncompleteError struct {
+	Profile string
+	Result  *SwitchResult
+}
+
+// Error names the profile and every failed mod with its reason.
+func (e *ProfileSwitchIncompleteError) Error() string {
+	return fmt.Sprintf("profile %q is now active, but %d mod(s) failed: %s",
+		e.Profile, len(e.Result.Failed), failedModsText(e.Result.Failed))
+}
+
+// Details returns the whole SwitchResult for a frontend's error envelope's
+// "details" field.
+func (e *ProfileSwitchIncompleteError) Details() any { return e.Result }
+
+// failedModsText names each failed mod with its reason.
+func failedModsText(failed []InstalledRef) string {
+	failures := make([]string, len(failed))
+	for i, f := range failed {
 		name := f.SourceID + ":" + f.ModID
 		if f.Name != "" {
 			name = fmt.Sprintf("%s (%s)", f.Name, name)
 		}
 		failures[i] = name + ": " + f.Reason
 	}
-	return fmt.Sprintf("profile %q was not fully applied - %d mod(s) failed: %s",
-		e.Profile, len(e.Result.Failed), strings.Join(failures, "; "))
+	return strings.Join(failures, "; ")
 }
-
-// Details returns the whole ProfileApplyResult for a frontend's error
-// envelope's "details" field.
-func (e *ProfileApplyIncompleteError) Details() any { return e.Result }
 
 // GameDetectPartialError reports a `game detect` run that failed partway
 // through ApplyGameDetect: Result still names exactly the games that were

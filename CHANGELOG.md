@@ -1847,6 +1847,19 @@ it deployed at 1.0, which only a download of 2.0 could replace, …)` —
   a version clears the old version's entry under the same rule, and notes
   (`--verbose`) the one it kept.
 
+- **`lmm profile switch` no longer says "Switched" when a mod inside it
+  failed (#470).** Like `lmm profile apply` before it, a switch whose mod
+  could not be fetched, downloaded or deployed printed the error on its own
+  line and still ended `✓ Switched to profile` with exit status 0 — a
+  deploy that failed as a mod was switched on was only a `--verbose` note.
+  The switch still carries on and still makes the profile active (its
+  other mods are live, the old profile's are down), but it now ends with
+  `✗ Profile <name> is now active, but N mod(s) failed.`, an error naming
+  each failed mod and why, and a non-zero exit status. Under `--json` the
+  error envelope's `details` is the whole result, which gains `failed` and
+  `outcomes` (what the switch did with each mod, as apply's result lists
+  them). The web UI's Switch job fails with the same message.
+
 - **`lmm profile apply` records the mods it switches on as deployed
   (#467).** Their rows kept saying "not deployed" while the files were
   live, so a later `lmm profile switch` that moved one of those mods to

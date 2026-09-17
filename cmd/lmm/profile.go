@@ -589,6 +589,21 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
+	// #470's twin: a switch that ran to the end with a mod it could not
+	// install or deploy is not "Switched", though the target is now active.
+	// The error names each failed mod and exits non-zero; under --json its
+	// envelope's details are the whole result, warnings and per-mod
+	// outcomes included.
+	var incomplete *core.ProfileSwitchIncompleteError
+	if errors.As(err, &incomplete) {
+		if !jsonOutput {
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+			fmt.Printf("\n✗ Profile %s is now active, but %d mod(s) failed.\n", targetName, len(result.Failed))
+		}
+		return err
+	}
 	if err != nil {
 		// Task 13 review round 1, Important 1: ApplyProfileSwitch's
 		// error-path convention returns diagnostics accumulated before the

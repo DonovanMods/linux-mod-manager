@@ -72,6 +72,31 @@ func TestFlowSwitch_JobSwitchesAndReportsTheLockedRefWarning(t *testing.T) {
 	assert.Contains(t, result.Warnings[0], "could not update profile")
 }
 
+// TestFlowSwitch_AFailedModFailsTheJob is #470's twin over the job API: a
+// switch to a profile listing a mod no source resolves still makes it the
+// active profile, but the job fails, naming the mod, and its envelope
+// carries the whole SwitchResult.
+func TestFlowSwitch_AFailedModFailsTheJob(t *testing.T) {
+	s, svc, game := newProfilesFixtureServer(t)
+
+	j := runFlow(t, s, game, "switch", `{"profile":"`+applyTargetProfile+`"}`, "")
+	status := j.status()
+	require.Equal(t, jobFailed, status.State, "a switch with a failed mod is not a success")
+	require.NotNil(t, status.Error)
+	assert.Contains(t, status.Error.Error, unresolvableModID)
+
+	active, err := svc.NewProfileManager().GetDefault(t.Context(), game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, applyTargetProfile, active.Name, "what did not fail is done: the target is active")
+
+	result, ok := status.Error.Details.(*core.SwitchResult)
+	require.True(t, ok, "the envelope's details must be the core document, got %T", status.Error.Details)
+	require.Len(t, result.Failed, 1)
+	assert.Equal(t, unresolvableModID, result.Failed[0].ModID)
+	var incomplete *core.ProfileSwitchIncompleteError
+	assert.ErrorAs(t, j.failure(), &incomplete, "the typed error survives the registry")
+}
+
 // makeApplyTargetActive marks applyTargetProfile active, by flag alone: an
 // apply acts for the active profile only (#462).
 func makeApplyTargetActive(t *testing.T, svc *core.Service, game *domain.Game) {

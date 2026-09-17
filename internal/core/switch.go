@@ -442,12 +442,23 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 //
 // On error, the returned result carries any diagnostics/counts accumulated
 // before the failure; callers should surface them alongside the error.
+//   - Failed holds one InstalledRef per mod the switch could not install or
+//     deploy (#470's twin): an enable whose deploy failed, or an install
+//     entry, in the order it met them, the reason as data.
+//     ApplyProfileSwitch returns a ProfileSwitchIncompleteError whenever it
+//     is not empty.
+//   - Outcomes is what the switch did with each mod, in the order it did
+//     it - the per-mod record ProfileApplyResult.Outcomes carries for an
+//     apply: disabled, enabled (FromProfile naming the profile whose row
+//     it was), installed, replaced or failed.
 type SwitchResult struct {
-	Disabled  int      `json:"disabled"`
-	Enabled   int      `json:"enabled"`
-	Installed int      `json:"installed"`
-	Notes     []string `json:"notes,omitempty"`
-	Warnings  []string `json:"warnings,omitempty"`
+	Disabled  int                   `json:"disabled"`
+	Enabled   int                   `json:"enabled"`
+	Installed int                   `json:"installed"`
+	Failed    []InstalledRef        `json:"failed,omitempty"`
+	Outcomes  []ProfileApplyOutcome `json:"outcomes,omitempty"`
+	Notes     []string              `json:"notes,omitempty"`
+	Warnings  []string              `json:"warnings,omitempty"`
 }
 
 // ApplyProfileSwitch executes a plan produced by PlanProfileSwitch: disables
@@ -468,13 +479,32 @@ type SwitchResult struct {
 // showing that preview, accepts whatever has changed in the interim as
 // already baked into plan; PlanProfileSwitch's own doc comment documents
 // why speculative plans are cheap enough to discard and recompute instead.
+//
+// A mod it could not install or deploy does not stop it (#470's twin): it
+// carries on with the rest, makes plan.To the active profile, and then
+// returns the result together with a ProfileSwitchIncompleteError, so no
+// frontend reports the switch as done.
 func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, sink EventSink) (*SwitchResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &SwitchResult{}, err
 	}
 	defer release()
-	return s.applyProfileSwitch(ctx, game, plan, sink)
+	result, err := s.applyProfileSwitch(ctx, game, plan, sink)
+	if err == nil && len(result.Failed) > 0 {
+		err = &ProfileSwitchIncompleteError{Profile: plan.To, Result: result}
+	}
+	return result, err
+}
+
+// recordFailure records a mod the switch could not install or deploy, on
+// both Failed and Outcomes. version is the version it meant to deploy.
+func (r *SwitchResult) recordFailure(failed InstalledRef, version string) {
+	r.Failed = append(r.Failed, failed)
+	r.Outcomes = append(r.Outcomes, ProfileApplyOutcome{
+		SourceID: failed.SourceID, ModID: failed.ModID, Name: failed.Name,
+		Version: version, Outcome: ProfileApplyFailed, Reason: failed.Reason,
+	})
 }
 
 // clearRowUnderProfile clears enabled and deployed on mod's installed row
@@ -673,6 +703,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 
 		result.Disabled++
+		result.Outcomes = append(result.Outcomes, outcomeOf(&im, ProfileApplyDisabled))
 		emit(ModEvent{Scope: scope, Phase: SwitchDisabled})
 	}
 
@@ -696,6 +727,8 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			msg := fmt.Sprintf("Warning: failed to deploy %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
+			// #470's twin: a failure, not only a --verbose note.
+			result.recordFailure(skippedRef(&im, fmt.Sprintf("deploy failed: %v", err)), im.Version)
 			continue
 		}
 		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.To, true); err != nil {
@@ -740,6 +773,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 
 		result.Enabled++
+		enabled := outcomeOf(&im, ProfileApplyEnabled)
+		if im.ProfileName != plan.To {
+			enabled.FromProfile = im.ProfileName
+		}
+		result.Outcomes = append(result.Outcomes, enabled)
 		emit(ModEvent{Scope: scope, Phase: SwitchEnabled})
 	}
 
@@ -754,7 +792,12 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalInstall, Mod: &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID}}
 			emit(ModEvent{Scope: scope, Phase: SwitchInstallingMod})
 
+			// failed names the entry for Failed: the mod once it resolved.
+			failed := InstalledRef{SourceID: ref.SourceID, ModID: ref.ModID}
+			version := ref.Version
 			fail := func(reason string) {
+				failed.Reason = reason
+				result.recordFailure(failed, version)
 				emit(ModEvent{Scope: scope, Phase: SwitchInstallError, Detail: reason})
 			}
 
@@ -764,6 +807,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				continue
 			}
 			scope.ModName = mod.Name
+			failed.Name = mod.Name
 
 			files, err := s.GetModFiles(ctx, ref.SourceID, mod)
 			if err != nil {
@@ -782,6 +826,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			}
 
 			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
+			version = mod.Version
 
 			downloadedFileIDs := make([]string, 0, len(filesToDownload))
 			for _, f := range filesToDownload {
@@ -813,7 +858,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 					}
 					downloadResult, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn)
 					if err != nil {
-						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
+						// Not fail(): SwitchDownloadFailed renders this
+						// mod's Error line already.
+						failed.Reason = fmt.Sprintf("download failed: %v", err)
+						result.recordFailure(failed, version)
+						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: failed.Reason})
 						downloadFailed = true
 						break
 					}
@@ -908,6 +957,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			}
 
 			result.Installed++
+			installed := ProfileApplyInstalled
+			if replacing {
+				installed = ProfileApplyReplaced
+			}
+			result.Outcomes = append(result.Outcomes, outcomeOf(installedMod, installed))
 			emit(ModEvent{Scope: scope, Phase: SwitchInstalled})
 		}
 	}

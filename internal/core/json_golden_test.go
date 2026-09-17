@@ -442,7 +442,14 @@ func TestJSONGoldens(t *testing.T) {
 				Disabled:  1,
 				Enabled:   2,
 				Installed: 1,
-				Notes:     []string{"Warning: failed to update Realistic Needs: some error"},
+				Failed:    []core.InstalledRef{{SourceID: "local", ModID: "a", Reason: "failed to fetch mod: source not found: local"}},
+				// #470's twin: what the switch did with each mod, in order.
+				Outcomes: []core.ProfileApplyOutcome{
+					{SourceID: "nexusmods", ModID: "7", Name: "Realistic Needs", Version: "1.0.0", Outcome: core.ProfileApplyDisabled},
+					{SourceID: "nexusmods", ModID: "8", Name: "Sample Mod", Version: "2.0.0", Outcome: core.ProfileApplyEnabled, FromProfile: "survival"},
+					{SourceID: "local", ModID: "a", Version: "2.0", Outcome: core.ProfileApplyFailed, Reason: "failed to fetch mod: source not found: local"},
+				},
+				Notes: []string{"Warning: failed to update Realistic Needs: some error"},
 				Warnings: []string{
 					"could not update profile: mod is locked",
 					"could not sync merged pak: base pak missing",

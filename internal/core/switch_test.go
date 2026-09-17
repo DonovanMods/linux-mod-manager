@@ -746,7 +746,7 @@ func TestService_ApplyProfileSwitch_EnableLoop_InstallFailureSkipsModEntirely(t 
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
-	require.NoError(t, err, "an Install failure must not fail the whole switch")
+	requireIncompleteSwitch(t, result, err, "an Install failure leaves the switch incomplete, not aborted")
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Enabled)
 	require.Len(t, result.Notes, 1)
@@ -906,7 +906,7 @@ func TestService_ApplyProfileSwitch_InstallLoop_FetchFailureSkipsModAndContinues
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
-	require.NoError(t, err, "a per-mod fetch failure must not fail the whole switch")
+	requireIncompleteSwitch(t, result, err, "a per-mod fetch failure leaves the switch incomplete, not aborted")
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed, "the good mod must still install")
 
@@ -954,7 +954,7 @@ func TestService_ApplyProfileSwitch_InstallLoop_DownloadFailureEmitsBlankErrorBl
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
-	require.NoError(t, err)
+	requireIncompleteSwitch(t, result, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Installed)
 
@@ -1017,7 +1017,7 @@ func TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod(t *te
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
-	require.NoError(t, err)
+	requireIncompleteSwitch(t, result, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed, "only mod2 should install; mod1 fails")
 
@@ -1233,7 +1233,7 @@ func TestApplyProfileSwitch_StoredIDsGone_VersionAlsoGone_HardFails(t *testing.T
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
-	require.NoError(t, err, "a per-mod resolution failure must not fail the whole switch")
+	requireIncompleteSwitch(t, result, err, "a per-mod resolution failure leaves the switch incomplete, not aborted")
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed, "mod2 must still install")
 
@@ -1290,7 +1290,7 @@ func TestApplyProfileSwitch_VersionlessSource_KeepsLegacyBehavior(t *testing.T) 
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
-	require.NoError(t, err)
+	requireIncompleteSwitch(t, result, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Installed, "a versionless source's stale FileIDs must still hard-fail exactly as before #96")
 
@@ -1381,7 +1381,7 @@ func TestApplyProfileSwitch_VersionMatchesNothing_NoStoredIDs_ErrVersionNotFound
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
-	require.NoError(t, err)
+	requireIncompleteSwitch(t, result, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Installed)
 
@@ -1426,7 +1426,7 @@ func TestApplyProfileSwitch_StoredIDPresentButVersionGone_NewErrorWording(t *tes
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
-	require.NoError(t, err)
+	requireIncompleteSwitch(t, result, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Installed)
 
