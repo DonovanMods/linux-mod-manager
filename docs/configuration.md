@@ -81,7 +81,8 @@ a file as `deployed_modified`, which `--fix` leaves alone.
 A file lmm cannot read to compare is kept the same way, and its record is
 kept exactly as it was. A file deployed before checksums were recorded
 (schema v18) is compared with the mod's cached copy instead: the same
-content is lmm's and goes, different content is yours and stays. When the
+content is lmm's and goes; different content is yours and stays when no
+other profile, mod or game records the path. When one does, or when the
 cached copy is gone too, the file is removed as it always was, and the flow
 reports it once as "removed unverified (deployed before checksums were
 recorded)"; the next deploy records its checksum.

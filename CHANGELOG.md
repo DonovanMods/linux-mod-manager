@@ -1636,7 +1636,11 @@ disable`, rollback, profile switch or apply, and `lmm verify --fix` deleted
 purge` puts it back. With two games sharing a directory, purging both no
   longer deletes a file you changed; `lmm import` over a file you changed
   says so and counts only the files it wrote (#476); and a hard link you
-  edited in place names `lmm install --force` as the way back.
+  edited in place names `lmm install --force` as the way back. A copy deploy
+  now writes a new file and moves it into place, so the directory must be
+  writable, and a replaced file is a new file with the mod file's
+  permissions, owned by you (the old file's extended attributes and ACLs are
+  not carried over).
 - **Changing `mod_path` by hand no longer strands deployed files (#451).**
   lmm now records the `mod_path` each file was deployed under. After a
   `games.yaml` edit made with files deployed, `lmm game show`,

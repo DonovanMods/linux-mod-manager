@@ -283,7 +283,7 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 					remove, reason = false, why
 				} else if witnesses := sourceWitnesses(users, src.ID(), ci.GameID); len(witnesses) > 0 {
 					remove, reason = false, fmt.Sprintf(
-						"game %s installs mods from this source (or a profile lists one), but games.yaml maps it to no index, or to the start of this index's name - a cut-short games.yaml (#403) can lose a mapping or shorten it, so lmm cannot tell whether this index is in use",
+						"game %s installs mods from this source (or a profile lists one), but games.yaml maps it to no index, or to the start of this index's name - a cut-short games.yaml (#403) can lose a mapping or shorten it, so lmm cannot tell whether this index is in use; `lmm source index prune --all` removes it anyway",
 						strings.Join(witnesses, ", "))
 				}
 			}
