@@ -263,12 +263,21 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 			report.Warnings = append(report.Warnings, fmt.Sprintf("source %s: not pruning: %v", src.ID(), err))
 			continue
 		}
+		cachedIDs := make(map[string]bool, len(cached))
+		for _, ci := range cached {
+			cachedIDs[ci.GameID] = true
+		}
 		for _, ci := range cached {
 			entry := IndexPruneEntry{
 				Source: src.ID(), Game: ci.GameID, Bytes: ci.Bytes, FetchedAt: ci.FetchedAt,
 				MappedBy: uses.mappedBy(ci.GameID),
 			}
 			remove, reason := pruneDecision(ci, uses, entry.MappedBy, opts.All, now)
+			if remove && !opts.All && len(entry.MappedBy) == 0 {
+				if why := uses.truncationDoubt(ci.GameID, cachedIDs); why != "" {
+					remove, reason = false, why
+				}
+			}
 			if remove && !opts.All && doubt != "" {
 				remove, reason = false, doubt
 			}
@@ -471,6 +480,23 @@ func (u indexUsage) mappedBy(id string) []string {
 		return append([]string(nil), games...)
 	}
 	return []string{}
+}
+
+// truncationDoubt says why the unmapped index id may be one a game uses
+// after all, or "" (#468): a game maps the source to an identifier that is
+// a strict prefix of id and has no index of its own. That is what a
+// games.yaml cut short in the middle of the identifier looks like (#403's
+// non-atomic write) - it still parses, and a shortened slug is still a
+// valid one - so the index the game really uses would look unused.
+func (u indexUsage) truncationDoubt(id string, cached map[string]bool) string {
+	for _, mapped := range u.identifiers() {
+		if mapped == id || cached[mapped] || !strings.HasPrefix(id, mapped) {
+			continue
+		}
+		return fmt.Sprintf("game %s maps this source to %q, which has no index of its own and is the start of this index's name - games.yaml may have been cut short mid-name, so lmm cannot tell whether this index is in use",
+			strings.Join(u.byID[mapped], ", "), mapped)
+	}
+	return ""
 }
 
 func (u indexUsage) identifiers() []string {

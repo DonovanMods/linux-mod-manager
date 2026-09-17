@@ -472,3 +472,67 @@ func TestListSourceIndexes_AnInventoryFailureStillListsMappedIndexes(t *testing.
 	}
 	assert.Equal(t, []string{"fresh", "never-built", "old"}, games)
 }
+
+// TestPruneSourceIndexes_AGamesFileCutShortMidSlugKeepsTheIndex (#468): a
+// games.yaml a non-atomic write (#403) cut off in the middle of a mapped
+// community slug still parses, and a shortened slug is still a valid one -
+// so the game appears to map a community with no index, and the index it
+// really uses looked unused. An index whose name extends a mapped slug that
+// has no index of its own is kept, with the reason; --all still removes it.
+func TestPruneSourceIndexes_AGamesFileCutShortMidSlugKeepsTheIndex(t *testing.T) {
+	for name, cut := range map[string]string{
+		"cut mid-word":         "lethal-com",
+		"cut after the hyphen": "lethal-",
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, src, configDir := newPruneService(t)
+			src.cached["lethal-company"] = source.CachedIndex{
+				GameID: "lethal-company", Present: true, Bytes: 35 << 20,
+				FetchedAt: time.Now().Add(-day), Removable: true,
+			}
+			require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+				ID: "lc", Name: "lc", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+				SourceIDs: map[string]string{"ts": "lethal-company"},
+			}))
+
+			// The file on disk is cut inside the slug, and a later lmm
+			// process - which never saw the whole file - prunes.
+			path := filepath.Join(configDir, "games.yaml")
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			i := strings.Index(string(data), "lethal-company")
+			require.Positive(t, i)
+			require.NoError(t, os.WriteFile(path, []byte(string(data)[:i]+cut+string(data)[i+len("lethal-company"):]), 0o644))
+			later, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir()})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, later.Close()) })
+			later.RegisterSource(src)
+			later.RegisterSource(newMockSource("other"))
+
+			report, err := later.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+			require.NoError(t, err)
+			kept := entryFor(t, report.Entries, "lethal-company")
+			assert.Equal(t, core.IndexPruneKeep, kept.Action)
+			assert.Contains(t, kept.Reason, `game lc maps this source to "`+cut+`"`)
+			assert.Contains(t, kept.Reason, "cut short")
+			assert.NotContains(t, src.removed, "lethal-company")
+			assert.Contains(t, src.removed, "unused", "an index nothing extends still goes")
+
+			_, err = later.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: true})
+			require.NoError(t, err)
+			assert.Contains(t, src.removed, "lethal-company", "--all is the explicit way past it")
+		})
+	}
+}
+
+// TestPruneSourceIndexes_AMappedSlugWithItsOwnIndexDoesNotKeepLongerOnes:
+// the #468 doubt needs the short slug to have no index - "old" is cached
+// and mapped, so an unused "older" is not a truncation of it.
+func TestPruneSourceIndexes_AMappedSlugWithItsOwnIndexDoesNotKeepLongerOnes(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+	src.cached["older"] = source.CachedIndex{GameID: "older", Present: true, Bytes: 1, FetchedAt: time.Now().Add(-day), Removable: true}
+
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, core.IndexPruneRemoved, entryFor(t, report.Entries, "older").Action)
+}
