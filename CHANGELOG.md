@@ -1599,6 +1599,11 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The web UI's install confirmation lists the dependencies it switches
+  back on (#448).** Installing a mod whose dependency the profile has
+  switched off turns that dependency on again; the confirmation now says so,
+  by name, before you confirm — as the CLI does.
+
 - **The web UI's Games table no longer shows `generic-files` for a game
   whose adapter lmm refuses (#449).** The cell names the configured adapter,
   marked **refused**, with lmm's reason and the command that fixes it; the

@@ -97,6 +97,14 @@ export function InstallPlanView({ plan, modal, actions }) {
   const deps = plan.dependencies ?? [];
   const missing = plan.missing_dependencies ?? [];
   const warnings = plan.dependency_warnings ?? [];
+  // Issue 448 (core issue 431): dependencies the profile marks off that this
+  // install switches back on - the user did not name them, so they are
+  // said out loud before Confirm, as the CLI does. Identity only; the name
+  // is on the matching dependencies entry.
+  const reenabled = plan.reenabled_dependencies ?? [];
+  const depName = (ref) =>
+    deps.find((d) => d.source_id === ref.source_id && d.id === ref.mod_id)
+      ?.name || `${ref.source_id}:${ref.mod_id}`;
   const conflicts = plan.conflicts ?? [];
 
   return html`
@@ -165,6 +173,31 @@ export function InstallPlanView({ plan, modal, actions }) {
             <ul class="plan__mods">
               ${deps.map(
                 (d) => html`<li key=${`${d.source_id}/${d.id}`}>${d.name}</li>`,
+              )}
+            </ul>
+          </section>
+        `
+      }
+      ${
+        reenabled.length > 0 &&
+        html`
+          <section class="plan__section" data-testid="install-reenabled">
+            <h3 class="plan__heading plan__heading--warn">
+              Switched back on (${reenabled.length})
+            </h3>
+            <p class="plan__note plan__note--warn">
+              Profile <span class="mono">${plan.profile}</span> has
+              ${reenabled.length === 1 ? " this dependency" : " these dependencies"}
+              switched off. ${plan.mod?.name ?? "This mod"} can't work without
+              ${reenabled.length === 1 ? " it" : " them"}, so installing turns
+              ${reenabled.length === 1 ? " it" : " them"} back on.
+            </p>
+            <ul class="plan__mods">
+              ${reenabled.map(
+                (r) =>
+                  html`<li key=${`${r.source_id}/${r.mod_id}`}>
+                    ${depName(r)}
+                  </li>`,
               )}
             </ul>
           </section>
