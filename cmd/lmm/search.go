@@ -317,7 +317,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		cells := []string{
 			mod.ID,
 			truncate(mod.Name, 40),
-			truncate(mod.Author, 20),
+			truncate(core.AuthorText(&mod.Mod), 20), // #420: the persona name where one resolved
 			displayModVersion(mod.External, mod.Version, mod.UpdatedAt),
 		}
 		if showUpdated {
@@ -350,15 +350,18 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	return nil
 }
 
-// truncate shortens a string to maxLen, adding "..." if truncated
+// truncate shortens a string to maxLen characters, adding "..." if
+// truncated. It counts runes, not bytes, so a non-ASCII name (a Steam
+// persona name, #420) is never cut through the middle of a character.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	r := []rune(s)
+	if len(r) <= maxLen {
 		return s
 	}
 	if maxLen <= 3 {
-		return s[:maxLen]
+		return string(r[:maxLen])
 	}
-	return s[:maxLen-3] + "..."
+	return string(r[:maxLen-3]) + "..."
 }
 
 // refreshSearchedIndexes rebuilds the local index of every source this

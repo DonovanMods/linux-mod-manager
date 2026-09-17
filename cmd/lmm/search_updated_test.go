@@ -59,6 +59,11 @@ func TestDoSearch_UpdatedColumn(t *testing.T) {
 			{ID: "2", Name: "Old", Author: "b", Version: "1.0", UpdatedAt: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)},
 			{ID: "3", Name: "Undated", Author: "c", Version: "0.1"},
 		}},
+		{"named_author", []domain.Mod{
+			// #420: a resolved persona name is what the AUTHOR column shows.
+			{ID: "3617086610", Name: "Workshop Item", Author: "76561198000000000", AuthorName: "Cargo Captain", Version: "1.0"},
+			{ID: "4", Name: "Plain", Author: "someone", Version: "1.0"},
+		}},
 		{"all_undated", []domain.Mod{
 			{ID: "3", Name: "Undated", Author: "c", Version: "0.1"},
 		}},

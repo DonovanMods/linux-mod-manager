@@ -54,3 +54,22 @@ func TestE2E_SearchAndInstallPickerShowTheLastUpdateDate(t *testing.T) {
 	}
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_SearchResultShowsTheAuthorsNameWithTheIDOnHover is #420's web
+// half: a hit whose author id resolved to a name shows the name, and the
+// id is in the element's title.
+func TestE2E_SearchResultShowsTheAuthorsNameWithTheIDOnHover(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchMultiFileModID)
+	var text, title string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SearchPagePath("edition")),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		textContent(row+" .search-result__author", &text),
+		chromedp.AttributeValue(row+" .search-result__author", "title", &title, nil, chromedp.ByQuery),
+	)
+	assert.Equal(t, "Cargo Captain", text)
+	assert.Equal(t, "76561198000000000", title)
+	assert.Empty(t, f.BrowserErrors())
+}

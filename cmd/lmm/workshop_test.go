@@ -303,6 +303,27 @@ func TestModShow_RendersTheManagedBySteamBlock(t *testing.T) {
 	assertModShowGolden(t, "external", strings.ReplaceAll(out, steamDir, "/GOLDEN/workshop/3617086610"))
 }
 
+// TestModShow_NamesTheWorkshopAuthor is #420's `lmm mod show` half: a
+// creator whose persona name resolved is shown by name, with the steamid64
+// it names beside it.
+func TestModShow_NamesTheWorkshopAuthor(t *testing.T) {
+	svc, game, src, _ := setupWorkshopCLI(t)
+	withWorkshopImportFlags(t, false, true)
+	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+	for i := range src.describe {
+		src.describe[i].Mod.AuthorName = "Cargo Captain"
+	}
+
+	old := modProfile
+	modProfile = "default"
+	t.Cleanup(func() { modProfile = old })
+
+	out := captureStdout(t, func() error {
+		return doModShow(context.Background(), svc, game, "3617086610")
+	})
+	assert.Contains(t, out, "Author: Cargo Captain (76561198000000000)\n")
+}
+
 func TestPrintExternalUpdateSummary_SaysSteamAppliesThem(t *testing.T) {
 	updates := []domain.Update{
 		{InstalledMod: domain.InstalledMod{

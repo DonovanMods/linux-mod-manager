@@ -64,6 +64,12 @@ func TestTruncate(t *testing.T) {
 			expected: "h...",
 		},
 		{
+			name:     "multi-byte characters are never split (#420)",
+			input:    "Капитан Грузового Корабля",
+			maxLen:   10,
+			expected: "Капитан...",
+		},
+		{
 			name:     "empty string",
 			input:    "",
 			maxLen:   10,

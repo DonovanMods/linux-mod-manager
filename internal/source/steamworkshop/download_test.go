@@ -42,6 +42,9 @@ func serveLegacyFixture(t *testing.T, payload string) *legacyFixture {
 	t.Helper()
 	fx := &legacyFixture{payload: []byte(payload)}
 	fx.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerNameLookup(w, r) {
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/ugc/") {
 			fx.mu.Lock()
 			fx.methods = append(fx.methods, r.Method)

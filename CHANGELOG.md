@@ -285,6 +285,18 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
 
 ### Added
 
+- **Steam Workshop items show their author's name, not a number (#420).**
+  A Workshop item's author was the creator's raw steamid64 everywhere. lmm
+  now resolves it to the creator's Steam persona name: `lmm mod show`
+  prints `Author: <name> (<steamid64>)`, `lmm search` and `lmm list` show
+  the name, and the web UI shows the name with the id on hover. `--json`
+  and the API keep the id in `author` and add `author_name` beside it. With
+  a Steam Web API key the names come from one batched request; without
+  one, from each creator's public Steam Community profile. Names are cached
+  for six hours (a missing profile for one), a name that cannot be resolved
+  shows the id, and `lmm list` and the library only show names lmm has
+  already looked up — they never make a request of their own.
+
 - **Search results and the install picker show when a mod was last
   updated (#433).** `lmm search` has an `UPDATED` column — an age for
   anything from the last week, the date after that — shown whenever at

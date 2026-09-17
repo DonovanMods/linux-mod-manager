@@ -37,6 +37,9 @@ func serveFixture(t *testing.T, files ...string) *apiFixture {
 	t.Helper()
 	fx := &apiFixture{}
 	fx.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerNameLookup(w, r) {
+			return
+		}
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		form, err := url.ParseQuery(string(body))
@@ -260,7 +263,7 @@ func TestNoTestReachesTheProductionAPI(t *testing.T) {
 		data, err := os.ReadFile(e.Name())
 		require.NoError(t, err)
 		// Split literals so this guard's own list is not a match.
-		for _, host := range []string{"api.steam" + "powered.com", "steamcommunity.com" + "/dev", "steam" + "cdn"} {
+		for _, host := range []string{"api.steam" + "powered.com", "steamcommunity.com" + "/dev", "steamcommunity.com" + "/profiles", "steam" + "cdn"} {
 			assert.NotContains(t, string(data), host,
 				"%s names a live Steam host: tests must use an httptest server", e.Name())
 		}

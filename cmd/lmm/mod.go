@@ -703,7 +703,12 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		// is the only version text on screen and it is the forbidden one.
 		headerVersion = displayRevision(mod.UpdatedAt)
 	}
-	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, colorCyan(headerVersion), mod.Author)
+	// #420: a resolved persona name leads, with the id it names beside it.
+	author := core.AuthorText(mod)
+	if mod.AuthorName != "" && mod.Author != "" {
+		author += " (" + mod.Author + ")"
+	}
+	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, colorCyan(headerVersion), author)
 	if mod.Category != "" {
 		fmt.Printf("Category: %s\n", mod.Category)
 	}

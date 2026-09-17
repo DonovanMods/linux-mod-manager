@@ -71,12 +71,15 @@ type client struct {
 	// through it, so storing a key for search does not start attributing
 	// each metadata fetch to the user's Steam account (W2 review,
 	// Important 2).
-	anon    *httpclient.Client
-	doer    *http.Client
-	baseURL string
-	cache   *metaCache
-	search  *searchCache
-	now     func() time.Time
+	anon *httpclient.Client
+	// community reads public Steam Community profiles for the keyless
+	// author-name lookup (names.go) - another host, its own backoff.
+	community *httpclient.Client
+	doer      *http.Client
+	baseURL   string
+	cache     *metaCache
+	search    *searchCache
+	now       func() time.Time
 
 	// keyID identifies the registered API key WITHOUT being it: the first
 	// 8 hex of its SHA-256, enough for the search cache to tell two
@@ -105,13 +108,14 @@ func newClient(opts Options) *client {
 	retrying.Transport = newRetryTransport(httpClient.Transport, now)
 
 	return &client{
-		http:    newAPIClient(&retrying, baseURL, ""),
-		anon:    newAPIClient(&retrying, baseURL, ""),
-		doer:    &retrying,
-		baseURL: baseURL,
-		cache:   newMetaCache(opts.CacheDir, now),
-		search:  newSearchCache(now),
-		now:     now,
+		http:      newAPIClient(&retrying, baseURL, ""),
+		anon:      newAPIClient(&retrying, baseURL, ""),
+		community: newCommunityClient(httpClient, communityURL(opts), now),
+		doer:      &retrying,
+		baseURL:   baseURL,
+		cache:     newMetaCache(opts.CacheDir, now),
+		search:    newSearchCache(now),
+		now:       now,
 	}
 }
 
@@ -347,16 +351,16 @@ func (c *client) detailsFor(ctx context.Context, fileID string, refresh bool) (i
 //
 // gameID is the Steam app id (unused by the endpoint, which resolves a
 // published file globally, but carried onto the mod so the row records
-// which game it belongs to). Author is the RAW creator steamid64: resolving
-// it to a display name needs GetPlayerSummaries, i.e. a key, and SourceURL
-// is one click from the real name.
+// which game it belongs to). Author is the RAW creator steamid64, and
+// AuthorName its persona name where one resolves (#420, names.go).
 func (s *Source) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
 	d, err := s.client.detailsFor(ctx, modID, false)
 	if err != nil {
 		return nil, fmt.Errorf("source %q: %w", sourceID, err)
 	}
-	mod := modFromDetails(d, gameID)
-	return &mod, nil
+	mods := []domain.Mod{modFromDetails(d, gameID)}
+	s.client.withAuthorNames(ctx, mods)
+	return &mods[0], nil
 }
 
 // modFromDetails is the one mapping from Valve's published-file shape to

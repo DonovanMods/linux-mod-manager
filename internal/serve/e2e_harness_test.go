@@ -1338,7 +1338,8 @@ func newE2EFixtureWithSearchableMods(t *testing.T) e2eSearchFixture {
 		members: map[string]string{"c1": e2eSearchDeployedFile},
 	})
 	src.addMod(e2eSearchSourceMod{
-		mod: domain.Mod{ID: e2eSearchMultiFileModID, SourceID: "fake", Name: "Multi Edition Mod", Version: "1.0"},
+		// #420: an opaque author id with its resolved name beside it.
+		mod: domain.Mod{ID: e2eSearchMultiFileModID, SourceID: "fake", Name: "Multi Edition Mod", Version: "1.0", Author: "76561198000000000", AuthorName: "Cargo Captain"},
 		files: []domain.DownloadableFile{
 			{ID: "m1", Name: "Regular Edition", FileName: "multi-regular.zip", Version: "1.0", Category: "MAIN", IsPrimary: true, Size: 48},
 			{ID: "m2", Name: "Definitive Edition", FileName: "multi-definitive.zip", Version: "1.0", Category: "MAIN", Size: 48},

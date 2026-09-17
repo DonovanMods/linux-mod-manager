@@ -216,8 +216,10 @@ func displayVersionSuffix(version string) string {
 
 // displayAuthorSuffix is displayVersionSuffix's twin for " by <author>":
 // "Selected: StockOverride v1.0.0 by " left a dangling "by" for any source
-// that does not report an author.
-func displayAuthorSuffix(author string) string {
+// that does not report an author. The author is core.AuthorText's - the
+// persona name where one resolved (#420).
+func displayAuthorSuffix(m *domain.Mod) string {
+	author := core.AuthorText(m)
 	if author == "" {
 		return ""
 	}

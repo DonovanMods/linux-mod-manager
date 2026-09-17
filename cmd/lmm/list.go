@@ -148,7 +148,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	}
 
 	for _, mod := range mods {
-		author := mod.Author
+		author := core.AuthorText(&mod.Mod) // #420
 		if author == "" {
 			author = "-"
 		}

@@ -13,6 +13,7 @@
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
 import { absoluteTime, updatedPhrase } from "../relativetime.js";
+import { authorTitle, displayAuthor } from "../author.js";
 import { navigate } from "../router.js";
 import { codeSpans } from "../errortext.js";
 import { InlineJob } from "./jobprogress.js";
@@ -104,8 +105,10 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
           >`
         }
         ${
-          hit.author &&
-          html`<span class="search-result__author">${hit.author}</span>`
+          displayAuthor(hit) &&
+          html`<span class="search-result__author" title=${authorTitle(hit)}
+            >${displayAuthor(hit)}</span
+          >`
         }
         <span
           class="search-result__updated"

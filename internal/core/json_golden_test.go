@@ -1309,6 +1309,21 @@ func TestJSONGoldens(t *testing.T) {
 			core.SearchHit{Mod: jsonGoldenMod, Installed: true},
 		},
 		{
+			// #420/#433: a Workshop hit - author keeps the creator's
+			// steamid64 and author_name carries its persona name beside it;
+			// updated_at is the date the search surfaces show.
+			"search_hit_workshop",
+			core.SearchHit{
+				Mod: domain.Mod{
+					ID: "3617086610", SourceID: "steamworkshop", Name: "Workshop Item",
+					Version: "7987119735124793734", Author: "76561198000000000",
+					AuthorName: "Cargo Captain", GameID: "1133870", UpdatedAt: fixedTime,
+					DisplayVersion: "2026-08-27",
+				},
+				External: true,
+			},
+		},
+		{
 			// Warnings carries the structured SourceWarning (SourceID + the
 			// error's message, never a pre-formatted line), and Mods is left
 			// nil to pin that an empty result marshals as "[]", not "null".

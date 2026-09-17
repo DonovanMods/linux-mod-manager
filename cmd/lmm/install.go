@@ -300,7 +300,7 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 			if age := displayAge(m.UpdatedAt, cliNow()); age != "" {
 				updated = ", updated " + age // #433
 			}
-			fmt.Printf("  [%d] %s%s%s (ID: %s%s)%s\n", i+1, m.Name, labels.suffix(&m), displayAuthorSuffix(m.Author), m.ID, updated, installedMark)
+			fmt.Printf("  [%d] %s%s%s (ID: %s%s)%s\n", i+1, m.Name, labels.suffix(&m), displayAuthorSuffix(&m), m.ID, updated, installedMark)
 		}
 
 		hasMore := false
@@ -567,7 +567,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// Every human-facing line below is suppressed under --json: the run
 	// emits exactly one document (Ruling 15).
 	if !jsonOutput {
-		fmt.Printf("\nSelected: %s%s%s\n", mod.Name, newModVersionLabels(service).suffix(mod), displayAuthorSuffix(mod.Author))
+		fmt.Printf("\nSelected: %s%s%s\n", mod.Name, newModVersionLabels(service).suffix(mod), displayAuthorSuffix(mod))
 
 		if !installNoDeps && mod.SourceID != domain.SourceLocal {
 			fmt.Println("\nResolving dependencies...")

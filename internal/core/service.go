@@ -2187,7 +2187,8 @@ func (s *Service) gamesSnapshot() []*domain.Game {
 // GetInstalledMods returns all installed mods for a game/profile (DB order: installed_at).
 func (s *Service) GetInstalledMods(ctx context.Context, gameID, profileName string) ([]domain.InstalledMod, error) {
 	rows, err := s.db.GetInstalledMods(ctx, gameID, profileName)
-	s.stampInstalledDisplay(rows) // #458
+	s.stampInstalledDisplay(rows)  // #458
+	s.stampCachedAuthorNames(rows) // #420
 	return rows, err
 }
 
@@ -2751,6 +2752,9 @@ func (s *Service) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, 
 	row, err := s.db.GetInstalledMod(ctx, sourceID, modID, gameID, profileName)
 	if row != nil {
 		s.stampDisplayVersion(&row.Mod, row.External) // #458
+		rows := []domain.InstalledMod{*row}
+		s.stampCachedAuthorNames(rows) // #420
+		row.AuthorName = rows[0].AuthorName
 	}
 	return row, err
 }

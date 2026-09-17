@@ -1,0 +1,15 @@
+{
+  "response": {
+    "players": [
+      {
+        "steamid": "76561198000000000",
+        "communityvisibilitystate": 3,
+        "profilestate": 1,
+        "personaname": "Cargo Captain",
+        "profileurl": "https://steamcommunity.example.invalid/id/cargo/",
+        "avatar": "https://avatars.example.invalid/0000.jpg",
+        "personastate": 0
+      }
+    ]
+  }
+}
