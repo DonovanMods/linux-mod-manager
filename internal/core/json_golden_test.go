@@ -1953,6 +1953,17 @@ func TestJSONGoldens(t *testing.T) {
 			core.ListedVersionUnavailable{SourceID: "local", ModID: "b", ProfileFile: "/home/user/.config/lmm/games/skyrim-se/profiles/survival.yaml"},
 		},
 		{
+			// #445 gate 2, G2-3: one the cache holds at the listed version,
+			// whose deployment at another version by another profile is what
+			// no apply can replace.
+			"listed_version_unavailable_live",
+			core.ListedVersionUnavailable{
+				SourceID: "local", ModID: "k", Version: "2.0", Cached: []string{"1.0", "2.0"},
+				LiveVersion: "1.0", LiveProfile: "default",
+				ProfileFile: "/home/user/.config/lmm/games/skyrim-se/profiles/survival.yaml",
+			},
+		},
+		{
 			// One profile's share of game_mod_path_in_use_error.
 			"profile_deployed_files",
 			core.ProfileDeployedFiles{Profile: "survival", DeployedFiles: 2},

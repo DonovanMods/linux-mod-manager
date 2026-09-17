@@ -1,0 +1,12 @@
+{
+  "source_id": "local",
+  "mod_id": "k",
+  "version": "2.0",
+  "cached": [
+    "1.0",
+    "2.0"
+  ],
+  "live_version": "1.0",
+  "live_profile": "default",
+  "profile_file": "/home/user/.config/lmm/games/skyrim-se/profiles/survival.yaml"
+}

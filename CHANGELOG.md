@@ -1821,6 +1821,16 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   now counts only when the document lists its mod, so the refusal names
   the apply that deploys and records the listed one.
 
+- **The mod_path refusal says what really blocks a listed version
+  (#445).** For a mod the active profile lists at a version no apply can
+  deploy, the refusal blamed the cache ("the cache holds it only at 1.0,
+  2.0") even when the cache held the listed 2.0 and the real blocker was
+  another profile's live 1.0, which an apply can only replace by
+  downloading 2.0. It now says so — `(the cache holds it, but profile p has
+it deployed at 1.0, which only a download of 2.0 could replace, …)` —
+  and names the edit that works: list the version deployed. `--json`'s
+  `listed_unavailable` entries gain `live_version` and `live_profile`.
+
 - **`lmm uninstall` keeps a cache entry another profile still uses
   (#445).** Uninstalling a mod deleted its version's cache entry even while
   another profile's row still used it — and for a local mod that entry is

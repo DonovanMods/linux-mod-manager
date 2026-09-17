@@ -444,6 +444,13 @@ func (v *activeApplyView) unavailable(key string) ListedVersionUnavailable {
 		}
 	}
 	slices.Sort(u.Cached)
+	// #445 gate 2, G2-3: the cache holds the listed version, so what an
+	// apply cannot get past is the other version deployed.
+	if ref.Version != "" && slices.Contains(u.Cached, ref.Version) {
+		if prior, drift := liveOtherVersion(v.elsewhere[key], ref); drift {
+			u.LiveVersion, u.LiveProfile = prior.Version, prior.ProfileName
+		}
+	}
 	return u
 }
 
@@ -700,6 +707,12 @@ type ListedVersionUnavailable struct {
 	Version string `json:"version,omitempty"`
 	// Cached is the versions of the mod the game's cache holds.
 	Cached []string `json:"cached,omitempty"`
+	// LiveVersion and LiveProfile are set when the cache does hold Version
+	// and what keeps an apply from deploying it is another profile's
+	// deployment of the mod at LiveVersion (#445 gate 2, G2-3): an enable
+	// cannot replace a deployed version, and only a download could.
+	LiveVersion string `json:"live_version,omitempty"`
+	LiveProfile string `json:"live_profile,omitempty"`
 	// ProfileFile is the active profile's document, where Version is set.
 	ProfileFile string `json:"profile_file"`
 }
@@ -783,25 +796,45 @@ func (e *GameModPathInUseError) Details() any { return e }
 // mods no apply can deploy: what is listed, what the cache holds, and the
 // edit of the active profile's document that ends the refusal. It names no
 // command, since none would record their files.
+//
+// What blocks each is named (#445 gate 2, G2-3): the cache, or - when the
+// cache holds the listed version - another profile's deployment of another
+// one, and the edit that ends it lists the version deployed then.
 func listedUnavailableText(active string, mods []ListedVersionUnavailable) string {
 	items := make([]string, len(mods))
+	live := 0
 	for i, u := range mods {
 		listed := u.SourceID + ":" + u.ModID
 		if u.Version != "" {
 			listed += " at version " + u.Version
 		}
-		cached := "the cache does not hold it"
-		if len(u.Cached) > 0 {
-			cached = "the cache holds it only at " + strings.Join(u.Cached, ", ")
+		var why string
+		switch {
+		case u.LiveVersion != "":
+			live++
+			why = fmt.Sprintf("the cache holds it, but profile %s has it deployed at %s, which only a download of %s could replace", u.LiveProfile, u.LiveVersion, u.Version)
+		case len(u.Cached) > 0:
+			why = "the cache holds it only at " + strings.Join(u.Cached, ", ")
+		default:
+			why = "the cache does not hold it"
 		}
-		items[i] = fmt.Sprintf("%s (%s, and lmm has no source %s to download it from)", listed, cached, u.SourceID)
+		items[i] = fmt.Sprintf("%s (%s, and lmm has no source %s to download it from)", listed, why, u.SourceID)
 	}
 	files, them, each := "its file", "it", "it"
 	if len(mods) > 1 {
 		files, them, each = "their files", "them", "each"
 	}
-	return fmt.Sprintf("it lists %s, which lmm cannot deploy - nothing records %s under %s, and no purge removes %s, until you edit %s to list %s at a version the cache holds (and ask for this move again, to be told what records %s) or to mark %s `disabled: true` (so the purges remove %s)",
-		strings.Join(items, " and "), files, active, them, mods[0].ProfileFile, each, them, each, files)
+	at := "a version the cache holds"
+	switch {
+	case live == 1 && len(mods) == 1:
+		at = "the version deployed, " + mods[0].LiveVersion
+	case live == len(mods):
+		at = "the version deployed"
+	case live > 0:
+		at = "a version the cache holds, or at the version deployed where another profile has one"
+	}
+	return fmt.Sprintf("it lists %s, which lmm cannot deploy - nothing records %s under %s, and no purge removes %s, until you edit %s to list %s at %s (and ask for this move again, to be told what records %s) or to mark %s `disabled: true` (so the purges remove %s)",
+		strings.Join(items, " and "), files, active, them, mods[0].ProfileFile, each, at, them, each, files)
 }
 
 // validatedSourceMap trims and checks every entry of a proposed source
