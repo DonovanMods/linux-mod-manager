@@ -1781,7 +1781,7 @@ deploy`, `lmm purge`, `lmm profile delete`, `verify --fix`'s re-links,
   failure, and `from_profile` for a mod deployed from another profile's
   cache. The web UI's Apply job fails with the same message.
 
-- **lmm never removes or replaces a file another game records (#445).**
+- **lmm never removes or replaces a file another game records (#473).**
   Two games can share one mod directory. `lmm purge` of the active
   profile, `lmm uninstall`, a deploy (`lmm deploy`, a switch, an apply, an
   update) and `verify --fix` ignored the other game's records: `lmm purge
@@ -1835,7 +1835,7 @@ it deployed at 1.0, which only a download of 2.0 could replace, …)` —
   `listed_unavailable` entries gain `live_version` and `live_profile`.
 
 - **`lmm uninstall` keeps a cache entry another profile still uses
-  (#445).** Uninstalling a mod deleted its version's cache entry even while
+  (#474).** Uninstalling a mod deleted its version's cache entry even while
   another profile's row still used it — and for a local mod that entry is
   the only copy, so the other profile was left with a mod it could never
   deploy again (its switch failed with "source not found: local"). Since
@@ -1851,7 +1851,7 @@ it deployed at 1.0, which only a download of 2.0 could replace, …)` —
   (`--verbose`) the one it kept.
 
 - **`lmm profile switch` no longer says "Switched" when a mod inside it
-  failed (#470).** Like `lmm profile apply` before it, a switch whose mod
+  failed (#475).** Like `lmm profile apply` before it, a switch whose mod
   could not be fetched, downloaded or deployed printed the error on its own
   line and still ended `✓ Switched to profile` with exit status 0 — a
   deploy that failed as a mod was switched on was only a `--verbose` note.
