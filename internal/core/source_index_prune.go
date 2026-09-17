@@ -27,6 +27,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // IndexPruneMaxAge is how long an index a game still uses may go without a
@@ -267,6 +268,10 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 		for _, ci := range cached {
 			cachedIDs[ci.GameID] = true
 		}
+		// users is #468's guard: the games that still install from this
+		// source. Read once per source; sourceWitnesses narrows it per
+		// index.
+		users := s.sourceUsers(ctx, games, src.ID())
 		for _, ci := range cached {
 			entry := IndexPruneEntry{
 				Source: src.ID(), Game: ci.GameID, Bytes: ci.Bytes, FetchedAt: ci.FetchedAt,
@@ -276,6 +281,10 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 			if remove && !opts.All && len(entry.MappedBy) == 0 {
 				if why := uses.truncationDoubt(ci.GameID, cachedIDs); why != "" {
 					remove, reason = false, why
+				} else if witnesses := sourceWitnesses(users, src.ID(), ci.GameID); len(witnesses) > 0 {
+					remove, reason = false, fmt.Sprintf(
+						"game %s installs mods from this source (or a profile lists one), but games.yaml maps it to no index, or to the start of this index's name - a cut-short games.yaml (#403) can lose a mapping or shorten it, so lmm cannot tell whether this index is in use",
+						strings.Join(witnesses, ", "))
 				}
 			}
 			if remove && !opts.All && doubt != "" {
@@ -497,6 +506,64 @@ func (u indexUsage) truncationDoubt(id string, cached map[string]bool) string {
 			strings.Join(u.byID[mapped], ", "), mapped)
 	}
 	return ""
+}
+
+// sourceUsers is every game in games with real, on-disk evidence of using
+// sourceID (gameUsesSource), sorted by ID (#468).
+func (s *Service) sourceUsers(ctx context.Context, games []*domain.Game, sourceID string) []*domain.Game {
+	var out []*domain.Game
+	for _, g := range games {
+		if s.gameUsesSource(ctx, g.ID, sourceID) {
+			out = append(out, g)
+		}
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].ID < out[b].ID })
+	return out
+}
+
+// sourceWitnesses names the users whose games.yaml entry may have been cut
+// short on the way to naming index id (#468): one that maps sourceID to
+// nothing at all - the cut dropped the mapping, or the key under it - or to
+// a strict prefix of id - the cut landed on a shorter slug, which may even
+// have an index of its own, so truncationDoubt does not ask. Either way the
+// game still installs from the source, and id cannot be proven unused. A
+// user whose mapping names another index entirely is not a witness: its
+// entry is whole, and the prune is free to decide id.
+func sourceWitnesses(users []*domain.Game, sourceID, id string) []string {
+	var out []string
+	for _, g := range users {
+		mapped := strings.TrimSpace(g.SourceIDs[sourceID])
+		if mapped == "" || (mapped != id && strings.HasPrefix(id, mapped)) {
+			out = append(out, g.ID)
+		}
+	}
+	return out
+}
+
+// gameUsesSource reports whether gameID has real evidence of using
+// sourceID: an installed_mods row in any of its profiles, or a profile file
+// listing one of the source's mods. A read error counts as evidence, not
+// its absence - fail closed, same as the rest of this file.
+func (s *Service) gameUsesSource(ctx context.Context, gameID, sourceID string) bool {
+	if used, err := s.db.GameHasInstalledModsFromSource(ctx, gameID, sourceID); err != nil || used {
+		return true
+	}
+	names, err := config.ListProfiles(s.configDir, gameID)
+	if err != nil {
+		return true
+	}
+	for _, name := range names {
+		profile, err := config.LoadProfile(s.configDir, gameID, name)
+		if err != nil {
+			return true
+		}
+		for _, m := range profile.Mods {
+			if m.SourceID == sourceID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (u indexUsage) identifiers() []string {

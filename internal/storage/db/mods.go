@@ -163,6 +163,24 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 	return mods, nil
 }
 
+// GameHasInstalledModsFromSource reports whether gameID has an installed_mods
+// row - in ANY profile - whose source_id is sourceID (#468): source-index
+// prune's evidence that a game still uses a source, independent of whatever
+// games.yaml currently maps it to.
+func (d *DB) GameHasInstalledModsFromSource(ctx context.Context, gameID, sourceID string) (bool, error) {
+	var exists int
+	err := d.QueryRowContext(ctx, `
+		SELECT 1 FROM installed_mods WHERE game_id = ? AND source_id = ? LIMIT 1
+	`, gameID, sourceID).Scan(&exists)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("checking installed mods for game %s from source %s: %w", gameID, sourceID, err)
+	}
+	return true, nil
+}
+
 // ModVersionRow is one installed row of a mod - in any game and profile -
 // and the versions it names: the one it has, and the one it rolls back to.
 type ModVersionRow struct {

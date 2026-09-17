@@ -1641,7 +1641,11 @@ disable`, rollback, profile switch or apply, and `lmm verify --fix` deleted
   community slug still reads as valid, so the index the game really uses
   looked unused and was deleted (and re-downloaded on the next search). An
   index whose name extends a mapped slug that has no index of its own is
-  now kept, and the prune says why; `--all` still removes it.
+  now kept, and the prune says why; `--all` still removes it. A cut that
+  drops a game's mapping entirely, or shortens it to a slug that happens to
+  have its own index, is caught too: while a game still installs mods from
+  the source (or a profile lists one) and games.yaml maps it to nothing, or
+  to the start of an index's name, that index is kept.
 - **A downloaded BepInEx archive's layout warning reaches `--json` (#464).**
   Installing a BepInEx-shaped archive into a game whose `mod_path` is not
   its install path was never silent - with no BepInEx it is refused, and

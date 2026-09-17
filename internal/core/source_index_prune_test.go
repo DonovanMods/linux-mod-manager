@@ -536,3 +536,182 @@ func TestPruneSourceIndexes_AMappedSlugWithItsOwnIndexDoesNotKeepLongerOnes(t *t
 	require.NoError(t, err)
 	assert.Equal(t, core.IndexPruneRemoved, entryFor(t, report.Entries, "older").Action)
 }
+
+// TestPruneSourceIndexes_AGamesFileCutAroundItsSourcesKeepsTheIndex (#468):
+// three games.yaml cuts a deletion-safety review found that truncationDoubt
+// does not catch, because each one still parses as an ordinary, resolvable
+// mapping (or the plain absence of one) rather than as a slug snipped
+// mid-name: the sources: key missing entirely (cut just before it), present
+// but empty (cut just after it), and shortened to a DIFFERENT, unrelated
+// slug that happens to have its own cached index (so the shortened mapping
+// looks exactly as intentional as a real one). In all three the game whose
+// mapping was damaged still has a profile mod from the source - the guard
+// that catches what truncationDoubt cannot.
+func TestPruneSourceIndexes_AGamesFileCutAroundItsSourcesKeepsTheIndex(t *testing.T) {
+	t.Run("cut just before the sources key leaves the game unmapped", func(t *testing.T) {
+		svc, src, configDir := newPruneService(t)
+		// zzlc sorts after every other game (games.yaml is written in
+		// sorted order), so its sources: key is the LAST thing in the
+		// file - the one byte offset a cut here cannot also mangle.
+		require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+			ID: "zzlc", Name: "zzlc", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+			SourceIDs: map[string]string{"ts": "unused"},
+		}))
+		pm := svc.NewProfileManager()
+		_, err := pm.Create(t.Context(), "zzlc", "default")
+		require.NoError(t, err)
+		require.NoError(t, pm.AddMod(t.Context(), "zzlc", "default", domain.ModReference{SourceID: "ts", ModID: "m", Version: "1.0"}))
+
+		path := filepath.Join(configDir, "games.yaml")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		i := strings.LastIndex(string(data), "sources:")
+		require.Positive(t, i, "fixture: zzlc sorts last and has a sources: key")
+		require.NoError(t, os.WriteFile(path, []byte(string(data)[:i]), 0o644))
+
+		report := runPruneAfterCut(t, configDir, src)
+		kept := entryFor(t, report.Entries, "unused")
+		assert.Equal(t, core.IndexPruneKeep, kept.Action)
+		assert.Contains(t, kept.Reason, "zzlc")
+		assert.NotContains(t, src.removed, "unused")
+
+		later := reopenPruneService(t, configDir, src)
+		_, err = later.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: true})
+		require.NoError(t, err)
+		assert.Contains(t, src.removed, "unused", "--all is the explicit way past it")
+	})
+
+	t.Run("cut just after the sources key leaves it empty", func(t *testing.T) {
+		svc, src, configDir := newPruneService(t)
+		require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+			ID: "zzlc", Name: "zzlc", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+			SourceIDs: map[string]string{"ts": "unused"},
+		}))
+		pm := svc.NewProfileManager()
+		_, err := pm.Create(t.Context(), "zzlc", "default")
+		require.NoError(t, err)
+		require.NoError(t, pm.AddMod(t.Context(), "zzlc", "default", domain.ModReference{SourceID: "ts", ModID: "m", Version: "1.0"}))
+
+		path := filepath.Join(configDir, "games.yaml")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		i := strings.LastIndex(string(data), "sources:")
+		require.Positive(t, i, "fixture: zzlc sorts last and has a sources: key")
+		cut := i + len("sources:")
+		require.NoError(t, os.WriteFile(path, []byte(string(data)[:cut]), 0o644))
+
+		report := runPruneAfterCut(t, configDir, src)
+		kept := entryFor(t, report.Entries, "unused")
+		assert.Equal(t, core.IndexPruneKeep, kept.Action)
+		assert.Contains(t, kept.Reason, "zzlc")
+		assert.NotContains(t, src.removed, "unused")
+
+		later := reopenPruneService(t, configDir, src)
+		_, err = later.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: true})
+		require.NoError(t, err)
+		assert.Contains(t, src.removed, "unused", "--all is the explicit way past it")
+	})
+
+	t.Run("cut lands exactly on a shorter slug with its own index", func(t *testing.T) {
+		svc, src, configDir := newPruneService(t)
+		src.cached["subnautica-below-zero"] = source.CachedIndex{
+			GameID: "subnautica-below-zero", Present: true, Bytes: 50 << 20,
+			FetchedAt: time.Now().Add(-day), Removable: true,
+		}
+		src.cached["subnautica"] = source.CachedIndex{
+			GameID: "subnautica", Present: true, Bytes: 10 << 20,
+			FetchedAt: time.Now().Add(-40 * day), Removable: true,
+		}
+		require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+			ID: "subz", Name: "subz", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+			SourceIDs: map[string]string{"ts": "subnautica-below-zero"},
+		}))
+		pm := svc.NewProfileManager()
+		_, err := pm.Create(t.Context(), "subz", "default")
+		require.NoError(t, err)
+		require.NoError(t, pm.AddMod(t.Context(), "subz", "default", domain.ModReference{SourceID: "ts", ModID: "m", Version: "1.0"}))
+
+		path := filepath.Join(configDir, "games.yaml")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		i := strings.Index(string(data), "subnautica-below-zero")
+		require.Positive(t, i)
+		require.NoError(t, os.WriteFile(path, []byte(string(data)[:i]+"subnautica"+string(data)[i+len("subnautica-below-zero"):]), 0o644))
+
+		report := runPruneAfterCut(t, configDir, src)
+		kept := entryFor(t, report.Entries, "subnautica-below-zero")
+		assert.Equal(t, core.IndexPruneKeep, kept.Action)
+		assert.Contains(t, kept.Reason, "subz")
+		assert.NotContains(t, src.removed, "subnautica-below-zero")
+		// "old" is still validly mapped (by beta) and past its age - the new
+		// guard only ever holds back an UNMAPPED index.
+		assert.Contains(t, src.removed, "old")
+
+		later := reopenPruneService(t, configDir, src)
+		_, err = later.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{All: true})
+		require.NoError(t, err)
+		assert.Contains(t, src.removed, "subnautica-below-zero", "--all is the explicit way past it")
+	})
+}
+
+// TestPruneSourceIndexes_AGameWithNoSourceEvidenceStaysPrunable is the
+// negative of #468's guard: a game simply not using a source at all - no
+// mapping, no installed mods, no profile mod from it - is the ordinary,
+// common case, and must not itself keep some OTHER game's stale index alive.
+func TestPruneSourceIndexes_AGameWithNoSourceEvidenceStaysPrunable(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+	require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+		ID: "eta", Name: "eta", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+	}))
+
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, core.IndexPruneRemoved, entryFor(t, report.Entries, "unused").Action)
+	assert.Contains(t, src.removed, "unused")
+}
+
+// TestPruneSourceIndexes_AGameWithAWholeMappingDoesNotHoldOtherIndexes: a
+// game that installs from the source and maps it to an index of its own,
+// whose name is not the start of the stale one, is no witness to a cut -
+// its entry is whole - so the stale index still goes.
+func TestPruneSourceIndexes_AGameWithAWholeMappingDoesNotHoldOtherIndexes(t *testing.T) {
+	svc, src, _ := newPruneService(t)
+	require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+		ID: "theta", Name: "theta", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"ts": "recent"},
+	}))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(t.Context(), "theta", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(t.Context(), "theta", "default", domain.ModReference{SourceID: "ts", ModID: "m", Version: "1.0"}))
+
+	report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, core.IndexPruneRemoved, entryFor(t, report.Entries, "unused").Action)
+	assert.Contains(t, src.removed, "unused")
+}
+
+// runPruneAfterCut reopens configDir as a fresh Service - the same way a
+// later lmm process would, having never seen the file whole - and returns
+// its dry-run-free prune report. Mirrors
+// TestPruneSourceIndexes_AGamesFileCutShortMidSlugKeepsTheIndex's pattern.
+func runPruneAfterCut(t *testing.T, configDir string, src *inventorySource) *core.IndexPruneReport {
+	t.Helper()
+	later := reopenPruneService(t, configDir, src)
+	report, err := later.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{})
+	require.NoError(t, err)
+	return report
+}
+
+// reopenPruneService opens a NEW Service over configDir (a later lmm
+// process) with src re-registered, so a cut games.yaml is read fresh rather
+// than from the original Service's in-memory snapshot.
+func reopenPruneService(t *testing.T, configDir string, src *inventorySource) *core.Service {
+	t.Helper()
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(src)
+	svc.RegisterSource(newMockSource("other"))
+	return svc
+}
