@@ -22,8 +22,12 @@ import (
 
 func TestWorkshopTier3_EverySurfaceShowsTheRevisionDate(t *testing.T) {
 	ctx := context.Background()
-	svc, game, _ := setupDoUpdateWorkshopTest(t)
+	svc, game, src := setupDoUpdateWorkshopTest(t)
 	mod := seedWorkshopInstalledMod(t, svc, game)
+	// The source's own document for the item, at the installed content id,
+	// so mod show has detail to render and no update is on offer.
+	src.AddMod(&domain.Mod{ID: mod.ID, SourceID: mod.SourceID, GameID: game.ID, Name: mod.Name,
+		Version: workshopContentID, UpdatedAt: workshopUpdatedAt}, nil)
 	ref := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: workshopContentID}
 	require.NoError(t, getProfileManager(svc).UpsertMod(ctx, game.ID, "default", ref))
 
@@ -39,11 +43,20 @@ func TestWorkshopTier3_EverySurfaceShowsTheRevisionDate(t *testing.T) {
 
 	t.Run("mod show's document", func(t *testing.T) {
 		detail, err := svc.ModDetail(ctx, game, "default", mod.SourceID, mod.ID)
-		if err != nil {
-			t.Skipf("the fake source serves no detail: %v", err)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, workshopRevision, detail.Mod.DisplayVersion)
 		require.NotNil(t, detail.Installed)
 		assert.Equal(t, workshopRevision, detail.Installed.DisplayVersion)
+
+		setFlag(t, &modSource, mod.SourceID)
+		setFlag(t, &modProfile, "")
+		setFlag(t, &jsonOutput, false)
+		stdout := captureStdout(t, func() error {
+			return doModShow(ctx, svc, game, mod.ID)
+		})
+		assert.Contains(t, stdout, "Version: revision of "+workshopRevision)
+		assert.Contains(t, stdout, "Installed: revision of "+workshopRevision+" (profile: default)")
+		assert.NotContains(t, stdout, "v"+workshopContentID)
 	})
 
 	t.Run("a profile import's plan lines", func(t *testing.T) {
