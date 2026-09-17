@@ -126,6 +126,10 @@ type SwitchPlan struct {
 // it still owes is settled first (settleOwedProfileBackfill), since the
 // plan is decided from the target profile's markers.
 func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, target string) (*SwitchPlan, error) {
+	// #451 F3: a dry run must not promise what its own Apply refuses.
+	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+		return nil, err
+	}
 	s.settleOwedProfileBackfill(ctx)
 	pm := s.NewProfileManager()
 

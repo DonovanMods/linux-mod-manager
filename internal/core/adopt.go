@@ -279,6 +279,10 @@ func (s *Service) scanLocal(ctx context.Context, game *domain.Game, opts ScanOpt
 // consume. It performs source READS (search, and one file listing per
 // match) but writes nothing.
 func (s *Service) PlanAdopt(ctx context.Context, game *domain.Game, profileName string, opts AdoptOptions) (*AdoptPlan, error) {
+	// #451 F3: a dry run must not promise what its own Apply refuses.
+	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+		return nil, err
+	}
 	scan, installedMods, err := s.scanLocal(ctx, game, ScanOptions{ProfileName: profileName, DryRun: opts.DryRun})
 	if err != nil {
 		return nil, err

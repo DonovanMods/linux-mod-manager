@@ -148,6 +148,10 @@ type ImportPlan struct {
 // touching the network - mirrors doProfileImport's preview step
 // (:411-459) exactly.
 func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte) (*ImportPlan, error) {
+	// #451 F3: a dry run must not promise what its own Apply refuses.
+	if err := s.refuseModPathMoved(ctx, game.ID); err != nil {
+		return nil, err
+	}
 	pm := s.NewProfileManager()
 
 	profile, err := pm.ParseProfile(data)

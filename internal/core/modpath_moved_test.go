@@ -107,6 +107,11 @@ func TestModPathMoved_EveryDeployRefusesAndStrandsNothing(t *testing.T) {
 			require.ErrorAs(t, err, &moved)
 			_, err = f.svc.PlanRelinkMod(ctx, f.game, "default", "local", "k", "", "")
 			require.ErrorAs(t, err, &moved)
+			// #451 F3: `lmm profile apply`'s Plan refuses too - it used to
+			// pass clean and let its own Apply half-run instead (see
+			// TestModPathMoved_ProfileApplyRefusesBeforeHalfApplying).
+			_, err = f.svc.PlanProfileApply(ctx, f.game, "default")
+			require.ErrorAs(t, err, &moved)
 
 			// The installer itself refuses too, for any path that reaches it
 			// without a plan.
@@ -240,4 +245,116 @@ func TestSaveGame_RefusesAModPathMoveUnderADeployment(t *testing.T) {
 	same := *f.game
 	same.Name = "Renamed"
 	require.NoError(t, f.svc.SaveGame(ctx, &same))
+}
+
+// TestModPathMoved_ProfileApplyRefusesBeforeHalfApplying is #451 finding F3:
+// `lmm profile apply` passed a clean Plan in the moved state and then
+// half-applied it - its disable loop ran (undeploying and disabling mod k)
+// and only the later enable/install loop's Installer.Install call hit the
+// backstop, leaving k disabled with its files stranded rather than the
+// refusal happening before anything moved. PlanProfileApply now refuses
+// outright, and - the harder case - so does an ApplyProfileApply given a
+// plan computed BEFORE the move: the disable loop must never run.
+func TestModPathMoved_ProfileApplyRefusesBeforeHalfApplying(t *testing.T) {
+	ctx := context.Background()
+	f := ledgerState(t, domain.LinkCopy)
+	oldPath := f.game.ModPath
+	newPath := oldPath + "2"
+
+	// Drop mod k from the profile document, so the plan has something to
+	// disable - the state the half-apply bug actually reached.
+	f.profile(t, "default", true)
+
+	plan, err := f.svc.PlanProfileApply(ctx, f.game, "default")
+	require.NoError(t, err, "the plan computed before the move must still succeed")
+	require.Len(t, plan.ToDisable, 1, "k is installed and enabled but no longer listed")
+
+	handEditModPath(t, f.svc, oldPath, newPath)
+	game, err := f.svc.GetGame("sky")
+	require.NoError(t, err)
+
+	var moved *core.ModPathMissingError
+
+	// A fresh plan, computed after the move, refuses outright.
+	_, err = f.svc.PlanProfileApply(ctx, game, "default")
+	require.ErrorAs(t, err, &moved)
+
+	// The plan computed BEFORE the move refuses too - before disabling
+	// anything: k's row is still enabled and deployed, and its files are
+	// still live under the OLD mod_path.
+	result, err := f.svc.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, nil)
+	require.ErrorAs(t, err, &moved)
+	require.NotNil(t, result)
+	assert.Zero(t, result.Disabled, "the disable loop must never have run")
+
+	mod, err := f.svc.GetInstalledMod(ctx, "local", "k", "sky", "default")
+	require.NoError(t, err)
+	assert.True(t, mod.Enabled, "k must still be enabled")
+	assert.True(t, mod.Deployed, "k must still claim its deployment")
+	assert.Equal(t, "mod k", readLive(t, filepath.Join(oldPath, "Data", "k.esp")))
+	assert.ElementsMatch(t, []string{"Data/k.esp", "Data/k2.esp"}, f.recorded(t, "default", "k"))
+}
+
+// TestModPathMoved_EveryDryRunPlanRefuses is #451 finding F3's other half:
+// every deploy-direction flow's Plan must refuse a moved mod_path, not just
+// deploy/install/relink - a dry run must not promise what its own Apply
+// would refuse. `lmm profile apply` is covered by
+// TestModPathMoved_ProfileApplyRefusesBeforeHalfApplying above (and its own
+// case in TestModPathMoved_EveryDeployRefusesAndStrandsNothing); this covers
+// the remaining Plan functions that read a game's mod_path and preview a
+// deploy: profile switch, profile import, adopt and snapshot restore.
+func TestModPathMoved_EveryDryRunPlanRefuses(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		plan func(t *testing.T, f *legacyFixture) error
+	}{
+		{
+			name: "profile switch",
+			plan: func(t *testing.T, f *legacyFixture) error {
+				f.profile(t, "other", false)
+				_, err := f.svc.PlanProfileSwitch(ctx, f.game, "other")
+				return err
+			},
+		},
+		{
+			name: "profile import",
+			plan: func(t *testing.T, f *legacyFixture) error {
+				_, err := f.svc.PlanImport(ctx, f.game, []byte("name: default\ngame_id: sky\nmods: []\n"))
+				return err
+			},
+		},
+		{
+			name: "adopt",
+			plan: func(t *testing.T, f *legacyFixture) error {
+				_, err := f.svc.PlanAdopt(ctx, f.game, "default", core.AdoptOptions{SkipMatch: true})
+				return err
+			},
+		},
+		{
+			name: "snapshot restore",
+			plan: func(t *testing.T, f *legacyFixture) error {
+				_, err := f.svc.CreateSnapshot(ctx, f.game, "default", "known-good")
+				require.NoError(t, err)
+				_, err = f.svc.PlanSnapshotRestore(ctx, f.game, "known-good")
+				return err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, newPath := movedState(t, domain.LinkCopy)
+			// The new mod_path exists (a user who repointed lmm there
+			// usually made the directory too), so the only way any of these
+			// can refuse is the #451 moved check - not adopt's unrelated
+			// "mod_path does not exist" stat check.
+			require.NoError(t, os.MkdirAll(newPath, 0o755))
+
+			var moved *core.ModPathMissingError
+			require.ErrorAs(t, tc.plan(t, f), &moved)
+			assert.NotEmpty(t, moved.DeployedUnder, "must be the MOVED reason, not some other ModPathMissingError")
+		})
+	}
 }
