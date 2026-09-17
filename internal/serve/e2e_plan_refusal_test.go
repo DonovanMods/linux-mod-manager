@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,46 @@ func TestE2E_DeployOnARefusedAdapter_ConfirmShowsTheRefusalAndItsRemedy(t *testi
 	assert.Zero(t, confirms, "a refused plan offers nothing to confirm")
 	// The 409 is the one expected failed request; nothing else may error.
 	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/plans/deploy", "/api/v1/conflicts")
+}
+
+// TestE2E_AdapterRefusalWithAReason_SkipsTheGenericRemedyAndDoesNotRepeatIt
+// is review F3: an AdapterPreconditionError's `reason` IS the adapter's own
+// remedy, and core's Error() already embeds it verbatim in the message this
+// component sits under (confirmplan.js's codeSpans(error), above
+// ErrorDetails). So AdapterRefusal must neither append the generic "change
+// the adapter" sentence, which would point the user the wrong way, nor
+// render the reason again itself. The real, unmodified component is
+// rendered directly (the same pure-module idiom
+// TestE2E_UnseenFailureBadgeIgnoresAJobWithNoEndTime uses), since no
+// production adapter implements Preconditioner today (#461's own report)
+// and so no plan refusal reaches this shape yet.
+func TestE2E_AdapterRefusalWithAReason_SkipsTheGenericRemedyAndDoesNotRepeatIt(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var html string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { render, h } = await import("/static/app/render.js");
+			const { AdapterRefusal } = await import("/static/app/components/errordetails.js");
+
+			const container = document.createElement("div");
+			document.body.appendChild(container);
+
+			render(h(AdapterRefusal, {
+				refusal: { gameID: "g1", adapter: "bepinex", reason: "install BepInEx first" },
+			}), container);
+
+			const out = container.innerHTML;
+			container.remove();
+			return out;
+		})()`, &html, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
+	)
+	assert.NotContains(t, html, "install BepInEx first", "the reason already shows in the message above - this component does not repeat it")
+	assert.NotContains(t, html, "change it in its games.yaml entry", "the generic remedy is wrong when the adapter's own reason is the fix")
+	assert.NotContains(t, html, "lmm game edit", "no generic --adapter command when the reason already names the fix")
+	assert.Empty(t, f.BrowserErrors())
 }
 
 // assertOnlyExpectedErrors fails on any browser error that is not a failed

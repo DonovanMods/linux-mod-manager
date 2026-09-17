@@ -92,6 +92,13 @@ export function LoaderSetup({ loader }) {
  * nothing will change on a retry until the game is changed. The message
  * above it is core's sentence; this names where the fix is made, in both
  * frontends.
+ *
+ * When `refusal.reason` is set (an AdapterPreconditionError, #353), the
+ * reason IS the adapter's own remedy - and core's `Error()` already embeds
+ * it verbatim in the message this component sits under (review F3). So
+ * there is nothing left for this component to add: the generic "change the
+ * adapter" sentence would point the wrong way, and repeating the reason
+ * here would say the same thing twice.
  */
 export function AdapterRefusal({ refusal }) {
   const adapter = refusal.adapter || "generic-files";
@@ -102,17 +109,14 @@ export function AdapterRefusal({ refusal }) {
       data-adapter=${adapter}
     >
       ${
-        refusal.reason &&
-        html`<p class="adapter-refusal__reason">
-          ${codeSpans(refusal.reason)}
+        !refusal.reason &&
+        html`<p class="adapter-refusal__remedy">
+          Nothing runs on this game until its adapter can: change it in its
+          games.yaml entry, or run${" "}<code
+            >lmm game edit ${refusal.gameID} --adapter ${"<name>"}</code
+          >, then try again.
         </p>`
       }
-      <p class="adapter-refusal__remedy">
-        Nothing runs on this game until its adapter can: change it in its
-        games.yaml entry, or run${" "}<code
-          >lmm game edit ${refusal.gameID} --adapter ${"<name>"}</code
-        >, then try again.
-      </p>
     </div>
   `;
 }
