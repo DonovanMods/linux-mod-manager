@@ -327,10 +327,17 @@ pre,
   color: var(--danger);
 }
 
+/* Issue 442: a disabled control is marked with certified tokens - muted
+   text on the sunken surface, a quiet border - rather than faded to half
+   strength, so no rule anywhere paints at partial opacity
+   (TestPartialOpacityIsAllowListed's allow-list is empty). A native
+   checkbox or radio keeps the browser's own disabled rendering. */
 .button:disabled,
 input:disabled,
 select:disabled {
-  opacity: 0.5;
+  border-color: var(--border-subtle);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
@@ -2238,11 +2245,25 @@ select {
   display: none;
 }
 
-/* The library header's live line while a job runs. */
-.library__live {
+/* The library header's live line while a job runs, and the count of items
+   Steam tracks beside it. The live line is a status region that is always
+   in the document (issue 442); with nothing to say it takes no room, but it
+   stays in the accessibility tree, so its first words are announced. */
+.library__live,
+.library__tracked {
   color: var(--accent);
   font-size: 0.85em;
   white-space: nowrap;
+}
+
+.library__live:empty,
+.mod-row__live:empty {
+  position: absolute;
+  overflow: hidden;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  margin: -1px;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -2296,6 +2317,82 @@ select {
 .mod-page__prose {
   color: var(--text-secondary);
   white-space: pre-wrap;
+}
+
+/* A mod's description, parsed from BBCode or Markdown into allow-listed
+   elements (issue 419, spa/app/richtext.js). Every value is a token: a
+   description's own [size]/[color] never reaches the page. */
+.richtext {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.richtext > :first-child {
+  margin-top: 0;
+}
+
+/* A description too long to parse as markup says why it reads as plain
+   text. */
+.richtext__note {
+  color: var(--text-muted);
+  font-size: 0.9em;
+  font-style: italic;
+}
+
+.richtext p,
+.richtext ul,
+.richtext ol,
+.richtext blockquote,
+.richtext pre {
+  margin: 0 0 var(--space-3);
+}
+
+.richtext ul,
+.richtext ol {
+  padding-left: var(--space-6);
+}
+
+.richtext blockquote {
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--border-strong);
+}
+
+.richtext code {
+  font-family: var(--font-mono);
+}
+
+.richtext__code {
+  overflow-x: auto;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  white-space: pre;
+}
+
+.richtext__heading {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--text-primary);
+}
+
+.richtext strong {
+  color: var(--text-primary);
+}
+
+.richtext__rule {
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  margin: var(--space-4) 0;
+}
+
+.richtext__link {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.richtext__link:hover {
+  color: var(--accent-hover);
 }
 
 .mod-page__table {
@@ -2385,10 +2482,12 @@ select {
 
 /* issue 338: a dashed outline marks the row's OWN slot as the current drop
  * target - the list already re-splices it there live (reordermodal.js's own
- * onRowMouseEnter), so this row IS where a drop would land right now. */
+ * onRowMouseEnter), so this row IS where a drop would land right now.
+ * Issue 442: marked, never dimmed - it used to fade to 0.7, which took the
+ * mod's name below WCAG AA for the whole drag. The outline and the sunken
+ * fill are certified tokens at full strength; the name stays readable. */
 .reorder-row--dragging {
   background: var(--surface-sunken);
-  opacity: 0.7;
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
 }
@@ -2771,35 +2870,56 @@ select {
   gap: var(--space-3);
 }
 
-/* Games: detect + manual add (gameadd.js), shared by the first-run flow. */
+/* Games: detect + manual add (gameadd.js), shared by the first-run flow.
+   Issue 421: the list is ONE grid and every row a subgrid of it, so the
+   names line up in a column however long each is, and the path column
+   takes whatever width the page has rather than a fixed share of it. The
+   name column stops growing at 40% and the path keeps at least 12rem (or
+   the whole list, if that is narrower), so one very long name wraps
+   rather than starving every path beside it to a few characters a line. */
 .setup-detect__list {
+  display: grid;
+  grid-template-columns:
+    fit-content(40%) minmax(min(12rem, 100%), 1fr)
+    auto auto;
+  column-gap: var(--space-3);
   margin: 0 0 var(--space-3);
   padding: 0;
   list-style: none;
 }
 
 .setup-detect__row {
-  display: flex;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: var(--space-3);
   padding: var(--space-1) 0;
 }
 
 /* First-run readiness item 9: the game name must never wrap mid-word to
-   make room for the path beside it - it gets its own natural width and
-   the path (usually much longer) truncates instead, with the full value
-   still available via its own `title` attribute. */
+   make room for the path beside it - it gets its natural width up to the
+   column's ceiling, and past that wraps only between words - and the path
+   (usually much longer) gives way instead. Issue 421: it gives way by
+   WRAPPING, not by an ellipsis - a truncated install path is the one fact
+   that tells two copies of a game apart - and keeps its `title`. */
 .setup-detect__name {
-  flex: 0 0 auto;
-  white-space: nowrap;
+  display: flex;
+  grid-column: 1;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.setup-detect__action {
+  grid-column: 4;
+  justify-self: end;
 }
 
 .setup-detect__path {
-  flex: 1 1 auto;
+  grid-column: 2;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   color: var(--text-muted);
   font-size: 0.85em;
 }
@@ -2810,17 +2930,24 @@ select {
    path above goes on absorbing the overflow. Muted, like the path: it is
    context for the name, not a second title. */
 .setup-detect__workshop {
-  flex: 0 0 auto;
+  grid-column: 3;
   white-space: nowrap;
   color: var(--text-muted);
   font-size: 0.85em;
 }
 
+/* Issue 421: the form is as wide as its panel - the installed-games picker
+   inside it needs the room - and only its input fields keep a reading
+   measure. */
 .setup-add {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  max-width: 30rem;
+}
+
+.setup-add > .plan__control,
+.setup-add__advanced .plan__control {
+  max-width: 60ch;
 }
 
 .setup-add__catalog {

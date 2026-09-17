@@ -32,13 +32,17 @@ var (
 	// guardReturn is a one-line early return at the component's own level.
 	guardReturn = regexp.MustCompile(`^  if \(.*\) return\b`)
 	// blockOpener opens a block at the component's own level: an if, loop
-	// or switch (its condition may run on over several lines), or an else.
-	blockOpener = regexp.MustCompile(`^  (?:(?:if|for|while|switch) \(|} else\b)(?:.*[{(])?$`)
+	// or switch (its condition may run on over several lines), or an else -
+	// or an unbraced if/loop whose single statement prettier wrapped onto
+	// the next line (issue 454 N3), which ends in the condition's ")".
+	blockOpener = regexp.MustCompile(`^  (?:(?:(?:if|for|while|switch) \(|} else\b)(?:.*[{(])?|(?:if|for|while) \(.*\))$`)
 	// blockReturn is a return directly inside such a block.
 	blockReturn = regexp.MustCompile(`^    return\b`)
 	// hookCall is a hook called at the component's level or one below it,
-	// as a statement or as a declaration's value.
-	hookCall = regexp.MustCompile(`^ {2}(?: {2})?(?:(?:const|let|var) [^=]+= )?use[A-Z]\w*\(`)
+	// as a statement or as a declaration's value - including the value of a
+	// destructuring prettier spread over several lines, whose last line
+	// reads "} = useThing(" or "] = useThing(" (issue 454 N3).
+	hookCall = regexp.MustCompile(`^ {2}(?: {2})?(?:(?:(?:const|let|var) [^=]+|[}\]]) = )?use[A-Z]\w*\(`)
 )
 
 // hookOrderViolations names every hook in source that a component calls
@@ -155,6 +159,33 @@ func TestHookOrderCheck_Reach(t *testing.T) {
     useMemo(() => rows.length, [rows]);
   return view;
 }`},
+		{name: "a hook after an unbraced if whose return is wrapped", refused: true, source: `function Card({ rows }) {
+  if (rows === null || rows.length === 0 || someOtherLongCondition(rows))
+    return renderEmptyState("Nothing here yet", rows);
+  const [open, setOpen] = useState(false);
+  return view;
+}`},
+		{name: "a hook inside an unbraced if", refused: true, source: `function Card({ rows }) {
+  if (rows)
+    useEffect(() => {}, [rows]);
+  return view;
+}`},
+		{name: "a multi-line destructured hook after a guard", refused: true, source: `function Card({ rows }) {
+  if (!rows) return null;
+  const {
+    selected,
+    toggle,
+  } = useSelection(rows);
+  return view;
+}`},
+		{name: "a multi-line array-destructured hook after a guard", refused: true, source: `function Card({ rows }) {
+  if (!rows) return null;
+  const [
+    open,
+    setOpen,
+  ] = useState(false);
+  return view;
+}`},
 		{name: "a custom hook after a return", refused: true, source: `function Bar({ open }) {
   if (!open) return null;
   useDismissOnOutsideOrEscape(ref, open, close);
@@ -196,6 +227,20 @@ func TestHookOrderCheck_Reach(t *testing.T) {
     return () => {};
   }, [open]);
   const ref = useRef(null);
+  return view;
+}`},
+		{name: "an unbraced if that does not return", source: `function Card({ rows }) {
+  if (rows.length > 0 && someOtherLongCondition(rows))
+    log(rows);
+  const count = useMemo(() => rows.length, [rows]);
+  return view;
+}`},
+		{name: "a multi-line destructured hook above every return", source: `function Card({ rows }) {
+  const {
+    selected,
+    toggle,
+  } = useSelection(rows);
+  if (!rows) return null;
   return view;
 }`},
 		{name: "a helper, not a component", source: `function visibleRows(rows) {

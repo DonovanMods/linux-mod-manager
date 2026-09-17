@@ -40,10 +40,12 @@ import { GameLoaderEditor, loaderDraft, loaderSpec } from "./gameloader.js";
  * already configured. It scans WIDE (issue 206: `?all=1`) so an installed game
  * with no curated known-games entry is shown, not silently dropped - it
  * just has no checkbox, since a detect selection can only name a known row
- * (GameDetectEntry.Index is 0 for one). Already-configured rows are shown
- * but their control is disabled - `lmm game detect --select` can still
- * repair one from the CLI, but a checklist offering to silently overwrite
- * an existing game's default profile is not this surface's first-run job.
+ * (GameDetectEntry.Index is 0 for one). Already-configured rows are not
+ * listed (issue 421) - the Games table's "Edit…" is where a configured game
+ * changes - apart from one whose mod path needs repair, which is listed
+ * with its control disabled: `lmm game detect --select` can still repair
+ * one from the CLI, but a checklist offering to silently overwrite an
+ * existing game's default profile is not this surface's job.
  *
  * `actions` is optional and used for one thing: the apply's own warnings,
  * raised as toasts (see addSelected). A caller that passes none simply
@@ -123,7 +125,12 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
     }
   }
 
-  const games = listing?.games ?? [];
+  // issue 421: a configured game is changed with "Edit…" in the Games
+  // table, not offered here again - except one that needs repair, which
+  // stays listed (disabled) so the scan can say so (issue 460).
+  const scanned = listing?.games ?? [];
+  const games = offeredGames(scanned);
+  const hiddenConfigured = scanned.length - games.length;
   const hasUnknown = games.some((g) => !g.known);
   const hasWorkshop = games.some((g) => !g.known && g.workshop_items > 0);
   const needsRepair = games.some(
@@ -149,9 +156,19 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
       }
       ${
         listing &&
-        games.length === 0 &&
+        scanned.length === 0 &&
         html`<p class="empty-state__hint">
           No moddable Steam games were found on this machine.
+        </p>`
+      }
+      ${
+        listing &&
+        hiddenConfigured > 0 &&
+        html`<p
+          class="empty-state__hint"
+          data-testid="detect-configured-hidden"
+        >
+          ${configuredHiddenLabel(hiddenConfigured)}
         </p>`
       }
       ${
@@ -229,7 +246,7 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
                     html`
                       <button
                         type="button"
-                        class="button button--small"
+                        class="button button--small setup-detect__action"
                         data-action="add-with-details"
                         disabled=${g.already_configured}
                         onClick=${() => onAddWithDetails?.(g)}
@@ -276,6 +293,21 @@ function configuredBadge(g) {
     >`;
   }
   return html`<span class="badge">already configured</span>`;
+}
+
+/**
+ * offeredGames is the part of a detect listing an add flow offers (issue
+ * 421): every game not configured yet, plus a configured one whose mod path
+ * needs repair - listed, never selectable, so the scan can flag it.
+ */
+function offeredGames(games) {
+  return games.filter((g) => !g.already_configured || g.mod_path_error);
+}
+
+/** configuredHiddenLabel says why a scan lists fewer games than it found. */
+function configuredHiddenLabel(count) {
+  const noun = count === 1 ? "game is" : "games are";
+  return `${count} already-configured ${noun} not listed - change ${count === 1 ? "it" : "them"} with "Edit…" in the Games table.`;
 }
 
 /**
@@ -721,6 +753,8 @@ export function GameAddForm({
 
   const errorFor = (field) =>
     fieldError?.field === field ? fieldError.reason : null;
+  const pickerGames = offeredGames(pickerListing?.games ?? []);
+  const pickerHidden = (pickerListing?.games ?? []).length - pickerGames.length;
   const installPathReady = detectedRow || spec.installPath;
   const modPathPlaceholder = detectedRow
     ? `${detectedRow.install_path}/mods`
@@ -765,24 +799,34 @@ export function GameAddForm({
               </p>`
             }
             ${
-              pickerListing &&
-              (pickerListing.games ?? []).length > 0 &&
+              pickerHidden > 0 &&
+              html`<p
+                class="empty-state__hint"
+                data-testid="picker-configured-hidden"
+              >
+                ${configuredHiddenLabel(pickerHidden)}
+              </p>`
+            }
+            ${
+              pickerGames.length > 0 &&
               html`
                 <ul class="setup-detect__list">
-                  ${pickerListing.games.map(
+                  ${pickerGames.map(
                     (g) => html`
                       <li key=${g.steam_app_id} class="setup-detect__row">
-                        <button
-                          type="button"
-                          class="button button--small"
-                          data-action="pick-installed-row"
-                          disabled=${g.already_configured}
-                          onClick=${() => applyDetected(g)}
-                        >
-                          ${g.name}
-                        </button>
-                        ${g.known && html`<span class="badge badge--policy">Known</span>`}
-                        ${configuredBadge(g)}
+                        <span class="setup-detect__name">
+                          <button
+                            type="button"
+                            class="button button--small"
+                            data-action="pick-installed-row"
+                            disabled=${g.already_configured}
+                            onClick=${() => applyDetected(g)}
+                          >
+                            ${g.name}
+                          </button>
+                          ${g.known && html`<span class="badge badge--policy">Known</span>`}
+                          ${configuredBadge(g)}
+                        </span>
                         <span
                           class="mono setup-detect__path"
                           title=${g.install_path}

@@ -73,6 +73,10 @@ export function initialState() {
     // has asked for and not yet seen settled, keyed by context and mod. The
     // controls render the requested value from here while an entry exists.
     toggleRequests: {},
+    // docStamps is the slice fence's stamp for the newest document written
+    // under a key (slicefence.js) - today only `mods`, which the full mod
+    // page weighs against its own files report (issue 454 N1).
+    docStamps: {},
     // toasts are the completions whose origin was NOT on screen when they
     // landed (design doc §Jobs: "never for things in view").
     toasts: [],

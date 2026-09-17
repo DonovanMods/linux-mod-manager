@@ -1633,6 +1633,21 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   many mods it checked, how many are Steam Workshop items checked only for
   presence, and how many have nothing recorded to compare.
 
+- **Mod descriptions show their formatting in the web UI (#419).** The full
+  mod page now renders a NexusMods description's BBCode (`[b]`, `[url=…]`,
+  `[list]`, `[quote]`, `[code]`, …) and a Markdown description's headings,
+  emphasis, links, lists, quotes and code blocks as formatted text, where
+  it used to show the raw brackets and asterisks. It is safe by
+  construction: the description is parsed into a fixed set of page
+  elements, never inserted as markup; links open in a new tab, say so, and
+  must be `http`/`https` (anything else stays literal text); an image
+  becomes a link to the image rather than something the page loads; and a
+  description's own sizes, colours and fonts are ignored. Markup lmm does
+  not recognise stays as text, as does markup nested more than 32 levels
+  deep, and a description over 256 KB is shown as plain text with a note
+  saying so, so a hostile description cannot stall or break the page.
+  `lmm mod show` is unchanged.
+
 ### Fixed
 
 - **The web UI's install confirmation lists the dependencies it switches
@@ -3263,6 +3278,54 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
   newest dated `CHANGELOG.md` section is later than the date the pages
   carry, so the release-prep commit that already runs `make man` bumps it
   too.
+
+- **The web UI's browser E2E suite no longer stalls on a close it missed
+  (#439, #486).** Sixty-four waits for a modal, menu or card to disappear
+  used `chromedp.WaitNotPresent`, which does not reliably notice a removal
+  that happens after the action before it — and in this interface nearly
+  every close waits on a server answer — so a green test could sit out the
+  whole 60-second budget about one run in ten. They all poll the page on a
+  timer now (`waitGone`), a ratchet refuses any new `WaitNotPresent`, and
+  the Setup tests' clicks wait for their button to stop moving first, so a
+  late-loading section above the form can no longer take the click. The
+  flakiest test, applying a profile from its Mission Control card, was also
+  waiting for the card's "succeeded" line — which the card takes with it
+  when the applied profile leaves nothing to report; it now waits for the
+  job to be over either way.
+
+- **Setup → Add Game uses the whole width, and a configured game is edited,
+  not offered again (#421).** The manual add form was a fixed narrow
+  column, so the "Pick an installed game…" list cut its install paths short
+  even on a wide screen, and its game names did not line up. The form now
+  follows the width of its panel, the installed-games lists (the picker and
+  "Detect games…") set names and paths in aligned columns, a long path
+  wraps instead of being cut off, and a very long game name wraps between
+  words rather than squeezing every path beside it. Neither list offers a game you have
+  already configured any more — it says how many it left out — and each
+  row of the Games table has an **Edit…** button that opens its sources,
+  mod path and loader editors together. A configured game whose mod path
+  needs repair is still listed by "Detect games…", marked, so the scan can
+  point you at it.
+
+- **Three web UI accessibility gaps are closed (#442).** A library row's
+  ⬆ update, ⇄ conflict and 🔒 lock badges now have names a screen reader
+  reads out ("Update available: 2.0", "File conflict", "Locked to 1.0"),
+  not just a hover tooltip. The library's activity line and each row's
+  "Enabling…"/job line are always present and change their words, so the
+  first thing they say is announced rather than lost. The row you are
+  dragging in the reorder window is marked with an outline and a sunken
+  background instead of being faded, so its name stays readable; disabled
+  buttons and fields are likewise shown in muted colours rather than at
+  half strength.
+
+- **An enable/disable whose follow-up read fails no longer leaves a wrong or
+  stuck control (#454).** On a mod's full page, a toggle whose library
+  re-read failed kept showing the button from before the change ("Disable"
+  on a mod that was now disabled); the page now shows the fresher answer it
+  already had, and asks the server again a few seconds later. In the
+  library, a toggle whose status read failed used to sit pending for a full
+  minute and then report that the server had not answered; it now settles
+  as soon as the library itself has been re-read.
 
 ## [2.0.0] - 2026-08-30
 

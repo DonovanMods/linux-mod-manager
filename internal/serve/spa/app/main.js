@@ -40,7 +40,11 @@ import {
   mountedOriginsSnapshot,
   registerOrigin,
 } from "./activity.js";
-import { createToggleLedger, modToggleOrigin } from "./toggleack.js";
+import {
+  createToggleLedger,
+  modToggleOrigin,
+  toggleEntryInContext,
+} from "./toggleack.js";
 
 const store = createStore();
 const root = document.getElementById("app");
@@ -153,6 +157,16 @@ function isCurrentHydration(seq) {
 // second (is this still the freshest answer for each slice).
 const slices = createSliceFence(store);
 
+// docStamps records the claim stamp of the newest library document written
+// (issue 454 N1): the full mod page holds a second, independently read
+// source of a mod's enabled flag (its files report), and a page that kept
+// an older library document after a failed read has to be able to tell
+// which of the two is fresher.
+slices.onCommit((key, write) => {
+  if (key !== "mods" || write.error) return;
+  store.set({ docStamps: { ...store.get().docStamps, mods: write.stamp } });
+});
+
 /** commitSlices writes into the store under BOTH fences: `patch` names
  * top-level store slices and `errors` names fetchErrors entries, and each
  * lands only while the route fence still holds AND `claim` is still the
@@ -233,17 +247,21 @@ async function hydrate(route) {
     // tray down with it over a fetch that has nothing to do with either.
     // The fatal `error` slice is reserved for the FIRST load, where there
     // is nothing on screen yet to protect (the I3 rule, applied here).
-    if (store.get().status) {
-      commitSlices(seq, statusClaim, {}, { status: message });
+    //
+    // Issue 454 N2: and it must not skip the view's own reads either. The
+    // library read below is what settles a toggle request (toggleack.js);
+    // returning here left one waiting out its whole deadline and then
+    // blaming a server that had answered at once.
+    if (!store.get().status) {
+      commitSlices(
+        seq,
+        statusClaim,
+        { status: null, games: null, error: message },
+        {},
+      );
       return;
     }
-    commitSlices(
-      seq,
-      statusClaim,
-      { status: null, games: null, error: message },
-      {},
-    );
-    return;
+    if (!commitSlices(seq, statusClaim, {}, { status: message })) return;
   }
 
   if (route.view === "mod") {
@@ -400,6 +418,8 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
         modPage: {
           key,
           filesReport,
+          // When this files report was asked for (issue 454 N1).
+          filesStamp: pageClaim.get("modPage").stamp,
           error: null,
           detail: null,
           detailError: null,
@@ -1323,11 +1343,43 @@ function toggleUnanswered(entry, err) {
  */
 function toggleUnread(entry, reason) {
   const name = entry.name ?? entry.modKey;
+  scheduleUnreadReread(entry);
   pushToast({
     tone: "failure",
     title: `The current state of ${name} could not be read`,
     detail: `After the request to ${entry.want ? "enable" : "disable"} it, the library could not be read (${reason}). The row shows the last state lmm serve reported, and updates once a read succeeds.`,
   });
+}
+
+/** unreadRereadDelayMillis is how long after a request settled unread the
+ * page asks again (issue 454 N1). Long enough not to hammer a server that
+ * is struggling, short enough that the row does not sit on a stale value
+ * until some unrelated read. */
+const unreadRereadDelayMillis = 3_000;
+
+// unreadRereadEntries are the requests waiting on the one re-read already
+// scheduled - a batch whose reads all failed schedules one read, not one
+// per mod.
+let unreadRereadEntries = null;
+
+/** scheduleUnreadReread re-reads the route once, a little later, when a
+ * request that settled unread belongs to the context still on screen by
+ * then. Once only: the request has already settled, so a read that fails
+ * again settles nothing and schedules nothing. */
+function scheduleUnreadReread(entry) {
+  if (unreadRereadEntries) {
+    unreadRereadEntries.push(entry);
+    return;
+  }
+  unreadRereadEntries = [entry];
+  setTimeout(() => {
+    const entries = unreadRereadEntries;
+    unreadRereadEntries = null;
+    const route = store.get().route ?? {};
+    if (route.view !== "home" && route.view !== "mod") return;
+    if (!entries.some((e) => toggleEntryInContext(e, route))) return;
+    hydrate(route);
+  }, unreadRereadDelayMillis);
 }
 
 /** routeContext is the game/profile the route on screen is scoped to. */

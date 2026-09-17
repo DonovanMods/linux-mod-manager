@@ -743,7 +743,7 @@ func TestE2E_SetupAdopt_WorkshopCardTracksSubscribedItems(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`[data-testid="setup-workshop-adopt"] .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 
@@ -944,12 +944,15 @@ func TestE2E_Workshop_ProfileApplyPlanShowsTheTrackedItemAsTracked(t *testing.T)
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.card--profile`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="apply-profile"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="apply-profile"]`),
 		chromedp.WaitVisible(`.modal[data-kind="profile_apply"] .plan`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="profile_apply"]`, &body),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+		// #439: an applied profile's card leaves with its own "succeeded"
+		// progress (TestE2E_ProfileCard_ApplyProfileInstallsWhatTheProfileLists).
+		pollUntil(`document.querySelector('.job-progress[data-state="succeeded"]') !== null ||
+			document.querySelector('.card--profile') === null`),
 	)
 
 	assert.Contains(t, body, "Sample Workshop Item")

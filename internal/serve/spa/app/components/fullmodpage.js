@@ -56,6 +56,7 @@ import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
+import { RichText } from "../richtext.js";
 import {
   ModSettingsControls,
   ManagedBySteam,
@@ -120,11 +121,10 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   // backpacks.</p>", angle brackets and all. dangerouslySetInnerHTML is
   // forbidden here (no_unsafe_dom_test.go), and re-implementing core's
   // cleaner in a frontend would put core logic in an adapter, so core
-  // hands over the cleaned prose and this splits its blank-line-separated
-  // paragraphs into real <p>s.
-  const descriptionParagraphs = splitParagraphs(
-    modPage.detail?.description_text,
-  );
+  // hands over the cleaned prose. What the cleaner leaves - BBCode and
+  // Markdown - RichText parses into an allow-listed element tree (issue
+  // 419, richtext.js).
+  const descriptionText = modPage.detail?.description_text ?? "";
   const installed = modPage.detail?.installed;
   const sourceID = route.sourceID;
   const modID = route.modID;
@@ -146,7 +146,16 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   // and one more (issue 432): the library document is what a toggle
   // request settles on (toggleack.js), so a control reading anything else
   // could show a value the request was never checked against.
-  const enabled = listing?.enabled ?? installedMod.enabled;
+  //
+  // Unless the listing is the OLDER of the two (issue 454 N1): a page
+  // re-read after a job whose library read failed keeps the library
+  // document from before the job, while its files report is from after
+  // it. The request has settled by then ("could not be read"), so nothing
+  // is checked against either, and the fresher answer is the true one.
+  const listingIsFresher =
+    (state.docStamps?.mods ?? 0) >= (modPage.filesStamp ?? 0);
+  const enabled =
+    (listingIsFresher ? listing?.enabled : undefined) ?? installedMod.enabled;
   const settingsRow = settingsSource && {
     source_id: sourceID,
     id: modID,
@@ -357,13 +366,14 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         </p>`
       }
       ${
-        descriptionParagraphs.length > 0 &&
+        descriptionText.trim() &&
         html`
           <section class="mod-page__section">
             <h2 class="plan__heading">Description</h2>
-            ${descriptionParagraphs.map(
-              (para) => html`<p class="mod-page__prose">${para}</p>`,
-            )}
+            <${RichText}
+              text=${descriptionText}
+              class="mod-page__description"
+            />
           </section>
         `
       }
@@ -426,20 +436,6 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
  * page's PRIMARY read (hydrateModPage), so unlike every other section here
  * it has no loading/error state of its own: by the time this renders,
  * filesReport already exists. */
-// splitParagraphs turns core's cleaned description text into paragraphs:
-// blank-line-separated runs, trimmed, with empty runs dropped.
-// CleanChangelog turns each </p><p> pair into two newlines and a <br> into
-// one, so a source that uses both leaves runs of three - rendering those as
-// literal blank lines (the pre-wrap the prose class carries) would put a
-// gap in the page where the source only meant a paragraph break.
-function splitParagraphs(text) {
-  if (!text) return [];
-  return text
-    .split(/\n\s*\n/)
-    .map((para) => para.trim())
-    .filter(Boolean);
-}
-
 function FilesSection({ filesReport }) {
   return html`
     <section class="mod-page__section">

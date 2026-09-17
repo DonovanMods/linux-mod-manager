@@ -649,7 +649,7 @@ func TestE2E_FailedUpdates_RendersErrorStateNotAbsent(t *testing.T) {
 	setFailing(false)
 	f.runInBrowser(t,
 		chromedp.Click(`.card--updates .card__error + .button`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.card--updates`, chromedp.ByQuery),
+		waitGone(`.card--updates`),
 	)
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
@@ -672,7 +672,7 @@ func TestE2E_FailedHealth_RendersErrorStateNotHealthy(t *testing.T) {
 	setFailing(false)
 	f.runInBrowser(t,
 		chromedp.Click(`.card--health .card__error + .button`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.card--health`, chromedp.ByQuery),
+		waitGone(`.card--health`),
 	)
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
@@ -694,7 +694,7 @@ func TestE2E_FailedConflicts_RendersErrorStateNotAbsent(t *testing.T) {
 	setFailing(false)
 	f.runInBrowser(t,
 		chromedp.Click(`.card--conflicts .card__error + .button`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.card--conflicts`, chromedp.ByQuery),
+		waitGone(`.card--conflicts`),
 	)
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
@@ -876,7 +876,7 @@ func TestE2E_ConfirmModalCancelsWithoutMutating(t *testing.T) {
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="cancel"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.Evaluate(`document.querySelectorAll(".modal").length`, &modals),
 		textContent(`.deploy-indicator`, &indicator),
 	)
@@ -898,7 +898,7 @@ func TestE2E_ConfirmModalEscapeClosesIt(t *testing.T) {
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 	)
 
 	assert.Empty(t, f.BrowserErrors())
@@ -953,7 +953,7 @@ func TestE2E_DeployRunsAsAJobAndMorphsTheControl(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		// The modal closes the moment the job is accepted, and the control
 		// it was opened from is now the job's progress.
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`.job-progress`, chromedp.ByQuery),
 		// A determinate bar means a real progress FRAME arrived: an
 		// indeterminate one is what the control shows before core has said
@@ -1300,7 +1300,7 @@ func TestE2E_QueuedJobDoesNotRenderRunningProgress(t *testing.T) {
 		// issued while it is still present - even mid-teardown - can be
 		// intercepted by the scrim instead of landing on the element
 		// underneath it (observed: the bell click silently opened nothing).
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		// The deploy now holds core's one mutation slot for the duration of
 		// its AfterEach sleep. Start a second, wholly independent job while
 		// it does - the only way this enable can be blocked in beginOp,
@@ -1823,7 +1823,7 @@ func TestE2E_SlideOver_UninstallThroughTheModal_RemovesFromDisk(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 	)
 
 	// The end state is asserted on the SERVICE, polled, rather than on any
@@ -1885,7 +1885,7 @@ func TestE2E_FullModPage_RollbackRoundTrip(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 
@@ -2074,7 +2074,7 @@ func TestE2E_UpdatesBatch_DropsARowAndAppliesTheRest(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal[data-kind="updates"] [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal[data-kind="updates"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="updates"]`),
 	)
 
 	// The end state is asserted on the job's own RESULT document, not the
@@ -2238,10 +2238,12 @@ func TestE2E_SlideOver_ClosingMidJobLeavesTheRowsLiveLine(t *testing.T) {
 		waitGone(`.slide-over`),
 	)
 
+	// Every row carries its live region (issue 442); the one that matters
+	// is the one with words in it.
 	var rowLive string
 	f.runInBrowser(t,
-		chromedp.WaitVisible(`.mod-row__live`, chromedp.ByQuery),
-		textContent(`.mod-row__live`, &rowLive),
+		pollUntil(`[...document.querySelectorAll(".mod-row__live")].some((e) => e.textContent.trim() !== "")`),
+		chromedp.Evaluate(`[...document.querySelectorAll(".mod-row__live")].map((e) => e.textContent.trim()).find(Boolean)`, &rowLive),
 	)
 	assert.Contains(t, rowLive, "Disabling", "the row must name the mutation, not just show a bare dot")
 	assert.Empty(t, f.BrowserErrors())
@@ -2386,7 +2388,7 @@ func TestE2E_OmnibarClearRestoresTheLibrary(t *testing.T) {
 	// --- The ✕ button. ---
 	f.runInBrowser(t,
 		chromedp.Click(`.omnibar__clear`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.omnibar-results`, chromedp.ByQuery),
+		waitGone(`.omnibar-results`),
 	)
 
 	var omnibarText string
@@ -2407,7 +2409,7 @@ func TestE2E_OmnibarClearRestoresTheLibrary(t *testing.T) {
 		chromedp.WaitVisible(`.omnibar-results .search-result`, chromedp.ByQuery),
 		chromedp.Focus(`.omnibar`, chromedp.ByQuery),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.omnibar-results`, chromedp.ByQuery),
+		waitGone(`.omnibar-results`),
 	)
 
 	f.runInBrowser(t,
@@ -2484,7 +2486,7 @@ func TestE2E_InlineInstallWithVersionPickWritesToDisk(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.SetValue(`select[name="install-version"]`, "1.0", chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 
@@ -2564,7 +2566,7 @@ func TestE2E_SearchRowReadsInstalledAfterItsOwnJobSucceeds(t *testing.T) {
 		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		chromedp.Click(row+` .job-progress__dismiss`, chromedp.ByQuery),
 	)
@@ -2622,7 +2624,7 @@ func TestE2E_InlineInstallWithFilePickWritesToDisk(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.SetValue(`select[name="install-file"]`, "m2", chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 
@@ -2659,7 +2661,7 @@ func TestE2E_ConflictOverwriteRoundTripSucceeds(t *testing.T) {
 		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
 	)
 
@@ -2709,7 +2711,7 @@ func TestE2E_ConflictOverwriteRoundTripSucceedsFromTheSearchPage(t *testing.T) {
 		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
 	)
 
@@ -2754,7 +2756,7 @@ func TestE2E_OverwriteButtonAfterReloadIsHonestlyDisabled(t *testing.T) {
 		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
 		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
@@ -3119,7 +3121,7 @@ func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
 	// is exactly what a clobbered bindingJobs slot could get wrong.
 	var jobHTML string
 	f.runInBrowser(t,
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
 		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
 		chromedp.WaitVisible(row+` .job-progress`, chromedp.ByQuery),
@@ -3349,7 +3351,7 @@ func TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk(t *testing.T) {
 	// coordinate dependency.
 	f.runInBrowser(t,
 		chromedp.Evaluate(`document.querySelector('.modal[data-kind="uninstall-batch"] [data-action="confirm"]').click()`, nil),
-		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="uninstall-batch"]`),
 	)
 	require.Eventually(t, func() bool {
 		_, errA := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
@@ -3381,7 +3383,7 @@ func TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape(t *testing.T) {
 		openMenu,
 		chromedp.Sleep(300*time.Millisecond),
 		chromedp.Click(`.section-header`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.row-menu`, chromedp.ByQuery),
+		waitGone(`.row-menu`),
 	)
 
 	f.runInBrowser(t,
@@ -3394,7 +3396,7 @@ func TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape(t *testing.T) {
 		// not that the effect has run yet.
 		chromedp.Sleep(300*time.Millisecond),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.row-menu`, chromedp.ByQuery),
+		waitGone(`.row-menu`),
 	)
 
 	assert.Empty(t, f.BrowserErrors())
@@ -3522,7 +3524,7 @@ func TestE2E_UpdatesCard_FailedBatchReportsAnHonestTally(t *testing.T) {
 		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="updates"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
 		chromedp.Click(`.modal[data-kind="updates"] [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal[data-kind="updates"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="updates"]`),
 	)
 
 	var cardText string
@@ -3574,7 +3576,7 @@ func TestE2E_LibraryBatchBar_CancelKeepsTheSelectionAndReturnsFocus(t *testing.T
 		// pattern - see TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape).
 		chromedp.Sleep(300*time.Millisecond),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="uninstall-batch"]`),
 		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? document.activeElement?.tagName`, &activeAction),
 	)
 	assert.Equal(t, "batch-uninstall", activeAction, "I2: focus must return to the batch bar's own Uninstall control, not <body>")
@@ -3620,7 +3622,7 @@ func TestE2E_ProfilesModal_EscapeReturnsFocusToThePickerTrigger(t *testing.T) {
 		// identical note); WaitVisible above only proves the DOM is there.
 		chromedp.Sleep(300*time.Millisecond),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		waitGone(`[data-testid="profiles-list"]`),
 		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &activeClass),
 	)
 	assert.Contains(t, activeClass, "profile-picker__trigger", "focus must return to the picker's own trigger, not <body>")
@@ -3741,7 +3743,7 @@ func TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime(t *testing.T) {
 		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector('.modal[data-kind="uninstall-batch"] [data-action="confirm"]').click()`, nil),
-		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="uninstall-batch"]`),
 	)
 
 	// N3 (unit 6 re-review): this end-state check used to be a require, which
@@ -3896,7 +3898,7 @@ func TestE2E_HealthCard_PerFindingRepairScopesToOneMod(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal[data-kind="verify_fix"] [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal[data-kind="verify_fix"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="verify_fix"]`),
 	)
 
 	require.Eventually(t, func() bool {
@@ -3960,7 +3962,7 @@ func TestE2E_ReorderModal_KeyboardAndDragFlipTheWinnerAndPersist(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.Click(`[data-action="save-order"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		waitGone(`[data-testid="reorder-list"]`),
 	)
 
 	require.Eventually(t, func() bool {
@@ -3986,7 +3988,7 @@ func TestE2E_ReorderModal_KeyboardAndDragFlipTheWinnerAndPersist(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.Click(`[data-action="save-order"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		waitGone(`[data-testid="reorder-list"]`),
 	)
 	require.Eventually(t, func() bool {
 		report, err := f.Svc.GetProfileConflictsForOrder(t.Context(), f.Game, "default", nil)
@@ -4218,7 +4220,7 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="profile_import"]`),
 	)
 	// Both mods land in the imported profile as real, version-matched
 	// references rather than skipped or missing - proving the import
@@ -4310,7 +4312,7 @@ mods:
 	// The install checkbox is left UNCHECKED - the flow's own default.
 	f.runInBrowser(t,
 		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="profile_import"]`),
 	)
 
 	require.Eventually(t, func() bool {
@@ -4413,7 +4415,7 @@ mods:
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="profile_import"]`),
 	)
 
 	require.Eventually(t, func() bool {
@@ -4496,7 +4498,7 @@ mods: []
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="profile_import"]`),
 	)
 
 	require.Eventually(t, func() bool {
@@ -4564,7 +4566,7 @@ func TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelec
 	f.runInBrowser(t,
 		chromedp.Sleep(300*time.Millisecond),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="uninstall-batch"]`),
 	)
 
 	// Change the selection to Beta ONLY (re-selecting from scratch, since
@@ -4587,7 +4589,7 @@ func TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelec
 
 	f.runInBrowser(t,
 		chromedp.Evaluate(`document.querySelector('.modal[data-kind="uninstall-batch"] [data-action="confirm"]').click()`, nil),
-		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		waitGone(`.modal[data-kind="uninstall-batch"]`),
 	)
 	require.Eventually(t, func() bool {
 		_, err := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, "default")
@@ -4638,7 +4640,7 @@ func TestE2E_ReorderModal_EscapeDiscardsTheEditOnReopen(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Sleep(300*time.Millisecond),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		waitGone(`[data-testid="reorder-list"]`),
 	)
 
 	// Re-open and read the list back BEFORE touching anything: it must show
@@ -4657,7 +4659,7 @@ func TestE2E_ReorderModal_EscapeDiscardsTheEditOnReopen(t *testing.T) {
 	// saved order, never a silent commit of the abandoned edit.
 	f.runInBrowser(t,
 		chromedp.Click(`[data-action="save-order"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		waitGone(`[data-testid="reorder-list"]`),
 	)
 	require.Eventually(t, func() bool {
 		report, err := f.Svc.GetProfileConflictsForOrder(t.Context(), f.Game, "default", nil)
@@ -4708,7 +4710,7 @@ func TestE2E_ProfilesModal_ReopenDoesNotResumeAHalfTypedRename(t *testing.T) {
 		chromedp.WaitVisible(`.profiles-row__rename-form`, chromedp.ByQuery),
 		chromedp.SetValue(`.profiles-row__rename-form input`, "half-typed", chromedp.ByQuery),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		waitGone(`[data-testid="profiles-list"]`),
 	)
 	settle()
 
@@ -4744,7 +4746,7 @@ func TestE2E_ProfilePicker_SwitchAndDeployRoundTrip(t *testing.T) {
 		chromedp.WaitVisible(`.modal[data-kind="switch"] .plan`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="switch"]`, &plan),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		textContent(`.job-progress__text`, &outcome),
 	)
@@ -4819,12 +4821,19 @@ func TestE2E_ProfileCard_ApplyProfileInstallsWhatTheProfileLists(t *testing.T) {
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.card--profile`, chromedp.ByQuery),
 		textContent(`.card--profile`, &card),
-		chromedp.Click(`[data-action="apply-profile"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="apply-profile"]`),
 		chromedp.WaitVisible(`.modal[data-kind="profile_apply"] .plan`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="profile_apply"]`, &plan),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+		// #439: the card's inline progress is not a reliable end marker. A
+		// profile that is fully applied has nothing left to say, so the
+		// re-read after the job removes the card - and its "succeeded"
+		// progress with it - often before a wait for that progress looks.
+		// The job is over once the card is gone (or says succeeded while it
+		// is still there); the disk assertions below say what it did.
+		pollUntil(`document.querySelector('.job-progress[data-state="succeeded"]') !== null ||
+			document.querySelector('.card--profile') === null`),
 	)
 
 	assert.Contains(t, card, "1 mod in this profile is not installed")
@@ -4838,6 +4847,13 @@ func TestE2E_ProfileCard_ApplyProfileInstallsWhatTheProfileLists(t *testing.T) {
 	deployed, err := os.ReadFile(filepath.Join(f.Game.ModPath, "Mods", "boots.pak"))
 	require.NoError(t, err, "apply must have installed and deployed the listed mod")
 	assert.Contains(t, string(deployed), "payload for boots")
+
+	var failed bool
+	f.runInBrowser(t,
+		waitGone(`.card--profile`),
+		chromedp.Evaluate(`document.querySelector('.job-progress[data-state="failed"]') !== null`, &failed),
+	)
+	assert.False(t, failed)
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -4895,7 +4911,7 @@ func TestE2E_GenericPlanView_RendersAnUnknownKindsPlanAsData(t *testing.T) {
 		chromedp.WaitVisible(`.modal[data-kind="e2e_no_renderer"] .plan--generic`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="e2e_no_renderer"]`, &body),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 
@@ -4973,7 +4989,7 @@ mods: []
 		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
 		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		// The import's own origin has no control left on screen, so its
 		// completion becomes a toast - which is exactly the state N7 is
 		// about.
@@ -5251,7 +5267,7 @@ func TestE2E_LockedUpdateIsReportedAsASkipNotAsDone(t *testing.T) {
 		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`.card--updates .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		// issue 344: the terminal STATE and the terminal LABEL do not arrive
 		// together. jobprogress.js renders the outcome the instant the job
@@ -5371,7 +5387,7 @@ func TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile(t *testing.T) {
 		chromedp.Click(`[data-action="switch"][data-profile="hardcore"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="switch"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		// The route follows the machine: this is the assertion, not a
 		// convenience wait - it never arrives without the fix.
 		chromedp.WaitVisible(`.profile-picker__trigger[data-profile="hardcore"]`, chromedp.ByQuery),
@@ -5626,7 +5642,7 @@ func TestE2E_ASlowStaleHydrationCannotRepaintTheProfileSwitchedTo(t *testing.T) 
 		chromedp.Click(`[data-action="switch"][data-profile="hardcore"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="switch"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`.profile-picker__trigger[data-profile="hardcore"]`, chromedp.ByQuery),
 		// The precondition: wait until the stale hydration has reached its
 		// first write. That write is the scoped status pair, and a resource
@@ -5712,7 +5728,7 @@ func TestE2E_OmnibarInstallReportsInlineWithoutAlsoToasting(t *testing.T) {
 		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		chromedp.Poll(searchRefreshedAfterTheJob, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 		textContent(row+` .job-progress`, &inline),
@@ -5743,7 +5759,7 @@ func TestE2E_SearchPageInstallConflictReportsInlineWithoutAlsoToasting(t *testin
 		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(row+` button[data-action="overwrite"]`, chromedp.ByQuery),
 		chromedp.Poll(searchRefreshedAfterTheJob, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
@@ -5847,7 +5863,7 @@ func TestE2E_ConflictsCardSaysWhatToDoAboutAStaleWinner(t *testing.T) {
 			return true;
 		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 		chromedp.Click(`[data-action="save-order"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		waitGone(`[data-testid="reorder-list"]`),
 	)
 
 	var card string
@@ -6324,7 +6340,7 @@ func TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp(t *testing.T) {
 		chromedp.WaitVisible(`.modal[data-kind="shortcuts"]`, chromedp.ByQuery),
 		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? ""`, &focused),
 	)
 	assert.Equal(t, "shortcuts", focused,
@@ -6560,7 +6576,7 @@ func installFromOmnibar(t *testing.T, f e2eSearchFixture, query, row string, ski
 	}
 	f.runInBrowser(t,
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 }
@@ -7013,7 +7029,7 @@ func TestE2E_ModDescriptionRendersAsProseNotMarkup(t *testing.T) {
 	var pageText string
 	f.runInBrowser(t,
 		chromedp.Navigate(f.ModPagePath("fake", "a")),
-		chromedp.WaitVisible(`.mod-page__prose`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.mod-page__description p`, chromedp.ByQuery),
 		textContent(`.mod-page`, &pageText),
 	)
 	assert.Contains(t, pageText, "Adds bigger backpacks.")
@@ -7026,7 +7042,7 @@ func TestE2E_ModDescriptionRendersAsProseNotMarkup(t *testing.T) {
 	// runs jammed together.
 	var paragraphs []string
 	f.runInBrowser(t, chromedp.Evaluate(
-		`Array.from(document.querySelectorAll(".mod-page__prose")).map((p) => p.textContent.trim())`,
+		`Array.from(document.querySelectorAll(".mod-page__description p")).map((p) => p.textContent.trim())`,
 		&paragraphs))
 	assert.Contains(t, paragraphs, "Adds bigger backpacks.")
 	assert.Contains(t, paragraphs, "Requires SKSE & SkyUI.")
@@ -7133,7 +7149,7 @@ func TestE2E_SnapshotsCard_RestoreGoesThroughTheConfirmPlanModal(t *testing.T) {
 		chromedp.WaitVisible(`.modal[data-kind="snapshot_restore"] .plan`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="snapshot_restore"]`, &plan),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 
@@ -7198,7 +7214,7 @@ func TestE2E_FetchPhasesReachTheScreenHumanized(t *testing.T) {
 		chromedp.Click(searchResultRow("fake", e2eFetchModID)+" .search-result__install", chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		// Wait for a FETCH frame specifically, not merely for the job: the
 		// phase under test is one core only emits while the fetch runs.
 		chromedp.Poll(
@@ -7240,12 +7256,12 @@ func TestE2E_FetchRefusalRendersItsExplainerAndKeepsTheInstallOffered(t *testing
 		chromedp.Click(searchResultRow("fake", e2eFetchModID)+" .search-result__install", chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.WaitVisible(`.job-progress[data-state="failed"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.job-progress__explainer[data-explainer="steamcmd"]`, chromedp.ByQuery),
 		textContent(`.job-progress__explainer`, &explainer),
 		chromedp.Click(`.job-progress__dismiss`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.job-progress`, chromedp.ByQuery),
+		waitGone(`.job-progress`),
 		settleEffects(),
 		chromedp.Evaluate(
 			`!!document.querySelector(`+"`"+searchResultRow("fake", e2eFetchModID)+` .search-result__install`+"`"+`)`,

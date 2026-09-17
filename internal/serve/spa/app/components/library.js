@@ -112,6 +112,18 @@ function healthBadgeTone(row) {
   return "";
 }
 
+// rowLiveText is a row's live line: the running job's words once there IS
+// a job, the requested toggle's words before that (issue 432), and nothing
+// otherwise - the region itself stays mounted either way (issue 442).
+function rowLiveText(mutation, togglePending, requested) {
+  if (mutation) {
+    return [mutationLabel(mutation.summary.kind), progressText(mutation.frame)]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return togglePending ? pendingToggleLabel(requested.want) : "";
+}
+
 // nonTextInputTypes are the <input> types that take no typing: a keystroke
 // aimed at one of these is a command, not a character.
 const nonTextInputTypes = new Set([
@@ -756,14 +768,19 @@ export function Library({
         <h2 class="section-header">${libraryLabel}</h2>
         ${
           externalCount > 0 &&
-          html`<span class="library__live"
+          html`<span class="library__tracked"
             >${`${externalCount} tracked by Steam`}</span
           >`
         }
-        ${
-          liveActivity &&
-          html`<span class="library__live" role="status">${liveActivity}</span>`
-        }
+        <span class="library__live" role="status" data-testid="library-live"
+          >${
+            // issue 442: the activity line is a live region that is ALWAYS
+            // in the document and changes only this text, for the same
+            // reason as the selection status above - one mounted together
+            // with its first words is not reliably announced.
+            liveActivity || ""
+          }</span
+        >
         <label class="library__control">
           Filter
           <select
@@ -979,29 +996,26 @@ export function Library({
                           >
                             ${row.name}
                           </button>
-                          ${
-                            // The row's own live line: the running job's
-                            // words once there IS a job, and - issue 432 -
-                            // the requested change's own words for the
-                            // window before that, which is exactly the
-                            // window the user was clicking into.
-                            mutation
-                              ? html`<span class="mod-row__live" role="status">
-                                  ${[
-                                    mutationLabel(mutation.summary.kind),
-                                    progressText(mutation.frame),
-                                  ]
-                                    .filter(Boolean)
-                                    .join(" · ")}
-                                </span>`
-                              : togglePending &&
-                                html`<span
-                                  class="mod-row__live"
-                                  role="status"
-                                  data-testid="toggle-pending"
-                                  >${pendingToggleLabel(requested.want)}</span
-                                >`
-                          }
+                          <span
+                            class="mod-row__live"
+                            role="status"
+                            data-testid=${
+                              !mutation && togglePending
+                                ? "toggle-pending"
+                                : undefined
+                            }
+                            >${
+                              // The row's own live line: the running job's
+                              // words once there IS a job, and - issue 432 -
+                              // the requested change's own words for the
+                              // window before that, which is exactly the
+                              // window the user was clicking into. Issue
+                              // 442: the region is always there and only
+                              // this text changes, so its first words are
+                              // announced.
+                              rowLiveText(mutation, togglePending, requested)
+                            }</span
+                          >
                         </td>
                         <td class="col--version mono">
                           ${displayVersion(row)}${
@@ -1015,6 +1029,9 @@ export function Library({
                             row.hasUpdate &&
                             html`<span
                               class="badge badge--good"
+                              data-testid="row-update"
+                              role="img"
+                              aria-label=${`Update available: ${row.updateTarget}`}
                               title="Update available"
                               >⬆</span
                             >`
@@ -1046,6 +1063,9 @@ export function Library({
                             row.hasConflict &&
                             html`<span
                               class="badge badge--danger"
+                              data-testid="row-conflict"
+                              role="img"
+                              aria-label="File conflict"
                               title="File conflict"
                               >⇄</span
                             >`
@@ -1054,7 +1074,10 @@ export function Library({
                             row.locked &&
                             html`<span
                               class="badge"
-                              title="Locked to ${row.locked_version}"
+                              data-testid="row-locked"
+                              role="img"
+                              aria-label=${`Locked to ${row.locked_version}`}
+                              title=${`Locked to ${row.locked_version}`}
                               >🔒</span
                             >`
                           }
