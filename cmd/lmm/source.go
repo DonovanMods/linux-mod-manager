@@ -154,8 +154,8 @@ Examples:
 					}
 					line += "\t" + inUse
 				}
-				// Deliberately unchecked, like the header write above: a
-				// the table writer buffers, so any write failure surfaces at Flush
+				// Deliberately unchecked: the table writer buffers row writes,
+				// so any write failure surfaces at Flush
 				// below, which IS checked.
 				_, _ = fmt.Fprintln(w, line+"\t"+info.ErrorMessage)
 			}

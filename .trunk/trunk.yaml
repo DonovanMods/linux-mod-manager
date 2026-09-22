@@ -23,10 +23,7 @@ lint:
     - shfmt@3.14.1
     - taplo@0.10.0
     - grype@0.119.0
-    # The current Trunk pinact adapter invokes long flags with one dash; that
-    # form is rejected by pinact v5 (Cobra). Keep the compatible v4 release
-    # until the adapter ships the corresponding --flag invocation.
-    - pinact@4.1.1
+    - pinact@5.0.0
     - actionlint@1.7.12
     - gofmt@1.20.4
     - golangci-lint2@2.13.2
@@ -37,6 +34,15 @@ lint:
     - prettier@3.9.8
     - trufflehog@3.97.5
     - yamllint@1.38.0
+  definitions:
+    - name: pinact
+      commands:
+        # The pinned upstream adapter still passes v4's one-dash long flags.
+        # Keep its token handling, SARIF normalization, and failure reporting.
+        - name: lint
+          run: python3 ${workspace}/.trunk/pinact_v5_run.py ${plugin}/linters/pinact/pinact_run.py ${target}
+        - name: upgrade
+          run: python3 ${workspace}/.trunk/pinact_v5_run.py ${plugin}/linters/pinact/pinact_run.py --upgrade ${target}
   ignore:
     - linters: [ALL]
       paths:

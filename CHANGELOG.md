@@ -2272,7 +2272,7 @@ switch` marks the profile you leave as having its mods switched off —
 
 - **A warning only a download can raise now reaches you whichever command
   downloaded (#425).** #424's "BepInEx found in “path”; declare it with
-  `lmm game edit “id” --loader bepinex`" and #358's "layout lmm cannot
+  `lmm game edit <id> --loader bepinex`" and #358's "layout lmm cannot
   place" are only knowable once an archive is extracted, and every flow's
   download step dropped them — `lmm install`'s too — while an archive from a
   directory source, or a Steam Workshop item fetched with steamcmd, raised

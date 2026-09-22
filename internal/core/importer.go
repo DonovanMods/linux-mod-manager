@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -829,7 +830,7 @@ func (i *Importer) detectModFromFilename(filename string, gameID string) *domain
 }
 
 // copyFileStreaming copies a file using streaming to avoid loading it all into memory
-func copyFileStreaming(src, dst string) error {
+func copyFileStreaming(src, dst string) (err error) {
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
@@ -849,7 +850,11 @@ func copyFileStreaming(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}
-	defer func() { _ = dstFile.Close() }()
+	defer func() {
+		if closeErr := dstFile.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("closing destination: %w", closeErr))
+		}
+	}()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("copying: %w", err)
