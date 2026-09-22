@@ -2019,7 +2019,7 @@ func (s *Service) GetGame(gameID string) (*domain.Game, error) {
 	if !ok {
 		return nil, domain.ErrGameNotFound
 	}
-	return game, nil
+	return copyGame(game), nil
 }
 
 // ListGames returns all configured games
@@ -2137,7 +2137,8 @@ func (s *Service) ReloadGames() (bool, error) {
 //
 // Replacing an entry is refused, as `lmm game edit --mod-path` is
 // (refuseModPathMove), when it would move the game's mod_path out from
-// under files deployed there (#451).
+// under files deployed there (#451). A cache_path change also requires
+// purging every recorded deployment first (#487).
 func (s *Service) SaveGame(ctx context.Context, game *domain.Game) error {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -2148,22 +2149,45 @@ func (s *Service) SaveGame(ctx context.Context, game *domain.Game) error {
 		if err := s.refuseModPathMove(ctx, prior, game.ModPath); err != nil {
 			return err
 		}
+		if err := s.refuseCachePathMove(ctx, prior, game.CachePath); err != nil {
+			return err
+		}
 	}
 	return s.saveGame(ctx, game)
 }
 
 func (s *Service) saveGame(ctx context.Context, game *domain.Game) error {
+	// The caller may reuse or edit game after this call. Never publish its
+	// pointer (or its nested mutable fields) into the Service's snapshot.
+	owned := copyGame(game)
 	s.gamesMu.Lock()
 	defer s.gamesMu.Unlock()
-	if err := config.SaveGame(s.configDir, game); err != nil {
+	if err := config.SaveGame(s.configDir, owned); err != nil {
 		return err
 	}
-	s.games[game.ID] = game
+	s.games[owned.ID] = owned
 	// The map and the file now agree, so re-fingerprint rather than leave
 	// ReloadGames a change it would only re-read to learn what this
 	// function just did (#376).
 	s.gamesStat = statGamesFile(s.configDir)
 	return nil
+}
+
+// copyGame owns every mutable field of a game. The hooks and other fields
+// contain only values; SourceIDs and Loader are its two mutable references.
+func copyGame(game *domain.Game) *domain.Game {
+	copy := *game
+	if game.SourceIDs != nil {
+		copy.SourceIDs = make(map[string]string, len(game.SourceIDs))
+		for source, id := range game.SourceIDs {
+			copy.SourceIDs[source] = id
+		}
+	}
+	if game.Loader != nil {
+		loader := *game.Loader
+		copy.Loader = &loader
+	}
+	return &copy
 }
 
 // game returns the in-memory game for id under the read lock.
@@ -2182,7 +2206,7 @@ func (s *Service) gamesSnapshot() []*domain.Game {
 	defer s.gamesMu.RUnlock()
 	out := make([]*domain.Game, 0, len(s.games))
 	for _, g := range s.games {
-		out = append(out, g)
+		out = append(out, copyGame(g))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

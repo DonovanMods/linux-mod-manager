@@ -615,6 +615,7 @@ func TestRunImportScan_MatchedSource_ResolvesFileIDAndStampsMarker(t *testing.T)
 	}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	importSkipMatch = false
 

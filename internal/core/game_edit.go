@@ -313,6 +313,52 @@ func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to s
 	return inUse
 }
 
+// refuseCachePathMove keeps deployed links associated with the cache root
+// that supplied them. A cache_path change changes the game-scoped cache
+// layout too, so even a path equal to the global cache root needs a purge.
+func (s *Service) refuseCachePathMove(ctx context.Context, game *domain.Game, to string) error {
+	if game.CachePath == to {
+		return nil
+	}
+	roots, err := s.db.DeployedFileRoots(ctx, game.ID)
+	if err != nil {
+		return err
+	}
+	if len(roots) == 0 {
+		return nil
+	}
+	inUse := &GameCachePathInUseError{GameID: game.ID, CachePath: game.CachePath, NewCachePath: to}
+	for _, root := range roots {
+		inUse.DeployedFiles += root.Files
+		if len(inUse.Profiles) > 0 && inUse.Profiles[len(inUse.Profiles)-1].Profile == root.Profile {
+			inUse.Profiles[len(inUse.Profiles)-1].DeployedFiles += root.Files
+		} else {
+			inUse.Profiles = append(inUse.Profiles, ProfileDeployedFiles{Profile: root.Profile, DeployedFiles: root.Files})
+		}
+	}
+	return inUse
+}
+
+// GameCachePathInUseError refuses a cache_path change while deployed-file
+// records remain. Each named profile must be purged before the edit.
+type GameCachePathInUseError struct {
+	GameID        string
+	CachePath     string
+	NewCachePath  string
+	DeployedFiles int
+	Profiles      []ProfileDeployedFiles
+}
+
+// Error names the purge sequence that clears the recorded deployments.
+func (e *GameCachePathInUseError) Error() string {
+	purges := make([]string, 0, len(e.Profiles))
+	for _, profile := range e.Profiles {
+		purges = append(purges, fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, profile.Profile))
+	}
+	return fmt.Sprintf("cannot change cache_path for game %s while %d deployed file(s) are recorded; run %s before changing it, then redeploy the active profile. If cache_path was edited by hand after deployment, restore its previous value in games.yaml and reopen lmm before purging",
+		e.GameID, e.DeployedFiles, strings.Join(purges, ", then "))
+}
+
 // orphanedRecordCount is how many of profileName's deployed-file records
 // name a mod it has no installed row for (#469).
 func (s *Service) orphanedRecordCount(ctx context.Context, gameID, profileName string) (int, error) {

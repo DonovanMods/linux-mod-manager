@@ -260,6 +260,7 @@ func TestJSONGolden_Search(t *testing.T) {
 			{ID: "z", SourceID: "src", Name: "Mod Z", Version: "3.1", Author: "Zed", GameID: game.ID, Category: "Gameplay"},
 		}})
 		game.SourceIDs = map[string]string{"src": game.ID}
+		require.NoError(t, svc.SaveGame(context.Background(), game))
 		withSearchFlags(t, "", 10)
 		withJSONOutput(t)
 
@@ -284,6 +285,7 @@ func TestJSONGolden_Search(t *testing.T) {
 			{ID: "z", SourceID: "src", Name: "Mod Z", Version: "3.1", Author: "Zed", GameID: game.ID, Category: "Gameplay"},
 		}})
 		game.SourceIDs = map[string]string{"src": game.ID}
+		require.NoError(t, svc.SaveGame(context.Background(), game))
 		withSearchFlags(t, "", 2)
 		withJSONOutput(t)
 
@@ -298,6 +300,7 @@ func TestJSONGolden_Search(t *testing.T) {
 		require.NoError(t, svc.SaveGame(context.Background(), game))
 		svc.RegisterSource(&goldenSearchSource{})
 		game.SourceIDs = map[string]string{"src": game.ID}
+		require.NoError(t, svc.SaveGame(context.Background(), game))
 		withSearchFlags(t, "", 10)
 		withJSONOutput(t)
 

@@ -870,6 +870,21 @@ The mod cache location is determined by:
 
 This allows you to store different games' mods on different drives (e.g., large games on HDD, frequently accessed games on SSD).
 
+Before changing a game's `cache_path`, run `lmm purge --game <id> --profile <name>`
+for **each profile with deployed files**, while the old cache path is still
+configured. lmm refuses a programmatic change until those deployments are
+gone: symlinks already in the game directory still point into the old cache. Then
+change `cache_path`, place the cached mods in the new layout (or download them
+again), and run `lmm deploy --game <id>` for the active profile. Keep the old
+cache until the new deployment works.
+
+If you already edited `games.yaml` by hand with files deployed, restore that
+game's previous `cache_path` in `games.yaml` first and reopen lmm (or restart
+`lmm serve`). You can inspect a deployed link's target with `readlink` to find
+the old cache directory. Purge every affected profile while the old path is
+configured, then make the change and redeploy as above. This leaves files you
+placed in the game directory alone.
+
 ## Custom Sources
 
 In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. Three types are fully implemented: `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list you publish, over `https://` or as a local file), and `api` (a GET+JSON REST API described declaratively) — all three work from `search`/`install`/`update` like any built-in source (within each type's capabilities), and `manifest`/`api` sources also support optional API-key authentication. Because `lmm search` queries every source configured for a game concurrently by default (see [Search](#search)), a game mapping several of these alongside NexusMods/CurseForge surfaces results from all of them in one query.

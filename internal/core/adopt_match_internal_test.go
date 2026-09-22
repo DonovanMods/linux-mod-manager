@@ -104,6 +104,7 @@ func TestMatchScannedMod_NonBuiltinSourceMatches(t *testing.T) {
 	src.searchMods = []domain.Mod{{ID: "42", SourceID: "acme-source", Name: "Acme Mod"}}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	matched, score, err := svc.matchScannedMod(context.Background(), game, "Acme Mod", "")
 
@@ -129,6 +130,7 @@ func TestMatchScannedMod_MultiSourceOrder_CurseforgeBeforeNexusmods(t *testing.T
 	svc.RegisterSource(nx)
 	svc.RegisterSource(cf)
 	game.SourceIDs = map[string]string{"curseforge": "g1", "nexusmods": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	matched, _, err := svc.matchScannedMod(context.Background(), game, "Shared Mod", "")
 
@@ -147,6 +149,7 @@ func TestMatchScannedMod_NoSearchableSources_CleanNoMatch(t *testing.T) {
 	src.caps.Search = false
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"no-search": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	matched, _, err := svc.matchScannedMod(context.Background(), game, "Anything", "")
 
@@ -177,6 +180,7 @@ func TestMatchScannedMod_FirstErrorsSecondEmpty_CleanNoMatchNotError(t *testing.
 	svc.RegisterSource(failing)
 	svc.RegisterSource(empty)
 	game.SourceIDs = map[string]string{"acme-fail": "g1", "beta-empty": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	matched, _, err := svc.matchScannedMod(context.Background(), game, "Anything", "")
 
@@ -197,6 +201,7 @@ func TestMatchScannedMod_AllSourcesError_ReturnsError(t *testing.T) {
 	svc.RegisterSource(a)
 	svc.RegisterSource(b)
 	game.SourceIDs = map[string]string{"source-a": "g1", "source-b": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	matched, _, err := svc.matchScannedMod(context.Background(), game, "Anything", "")
 
@@ -215,6 +220,7 @@ func TestMatchScannedMod_FirstEmptySecondMatches_ReturnsMatch(t *testing.T) {
 	svc.RegisterSource(empty)
 	svc.RegisterSource(matchSrc)
 	game.SourceIDs = map[string]string{"acme-empty": "g1", "beta-match": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	matched, _, err := svc.matchScannedMod(context.Background(), game, "Found It", "")
 
@@ -237,6 +243,7 @@ func TestMatchScannedMod_RefusesAWeakHit(t *testing.T) {
 	}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"nexusmods": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	matched, score, err := svc.matchScannedMod(context.Background(), game, "SkyUI", "")
 
@@ -256,6 +263,7 @@ func TestMatchScannedMod_PicksTheBestHitNotTheFirst(t *testing.T) {
 	}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"nexusmods": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	matched, score, err := svc.matchScannedMod(context.Background(), game, "SkyUI", "")
 
@@ -277,6 +285,7 @@ func TestMatchScannedMod_ScoresAcrossSources(t *testing.T) {
 	svc.RegisterSource(first)
 	svc.RegisterSource(second)
 	game.SourceIDs = map[string]string{"alpha": "g1", "beta": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	matched, _, err := svc.matchScannedMod(context.Background(), game, "Bigger Backpacks", "")
 
@@ -297,6 +306,7 @@ func TestMatchScannedMod_ExactHitStopsEarly(t *testing.T) {
 	svc.RegisterSource(first)
 	svc.RegisterSource(second)
 	game.SourceIDs = map[string]string{"alpha": "g1", "beta": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	matched, score, err := svc.matchScannedMod(context.Background(), game, "SkyUI", "")
 
@@ -316,6 +326,7 @@ func TestMatchScannedMod_VersionLiftsANearMiss(t *testing.T) {
 		src.searchMods = []domain.Mod{{ID: "1", SourceID: "nexusmods", Name: "Winter Overhaul Redux", Version: "5.2"}}
 		svc.RegisterSource(src)
 		game.SourceIDs = map[string]string{"nexusmods": "g1"}
+		require.NoError(t, svc.SaveGame(context.Background(), game))
 		return svc, game
 	}
 

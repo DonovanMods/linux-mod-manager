@@ -241,6 +241,36 @@ func TestSaveGame_RefusesOnlyAnEditThatMovesTheModPath(t *testing.T) {
 	require.NoError(t, f.svc.SaveGame(ctx, &renamed), "an edit that keeps the mod_path is not refused")
 }
 
+func TestSaveGame_RefusesMoveOfGetGameResultUnderLiveDeployment(t *testing.T) {
+	ctx := context.Background()
+	f := newLegacyFixture(t, &domain.Game{ID: "sky", Name: "Sky", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink})
+	f.profile(t, "default", true, "a")
+	f.deployed(t, "default", "a", domain.LinkSymlink, map[string]string{"Data/a.esp": "mod a"}, nil)
+	before := f.game.ModPath
+	queried, err := f.svc.GetGame("sky")
+	require.NoError(t, err)
+	queried.ModPath = t.TempDir()
+
+	still, err := f.svc.GetGame("sky")
+	require.NoError(t, err)
+	assert.Equal(t, before, still.ModPath, "editing a query result must not publish a game")
+	err = f.svc.SaveGame(ctx, queried)
+	var inUse *core.GameModPathInUseError
+	require.ErrorAs(t, err, &inUse)
+	assert.Equal(t, before, inUse.ModPath)
+	still, err = f.svc.GetGame("sky")
+	require.NoError(t, err)
+	assert.Equal(t, before, still.ModPath)
+
+	// The pointer originally handed to SaveGame is caller-owned too.
+	f.game.ModPath = t.TempDir()
+	still, err = f.svc.GetGame("sky")
+	require.NoError(t, err)
+	assert.Equal(t, before, still.ModPath)
+	err = f.svc.SaveGame(ctx, f.game)
+	require.ErrorAs(t, err, &inUse)
+}
+
 // TestVerifyFix_ANonActiveProfilesReplacedLinkIsTheUsers: a non-active
 // profile's convergence judges a regular file at a path it recorded a link
 // for as a recorded-only purge does (#469's (b)) - the user's file, kept,

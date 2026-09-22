@@ -62,6 +62,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Changing a game's `cache_path` requires a purge (#487).** `SaveGame`
+  refuses the change while any profile has deployed files and names each
+  profile's purge command. This keeps existing symlinks tied to their old
+  cache root until they are removed. If `games.yaml` was changed manually,
+  restore the old cache path, reopen lmm, purge, and then make the change.
+
+- **Game queries cannot bypass the `mod_path` move guard (#480).** `GetGame`
+  and `ListGames` now return independent copies, including source mappings
+  and loader settings. `SaveGame` keeps its own copy, so later caller edits
+  cannot change the live game before the deployment safety check runs.
+
 - **`lmm profile sync` preserves explicitly disabled mods that have never
   been downloaded (#479).** An imported profile can deliberately record a
   switched-off mod with its version, selected files and load-order position
