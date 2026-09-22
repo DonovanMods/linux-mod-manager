@@ -58,9 +58,9 @@ type purgeSpec struct {
 // purgeMods is THE purge loop (#61): the one shared implementation of
 // "undeploy every mod in mods", consumed via purgeForDeploy and
 // PurgeProfile. An empty mods slice returns immediately - no hooks, no
-// events. Cancellation is honored between mods; the caller's accumulated
-// result travels back through the spec's pointers (partial-result
-// convention).
+// events. Cancellation is honored between mods and during a mod's file
+// removal; the caller's accumulated result travels back through the spec's
+// pointers (partial-result convention).
 func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, spec purgeSpec) error {
 	if len(mods) == 0 {
 		return nil
@@ -147,6 +147,16 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 			}
 		}
 		if err != nil {
+			// Cancellation is not a best-effort file-removal failure. The
+			// uninstall may have stopped partway through this mod, so leave
+			// its installed/profile ownership intact and let a rerun reconcile
+			// the retained deployed-file rows (#481).
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
 			// Best-effort: files may have been manually removed.
 			msg := fmt.Sprintf("⚠ %s - %v", mod.Name, err)
 			*spec.notes = append(*spec.notes, msg)
@@ -1598,10 +1608,10 @@ type PurgeResult struct {
 // before_each hook failure or --uninstall record-delete failure skips
 // that mod (Skipped).
 //
-// sink may be nil. Cancellation is honored between mods (the
-// partial-result convention: the accumulated result comes back alongside
-// ctx.Err()); one cancellation-behavior delta from the pre-extraction
-// doPurge, which never checked ctx mid-loop.
+// sink may be nil. Cancellation is honored between mods and during a mod's
+// file removal (the partial-result convention: the accumulated result comes
+// back alongside ctx.Err()); one cancellation-behavior delta from the
+// pre-extraction doPurge, which never checked ctx mid-loop.
 //
 // It is PlanPurge + ApplyPurge in one call, under a single mutation slot,
 // for callers with no prompt to show between the two (core's own tests) -

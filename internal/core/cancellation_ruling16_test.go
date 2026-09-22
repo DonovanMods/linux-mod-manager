@@ -2,6 +2,8 @@ package core_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -49,6 +51,102 @@ func (c *cancelAtCompletingProfileWrite) Err() error {
 		c.cancel()
 	}
 	return c.Context.Err()
+}
+
+// cancelOnSecondUninstallIteration closes Done when Installer.uninstall starts
+// its second file. The first file is therefore gone while the rest of the mod
+// is still deployed, deterministically reproducing an interrupt in the middle
+// of a large purge without relying on timing.
+type cancelOnSecondUninstallIteration struct {
+	context.Context
+	cancel     context.CancelFunc
+	iterations atomic.Int32
+}
+
+func (c *cancelOnSecondUninstallIteration) Done() <-chan struct{} {
+	if pc, _, _, ok := runtime.Caller(1); ok &&
+		strings.HasSuffix(runtime.FuncForPC(pc).Name(), "core.(*Installer).uninstall") &&
+		c.iterations.Add(1) == 2 {
+		c.cancel()
+	}
+	return c.Context.Done()
+}
+
+// TestService_PurgeProfile_CancellationDuringFileRemoval_LeavesTheModOwned
+// pins #481: Installer.uninstall returns cancellation partway through a mod,
+// so purgeMods must not render that as a best-effort note and then delete the
+// installed-mod row and profile ref. Keeping all deployed_files rows is the
+// conservative recovery choice: a rerun still knows every path it must clear.
+func TestService_PurgeProfile_CancellationDuringFileRemoval_LeavesTheModOwned(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy}
+
+	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{
+		"a.esp": []byte("a"),
+		"b.esp": []byte("b"),
+	})
+	seedProfileWithMod(t, svc, game.ID, "default", "src", "a", "1.0")
+	installSeededMod(t, svc, game, "a")
+
+	mods, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, mods, 1)
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelOnSecondUninstallIteration{Context: inner, cancel: cancel}
+	sink, seen := core.RecordEvents()
+
+	result, err := svc.PurgeProfile(ctx, game, "default", mods, core.PurgeOptions{Uninstall: true}, sink)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "the interrupt must be fatal, not a best-effort per-mod note")
+	assert.Equal(t, int32(2), ctx.iterations.Load(), "the interrupt must land after exactly one file-loop iteration")
+	require.NotNil(t, result)
+	assert.Zero(t, result.Purged, "a partially removed mod must not be reported purged")
+	assert.Empty(t, result.Notes, "cancellation is not a per-mod business note")
+	assert.Empty(t, result.Skipped)
+
+	remaining := 0
+	for _, name := range []string{"a.esp", "b.esp"} {
+		if _, statErr := os.Stat(filepath.Join(game.ModPath, name)); statErr == nil {
+			remaining++
+		}
+	}
+	assert.Equal(t, 1, remaining, "the fixture must cancel after one of the two files is removed")
+
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "default", "src", "a")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"a.esp", "b.esp"}, rows,
+		"all ownership rows stay so a rerun can clear the partial removal")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+	assert.NoError(t, err, "the partially removed mod must retain its installed-mod owner")
+	profile, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.NotNil(t, profile.FindRef("src", "a"), "the partially removed mod must retain its profile owner")
+
+	phases, _ := phasesOf(*seen)
+	for _, phase := range phases {
+		assert.NotEqual(t, core.PurgeModPurged, phase, "a cancelled mod must not emit success")
+		assert.NotEqual(t, core.PurgeComplete, phase, "a cancelled purge must not emit completion")
+	}
+
+	// The retained ownership makes the partial state recoverable: rerunning
+	// the same operation removes the remaining file and every owning record.
+	runAgain, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{Uninstall: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, runAgain.Purged)
+	for _, name := range []string{"a.esp", "b.esp"} {
+		_, statErr := os.Stat(filepath.Join(game.ModPath, name))
+		assert.True(t, os.IsNotExist(statErr), "%s must be absent after recovery", name)
+	}
+	rows, err = svc.GetDeployedFilesForMod(context.Background(), game.ID, "default", "src", "a")
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+	_, err = svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+	profile, err = svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Nil(t, profile.FindRef("src", "a"))
 }
 
 // TestService_PurgeProfile_CancellationBetweenRecordDeleteAndProfileRefRemoval
