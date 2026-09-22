@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI test pushes include the v2 branch (#492).** The test workflow now runs
+  for pushes to `main`, `develop`, and `v2`, while preserving pull-request
+  validation.
+
 - **`lmm game show` and the web loader panel say what a BepInEx game still
   lacks (#443).** Their loader warnings now name the missing step: BepInEx
   is not installed (with the build this game needs - the Linux archive or
