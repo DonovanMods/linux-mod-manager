@@ -1680,6 +1680,12 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Profile attention waits for the installed-mod read (#498).** The web
+  card now computes profile drift only after both status and mod documents
+  arrive, so slow hosted or local reads cannot briefly offer the wrong
+  repair. Browser convergence checks wait for durable end state, and the
+  games reload memo regression uses a reliably changed file fingerprint.
+
 - **Final v2 stabilization recovery fixes (#497).** A same-version reinstall
   with a missing cache now reconciles old-only deployed files from recorded
   ownership after the repaired install commits, retaining records for paths

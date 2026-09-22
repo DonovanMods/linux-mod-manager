@@ -6540,13 +6540,16 @@ func TestE2E_DeployAllIncludesDisabledMods(t *testing.T) {
 			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 		chromedp.Evaluate(`document.querySelectorAll(".modal .plan__mod").length`, &after),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
 	)
 
 	assert.Equal(t, 2, before, "the default full-profile deploy skips the disabled mod")
 	assert.Equal(t, 3, after, "and --all re-plans to include it")
 
-	assert.FileExists(t, filepath.Join(f.Game.ModPath, "gamma.pak"),
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(filepath.Join(f.Game.ModPath, "gamma.pak"))
+		return err == nil
+	}, 10*time.Second, 50*time.Millisecond,
 		"the disabled mod's file must actually have been deployed")
 	assert.Empty(t, f.BrowserErrors())
 }
@@ -7362,6 +7365,39 @@ func TestNotListedCount_IgnoresDisabledRows(t *testing.T) {
 		"a genuinely unlisted ENABLED mod is still counted, which is what the card exists to say")
 	assert.Equal(t, float64(0), counts[2],
 		"and the count never goes negative when the profile lists more than is enabled")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+func TestE2E_ProfileCardWaitsForInstalledSet(t *testing.T) {
+	f := newE2EFixture(t)
+	var states []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { AttentionCards } = await import("/static/app/components/cards.js");
+			const { initialState } = await import("/static/app/store.js");
+			const { h, render } = await import("/static/app/render.js");
+			const mount = document.createElement("div");
+			document.body.append(mount);
+			const state = initialState();
+			state.route = { game: "g1", profile: "default" };
+			state.status = { profiles: [{ name: "default", mod_count: 1 }] };
+			const props = { state, actions: { openPlan() {} }, mods: null };
+			render(h(AttentionCards, props), mount);
+			const pending = mount.querySelector(".card--profile")?.textContent ?? "absent";
+			props.mods = { mods: [] };
+			render(h(AttentionCards, props), mount);
+			const loaded = mount.querySelector(".card--profile")?.textContent ?? "absent";
+			mount.remove();
+			return [pending, loaded];
+		})()`, &states, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+	require.Len(t, states, 2)
+	assert.Equal(t, "absent", states[0], "status alone cannot establish profile drift")
+	assert.Contains(t, states[1], "1 mod in this profile is not installed")
 	assert.Empty(t, f.BrowserErrors())
 }
 

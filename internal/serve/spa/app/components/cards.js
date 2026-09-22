@@ -93,9 +93,12 @@ export function AttentionCards({
   );
   const conflictRows = conflicts?.conflicts ?? [];
   const hasError = Boolean(errors.updates || errors.health || errors.conflicts);
-  const listedOff = listedOffRefs(mods);
-  const notInstalled = notInstalledCount(state, mods);
-  const notListed = notListedCount(state, mods);
+  // The profile count comes from status, but the installed set arrives in
+  // a separate mods request. Until it does, subtracting from an empty set
+  // invents drift and can briefly offer the wrong repair.
+  const listedOff = mods ? listedOffRefs(mods) : [];
+  const notInstalled = mods ? notInstalledCount(state, mods) : 0;
+  const notListed = mods ? notListedCount(state, mods) : 0;
 
   if (
     updateRows.length === 0 &&
