@@ -227,20 +227,19 @@ func TestDoDeploy_AfterEachHookFailure_PrintsWarningToStderrUnconditionally(t *t
 // the Notes display contract for deploy's per-mod bookkeeping diagnostics:
 // a failed "undeploy old files before redeploy" step is recorded with its
 // historical "Warning: undeploy <name>: <err>" text and only shown under
-// --verbose, without stopping the mod from redeploying successfully.
+// --verbose, while a later mod still deploys successfully.
 func TestDoDeploy_Verbose_PrintsUndeployWarningNoteWithHistoricalPrefix(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "blocked/plugin.esp")
 
-	// Deploy once for real, then corrupt the deployed symlink into a plain
-	// file so the symlink linker's Undeploy fails deterministically on the
-	// second pass ("not a symlink") - mirrors
-	// TestService_DisableMod_UndeployFailureIsNonFatal. The cache itself is
-	// untouched, so the subsequent Install still succeeds.
+	// Block traversal through the deployed path's parent to produce a real
+	// undeploy error. A second mod still deploys after the diagnostic.
 	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
-	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
+	deployedPath := filepath.Join(game.ModPath, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
+	seedDeployableMod(t, svc, game, "2", "Good Mod", "good.esp")
 
 	oldVerbose := verbose
 	verbose = true
@@ -251,11 +250,11 @@ func TestDoDeploy_Verbose_PrintsUndeployWarningNoteWithHistoricalPrefix(t *testi
 	})
 
 	assert.Contains(t, out, "  Warning: undeploy Test Mod: ")
-	assert.Contains(t, out, "  ✓ Test Mod\n")
-	assert.Contains(t, out, "\nDeployed: 1\n")
+	assert.Contains(t, out, "  ✓ Good Mod\n")
+	assert.Contains(t, out, "\nDeployed: 1, Failed: 1\n")
 	assert.Equal(t, 1, strings.Count(out, "Warning: undeploy Test Mod:"), "must print exactly once, not double-printed via both an inline event and the end-of-run batch")
-	assert.Less(t, strings.Index(out, "Warning: undeploy Test Mod:"), strings.Index(out, "✓ Test Mod"),
-		"the undeploy warning must print inline, immediately before THIS mod's own success line - not batched at the end of the run (review finding 3)")
+	assert.Less(t, strings.Index(out, "Warning: undeploy Test Mod:"), strings.Index(out, "✓ Good Mod"),
+		"the undeploy warning must print inline before a later mod's success line")
 }
 
 // TestDoDeploy_NonVerbose_DoesNotPrintNotes guards the other half of the
@@ -486,18 +485,18 @@ func TestDoDeploy_OverridesWarning_PrintsBeforeAfterEachAfterAllHookWarnings(t *
 // guards review finding 4: the pre-extraction purgeDeployedMods printed its
 // closing blank line at the END of the purge phase (after any inline
 // purge diagnostics), not immediately after the "Purging N mod(s) before
-// deploy..." header. Corrupts a previously-deployed symlink into a plain
-// file so purge's own Uninstall call fails deterministically ("not a
-// symlink"), producing an inline --verbose purge diagnostic to place the
+// deploy..." header. Blocks a previously-deployed path's parent so purge's
+// own Uninstall call fails with ENOTDIR, producing an inline diagnostic to place the
 // blank line after.
 func TestDoDeploy_Verbose_PurgeBlankLine_AppearsAfterInlineDiagnosticsNotImmediatelyAfterHeader(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "blocked/plugin.esp")
 
 	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
-	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
+	deployedPath := filepath.Join(game.ModPath, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 
 	oldPurge, oldVerbose := deployPurge, verbose
 	deployPurge = true

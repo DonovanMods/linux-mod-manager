@@ -1230,42 +1230,58 @@ func TestService_DeployProfile_PerModNoteDiagnostics_CarryModAttributionAndPrece
 // TestService_DeployProfile_UndeployFailureEmitsNoteEventBeforeSuccessEvent
 // guards finding 3's third deploy-loop diagnostic (undeploy-before-redeploy
 // failure, deploy.go's "Warning: undeploy %s: %v" - the only one of the
-// three whose text DOES carry a mod name already), corrupting a previously
-// deployed symlink into a plain file so the redeploy's own undeploy step
-// fails deterministically, mirroring
-// TestService_DisableMod_UndeployFailureIsNonFatal.
+// three whose text DOES carry a mod name already). A regular file or
+// directory at the recorded symlink path is now deliberately preserved as
+// the user's replacement (#483), so this instead blocks traversal through
+// the file's parent. That is an ordinary, deterministic filesystem error,
+// while a second mod proves the note still precedes a later success event.
 func TestService_DeployProfile_UndeployFailureEmitsNoteEventBeforeSuccessEvent(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
-	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"blocked/plugin.esp": []byte("data")})
+	seedNamedInstalledMod(t, svc, game, "src", "2", "Good Mod", "1.0", true, map[string][]byte{"good.esp": []byte("good")})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "2", "1.0")
 
 	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
-	deployedPath := filepath.Join(gameDir, "plugin.esp")
+	deployedPath := filepath.Join(gameDir, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("not a directory"), 0644))
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, 1, result.Deployed)
+	assert.Equal(t, 1, result.Deployed, "Good Mod still deploys after Test Mod's undeploy error")
+	require.Len(t, result.Skipped, 1)
+	assert.Equal(t, "1", result.Skipped[0].ModID)
 	require.Len(t, result.Notes, 1)
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: undeploy Test Mod: "))
 
-	require.Len(t, *seen, 2)
 	phases, events := phasesOf(*seen)
-	note, ok := events[0].(core.StepEvent)
-	require.True(t, ok)
+	noteIdx, goodIdx := -1, -1
+	var note core.StepEvent
+	for i, event := range events {
+		if step, ok := event.(core.StepEvent); ok && step.Phase == core.DeployNote {
+			noteIdx, note = i, step
+		}
+		if flow, ok := event.(core.FlowEvent); ok && flow.EventScope().ModName == "Good Mod" && flow.FlowPhase() == core.DeployDeployed {
+			goodIdx = i
+		}
+	}
+	require.NotEqual(t, -1, noteIdx)
 	assert.Equal(t, core.DeployNote, note.Phase)
 	assert.Equal(t, "Test Mod", note.ModName)
 	require.NotNil(t, note.Mod)
 	assert.Equal(t, "1", note.Mod.ModID)
 	assert.Equal(t, result.Notes[0], note.Detail)
-	assert.Equal(t, core.DeployDeployed, phases[1], "the Note event must precede the success event")
+	require.NotEqual(t, -1, goodIdx)
+	assert.Less(t, noteIdx, goodIdx, "the Note event must precede Good Mod's success event")
+	assert.Equal(t, core.DeployDeployed, phases[goodIdx])
 }
 
 // TestService_DeployProfile_PurgeBeforeEachSkip_EmitsWarningEventWithModAttribution
@@ -1313,13 +1329,11 @@ exit 0`)
 	assert.Contains(t, result.Warnings, found.Message, "the event's Message must match the recorded Warning text verbatim")
 }
 
-// TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent guards
-// finding 3's "finish the pattern" scope: purgeForDeploy's own per-mod ⚠
-// undeploy-failure Note (previously batched, same as the deploy loop's
-// equivalent) must fire inline via a PurgeNote event. Reuses the
-// symlink-corruption technique, then triggers a --purge deploy so purge's
-// own Uninstall call hits the same "not a symlink" failure.
-func TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent(t *testing.T) {
+// TestService_DeployProfile_PurgePreservesReplacedDirectory confirms that the
+// purge phase of a --purge deploy treats a directory replacing lmm's recorded
+// symlink as user content (#483), rather than an undeploy error with a
+// PurgeNote. The subsequent deploy must leave the directory in place too.
+func TestService_DeployProfile_PurgePreservesReplacedDirectory(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
@@ -1331,7 +1345,7 @@ func TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent(t *testing.T) 
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	deployedPath := filepath.Join(gameDir, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(deployedPath, "obstruction"), 0o755))
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{Purge: true}, sink)
@@ -1346,25 +1360,10 @@ func TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent(t *testing.T) 
 			break
 		}
 	}
-	require.NotNil(t, found, "expected a PurgeNote event for the purge-phase undeploy failure")
-	assert.Equal(t, "Test Mod", found.ModName)
-	assert.True(t, strings.HasPrefix(found.Detail, "⚠ Test Mod - "))
-	assert.Contains(t, result.Notes, found.Detail)
-
-	// PurgeNote must be emitted before DeployPurging's redeploy-phase
-	// events (it belongs to the purge phase).
-	purgingIdx, noteIdx := -1, -1
-	phases, _ := phasesOf(*seen)
-	for i, ph := range phases {
-		if ph == core.DeployPurging {
-			purgingIdx = i
-		}
-		if ph == core.PurgeNote && noteIdx == -1 {
-			noteIdx = i
-		}
-	}
-	require.NotEqual(t, -1, purgingIdx)
-	assert.Greater(t, noteIdx, purgingIdx, "the purge-phase note must come after the DeployPurging header event, still within the purge phase")
+	assert.Nil(t, found, "a replaced directory is user content, not an undeploy failure")
+	assert.Empty(t, result.Notes)
+	assert.DirExists(t, filepath.Join(deployedPath, "obstruction"))
+	assert.True(t, containsLine(result.Warnings, "plugin.esp", "you replaced lmm's link", "left"), "%q", result.Warnings)
 }
 
 // TestService_DeployProfile_PurgeBeforeEachSkip_WarningTextExact pins the

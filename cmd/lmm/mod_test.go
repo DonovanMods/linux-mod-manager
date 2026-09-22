@@ -239,7 +239,7 @@ func TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically(t
 	// TestService_DisableMod_UndeployFailureIsNonFatal) so there is
 	// something to undeploy.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
+	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "blocked/plugin.esp", []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
@@ -248,11 +248,11 @@ func TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically(t
 	}))
 	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default")
 
-	// Corrupt the deployed file into a plain file (not a symlink) so the
-	// symlink linker's Undeploy fails deterministically ("not a symlink").
-	deployedPath := filepath.Join(gameDir, "plugin.esp")
+	// Block traversal through the deployed path's parent to force ENOTDIR.
+	deployedPath := filepath.Join(gameDir, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 
 	oldSource, oldProfile, oldVerbose := modSource, modProfile, verbose
 	modSource = "src"
@@ -325,7 +325,7 @@ func TestDoModDisable_ErrorPath_PrintsAccumulatedNoteToStdout(t *testing.T) {
 	}
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
+	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "blocked/plugin.esp", []byte("data")))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
@@ -334,12 +334,12 @@ func TestDoModDisable_ErrorPath_PrintsAccumulatedNoteToStdout(t *testing.T) {
 	}))
 	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default")
 
-	// Corrupt the deployed file into a plain file (not a symlink) so the
-	// symlink linker's Undeploy fails deterministically ("not a symlink"),
-	// recording a Note before the fatal SetModEnabled failure below.
-	deployedPath := filepath.Join(gameDir, "plugin.esp")
+	// Obstruct the parent so Uninstall records an ENOTDIR note before the
+	// fatal SetModEnabled failure below.
+	deployedPath := filepath.Join(gameDir, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 
 	blockEnabledColumnUpdates(t, filepath.Join(dataDir, "lmm.db"))
 

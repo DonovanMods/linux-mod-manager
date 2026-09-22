@@ -25,6 +25,11 @@ func TestSymlinkReplacementState_PreservesMixedAndUnknownOwnership(t *testing.T)
 
 	assert.Nil(t, symlinkReplacementState([]db.DeployedFileState{
 		{Profile: "a", LinkMethod: &symlink},
+		{Profile: "b", LinkMethod: &symlink, Fingerprint: &db.FileFingerprint{Checksum: "copy"}},
+	}, 0), "a copy fingerprint contradicts a stale symlink method")
+
+	assert.Nil(t, symlinkReplacementState([]db.DeployedFileState{
+		{Profile: "a", LinkMethod: &symlink},
 		{Profile: "residual"},
 	}, 0), "a residual row with no installed method keeps provenance unknown")
 
