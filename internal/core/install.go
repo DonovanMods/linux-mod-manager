@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -932,15 +933,19 @@ func ensureProfileExists(ctx context.Context, pm *ProfileManager, gameID, profil
 // reinstall) - a version upgrade downloads into a distinct cache path
 // already (version is part of the cache key) and needs no staging.
 type reinstallCacheTransaction struct {
-	live      *cache.Cache
-	snapshot  *cache.Cache
-	staged    *cache.Cache
-	tempDir   string
-	gameID    string
-	sourceID  string
-	modID     string
-	version   string
-	activated bool
+	live     *cache.Cache
+	snapshot *cache.Cache
+	staged   *cache.Cache
+	tempDir  string
+	gameID   string
+	sourceID string
+	modID    string
+	version  string
+	// hasOriginal distinguishes a genuinely absent cache entry from an empty
+	// one. The latter still has a directory CloneMod can restore; the former
+	// must be removed again on rollback rather than materialized as empty.
+	hasOriginal bool
+	activated   bool
 }
 
 func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, gameID, sourceID, modID, version string, logger *slog.Logger) (*reinstallCacheTransaction, error) {
@@ -952,11 +957,7 @@ func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, ga
 	snapshot.SetLogger(logger)
 	staged := cache.New(filepath.Join(tempDir, "staged"))
 	staged.SetLogger(logger)
-	if err := live.CloneMod(ctx, snapshot, gameID, sourceID, modID, version); err != nil {
-		_ = os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("snapshotting existing cache: %w", err)
-	}
-	return &reinstallCacheTransaction{
+	txn := &reinstallCacheTransaction{
 		live:     live,
 		snapshot: snapshot,
 		staged:   staged,
@@ -965,7 +966,33 @@ func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, ga
 		sourceID: sourceID,
 		modID:    modID,
 		version:  version,
-	}, nil
+	}
+
+	// A wiped cache entry is the precise recovery case this transaction must
+	// allow: the reinstall will download a replacement. Check the entry itself
+	// before cloning, rather than treating any ENOENT from CloneMod as absent;
+	// a missing member underneath an existing entry is still an I/O failure.
+	if _, err := os.Lstat(live.ModPath(gameID, sourceID, modID, version)); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// ReplaceWithOldCache needs an old-side cache directory even when
+			// there are no old files to remove. This empty snapshot represents
+			// the missing entry only for the forward replace; hasOriginal keeps
+			// recovery from restoring it as a new empty live entry.
+			if err := os.MkdirAll(snapshot.ModPath(gameID, sourceID, modID, version), 0755); err != nil {
+				_ = os.RemoveAll(tempDir)
+				return nil, fmt.Errorf("preparing empty cache snapshot: %w", err)
+			}
+			return txn, nil
+		}
+		_ = os.RemoveAll(tempDir)
+		return nil, fmt.Errorf("checking existing cache: %w", err)
+	}
+	if err := live.CloneMod(ctx, snapshot, gameID, sourceID, modID, version); err != nil {
+		_ = os.RemoveAll(tempDir)
+		return nil, fmt.Errorf("snapshotting existing cache: %w", err)
+	}
+	txn.hasOriginal = true
+	return txn, nil
 }
 
 // Activate publishes the staged download over the live cache entry. It is
@@ -992,18 +1019,24 @@ func (s *reinstallCacheTransaction) Activate(ctx context.Context) error {
 	return nil
 }
 
-// RestoreLive puts the original cache entry back. It is a RECOVERY path:
-// its Delete-then-CloneMod sequence destroys the live entry before it can
-// rewrite it, so every call site passes context.WithoutCancel(ctx) - a
-// cancelled clone here would leave the mod's cache entry gone for good
-// (review finding C1). ctx is still threaded rather than dropped so the
-// copy stays interruptible by a future non-cancellation signal.
+// RestoreLive returns the live cache to its pre-Activate state: it puts the
+// original cache entry back when one existed, or removes the freshly staged
+// one when it did not. Its Delete-then-CloneMod sequence destroys the live
+// entry before it can rewrite it, so every call site passes
+// context.WithoutCancel(ctx) - a cancelled clone here would leave the mod's
+// cache entry gone for good (review finding C1). ctx is still threaded rather
+// than dropped so the copy stays interruptible by a future non-cancellation
+// signal.
 func (s *reinstallCacheTransaction) RestoreLive(ctx context.Context) error {
 	if s == nil || !s.activated {
 		return nil
 	}
 	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
 		return err
+	}
+	if !s.hasOriginal {
+		s.activated = false
+		return nil
 	}
 	if err := s.snapshot.CloneMod(ctx, s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
 		return err

@@ -18,7 +18,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -719,6 +721,82 @@ func TestService_ApplyInstall_FreshInstallEndToEnd(t *testing.T) {
 	require.NoError(t, err, "the profile must have been created since it didn't exist yet")
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "mod1", profile.Mods[0].ModID)
+}
+
+// TestService_ApplyInstall_ForceReinstall_MissingCacheEntryRedownloads covers
+// the recovery path where a user has removed the cache entry for an installed
+// mod. A same-version forced reinstall must treat that absent entry as having
+// nothing to snapshot, then re-download it instead of refusing before any
+// repair work can begin (#477).
+func TestService_ApplyInstall_ForceReinstall_MissingCacheEntryRedownloads(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "repaired-content")
+
+	first, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	_, err = svc.ApplyInstall(context.Background(), game, first, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Delete(game.ID, "src", "mod1", "1.0"))
+	require.False(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "precondition: cache entry is gone")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	require.NotNil(t, plan.Replaces, "precondition: this is a same-version reinstall")
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
+	assert.Equal(t, 2, mock.DownloadCount(), "the missing entry must be re-downloaded")
+	assert.True(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "the reinstall repairs the missing cache entry")
+
+	content, err := os.ReadFile(gameCache.GetFilePath(game.ID, "src", "mod1", "1.0", "mod1.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "repaired-content", string(content))
+}
+
+// TestService_ApplyInstall_ForceReinstall_BrokenCacheEntryStillFails keeps
+// #477's absence guard narrow. A present-but-unreadable cache entry is not a
+// missing entry: cloning its broken member must still fail rather than hiding
+// a real I/O error behind the recovery path.
+func TestService_ApplyInstall_ForceReinstall_BrokenCacheEntryStillFails(t *testing.T) {
+	// A Unix socket is a portable-enough unreadable cache member for this
+	// Linux application, but its path has a 108-byte kernel limit. Keep just
+	// the cache root short; the other test paths remain t.TempDir-owned.
+	cacheDir, err := os.MkdirTemp("", "lmm477-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(cacheDir) })
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: cacheDir})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: game.ID}, "mod1.esp", "payload")
+
+	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("old-content")})
+	gameCache := svc.GetGameCache(game)
+	entry := gameCache.ModPath(game.ID, "src", "mod1", "1.0")
+	require.NoError(t, gameCache.Delete(game.ID, "src", "mod1", "1.0"))
+	require.NoError(t, os.MkdirAll(entry, 0755))
+	socket, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(entry, "unreadable.sock"), Net: "unix"})
+	require.NoError(t, err)
+	defer socket.Close()
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	require.NotNil(t, plan.Replaces)
+
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Force: true}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "preparing reinstall cache")
+	assert.NotErrorIs(t, err, fs.ErrNotExist)
 }
 
 // TestService_ApplyInstall_KeepCacheReinstall_SavesChecksumFromCache pins the

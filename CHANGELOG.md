@@ -69,6 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than silently removing it; unmarked references with no installed row are
   still cleaned up as before.
 
+- **Forced same-version reinstalls recover a missing cache entry (#477).** If
+  an installed mod's cache entry has been removed, `lmm install --force` now
+  treats it as nothing to snapshot and re-downloads it. A present cache entry
+  with a real I/O error is still refused rather than silently treated as gone.
+
 ### Changed
 
 - **CI test pushes include the v2 branch (#492).** The test workflow now runs
