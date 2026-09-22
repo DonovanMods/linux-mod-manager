@@ -775,7 +775,18 @@ func (i *Installer) ReplaceWithOldCache(ctx context.Context, game *domain.Game, 
 	return i.replaceWithCaches(ctx, game, oldCache, i.cache, oldMod, newMod, profileName, nil, nil)
 }
 
+// ReplaceWithMissingOldCache keeps recorded old paths until the repaired
+// install is committed. The absent cache cannot restore a removed path if
+// deployment or the subsequent installed-row write fails.
+func (i *Installer) ReplaceWithMissingOldCache(ctx context.Context, game *domain.Game, oldCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
+	return i.replace(ctx, game, oldCache, i.cache, oldMod, newMod, profileName, nil, nil, true)
+}
+
 func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string, oldFileIDs, newFileIDs []string) error {
+	return i.replace(ctx, game, oldCache, newCache, oldMod, newMod, profileName, oldFileIDs, newFileIDs, false)
+}
+
+func (i *Installer) replace(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string, oldFileIDs, newFileIDs []string, missingOldCache bool) error {
 	if i.refused != nil {
 		return i.refused
 	}
@@ -873,6 +884,16 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	// keepRecords is the old-side paths whose records stay exactly as they
 	// are: a file this replace could not judge (#466 review D3).
 	keepRecords := make(map[string]bool)
+	if missingOldCache {
+		// The old cache listing is empty, but its deployed-file ledger is
+		// still live. Keep every old-only row through the fallible replace
+		// and installed-row write. Reconcile it only after both succeed.
+		for file := range oldRecords {
+			if !newSet[file] {
+				keepRecords[file] = true
+			}
+		}
+	}
 
 	var removedOld []string
 	for _, file := range oldFiles {
@@ -1077,6 +1098,64 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	i.restoreReplacedOriginals(game, removedOld)
 
 	return nil
+}
+
+// ReconcileMissingCacheDepartures removes old-only paths after a repaired
+// reinstall has committed its deployed and installed rows. An unresolved
+// path keeps its ledger row so a later purge can judge it again.
+func (i *Installer) ReconcileMissingCacheDepartures(ctx context.Context, game *domain.Game, profileName string, oldOnlyRecords []db.DeployedFileRecord) error {
+	others, err := i.otherGamesFor(ctx, game)
+	if err != nil {
+		return err
+	}
+	judge := i.judgeFor(game, profileName, others, nil)
+	var errs []error
+	for _, rec := range oldOnlyRecords {
+		file := rec.RelativePath
+		if !underCurrentRoot(game, rec.ModPath) {
+			continue
+		}
+		if !filepath.IsLocal(file) {
+			errs = append(errs, fmt.Errorf("unsafe deployed-file record %q", file))
+			continue
+		}
+		if i.notLinkerOwned(game, file) {
+			continue
+		}
+		dst := filepath.Join(game.ModPath, filepath.FromSlash(file))
+		if _, held := heldElsewhere(others, file, dst); held {
+			continue
+		}
+		states, err := currentStates(ctx, i.db, game, file)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("reading owners of %s: %w", file, err))
+			continue
+		}
+		shared := false
+		for _, state := range states {
+			if state.Profile != profileName {
+				shared = true
+				break
+			}
+		}
+		if shared {
+			continue
+		}
+		verdict := judge.judge(ctx, file, dst).verdict
+		if verdict != deployedOurs && verdict != deployedGone {
+			continue
+		}
+		if err := i.linker.Undeploy(dst); err != nil {
+			errs = append(errs, fmt.Errorf("removing obsolete file %s: %w", file, err))
+			continue
+		}
+		if err := i.db.DeleteDeployedFile(ctx, game.ID, profileName, file); err != nil {
+			errs = append(errs, fmt.Errorf("clearing obsolete file record %s: %w", file, err))
+			continue
+		}
+		i.restoreReplacedOriginal(file, dst)
+	}
+	return errors.Join(errs...)
 }
 
 // resolveSharedDirUpdate resolves member ownership for a same-version

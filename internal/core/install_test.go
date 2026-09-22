@@ -3759,3 +3759,89 @@ func TestInstallPlan_SkipDependenciesAlsoDropsTheSwitchOnNotice(t *testing.T) {
 	plan.SkipDependencies()
 	assert.Nil(t, plan.ReenabledDependencies)
 }
+
+func TestApplyInstall_MissingCacheReinstallChangedFileSet(t *testing.T) {
+	for _, method := range []domain.LinkMethod{domain.LinkSymlink, domain.LinkCopy, domain.LinkHardlink} {
+		for _, failure := range []string{"success", "replace cancellation", "save cancellation", "user change", "other game", "other profile"} {
+			t.Run(method.String()+"/"+failure, func(t *testing.T) {
+				ctx := context.Background()
+				svc := newFlowsTestService(t)
+				game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: method}
+				require.NoError(t, svc.SaveGame(ctx, game))
+				mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+				defer mock.Close()
+				svc.RegisterSource(mock)
+				mod := &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}
+				registerDownloadableMod(t, mock, mod, "old.esp", "old-payload")
+				plan, err := svc.PlanInstall(ctx, game, "default", "src", "mod1", false)
+				require.NoError(t, err)
+				_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
+				require.NoError(t, err)
+				require.NoError(t, svc.GetGameCache(game).Delete("g1", "src", "mod1", "1.0"))
+				oldPath := filepath.Join(game.ModPath, "old.esp")
+				if failure == "user change" {
+					require.NoError(t, os.Remove(oldPath))
+					require.NoError(t, os.WriteFile(oldPath, []byte("user-payload"), 0o644))
+				}
+				if failure == "other game" {
+					other := &domain.Game{ID: "g2", Name: "Other", ModPath: game.ModPath, LinkMethod: method}
+					require.NoError(t, svc.SaveGame(ctx, other))
+					seedInstalledMod(t, svc, other, "src", "other", "1.0", true, map[string][]byte{"old.esp": []byte("old-payload")})
+					require.NoError(t, svc.GetInstallerForTest(other).Install(ctx, other,
+						&domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g2"}, "default"))
+				}
+				if failure == "other profile" {
+					require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "other", "1.0", "old.esp", []byte("old-payload")))
+					require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+						Mod:         domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: game.ID},
+						ProfileName: "alt", LinkMethod: method, Deployed: true,
+					}))
+					require.NoError(t, svc.GetInstallerForTest(game).Install(ctx, game,
+						&domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: game.ID}, "alt"))
+				}
+				registerDownloadableMod(t, mock, mod, "new.esp", "new-payload")
+				plan, err = svc.PlanInstall(ctx, game, "default", "src", "mod1", false)
+				require.NoError(t, err)
+				applyCtx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				switch failure {
+				case "replace cancellation":
+					svc.SetBeforeInstallReplaceForTest(cancel)
+				case "save cancellation":
+					svc.SetBeforeSaveInstalledForTest(cancel)
+				}
+				_, err = svc.ApplyInstall(applyCtx, game, plan, core.InstallOptions{Force: true}, nil)
+				rows, rowErr := svc.GetDeployedFilesForMod(ctx, "g1", "default", "src", "mod1")
+				require.NoError(t, rowErr)
+				switch failure {
+				case "success":
+					require.NoError(t, err)
+					_, statErr := os.Lstat(oldPath)
+					assert.ErrorIs(t, statErr, os.ErrNotExist)
+					assert.Equal(t, []string{"new.esp"}, rows)
+				case "user change":
+					require.NoError(t, err)
+					content, readErr := os.ReadFile(oldPath)
+					require.NoError(t, readErr)
+					assert.Equal(t, "user-payload", string(content))
+					assert.Contains(t, rows, "old.esp", "unresolved old deployment must retain its record")
+				case "other game":
+					require.NoError(t, err)
+					_, statErr := os.Lstat(oldPath)
+					require.NoError(t, statErr, "another game's recorded path must remain")
+					assert.Contains(t, rows, "old.esp", "shared old deployment must retain its record")
+				case "other profile":
+					require.NoError(t, err)
+					_, statErr := os.Lstat(oldPath)
+					require.NoError(t, statErr, "another profile's recorded path must remain")
+					assert.Contains(t, rows, "old.esp", "shared old deployment must retain its record")
+				default:
+					require.ErrorIs(t, err, context.Canceled)
+					_, statErr := os.Lstat(oldPath)
+					require.NoError(t, statErr, "old path must survive recovery")
+					assert.Contains(t, rows, "old.esp", "recovery must restore the old ledger row")
+				}
+			})
+		}
+	}
+}

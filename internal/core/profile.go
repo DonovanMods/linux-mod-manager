@@ -781,8 +781,8 @@ func (s *Service) requireActiveProfile(ctx context.Context, gameID, profileName 
 		return err
 	}
 	if len(owners) > 0 {
-		return fmt.Errorf("%w: cannot %s profile %q of %s - it has no profile file, while the game directory still has files recorded by profile %s; run `lmm profile create %s` to make it active, then %s to clear the files those profiles recorded",
-			ErrProfileNotActive, verb, profileName, gameID, quotedNames(owners), profileName, purgeCommands(owners))
+		return fmt.Errorf("%w: cannot %s profile %q of %s - it has no profile file, while the game directory still has files recorded by profile %s; run `lmm profile create %s --game %s` to make it active, then %s to clear the files those profiles recorded",
+			ErrProfileNotActive, verb, profileName, gameID, quotedNames(owners), ShellQuoteArg(profileName), ShellQuoteArg(gameID), purgeCommands(gameID, owners))
 	}
 	return s.refuseInactive(ctx, gameID, profileName, string(verb))
 }
@@ -833,12 +833,24 @@ func quotedNames(names []string) string {
 // a game directory with no profile files. With only one owner it has the
 // concise command form the CLI documents; multiple owners all get named so a
 // user is never left with a remaining ledger record and no terminating remedy.
-func purgeCommands(names []string) string {
+func purgeCommands(gameID string, names []string) string {
 	commands := make([]string, len(names))
 	for i, name := range names {
-		commands[i] = fmt.Sprintf("`lmm purge -p %s`", name)
+		commands[i] = fmt.Sprintf("`lmm purge -p %s --game %s`", ShellQuoteArg(name), ShellQuoteArg(gameID))
 	}
 	return strings.Join(commands, ", then ")
+}
+
+// ShellQuoteArg quotes one argument in a recovery command for a POSIX shell.
+// Plain IDs remain readable; a name with shell syntax is single quoted.
+func ShellQuoteArg(arg string) string {
+	if arg != "" && strings.IndexFunc(arg, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' || r == '/')
+	}) == -1 {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 }
 
 // DeployVerb names a deploy-direction flow in its active-profile refusal

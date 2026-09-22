@@ -19,6 +19,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // --- PlanInstall (Phase 5b Task 1) ---
@@ -2442,6 +2443,35 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 	mod, scope, modScope := st.mod, st.scope, st.modScope
 	installer := st.installer
 	downloadedFileIDs := st.downloadedFileIDs
+	var oldOnlyRecords []db.DeployedFileRecord
+	if st.reinstallTxn != nil && !st.reinstallTxn.hasOriginal && plan.Replaces != nil {
+		newFiles, err := deployableFiles(st.reinstallTxn.staged, installer.adapter, game, mod.SourceID, mod.ID, mod.Version)
+		if err != nil {
+			return nil, fmt.Errorf("resolving repaired files: %w", err)
+		}
+		newSet := make(map[string]bool, len(newFiles))
+		for _, file := range newFiles {
+			newSet[filepath.ToSlash(file)] = true
+		}
+		oldRecords, err := s.db.DeployedFileRecordsForMod(ctx, game.ID, plan.Profile, plan.Replaces.SourceID, plan.Replaces.ID)
+		if err != nil {
+			return nil, fmt.Errorf("reading old deployment: %w", err)
+		}
+		for _, rec := range oldRecords {
+			if !newSet[rec.RelativePath] {
+				oldOnlyRecords = append(oldOnlyRecords, rec)
+			}
+		}
+	}
+	restoreOldOnlyRecords := func(ctx context.Context) error {
+		var errs []error
+		for _, rec := range oldOnlyRecords {
+			if err := s.db.RecordDeployedFile(ctx, rec); err != nil {
+				errs = append(errs, fmt.Errorf("restoring old deployment record %s: %w", rec.RelativePath, err))
+			}
+		}
+		return errors.Join(errs...)
+	}
 
 	hookCtx := hookContextFor(game)
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
@@ -2467,7 +2497,11 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		}
 		var replaceErr error
 		if st.reinstallTxn != nil {
-			replaceErr = installer.ReplaceWithOldCache(ctx, game, st.reinstallTxn.snapshot, &plan.Replaces.Mod, &mod, plan.Profile)
+			if st.reinstallTxn.hasOriginal {
+				replaceErr = installer.ReplaceWithOldCache(ctx, game, st.reinstallTxn.snapshot, &plan.Replaces.Mod, &mod, plan.Profile)
+			} else {
+				replaceErr = installer.ReplaceWithMissingOldCache(ctx, game, st.reinstallTxn.snapshot, &plan.Replaces.Mod, &mod, plan.Profile)
+			}
 		} else {
 			replaceErr = installer.Replace(ctx, game, &plan.Replaces.Mod, &mod, plan.Profile)
 		}
@@ -2482,6 +2516,7 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 				if err := installer.ReplaceWithCaches(rctx, game, st.reinstallTxn.snapshot, s.GetGameCache(game), &plan.Replaces.Mod, &plan.Replaces.Mod, plan.Profile); err != nil {
 					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("restoring deployment: %w", err))
 				}
+				recoveryErr = errors.Join(recoveryErr, restoreOldOnlyRecords(rctx))
 			}
 			return nil, fmt.Errorf("deployment failed: %w", errors.Join(replaceErr, recoveryErr))
 		}
@@ -2515,6 +2550,7 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 				if err := installer.ReplaceWithCaches(rctx, game, st.reinstallTxn.staged, s.GetGameCache(game), &mod, &plan.Replaces.Mod, plan.Profile); err != nil {
 					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("restoring deployment: %w", err))
 				}
+				recoveryErr = errors.Join(recoveryErr, restoreOldOnlyRecords(rctx))
 			} else {
 				if err := installer.Replace(rctx, game, &mod, &plan.Replaces.Mod, plan.Profile); err != nil {
 					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("restoring deployment: %w", err))
@@ -2528,6 +2564,13 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		return nil, fmt.Errorf("failed to save mod: %w", errors.Join(err, recoveryErr))
 	}
 	if st.reinstallTxn != nil {
+		if !st.reinstallTxn.hasOriginal {
+			if err := installer.ReconcileMissingCacheDepartures(context.WithoutCancel(ctx), game, plan.Profile, oldOnlyRecords); err != nil {
+				msg := fmt.Sprintf("Warning: could not finish old deployment cleanup: %v", err)
+				result.Warnings = append(result.Warnings, msg)
+				emit(WarningEvent{Scope: modScope, Phase: InstallWarning, Message: msg})
+			}
+		}
 		if err := st.reinstallTxn.Commit(); err != nil {
 			msg := fmt.Sprintf("Warning: could not finalize reinstall cache transaction: %v", err)
 			result.Notes = append(result.Notes, msg)

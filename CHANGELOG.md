@@ -1680,6 +1680,13 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Final v2 stabilization recovery fixes (#497).** A same-version reinstall
+  with a missing cache now reconciles old-only deployed files from recorded
+  ownership after the repaired install commits, retaining records for paths
+  it cannot safely remove. Public game and loader queries return independent
+  nested data, and profile creation/purge recovery commands in core, CLI and
+  web output explicitly name the selected game.
+
 - **Full Trunk validation is clean again (#493).** The lint gate now checks
   write and close errors where they can affect results, removes obsolete
   helpers, and formats the web favicon. Its Pinact integration uses the

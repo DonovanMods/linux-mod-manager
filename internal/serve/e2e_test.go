@@ -37,6 +37,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // TestE2E_ShellLoadsAndStoreHydratesStatus is the whole boot path in one
@@ -1841,6 +1842,38 @@ func TestE2E_SlideOver_UninstallThroughTheModal_RemovesFromDisk(t *testing.T) {
 	}, 5*time.Second, 20*time.Millisecond, "the uninstall job must remove the mod")
 
 	assert.NoFileExists(t, deployedPath)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+func TestE2E_UninstallStrandedHintNamesSelectedGame(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+	_, err := f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	other := &domain.Game{ID: "other", Name: "Other", ModPath: t.TempDir()}
+	require.NoError(t, f.Svc.SaveGame(t.Context(), other))
+	require.NoError(t, f.Svc.SetDefaultGame(t.Context(), other.ID))
+	// A manual games.yaml edit is the recovery state with old-root records.
+	selected := *f.Game
+	selected.ModPath = t.TempDir()
+	require.NoError(t, config.SaveGame(f.Svc.ConfigDir(), &selected))
+	reloaded, err := f.Svc.ReloadGames()
+	require.NoError(t, err)
+	require.True(t, reloaded)
+	f.Game = &selected
+
+	var hint string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll(".slide-over__actions button"))
+			.find((b) => b.textContent.trim() === "Uninstall").click()`, nil),
+		chromedp.WaitVisible(`[data-testid="uninstall-stranded-note"]`, chromedp.ByQuery),
+		textContent(`[data-testid="uninstall-stranded-note"]`, &hint),
+	)
+	assert.Contains(t, hint, "lmm purge -p default --game "+selected.ID)
+	assert.NotContains(t, hint, "--game "+other.ID)
 	assert.Empty(t, f.BrowserErrors())
 }
 

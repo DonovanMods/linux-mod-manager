@@ -213,7 +213,7 @@ func (s *Service) LoaderStatus(_ context.Context, gameID string) (*LoaderStatus,
 		return nil, domain.ErrGameNotFound
 	}
 
-	status := &LoaderStatus{GameID: game.ID, Declared: game.Loader}
+	status := &LoaderStatus{GameID: game.ID, Declared: copyGame(game).Loader}
 	status.DetectedRuntime, status.DetectedBootstrap = DetectLoaderTarget(game.InstallPath)
 
 	status.EffectiveRuntime, status.EffectiveBootstrap = status.DetectedRuntime, status.DetectedBootstrap

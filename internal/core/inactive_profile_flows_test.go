@@ -432,6 +432,8 @@ func TestSnapshotRestore_RefusesToGuessTheActiveProfile(t *testing.T) {
 func TestDeployTarget_AGameWithNoProfileFileStillHasALiveProfile(t *testing.T) {
 	ctx := context.Background()
 	f := newLegacyFixture(t, &domain.Game{ID: "sky", Name: "Sky", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink})
+	require.NoError(t, f.svc.SaveGame(ctx, &domain.Game{ID: "other", Name: "Other", ModPath: t.TempDir()}))
+	require.NoError(t, f.svc.SetDefaultGame(ctx, "other"))
 
 	require.NoError(t, f.svc.CheckDeployTarget(ctx, "sky", "foo", core.VerbInstall), "a fresh game takes any first profile")
 
@@ -440,8 +442,15 @@ func TestDeployTarget_AGameWithNoProfileFileStillHasALiveProfile(t *testing.T) {
 	err := f.svc.CheckDeployTarget(ctx, "sky", "foo", core.VerbInstall)
 	require.ErrorIs(t, err, core.ErrProfileNotActive)
 	assert.Contains(t, err.Error(), "has no profile file")
-	assert.Contains(t, err.Error(), "lmm profile create foo")
-	assert.Contains(t, err.Error(), "lmm purge -p default")
+	assert.Contains(t, err.Error(), "lmm profile create foo --game sky")
+	assert.Contains(t, err.Error(), "lmm purge -p default --game sky")
+	assert.NotContains(t, err.Error(), "--game other")
 	assert.NotContains(t, err.Error(), "lmm profile switch foo")
 	assert.NoError(t, f.svc.CheckDeployTarget(ctx, "sky", "default", core.VerbInstall), "the profile the records name is the live one")
+}
+
+func TestShellQuoteArg(t *testing.T) {
+	assert.Equal(t, "plain-id", core.ShellQuoteArg("plain-id"))
+	assert.Equal(t, "'a b'", core.ShellQuoteArg("a b"))
+	assert.Equal(t, "'a'\"'\"'b'", core.ShellQuoteArg("a'b"))
 }
