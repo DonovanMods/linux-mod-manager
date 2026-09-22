@@ -1676,6 +1676,13 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Cancelling a purge now stops it instead of reporting a partially removed
+  mod as purged (#481).** `lmm purge`, `deploy --purge`, and the other flows
+  that share the purge engine return the cancellation immediately, do not run
+  that mod's success path, and retain its installed/profile ownership plus the
+  deployed-file rows a rerun needs to finish safely. A CLI interrupt therefore
+  exits 2 rather than printing a successful purge summary.
+
 - **A deploy no longer replaces a file or directory you put where lmm had
   deployed a symlink (#483).** Redeploy, `deploy --purge`, update, rollback,
   profile switch/apply and `verify --fix` now leave that path untouched and
