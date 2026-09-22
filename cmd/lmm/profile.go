@@ -990,6 +990,18 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	result, err := service.ApplyImport(ctx, game, plan, opts, quietSink(progress))
+	// #485: saving the profile and continuing past a failed mod remains a
+	// useful partial outcome, but it is not a successful import. The typed
+	// error carries result for --json; plain output keeps the summary below.
+	var incomplete *core.ProfileImportIncompleteError
+	var incompleteErr error
+	if errors.As(err, &incomplete) {
+		if jsonOutput {
+			return err
+		}
+		incompleteErr = err
+		err = nil
+	}
 	if err != nil {
 		// Diagnostics accumulated before a fatal error were already printed
 		// above, live, via progress. ApplyImport's own error is already
@@ -1035,7 +1047,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 	}
 
-	return nil
+	return incompleteErr
 }
 
 func runProfileSync(cmd *cobra.Command, args []string) error {

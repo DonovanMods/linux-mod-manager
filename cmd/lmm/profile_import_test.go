@@ -605,11 +605,14 @@ func TestDoProfileImport_PerItemFailure_PlainOutputIsUnchanged(t *testing.T) {
 	})
 
 	var out string
+	var importErr error
 	withStdin(t, "y\n", func() {
-		out = captureStdout(t, func() error {
+		out, _, importErr = captureStdoutAndStderr(t, func() error {
 			return doProfileImport(context.Background(), svc, game, data)
 		})
 	})
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, importErr, &incomplete)
 
 	assert.Equal(t, "Importing profile: target\n"+
 		"\n"+
