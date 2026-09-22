@@ -60,6 +60,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database that is copied, synced or backed up, **not** a local attacker
   running as you.
 
+### Fixed
+
+- **`lmm profile sync` preserves explicitly disabled mods that have never
+  been downloaded (#479).** An imported profile can deliberately record a
+  switched-off mod with its version, selected files and load-order position
+  before lmm has a local row for it. Sync now keeps that desired state rather
+  than silently removing it; unmarked references with no installed row are
+  still cleaned up as before.
+
 ### Changed
 
 - **CI test pushes include the v2 branch (#492).** The test workflow now runs
