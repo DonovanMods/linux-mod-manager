@@ -338,7 +338,8 @@ type PurgeKeptPath struct {
 	ModPath string `json:"mod_path,omitempty"`
 }
 
-// replacedLinkNote is PurgeKeptPath.Note for a link the user replaced.
+// replacedLinkNote explains a link the user replaced, shared by purge's kept
+// path and the deployed-identity judge that protects every deploy (#483).
 const replacedLinkNote = "you replaced lmm's link with your own file"
 
 // PurgeStrandedPath is a file a purge removes from a mod_path the game no

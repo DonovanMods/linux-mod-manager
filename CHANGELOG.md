@@ -1676,6 +1676,13 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A deploy no longer replaces a file or directory you put where lmm had
+  deployed a symlink (#483).** Redeploy, `deploy --purge`, update, rollback,
+  profile switch/apply and `verify --fix` now leave that path untouched and
+  warn that lmm treats it as yours. The check uses the method recorded on
+  every profile that claims the path, so a regular file another profile
+  deployed by copy or hardlink is not mistaken for a replaced symlink.
+
 - **A mod imported without a version no longer reads "vunknown", and a mod
   with no author no longer prints an empty `Author:` (#459).** `lmm import`
   records an archive whose name carries no version at the version

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // FileOwner represents the mod that owns a deployed file
@@ -95,25 +97,37 @@ func (d *DB) RecordDeployedFile(ctx context.Context, rec DeployedFileRecord) err
 
 // DeployedFileState is one profile's record of a path: the fingerprint it
 // was deployed with (nil when none was recorded), when the row was last
-// written, and the mod_path it was deployed under ("" when none was
-// recorded).
+// written, the mod_path it was deployed under ("" when none was recorded),
+// and the link method on the installed-mod row that owns it. LinkMethod is
+// nil when that row no longer exists; a deployed-file row alone cannot prove
+// whether fingerprintless content was a symlink or a legacy copy/hardlink.
 type DeployedFileState struct {
 	Profile     string
 	SourceID    string
 	ModID       string
 	ModPath     string
 	Fingerprint *FileFingerprint
+	LinkMethod  *domain.LinkMethod
 	DeployedAt  time.Time
 }
 
 // DeployedFileStates returns every profile's record of relativePath in
 // gameID, sorted by profile - what a removal compares the file on disk
-// against (#466).
+// against (#466), including the method provenance that distinguishes a
+// replaced symlink (#483).
 func (d *DB) DeployedFileStates(ctx context.Context, gameID, relativePath string) (states []DeployedFileState, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT profile_name, source_id, mod_id, mod_path, checksum, size, mtime, ctime, deployed_at FROM deployed_files
-		WHERE game_id = ? AND relative_path = ?
-		ORDER BY profile_name
+		SELECT df.profile_name, df.source_id, df.mod_id, df.mod_path,
+		       df.checksum, df.size, df.mtime, df.ctime, im.link_method,
+		       df.deployed_at
+		FROM deployed_files AS df
+		LEFT JOIN installed_mods AS im
+		  ON im.game_id = df.game_id
+		 AND im.profile_name = df.profile_name
+		 AND im.source_id = df.source_id
+		 AND im.mod_id = df.mod_id
+		WHERE df.game_id = ? AND df.relative_path = ?
+		ORDER BY df.profile_name
 	`, gameID, relativePath)
 	if err != nil {
 		return nil, fmt.Errorf("querying deployed file states: %w", err)
@@ -126,13 +140,17 @@ func (d *DB) DeployedFileStates(ctx context.Context, gameID, relativePath string
 	for rows.Next() {
 		var st DeployedFileState
 		var modPath, checksum sql.NullString
-		var size, mtime, ctime sql.NullInt64
-		if err := rows.Scan(&st.Profile, &st.SourceID, &st.ModID, &modPath, &checksum, &size, &mtime, &ctime, &st.DeployedAt); err != nil {
+		var size, mtime, ctime, linkMethod sql.NullInt64
+		if err := rows.Scan(&st.Profile, &st.SourceID, &st.ModID, &modPath, &checksum, &size, &mtime, &ctime, &linkMethod, &st.DeployedAt); err != nil {
 			return nil, fmt.Errorf("scanning deployed file state: %w", err)
 		}
 		st.ModPath = modPath.String
 		if checksum.Valid && checksum.String != "" {
 			st.Fingerprint = &FileFingerprint{Checksum: checksum.String, Size: size.Int64, MTime: mtime.Int64, CTime: ctime.Int64}
+		}
+		if linkMethod.Valid {
+			method := domain.LinkMethod(linkMethod.Int64)
+			st.LinkMethod = &method
 		}
 		states = append(states, st)
 	}
