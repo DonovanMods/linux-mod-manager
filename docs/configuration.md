@@ -136,6 +136,17 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 | `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile` |
 | `adapter`      | string | no       | Game adapter: `generic-files` (default), `icarus` or `bepinex` — below |
 
+Changing a game's `cache_path` requires purging each profile with deployed
+files first: `lmm purge --game <id> --profile <name>`. Do this with the old
+path still configured so lmm recognizes its own symlinks. After changing the
+path, copy the cached mods into the new cache layout or download them again,
+then run `lmm deploy --game <id>` for the active profile. Do not remove the old
+cache until the new deployment works. If `games.yaml` was edited manually
+before the purge, restore the previous `cache_path`, reopen lmm (or restart
+`lmm serve`), and purge before trying the change again. A deployed link's
+`readlink` target can help identify the previous cache directory; user files
+in the game directory should be left in place.
+
 #### `mod_path` and relative values
 
 `mod_path` may be **absolute, or relative to `install_path` — everywhere**.
