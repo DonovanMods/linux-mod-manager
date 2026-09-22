@@ -215,7 +215,7 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{
-		"plugin.esp": []byte("data"),
+		"blocked/plugin.esp": []byte("data"),
 	})
 
 	installer := svc.GetInstallerForTest(game)
@@ -223,11 +223,13 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 	require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", "g1", "default", true),
 		"seed Deployed=true so the post-disable assertion below actually proves a transition")
 
-	// Corrupt the deployed file into a plain file (not a symlink) so the
-	// symlink linker's Undeploy fails deterministically ("not a symlink").
-	deployedPath := filepath.Join(gameDir, "plugin.esp")
+	// A regular file replacing lmm's symlink is user content under #483, so
+	// block traversal through its parent instead. Lstat/Undeploy then return
+	// ENOTDIR deterministically, which is an ordinary undeploy error.
+	deployedPath := filepath.Join(gameDir, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("not a directory"), 0644))
 
 	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err, "undeploy failures must not fail DisableMod")

@@ -293,7 +293,7 @@ func TestService_PurgeProfile_AfterHookFailures_WarningsUseModNameAndDeferEmissi
 		"after-hook warnings are deferred: they must emit only after the last per-mod event")
 }
 
-func TestService_PurgeProfile_UndeployFailure_EmitsPurgeNoteAndStillCounts(t *testing.T) {
+func TestService_PurgeProfile_PreservesReplacedDirectoryAsKeptUserFile(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
@@ -314,20 +314,22 @@ func TestService_PurgeProfile_UndeployFailure_EmitsPurgeNoteAndStillCounts(t *te
 	sink, seen := core.RecordEvents()
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, sink)
 	require.NoError(t, err)
-	assert.Equal(t, 1, result.Purged, "an undeploy failure is best-effort: the mod still counts as purged")
+	assert.Equal(t, 1, result.Purged, "leaving user content in place still completes the purge")
 	assert.Empty(t, result.Skipped)
+	assert.Empty(t, result.Notes)
+	require.Len(t, result.Kept, 1)
+	assert.Equal(t, "plugin.esp", result.Kept[0].Path)
+	assert.Equal(t, core.PurgeKeptUserFile, result.Kept[0].Reason)
+	assert.Equal(t, "you replaced lmm's link with your own file", result.Kept[0].Note)
 
-	var found *core.StepEvent
 	for _, e := range *seen {
-		if step, ok := e.(core.StepEvent); ok && step.Phase == core.PurgeNote {
-			found = &step
-			break
+		if step, ok := e.(core.StepEvent); ok {
+			assert.NotEqual(t, core.PurgeNote, step.Phase, "preserving user content must not emit an undeploy-failure note")
 		}
 	}
-	require.NotNil(t, found)
-	assert.Equal(t, "Test Mod", found.ModName)
-	assert.True(t, strings.HasPrefix(found.Detail, "⚠ Test Mod - "))
-	assert.Contains(t, result.Notes, found.Detail)
+	info, err := os.Lstat(deployedPath)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir(), "the user's replacement directory must remain in place")
 }
 
 func TestService_PurgeProfile_SetModDeployedFailure_NonFatalNote(t *testing.T) {
