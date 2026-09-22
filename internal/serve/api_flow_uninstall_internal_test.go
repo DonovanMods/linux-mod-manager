@@ -32,6 +32,19 @@ func TestFlowUninstall_PlanRemovesNothing(t *testing.T) {
 	assert.FileExists(t, deployedFixturePath(game))
 }
 
+// TestFlowUninstall_UnknownModIs404WithTheEnvelope pins the plan boundary's
+// not-found contract: naming a mod the selected profile does not contain is a
+// normal client miss, not a server failure (#484).
+func TestFlowUninstall_UnknownModIs404WithTheEnvelope(t *testing.T) {
+	s, _, game := newFlowFixtureServer(t)
+
+	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/uninstall", game),
+		`{"source_id":"`+fixtureSourceID+`","mod_id":"nope"}`)
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
+	assert.Contains(t, rec.Body.String(), `"error"`)
+}
+
 // TestFlowUninstall_JobRemovesEverything is the Apply half: the mod is gone
 // from the database, the profile and the game directory, and its cache
 // entry is deleted.

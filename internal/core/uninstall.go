@@ -95,16 +95,25 @@ type UninstallPlan struct {
 	remove, untrack map[string]bool
 }
 
+// uninstallModNotFoundError preserves PlanUninstall's established sentence
+// while exposing the not-found sentinel that frontends use to answer 404.
+type uninstallModNotFoundError struct{ message string }
+
+func (e *uninstallModNotFoundError) Error() string { return e.message }
+
+func (e *uninstallModNotFoundError) Unwrap() error { return domain.ErrModNotFound }
+
 // PlanUninstall resolves sourceID/modID against profileName's installed mods
 // and computes what UninstallMod would then do, without touching anything.
 //
 // Resolution mirrors the pre-lift cmd/lmm/uninstall.go exactly, including
 // both of its error texts: with sourceID set, that source's copy is looked
-// up directly ("mod X not found in profile P (source: S)"); with sourceID
-// empty, every installed mod is scanned by ID and the FIRST hit wins ("mod X
-// not found in profile P"), which is how `lmm uninstall <id>` has always
-// disambiguated an ID installed from more than one source. The scan's own
-// read failure keeps its pre-lift wording too ("listing installed mods: …").
+// up directly ("mod X not found in profile P (source: S)", typed as
+// domain.ErrModNotFound); with sourceID empty, every installed mod is scanned
+// by ID and the FIRST hit wins ("mod X not found in profile P"), which is how
+// `lmm uninstall <id>` has always disambiguated an ID installed from more
+// than one source. The scan's own read failure keeps its pre-lift wording too
+// ("listing installed mods: …").
 //
 // The returned plan is a snapshot: pass it to ApplyUninstall promptly, and
 // be ready for ErrStalePlan if the installed set moved underneath it.
@@ -116,7 +125,10 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 	if sourceID != "" {
 		found, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 		if err != nil {
-			return nil, fmt.Errorf("mod %s not found in profile %s (source: %s)", modID, profileName, sourceID)
+			if errors.Is(err, domain.ErrModNotFound) {
+				return nil, &uninstallModNotFoundError{message: fmt.Sprintf("mod %s not found in profile %s (source: %s)", modID, profileName, sourceID)}
+			}
+			return nil, fmt.Errorf("getting installed mod: %w", err)
 		}
 		mod = found
 		if installed, err = s.GetInstalledMods(ctx, game.ID, profileName); err != nil {

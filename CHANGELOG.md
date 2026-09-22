@@ -74,6 +74,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   treats it as nothing to snapshot and re-downloads it. A present cache entry
   with a real I/O error is still refused rather than silently treated as gone.
 
+- **The web uninstall planner reports an unknown profile mod as HTTP 404
+  (#484).** `POST /api/v1/plans/uninstall` now preserves the core not-found
+  identity behind its established error text, so an ordinary missing mod no
+  longer looks like a server failure.
+
 ### Changed
 
 - **CI test pushes include the v2 branch (#492).** The test workflow now runs
