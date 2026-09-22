@@ -11,7 +11,7 @@ import (
 
 // TestDoConflicts_Stale_ColorPath: the "(stale — redeploy to apply)" suffix
 // is a pending/attention-worthy state (yellow, per the repo's palette), and
-// is a plain non-tabular line so no tabwriter alignment concern applies.
+// is a plain non-tabular line so no table alignment concern applies.
 func TestDoConflicts_Stale_ColorPath(t *testing.T) {
 	svc, game := setupConflictsTest(t)
 	seedTwinConflictFixture(t, svc, game)

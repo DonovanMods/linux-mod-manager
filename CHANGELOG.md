@@ -62,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CLI tables align Unicode text by terminal display width (#489).** Search,
+  list, update, profile, snapshot, source, and the other command tables now
+  keep their later columns aligned for accented, Cyrillic, CJK, and other
+  multi-byte cell text while preserving the existing ASCII layout.
+
 - **One-mod uninstalls name files stranded by a `mod_path` move (#488).**
   When an uninstall leaves a target mod's older deployment records for the
   profile purge that can safely remove them, its preview and result now say

@@ -8,7 +8,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -309,7 +308,7 @@ func doSourceIndexList(ctx context.Context, svc *core.Service, sourceID string) 
 	}
 
 	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	w := newDisplayWidthTableWriter(&buf)
 	fmt.Fprintln(w, "SOURCE\tINDEX\tPACKAGES\tSIZE\tUPDATED\tUSED BY")
 	fmt.Fprintln(w, "------\t-----\t--------\t----\t-------\t-------")
 	var total int64
@@ -423,7 +422,7 @@ func printPruneReport(report *core.IndexPruneReport, summary bool) {
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Game < entries[j].Game })
 
 	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	w := newDisplayWidthTableWriter(&buf)
 	fmt.Fprintln(w, "ACTION\tSOURCE\tINDEX\tSIZE\tWHY")
 	fmt.Fprintln(w, "------\t------\t-----\t----\t---")
 	for _, e := range entries {

@@ -30,7 +30,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -132,7 +131,7 @@ func cutReorderRange(part string) (lo, hi string, ok bool) {
 // domain.ModKey; a ref with no installed row falls back to "(unknown)",
 // matching the readout.
 func printLoadOrderRows(w io.Writer, refs []domain.ModReference, names map[string]string) error {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	tw := newDisplayWidthTableWriter(w)
 	if _, err := fmt.Fprintln(tw, "#\tMOD_ID\tNAME"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}

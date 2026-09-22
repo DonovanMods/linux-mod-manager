@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"text/tabwriter"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -79,7 +78,7 @@ func doStatus(ctx context.Context, service *core.Service) error {
 	fmt.Println()
 
 	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	w := newDisplayWidthTableWriter(&buf)
 
 	if verbose {
 		if _, err := fmt.Fprintln(w, "GAME\tID\tPATH\tLINK\tPROFILES\tMODS†"); err != nil {
@@ -109,8 +108,8 @@ func doStatus(ctx context.Context, service *core.Service) error {
 		}
 
 		// The last column (whichever count it is - MODS† in verbose,
-		// PROFILES otherwise) is safe to color inline: text/tabwriter never
-		// pads after the final cell, so this cell's inflated byte length
+		// PROFILES otherwise) is safe to color inline: the table writer never
+		// pads after the final cell, so this cell's invisible escape bytes
 		// can't misalign any column after it (see printTable's doc
 		// comment; do not do this for an interior column).
 		if verbose {

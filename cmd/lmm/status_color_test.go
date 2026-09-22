@@ -46,7 +46,7 @@ func TestShowGameStatus_EnabledDisabledCounts_ColoredWhenTTY(t *testing.T) {
 
 // TestDoStatus_TableHeader_BoldedWhenTTY_AlignmentUnaffected guards the
 // "Configured Games:" summary table: header accenting (#193: bold+cyan, not
-// bold-only) must not perturb the tabwriter-computed column alignment (see
+// bold-only) must not perturb display-width column alignment (see
 // printTable's doc comment).
 func TestDoStatus_TableHeader_BoldedWhenTTY_AlignmentUnaffected(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
@@ -72,7 +72,7 @@ func TestDoStatus_TableHeader_BoldedWhenTTY_AlignmentUnaffected(t *testing.T) {
 // TestDoStatus_LastColumnCount_CyanWhenTTY_AlignmentUnaffected guards #193's
 // richer palette for the "Configured Games:" table: its last column (a mod
 // or profile count, depending on --verbose) is safe to color inline since
-// tabwriter never pads after the final cell (see printTable's doc comment).
+// the table writer never pads after the final cell (see printTable's doc comment).
 func TestDoStatus_LastColumnCount_CyanWhenTTY_AlignmentUnaffected(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	require.NoError(t, svc.SaveGame(context.Background(), game))

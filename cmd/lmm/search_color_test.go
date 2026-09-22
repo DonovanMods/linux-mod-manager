@@ -99,7 +99,7 @@ func TestDoSearch_InstalledMarker_PlainWhenColorDisabled(t *testing.T) {
 // richer palette: an installed mod's ENTIRE row is now tinted green (whole-
 // row, via printTable's rowColor), not just the trailing [installed] marker
 // - #112's cell-only accent read as too subtle in smoke feedback. Still
-// safe under the tabwriter alignment constraint since whole-row tinting
+// safe under the table alignment constraint since whole-row tinting
 // wraps an already-flushed line, same as the header accent.
 func TestDoSearch_InstalledRow_GreenWhenTTY_AlignmentUnaffected(t *testing.T) {
 	svc, game := setupSearchColorTest(t)

@@ -9,7 +9,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -288,7 +287,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		header, separator = header+"UPDATED\t", separator+"-------\t"
 	}
 	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	w := newDisplayWidthTableWriter(&buf)
 	if _, err := fmt.Fprintln(w, header+"SOURCE\t"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
@@ -299,7 +298,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// installedRows tracks each row's installed state in iteration order, so
 	// the whole row (not just the marker) can be green-tinted post-Flush -
 	// #193's richer palette (a cell-only accent read as too subtle in smoke
-	// feedback). Plain "[installed]" text is fed into the tabwriter; the
+	// feedback). Plain "[installed]" text is fed into the table writer; the
 	// row-level color wraps the already-padded line, matching printTable's
 	// "color only after Flush" contract.
 	var installedRows []bool

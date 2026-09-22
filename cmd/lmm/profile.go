@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -305,7 +304,7 @@ func doProfileList(ctx context.Context, service *core.Service, game *domain.Game
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := newDisplayWidthTableWriter(os.Stdout)
 	if _, err := fmt.Fprintln(w, "NAME\tMODS\tDEFAULT"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
@@ -1286,7 +1285,7 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 			nameByKey[key] = installed[i].Name
 		}
 		fmt.Printf("Load order for %s (first = lowest priority):\n", profileName)
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		w := newDisplayWidthTableWriter(os.Stdout)
 		if _, err := fmt.Fprintln(w, "#\tMOD_ID\tNAME"); err != nil {
 			return fmt.Errorf("writing header: %w", err)
 		}
