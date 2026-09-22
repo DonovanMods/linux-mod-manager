@@ -97,18 +97,23 @@ esac
 #
 # So: every variable present must be one lmm sets, or one this shell set
 # for itself. The tests deliberately set STEAM_ROOT in the PARENT.
+if ! env_names=$(compgen -e); then
+	echo "FAKE STEAMCMD: could not list the environment" >&2
+	exit 6
+fi
+
 while IFS= read -r name; do
 	[[ -n ${name} ]] || continue
 	case "${name}" in
 	HOME | PATH | TERM | LANG) continue ;;
 	XDG_DATA_HOME | XDG_CONFIG_HOME | XDG_CACHE_HOME | XDG_STATE_HOME) continue ;;
 	PWD | OLDPWD | SHLVL | _) continue ;; # set by this shell, not by lmm
+	*)
+		echo "FAKE STEAMCMD: \$${name} is set - the environment was filtered, not built" >&2
+		exit 6
+		;;
 	esac
-	echo "FAKE STEAMCMD: \$${name} is set - the environment was filtered, not built" >&2
-	exit 6
-done <<EOF
-$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u)
-EOF
+done <<<"${env_names}"
 
 # ...and the XDG directories lmm does set must live inside that HOME, or
 # the tool's caches and configs land somewhere the user did not agree to.

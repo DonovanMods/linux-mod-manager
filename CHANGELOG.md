@@ -60,70 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database that is copied, synced or backed up, **not** a local attacker
   running as you.
 
-### Fixed
-
-- **Workshop persona lookups no longer delay mutations (#491).** Install,
-  update, and re-link metadata reads use a cached author name when available;
-  a live Steam Community lookup now runs only for a mod detail or search read.
-
-- **Custom manifest and API sources can report each downloadable file's date
-  (#490).** A manifest file may carry `updated_at`, and an API source may map
-  `uploaded_at`; valid RFC 3339 values reach the install picker while missing
-  or malformed values remain unset.
-
-- **CLI tables align Unicode text by terminal display width (#489).** Search,
-  list, update, profile, snapshot, source, and the other command tables now
-  keep their later columns aligned for accented, Cyrillic, CJK, and other
-  multi-byte cell text while preserving the existing ASCII layout.
-
-- **One-mod uninstalls name files stranded by a `mod_path` move (#488).**
-  When an uninstall leaves a target mod's older deployment records for the
-  profile purge that can safely remove them, its preview and result now say
-  how many and name `lmm purge -p <profile>`. A deploy-direction refusal for a
-  missing profile file now names `lmm profile create <profile>` rather than an
-  impossible switch, followed by the purge for the stale profile rows that
-  still own the game directory.
-
-- **The web purge result now names files it left behind (#478).** Finished
-  purge jobs show each user-owned file lmm no longer tracks (including the
-  reason and its former `mod_path`), each file another game still records,
-  and the count removed under an earlier `mod_path`.
-
-- **A partly failed profile import now exits unsuccessfully (#485).** When
-  `lmm profile import` saves the profile but cannot install every requested
-  mod, it keeps the completed result and its per-mod failures but returns a
-  non-zero typed incomplete error. `--json` carries that same result in the
-  error envelope, and the web import job now ends failed instead of claiming
-  success.
-
-- **Changing a game's `cache_path` requires a purge (#487).** `SaveGame`
-  refuses the change while any profile has deployed files and names each
-  profile's purge command. This keeps existing symlinks tied to their old
-  cache root until they are removed. If `games.yaml` was changed manually,
-  restore the old cache path, reopen lmm, purge, and then make the change.
-
-- **Game queries cannot bypass the `mod_path` move guard (#480).** `GetGame`
-  and `ListGames` now return independent copies, including source mappings
-  and loader settings. `SaveGame` keeps its own copy, so later caller edits
-  cannot change the live game before the deployment safety check runs.
-
-- **`lmm profile sync` preserves explicitly disabled mods that have never
-  been downloaded (#479).** An imported profile can deliberately record a
-  switched-off mod with its version, selected files and load-order position
-  before lmm has a local row for it. Sync now keeps that desired state rather
-  than silently removing it; unmarked references with no installed row are
-  still cleaned up as before.
-
-- **Forced same-version reinstalls recover a missing cache entry (#477).** If
-  an installed mod's cache entry has been removed, `lmm install --force` now
-  treats it as nothing to snapshot and re-downloads it. A present cache entry
-  with a real I/O error is still refused rather than silently treated as gone.
-
-- **The web uninstall planner reports an unknown profile mod as HTTP 404
-  (#484).** `POST /api/v1/plans/uninstall` now preserves the core not-found
-  identity behind its established error text, so an ordinary missing mod no
-  longer looks like a server failure.
-
 ### Changed
 
 - **CI test pushes include the v2 branch (#492).** The test workflow now runs
@@ -1744,6 +1680,79 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Full Trunk validation is clean again (#493).** The lint gate now checks
+  write and close errors where they can affect results, removes obsolete
+  helpers, and formats the web favicon. Its Pinact integration uses the
+  compatible adapter/tool pairing while the adapter's v5 long-flag update is
+  pending, without broad diagnostic suppression.
+
+- **CI browser tests use a supported sandboxed Ubuntu runner (#496).** The
+  test workflow runs on Ubuntu 22.04, where hosted Chromium can start with its
+  normal sandbox; browser coverage and assertions remain enabled. The workflow
+  also explicitly has read-only repository permissions.
+
+- **Workshop persona lookups no longer delay mutations (#491).** Install,
+  update, and re-link metadata reads use a cached author name when available;
+  a live Steam Community lookup now runs only for a mod detail or search read.
+
+- **Custom manifest and API sources can report each downloadable file's date
+  (#490).** A manifest file may carry `updated_at`, and an API source may map
+  `uploaded_at`; valid RFC 3339 values reach the install picker while missing
+  or malformed values remain unset.
+
+- **CLI tables align Unicode text by terminal display width (#489).** Search,
+  list, update, profile, snapshot, source, and the other command tables now
+  keep their later columns aligned for accented, Cyrillic, CJK, and other
+  multi-byte cell text while preserving the existing ASCII layout.
+
+- **One-mod uninstalls name files stranded by a `mod_path` move (#488).**
+  When an uninstall leaves a target mod's older deployment records for the
+  profile purge that can safely remove them, its preview and result now say
+  how many and name `lmm purge -p <profile>`. A deploy-direction refusal for a
+  missing profile file now names `lmm profile create <profile>` rather than an
+  impossible switch, followed by the purge for the stale profile rows that
+  still own the game directory.
+
+- **The web purge result now names files it left behind (#478).** Finished
+  purge jobs show each user-owned file lmm no longer tracks (including the
+  reason and its former `mod_path`), each file another game still records,
+  and the count removed under an earlier `mod_path`.
+
+- **A partly failed profile import now exits unsuccessfully (#485).** When
+  `lmm profile import` saves the profile but cannot install every requested
+  mod, it keeps the completed result and its per-mod failures but returns a
+  non-zero typed incomplete error. `--json` carries that same result in the
+  error envelope, and the web import job now ends failed instead of claiming
+  success.
+
+- **Changing a game's `cache_path` requires a purge (#487).** `SaveGame`
+  refuses the change while any profile has deployed files and names each
+  profile's purge command. This keeps existing symlinks tied to their old
+  cache root until they are removed. If `games.yaml` was changed manually,
+  restore the old cache path, reopen lmm, purge, and then make the change.
+
+- **Game queries cannot bypass the `mod_path` move guard (#480).** `GetGame`
+  and `ListGames` now return independent copies, including source mappings
+  and loader settings. `SaveGame` keeps its own copy, so later caller edits
+  cannot change the live game before the deployment safety check runs.
+
+- **`lmm profile sync` preserves explicitly disabled mods that have never
+  been downloaded (#479).** An imported profile can deliberately record a
+  switched-off mod with its version, selected files and load-order position
+  before lmm has a local row for it. Sync now keeps that desired state rather
+  than silently removing it; unmarked references with no installed row are
+  still cleaned up as before.
+
+- **Forced same-version reinstalls recover a missing cache entry (#477).** If
+  an installed mod's cache entry has been removed, `lmm install --force` now
+  treats it as nothing to snapshot and re-downloads it. A present cache entry
+  with a real I/O error is still refused rather than silently treated as gone.
+
+- **The web uninstall planner reports an unknown profile mod as HTTP 404
+  (#484).** `POST /api/v1/plans/uninstall` now preserves the core not-found
+  identity behind its established error text, so an ordinary missing mod no
+  longer looks like a server failure.
+
 - **`lmm mod edit` keeps deployed-file ownership attached when relinking a mod
   (#482).** The installed identity and its deployment records now move in one
   database transaction, preserving file fingerprints and recorded mod paths.
@@ -1769,7 +1778,7 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   records an archive whose name carries no version at the version
   `unknown`, and `lmm mod show` printed `Installed: vunknown`,
   `lmm mod set-update --pin` printed `(vunknown)`, and the `mod show`
-  header ended in `Author: ` with nothing after it. Every CLI line that
+  header ended in `Author:` with nothing after it. Every CLI line that
   labels a version now treats that placeholder as no version at all —
   `Installed (profile: default)`, a pin with no version in brackets,
   `is already up to date.` —
@@ -2236,7 +2245,7 @@ switch` marks the profile you leave as having its mods switched off —
   later one, `lmm serve` included: the hold is kept on disk beside the
   indexes. A throttle or a server error holds every community; a community
   whose own document is missing or unreadable is held on its own ("Not
-  asking Thunderstore about <community> again until …"), and three failed
+  asking Thunderstore about “community” again until …"), and three failed
   requests in a row trip either, across processes. A mod download told to
   wait more than a minute fails at once, naming the wait.
 
@@ -2262,13 +2271,13 @@ switch` marks the profile you leave as having its mods switched off —
   details, where it used to answer 500.
 
 - **A warning only a download can raise now reaches you whichever command
-  downloaded (#425).** #424's "BepInEx found in <path>; declare it with
-  `lmm game edit <id> --loader bepinex`" and #358's "layout lmm cannot
+  downloaded (#425).** #424's "BepInEx found in “path”; declare it with
+  `lmm game edit “id” --loader bepinex`" and #358's "layout lmm cannot
   place" are only knowable once an archive is extracted, and every flow's
   download step dropped them — `lmm install`'s too — while an archive from a
   directory source, or a Steam Workshop item fetched with steamcmd, raised
   them with nowhere to go but the log (off by default). They now reach the
-  terminal as `Warning: <mod>: <message>` on stderr from `lmm install`,
+  terminal as `Warning: “mod”: “message”` on stderr from `lmm install`,
   `update`, `deploy`, `profile switch`/`apply`/`import`, `snapshot restore`
   and `import`, as a `Warning:` sub-line under the row it belongs to in
   `lmm verify --fix`, and in the web UI's job activity, a health repair's

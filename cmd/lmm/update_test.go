@@ -670,7 +670,7 @@ func captureStdoutOnlyErr(t *testing.T, fn func() error) error {
 	t.Helper()
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	require.NoError(t, err)
-	defer devNull.Close()
+	defer func() { require.NoError(t, devNull.Close(), "closing stdout sink") }()
 	old := os.Stdout
 	os.Stdout = devNull
 	defer func() { os.Stdout = old }()

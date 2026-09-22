@@ -180,9 +180,10 @@ func TestScanModPath_CopyMode_SymlinksMarkedAsTracked(t *testing.T) {
 	// Find results by name
 	var symlinkResult, regularResult *core.ScanResult
 	for i := range results {
-		if results[i].FileName == "CachedMod-1.0.jar" {
+		switch results[i].FileName {
+		case "CachedMod-1.0.jar":
 			symlinkResult = &results[i]
-		} else if results[i].FileName == "ManualMod.jar" {
+		case "ManualMod.jar":
 			regularResult = &results[i]
 		}
 	}

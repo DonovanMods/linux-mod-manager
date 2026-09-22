@@ -22,7 +22,7 @@ func captureStdout(t *testing.T, fn func() error) string {
 	require.NoError(t, err)
 	os.Stdout = w
 	defer func() { os.Stdout = old }()
-	defer r.Close()
+	defer func() { require.NoError(t, r.Close(), "closing read end of the pipe") }()
 
 	fnErr := fn()
 	require.NoError(t, w.Close(), "closing write end of the pipe")

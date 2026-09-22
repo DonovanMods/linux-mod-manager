@@ -128,10 +128,10 @@ func TestApplySingleUpdate_Workshop_PinnedAndUpToDate_ShowRevisionDate(t *testin
 
 	t.Run("pinned", func(t *testing.T) {
 		svc, game, _ := setupDoUpdateWorkshopTest(t)
-		mod := seedWorkshopInstalledMod(t, svc, game)
+		seedWorkshopInstalledMod(t, svc, game)
 		_, err := svc.SetModUpdatePolicy(context.Background(), "steamworkshop", "3000000001", "g1", "default", domain.UpdatePinned)
 		require.NoError(t, err)
-		mod, err = svc.GetInstalledMod(context.Background(), "steamworkshop", "3000000001", "g1", "default")
+		mod, err := svc.GetInstalledMod(context.Background(), "steamworkshop", "3000000001", "g1", "default")
 		require.NoError(t, err)
 
 		out := captureStdout(t, func() error {
@@ -154,13 +154,13 @@ func TestApplySingleUpdate_Workshop_PinnedAndUpToDate_ShowRevisionDate(t *testin
 // - a real, separate gap outside this finding's cmd/lmm/update.go scope.
 func TestApplySingleUpdate_Workshop_LockedRefusal_ShowsRevisionDates(t *testing.T) {
 	svc, game, src := setupDoUpdateWorkshopTest(t)
-	mod := seedWorkshopInstalledMod(t, svc, game)
+	seedWorkshopInstalledMod(t, svc, game)
 	src.AddMod(&domain.Mod{ID: "3000000001", SourceID: "steamworkshop", Name: "Workshop Item", Version: newWorkshopContentID, GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "new-1", FileName: "item-new.pak", IsPrimary: true}})
 
 	_, err := svc.SetModLock(context.Background(), "steamworkshop", "3000000001", "g1", "default", workshopContentID)
 	require.NoError(t, err)
-	mod, err = svc.GetInstalledMod(context.Background(), "steamworkshop", "3000000001", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "steamworkshop", "3000000001", "g1", "default")
 	require.NoError(t, err)
 
 	out := captureStdout(t, func() error {

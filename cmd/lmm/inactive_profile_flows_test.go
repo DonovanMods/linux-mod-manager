@@ -209,7 +209,6 @@ func TestDoModDisable_ANonActiveProfileRemovesOnlyItsOwn(t *testing.T) {
 func TestDoProfileImport_ANonActiveProfileIsRecordedOnly(t *testing.T) {
 	svc, game, _ := setupDoProfileImportTest(t)
 	seedAltProfile(t, svc, game, "test-src")
-	before := dirNames(t, game.ModPath)
 	setFlag(t, &profileImportYes, true)
 	setFlag(t, &profileImportForce, true)
 	ctx := context.Background()
@@ -218,7 +217,7 @@ func TestDoProfileImport_ANonActiveProfileIsRecordedOnly(t *testing.T) {
 	require.NoError(t, getProfileManager(svc).AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "donly", Version: "1.0"}))
 	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
-	before = dirNames(t, game.ModPath)
+	before := dirNames(t, game.ModPath)
 	data := buildImportProfileData(t, "g1", "alt", []domain.ModReference{{SourceID: "test-src", ModID: "donly", Version: "1.0"}})
 
 	stdout, _, err := captureStdoutAndStderr(t, func() error {

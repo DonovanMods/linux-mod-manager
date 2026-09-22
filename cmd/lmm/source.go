@@ -128,7 +128,9 @@ Examples:
 			if showInUseColumn {
 				header += "\tIN USE"
 			}
-			fmt.Fprintln(w, header+"\tERROR")
+			if _, err := fmt.Fprintln(w, header+"\tERROR"); err != nil {
+				return fmt.Errorf("writing source table header: %w", err)
+			}
 			for _, info := range infos {
 				// An error row carries no auth/capability data (it never
 				// registered), so both columns stay blank here - the display

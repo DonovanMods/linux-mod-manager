@@ -309,8 +309,12 @@ func doSourceIndexList(ctx context.Context, svc *core.Service, sourceID string) 
 
 	var buf bytes.Buffer
 	w := newDisplayWidthTableWriter(&buf)
-	fmt.Fprintln(w, "SOURCE\tINDEX\tPACKAGES\tSIZE\tUPDATED\tUSED BY")
-	fmt.Fprintln(w, "------\t-----\t--------\t----\t-------\t-------")
+	if _, err := fmt.Fprintln(w, "SOURCE\tINDEX\tPACKAGES\tSIZE\tUPDATED\tUSED BY"); err != nil {
+		return fmt.Errorf("writing source index header: %w", err)
+	}
+	if _, err := fmt.Fprintln(w, "------\t-----\t--------\t----\t-------\t-------"); err != nil {
+		return fmt.Errorf("writing source index separator: %w", err)
+	}
 	var total int64
 	var kept []string
 	now := time.Now()
@@ -332,7 +336,9 @@ func doSourceIndexList(ctx context.Context, svc *core.Service, sourceID string) 
 		if len(e.MappedBy) > 0 {
 			used = strings.Join(e.MappedBy, ", ")
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", e.Source, e.Game, packages, size, updated, used)
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", e.Source, e.Game, packages, size, updated, used); err != nil {
+			return fmt.Errorf("writing source index row: %w", err)
+		}
 		if e.KeepReason != "" {
 			kept = append(kept, fmt.Sprintf("  %s/%s: prune keeps it: %s", e.Source, e.Game, e.KeepReason))
 		}
@@ -362,15 +368,16 @@ func doSourceIndexPrune(ctx context.Context, svc *core.Service, opts core.IndexP
 		if jsonOutput {
 			return emitJSON(preview)
 		}
-		printPruneReport(preview, true)
-		return nil
+		return printPruneReport(preview, true)
 	}
 	if opts.All && preview.Removed > 0 && !yes {
 		if !jsonOutput {
 			// The table alone: the question below is its summary, and
 			// "nothing was removed (dry run)" right before it read as the
 			// answer (T3 review F11).
-			printPruneReport(preview, false)
+			if err := printPruneReport(preview, false); err != nil {
+				return err
+			}
 			fmt.Printf("\nRemove %d index(es), %s? They are rebuilt on the next search. [y/N] ", preview.Removed, humanBytes(preview.FreedBytes))
 		}
 		response, err := readPromptLine()
@@ -392,7 +399,9 @@ func doSourceIndexPrune(ctx context.Context, svc *core.Service, opts core.IndexP
 			return err
 		}
 	} else {
-		printPruneReport(report, true)
+		if err := printPruneReport(report, true); err != nil {
+			return err
+		}
 	}
 	// An index that could not be removed is a failure the exit status must
 	// carry (T3 review F11); the report has already said which and why.
@@ -410,30 +419,40 @@ func doSourceIndexPrune(ctx context.Context, svc *core.Service, opts core.IndexP
 
 // printPruneReport renders a prune (or its preview) as a table and, with
 // summary, the line that says what it came to.
-func printPruneReport(report *core.IndexPruneReport, summary bool) {
+func printPruneReport(report *core.IndexPruneReport, summary bool) error {
 	for _, w := range report.Warnings {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
 	if len(report.Entries) == 0 {
 		fmt.Println("No local source indexes on disk.")
-		return
+		return nil
 	}
 	entries := append([]core.IndexPruneEntry(nil), report.Entries...)
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Game < entries[j].Game })
 
 	var buf bytes.Buffer
 	w := newDisplayWidthTableWriter(&buf)
-	fmt.Fprintln(w, "ACTION\tSOURCE\tINDEX\tSIZE\tWHY")
-	fmt.Fprintln(w, "------\t------\t-----\t----\t---")
+	if _, err := fmt.Fprintln(w, "ACTION\tSOURCE\tINDEX\tSIZE\tWHY"); err != nil {
+		return fmt.Errorf("writing source index prune header: %w", err)
+	}
+	if _, err := fmt.Fprintln(w, "------\t------\t-----\t----\t---"); err != nil {
+		return fmt.Errorf("writing source index prune separator: %w", err)
+	}
 	for _, e := range entries {
 		action := e.Action
 		if report.DryRun && action == core.IndexPruneRemove {
 			action = "would remove"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", action, e.Source, e.Game, humanBytes(e.Bytes), e.Reason)
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", action, e.Source, e.Game, humanBytes(e.Bytes), e.Reason); err != nil {
+			return fmt.Errorf("writing source index prune row: %w", err)
+		}
 	}
-	_ = w.Flush()
-	_ = printTable(&buf, 2, nil)
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flushing source index prune table: %w", err)
+	}
+	if err := printTable(&buf, 2, nil); err != nil {
+		return err
+	}
 
 	switch {
 	case !summary:
@@ -444,6 +463,7 @@ func printPruneReport(report *core.IndexPruneReport, summary bool) {
 	default:
 		fmt.Printf("\nRemoved %d index(es), freeing %s.\n", report.Removed, humanBytes(report.FreedBytes))
 	}
+	return nil
 }
 
 // formatWhen renders a timestamp with how long ago it was.

@@ -89,7 +89,7 @@ func (e *Extractor) detectFormatFromPath(path string) string {
 	if err != nil {
 		return ""
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	header := make([]byte, 8)
 	n, err := io.ReadFull(file, header)
