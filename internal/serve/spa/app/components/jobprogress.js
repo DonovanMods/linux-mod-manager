@@ -22,11 +22,16 @@ import {
   resultTallyLabel,
   resultTallyTone,
 } from "../progress.js";
-import { useJobResultTally, useJobResultWarnings } from "../jobresult.js";
+import {
+  useJobResultPurge,
+  useJobResultTally,
+  useJobResultWarnings,
+} from "../jobresult.js";
 import { codeSpans } from "../errortext.js";
 import { OverwriteButton } from "./tray.js";
 import { explainerFor, loaderSetupFor } from "../failures.js";
 import { LoaderSetup } from "./errordetails.js";
+import { PurgeResultDetails } from "./purgeresult.js";
 
 /**
  * InlineJob renders children when origin has no job, and that job's live
@@ -76,6 +81,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   // conditional is exactly the pattern that let a stale value survive.
   const tally = useJobResultTally(jobID, state);
   const resultWarnings = useJobResultWarnings(jobID, state);
+  const purgeResult = useJobResultPurge(jobID, state);
 
   if (state === "running") {
     const fraction = progressFraction(frame);
@@ -127,7 +133,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
     !failed && summary?.kind === "switch" ? resultWarnings : NO_NOTICES;
   return html`
     <div
-      class="job-progress job-progress--${tone} ${explainer || loader || notices.length > 0 ? "job-progress--explained" : ""}"
+      class="job-progress job-progress--${tone} ${explainer || loader || notices.length > 0 || purgeResult ? "job-progress--explained" : ""}"
       data-job=${jobID}
       data-state=${state}
       role="status"
@@ -168,6 +174,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
             ${codeSpans(n)}
           </p>`,
       )}
+      <${PurgeResultDetails} result=${purgeResult} />
       ${
         loader &&
         html`<div class="job-progress__explainer">

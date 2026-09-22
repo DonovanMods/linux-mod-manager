@@ -25,9 +25,10 @@ import {
   resultTallyLabel,
   resultTallyTone,
 } from "../progress.js";
-import { useJobResultTally } from "../jobresult.js";
+import { useJobResultPurge, useJobResultTally } from "../jobresult.js";
 import { ErrorDetails } from "./errordetails.js";
 import { nextStepFor } from "../failures.js";
+import { PurgeResultDetails } from "./purgeresult.js";
 
 // maxStreamedEvents caps what one expanded entry keeps. core's downloader
 // emits a DownloadEvent per read - thousands for a large mod - and the
@@ -189,6 +190,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
   // jobprogress.js's identical use for why "succeeded" alone can lie about
   // a batch that applied nothing.
   const tally = useJobResultTally(job.id, job.state);
+  const purgeResult = useJobResultPurge(job.id, job.state);
   const tone =
     job.state === "succeeded" && tally ? resultTallyTone(tally) : job.state;
   const stateText =
@@ -231,6 +233,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         `
       }
       ${job.state === "failed" && html`<${FailureNextStep} job=${job} actions=${actions} />`}
+      <${PurgeResultDetails} result=${purgeResult} />
       ${
         // I1, unit 8 gate review: a count alone ("1 skipped") leaves the
         // reader to guess, and a lock refusal is not a guessable outcome.

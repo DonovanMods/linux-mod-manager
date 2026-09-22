@@ -62,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web purge result now names files it left behind (#478).** Finished
+  purge jobs show each user-owned file lmm no longer tracks (including the
+  reason and its former `mod_path`), each file another game still records,
+  and the count removed under an earlier `mod_path`.
+
 - **A partly failed profile import now exits unsuccessfully (#485).** When
   `lmm profile import` saves the profile but cannot install every requested
   mod, it keeps the completed result and its per-mod failures but returns a

@@ -52,14 +52,33 @@ export function useJobResultWarnings(jobID, jobState) {
   return useJobResultRead(jobID, jobState)?.warnings ?? NO_WARNINGS;
 }
 
+// useJobResultPurge returns the completed purge's additive file outcome,
+// when it has one. It shares the same cached status request as every other
+// result reader, so adding this detail never adds another poll.
+export function useJobResultPurge(jobID, jobState) {
+  return useJobResultRead(jobID, jobState)?.purge ?? null;
+}
+
 const NO_WARNINGS = [];
 
-/** readResult is what the cache holds for one finished job's result. */
-function readResult(result) {
+/** readResult is what the cache holds for one finished job's status/result. */
+function readResult(status) {
+  const result = status?.result;
   const warnings = Array.isArray(result?.warnings)
     ? result.warnings.filter((w) => typeof w === "string" && w !== "")
     : NO_WARNINGS;
-  return { tally: resultTally(result), warnings };
+  const kept = Array.isArray(result?.kept) ? result.kept : [];
+  const removedPaths = Number.isSafeInteger(result?.removed_paths)
+    ? result.removed_paths
+    : 0;
+  // Several non-purge results also happen to have a `kept` field. The job
+  // kind is the closed discriminator here, so an uninstall or a mod toggle
+  // never receives purge's completion copy by coincidence.
+  const purge =
+    status?.kind === "purge" && (kept.length > 0 || removedPaths > 0)
+      ? result
+      : null;
+  return { tally: resultTally(result), warnings, purge };
 }
 
 function useJobResultRead(jobID, jobState) {
@@ -75,7 +94,7 @@ function useJobResultRead(jobID, jobState) {
     let read = pendingReads.get(jobID);
     if (!read) {
       read = jobStatus(jobID).then(
-        (status) => readResult(status.result),
+        (status) => readResult(status),
         () => {
           // A job the registry has already evicted (jobs.go's retention
           // limit) - honestly null, same as jobhistory.js's own "a gap in
