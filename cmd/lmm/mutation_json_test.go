@@ -93,6 +93,14 @@ func TestJSONGolden_Uninstall(t *testing.T) {
 
 	t.Run("dry_run_plan", func(t *testing.T) {
 		svc, game := setupDoUninstallTest(t)
+		// The shared fixture obstructs the parent to exercise an undeploy
+		// error. Restore its link here so the dry-run golden still covers
+		// a populated file list.
+		blocker := filepath.Join(game.ModPath, "blocked")
+		require.NoError(t, os.Remove(blocker))
+		_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+		require.NoError(t, err)
+		require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", game.ID, "default", false))
 		uninstallDryRun = true
 
 		out := runJSONCommand(t, func() error {

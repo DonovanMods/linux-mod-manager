@@ -24,7 +24,7 @@
     "convert_paks": true
   },
   "files": [
-    "plugin.esp"
+    "blocked/plugin.esp"
   ],
   "keep_cache": false,
   "hooks": []

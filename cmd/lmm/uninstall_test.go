@@ -104,8 +104,8 @@ func TestUninstallCmd_GameNotFound(t *testing.T) {
 }
 
 // setupDoUninstallTest builds a *core.Service plus a mod that will fail to
-// undeploy (a regular file sits at the deploy destination, so the symlink
-// linker's Undeploy fails deterministically with "not a symlink" - an absent
+// undeploy (a regular file blocks traversal through the deployed path's
+// parent, so the symlink linker's Undeploy fails with ENOTDIR - an absent
 // cache entry no longer works as the failure fixture, since #260 made that a
 // documented no-op) and resets the uninstall command's package-level flag
 // globals to sane defaults for calling doUninstall directly. Callers set
@@ -131,25 +131,20 @@ func setupDoUninstallTest(t *testing.T) (*core.Service, *domain.Game) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	require.NoError(t, svc.GetGameCache(game).Store("g1", "src", "1", "1.0", "plugin.esp", []byte("data")))
-	// The undeploy obstruction: a DIRECTORY where the symlink linker
-	// expects its own link. It used to be a foreign regular FILE, which
-	// #350 changed the meaning of - a regular file with no deployed_files
-	// row is content lmm did not put there, and the undeploy now leaves it
-	// alone rather than deleting it. A directory is still an undeploy
-	// failure and nothing else, which is what these tests are about.
+	require.NoError(t, svc.GetGameCache(game).Store("g1", "src", "1", "1.0", "blocked/plugin.esp", []byte("data")))
 	pm := svc.NewProfileManager()
 	_, err = pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.NoError(t, pm.AddMod(context.Background(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
-	// #466: a link or directory lmm has no record of is the user's, and an
-	// uninstall leaves it untouched - so the mod is deployed first, and its
-	// recorded link is what the directory replaces.
+	// Deploy first to give the linker a recorded path, then obstruct its
+	// parent without placing user content at that path.
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
-	require.NoError(t, os.Remove(filepath.Join(gameDir, "plugin.esp")))
-	require.NoError(t, os.MkdirAll(filepath.Join(gameDir, "plugin.esp"), 0755))
+	deployedPath := filepath.Join(gameDir, "blocked", "plugin.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 	// The row as the goldens recorded it: installed, not marked deployed.
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},

@@ -494,14 +494,15 @@ func TestDoProfileSwitch_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *te
 	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
-	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "blocked/plugin.esp")
 	// seedDeployableMod only seeds the cache/DB/profile - actually deploy the
-	// mod first so there is a real symlink to corrupt.
+	// mod first so there is a real deployed path to obstruct.
 	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default")
-	// Corrupt the deployed symlink so Uninstall fails deterministically.
-	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
+	// Blocking the parent makes Uninstall fail with ENOTDIR.
+	deployedPath := filepath.Join(game.ModPath, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 
 	oldVerbose := verbose
 	verbose = true

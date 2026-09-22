@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -2419,17 +2420,11 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinksWithSibling
 	assert.True(t, secondMod.Deployed, "Deployed remains true after a successful sibling re-link")
 }
 
-// TestDoVerify_Fix_VersionMismatch_Deployed_UndeployWarning_JSONNotesIt pins
-// PR #154's Copilot finding: relinkDeployedRow's undeploy-then-install shape
-// treats an Uninstall failure that still lets Install succeed as non-fatal
-// (DeployProfile's own precedent - every file was rewritten, nothing is left
-// broken), but the warning must reach --json's per-row note, not just the
-// text-mode line, or automation has no way to see the partial cleanup a
-// human would be shown. Forces exactly that shape: a regular file squatting
-// where the row's symlink deployment should be makes the symlink linker's
-// Undeploy refuse ("not a symlink"), while its Deploy - which clears dst
-// itself - still succeeds.
-func TestDoVerify_Fix_VersionMismatch_Deployed_UndeployWarning_JSONNotesIt(t *testing.T) {
+// TestDoVerify_Fix_VersionMismatch_Deployed_PreservesReplacedLinkJSON checks
+// the JSON surface when a user replaces a recorded symlink with a regular
+// file while the cache version also needs repair. The file remains theirs,
+// and JSON must explain why verify --fix leaves it in place (#483).
+func TestDoVerify_Fix_VersionMismatch_Deployed_PreservesReplacedLinkJSON(t *testing.T) {
 	cmd, svc, game := setupDoVerifyFixTest(t, true)
 
 	deployedPath := filepath.Join(game.ModPath, "mod1.esp")
@@ -2447,25 +2442,59 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_UndeployWarning_JSONNotesIt(t *te
 	var resultDoc core.VerifyReport
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
 	result := resultDoc.Result
-	assert.Equal(t, 0, result.Issues, "the repair itself succeeded - the undeploy warning must not keep the issue counted")
+	assert.Positive(t, result.Warnings)
 
-	found := false
+	foundVersion, foundReplacement := false, false
 	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
-			found = true
-			assert.Equal(t, "ok", f.Status, "the repaired row still flips to ok")
-			assert.Contains(t, f.Note, "undeploy", "the undeploy warning must reach the JSON note, not just the text-mode line")
-			assert.Contains(t, f.Note, "not a symlink", "the note must carry the underlying reason")
+			foundVersion = true
+		}
+		if f.ModID == "mod1" && f.Status == core.VerifyStatusDeployedModified {
+			foundReplacement = true
+			assert.Contains(t, f.Note, "you replaced lmm's link")
 		}
 	}
-	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Findings)
+	assert.True(t, foundVersion, "expected a mod1 version-check entry in JSON files: %+v", result.Findings)
+	assert.True(t, foundReplacement, "expected the replacement warning in JSON files: %+v", result.Findings)
 
-	// The re-link itself must still have completed: the squatter was
-	// replaced by a working symlink into the renamed cache dir.
 	info, err := os.Lstat(deployedPath)
 	require.NoError(t, err)
-	assert.True(t, info.Mode()&os.ModeSymlink != 0, "the squatting file must have been replaced by the re-created symlink")
+	assert.True(t, info.Mode().IsRegular(), "the user's replacement must remain a regular file")
 	content, err := os.ReadFile(deployedPath)
 	require.NoError(t, err)
-	assert.Equal(t, "plugin content", string(content))
+	assert.Equal(t, "squatter", string(content))
+}
+
+// A genuine undeploy error can still accompany a successful relink. Keep
+// the JSON diagnostic contract independent of user-replacement fixtures.
+func TestDoVerify_Fix_VersionMismatch_Deployed_UndeployErrorJSONNotesIt(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixTest(t, true)
+	conn, err := sql.Open("sqlite", filepath.Join(dataDir, "lmm.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	_, err = conn.Exec(`CREATE TRIGGER block_deployed_file_delete
+		BEFORE DELETE ON deployed_files BEGIN
+			SELECT RAISE(ABORT, 'synthetic undeploy failure');
+		END`)
+	require.NoError(t, err)
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+	outJSON := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
+	var doc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &doc))
+	var found bool
+	for _, finding := range doc.Result.Findings {
+		if finding.ModID == "mod1" && finding.FileID == "" {
+			found = true
+			assert.Equal(t, "ok", finding.Status)
+			assert.Contains(t, finding.Note, "undeploy")
+			assert.Contains(t, finding.Note, "synthetic undeploy failure")
+		}
+	}
+	assert.True(t, found, "%+v", doc.Result.Findings)
+	info, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	require.NoError(t, err)
+	assert.True(t, info.Mode()&os.ModeSymlink != 0, "the relink still succeeds")
 }

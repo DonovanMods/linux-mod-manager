@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -238,42 +239,43 @@ func TestConverge_RegularFileNeedsRow(t *testing.T) {
 // TestConverge_RowPass_UndeployFailureExcludedFromRemoved pins fix round 1
 // (#168): a failed Undeploy must NOT be reported in Result.Removed, since
 // callers (verify --fix's "removed N") treat that list as what actually
-// happened. Mirrors TestService_DisableMod_UndeployFailureIsNonFatal's
-// fixture shape (flows_test.go:304): corrupt a deployed symlink into a
-// plain file so SymlinkLinker.Undeploy fails deterministically with "not a
-// symlink" - exactly the linker-method-mismatch trigger the review flagged.
+// happened. A regular file blocking the deployed path's parent makes the
+// linker's Undeploy fail with ENOTDIR, while preserving genuine error coverage.
 func TestConverge_RowPass_UndeployFailureExcludedFromRemoved(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
 
 	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
-		"gone.esp": []byte("g"),
+		"blocked/gone.esp": []byte("g"),
 	})
 	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
-	// gone.esp becomes stale: no longer provided by m1.
+	// The recorded path becomes stale: no longer provided by m1.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "gone.esp")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "blocked/gone.esp")))
 
-	// Corrupt the deployed symlink into a plain file so the symlink linker's
-	// Undeploy fails deterministically ("not a symlink").
-	deployedPath := filepath.Join(gameDir, "gone.esp")
+	// Obstruct the parent after deployment; there is no user replacement at
+	// the recorded leaf, but the linker still cannot undeploy it.
+	deployedPath := filepath.Join(gameDir, "blocked", "gone.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 
 	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.Error(t, err, "a failed Undeploy must surface as a joined error")
-	assert.Contains(t, err.Error(), "gone.esp")
+	assert.Contains(t, err.Error(), "blocked/gone.esp")
+	assert.ErrorIs(t, err, syscall.ENOTDIR)
 	assert.Empty(t, result.Removed, "a failed Undeploy must not be reported as removed")
 
-	_, statErr := os.Stat(deployedPath)
-	assert.NoError(t, statErr, "the file must survive a failed undeploy")
+	blocker, readErr := os.ReadFile(filepath.Dir(deployedPath))
+	require.NoError(t, readErr)
+	assert.Equal(t, "blocked", string(blocker))
 
 	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"gone.esp"}, rows, "the row must survive a failed undeploy")
+	assert.Equal(t, []string{"blocked/gone.esp"}, rows, "the row must survive a failed undeploy")
 }
 
 // TestConverge_SweepPass_RemoveFailureExcludedFromRemoved is the sweep

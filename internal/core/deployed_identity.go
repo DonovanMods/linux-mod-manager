@@ -213,7 +213,8 @@ func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudg
 	j := deployedJudgement{recorded: len(states) > 0, regular: info.Mode().IsRegular()}
 	// #483: a symlink deployment cannot leave a regular file, directory or
 	// other non-link object behind. If every installed row that records this
-	// path says it used symlinks, what is there now is therefore the user's
+	// path says it used symlinks and no path record carries a copy/hardlink
+	// fingerprint, what is there now is therefore the user's
 	// replacement. This runs before fingerprint handling because symlink rows
 	// deliberately have none; treating that absence as "unverified" let every
 	// deploy remove the user's object. A copy/hardlink or unknown claimant
@@ -286,9 +287,10 @@ func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudg
 
 // symlinkReplacementState returns a representative record when mode is not
 // a symlink and every installed row recording the path says it was deployed
-// by symlink. A nil method (the installed row is gone) or any copy/hardlink
-// claimant makes the provenance ambiguous and preserves the historical
-// unverified judgement. This game-wide test is deliberate: the deployed tree
+// by symlink, with no copy/hardlink fingerprint. A nil method (the installed
+// row is gone), a copy/hardlink method, or a fingerprint contradicting the
+// method makes the provenance ambiguous and preserves the historical
+// judgement. This game-wide test is deliberate: the deployed tree
 // is shared by its profiles, so a switch into a profile with no row of its own
 // must still recognize a link another profile recorded and the user replaced.
 func symlinkReplacementState(states []db.DeployedFileState, mode fs.FileMode) *db.DeployedFileState {
@@ -296,7 +298,7 @@ func symlinkReplacementState(states []db.DeployedFileState, mode fs.FileMode) *d
 		return nil
 	}
 	for idx := range states {
-		if states[idx].LinkMethod == nil || *states[idx].LinkMethod != domain.LinkSymlink {
+		if states[idx].LinkMethod == nil || *states[idx].LinkMethod != domain.LinkSymlink || states[idx].Fingerprint != nil {
 			return nil
 		}
 	}

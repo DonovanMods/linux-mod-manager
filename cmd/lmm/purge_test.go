@@ -330,14 +330,13 @@ func TestDoPurge_AfterHookWarnings_StderrAfterModLines(t *testing.T) {
 
 func TestDoPurge_Verbose_UndeployDiagnosticPrintsInline(t *testing.T) {
 	svc, game := setupDoPurgeTest(t)
-	seedPurgeableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	seedPurgeableMod(t, svc, game, "1", "Test Mod", "blocked/plugin.esp")
 
-	// A DIRECTORY where the symlink linker expects its link, so Uninstall
-	// fails. (A regular file there is the user's replacement of the link,
-	// which a purge keeps and stops recording - #469.)
-	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
+	// Obstruct the deployed path's parent to force a real undeploy error.
+	deployedPath := filepath.Join(game.ModPath, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.MkdirAll(filepath.Join(deployedPath, "obstruction"), 0o755))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0o644))
 
 	oldVerbose := verbose
 	verbose = true

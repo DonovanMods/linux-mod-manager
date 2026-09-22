@@ -1332,7 +1332,7 @@ exit 0`)
 // TestService_DeployProfile_PurgePreservesReplacedDirectory confirms that the
 // purge phase of a --purge deploy treats a directory replacing lmm's recorded
 // symlink as user content (#483), rather than an undeploy error with a
-// PurgeNote. The subsequent deploy may legitimately converge that path.
+// PurgeNote. The subsequent deploy must leave the directory in place too.
 func TestService_DeployProfile_PurgePreservesReplacedDirectory(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -1362,6 +1362,8 @@ func TestService_DeployProfile_PurgePreservesReplacedDirectory(t *testing.T) {
 	}
 	assert.Nil(t, found, "a replaced directory is user content, not an undeploy failure")
 	assert.Empty(t, result.Notes)
+	assert.DirExists(t, filepath.Join(deployedPath, "obstruction"))
+	assert.True(t, containsLine(result.Warnings, "plugin.esp", "you replaced lmm's link", "left"), "%q", result.Warnings)
 }
 
 // TestService_DeployProfile_PurgeBeforeEachSkip_WarningTextExact pins the
