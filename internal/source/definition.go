@@ -146,7 +146,7 @@ var knownModMappingKeys = map[string]bool{
 }
 
 var knownFileMappingKeys = map[string]bool{
-	"id": true, "name": true, "filename": true, "version": true, "size": true,
+	"id": true, "name": true, "filename": true, "version": true, "size": true, "uploaded_at": true,
 }
 
 // knownDependencyMappingKeys are the domain.ModReference fields a

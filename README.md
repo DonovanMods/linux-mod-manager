@@ -994,6 +994,7 @@ mods:
         version: 1.2.0
         size: 123456
         url: https://example.com/files/cool-mod-1.2.0.zip
+        updated_at: 2026-07-02T03:04:05Z # optional, RFC 3339
         sha256: <hex digest> # optional; verified on download if present
         primary: true
 ```
@@ -1017,16 +1018,17 @@ mods:
 
 **`files[]` fields:**
 
-| Field      | Type    | Required | Description                                                                                                               |
-| ---------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `id`       | string  | **yes**  | File ID, used to request a download                                                                                       |
-| `filename` | string  | **yes**  | Name given to the downloaded/cached file                                                                                  |
-| `url`      | string  | **yes**  | Download URL (`https://` unless `allow_http: true`)                                                                       |
-| `name`     | string  | no       | Display name                                                                                                              |
-| `version`  | string  | no       | —                                                                                                                         |
-| `size`     | integer | no       | Size in bytes                                                                                                             |
-| `sha256`   | string  | no       | Hex-encoded SHA-256 checksum; when present, lmm verifies it after download and **aborts the install if it doesn't match** |
-| `primary`  | boolean | no       | Marks the default file when a mod publishes more than one                                                                 |
+| Field        | Type    | Required | Description                                                                                                               |
+| ------------ | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | string  | **yes**  | File ID, used to request a download                                                                                       |
+| `filename`   | string  | **yes**  | Name given to the downloaded/cached file                                                                                  |
+| `url`        | string  | **yes**  | Download URL (`https://` unless `allow_http: true`)                                                                       |
+| `name`       | string  | no       | Display name                                                                                                              |
+| `version`    | string  | no       | —                                                                                                                         |
+| `size`       | integer | no       | Size in bytes                                                                                                             |
+| `updated_at` | string  | no       | RFC 3339 timestamp for this file; an unparseable value is silently treated as unset                                       |
+| `sha256`     | string  | no       | Hex-encoded SHA-256 checksum; when present, lmm verifies it after download and **aborts the install if it doesn't match** |
+| `primary`    | boolean | no       | Marks the default file when a mod publishes more than one                                                                 |
 
 To use a manifest source with a game, map it under that game's `sources:` block in `games.yaml`, the same as any built-in source — the mapped value should match the IDs used in the manifest's `game_ids` (unlike `directory` sources, this value is not ignored):
 
@@ -1090,6 +1092,7 @@ api:
       filename: file_name
       version: version
       size: size_bytes
+      uploaded_at: published_at # RFC 3339 expected; unparseable is left unset
     dependency: # one entry of the dependencies list -> a mod reference
       mod_id: id # required when endpoints.dependencies is defined
       source_id: source # optional; defaults to this source's own id
@@ -1127,13 +1130,14 @@ api:
 
 **`mappings.file` keys** (`id` is required only when `mod_files` is defined):
 
-| Key        | Required                       | Domain field                             |
-| ---------- | ------------------------------ | ---------------------------------------- |
-| `id`       | **yes** (when `mod_files` set) | File ID, used to request a download      |
-| `name`     | no                             | Display name                             |
-| `filename` | no                             | Name given to the downloaded/cached file |
-| `version`  | no                             | —                                        |
-| `size`     | no                             | Size in bytes                            |
+| Key           | Required                       | Domain field                             |
+| ------------- | ------------------------------ | ---------------------------------------- |
+| `id`          | **yes** (when `mod_files` set) | File ID, used to request a download      |
+| `name`        | no                             | Display name                             |
+| `filename`    | no                             | Name given to the downloaded/cached file |
+| `version`     | no                             | —                                        |
+| `size`        | no                             | Size in bytes                            |
+| `uploaded_at` | no                             | RFC 3339 timestamp for this file         |
 
 **`mappings.dependency` keys** (`mod_id` is required only when `dependencies` is defined):
 

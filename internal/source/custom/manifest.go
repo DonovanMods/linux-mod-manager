@@ -337,14 +337,19 @@ func (m *Manifest) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.D
 	}
 	files := make([]domain.DownloadableFile, 0, len(mm.Files))
 	for _, f := range mm.Files {
+		var uploadedAt time.Time
+		if parsed, err := time.Parse(time.RFC3339, f.UpdatedAt); err == nil {
+			uploadedAt = parsed
+		}
 		files = append(files, domain.DownloadableFile{
-			ID:        f.ID,
-			Name:      f.Name,
-			FileName:  f.Filename,
-			Version:   f.Version,
-			Size:      f.Size,
-			IsPrimary: f.Primary,
-			SHA256:    f.SHA256,
+			ID:         f.ID,
+			Name:       f.Name,
+			FileName:   f.Filename,
+			Version:    f.Version,
+			Size:       f.Size,
+			IsPrimary:  f.Primary,
+			UploadedAt: uploadedAt,
+			SHA256:     f.SHA256,
 		})
 	}
 	return files, nil

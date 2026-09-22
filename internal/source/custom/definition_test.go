@@ -209,6 +209,10 @@ func TestSourceDefinitionValidate(t *testing.T) {
 			*d = validAPIDef()
 			d.API.Mappings.File["sha512"] = "x"
 		}, `mappings.file: unknown key "sha512"`},
+		{"api uploaded_at file mapping", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Mappings.File["uploaded_at"] = "published_at"
+		}, ""},
 		{"api with auth", func(d *SourceDefinition) {
 			*d = validAPIDef()
 			d.API.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "header", Name: "X-API-Key"}}
