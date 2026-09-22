@@ -205,6 +205,7 @@ func TestE2E_Workshop_ModPanelOffersNoAutoUpdatePolicy(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
 		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.slide-over__settings select`, chromedp.ByQuery),
 		chromedp.Evaluate(`
 			Array.from(document.querySelectorAll(".slide-over__settings select option"))
 				.map((o) => o.value);
@@ -251,6 +252,7 @@ func TestE2E_Workshop_FullModPageHidesRelinkAndRollback(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.ModPagePath(e2eWorkshopSourceID, e2eWorkshopFileID)),
 		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.mod-page .slide-over__settings select`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector(".mod-page").textContent;`, &page),
 	)
 	assert.Contains(t, page, "Managed by Steam")
