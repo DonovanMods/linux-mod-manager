@@ -149,6 +149,33 @@ func TestFlowProfileImport_NoInstallOverridesInstall(t *testing.T) {
 	assert.Equal(t, 2, result.Skipped)
 }
 
+// TestFlowProfileImport_PartialFailureFailsTheJobWithResultDetails is #485's
+// web half. Core saves the profile and continues after the missing mod, but
+// the completed job must be failed and its envelope must retain the result
+// that explains what happened rather than reporting a false success.
+func TestFlowProfileImport_PartialFailureFailsTheJobWithResultDetails(t *testing.T) {
+	s, svc, game := newProfilesFixtureServer(t)
+	const document = `name: partly-imported
+game_id: g1
+mods:
+  - source_id: fake
+    mod_id: absent
+    version: "1.0"
+`
+
+	j := runFlow(t, s, game, "profile_import", importPlanBody(t, document), `{"install":true}`)
+	require.Equal(t, jobFailed, j.status().State)
+	require.NotNil(t, j.status().Error)
+	assert.Nil(t, j.status().Result, "a failed job exposes its outcome through typed error details")
+	result, ok := j.status().Error.Details.(*core.ProfileImportResult)
+	require.True(t, ok, "the failed-job envelope keeps the core import result")
+	assert.Equal(t, 1, result.Failed)
+	require.Len(t, result.Failures, 1)
+	assert.Equal(t, "absent", result.Failures[0].ModID)
+	_, err := svc.NewProfileManager().Get(t.Context(), game.ID, "partly-imported")
+	require.NoError(t, err, "the partial import still saved the profile")
+}
+
 // TestFlowProfileImport_ExistingProfileNeedsForce: the second import of the
 // same document fails the job unless force is set, and reports why.
 func TestFlowProfileImport_ExistingProfileNeedsForce(t *testing.T) {

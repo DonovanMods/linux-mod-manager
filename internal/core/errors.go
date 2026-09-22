@@ -267,6 +267,26 @@ func (e *ProfileSwitchIncompleteError) Error() string {
 // "details" field.
 func (e *ProfileSwitchIncompleteError) Details() any { return e.Result }
 
+// ProfileImportIncompleteError is ApplyImport's error when the imported
+// profile was saved but one or more requested mods could not be installed
+// (#485). Result is the complete outcome, including every item that did
+// install and the structured failures, so frontends can show the partial
+// work without claiming the import succeeded.
+type ProfileImportIncompleteError struct {
+	Profile string
+	Result  *ProfileImportResult
+}
+
+// Error names the imported profile and every failed mod with its reason.
+func (e *ProfileImportIncompleteError) Error() string {
+	return fmt.Sprintf("profile %q was not fully imported - %d mod(s) failed: %s",
+		e.Profile, e.Result.Failed, failedImportModsText(e.Result.Failures))
+}
+
+// Details returns the whole ProfileImportResult for a frontend's error
+// envelope's "details" field.
+func (e *ProfileImportIncompleteError) Details() any { return e.Result }
+
 // failedModsText names each failed mod with its reason.
 func failedModsText(failed []InstalledRef) string {
 	failures := make([]string, len(failed))
@@ -278,6 +298,21 @@ func failedModsText(failed []InstalledRef) string {
 		failures[i] = name + ": " + f.Reason
 	}
 	return strings.Join(failures, "; ")
+}
+
+// failedImportModsText names every ProfileImportResult failure. Import's
+// ItemFailure is deliberately distinct from an InstalledRef: an import can
+// fail before it has an installed row at all.
+func failedImportModsText(failures []ItemFailure) string {
+	failed := make([]string, len(failures))
+	for i, failure := range failures {
+		name := failure.SourceID + ":" + failure.ModID
+		if failure.Name != "" {
+			name = fmt.Sprintf("%s (%s)", failure.Name, name)
+		}
+		failed[i] = name + ": " + failure.Reason
+	}
+	return strings.Join(failed, "; ")
 }
 
 // GameDetectPartialError reports a `game detect` run that failed partway

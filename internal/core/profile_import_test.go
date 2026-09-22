@@ -293,8 +293,9 @@ func TestApplyImportForceOverwrite(t *testing.T) {
 
 // TestApplyImportPartialFailure covers the install loop's skip-and-continue
 // semantics: one ref that fails to even fetch (never registered with the
-// mock source) must not stop the loop - a later, valid ref still installs,
-// and the failure is recorded in Failed (never fatal).
+// mock source) must not stop the loop - a later, valid ref still installs.
+// The completed partial outcome is still an error, so no frontend can call
+// an import successful while its result says Failed is non-zero (#485).
 func TestApplyImportPartialFailure(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -330,8 +331,11 @@ func TestApplyImportPartialFailure(t *testing.T) {
 			failedEvt = m
 		}
 	})
-	require.NoError(t, err)
 	require.NotNil(t, result)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	assert.Same(t, result, incomplete.Result)
+	assert.Contains(t, err.Error(), `profile "target" was not fully imported - 1 mod(s) failed:`)
 	assert.Equal(t, 1, result.Installed)
 	assert.Equal(t, 1, result.Failed)
 	assert.Contains(t, failedEvt.Detail, "failed to fetch mod")
@@ -404,8 +408,10 @@ func TestApplyImport_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T)
 			failedEvt = m
 		}
 	})
-	require.NoError(t, err)
 	require.NotNil(t, result)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	assert.Same(t, result, incomplete.Result)
 	assert.Equal(t, 1, result.Installed)
 	assert.Equal(t, 1, result.Failed)
 	assert.Contains(t, failedEvt.Detail, "no longer available upstream")
@@ -642,8 +648,10 @@ func TestApplyImport_VersionlessSource_KeepsLegacyBehavior(t *testing.T) {
 			failedEvt = m
 		}
 	})
-	require.NoError(t, err)
 	require.NotNil(t, result)
+	var incomplete *core.ProfileImportIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	assert.Same(t, result, incomplete.Result)
 	assert.Equal(t, 0, result.Installed, "a versionless source's stale FileIDs must still hard-fail exactly as before #96")
 	assert.Equal(t, 1, result.Failed)
 

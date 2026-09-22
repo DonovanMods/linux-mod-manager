@@ -56,6 +56,9 @@ var detailsCoverage = map[string]string{
 	// #470: an apply that ran to the end with a failed mod - the whole
 	// result, per-mod outcomes included, reaches the envelope.
 	"core.ProfileApplyIncompleteError": "TestDoProfileApply_JSON_AFailedModIsTheEnvelope",
+	// #485: a profile import that saved its profile but could not install
+	// every requested mod carries the full import result on the error path.
+	"core.ProfileImportIncompleteError": "TestDoProfileImport_JSON_AFailedModIsTheEnvelope",
 	// #470's twin: a switch that ran to the end with a failed mod.
 	"core.ProfileSwitchIncompleteError": "TestDoProfileSwitch_JSON_AFailedModIsTheEnvelope",
 	"core.ProfileWarningsError":         "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",

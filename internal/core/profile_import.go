@@ -612,6 +612,9 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 	// #466 review D7: what the installs left in place is this import's to
 	// report (the CLI prints Warnings, not events, for this flow).
 	s.takeCaptureWarnings(game.ID, OpImport, ImportNote, &result.Warnings, nil)
+	if err == nil && result.Failed > 0 {
+		err = &ProfileImportIncompleteError{Profile: result.ProfileName, Result: result}
+	}
 	return result, err
 }
 
