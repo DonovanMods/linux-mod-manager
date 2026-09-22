@@ -5,10 +5,12 @@
 // doProfileSync reconciles profile.yaml against the DB's installed/enabled
 // mods (the opposite direction of ApplyProfileApply, which reconciles the
 // system to MATCH the profile): a mod enabled in the DB but missing from the
-// profile is added, a mod listed in the profile but not enabled in the DB is
-// removed, and a mod present in both but missing its profile-side FileIDs is
-// backfilled. The CLI keeps the prompt and every printed line; the diff and
-// the pm.AddMod/RemoveMod/UpsertMod execution live here.
+// profile is added, an unmarked mod listed in the profile but not enabled in
+// the DB is removed, and a mod present in both but missing its profile-side
+// FileIDs is backfilled. An explicitly disabled ref remains the profile's
+// record of an intentionally never-downloaded mod. The CLI keeps the prompt
+// and every printed line; the diff and the pm.AddMod/RemoveMod/UpsertMod
+// execution live here.
 package core
 
 import (
@@ -30,15 +32,14 @@ type ProfileSyncPlan struct {
 	// ToAdd is every mod enabled in the DB but absent from the profile's
 	// mod list - doProfileSync's "Will add to profile:" bucket.
 	ToAdd []domain.ModReference `json:"to_add"`
-	// ToRemove is every mod listed in the profile that has no installed
-	// row under it at all (uninstalled, or never recorded) -
+	// ToRemove is every non-disabled mod listed in the profile that has no
+	// installed row under it at all (uninstalled, or never recorded) -
 	// doProfileSync's "Will remove from profile:" bucket. A mod that is
-	// installed but not enabled is NOT here (#444): on a profile that is
-	// not active its enabled flag is what a profile switch wrote, not a
-	// choice, and on the active one the document saying "on" while the row
-	// says "off" is a disagreement for the user to settle (see Warnings),
-	// not a leftover - removing the reference would take its load-order
-	// slot and pinned version with it.
+	// disabled in the document is NOT here (#444, #479): an installed row
+	// may be disabled by a profile switch or disagree with the active
+	// profile's document, while a disabled ref with no row means lmm
+	// intentionally never fetched that ref. In either case removing it would
+	// take its load-order slot, selected files and pinned version with it.
 	ToRemove []domain.ModReference `json:"to_remove"`
 	// ToUpdate is every mod present in both, where the DB row carries
 	// FileIDs the profile's own ref is missing - doProfileSync's "Will
@@ -154,8 +155,9 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 	}
 
 	installedRefs := make(map[string]domain.ModReference, len(installedMods))
-	// rows is every row, enabled or not. A reference is a leftover only
-	// when it has none (#431, #444): see ProfileSyncPlan.ToRemove.
+	// rows is every row, enabled or not. A reference is a leftover only when
+	// it has neither a row nor an explicit disabled marker (#431, #444, #479):
+	// see ProfileSyncPlan.ToRemove.
 	rows := make(map[string]domain.InstalledMod, len(installedMods))
 	for _, im := range installedMods {
 		rows[domain.ModKey(im.SourceID, im.ID)] = im
@@ -203,11 +205,14 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 		seen[key] = true
 		ref, exists := installedRefs[key]
 		if !exists {
-			// Kept because a row exists for it, not because the marker
-			// makes a ref immortal - a disabled ref with no row at all is
-			// as stale as any other unbacked ref.
 			row, installed := rows[key]
 			if !installed {
+				// A disabled ref with no row is an imported profile's intended
+				// never-downloaded mod. It carries desired state (including its
+				// load-order position and version), so sync must leave it alone.
+				if mr.Disabled {
+					continue
+				}
 				plan.ToRemove = append(plan.ToRemove, mr)
 				continue
 			}

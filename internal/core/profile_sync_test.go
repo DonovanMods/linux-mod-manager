@@ -416,20 +416,31 @@ func TestPlanProfileSync_KeepsADisabledRef(t *testing.T) {
 	assert.True(t, plan.NoChanges)
 }
 
-// TestPlanProfileSync_StillRemovesAnUninstalledDisabledRef is the limit of
-// the rule above: the ref is kept because a row exists for it, not because
-// the marker makes it immortal. With no row at all it is as stale as any
-// other unbacked ref.
-func TestPlanProfileSync_StillRemovesAnUninstalledDisabledRef(t *testing.T) {
+// TestProfileSync_KeepsAnExplicitlyDisabledNeverDownloadedRef covers an
+// imported profile's record of a mod lmm has deliberately never downloaded.
+// The disabled marker is the user's intent: sync must preserve its version,
+// file selection and load-order slot rather than treating the absent DB row as
+// a stale reference (#479).
+func TestProfileSync_KeepsAnExplicitlyDisabledNeverDownloadedRef(t *testing.T) {
 	svc, game := newSyncTestService(t)
 	pm := svc.NewProfileManager()
 	ctx := context.Background()
 
-	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ghost", Version: "1.0"}))
-	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "default", "src", "ghost", true))
+	want := domain.ModReference{SourceID: "src", ModID: "saved", Version: "2.0", FileIDs: []string{"primary"}}
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", want))
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "default", "src", "saved", true))
+	want.Disabled = true
 
 	plan, err := svc.PlanProfileSync(ctx, game, "default")
 	require.NoError(t, err)
-	require.Len(t, plan.ToRemove, 1)
-	assert.Equal(t, "ghost", plan.ToRemove[0].ModID)
+	assert.Empty(t, plan.ToRemove)
+	assert.True(t, plan.NoChanges)
+
+	result, err := svc.ApplyProfileSync(ctx, game, plan, nil)
+	require.NoError(t, err)
+	assert.Zero(t, result.Removed)
+
+	profile, err := pm.Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, []domain.ModReference{want}, profile.Mods)
 }

@@ -61,6 +61,12 @@ func (s *Service) SetBeforeSaveInstalledForTest(fn func()) {
 	s.beforeSaveInstalled = fn
 }
 
+// SetBeforeInstallReplaceForTest injects a failure after a reinstall publishes
+// its cache repair but before the replacement begins.
+func (s *Service) SetBeforeInstallReplaceForTest(fn func()) {
+	s.beforeInstallReplace = fn
+}
+
 // SetRelayoutPlaceFileForTest arms the verify re-layout's per-file
 // placement seam, so a test can make the rewrite fail PARTWAY and prove the
 // live cache entry is byte-identical afterwards (#424 review, finding 3).

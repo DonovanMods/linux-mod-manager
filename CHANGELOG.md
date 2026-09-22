@@ -60,6 +60,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database that is copied, synced or backed up, **not** a local attacker
   running as you.
 
+### Fixed
+
+- **`lmm profile sync` preserves explicitly disabled mods that have never
+  been downloaded (#479).** An imported profile can deliberately record a
+  switched-off mod with its version, selected files and load-order position
+  before lmm has a local row for it. Sync now keeps that desired state rather
+  than silently removing it; unmarked references with no installed row are
+  still cleaned up as before.
+
+- **Forced same-version reinstalls recover a missing cache entry (#477).** If
+  an installed mod's cache entry has been removed, `lmm install --force` now
+  treats it as nothing to snapshot and re-downloads it. A present cache entry
+  with a real I/O error is still refused rather than silently treated as gone.
+
+- **The web uninstall planner reports an unknown profile mod as HTTP 404
+  (#484).** `POST /api/v1/plans/uninstall` now preserves the core not-found
+  identity behind its established error text, so an ordinary missing mod no
+  longer looks like a server failure.
+
 ### Changed
 
 - **CI test pushes include the v2 branch (#492).** The test workflow now runs
