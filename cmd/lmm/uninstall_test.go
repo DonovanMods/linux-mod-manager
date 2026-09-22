@@ -489,3 +489,25 @@ func TestDoUninstall_NoHooks_SkipsConfiguredHook(t *testing.T) {
 	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.Error(t, dbErr, "the mod record must be gone once the uninstall succeeds")
 }
+
+// TestPrintStrandedUninstallHint pins #488's terminal remedy for the files a
+// one-mod removal intentionally leaves under a former mod_path. It is shared
+// by active and recorded-only uninstalls because both receive the same core
+// result field.
+func TestPrintStrandedUninstallHint(t *testing.T) {
+	stranded := []core.PurgeStrandedPath{
+		{Path: "Data/a.esp", ModPath: "/old/mods"},
+		{Path: "Data/b.esp", ModPath: "/old/mods"},
+	}
+	out := captureStdout(t, func() error {
+		printStrandedUninstallHint("alt", stranded, false)
+		return nil
+	})
+	assert.Equal(t, "  2 file(s) deployed under an earlier mod_path are left for `lmm purge -p alt`\n", out)
+
+	dryRun := captureStdout(t, func() error {
+		printStrandedUninstallHint("alt", stranded[:1], true)
+		return nil
+	})
+	assert.Equal(t, "  1 file(s) deployed under an earlier mod_path would be left for `lmm purge -p alt`\n", dryRun)
+}

@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **One-mod uninstalls name files stranded by a `mod_path` move (#488).**
+  When an uninstall leaves a target mod's older deployment records for the
+  profile purge that can safely remove them, its preview and result now say
+  how many and name `lmm purge -p <profile>`. A deploy-direction refusal for a
+  missing profile file now names `lmm profile create <profile>` rather than an
+  impossible switch, followed by the purge for the stale profile rows that
+  still own the game directory.
+
 - **The web purge result now names files it left behind (#478).** Finished
   purge jobs show each user-owned file lmm no longer tracks (including the
   reason and its former `mod_path`), each file another game still records,

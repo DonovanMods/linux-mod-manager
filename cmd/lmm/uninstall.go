@@ -140,6 +140,7 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 	if result.RecordedOnly {
 		printRecordedOnlyRemoval(profileName, result.ActiveProfile, result.Removed, result.Kept)
 	}
+	printStrandedUninstallHint(profileName, result.Stranded, false)
 
 	if uninstallKeep {
 		fmt.Println("  Cache files preserved")
@@ -166,6 +167,25 @@ func printRecordedOnlyRemoval(profile, active string, removed []string, kept []c
 		fmt.Print("  ")
 		printKeptPaths([]core.PurgeKeptPath{k})
 	}
+}
+
+// printStrandedUninstallHint says why a one-mod uninstall's count can be
+// zero after a mod_path move: those records point outside the current game
+// directory, and only a profile purge can remove them where they were
+// deployed (#451, #488).
+func printStrandedUninstallHint(profile string, stranded []core.PurgeStrandedPath, dryRun bool) {
+	if len(stranded) == 0 {
+		return
+	}
+	state := "are left"
+	if len(stranded) == 1 {
+		state = "is left"
+	}
+	if dryRun {
+		state = "would be left"
+	}
+	fmt.Printf("  %d file(s) deployed under an earlier mod_path %s for `lmm purge -p %s`\n",
+		len(stranded), state, profile)
 }
 
 // usedByText says which installed rows still use a cache entry an
@@ -229,6 +249,7 @@ func renderUninstallPlan(plan *core.UninstallPlan, profileName string) {
 				fmt.Printf("    - %s\n", f)
 			}
 		}
+		printStrandedUninstallHint(profileName, plan.Stranded, true)
 		switch {
 		case plan.KeepCache:
 			fmt.Println("  Cache files preserved")

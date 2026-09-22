@@ -219,3 +219,63 @@ func TestRecordedOnlyUninstall_LeavesStrandedFilesToAPurge(t *testing.T) {
 		})
 	}
 }
+
+// TestUninstall_ReportsStrandedFilesLeftForPurge makes the one-mod removal's
+// intentionally narrower scope visible. An uninstall cannot safely remove a
+// file under a former mod_path, whether its profile is currently active or
+// recorded-only, but the result must point its caller at the purge that can.
+func TestUninstall_ReportsStrandedFilesLeftForPurge(t *testing.T) {
+	ctx := context.Background()
+	for _, recordedOnly := range []bool{false, true} {
+		name := "active"
+		if recordedOnly {
+			name = "recorded-only"
+		}
+		t.Run(name, func(t *testing.T) {
+			f, oldPath, _ := movedState(t, domain.LinkCopy)
+			if recordedOnly {
+				f.demote(t)
+			}
+
+			plan, err := f.svc.PlanUninstall(ctx, f.game, "default", "local", "k", core.UninstallOptions{KeepCache: true})
+			require.NoError(t, err)
+			want := []core.PurgeStrandedPath{
+				{Path: "Data/k.esp", ModPath: oldPath},
+				{Path: "Data/k2.esp", ModPath: oldPath},
+			}
+			assert.Equal(t, want, plan.Stranded, "the preview says which records a one-mod removal leaves")
+
+			result, err := f.svc.ApplyUninstall(ctx, f.game, plan, core.UninstallOptions{KeepCache: true})
+			require.NoError(t, err)
+			assert.Equal(t, want, result.Stranded, "the completed result gives both frontends the same purge remedy")
+			assert.FileExists(t, filepath.Join(oldPath, "Data", "k.esp"))
+			assert.ElementsMatch(t, []string{"Data/k.esp", "Data/k2.esp"}, f.recorded(t, "default", "k"))
+		})
+	}
+}
+
+// TestRecordedOnlyPurge_AProfileCopyIsNotCalledAReplacedLink exercises the
+// mixed-method case behind #488's cosmetic correction. sym's symlink record
+// is being cleared, but default's copy is the regular file still on disk; it
+// is another profile's deployment, not the user's replacement of sym's link.
+func TestRecordedOnlyPurge_AProfileCopyIsNotCalledAReplacedLink(t *testing.T) {
+	ctx := context.Background()
+	f := newLegacyFixture(t, handoffGame(t, "sky", t.TempDir(), domain.LinkSymlink))
+	f.profile(t, "default", true, "k")
+	f.profile(t, "sym", false, "k")
+	f.deployed(t, "sym", "k", domain.LinkSymlink, map[string]string{"Data/k.esp": "sym"}, nil)
+	f.deployed(t, "default", "k", domain.LinkCopy, map[string]string{"Data/k.esp": "default"}, nil)
+
+	plan, err := f.svc.PlanPurge(ctx, f.game, "sym", core.PurgeOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []core.PurgeKeptPath{{
+		Path: "Data/k.esp", Reason: core.PurgeKeptRecorded, Profiles: []string{"default"},
+	}}, plan.Kept)
+
+	result, err := f.svc.ApplyPurge(ctx, f.game, plan, core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, plan.Kept, result.Kept)
+	assert.Equal(t, "default", readLive(t, f.kPath()))
+	assert.Empty(t, f.recorded(t, "sym", "k"))
+	assert.Equal(t, []string{"Data/k.esp"}, f.recorded(t, "default", "k"))
+}

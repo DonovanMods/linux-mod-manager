@@ -703,10 +703,6 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 	if err != nil {
 		return nil, nil, err
 	}
-	methods, err := s.recordedLinkMethods(ctx, game, profileName, only)
-	if err != nil {
-		return nil, nil, err
-	}
 	// The adapter's routing does not depend on the link method.
 	installer := s.getInstaller(game)
 	cached, err := s.installedCacheLookup(ctx, game, profileName)
@@ -744,14 +740,6 @@ func (s *Service) recordedPaths(ctx context.Context, game *domain.Game, profileN
 				k.ModPath = rowGame.ModPath
 			}
 			kept = append(kept, keptRecord{PurgeKeptPath: k, row: row})
-		}
-		// #469: a regular file where a symlink profile recorded a link is
-		// the user's replacement of it: kept, like any file the game hands
-		// the user, and its record goes. The #466 judge below cannot say
-		// so - a link's record carries no fingerprint.
-		if methods(key) == domain.LinkSymlink && !installer.notLinkerOwned(rowGame, row.RelativePath) && replacedLink(dst) {
-			keep(PurgeKeptPath{Path: row.RelativePath, Reason: PurgeKeptUserFile, Note: replacedLinkNote})
-			continue
 		}
 		pathRecords := recordsUnder(game, rowGame, records[row.RelativePath])
 		jd := deployedJudge{db: s.db, game: rowGame, profile: profileName, cacheRoots: s.cacheRoots(game), others: rowOthers, cached: cached}

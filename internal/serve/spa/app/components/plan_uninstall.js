@@ -21,6 +21,7 @@ const UNINSTALL_EXTERNAL_NOTE =
 export function UninstallPlanView({ plan, modal, actions }) {
   const files = plan.files ?? [];
   const hooks = plan.hooks ?? [];
+  const stranded = plan.stranded ?? [];
 
   return html`
     <div class="plan plan--uninstall">
@@ -79,6 +80,17 @@ export function UninstallPlanView({ plan, modal, actions }) {
                     : "The cached download is deleted too - reinstalling later re-downloads it."
                 }
               </p>
+              ${
+                stranded.length > 0 &&
+                html`<p
+                  class="plan__note"
+                  data-testid="uninstall-stranded-note"
+                >
+                  ${stranded.length} file${stranded.length === 1 ? "" : "s"}
+                  deployed under an earlier mod path are left for a profile
+                  purge: <code>lmm purge -p ${plan.mod.profile_name}</code>.
+                </p>`
+              }
             `
       }
       ${
