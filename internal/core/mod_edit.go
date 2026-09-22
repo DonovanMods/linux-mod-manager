@@ -4,9 +4,9 @@
 // distinct shapes cmd's --name/--version/--author/--to-source/--to-source-id
 // flags select between: a metadata-only edit (no --to-source/--to-source-id) that
 // updates the DB row in place, and a re-link (either flag given) that moves
-// the mod to a new source_id/mod_id identity - deleting the old DB row and
-// profile ref, optionally refreshing metadata from the new source, and
-// saving a fresh row/ref under the new identity. Both shapes flow through
+// the mod to a new source_id/mod_id identity - moving the DB row and its
+// deployment ownership together, replacing the profile ref, and optionally
+// refreshing metadata from the new source. Both shapes flow through
 // the same Plan/Apply pair; RelinkPlan.Relink tells a renderer (and
 // ApplyRelinkMod itself) which one is in play.
 package core
@@ -40,10 +40,8 @@ type RelinkPlan struct {
 	// current source/id still counts as a re-link request.
 	Relink bool `json:"relink"`
 	// TargetInstalled reports that To's identity already names a DIFFERENT
-	// installed mod in Profile. Informational only - ApplyRelinkMod does
-	// not refuse on it (matching doModEdit's own pre-existing behavior,
-	// unchanged by this extraction); a --json/dry-run caller can use it to
-	// warn before applying.
+	// installed mod in Profile. ApplyRelinkMod refuses that collision so the
+	// destination mod and its deployment ownership cannot be overwritten.
 	TargetInstalled bool `json:"target_installed"`
 	// Locked/LockedVersion mirror the profile ref's lock state, read once.
 	Locked        bool   `json:"locked"`
@@ -186,10 +184,9 @@ type RelinkResult struct {
 }
 
 // ApplyRelinkMod applies plan - a metadata-only edit, or a re-link to a
-// different source_id/mod_id - exactly reproducing doModEdit's
-// pre-extraction sequence: guard checks, metadata overrides, a re-link's
+// different source_id/mod_id - with guard checks, metadata overrides, a re-link's
 // metadata refresh from the target source (skipped for domain.SourceLocal),
-// the DB row replace (DeleteInstalledMod + SaveInstalledMod) and profile ref
+// the atomic DB identity/ledger move and profile ref
 // upsert/remove a re-link requires, and a final SyncMergedPak so a version
 // or identity change that affects the merge is picked up immediately (#197
 // postsmoke fix). sink may be nil.
@@ -223,6 +220,9 @@ func (s *Service) ApplyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *RelinkPlan, opts RelinkOptions, sink EventSink) (*RelinkResult, error) {
 	if err := s.checkPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
 		return nil, err
+	}
+	if plan.Relink && plan.TargetInstalled {
+		return nil, fmt.Errorf("%s:%s is already installed in profile %s", plan.To.SourceID, plan.To.ModID, plan.Profile)
 	}
 
 	mod := plan.Mod
@@ -328,18 +328,15 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 			changes = append(changes, fmt.Sprintf("id -> %s (was %s)", newModID, oldModID))
 		}
 
-		if err := s.deleteInstalledMod(ctx, oldSourceID, oldModID, game.ID, profileName); err != nil {
-			return nil, fmt.Errorf("removing old record: %w", err)
+		if err := s.db.RelinkInstalledMod(ctx, oldSourceID, oldModID, &mod); err != nil {
+			return nil, fmt.Errorf("moving installed record: %w", err)
+		}
+		if mod.Enabled {
+			s.supersedePendingProfileBackfill(ctx, mod.GameID, mod.ProfileName, mod.SourceID, mod.ID)
 		}
 
-		// Ruling 16 (A): the old DB record is already deleted, so ALL THREE
-		// steps that complete it - dropping the old profile ref, writing
-		// the new one, and saving the new DB row under the new identity -
-		// run to the end even under a cancelled ctx. They are one
-		// completion, so the cancellation is re-checked once, after all
-		// three, and never in between (fix wave round 1's residual: this
-		// used to stop after the profile pair, leaving the profile agreeing
-		// with the NEW identity while the DB had NEITHER identity's row).
+		// Ruling 16 (A): the DB identity and ledger have moved together;
+		// complete both profile writes even if the caller is cancelled now.
 		pm := s.NewProfileManager()
 		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
 			return pm.RemoveMod(ctx, game.ID, profileName, oldSourceID, oldModID)
@@ -351,11 +348,6 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 			return pm.UpsertMod(ctx, game.ID, profileName, modRef)
 		}); err != nil && ctx.Err() == nil {
 			note("Warning: could not update profile: %v", err)
-		}
-		if err := completeDBWrite(ctx, func(ctx context.Context) error {
-			return s.saveInstalledMod(ctx, &mod)
-		}); err != nil && ctx.Err() == nil {
-			return nil, fmt.Errorf("saving changes: %w", err)
 		}
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, cerr
@@ -369,8 +361,7 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	}
 
 	if !plan.Relink {
-		// A re-link already saved mod under its new identity above, as the
-		// last step of that one completion chain - saving it again here
+		// A re-link already saved mod under its new identity above; saving it again here
 		// would be a harmless but redundant duplicate write.
 		if err := s.saveInstalledMod(ctx, &mod); err != nil {
 			return nil, fmt.Errorf("saving changes: %w", err)

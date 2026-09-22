@@ -8,6 +8,8 @@ package core_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -74,8 +76,7 @@ func TestService_PlanRelinkMod_Relink_DefaultsOmittedHalf(t *testing.T) {
 
 // TestService_PlanRelinkMod_TargetInstalled_Detected guards the
 // TargetInstalled datum: re-linking onto an identity another installed mod
-// already occupies is flagged (informational; ApplyRelinkMod does not
-// refuse on it - see RelinkPlan's doc comment).
+// already occupies is flagged; ApplyRelinkMod refuses that collision.
 func TestService_PlanRelinkMod_TargetInstalled_Detected(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
 	seedModDetailInstalled(t, svc, game, "a", "1.5")
@@ -205,6 +206,78 @@ func TestService_ApplyRelinkMod_Relink_MovesDBRowAndProfileRef(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, prof.FindRef("src", "a"), "the old profile ref must be removed")
 	require.NotNil(t, prof.FindRef("src", "b"), "the new profile ref must exist")
+}
+
+func TestService_RelinkThenUninstall_RemovesDeployedFilesAndRows(t *testing.T) {
+	ctx := context.Background()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy}
+	seedInstalledMod(t, svc, game, domain.SourceLocal, "old", "1.0", true, map[string][]byte{
+		"first.esp": []byte("first"), "second.esp": []byte("second"),
+	})
+	seedProfileWithMod(t, svc, game.ID, "default", domain.SourceLocal, "old", "1.0")
+	require.NoError(t, svc.GetInstallerForTest(game).Install(ctx, game,
+		&domain.Mod{ID: "old", SourceID: domain.SourceLocal, Version: "1.0", GameID: game.ID}, "default"))
+	plan, err := svc.PlanRelinkMod(ctx, game, "default", domain.SourceLocal, "old", "", "new")
+	require.NoError(t, err)
+	_, err = svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.NoError(t, err)
+	oldRows, err := svc.GetDeployedFilesForMod(ctx, game.ID, "default", domain.SourceLocal, "old")
+	require.NoError(t, err)
+	require.Empty(t, oldRows)
+	newRows, err := svc.GetDeployedFilesForMod(ctx, game.ID, "default", domain.SourceLocal, "new")
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"first.esp", "second.esp"}, newRows)
+	_, err = svc.UninstallMod(ctx, game, "default", domain.SourceLocal, "new", core.UninstallOptions{})
+	require.NoError(t, err)
+	for _, name := range []string{"first.esp", "second.esp"} {
+		_, err := os.Lstat(filepath.Join(game.ModPath, name))
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+	newRows, err = svc.GetDeployedFilesForMod(ctx, game.ID, "default", domain.SourceLocal, "new")
+	require.NoError(t, err)
+	require.Empty(t, newRows)
+}
+
+func TestService_ApplyRelinkMod_InstalledDestinationRefusesWithoutChangingProfile(t *testing.T) {
+	ctx := context.Background()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy}
+	for _, id := range []string{"old", "new"} {
+		seedInstalledMod(t, svc, game, domain.SourceLocal, id, "1.0", true, nil)
+		seedProfileWithMod(t, svc, game.ID, "default", domain.SourceLocal, id, "1.0")
+	}
+	plan, err := svc.PlanRelinkMod(ctx, game, "default", domain.SourceLocal, "old", "", "new")
+	require.NoError(t, err)
+	require.True(t, plan.TargetInstalled)
+	_, err = svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.Error(t, err)
+	for _, id := range []string{"old", "new"} {
+		_, err := svc.GetInstalledMod(ctx, domain.SourceLocal, id, game.ID, "default")
+		require.NoError(t, err)
+	}
+	profile, err := svc.NewProfileManager().Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.NotNil(t, profile.FindRef(domain.SourceLocal, "old"))
+	require.NotNil(t, profile.FindRef(domain.SourceLocal, "new"))
+}
+
+func TestService_VerifyFix_RepairsRowsOrphanedByLegacyRelink(t *testing.T) {
+	ctx := context.Background()
+	f := newLegacyFixture(t, &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy})
+	f.profile(t, "default", true, "new")
+	f.deployed(t, "default", "old", domain.LinkCopy, map[string]string{"file.esp": "mod bytes"}, nil)
+	// Reproduce the old relink's DB end state: the installed identity moved,
+	// while the deployed row still names its former identity.
+	require.NoError(t, f.svc.ExecForTest(ctx,
+		`UPDATE installed_mods SET mod_id = 'new' WHERE game_id = 'g1' AND profile_name = 'default' AND source_id = 'local' AND mod_id = 'old'`))
+	report, err := f.svc.VerifyReport(ctx, f.game, "default", core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, findingWithStatus(report.Result, "fixed_orphaned_record"))
+	require.Empty(t, f.recorded(t, "default", "old"))
+	content, err := os.ReadFile(filepath.Join(f.game.ModPath, "file.esp"))
+	require.NoError(t, err)
+	require.Equal(t, "mod bytes", string(content), "repair cannot prove the file is still lmm's, so it leaves the bytes")
 }
 
 // TestService_ApplyRelinkMod_Relink_FetchesMetadataFromNonLocalSource

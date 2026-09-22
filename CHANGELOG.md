@@ -1676,6 +1676,12 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **`lmm mod edit` keeps deployed-file ownership attached when relinking a mod
+  (#482).** The installed identity and its deployment records now move in one
+  database transaction, preserving file fingerprints and recorded mod paths.
+  Uninstalling the relinked mod removes its tracked files. A relink onto an
+  already installed identity is refused. For records orphaned by an older
+  relink, `lmm verify --fix` drops the records and leaves the files untouched.
 - **Cancelling a purge now stops it instead of reporting a partially removed
   mod as purged (#481).** `lmm purge`, `deploy --purge`, and the other flows
   that share the purge engine return the cancellation immediately, do not run
