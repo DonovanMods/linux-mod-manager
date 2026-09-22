@@ -408,7 +408,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 // the active profile. A game whose active profile cannot be told is
 // ErrActiveProfileUnknown.
 func (s *Service) importScope(ctx context.Context, gameID, profileName string) (live string, recordedOnly bool, err error) {
-	first, err := s.createsFirstProfile(ctx, gameID, profileName)
+	first, _, err := s.createsFirstProfile(ctx, gameID, profileName)
 	if err != nil || first {
 		return "", false, err
 	}

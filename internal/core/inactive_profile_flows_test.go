@@ -427,9 +427,8 @@ func TestSnapshotRestore_RefusesToGuessTheActiveProfile(t *testing.T) {
 // no profile file may be installed into under any name - the install
 // creates its first, active profile - unless its DB still records another
 // profile's deployment in the directory (the profile files were deleted by
-// hand). Then the directory is that profile's - liveProfile's answer,
-// "default" - and a flow for another name is refused as any non-active
-// profile's is.
+// hand). The missing target cannot be switched to, so the refusal names the
+// creation that makes it active and the recorded owner's terminating purge.
 func TestDeployTarget_AGameWithNoProfileFileStillHasALiveProfile(t *testing.T) {
 	ctx := context.Background()
 	f := newLegacyFixture(t, &domain.Game{ID: "sky", Name: "Sky", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink})
@@ -440,6 +439,9 @@ func TestDeployTarget_AGameWithNoProfileFileStillHasALiveProfile(t *testing.T) {
 
 	err := f.svc.CheckDeployTarget(ctx, "sky", "foo", core.VerbInstall)
 	require.ErrorIs(t, err, core.ErrProfileNotActive)
-	assert.Contains(t, err.Error(), `the active profile "default"`)
+	assert.Contains(t, err.Error(), "has no profile file")
+	assert.Contains(t, err.Error(), "lmm profile create foo")
+	assert.Contains(t, err.Error(), "lmm purge -p default")
+	assert.NotContains(t, err.Error(), "lmm profile switch foo")
 	assert.NoError(t, f.svc.CheckDeployTarget(ctx, "sky", "default", core.VerbInstall), "the profile the records name is the live one")
 }

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -774,9 +776,13 @@ func (s *Service) refuseInactive(ctx context.Context, gameID, profileName, verb 
 // flow creates the game's first profile, and a game's only profile is its
 // active one (createsFirstProfile).
 func (s *Service) requireActiveProfile(ctx context.Context, gameID, profileName string, verb DeployVerb) error {
-	first, err := s.createsFirstProfile(ctx, gameID, profileName)
+	first, owners, err := s.createsFirstProfile(ctx, gameID, profileName)
 	if err != nil || first {
 		return err
+	}
+	if len(owners) > 0 {
+		return fmt.Errorf("%w: cannot %s profile %q of %s - it has no profile file, while the game directory still has files recorded by profile %s; run `lmm profile create %s` to make it active, then %s to clear the files those profiles recorded",
+			ErrProfileNotActive, verb, profileName, gameID, quotedNames(owners), profileName, purgeCommands(owners))
 	}
 	return s.refuseInactive(ctx, gameID, profileName, string(verb))
 }
@@ -786,26 +792,53 @@ func (s *Service) requireActiveProfile(ctx context.Context, gameID, profileName 
 // profile file, and its DB records no other profile's files in the
 // directory - rows left by profile files deleted by hand make that
 // directory liveProfile's, as for any other game.
-func (s *Service) createsFirstProfile(ctx context.Context, gameID, profileName string) (bool, error) {
+func (s *Service) createsFirstProfile(ctx context.Context, gameID, profileName string) (bool, []string, error) {
 	names, err := config.ListProfiles(s.configDir, gameID)
 	if err != nil {
-		return false, fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+		return false, nil, fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
 	}
 	if len(names) > 0 {
-		return false, nil
+		return false, nil, nil
 	}
 	records, err := s.db.DeployedPathRecords(ctx, gameID)
 	if err != nil {
-		return false, fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
+		return false, nil, fmt.Errorf("resolving the active profile for %s: %w", gameID, err)
 	}
+	owners := make(map[string]bool)
 	for _, rs := range records {
 		for _, r := range rs {
 			if r.Profile != profileName {
-				return false, nil
+				owners[r.Profile] = true
 			}
 		}
 	}
-	return true, nil
+	if len(owners) == 0 {
+		return true, nil, nil
+	}
+	return false, slices.Sorted(maps.Keys(owners)), nil
+}
+
+// quotedNames formats the deployed-record owners named in a no-profile-file
+// refusal. A single name has the historical quoted profile spelling; several
+// names stay unambiguous without inventing an active profile from stale rows.
+func quotedNames(names []string) string {
+	quoted := make([]string, len(names))
+	for i, name := range names {
+		quoted[i] = fmt.Sprintf("%q", name)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// purgeCommands returns every necessary purge command for the stale owners of
+// a game directory with no profile files. With only one owner it has the
+// concise command form the CLI documents; multiple owners all get named so a
+// user is never left with a remaining ledger record and no terminating remedy.
+func purgeCommands(names []string) string {
+	commands := make([]string, len(names))
+	for i, name := range names {
+		commands[i] = fmt.Sprintf("`lmm purge -p %s`", name)
+	}
+	return strings.Join(commands, ", then ")
 }
 
 // DeployVerb names a deploy-direction flow in its active-profile refusal

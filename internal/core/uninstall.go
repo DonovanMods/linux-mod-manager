@@ -85,6 +85,10 @@ type UninstallPlan struct {
 	ActiveProfile string `json:"active_profile,omitempty"`
 	// Kept is the recorded paths a RecordedOnly uninstall leaves, and why.
 	Kept []PurgeKeptPath `json:"kept,omitempty"`
+	// Stranded is the target mod's records under an earlier mod_path. A
+	// one-mod uninstall intentionally leaves them for PurgeProfile, which
+	// removes them under the directory where lmm deployed them (#451, #488).
+	Stranded []PurgeStrandedPath `json:"stranded,omitempty"`
 
 	// snapshot is Ruling 5's precondition: the installed-mod set this plan
 	// was computed from, re-derived and compared by ApplyUninstall.
@@ -159,6 +163,11 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 		KeepCache: opts.KeepCache,
 		// A removal: the adapter has no say (removalSnapshotOf).
 		snapshot: removalSnapshotOf(installed),
+	}
+	if !mod.External {
+		if plan.Stranded, err = s.strandedUninstallPaths(ctx, game, profileName, mod.SourceID, mod.ID); err != nil {
+			return nil, err
+		}
 	}
 	switch {
 	case recordedOnly:
@@ -316,6 +325,9 @@ type UninstallResult struct {
 	ActiveProfile string          `json:"active_profile,omitempty"`
 	Removed       []string        `json:"removed,omitempty"`
 	Kept          []PurgeKeptPath `json:"kept,omitempty"`
+	// Stranded is the target mod's deployed-file records left under an
+	// earlier mod_path. They require `lmm purge -p <profile>` to clear.
+	Stranded []PurgeStrandedPath `json:"stranded,omitempty"`
 }
 
 // UninstallMod removes a mod from the profile: runs uninstall hooks,
@@ -382,6 +394,9 @@ func (s *Service) uninstallRecorded(ctx context.Context, game *domain.Game, prof
 	if mod.External {
 		result.Notes = append(result.Notes, "Note: "+UninstallExternalNote)
 	} else {
+		if result.Stranded, err = s.strandedUninstallPaths(ctx, game, profileName, mod.SourceID, mod.ID); err != nil {
+			return result, err
+		}
 		cleared, err := s.clearRecorded(ctx, game, profileName, live, recordedClearOptions{
 			only:    modKeySet(mod.SourceID, mod.ID),
 			approve: approve,
@@ -460,6 +475,9 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 	// nothing to undeploy and cached nothing to delete, and reaching for
 	// either would be reaching into a directory the Steam client owns.
 	if !mod.External {
+		if result.Stranded, err = s.strandedUninstallPaths(ctx, game, profileName, mod.SourceID, mod.ID); err != nil {
+			return result, err
+		}
 		installer, err := s.getInstallerForProfile(ctx, game, profileName)
 		if err != nil {
 			return result, err
@@ -533,4 +551,23 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 	s.takeCaptureWarnings(game.ID, OpPurge, PurgeWarning, &result.Warnings, nil)
 
 	return result, nil
+}
+
+// strandedUninstallPaths returns the target mod's records under a former
+// mod_path. They are intentionally outside a one-mod uninstall's removal
+// scope: PurgeProfile is the operation that can safely clear such paths at
+// their recorded roots (#451). Keeping them in both plan and result lets every
+// frontend name that remedy without rediscovering storage state (#488).
+func (s *Service) strandedUninstallPaths(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) ([]PurgeStrandedPath, error) {
+	rows, err := s.db.ListDeployedFiles(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("listing deployed files: %w", err)
+	}
+	var stranded []PurgeStrandedPath
+	for _, row := range rows {
+		if row.SourceID == sourceID && row.ModID == modID && !underCurrentRoot(game, row.ModPath) {
+			stranded = append(stranded, PurgeStrandedPath{Path: row.RelativePath, ModPath: row.ModPath})
+		}
+	}
+	return stranded, nil
 }
