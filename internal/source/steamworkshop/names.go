@@ -342,15 +342,25 @@ func (c *client) keylessAuthorName(ctx context.Context, id string) (name string,
 }
 
 // withAuthorNames sets AuthorName on every mod whose Author resolves.
-func (c *client) withAuthorNames(ctx context.Context, mods []domain.Mod) {
+func (c *client) withAuthorNames(ctx context.Context, mods []*domain.Mod) {
 	ids := make([]string, 0, len(mods))
-	for _, m := range mods {
-		ids = append(ids, m.Author)
+	for _, mod := range mods {
+		if mod != nil {
+			ids = append(ids, mod.Author)
+		}
 	}
 	names := c.authorNames(ctx, ids)
-	for i := range mods {
-		mods[i].AuthorName = names[mods[i].Author]
+	for _, mod := range mods {
+		if mod != nil {
+			mod.AuthorName = names[mod.Author]
+		}
 	}
+}
+
+// ResolveAuthorNames implements source.AuthorNameResolver. It is deliberately
+// separate from GetMod so mutation flows cannot wait for Steam Community.
+func (s *Source) ResolveAuthorNames(ctx context.Context, mods []*domain.Mod) {
+	s.client.withAuthorNames(ctx, mods)
 }
 
 // CachedAuthorNames implements source.AuthorNameCache: the persona names

@@ -96,6 +96,7 @@ type InstalledDetail struct {
 // a catalog entry nobody can serve.
 func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sourceID, modID string) (*ModDetail, error) {
 	mod, err := s.GetMod(ctx, sourceID, game.ID, modID)
+	liveSource := err == nil
 	if err != nil {
 		if _, regErr := s.GetSource(sourceID); regErr == nil {
 			return nil, fmt.Errorf("mod not found: %w", err)
@@ -106,6 +107,9 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		}
 		installedMod := row.Mod
 		mod = &installedMod
+	}
+	if liveSource {
+		s.resolveAuthorNames(ctx, sourceID, mod)
 	}
 	detail := &ModDetail{Mod: mod}
 	s.fillModDescription(ctx, sourceID, game, mod)
