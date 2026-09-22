@@ -184,6 +184,10 @@ type Service struct {
 	// (export_test.go's SetBeforeSaveInstalledForTest); always nil in
 	// production.
 	beforeSaveInstalled func()
+	// beforeInstallReplace lets tests cancel after cache activation, so the
+	// failed-replacement recovery path runs with a published repair. Nil in
+	// production.
+	beforeInstallReplace func()
 
 	// afterInstallSave, when non-nil, runs immediately after a successful
 	// SaveInstalledMod call in the BATCH install engine (applyInstallBatchMod)

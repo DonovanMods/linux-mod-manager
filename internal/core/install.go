@@ -946,6 +946,11 @@ type reinstallCacheTransaction struct {
 	// must be removed again on rollback rather than materialized as empty.
 	hasOriginal bool
 	activated   bool
+	// published is set only after the staged entry has been fully copied to
+	// live. With no original entry, a failed activation must discard a partial
+	// copy, but a later deploy/save failure must keep the repaired cache so
+	// compensation can deploy from it and existing symlinks remain valid.
+	published bool
 }
 
 func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, gameID, sourceID, modID, version string, logger *slog.Logger) (*reinstallCacheTransaction, error) {
@@ -1016,12 +1021,15 @@ func (s *reinstallCacheTransaction) Activate(ctx context.Context) error {
 	if err := s.staged.CloneMod(ctx, s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
 		return err
 	}
+	s.published = true
 	return nil
 }
 
-// RestoreLive returns the live cache to its pre-Activate state: it puts the
-// original cache entry back when one existed, or removes the freshly staged
-// one when it did not. Its Delete-then-CloneMod sequence destroys the live
+// RestoreLive puts an original cache entry back when one existed. With no
+// original, it removes an incomplete activation but keeps a fully published
+// repair: the replacement recovery still needs that live entry, and the
+// preexisting installed row may have game links pointing into it. Its
+// Delete-then-CloneMod sequence for an original entry destroys the live
 // entry before it can rewrite it, so every call site passes
 // context.WithoutCancel(ctx) - a cancelled clone here would leave the mod's
 // cache entry gone for good (review finding C1). ctx is still threaded rather
@@ -1029,6 +1037,10 @@ func (s *reinstallCacheTransaction) Activate(ctx context.Context) error {
 // signal.
 func (s *reinstallCacheTransaction) RestoreLive(ctx context.Context) error {
 	if s == nil || !s.activated {
+		return nil
+	}
+	if !s.hasOriginal && s.published {
+		s.activated = false
 		return nil
 	}
 	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
@@ -2449,6 +2461,9 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 			if err := st.reinstallTxn.Activate(ctx); err != nil {
 				return nil, fmt.Errorf("activating reinstall cache: %w", err)
 			}
+			if s.beforeInstallReplace != nil {
+				s.beforeInstallReplace()
+			}
 		}
 		var replaceErr error
 		if st.reinstallTxn != nil {
@@ -2457,17 +2472,18 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 			replaceErr = installer.Replace(ctx, game, &plan.Replaces.Mod, &mod, plan.Profile)
 		}
 		if replaceErr != nil {
+			var recoveryErr error
 			if st.reinstallTxn != nil {
 				// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 				rctx := context.WithoutCancel(ctx)
 				if err := st.reinstallTxn.RestoreLive(rctx); err != nil {
-					s.logger().Warn("rollback after failed install also failed", "step", "restore_live", "err", err)
+					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("restoring live cache: %w", err))
 				}
 				if err := installer.ReplaceWithCaches(rctx, game, st.reinstallTxn.snapshot, s.GetGameCache(game), &plan.Replaces.Mod, &plan.Replaces.Mod, plan.Profile); err != nil {
-					s.logger().Warn("rollback after failed install also failed", "step", "replace_with_caches", "err", err)
+					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("restoring deployment: %w", err))
 				}
 			}
-			return nil, fmt.Errorf("deployment failed: %w", replaceErr)
+			return nil, fmt.Errorf("deployment failed: %w", errors.Join(replaceErr, recoveryErr))
 		}
 	} else if err := installer.Install(ctx, game, &mod, plan.Profile); err != nil {
 		return nil, fmt.Errorf("deployment failed: %w", err)
@@ -2490,25 +2506,26 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
+		var recoveryErr error
 		if plan.Replaces != nil {
 			if st.reinstallTxn != nil {
 				if err := st.reinstallTxn.RestoreLive(rctx); err != nil {
-					s.logger().Warn("rollback after failed install also failed", "step", "restore_live", "err", err)
+					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("restoring live cache: %w", err))
 				}
 				if err := installer.ReplaceWithCaches(rctx, game, st.reinstallTxn.staged, s.GetGameCache(game), &mod, &plan.Replaces.Mod, plan.Profile); err != nil {
-					s.logger().Warn("rollback after failed install also failed", "step", "replace_with_caches", "err", err)
+					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("restoring deployment: %w", err))
 				}
 			} else {
 				if err := installer.Replace(rctx, game, &mod, &plan.Replaces.Mod, plan.Profile); err != nil {
-					s.logger().Warn("rollback after failed install also failed", "step", "replace", "err", err)
+					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("restoring deployment: %w", err))
 				}
 			}
 		} else {
 			if err := installer.Uninstall(rctx, game, &mod, plan.Profile); err != nil {
-				s.logger().Warn("rollback after failed install also failed", "step", "uninstall", "err", err)
+				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("removing failed deployment: %w", err))
 			}
 		}
-		return nil, fmt.Errorf("failed to save mod: %w", err)
+		return nil, fmt.Errorf("failed to save mod: %w", errors.Join(err, recoveryErr))
 	}
 	if st.reinstallTxn != nil {
 		if err := st.reinstallTxn.Commit(); err != nil {
