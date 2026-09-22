@@ -301,9 +301,9 @@ func TestService_PurgeProfile_PreservesReplacedDirectoryAsKeptUserFile(t *testin
 	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
 	installSeededMod(t, svc, game, "1")
 
-	// A DIRECTORY where the symlink linker expects its own link, so
-	// Uninstall fails. (A regular file there is the user's replacement of
-	// the link, which a purge keeps and stops recording - #469.)
+	// A directory replaces the symlink linker expects. Like a regular-file
+	// replacement, it is user-owned content: purge keeps it and clears lmm's
+	// deployment record rather than failing.
 	deployedPath := filepath.Join(gameDir, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
 	require.NoError(t, os.MkdirAll(filepath.Join(deployedPath, "obstruction"), 0o755))

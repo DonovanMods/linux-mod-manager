@@ -34,6 +34,15 @@ lint:
     - prettier@3.9.8
     - trufflehog@3.97.5
     - yamllint@1.38.0
+  definitions:
+    - name: pinact
+      commands:
+        # The pinned upstream adapter still passes v4's one-dash long flags.
+        # Keep its token handling, SARIF normalization, and failure reporting.
+        - name: lint
+          run: python3 ${workspace}/.trunk/pinact_v5_run.py ${plugin}/linters/pinact/pinact_run.py ${target}
+        - name: upgrade
+          run: python3 ${workspace}/.trunk/pinact_v5_run.py ${plugin}/linters/pinact/pinact_run.py --upgrade ${target}
   ignore:
     - linters: [ALL]
       paths:

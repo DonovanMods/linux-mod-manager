@@ -34,16 +34,16 @@ func newFakeRESTServer(t *testing.T, requireKey bool) *httptest.Server {
 	}
 
 	mux.HandleFunc("/mods", auth(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"results": [{"id": 77, "name": "Cool Mod", "latest_version": "1.2.0"}], "total": 1}`)
+		_, _ = fmt.Fprint(w, `{"results": [{"id": 77, "name": "Cool Mod", "latest_version": "1.2.0"}], "total": 1}`)
 	}))
 	mux.HandleFunc("/mods/77", auth(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"id": 77, "name": "Cool Mod", "latest_version": "1.2.0"}`)
+		_, _ = fmt.Fprint(w, `{"id": 77, "name": "Cool Mod", "latest_version": "1.2.0"}`)
 	}))
 	mux.HandleFunc("/mods/77/files", auth(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"files": [{"id": 900, "file_name": "cool-1.2.0.zip", "version": "1.2.0", "size_bytes": 11}]}`)
+		_, _ = fmt.Fprint(w, `{"files": [{"id": 900, "file_name": "cool-1.2.0.zip", "version": "1.2.0", "size_bytes": 11}]}`)
 	}))
 	mux.HandleFunc("/files/900/download", auth(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"url": %q}`, srv.URL+"/dl/cool-1.2.0.zip")
+		_, _ = fmt.Fprintf(w, `{"url": %q}`, srv.URL+"/dl/cool-1.2.0.zip")
 	}))
 	mux.HandleFunc("/dl/cool-1.2.0.zip", auth(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("mod payload"))
@@ -163,23 +163,23 @@ func TestAPISourceDependenciesReachTheResolver(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	mux.HandleFunc("/mods/77", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"id": 77, "name": "Cool Mod", "latest_version": "1.2.0"}`)
+		_, _ = fmt.Fprint(w, `{"id": 77, "name": "Cool Mod", "latest_version": "1.2.0"}`)
 	})
 	mux.HandleFunc("/mods/88", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"id": 88, "name": "Required Lib", "latest_version": "3.0.0"}`)
+		_, _ = fmt.Fprint(w, `{"id": 88, "name": "Required Lib", "latest_version": "3.0.0"}`)
 	})
 	mux.HandleFunc("/mods/77/deps", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"requires": [{"id": 88, "min_version": "3.0.0"}]}`)
+		_, _ = fmt.Fprint(w, `{"requires": [{"id": 88, "min_version": "3.0.0"}]}`)
 	})
 	mux.HandleFunc("/mods/88/deps", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"requires": []}`)
+		_, _ = fmt.Fprint(w, `{"requires": []}`)
 	})
 	// PlanInstall lists each mod's files as part of building the plan.
 	mux.HandleFunc("/mods/77/files", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"files": [{"id": 900, "file_name": "cool-1.2.0.zip", "version": "1.2.0", "size_bytes": 11}]}`)
+		_, _ = fmt.Fprint(w, `{"files": [{"id": 900, "file_name": "cool-1.2.0.zip", "version": "1.2.0", "size_bytes": 11}]}`)
 	})
 	mux.HandleFunc("/mods/88/files", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"files": [{"id": 901, "file_name": "lib-3.0.0.zip", "version": "3.0.0", "size_bytes": 11}]}`)
+		_, _ = fmt.Fprint(w, `{"files": [{"id": 901, "file_name": "lib-3.0.0.zip", "version": "3.0.0", "size_bytes": 11}]}`)
 	})
 
 	def := apiSourceDef(srv.URL, false)

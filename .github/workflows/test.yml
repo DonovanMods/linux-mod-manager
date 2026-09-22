@@ -5,9 +5,18 @@ on:
     branches: [main, develop, v2]
   pull_request:
 
+# The test workflow only reads repository contents. Keeping this explicit avoids
+# inheriting GitHub's broader default token permissions.
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04's AppArmor user-namespace restriction prevents the distro
+    # Chromium package from starting its supported sandbox in hosted CI.
+    # 22.04 provides the same isolated hosted runner without that restriction;
+    # browser tests retain Chromium's sandbox and their full assertions.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 

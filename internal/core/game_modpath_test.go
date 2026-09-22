@@ -134,7 +134,7 @@ func TestGameDocuments_AFreshGameIsNotFlagged(t *testing.T) {
 	report, err := svc.Status(t.Context())
 	require.NoError(t, err)
 	for _, summary := range report.Games {
-		assert.Empty(t, summary.ModPathError, summary.Game.ID)
+		assert.Empty(t, summary.ModPathError, summary.ID)
 	}
 
 	listing, err := svc.GameDetectListing(t.Context(), []domain.DetectedGame{{

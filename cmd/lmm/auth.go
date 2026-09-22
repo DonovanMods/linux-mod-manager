@@ -297,8 +297,12 @@ func doAuthLoginIndented(ctx context.Context, service *core.Service, sourceID, i
 		// document, for the same reason.
 		return doAuthStatus(ctx, service)
 	}
-	printLoginResult(out, hasValidator)
-	printAuthLoginSuccess(out, src, hasValidator)
+	if err := printLoginResult(out, hasValidator); err != nil {
+		return fmt.Errorf("printing login result: %w", err)
+	}
+	if err := printAuthLoginSuccess(out, src, hasValidator); err != nil {
+		return fmt.Errorf("printing login success: %w", err)
+	}
 	return nil
 }
 
@@ -354,11 +358,12 @@ func readOneLine(r io.Reader) (string, error) {
 // needed here. Sources without a validator get an honest message instead -
 // printing that same "Validating... done" sequence would fabricate a result
 // that never happened.
-func printLoginResult(w io.Writer, hasValidator bool) {
+func printLoginResult(w io.Writer, hasValidator bool) error {
 	if hasValidator {
-		return
+		return nil
 	}
-	fmt.Fprintln(w, "Stored (validated on first use).")
+	_, err := fmt.Fprintln(w, "Stored (validated on first use).")
+	return err
 }
 
 // printAuthLoginSuccess prints the final confirmation line for a completed
@@ -367,12 +372,13 @@ func printLoginResult(w io.Writer, hasValidator bool) {
 // Sources without one have no generic validation endpoint - printing that
 // same claim would fabricate a result that never happened, so they get an
 // honest "stored" message instead, keyed by ID rather than a display name.
-func printAuthLoginSuccess(w io.Writer, src source.ModSource, hasValidator bool) {
+func printAuthLoginSuccess(w io.Writer, src source.ModSource, hasValidator bool) error {
 	if hasValidator {
-		fmt.Fprintf(w, "Successfully authenticated with %s!\n", src.Name())
-		return
+		_, err := fmt.Fprintf(w, "Successfully authenticated with %s!\n", src.Name())
+		return err
 	}
-	fmt.Fprintf(w, "API key stored for %s.\n", src.ID())
+	_, err := fmt.Fprintf(w, "API key stored for %s.\n", src.ID())
+	return err
 }
 
 // selectAuthSource resolves the source from args or prompts interactively.

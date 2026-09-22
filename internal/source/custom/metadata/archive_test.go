@@ -18,7 +18,7 @@ func writeZip(t *testing.T, entries [][2]string) string {
 	path := filepath.Join(t.TempDir(), "mod.zip")
 	f, err := os.Create(path)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { require.NoError(t, f.Close(), "closing test archive") }()
 
 	w := zip.NewWriter(f)
 	for _, entry := range entries {
@@ -106,7 +106,7 @@ func TestResolveArchiveDecompressionBomb(t *testing.T) {
 	// while remaining valid XML if fully read.
 	f, err := os.Create(filepath.Join(t.TempDir(), "bomb.zip"))
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { require.NoError(t, f.Close(), "closing decompression-bomb archive") }()
 
 	w := zip.NewWriter(f)
 	// Create a large valid XML document with padding comment

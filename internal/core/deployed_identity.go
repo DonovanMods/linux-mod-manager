@@ -473,12 +473,6 @@ func statesOf(states []db.DeployedFileState, profile string) []db.DeployedFileSt
 	return out
 }
 
-// judgeDeployed is a deployedJudge with only a database, a game and the
-// acting profile.
-func judgeDeployed(ctx context.Context, database *db.DB, game *domain.Game, profile, rel, dst string) deployedJudgement {
-	return deployedJudge{db: database, game: game, profile: profile}.judge(ctx, rel, dst)
-}
-
 // unchangedSince is the pre-check that spares a hash: info matches fp's
 // size, mtime and ctime exactly. A size and an mtime can be copied onto
 // another file; a ctime cannot be set on a filesystem that keeps one

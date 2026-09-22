@@ -29,7 +29,7 @@ func ResolveArchive(archivePath string) *Info {
 	if err != nil {
 		return nil
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	target := findModInfoEntry(r.File)
 	if target == nil {
@@ -40,7 +40,7 @@ func ResolveArchive(archivePath string) *Info {
 	if err != nil {
 		return nil
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	data, err := io.ReadAll(io.LimitReader(rc, maxModInfoSize+1))
 	if err != nil {

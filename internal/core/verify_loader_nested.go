@@ -382,7 +382,7 @@ func (r *verifyRun) removeNestedLeftovers(tree nestedLoaderTree) {
 	if err != nil {
 		errs = append(errs, err)
 	} else {
-		defer root.Close()
+		defer func() { _ = root.Close() }()
 		scopes := r.svc.ownerScopes(r.game)
 		own := r.svc.ownCacheSubtrees(r.game)
 		for _, path := range tree.leftovers {

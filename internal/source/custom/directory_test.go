@@ -225,7 +225,7 @@ func writeTestZip(t *testing.T, path, entryPath, content string) {
 	t.Helper()
 	f, err := os.Create(path)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { require.NoError(t, f.Close(), "closing test archive") }()
 
 	w := zip.NewWriter(f)
 	fw, err := w.Create(entryPath)

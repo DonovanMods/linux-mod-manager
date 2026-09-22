@@ -128,7 +128,9 @@ Examples:
 			if showInUseColumn {
 				header += "\tIN USE"
 			}
-			fmt.Fprintln(w, header+"\tERROR")
+			if _, err := fmt.Fprintln(w, header+"\tERROR"); err != nil {
+				return fmt.Errorf("writing source table header: %w", err)
+			}
 			for _, info := range infos {
 				// An error row carries no auth/capability data (it never
 				// registered), so both columns stay blank here - the display
@@ -152,8 +154,8 @@ Examples:
 					}
 					line += "\t" + inUse
 				}
-				// Deliberately unchecked, like the header write above: a
-				// the table writer buffers, so any write failure surfaces at Flush
+				// Deliberately unchecked: the table writer buffers row writes,
+				// so any write failure surfaces at Flush
 				// below, which IS checked.
 				_, _ = fmt.Fprintln(w, line+"\t"+info.ErrorMessage)
 			}

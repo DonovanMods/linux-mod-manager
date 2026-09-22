@@ -166,48 +166,12 @@ func completeProfileWrite(ctx context.Context, write func(context.Context) error
 	return err
 }
 
-// completeDBWrite runs write - a DB mutation that COMPLETES a profile-file
-// mutation the caller has ALREADY applied - under a context that cannot be
-// cancelled, then reports the caller's own cancellation if there was one.
-//
-// Mirrors completeProfileWrite exactly, direction reversed: a re-link
-// (ApplyRelinkMod) moves a mod to a new source_id/mod_id identity by first
-// completing its profile-ref move (two completeProfileWrite calls dropping
-// the old ref and writing the new one, once the OLD DB row is already
-// deleted), then saving the NEW installed_mods row. A Ctrl-C landing after
-// the profile move but before that save would leave the profile pointing at
-// an identity with no DB row behind it - the same drift completeProfileWrite
-// prevents, on the other side of the pair. write always runs under
-// context.WithoutCancel(ctx) and always finishes; ctx.Err() is re-checked
-// immediately afterwards and takes precedence over write's own error, so the
-// caller still ends the run with context.Canceled (v2 Phase 3 Ruling 16,
-// fix wave round 1's residual - see completeProfileWrite's own comment for
-// the shared cancellation-precedence contract callers rely on).
-//
-// context.WithoutCancel also drops any deadline the caller's ctx carried, not
-// just its cancellation signal - immaterial for completeProfileWrite (its
-// wrapped writes never hand a ctx to I/O; config.LoadProfile/SaveProfile take
-// none) but real here, since write's saveInstalledMod does pass ctx to
-// database/sql. Acceptable: this completes a single row already-committed on
-// the profile side, over a local SQLite connection with no network round
-// trip - the write finishes in microseconds regardless of the caller's own
-// deadline, so running it deadline-free costs nothing a caller would notice.
-func completeDBWrite(ctx context.Context, write func(context.Context) error) error {
-	err := write(context.WithoutCancel(ctx))
-	if cerr := ctx.Err(); cerr != nil {
-		return cerr
-	}
-	return err
-}
-
 // completeRename runs write - the profile-RENAME write chain - under a
 // context that cannot be cancelled, then reports the caller's own
 // cancellation if there was one.
 //
-// Rename is the one flow the two helpers above cannot express between them.
-// Both of those exist because one half is applied FIRST and the other half
-// completes it, so the completing half is what runs uncancellably. A rename
-// has three writes and no such ordering: the new profile file, the DB rows
+// Rename is the one flow completeProfileWrite cannot express. It has three
+// writes and no half that can safely finish independently: a rename
 // that name the profile, and the removal of the old profile file. Stop
 // after the first and the config directory holds two copies of one profile,
 // both flagged default; stop after the second and the DB names a profile

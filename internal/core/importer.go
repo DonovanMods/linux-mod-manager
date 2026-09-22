@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -287,9 +288,12 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 
 		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
 
-		// Remove existing cache if present (re-import case)
-		// Ignore errors - if removal fails, MkdirAll/copy will error anyway
-		os.RemoveAll(cachePath)
+		// Remove existing cache if present (re-import case). A failed removal
+		// can leave stale content that an otherwise successful copy would not
+		// expose, so surface it instead of relying on a later write to fail.
+		if err := os.RemoveAll(cachePath); err != nil {
+			return nil, fmt.Errorf("removing existing cache directory: %w", err)
+		}
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
@@ -826,12 +830,12 @@ func (i *Importer) detectModFromFilename(filename string, gameID string) *domain
 }
 
 // copyFileStreaming copies a file using streaming to avoid loading it all into memory
-func copyFileStreaming(src, dst string) error {
+func copyFileStreaming(src, dst string) (err error) {
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {
@@ -846,7 +850,11 @@ func copyFileStreaming(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}
-	defer dstFile.Close()
+	defer func() {
+		if closeErr := dstFile.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("closing destination: %w", closeErr))
+		}
+	}()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("copying: %w", err)

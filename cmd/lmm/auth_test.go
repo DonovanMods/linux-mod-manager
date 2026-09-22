@@ -356,13 +356,13 @@ func TestAuthLogoutCmd_DefaultSource(t *testing.T) {
 func TestPrintLoginResult(t *testing.T) {
 	t.Run("validator path prints nothing extra", func(t *testing.T) {
 		var buf bytes.Buffer
-		printLoginResult(&buf, true)
+		require.NoError(t, printLoginResult(&buf, true))
 		assert.Empty(t, buf.String(), "validated sources are reported via the Validating...done sequence above")
 	})
 
 	t.Run("stored path prints an honest message", func(t *testing.T) {
 		var buf bytes.Buffer
-		printLoginResult(&buf, false)
+		require.NoError(t, printLoginResult(&buf, false))
 		assert.Equal(t, "Stored (validated on first use).\n", buf.String())
 		assert.NotContains(t, buf.String(), "Validating", "must not fabricate a validation step that never ran")
 	})
@@ -384,19 +384,19 @@ func TestPrintLoginResult(t *testing.T) {
 func TestPrintAuthLoginSuccess(t *testing.T) {
 	t.Run("validator path keeps the authenticated message (nexusmods)", func(t *testing.T) {
 		var buf bytes.Buffer
-		printAuthLoginSuccess(&buf, nexusmods.New(nil, ""), true)
+		require.NoError(t, printAuthLoginSuccess(&buf, nexusmods.New(nil, ""), true))
 		assert.Equal(t, "Successfully authenticated with Nexus Mods!\n", buf.String())
 	})
 
 	t.Run("validator path keeps the authenticated message (curseforge)", func(t *testing.T) {
 		var buf bytes.Buffer
-		printAuthLoginSuccess(&buf, curseforge.New(nil, ""), true)
+		require.NoError(t, printAuthLoginSuccess(&buf, curseforge.New(nil, ""), true))
 		assert.Equal(t, "Successfully authenticated with CurseForge!\n", buf.String())
 	})
 
 	t.Run("stored path prints an honest stored message keyed by ID", func(t *testing.T) {
 		var buf bytes.Buffer
-		printAuthLoginSuccess(&buf, &mockAuthSource{id: "my-repo", name: "My Repo"}, false)
+		require.NoError(t, printAuthLoginSuccess(&buf, &mockAuthSource{id: "my-repo", name: "My Repo"}, false))
 		assert.Equal(t, "API key stored for my-repo.\n", buf.String())
 		assert.NotContains(t, buf.String(), "Successfully authenticated", "must not fabricate a validation result that never happened")
 	})

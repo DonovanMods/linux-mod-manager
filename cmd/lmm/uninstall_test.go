@@ -363,11 +363,11 @@ func TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr(t *testing.T) {
 	dbPath := filepath.Join(dataDir, "lmm.db")
 	locker, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
-	defer locker.Close()
+	defer func() { require.NoError(t, locker.Close(), "closing database locker") }()
 	locker.SetMaxOpenConns(1)
 	conn, err := locker.Conn(context.Background())
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { require.NoError(t, conn.Close(), "closing database connection") }()
 	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 	defer conn.ExecContext(context.Background(), "ROLLBACK") //nolint:errcheck // best-effort cleanup

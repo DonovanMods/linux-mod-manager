@@ -909,7 +909,7 @@ func TestService_ApplyInstall_ForceReinstall_BrokenCacheEntryStillFails(t *testi
 	require.NoError(t, os.MkdirAll(entry, 0755))
 	socket, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(entry, "unreadable.sock"), Net: "unix"})
 	require.NoError(t, err)
-	defer socket.Close()
+	defer func() { require.NoError(t, socket.Close(), "closing test socket") }()
 
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)

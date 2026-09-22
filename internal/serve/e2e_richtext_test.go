@@ -335,7 +335,7 @@ func TestE2E_RichText_HostileInputRendersInertAndNeverThrows(t *testing.T) {
 		{"bbcode quote and code", "[quote][url=https://a.example]q[/url][/quote][code][url=https://a.example]c[/url][/code]", "bbcode"},
 		{"bbcode attribute injection", `[url=https://a.example/" onclick="alert(1)]x[/url]`, "bbcode"},
 		{"bbcode attribute after a space", `[url=https://a.example/ onmouseover=alert(1)]x[/url]`, "bbcode"},
-		{"bbcode rtl override", "[b]‮evil‬[/b] [url=https://a.example/‮]x[/url]", "bbcode"},
+		{"bbcode rtl override", "[b]\u202eevil\u202c[/b] [url=https://a.example/\u202e]x[/url]", "bbcode"},
 		{"bbcode entities", "[b]&lt;script&gt;alert(1)&lt;/script&gt;[/b]", "bbcode"},
 		{"bbcode backslash url", `[url=https:\\evil.example]x[/url]`, "bbcode"},
 		{"bbcode credentials url", `[url=https://nexusmods.com@evil.example]x[/url]`, "bbcode"},
