@@ -50,6 +50,7 @@ func TestImportScan_SaysWhatTheLookupIsWaitingOn(t *testing.T) {
 	src.notice = &throttleNotice
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	importSkipMatch = false
 	importDryRun = true
 
@@ -78,6 +79,7 @@ func TestImportScan_ALookupThatFailedSaysSo(t *testing.T) {
 	src.searchErr = &source.RetryLaterError{Source: "Thunderstore", Until: time.Now().Add(5 * time.Minute), Reason: "suspended after repeated failures"}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	importSkipMatch = false
 	importDryRun = true
 	verbose = false
