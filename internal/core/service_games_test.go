@@ -37,6 +37,55 @@ func TestService_ListGames_OrderedByGameID(t *testing.T) {
 	assert.Equal(t, []string{"alpha", "bravo", "mike", "yankee", "zulu"}, got)
 }
 
+// Public game values must not expose the Service's published configuration,
+// including its map and optional loader pointer.
+func TestService_GameQueriesAndSaveGameOwnIndependentCopies(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	ctx := context.Background()
+	original := &domain.Game{ID: "g", Name: "Game", ModPath: t.TempDir(),
+		SourceIDs: map[string]string{"nexus": "game"}, Loader: &domain.GameLoader{Kind: "bepinex"}}
+	require.NoError(t, svc.SaveGame(ctx, original))
+	original.Name = "caller edit"
+	original.SourceIDs["nexus"] = "caller edit"
+	original.Loader.Kind = "caller edit"
+
+	first, err := svc.GetGame("g")
+	require.NoError(t, err)
+	listed := svc.ListGames()
+	require.Len(t, listed, 1)
+	assert.Equal(t, "Game", first.Name)
+	assert.Equal(t, "game", first.SourceIDs["nexus"])
+	assert.Equal(t, "bepinex", first.Loader.Kind)
+	first.Name = "query edit"
+	first.SourceIDs["nexus"] = "query edit"
+	first.Loader.Kind = "query edit"
+	assert.Equal(t, "Game", listed[0].Name)
+	assert.Equal(t, "game", listed[0].SourceIDs["nexus"])
+	assert.Equal(t, "bepinex", listed[0].Loader.Kind)
+	listed[0].SourceIDs["nexus"] = "list edit"
+	listed[0].Loader.Kind = "list edit"
+	latest, err := svc.GetGame("g")
+	require.NoError(t, err)
+	assert.Equal(t, "Game", latest.Name)
+	assert.Equal(t, "game", latest.SourceIDs["nexus"])
+	assert.Equal(t, "bepinex", latest.Loader.Kind)
+
+	// Nil nested fields stay nil through both query paths.
+	require.NoError(t, svc.SaveGame(ctx, &domain.Game{ID: "empty", ModPath: t.TempDir()}))
+	empty, err := svc.GetGame("empty")
+	require.NoError(t, err)
+	assert.Nil(t, empty.SourceIDs)
+	assert.Nil(t, empty.Loader)
+	for _, game := range svc.ListGames() {
+		if game.ID == "empty" {
+			assert.Nil(t, game.SourceIDs)
+			assert.Nil(t, game.Loader)
+		}
+	}
+}
+
 // TestService_SaveGame_ConcurrentWithReaders pins the games-map contract: a
 // writer and many readers may interleave freely (run with -race).
 func TestService_SaveGame_ConcurrentWithReaders(t *testing.T) {

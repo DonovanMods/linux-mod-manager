@@ -203,6 +203,7 @@ func TestPlanAdopt_SkipMatch_DropsBackfillAndRunsNoLookups(t *testing.T) {
 	src.searchMods = []domain.Mod{{ID: "42", SourceID: "acme-source", Name: "LooseMod", GameID: "g1"}}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedSyncInstalledMod(t, svc, game, "acme-source", "77", "Needs Backfill", "1.0", "default", true, nil)
 	writeLooseMod(t, game, "LooseMod-1.0.zip", "loose")
 
@@ -230,6 +231,7 @@ func TestPlanAdopt_MatchUpgradesScanResultAndResolvesFile(t *testing.T) {
 	}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	writeLooseMod(t, game, "AcmeMod-1.0.zip", "payload")
 
 	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{})
@@ -266,6 +268,7 @@ func TestPlanAdopt_NoMatch_StaysLocal(t *testing.T) {
 	src := newAdoptTestSource("acme-source") // no searchMods: succeeds with zero results
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	writeLooseMod(t, game, "LooseMod-1.0.zip", "loose")
 
 	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{})
@@ -286,6 +289,7 @@ func TestPlanAdopt_AllSourcesError_RecordsErrorNotFailure(t *testing.T) {
 	src.searchErr = errors.New("boom")
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	writeLooseMod(t, game, "LooseMod-1.0.zip", "loose")
 
 	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{})
@@ -307,6 +311,7 @@ func TestPlanAdopt_FileResolutionFailure_RecordsFileErrorAndKeepsMatch(t *testin
 	src.filesErr = errors.New("rate limited")
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	writeLooseMod(t, game, "AcmeMod-1.0.zip", "payload")
 
 	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{})
@@ -348,6 +353,7 @@ func TestApplyAdoptBackfill_SavesFetchedMetadata(t *testing.T) {
 	}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedSyncInstalledMod(t, svc, game, "acme-source", "77", "Needs Backfill", "1.0", "default", true, nil)
 
 	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{})
@@ -375,6 +381,7 @@ func TestApplyAdoptBackfill_FetchFailure_NotesAndCountsNothing(t *testing.T) {
 	src.modErr = errors.New("upstream down")
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedSyncInstalledMod(t, svc, game, "acme-source", "77", "Needs Backfill", "1.0", "default", true, nil)
 
 	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{})
@@ -509,6 +516,7 @@ func TestApplyAdopt_MatchedFile_RecordsFileIDsAndStampsMarker(t *testing.T) {
 	}
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	writeLooseMod(t, game, "AcmeMod-1.0.zip", "payload")
 
 	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{})

@@ -62,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Game queries cannot bypass the `mod_path` move guard (#480).** `GetGame`
+  and `ListGames` now return independent copies, including source mappings
+  and loader settings. `SaveGame` keeps its own copy, so later caller edits
+  cannot change the live game before the deployment safety check runs.
+
 - **`lmm profile sync` preserves explicitly disabled mods that have never
   been downloaded (#479).** An imported profile can deliberately record a
   switched-off mod with its version, selected files and load-order position
