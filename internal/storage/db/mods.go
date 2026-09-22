@@ -99,6 +99,66 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 	return tx.Commit()
 }
 
+// RelinkInstalledMod moves one installed identity and its deployment ledger in
+// one transaction. The ledger has no foreign key to installed_mods, so a
+// delete followed by an insert would otherwise leave its rows orphaned.
+func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID string, mod *domain.InstalledMod) error {
+	if oldSourceID == mod.SourceID && oldModID == mod.ID {
+		return d.SaveInstalledMod(ctx, mod)
+	}
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("starting relink transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	// installed_mod_files has a foreign key without ON UPDATE CASCADE.
+	// Replace those children around the parent key change in this transaction.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM installed_mod_files
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
+		oldSourceID, oldModID, mod.GameID, mod.ProfileName); err != nil {
+		return fmt.Errorf("removing old file IDs: %w", err)
+	}
+	var prevVersion *string
+	if mod.PreviousVersion != "" {
+		prevVersion = &mod.PreviousVersion
+	}
+	prevFileIDs, err := encodeFileIDs(mod.PreviousFileIDs)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE installed_mods SET
+		source_id = ?, mod_id = ?, name = ?, version = ?, author = ?,
+		enabled = ?, deployed = ?, previous_version = ?, previous_file_ids = ?,
+		link_method = ?, manual_download = ?, summary = ?, source_url = ?,
+		external = ?, external_path = ?, updated_at = ?
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
+		mod.SourceID, mod.ID, mod.Name, mod.Version, mod.Author,
+		mod.Enabled, mod.Deployed, prevVersion, prevFileIDs,
+		mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL,
+		mod.External, mod.ExternalPath, updatedAtValue(mod),
+		oldSourceID, oldModID, mod.GameID, mod.ProfileName)
+	if err != nil {
+		return fmt.Errorf("moving installed mod: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking moved installed mod: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrModNotFound
+	}
+	if err := replaceModFileIDsTx(ctx, tx, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.FileIDs); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE deployed_files SET source_id = ?, mod_id = ?
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
+		mod.SourceID, mod.ID, oldSourceID, oldModID, mod.GameID, mod.ProfileName); err != nil {
+		return fmt.Errorf("moving deployed file records: %w", err)
+	}
+	return tx.Commit()
+}
+
 // GetInstalledMods returns all installed mods for a game/profile combination
 func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (mods []domain.InstalledMod, err error) {
 	rows, err := d.QueryContext(ctx, `
