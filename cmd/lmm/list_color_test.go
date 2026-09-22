@@ -117,8 +117,8 @@ func TestList_Verbose_RowTinting(t *testing.T) {
 
 // TestList_Verbose_ColorNeverBreaksAlignment: stripping ANSI from a
 // color-enabled run must reproduce the color-disabled run byte-for-byte -
-// text/tabwriter pads by raw byte length, so this is the guard against a
-// silent column-alignment regression (see printTable's doc comment).
+// ANSI must be applied only after display-width padding, so this guards
+// against a silent column-alignment regression (see printTable's doc comment).
 func TestList_Verbose_ColorNeverBreaksAlignment(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	resetColorFlags(t)

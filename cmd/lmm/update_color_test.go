@@ -50,7 +50,7 @@ func TestDoUpdateRollback_SuccessCheckmark_ColorPath(t *testing.T) {
 }
 
 // TestDoUpdate_Table_ColorPath guards the update-available table: header
-// bolded, the last column (POLICY, never padded by tabwriter - see
+// bolded, the last column (POLICY, never padded by the table writer - see
 // printTable's doc comment) tinted per row, and the summary line accented -
 // all without perturbing the plain-mode column alignment.
 func TestDoUpdate_Table_ColorPath(t *testing.T) {

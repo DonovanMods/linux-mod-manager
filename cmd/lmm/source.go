@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -124,7 +123,7 @@ Examples:
 				return emitJSON(infos)
 			}
 
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			w := newDisplayWidthTableWriter(cmd.OutOrStdout())
 			header := "ID\tNAME\tTYPE\tAUTH\tCAPABILITIES"
 			if showInUseColumn {
 				header += "\tIN USE"
@@ -154,7 +153,7 @@ Examples:
 					line += "\t" + inUse
 				}
 				// Deliberately unchecked, like the header write above: a
-				// tabwriter buffers, so any write failure surfaces at Flush
+				// the table writer buffers, so any write failure surfaces at Flush
 				// below, which IS checked.
 				_, _ = fmt.Fprintln(w, line+"\t"+info.ErrorMessage)
 			}

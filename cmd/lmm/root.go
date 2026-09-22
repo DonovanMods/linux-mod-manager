@@ -265,22 +265,22 @@ func modRowColor(enabled, deployed bool) func(string) string {
 	}
 }
 
-// printTable writes a fully-flushed text/tabwriter table (buf) to os.Stdout,
+// printTable writes a fully-flushed display-width table (buf) to os.Stdout,
 // accenting the header line (bold+cyan, via colorHeader) and applying
 // rowColor's per-row wrapper (nil for no tint) when color is enabled.
 // headerLines is the number of leading lines to skip when indexing data
 // rows (2: header + dashed separator).
 //
 // Color is applied ONLY to buf's already-rendered, already-padded text -
-// never to a cell before it reaches the tabwriter. text/tabwriter computes
-// column padding from raw byte length, so an ANSI-wrapped cell fed into it
-// would inflate that cell's measured width and misalign every column after
-// it (verified empirically). Wrapping an already-flushed line's start/end
-// is safe: those bytes are invisible to the terminal and never shift where
-// the real characters land. Do not colorize interior cell values before
-// Fprintf-ing them into a tabwriter.Writer - use whole-row tinting (via
-// rowColor) or, for a table's genuinely last column (nothing pads after it
-// per tabwriter's own behavior), inline coloring of that one column instead.
+// never to a cell before it reaches the display-width table writer. ANSI
+// escape sequences do not occupy terminal cells, but a writer cannot infer
+// that from their bytes, so an ANSI-wrapped interior cell would misalign every
+// column after it. Wrapping an already-flushed line's start/end is safe: those
+// bytes are invisible to the terminal and never shift where the real
+// characters land. Do not colorize interior cell values before Fprintf-ing
+// them into a display-width table writer - use whole-row tinting (via
+// rowColor) or, for a table's genuinely last column (nothing pads after it),
+// inline coloring of that one column instead.
 func printTable(buf *bytes.Buffer, headerLines int, rowColor func(dataRowIndex int) func(string) string) error {
 	return printTableTo(os.Stdout, buf, headerLines, rowColor)
 }

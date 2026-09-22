@@ -12,7 +12,7 @@ import (
 )
 
 // columnStarts returns the byte offset each column begins at, read off the
-// table's dashed separator line. tabwriter aligns every line of a table to
+// table's dashed separator line. The table writer aligns every ASCII line to
 // the same offsets, and the separator is the one line whose cells hold no
 // interior space, so it is the ruler: slicing a row at those offsets
 // recovers its cells exactly - including an EMPTY cell, which a split on

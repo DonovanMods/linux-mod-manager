@@ -7,7 +7,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -60,7 +59,7 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 	}
 
 	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	w := newDisplayWidthTableWriter(&buf)
 	if _, err := fmt.Fprintln(w, "ID\tNAME\tINSTALL PATH\tMOD PATH\tADAPTER\tDEPLOY MODE\tCONVERT PAKS\tSOURCES"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}

@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -221,7 +220,7 @@ func doSnapshotList(ctx context.Context, service *core.Service, game *domain.Gam
 		return nil
 	}
 	fmt.Printf("Snapshots for %s:\n\n", game.Name)
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := newDisplayWidthTableWriter(os.Stdout)
 	if _, err := fmt.Fprintln(w, "NAME\tTAKEN\tPROFILE\tMODS\tFILES\tORIGINALS\tSIZE"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}

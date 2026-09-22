@@ -244,7 +244,7 @@ func TestListShowsConvert(t *testing.T) {
 	assert.Contains(t, out, "CONVERT")
 	// Mod A (convert off) should show "off"
 	// Mod B (convert on) should show "on"
-	// (The exact formatting depends on the tabwriter, but both should appear)
+	// (The exact table padding is not material here, but both should appear.)
 }
 
 // TestListShowsConvert_ExmodzOnly guards that lmm list does NOT show

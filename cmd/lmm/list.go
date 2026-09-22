@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -115,7 +114,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	fmt.Println()
 
 	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	w := newDisplayWidthTableWriter(&buf)
 	header := "ID\tNAME\tVERSION\tAUTHOR"
 	sep := "--\t----\t-------\t------"
 	if verbose {

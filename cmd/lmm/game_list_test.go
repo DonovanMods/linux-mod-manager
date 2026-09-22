@@ -96,7 +96,7 @@ func TestDoGameList_ConvertPaksColumnUsesOnOff(t *testing.T) {
 	assert.Contains(t, onLine, "on")
 	assert.Contains(t, offLine, "off")
 	// A non-DeployCompile game's column is blank - assert by field count
-	// (tabwriter columns) rather than substring, since "extract" itself
+	// (table columns) rather than substring, since "extract" itself
 	// contains no false positive here either way.
 	assert.NotContains(t, skyrimLine, "on")
 	assert.NotContains(t, skyrimLine, "off")

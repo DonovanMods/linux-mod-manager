@@ -121,10 +121,10 @@ func TestColorHeader_IsBoldAndCyan(t *testing.T) {
 }
 
 // TestPrintTable_ColorNeverShiftsColumnAlignment guards the exact regression
-// this feature risks: text/tabwriter computes column padding from raw byte
-// length, so injecting ANSI escapes into a cell BEFORE it reaches the
-// tabwriter would inflate that cell's measured width and misalign every
-// column after it. printTable colors the ALREADY-flushed, plain-padded
+// this feature risks: injecting ANSI escapes into a cell BEFORE it reaches
+// the display-width table writer would make that cell's measured width wrong
+// and misalign every column after it. printTable colors the ALREADY-flushed,
+// plain-padded
 // text instead - stripping ANSI from its output must reproduce the
 // plain-mode text byte-for-byte, for any row-color choice.
 func TestPrintTable_ColorNeverShiftsColumnAlignment(t *testing.T) {
@@ -136,8 +136,8 @@ func TestPrintTable_ColorNeverShiftsColumnAlignment(t *testing.T) {
 		buf.WriteString("--\t----\t-------\n")
 		buf.WriteString("modA\tSome Mod\tyes\n")
 		buf.WriteString("modB-longer-id\tAnother\tno\n")
-		// tabwriter enforcement of column widths happens on Flush of a live
-		// writer; simulate its already-flushed output directly since the
+		// Table alignment happens on Flush of a live writer; simulate its
+		// already-flushed output directly since the
 		// production code always calls printTable post-Flush.
 		return &buf
 	}
