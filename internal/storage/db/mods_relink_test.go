@@ -56,6 +56,36 @@ func TestRelinkInstalledMod_PreservesLedgerAndScope(t *testing.T) {
 	}
 }
 
+func TestRelinkInstalledMod_PreservesFileChecksums(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source string
+		id     string
+	}{
+		{name: "new identity", source: "repo", id: "new"},
+		{name: "same identity", source: "local", id: "old"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			database, err := db.New(":memory:")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, database.Close()) })
+			require.NoError(t, database.SaveInstalledMod(ctx, relinkTestMod("g", "p", "local", "old")))
+			require.NoError(t, database.SaveFileChecksum(ctx, "local", "old", "g", "p", "archive", "abc123"))
+
+			moved := relinkTestMod("g", "p", tc.source, tc.id)
+			moved.Name = "Renamed"
+			require.NoError(t, database.RelinkInstalledMod(ctx, "local", "old", moved))
+			checksum, err := database.GetFileChecksum(ctx, tc.source, tc.id, "g", "p", "archive")
+			require.NoError(t, err)
+			require.Equal(t, "abc123", checksum)
+			stored, err := database.GetInstalledMod(ctx, tc.source, tc.id, "g", "p")
+			require.NoError(t, err)
+			require.Equal(t, "Renamed", stored.Name)
+		})
+	}
+}
+
 func TestRelinkInstalledMod_CollisionAndLedgerFailureRollBack(t *testing.T) {
 	for _, failure := range []string{"collision", "ledger"} {
 		t.Run(failure, func(t *testing.T) {
@@ -64,6 +94,7 @@ func TestRelinkInstalledMod_CollisionAndLedgerFailureRollBack(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, database.Close()) })
 			require.NoError(t, database.SaveInstalledMod(ctx, relinkTestMod("g", "p", "local", "old")))
+			require.NoError(t, database.SaveFileChecksum(ctx, "local", "old", "g", "p", "archive", "abc123"))
 			require.NoError(t, database.SaveDeployedFile(ctx, "g", "p", "file.esp", "local", "old"))
 			switch failure {
 			case "collision":
@@ -78,6 +109,9 @@ func TestRelinkInstalledMod_CollisionAndLedgerFailureRollBack(t *testing.T) {
 			old, err := database.GetInstalledMod(ctx, "local", "old", "g", "p")
 			require.NoError(t, err)
 			require.Equal(t, []string{"archive"}, old.FileIDs)
+			checksum, err := database.GetFileChecksum(ctx, "local", "old", "g", "p", "archive")
+			require.NoError(t, err)
+			require.Equal(t, "abc123", checksum)
 			rows, err := database.GetDeployedFilesForMod(ctx, "g", "p", "local", "old")
 			require.NoError(t, err)
 			require.Equal(t, []string{"file.esp"}, rows)

@@ -4,9 +4,9 @@
 // distinct shapes cmd's --name/--version/--author/--to-source/--to-source-id
 // flags select between: a metadata-only edit (no --to-source/--to-source-id) that
 // updates the DB row in place, and a re-link (either flag given) that moves
-// the mod to a new source_id/mod_id identity - deleting the old DB row and
-// profile ref, optionally refreshing metadata from the new source, and
-// saving a fresh row/ref under the new identity. Both shapes flow through
+// the mod to a new source_id/mod_id identity - moving the DB row and its
+// deployment ownership together, replacing the profile ref, and optionally
+// refreshing metadata from the new source. Both shapes flow through
 // the same Plan/Apply pair; RelinkPlan.Relink tells a renderer (and
 // ApplyRelinkMod itself) which one is in play.
 package core

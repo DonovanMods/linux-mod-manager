@@ -76,8 +76,7 @@ func TestService_PlanRelinkMod_Relink_DefaultsOmittedHalf(t *testing.T) {
 
 // TestService_PlanRelinkMod_TargetInstalled_Detected guards the
 // TargetInstalled datum: re-linking onto an identity another installed mod
-// already occupies is flagged (informational; ApplyRelinkMod does not
-// refuse on it - see RelinkPlan's doc comment).
+// already occupies is flagged; ApplyRelinkMod refuses that collision.
 func TestService_PlanRelinkMod_TargetInstalled_Detected(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
 	seedModDetailInstalled(t, svc, game, "a", "1.5")

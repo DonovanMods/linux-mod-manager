@@ -103,9 +103,6 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 // one transaction. The ledger has no foreign key to installed_mods, so a
 // delete followed by an insert would otherwise leave its rows orphaned.
 func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID string, mod *domain.InstalledMod) error {
-	if oldSourceID == mod.SourceID && oldModID == mod.ID {
-		return d.SaveInstalledMod(ctx, mod)
-	}
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("starting relink transaction: %w", err)
@@ -113,7 +110,31 @@ func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID strin
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	// installed_mod_files has a foreign key without ON UPDATE CASCADE.
-	// Replace those children around the parent key change in this transaction.
+	// Preserve checksums before replacing children during the relink.
+	checksums := make(map[string]sql.NullString)
+	fileRows, err := tx.QueryContext(ctx, `SELECT file_id, checksum FROM installed_mod_files
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
+		oldSourceID, oldModID, mod.GameID, mod.ProfileName)
+	if err != nil {
+		return fmt.Errorf("reading old file checksums: %w", err)
+	}
+	for fileRows.Next() {
+		var fileID string
+		var checksum sql.NullString
+		if err := fileRows.Scan(&fileID, &checksum); err != nil {
+			_ = fileRows.Close()
+			return fmt.Errorf("scanning old file checksum: %w", err)
+		}
+		checksums[fileID] = checksum
+	}
+	if err := fileRows.Err(); err != nil {
+		_ = fileRows.Close()
+		return fmt.Errorf("reading old file checksums: %w", err)
+	}
+	if err := fileRows.Close(); err != nil {
+		return fmt.Errorf("closing old file checksums: %w", err)
+	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM installed_mod_files
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
 		oldSourceID, oldModID, mod.GameID, mod.ProfileName); err != nil {
@@ -151,10 +172,21 @@ func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID strin
 	if err := replaceModFileIDsTx(ctx, tx, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.FileIDs); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE deployed_files SET source_id = ?, mod_id = ?
-		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
-		mod.SourceID, mod.ID, oldSourceID, oldModID, mod.GameID, mod.ProfileName); err != nil {
-		return fmt.Errorf("moving deployed file records: %w", err)
+	for _, fileID := range mod.FileIDs {
+		if checksum, ok := checksums[fileID]; ok && checksum.Valid {
+			if _, err := tx.ExecContext(ctx, `UPDATE installed_mod_files SET checksum = ?
+				WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ? AND file_id = ?`,
+				checksum.String, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, fileID); err != nil {
+				return fmt.Errorf("preserving file checksum: %w", err)
+			}
+		}
+	}
+	if oldSourceID != mod.SourceID || oldModID != mod.ID {
+		if _, err := tx.ExecContext(ctx, `UPDATE deployed_files SET source_id = ?, mod_id = ?
+			WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
+			mod.SourceID, mod.ID, oldSourceID, oldModID, mod.GameID, mod.ProfileName); err != nil {
+			return fmt.Errorf("moving deployed file records: %w", err)
+		}
 	}
 	return tx.Commit()
 }
