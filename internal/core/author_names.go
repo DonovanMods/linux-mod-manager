@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
@@ -51,4 +53,33 @@ func (s *Service) stampCachedAuthorNames(rows []domain.InstalledMod) {
 			rows[i].AuthorName = names[rows[i].Author]
 		}
 	}
+}
+
+// stampCachedAuthorName applies an already-known display name to one fetched
+// mod. Unlike AuthorNameResolver, this is safe for a mutation path: its cache
+// contract forbids it from making a request.
+func stampCachedAuthorName(src source.ModSource, mod *domain.Mod) {
+	if mod == nil || mod.Author == "" || mod.AuthorName != "" {
+		return
+	}
+	cache, ok := src.(source.AuthorNameCache)
+	if !ok {
+		return
+	}
+	mod.AuthorName = cache.CachedAuthorNames([]string{mod.Author})[mod.Author]
+}
+
+// resolveAuthorNames completes a detail read when the source offers live
+// persona resolution. Lookup failures are intentionally handled by the
+// source as an absent name, so this cannot turn a mod detail into an error.
+func (s *Service) resolveAuthorNames(ctx context.Context, sourceID string, mod *domain.Mod) {
+	src, err := s.registry.Get(sourceID)
+	if err != nil {
+		return
+	}
+	resolver, ok := src.(source.AuthorNameResolver)
+	if !ok {
+		return
+	}
+	resolver.ResolveAuthorNames(ctx, []*domain.Mod{mod})
 }

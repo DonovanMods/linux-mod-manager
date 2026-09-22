@@ -361,16 +361,17 @@ func (c *client) detailsFor(ctx context.Context, fileID string, refresh bool) (i
 //
 // gameID is the Steam app id (unused by the endpoint, which resolves a
 // published file globally, but carried onto the mod so the row records
-// which game it belongs to). Author is the RAW creator steamid64, and
-// AuthorName its persona name where one resolves (#420, names.go).
+// which game it belongs to). Author is the RAW creator steamid64. AuthorName
+// comes only from the local cache here; live resolution belongs to detail and
+// search reads (see ResolveAuthorNames and names.go).
 func (s *Source) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
 	d, err := s.client.detailsFor(ctx, modID, false)
 	if err != nil {
 		return nil, fmt.Errorf("source %q: %w", sourceID, err)
 	}
-	mods := []domain.Mod{modFromDetails(d, gameID)}
-	s.client.withAuthorNames(ctx, mods)
-	return &mods[0], nil
+	mod := modFromDetails(d, gameID)
+	mod.AuthorName = s.client.cachedAuthorNames([]string{mod.Author})[mod.Author]
+	return &mod, nil
 }
 
 // modFromDetails is the one mapping from Valve's published-file shape to

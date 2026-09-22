@@ -1254,7 +1254,11 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 	}
 
 	mod, err := src.GetMod(ctx, sourceGameID, modID)
-	return mod, classifyIndexError(sourceID, sourceGameID, err)
+	if err != nil {
+		return mod, classifyIndexError(sourceID, sourceGameID, err)
+	}
+	stampCachedAuthorName(src, mod)
+	return mod, nil
 }
 
 // GetModFiles retrieves available download files for a mod

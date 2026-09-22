@@ -184,7 +184,11 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 		}
 		result.Mods = append(result.Mods, modFromDetails(d, query.GameID))
 	}
-	s.client.withAuthorNames(ctx, result.Mods)
+	mods := make([]*domain.Mod, len(result.Mods))
+	for i := range result.Mods {
+		mods[i] = &result.Mods[i]
+	}
+	s.ResolveAuthorNames(ctx, mods)
 	s.client.search.put(cacheKey, result)
 	return result, nil
 }

@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/steamworkshop"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -84,10 +86,19 @@ func (fx *communityFixture) requests() []string {
 	return append([]string(nil), fx.asked...)
 }
 
-// TestAuthorName_KeylessProfileNamesTheCreator is #420's keyless route: with
-// no key registered, GetMod reads the creator's public community profile,
-// keeps the id in Author and puts the persona name in AuthorName - and the
-// answer is cached, so a second read asks nobody.
+// detailMod mirrors the core detail path: source metadata first, then the
+// optional live author-name read. Mutation paths call GetMod alone.
+func detailMod(t *testing.T, src *steamworkshop.Source, ctx context.Context, gameID, modID string) *domain.Mod {
+	t.Helper()
+	mod, err := src.GetMod(ctx, gameID, modID)
+	require.NoError(t, err)
+	src.ResolveAuthorNames(ctx, []*domain.Mod{mod})
+	return mod
+}
+
+// TestAuthorName_KeylessProfileNamesTheCreator is #420's keyless route: a
+// detail read resolves the creator's public community profile, while GetMod
+// itself stays mutation-safe; the answer is cached for the next detail read.
 func TestAuthorName_KeylessProfileNamesTheCreator(t *testing.T) {
 	api := serveFixture(t, "getpublishedfiledetails_ok.json")
 	community := serveCommunity(t, map[string]string{creatorA: "profile_ok.xml"})
@@ -96,6 +107,9 @@ func TestAuthorName_KeylessProfileNamesTheCreator(t *testing.T) {
 	mod, err := src.GetMod(context.Background(), "1133870", "3617086610")
 	require.NoError(t, err)
 	assert.Equal(t, creatorA, mod.Author, "the id stays in author")
+	assert.Empty(t, mod.AuthorName)
+	assert.Empty(t, community.requests(), "a mutation-shaped GetMod never asks Steam Community")
+	src.ResolveAuthorNames(context.Background(), []*domain.Mod{mod})
 	assert.Equal(t, "Cargo Captain", mod.AuthorName)
 	assert.Equal(t, []string{creatorA}, community.requests())
 
@@ -148,13 +162,11 @@ func TestAuthorName_FallsBackToTheIDWhenNothingAnswers(t *testing.T) {
 		community := serveCommunity(t, nil)
 		src := newNamedSource(t, api.srv.URL, community.srv.URL, t.TempDir(), nil)
 
-		mod, err := src.GetMod(context.Background(), "1133870", "3617086610")
-		require.NoError(t, err)
+		mod := detailMod(t, src, context.Background(), "1133870", "3617086610")
 		assert.Equal(t, creatorA, mod.Author)
 		assert.Empty(t, mod.AuthorName)
 
-		_, err = src.GetMod(context.Background(), "1133870", "3617086610")
-		require.NoError(t, err)
+		_ = detailMod(t, src, context.Background(), "1133870", "3617086610")
 		assert.Len(t, community.requests(), 1, "Valve's 'not found' is remembered for the negative TTL")
 	})
 
@@ -164,13 +176,11 @@ func TestAuthorName_FallsBackToTheIDWhenNothingAnswers(t *testing.T) {
 		community.set(http.StatusForbidden, "", "")
 		src := newNamedSource(t, api.srv.URL, community.srv.URL, t.TempDir(), nil)
 
-		mod, err := src.GetMod(context.Background(), "1133870", "3617086610")
-		require.NoError(t, err, "a failed name lookup never fails the call that wanted it")
+		mod := detailMod(t, src, context.Background(), "1133870", "3617086610")
 		assert.Empty(t, mod.AuthorName)
 
 		community.set(0, creatorA, "profile_ok.xml")
-		mod, err = src.GetMod(context.Background(), "1133870", "3617086610")
-		require.NoError(t, err)
+		mod = detailMod(t, src, context.Background(), "1133870", "3617086610")
 		assert.Equal(t, "Cargo Captain", mod.AuthorName, "a refusal is not cached; the next read asks again")
 	})
 
@@ -179,8 +189,7 @@ func TestAuthorName_FallsBackToTheIDWhenNothingAnswers(t *testing.T) {
 		community := serveCommunity(t, nil)
 		src := newNamedSource(t, api.srv.URL, community.srv.URL, t.TempDir(), nil)
 		// The undated fixture's item has an empty creator: nothing to ask.
-		mod, err := src.GetMod(context.Background(), "1133870", "3617086699")
-		require.NoError(t, err)
+		mod := detailMod(t, src, context.Background(), "1133870", "3617086699")
 		assert.Empty(t, mod.AuthorName)
 		assert.Empty(t, community.requests(), "an empty creator is never looked up")
 		// Nor is a group id or a path-shaped value, which would otherwise
@@ -221,8 +230,7 @@ func TestAuthorName_APersonaNameIsMadeSafeToPrint(t *testing.T) {
 		community := serveCommunity(t, map[string]string{creatorA: "profile_hostile.xml"})
 		src := newNamedSource(t, api.srv.URL, community.srv.URL, t.TempDir(), nil)
 
-		mod, err := src.GetMod(context.Background(), "1133870", "3617086610")
-		require.NoError(t, err)
+		mod := detailMod(t, src, context.Background(), "1133870", "3617086610")
 		assert.Equal(t, "Evil Name", mod.AuthorName)
 	})
 }
@@ -235,21 +243,19 @@ func TestAuthorName_CacheHonoursTheMetadataTTLs(t *testing.T) {
 	community := serveCommunity(t, map[string]string{creatorA: "profile_ok.xml"})
 	src := newNamedSource(t, api.srv.URL, community.srv.URL, t.TempDir(), func() time.Time { return clock })
 
-	_, err := src.GetMod(context.Background(), "1133870", "3617086610")
-	require.NoError(t, err)
+	_ = detailMod(t, src, context.Background(), "1133870", "3617086610")
 	clock = clock.Add(5 * time.Hour)
 	assert.NotEmpty(t, src.CachedAuthorNames([]string{creatorA}), "within six hours")
 	clock = clock.Add(2 * time.Hour)
 	assert.Empty(t, src.CachedAuthorNames([]string{creatorA}), "past six hours the name is stale")
 
-	mod, err := src.GetMod(context.Background(), "1133870", "3617086610")
-	require.NoError(t, err)
+	mod := detailMod(t, src, context.Background(), "1133870", "3617086610")
 	assert.Equal(t, "Cargo Captain", mod.AuthorName)
 	assert.Len(t, community.requests(), 2, "a stale name is asked for again")
 }
 
 // TestAuthorName_AFailingKeyedLookupNeverSuspendsMetadata pins that the
-// keyed GetPlayerSummaries lookup has its own circuit breaker: three
+// keyed GetPlayerSummaries detail lookups have their own circuit breaker: three
 // failing name lookups on a cached item must leave GetPublishedFileDetails
 // reachable for the next one, and the key never reaches an error.
 func TestAuthorName_AFailingKeyedLookupNeverSuspendsMetadata(t *testing.T) {
@@ -283,9 +289,8 @@ func TestAuthorName_AFailingKeyedLookupNeverSuspendsMetadata(t *testing.T) {
 	src := newNamedSource(t, api.URL, community.URL, t.TempDir(), nil)
 	src.SetAPIKey(key)
 	ctx := context.Background()
-	for i := range 3 {
-		mod, err := src.GetMod(ctx, "1133870", "3617086610")
-		require.NoError(t, err, "view %d", i)
+	for range 3 {
+		mod := detailMod(t, src, ctx, "1133870", "3617086610")
 		assert.Empty(t, mod.AuthorName, "nothing answered, so the id is shown")
 	}
 
@@ -309,13 +314,11 @@ func TestAuthorName_AMalformedProfileFallsBackToTheID(t *testing.T) {
 	})
 	src := newNamedSource(t, api.srv.URL, community.URL, t.TempDir(), nil)
 
-	mod, err := src.GetMod(context.Background(), "1133870", "3617086610")
-	require.NoError(t, err)
+	mod := detailMod(t, src, context.Background(), "1133870", "3617086610")
 	assert.Equal(t, creatorA, mod.Author)
 	assert.Empty(t, mod.AuthorName)
 
-	_, err = src.GetMod(context.Background(), "1133870", "3617086610")
-	require.NoError(t, err)
+	_ = detailMod(t, src, context.Background(), "1133870", "3617086610")
 	assert.EqualValues(t, 2, hits.Load(), "an unreadable profile is not cached, so it is asked again")
 }
 
@@ -328,8 +331,7 @@ func TestAuthorName_AnOversizedProfileFallsBackToTheID(t *testing.T) {
 	community, _ := serveProfileBody(t, func() string { return body })
 	src := newNamedSource(t, api.srv.URL, community.URL, t.TempDir(), nil)
 
-	mod, err := src.GetMod(context.Background(), "1133870", "3617086610")
-	require.NoError(t, err)
+	mod := detailMod(t, src, context.Background(), "1133870", "3617086610")
 	assert.Empty(t, mod.AuthorName, "an oversized body must not yield a name")
 }
 
@@ -350,21 +352,18 @@ func TestAuthorName_ARenameShowsOnceTheCachedNameExpires(t *testing.T) {
 	src := newNamedSource(t, api.srv.URL, community.URL, t.TempDir(), func() time.Time { return clock })
 	ctx := context.Background()
 
-	mod, err := src.GetMod(ctx, "1133870", "3617086610")
-	require.NoError(t, err)
+	mod := detailMod(t, src, ctx, "1133870", "3617086610")
 	assert.Equal(t, "Old Name", mod.AuthorName)
 
 	mu.Lock()
 	name = "New Name"
 	mu.Unlock()
 	clock = clock.Add(time.Hour)
-	mod, err = src.GetMod(ctx, "1133870", "3617086610")
-	require.NoError(t, err)
+	mod = detailMod(t, src, ctx, "1133870", "3617086610")
 	assert.Equal(t, "Old Name", mod.AuthorName, "within the TTL the cached name is served")
 
 	clock = clock.Add(6 * time.Hour)
-	mod, err = src.GetMod(ctx, "1133870", "3617086610")
-	require.NoError(t, err)
+	mod = detailMod(t, src, ctx, "1133870", "3617086610")
 	assert.Equal(t, "New Name", mod.AuthorName, "after the TTL the new name is fetched")
 }
 

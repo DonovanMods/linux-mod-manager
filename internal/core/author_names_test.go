@@ -18,6 +18,21 @@ type namingSource struct {
 	asked int
 }
 
+type resolvingNamingSource struct {
+	*namingSource
+	resolved map[string]string
+	calls    int
+}
+
+func (s *resolvingNamingSource) ResolveAuthorNames(_ context.Context, mods []*domain.Mod) {
+	s.calls++
+	for _, mod := range mods {
+		if mod != nil {
+			mod.AuthorName = s.resolved[mod.Author]
+		}
+	}
+}
+
 func (s *namingSource) CachedAuthorNames(authors []string) map[string]string {
 	s.asked++
 	out := map[string]string{}
@@ -64,6 +79,29 @@ func TestListMods_StampsCachedAuthorNames(t *testing.T) {
 	row, err := svc.GetInstalledMod(ctx, "named", "a", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "Cargo Captain", row.AuthorName)
+}
+
+// TestModDetail_ResolvesAuthorNamesAfterMutationSafeGetMod proves #491's
+// split: every core flow that calls GetMod gets only an already-cached name,
+// while the detail flow is the one place that pays a live resolver.
+func TestModDetail_ResolvesAuthorNamesAfterMutationSafeGetMod(t *testing.T) {
+	svc, game, _ := newModDetailTestService(t)
+	named := &resolvingNamingSource{
+		namingSource: &namingSource{mockSource: newMockSource("named"), names: map[string]string{"7656": "Cached Name"}},
+		resolved:     map[string]string{"7656": "Live Name"},
+	}
+	named.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "named", GameID: game.ID, Name: "Mod A", Author: "7656"})
+	svc.RegisterSource(named)
+
+	mod, err := svc.GetMod(context.Background(), "named", game.ID, "a")
+	require.NoError(t, err)
+	assert.Equal(t, "Cached Name", mod.AuthorName)
+	assert.Zero(t, named.calls, "the shared GetMod path must not resolve live names")
+
+	detail, err := svc.ModDetail(context.Background(), game, "default", "named", "a")
+	require.NoError(t, err)
+	assert.Equal(t, "Live Name", detail.Mod.AuthorName)
+	assert.Equal(t, 1, named.calls)
 }
 
 // TestAuthorText is the one author rule every surface reads (#420, #459):

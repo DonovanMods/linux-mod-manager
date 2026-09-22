@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ mods:
         version: 1.2.0
         size: 4
         url: https://files.test/cool-mod-1.2.0.zip
+        updated_at: 2026-07-02T03:04:05Z
         sha256: aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd
         primary: true
   - id: other-mod
@@ -339,6 +341,7 @@ func TestManifestFilesAndDownloadURL(t *testing.T) {
 	assert.Equal(t, "cool-mod-1.2.0.zip", f.FileName)
 	assert.Equal(t, "1.2.0", f.Version)
 	assert.Equal(t, int64(4), f.Size)
+	assert.True(t, f.UploadedAt.Equal(time.Date(2026, 7, 2, 3, 4, 5, 0, time.UTC)))
 	assert.Equal(t, "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd", f.SHA256)
 	assert.True(t, f.IsPrimary)
 
@@ -348,6 +351,21 @@ func TestManifestFilesAndDownloadURL(t *testing.T) {
 
 	_, err = m.GetDownloadURL(ctx, mod, "nope")
 	assert.ErrorContains(t, err, "not found")
+}
+
+func TestManifestFileUnparseableUpdatedAtIsUnset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mods.yaml")
+	doc := strings.Replace(testManifest, "updated_at: 2026-07-02T03:04:05Z", "updated_at: yesterday-ish", 1)
+	require.NoError(t, os.WriteFile(path, []byte(doc), 0o644))
+	m, err := NewManifest(manifestDef(path))
+	require.NoError(t, err)
+
+	mod, err := m.GetMod(context.Background(), "skyrim", "cool-mod")
+	require.NoError(t, err)
+	files, err := m.GetModFiles(context.Background(), mod)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.True(t, files[0].UploadedAt.IsZero())
 }
 
 func TestManifestDownloadURLQueryAuth(t *testing.T) {

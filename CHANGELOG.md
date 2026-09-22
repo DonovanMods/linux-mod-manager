@@ -62,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Workshop persona lookups no longer delay mutations (#491).** Install,
+  update, and re-link metadata reads use a cached author name when available;
+  a live Steam Community lookup now runs only for a mod detail or search read.
+
+- **Custom manifest and API sources can report each downloadable file's date
+  (#490).** A manifest file may carry `updated_at`, and an API source may map
+  `uploaded_at`; valid RFC 3339 values reach the install picker while missing
+  or malformed values remain unset.
+
 - **CLI tables align Unicode text by terminal display width (#489).** Search,
   list, update, profile, snapshot, source, and the other command tables now
   keep their later columns aligned for accented, Cyrillic, CJK, and other

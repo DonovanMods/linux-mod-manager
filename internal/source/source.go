@@ -175,6 +175,15 @@ type AuthorNameCache interface {
 	CachedAuthorNames(authors []string) map[string]string
 }
 
+// AuthorNameResolver is implemented by sources that can resolve opaque
+// author IDs to display names. Resolution may make network requests, so core
+// uses it only for detail reads; mutations use AuthorNameCache when present.
+// Implementations update the supplied mods in place and never fail their
+// caller solely because a name cannot be resolved.
+type AuthorNameResolver interface {
+	ResolveAuthorNames(ctx context.Context, mods []*domain.Mod)
+}
+
 // BatchModDescriber is implemented by sources that can resolve MANY mods'
 // metadata in one round trip, so a flow with a list of ids in hand does not
 // have to make one GetMod call per id (#269: a workshop adopt routinely has

@@ -32,14 +32,15 @@ type manifestMod struct {
 }
 
 type manifestFile struct {
-	ID       string `yaml:"id"`
-	Name     string `yaml:"name"`
-	Filename string `yaml:"filename"`
-	Version  string `yaml:"version"`
-	Size     int64  `yaml:"size"`
-	URL      string `yaml:"url"`
-	SHA256   string `yaml:"sha256"` // optional; verified on download when present
-	Primary  bool   `yaml:"primary"`
+	ID        string `yaml:"id"`
+	Name      string `yaml:"name"`
+	Filename  string `yaml:"filename"`
+	Version   string `yaml:"version"`
+	Size      int64  `yaml:"size"`
+	URL       string `yaml:"url"`
+	UpdatedAt string `yaml:"updated_at"` // RFC 3339; unparseable -> zero value (design §4 rule)
+	SHA256    string `yaml:"sha256"`     // optional; verified on download when present
+	Primary   bool   `yaml:"primary"`
 }
 
 // parseManifest decodes and validates a manifest document. allowHTTP mirrors
