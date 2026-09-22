@@ -815,9 +815,10 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 
 // VerifyStatusDeployedModified is the status of a verify row for a copy or
 // hardlink the profile deployed whose content is no longer what lmm wrote
-// there (#466) - the user replaced or edited it. Every removal keeps such a
-// file and every deploy leaves it, so --fix does too: the row is never
-// fixable, and its note says how to take the mod's version back.
+// there (#466), or for a symlink deployment whose path now holds a non-link
+// (#483) - the user replaced or edited it. Every removal keeps such a file and
+// every deploy leaves it, so --fix does too: the row is never fixable, and its
+// note says how to take the mod's version back.
 const VerifyStatusDeployedModified = "deployed_modified"
 
 // deployedModifiedRemedy is VerifyStatusDeployedModified's remedy: delete
@@ -831,12 +832,13 @@ func deployedModifiedRemedy(sharesCache bool) string {
 }
 
 // deployedContentPass reports every file this profile deployed, under the
-// game's current mod_path, that is no longer provably lmm's (#466):
+// game's current mod_path, that is no longer provably lmm's (#466/#483):
 // VerifyStatusDeployedModified. A file that is missing is not this pass's
-// row, and neither is one with no fingerprint to compare - there is nothing
-// to say about it. A file that could not be read to compare is reported
-// the same way, since it is left alone the same way. Only a cancellation
-// ends the run; a listing that fails is a skipped row.
+// row. A fingerprintless regular file is normally unverified, except when
+// every owning installed row proves it replaced a symlink deployment. A file
+// that could not be read to compare is reported the same way, since it is
+// left alone the same way. Only a cancellation ends the run; a listing that
+// fails is a skipped row.
 func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) error {
 	rows, err := r.svc.db.ListDeployedFiles(r.ctx, r.game.ID, r.profile)
 	if err != nil {

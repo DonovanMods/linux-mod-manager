@@ -2,12 +2,14 @@
 // path still the one lmm put there?" for the copy and hardlink link methods
 // (#466), and "was it deployed under the game's current mod_path?" (#451).
 //
-// Under the symlink method the answer is on disk: lmm's file is a link into
-// its cache. Under copy and hardlink the deployed path is a regular file, so
-// a file the user replaced looked exactly like lmm's own and every removal
-// deleted it. A deploy therefore records the content it wrote - checksum,
-// size and mtime (db.FileFingerprint) - and every removal and every
-// overwrite compares before it acts.
+// Under the symlink method the answer combines disk and the installed row's
+// recorded method: lmm's file is a link into its cache, while a non-link at a
+// path recorded only by symlink deployments is the user's replacement (#483).
+// Under copy and hardlink the deployed path is a regular file, so a file the
+// user replaced looked exactly like lmm's own and every removal deleted it. A
+// deploy therefore records the content it wrote - checksum, size and mtime
+// (db.FileFingerprint) - and every removal and every overwrite compares before
+// it acts.
 //
 // Every comparison fails closed. A file that cannot be read, a record that
 // cannot be read, and a content mismatch all leave the file where it is. A
@@ -38,10 +40,10 @@ const (
 	// deployedGone: nothing is at the path.
 	deployedGone deployedVerdict = iota
 	// deployedOurs: the file is lmm's - its content matches a recorded
-	// fingerprint or the mod's cached copy, or it is a link lmm made (one
-	// into the game's cache, or one a record of the acting profile names
-	// without a fingerprint: a symlink deployment, whose link is its
-	// identity).
+	// fingerprint or the mod's cached copy, or it is a link lmm made into
+	// the game's cache. A fingerprintless record is not enough by itself:
+	// its installed row's method distinguishes a symlink deployment from a
+	// legacy copy/hardlink (#483).
 	deployedOurs
 	// deployedUnverified: a regular file that records name but none
 	// fingerprints, and the mod's cached copy is not there to compare
@@ -209,6 +211,22 @@ func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudg
 		return deployedJudgement{verdict: deployedUsers, recorded: true, unchecked: true, reason: fmt.Sprintf("its record could not be read (%v)", err)}
 	}
 	j := deployedJudgement{recorded: len(states) > 0, regular: info.Mode().IsRegular()}
+	// #483: a symlink deployment cannot leave a regular file, directory or
+	// other non-link object behind. If every installed row that records this
+	// path says it used symlinks, what is there now is therefore the user's
+	// replacement. This runs before fingerprint handling because symlink rows
+	// deliberately have none; treating that absence as "unverified" let every
+	// deploy remove the user's object. A copy/hardlink or unknown claimant
+	// keeps the old conservative answer: another profile may own the regular
+	// file, and a bare deployed_files row does not prove its method.
+	if st := symlinkReplacementState(states, info.Mode()); st != nil {
+		j.kept = st
+		j.verdict = deployedUsers
+		// Keep #469's established user-facing explanation: purge and verify
+		// already expose it, and deploy now uses the same shared judgement.
+		j.reason = replacedLinkNote
+		return j
+	}
 	if !j.regular {
 		return jd.judgeLink(j, info, states, dst)
 	}
@@ -264,6 +282,25 @@ func (jd deployedJudge) judge(ctx context.Context, rel, dst string) deployedJudg
 	j.verdict, j.reason = deployedUsers, "its content changed after lmm deployed it"
 	j.sharesCache = jd.sharesCache(info, states, rel)
 	return j
+}
+
+// symlinkReplacementState returns a representative record when mode is not
+// a symlink and every installed row recording the path says it was deployed
+// by symlink. A nil method (the installed row is gone) or any copy/hardlink
+// claimant makes the provenance ambiguous and preserves the historical
+// unverified judgement. This game-wide test is deliberate: the deployed tree
+// is shared by its profiles, so a switch into a profile with no row of its own
+// must still recognize a link another profile recorded and the user replaced.
+func symlinkReplacementState(states []db.DeployedFileState, mode fs.FileMode) *db.DeployedFileState {
+	if mode&fs.ModeSymlink != 0 || len(states) == 0 {
+		return nil
+	}
+	for idx := range states {
+		if states[idx].LinkMethod == nil || *states[idx].LinkMethod != domain.LinkSymlink {
+			return nil
+		}
+	}
+	return &states[0]
 }
 
 // judgeLink is judge for a path that holds something other than a regular

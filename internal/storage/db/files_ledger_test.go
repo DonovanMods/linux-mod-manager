@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
@@ -145,6 +146,50 @@ func TestDeployedFileStates_EveryProfilesRecord(t *testing.T) {
 	none, err := database.DeployedFileStates(ctx, "g", "z")
 	require.NoError(t, err)
 	assert.Empty(t, none)
+}
+
+// TestDeployedFileStates_CarriesTheOwningRowsLinkMethod pins #483's
+// provenance read. A fingerprintless deployed-file row says only that lmm
+// recorded the path; the joined installed row is what distinguishes a link
+// the user replaced from a legacy copy/hardlink. A residual record whose
+// installed row is gone must stay unknown rather than defaulting to symlink.
+func TestDeployedFileStates_CarriesTheOwningRowsLinkMethod(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	ctx := t.Context()
+
+	for _, row := range []domain.InstalledMod{
+		{Mod: domain.Mod{SourceID: "s", ID: "sym", GameID: "g"}, ProfileName: "a", LinkMethod: domain.LinkSymlink},
+		{Mod: domain.Mod{SourceID: "s", ID: "copy", GameID: "g"}, ProfileName: "b", LinkMethod: domain.LinkCopy},
+	} {
+		row := row
+		require.NoError(t, database.SaveInstalledMod(ctx, &row))
+	}
+	for _, rec := range []db.DeployedFileRecord{
+		{GameID: "g", Profile: "a", RelativePath: "sym", SourceID: "s", ModID: "sym"},
+		{GameID: "g", Profile: "b", RelativePath: "copy", SourceID: "s", ModID: "copy"},
+		{GameID: "g", Profile: "c", RelativePath: "residual", SourceID: "s", ModID: "gone"},
+	} {
+		require.NoError(t, database.RecordDeployedFile(ctx, rec))
+	}
+
+	states, err := database.DeployedFileStates(ctx, "g", "sym")
+	require.NoError(t, err)
+	require.Len(t, states, 1)
+	require.NotNil(t, states[0].LinkMethod)
+	assert.Equal(t, domain.LinkSymlink, *states[0].LinkMethod)
+
+	states, err = database.DeployedFileStates(ctx, "g", "copy")
+	require.NoError(t, err)
+	require.Len(t, states, 1)
+	require.NotNil(t, states[0].LinkMethod)
+	assert.Equal(t, domain.LinkCopy, *states[0].LinkMethod)
+
+	states, err = database.DeployedFileStates(ctx, "g", "residual")
+	require.NoError(t, err)
+	require.Len(t, states, 1)
+	assert.Nil(t, states[0].LinkMethod)
 }
 
 // TestDeployedFileRoots_CountsPerProfileAndRecordedModPath (#451).
