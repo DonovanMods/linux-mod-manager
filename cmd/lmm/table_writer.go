@@ -10,7 +10,7 @@ import (
 
 // displayWidthTableWriter is the narrow tabwriter-shaped surface the CLI
 // tables need. It buffers tab-delimited rows until Flush so padding can use
-// terminal display width rather than UTF-8 byte length.
+// terminal display width rather than rune count.
 //
 // The command tables use text/tabwriter's default layout: each non-final cell
 // is followed by two spaces, and a final empty cell (from a trailing tab)

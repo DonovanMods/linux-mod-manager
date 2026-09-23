@@ -350,11 +350,25 @@ func TestService_PurgeProfile_SetModDeployedFailure_NonFatalNote(t *testing.T) {
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
-	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, nil)
+	sink, seen := core.RecordEvents()
+	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Purged)
 	require.NotEmpty(t, result.Notes)
 	assert.Contains(t, result.Notes[0], "⚠ Test Mod - failed to mark as not deployed:")
+	var notes []core.StepEvent
+	for _, event := range *seen {
+		if note, ok := event.(core.StepEvent); ok && note.Phase == core.PurgeNote {
+			notes = append(notes, note)
+		}
+	}
+	require.Len(t, notes, 1)
+	assert.Equal(t, result.Notes[0], notes[0].Detail)
+	assert.Equal(t, core.OpPurge, notes[0].Op)
+	assert.Equal(t, "Test Mod", notes[0].ModName)
+	assert.Equal(t, &domain.ModReference{SourceID: "src", ModID: "1"}, notes[0].Mod)
+	assert.Equal(t, 1, notes[0].Index)
+	assert.Equal(t, 1, notes[0].Total)
 }
 
 func TestService_PurgeProfile_Uninstall_DeleteRecordFailure_CountsFailedSkipsAfterEachAndSuccess(t *testing.T) {

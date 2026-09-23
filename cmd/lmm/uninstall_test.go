@@ -500,14 +500,14 @@ func TestPrintStrandedUninstallHint(t *testing.T) {
 		{Path: "Data/b.esp", ModPath: "/old/mods"},
 	}
 	out := captureStdout(t, func() error {
-		printStrandedUninstallHint("alt", stranded, false)
+		printStrandedUninstallHint("selected-game", "alt", stranded, false)
 		return nil
 	})
-	assert.Equal(t, "  2 file(s) deployed under an earlier mod_path are left for `lmm purge -p alt`\n", out)
+	assert.Equal(t, "  2 file(s) deployed under an earlier mod_path are left for `lmm purge -p alt --game selected-game`\n", out)
 
 	dryRun := captureStdout(t, func() error {
-		printStrandedUninstallHint("alt", stranded[:1], true)
+		printStrandedUninstallHint("selected-game", "alt", stranded[:1], true)
 		return nil
 	})
-	assert.Equal(t, "  1 file(s) deployed under an earlier mod_path would be left for `lmm purge -p alt`\n", dryRun)
+	assert.Equal(t, "  1 file(s) deployed under an earlier mod_path would be left for `lmm purge -p alt --game selected-game`\n", dryRun)
 }

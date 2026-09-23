@@ -209,6 +209,41 @@ func TestLoaderStatus_UnknownGame(t *testing.T) {
 	assert.ErrorIs(t, err, domain.ErrGameNotFound)
 }
 
+func TestPublicGameQueriesOwnNestedFields(t *testing.T) {
+	ctx := context.Background()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), InstallPath: t.TempDir(),
+		SourceIDs: map[string]string{"src": "original"}, Loader: &domain.GameLoader{Kind: "bepinex", Version: "original"}}
+	require.NoError(t, svc.SaveGame(ctx, game))
+
+	assertUnchanged := func() {
+		t.Helper()
+		got, err := svc.GetGame("g1")
+		require.NoError(t, err)
+		assert.Equal(t, "original", got.SourceIDs["src"])
+		assert.Equal(t, "original", got.Loader.Version)
+	}
+	entries, err := svc.ListGameEntries(ctx)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	entries[0].SourceIDs["src"] = "list mutation"
+	entries[0].Loader.Version = "list mutation"
+	assertUnchanged()
+
+	detail, err := svc.GameDetail(ctx, "g1")
+	require.NoError(t, err)
+	detail.SourceIDs["src"] = "detail mutation"
+	detail.Game.Loader.Version = "detail mutation"
+	detail.Loader.Declared.Version = "declared mutation"
+	assertUnchanged()
+
+	status, err := svc.LoaderStatus(ctx, "g1")
+	require.NoError(t, err)
+	status.Declared.Version = "status mutation"
+	assertUnchanged()
+	assert.Equal(t, "original", game.Loader.Version, "queries must not mutate the caller's game")
+}
+
 // TestLoaderStatus_AGameWithNothingLoaderShapedIsNotRelevant is review F7's
 // core half: the "set it with --loader-bootstrap" warning was appended
 // unconditionally, so `lmm game show icarus` - an Unreal game that neither

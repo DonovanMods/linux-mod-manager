@@ -794,7 +794,7 @@ func (s *Service) ListGameEntries(ctx context.Context) ([]GameListEntry, error) 
 // costs the same again plus one DB read (ModPathProblem), and its failure
 // is the entry's.
 func (s *Service) newGameListEntry(ctx context.Context, game *domain.Game, defaultGameID string) (GameListEntry, error) {
-	entry := GameListEntry{Game: *game, Default: game.ID == defaultGameID}
+	entry := GameListEntry{Game: *copyGame(game), Default: game.ID == defaultGameID}
 	name := s.AdapterName(game)
 	switch _, err := s.adapterForName(game, name); {
 	case err != nil:

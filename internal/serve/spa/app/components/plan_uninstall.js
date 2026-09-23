@@ -17,11 +17,17 @@ import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
 const UNINSTALL_EXTERNAL_NOTE =
   "this only stops lmm tracking it; the item stays subscribed in Steam - unsubscribe in the Steam client to remove it";
 
+function shellQuoteArg(value) {
+  if (/^[A-Za-z0-9_./-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
 /** UninstallPlanView renders core.UninstallPlan (internal/core/uninstall.go). */
 export function UninstallPlanView({ plan, modal, actions }) {
   const files = plan.files ?? [];
   const hooks = plan.hooks ?? [];
   const stranded = plan.stranded ?? [];
+  const purgeCommand = `lmm purge -p ${shellQuoteArg(plan.mod.profile_name)} --game ${shellQuoteArg(plan.mod.game_id)}`;
 
   return html`
     <div class="plan plan--uninstall">
@@ -88,7 +94,8 @@ export function UninstallPlanView({ plan, modal, actions }) {
                 >
                   ${stranded.length} file${stranded.length === 1 ? "" : "s"}
                   deployed under an earlier mod path are left for a profile
-                  purge: <code>lmm purge -p ${plan.mod.profile_name}</code>.
+                  purge:
+                  <code>${purgeCommand}</code>.
                 </p>`
               }
             `

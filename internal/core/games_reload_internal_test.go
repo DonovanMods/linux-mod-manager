@@ -88,7 +88,11 @@ func TestReloadGames_DropsTheVerifyMemoWhenTheGameSetChanges(t *testing.T) {
 		"        name: Fixture\n" +
 		"        install_path: " + moved + "\n" +
 		"        mod_path: " + moved + "\n" +
-		"        link_method: symlink\n"
+		"        link_method: symlink\n" +
+		"# repointed\n"
+	// Temp paths often have equal lengths, and a hosted filesystem can
+	// stamp two immediate rewrites with the same mtime. Make the stat-only
+	// reload witness deterministic while still repointing the mod path.
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "games.yaml"), []byte(body), 0o644))
 
 	reloaded, err = svc.ReloadGames()
