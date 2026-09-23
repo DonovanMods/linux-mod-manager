@@ -3476,6 +3476,10 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
   minute and then report that the server had not answered; it now settles
   as soon as the library itself has been re-read.
 
+### Documentation
+
+- Added the current v2.0.0 release-readiness checklist (#495): [checklist](docs/plans/2026-09-22-v2-release-checklist.md) records stabilization evidence, pending owner checks, and tag/publish steps
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes
@@ -4445,7 +4449,6 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
 
 ### Documentation
 
-- Added the current v2.0.0 release-readiness checklist (#495): [checklist](docs/plans/2026-09-22-v2-release-checklist.md) records stabilization evidence, pending owner checks, and tag/publish steps
 - README currency pass: TUI search described as infinite scroll (`n`/`p` skip a paneful — the old "next/previous page" wording predated v1.19.0), dependency auto-install marked shipped in the Roadmap (contradicted the Features list), architecture tree gained `internal/tui` and the `custom`/`steam`/`httpclient` source packages, the commands table gained `import`, `game add`, `game detect`, `mod edit`, and the missing `install`/`uninstall` flags, plus new Exit Codes and Import sections, file locations for `sources/*.yaml` and the `downloads/` staging dir, and a CHANGELOG link
 - `docs/configuration.md`: profile-level `link_method` is now documented as parsed-but-inert at deploy time (#81) — effective precedence is game-level then global — and the file gained a Custom Sources cross-reference it always claimed to have
 - The original PRD moved to `docs/plans/archive/2026-01-22-PRD.md` with a historical banner (OAuth, a Settings screen, and its `games.yaml` schema never shipped as written)

@@ -70,8 +70,11 @@ Coordinator final evidence recorded before this checklist was finalized:
 ## Tag and publication sequence
 
 1. After the owner checks and final gates pass, prepare the release commit on
-   `v2`: move `[Unreleased]` into a dated `v2.0.0` section in `CHANGELOG.md`,
-   add the comparison link, and regenerate man pages if they changed. Keep
+   `v2`: fold `[Unreleased]` into the single existing retracted
+   `## [2.0.0] - 2026-08-30` section in `CHANGELOG.md`, re-date that section
+   to the actual cut date, and leave a fresh `[Unreleased]` heading. Reuse or
+   update its existing `[2.0.0]` comparison reference; do not add a second
+   v2.0.0 section or reference. Regenerate man pages if they changed. Keep
    `cmd/lmm/root.go` at `2.0.0` and the module path at `/v2`.
 2. Review the release diff, run `make test`, `make vet`, and `make man`, then
    commit the release preparation on `v2`.
