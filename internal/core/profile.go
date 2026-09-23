@@ -845,8 +845,8 @@ func purgeCommands(gameID string, names []string) string {
 // Plain IDs remain readable; a name with shell syntax is single quoted.
 func ShellQuoteArg(arg string) string {
 	if arg != "" && strings.IndexFunc(arg, func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' || r == '/')
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') &&
+			(r < '0' || r > '9') && r != '-' && r != '_' && r != '.' && r != '/'
 	}) == -1 {
 		return arg
 	}

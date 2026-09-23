@@ -227,7 +227,7 @@ func TestPublicGameQueriesOwnNestedFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	entries[0].SourceIDs["src"] = "list mutation"
-	entries[0].Game.Loader.Version = "list mutation"
+	entries[0].Loader.Version = "list mutation"
 	assertUnchanged()
 
 	detail, err := svc.GameDetail(ctx, "g1")

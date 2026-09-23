@@ -27,6 +27,7 @@ export function UninstallPlanView({ plan, modal, actions }) {
   const files = plan.files ?? [];
   const hooks = plan.hooks ?? [];
   const stranded = plan.stranded ?? [];
+  const purgeCommand = `lmm purge -p ${shellQuoteArg(plan.mod.profile_name)} --game ${shellQuoteArg(plan.mod.game_id)}`;
 
   return html`
     <div class="plan plan--uninstall">
@@ -94,10 +95,7 @@ export function UninstallPlanView({ plan, modal, actions }) {
                   ${stranded.length} file${stranded.length === 1 ? "" : "s"}
                   deployed under an earlier mod path are left for a profile
                   purge:
-                  <code
-                    >lmm purge -p ${shellQuoteArg(plan.mod.profile_name)} --game
-                    ${shellQuoteArg(plan.mod.game_id)}</code
-                  >.
+                  <code>${purgeCommand}</code>.
                 </p>`
               }
             `

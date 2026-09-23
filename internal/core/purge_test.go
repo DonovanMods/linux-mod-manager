@@ -364,11 +364,11 @@ func TestService_PurgeProfile_SetModDeployedFailure_NonFatalNote(t *testing.T) {
 	}
 	require.Len(t, notes, 1)
 	assert.Equal(t, result.Notes[0], notes[0].Detail)
-	assert.Equal(t, core.OpPurge, notes[0].Scope.Op)
-	assert.Equal(t, "Test Mod", notes[0].Scope.ModName)
-	assert.Equal(t, &domain.ModReference{SourceID: "src", ModID: "1"}, notes[0].Scope.Mod)
-	assert.Equal(t, 1, notes[0].Scope.Index)
-	assert.Equal(t, 1, notes[0].Scope.Total)
+	assert.Equal(t, core.OpPurge, notes[0].Op)
+	assert.Equal(t, "Test Mod", notes[0].ModName)
+	assert.Equal(t, &domain.ModReference{SourceID: "src", ModID: "1"}, notes[0].Mod)
+	assert.Equal(t, 1, notes[0].Index)
+	assert.Equal(t, 1, notes[0].Total)
 }
 
 func TestService_PurgeProfile_Uninstall_DeleteRecordFailure_CountsFailedSkipsAfterEachAndSuccess(t *testing.T) {
