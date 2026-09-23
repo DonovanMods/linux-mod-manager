@@ -6545,6 +6545,17 @@ func TestE2E_DeployAllIncludesDisabledMods(t *testing.T) {
 
 	assert.Equal(t, 2, before, "the default full-profile deploy skips the disabled mod")
 	assert.Equal(t, 3, after, "and --all re-plans to include it")
+	var jobState string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, chromedp.Evaluate(`
+			fetch('/api/v1/jobs').then(r => r.json())
+				.then(index => fetch('/api/v1/jobs/' + index.jobs[0].id))
+				.then(r => r.json())
+				.then(job => job.state)
+		`, &jobState, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
+		return jobState == "succeeded" || jobState == "failed"
+	}, 10*time.Second, 50*time.Millisecond, "the deploy job must reach a terminal state")
+	assert.Equal(t, "succeeded", jobState, "deploying all mods must succeed")
 
 	require.Eventually(t, func() bool {
 		_, err := os.Stat(filepath.Join(f.Game.ModPath, "gamma.pak"))
