@@ -3476,6 +3476,10 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
   minute and then report that the server had not answered; it now settles
   as soon as the library itself has been re-read.
 
+### Documentation
+
+- Added the current v2.0.0 release-readiness checklist (#495): [checklist](docs/plans/2026-09-22-v2-release-checklist.md) records stabilization evidence, pending owner checks, and tag/publish steps
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes
