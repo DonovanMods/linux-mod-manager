@@ -390,11 +390,18 @@ func TestE2E_RichText_HostileInputRendersInertAndNeverThrows(t *testing.T) {
 // (issue 419): unclosed tags, unclosed code blocks, unterminated arguments
 // and emphasis runs that never close each parsed in time quadratic in their
 // length, and RichText parsed again on every render. Each now parses and
-// renders in well under half a second; a description over 256 KB is shown
-// as plain text, with a note saying so.
+// renders quickly; a description over 256 KB is shown as plain text, with a
+// note saying so.
+//
+// The budget guards the QUADRATIC regression, not absolute speed (#498).
+// The quadratic shapes took about 17 s before the fix; the slowest shape
+// now takes about 150 ms locally, and the worst seen on a hosted, CPU-
+// contended runner under -race was 706 ms - which failed the original 500 ms
+// budget three times on a runner that was merely slow. 3000 ms clears that
+// with a 4x margin and still fails a quadratic regression by more than 5x.
 func TestE2E_RichText_ShapedInputRendersQuickly(t *testing.T) {
 	rep := strings.Repeat
-	const budgetMs = 500
+	const budgetMs = 3000
 	realisticBB := rep("[b]Features[/b]\n[list][*]Adds [i]more[/i] room\n[*]See [url=https://example.com/a]the docs[/url]\n[/list]\n[quote]Nice[/quote]\n\n", 12000)
 	cases := []struct {
 		name, in, family string

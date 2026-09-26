@@ -394,9 +394,7 @@ func newE2EMultiGameFixture(t *testing.T) e2eMultiGameFixture {
 
 func (f e2eMultiGameFixture) runInBrowser(t *testing.T, actions ...chromedp.Action) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(f.Ctx, e2eTimeout)
-	defer cancel()
-	require.NoError(t, chromedp.Run(ctx, actions...))
+	runE2EActions(t, f.Ctx, actions)
 }
 
 // startE2EServer binds a loopback listener, serves svc on it, and returns
@@ -677,9 +675,52 @@ func ignorableBrowserError(entry *log.Entry) bool {
 // runInBrowser runs actions against f's browser under the harness timeout.
 func (f e2eFixture) runInBrowser(t *testing.T, actions ...chromedp.Action) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(f.Ctx, e2eTimeout)
+	runE2EActions(t, f.Ctx, actions)
+}
+
+// runE2EActions is the one body both fixtures' runInBrowser share: one
+// chromedp.Run under ONE e2eTimeout budget, where a failure or a timeout
+// names the action it happened in (#498). A 60s wait on a selector that
+// never appeared used to surface as a bare "context deadline exceeded" from
+// the harness line, which took forensics on a hosted runner to attribute.
+//
+// Each action is wrapped in an ActionFunc that only annotates the error, so
+// this is still a single Run. And browserCtx must still be the long-lived
+// context newE2EBrowser returned: the FIRST Run (there) is what allocates
+// the browser and ties its lifetime to that context, so only the per-call
+// timeout child is made here, once the browser exists.
+func runE2EActions(t *testing.T, browserCtx context.Context, actions []chromedp.Action) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(browserCtx, e2eTimeout)
 	defer cancel()
-	require.NoError(t, chromedp.Run(ctx, actions...))
+	named := make([]chromedp.Action, len(actions))
+	for i, a := range actions {
+		named[i] = chromedp.ActionFunc(func(ctx context.Context) error {
+			if err := a.Do(ctx); err != nil {
+				return fmt.Errorf("browser action %d of %d (%s): %w", i+1, len(actions), describeE2EAction(a), err)
+			}
+			return nil
+		})
+	}
+	require.NoError(t, chromedp.Run(ctx, named...))
+}
+
+// describeE2EAction is a readable name for one chromedp action in a failure
+// message: its Go type, plus the selector when the action carries one
+// (#498). chromedp keeps a query action's selector in an unexported field of
+// *chromedp.Selector, so it is read back out of the %+v rendering
+// ("&{sel:.modal .plan fromNode:..."): a best-effort label, never
+// load-bearing. Navigate, Evaluate and the harness's own ActionFuncs carry
+// nothing to print, so the index in the message is what locates those.
+func describeE2EAction(a chromedp.Action) string {
+	desc := fmt.Sprintf("%T", a)
+	rendered := fmt.Sprintf("%+v", a)
+	if _, rest, ok := strings.Cut(rendered, "sel:"); ok {
+		if sel, _, ok := strings.Cut(rest, " fromNode:"); ok {
+			desc += " " + sel
+		}
+	}
+	return desc
 }
 
 // textContent reads an element's raw textContent with its whitespace
