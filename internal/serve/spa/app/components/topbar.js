@@ -48,6 +48,7 @@ export function TopBar({
   games,
   route,
   mods,
+  modsKnown,
   query,
   onQueryChange,
   onThemeChange,
@@ -172,15 +173,24 @@ export function TopBar({
           actions=${actions}
         ><//>
       </span>
-      <span
-        class="deploy-indicator ${undeployed > 0 ? "deploy-indicator--pending" : ""}"
-      >
-        ${
-          undeployed > 0
-            ? `${undeployed} change${undeployed === 1 ? "" : "s"} undeployed`
-            : "Deployed"
-        }
-      </span>
+      ${
+        // issue 498: no verdict until the mod list has been answered (or has
+        // failed - the page then still does not know, so still says
+        // nothing). countUndeployed(null) is 0, so rendering it here
+        // claimed "Deployed" for as long as /api/v1/mods was in flight, and
+        // the text that replaced it moved the Deploy button under a click
+        // already on its way.
+        modsKnown &&
+        html`<span
+          class="deploy-indicator ${undeployed > 0 ? "deploy-indicator--pending" : ""}"
+        >
+          ${
+            undeployed > 0
+              ? `${undeployed} change${undeployed === 1 ? "" : "s"} undeployed`
+              : "Deployed"
+          }
+        </span>`
+      }
       <${InlineJob} origin=${DEPLOY_ORIGIN} state=${state} actions=${actions}>
         <button
           type="button"
