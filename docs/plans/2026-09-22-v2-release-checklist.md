@@ -43,6 +43,7 @@ Coordinator final evidence recorded before this checklist was finalized:
 | --- | --- | --- |
 | `make test-race` on the finalized tree | PASS | `/tmp/lmm-v2-verified-race.log` |
 | Hosted CI run #35800961386 | FAIL; release blocker | [GitHub Actions](https://github.com/DonovanMods/linux-mod-manager/actions/runs/35800961386); `/tmp/lmm-v2-ci-35800961386-failure.log`; two failing serve E2E checks listed above |
+| Hosted CI run #36218650617 on `7fab2f91` (#498 fix) | PASS | [GitHub Actions](https://github.com/DonovanMods/linux-mod-manager/actions/runs/36218650617); the serve race suite passed in 784 s |
 
 ## Owner checks before tagging
 
@@ -63,9 +64,12 @@ Coordinator final evidence recorded before this checklist was finalized:
   help/version and representative profile workflow; web UI launch, primary
   navigation, a representative mutation, and keyboard/focus behavior. These
   owner checks remain undone; automated Go tests are not a substitute.
-- [ ] Resolve the two hosted CI serve E2E failures above, rerun hosted CI, and
-  confirm a green result before proceeding. Local race, normal tests, vet, build,
-  and lint passed; that does not waive this hosted release gate.
+- [x] Resolve the two hosted CI serve E2E failures above, rerun hosted CI, and
+  confirm a green result before proceeding. Done in #498 (merged as
+  `7fab2f91`): the serve failures shared one cause, a hydration race that
+  moved the Deploy button, and hosted run
+  [#36218650617](https://github.com/DonovanMods/linux-mod-manager/actions/runs/36218650617)
+  is green. Re-confirm hosted CI on the final release commit.
 
 ## Tag and publication sequence
 
