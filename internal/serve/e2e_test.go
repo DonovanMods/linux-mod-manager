@@ -862,6 +862,37 @@ func TestE2E_DeployOpensAConfirmModalRenderingThePlan(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_DeployIndicatorMakesNoClaimBeforeTheModListLands pins #498: the
+// top bar's deploy indicator read "Deployed" for as long as /api/v1/mods was
+// still in flight (countUndeployed(null) is 0), which is a claim the page
+// had no basis for - and when the list landed the text became "N changes
+// undeployed", moving the Deploy button under a click that was already on
+// its way. The mods read is held here (the delaying proxy every other race
+// scenario uses), so the gap is a certainty rather than a scheduler's
+// choice: the indicator must say nothing, the hydrated marker must not have
+// been raised, and both must settle once the list lands.
+func TestE2E_DeployIndicatorMakesNoClaimBeforeTheModListLands(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+	f.BaseURL = startE2EDelayingProxy(t, f.BaseURL, 4*time.Second, func(r *http.Request) bool {
+		return r.Method == http.MethodGet && r.URL.Path == "/api/v1/mods"
+	})
+
+	var during, hydratedDuring, after string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control`, chromedp.ByQuery),
+		chromedp.Evaluate(`(document.querySelector('.deploy-indicator')?.textContent ?? '').trim()`, &during),
+		chromedp.Evaluate(`document.querySelector('.mission-control').getAttribute('data-hydrated') ?? ''`, &hydratedDuring),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		textContent(`.deploy-indicator`, &after),
+	)
+
+	assert.Empty(t, during, "the indicator claims neither state while the mod list is unknown")
+	assert.NotEqual(t, "true", hydratedDuring, "hydrated means the home reads settled, not just that status did")
+	assert.Equal(t, "2 changes undeployed", after)
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_ConfirmModalCancelsWithoutMutating is the other half of a
 // confirm: Cancel closes it and nothing happened. The proof that nothing
 // happened is the undeployed indicator, which still counts both mods -

@@ -1680,6 +1680,11 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The deploy indicator no longer claims "Deployed" before the page
+  knows (#498).** The web top bar read "Deployed" for as long as the mod
+  list was still loading, then switched to "N changes undeployed" and moved
+  the Deploy button. It now shows nothing until the list has arrived.
+
 - **Profile attention waits for the installed-mod read (#498).** The web
   card now computes profile drift only after both status and mod documents
   arrive, so slow hosted or local reads cannot briefly offer the wrong

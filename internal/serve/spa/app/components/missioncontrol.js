@@ -130,14 +130,26 @@ export function MissionControl({ state, onThemeChange, actions }) {
           .join(" · ")
       : "";
 
+  // issue 498: hydrated means the home view's reads have SETTLED, not merely
+  // that status arrived. main.js commits mods/updates/health/conflicts/
+  // snapshots together, after status, so a settled mods read (a list, or its
+  // failure) is the proof the whole batch landed. Raising the marker on
+  // status alone let a test - or a fast user - act on a top bar whose layout
+  // was still about to change when the mod list arrived.
+  const homeSettled = mods !== null || Boolean(fetchErrors?.mods);
+
   return html`
-    <div class="mission-control" data-hydrated="true">
+    <div
+      class="mission-control"
+      data-hydrated=${homeSettled ? "true" : "false"}
+    >
       <${TopBar}
         state=${state}
         status=${status}
         games=${games}
         route=${route}
         mods=${mods?.mods}
+        modsKnown=${mods !== null}
         query=${query}
         onQueryChange=${setQuery}
         onThemeChange=${onThemeChange}
