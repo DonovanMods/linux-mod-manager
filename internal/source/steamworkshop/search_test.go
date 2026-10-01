@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/steamworkshop"
 	"github.com/stretchr/testify/assert"
@@ -174,4 +175,29 @@ func TestSearch_ThrottlingIsRetried(t *testing.T) {
 	require.NoError(t, err, "the Tier-1 retry transport carries Tier-2 search too")
 	assert.Len(t, res.Mods, 2)
 	assert.Equal(t, 2, fx.calls)
+}
+
+// TestCapabilities_SortsAreTheOnesASearchHitCanFill pins #503: a hit carries
+// time_updated and lifetime_subscriptions, so updated and downloads are
+// declared; the Workshop has no endorsement count, so popular is not; and
+// Search does not forward the sort to Valve (query_type is unchanged).
+func TestCapabilities_SortsAreTheOnesASearchHitCanFill(t *testing.T) {
+	fx := serveRoutes(t, reply{file: "queryfiles_page1.json"})
+	src := keyedSource(t, fx.srv.URL, nil)
+
+	caps := src.Capabilities()
+	assert.Equal(t, []domain.SearchSort{domain.SortUpdated, domain.SortDownloads}, caps.Sorts)
+	assert.True(t, caps.SupportsSort(domain.SortUpdated))
+	assert.True(t, caps.SupportsSort(domain.SortDownloads))
+	assert.False(t, caps.SupportsSort(domain.SortPopular))
+
+	res, err := src.Search(context.Background(), source.SearchQuery{GameID: "1133870", Sort: domain.SortDownloads})
+	require.NoError(t, err)
+	require.NotEmpty(t, res.Mods)
+	for _, m := range res.Mods {
+		assert.False(t, m.UpdatedAt.IsZero(), "%s: a declared sort's field is filled", m.ID)
+		assert.NotZero(t, m.Downloads, "%s: a declared sort's field is filled", m.ID)
+		assert.Nil(t, m.Endorsements)
+	}
+	assert.Equal(t, "3", fx.requests[0].Get("query_type"), "the sort is not forwarded to QueryFiles")
 }

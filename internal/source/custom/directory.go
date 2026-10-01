@@ -62,9 +62,11 @@ func (d *Directory) ExchangeToken(ctx context.Context, code string) (*source.Tok
 	return nil, fmt.Errorf("source %q: authentication: %w", d.id, source.ErrNotSupported)
 }
 
-// Capabilities implements source.CapabilityReporter.
+// Capabilities implements source.CapabilityReporter. Sorts is updated alone
+// (#503): an entry's modification time is the one date a directory has, and
+// there is no download or endorsement count to read from a folder.
 func (d *Directory) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Updates: true}
+	return source.Capabilities{Search: true, Updates: true, Sorts: []domain.SearchSort{domain.SortUpdated}}
 }
 
 // TypeLabel implements source.TypeLabeler.

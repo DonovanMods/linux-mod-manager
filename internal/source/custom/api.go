@@ -151,13 +151,29 @@ func (a *API) IsAuthenticated() bool { return a.apiKey != "" }
 
 // Capabilities implements source.CapabilityReporter: an undefined endpoint is
 // an unsupported capability (design §4/§7).
+//
+// Sorts (#503) lists the orderings the definition's mod mapping can fill:
+// updated_at and downloads, when the definition maps them (endorsements has
+// no mapping key). Search is delegated to the user's endpoint and this
+// source never forwards a sort, so these claim only that the hits carry the
+// field; core orders the page that comes back.
 func (a *API) Capabilities() source.Capabilities {
+	var sorts []domain.SearchSort
+	if a.endpoints.Search != nil {
+		if _, ok := a.mappings.Mod["updated_at"]; ok {
+			sorts = append(sorts, domain.SortUpdated)
+		}
+		if _, ok := a.mappings.Mod["downloads"]; ok {
+			sorts = append(sorts, domain.SortDownloads)
+		}
+	}
 	return source.Capabilities{
 		Search:       a.endpoints.Search != nil,
 		Dependencies: a.endpoints.Dependencies != nil,
 		Updates:      a.endpoints.GetMod != nil,
 		Auth:         a.auth != nil,
 		Versions:     a.endpoints.ModFiles != nil,
+		Sorts:        sorts,
 	}
 }
 

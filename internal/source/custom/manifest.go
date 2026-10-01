@@ -248,9 +248,14 @@ func (m *Manifest) ExchangeToken(ctx context.Context, code string) (*source.Toke
 }
 
 // Capabilities implements source.CapabilityReporter. Auth reflects whether the
-// definition declares an auth block.
+// definition declares an auth block. Sorts is updated alone (#503): a
+// manifest entry may carry updated_at (an undated one sorts last), and the
+// schema has no download or endorsement count. Capabilities is answered
+// without fetching the document, so this is a fact about the schema, not
+// about which entries happen to be dated.
 func (m *Manifest) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: m.auth != nil, Versions: true}
+	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: m.auth != nil, Versions: true,
+		Sorts: []domain.SearchSort{domain.SortUpdated}}
 }
 
 // TypeLabel implements source.TypeLabeler.
