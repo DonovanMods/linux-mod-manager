@@ -3,6 +3,7 @@ package source_test
 import (
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
@@ -73,9 +74,14 @@ func TestTypeLabels(t *testing.T) {
 
 // TestBuiltinCapabilitiesExplicit pins that both built-ins declare
 // Capabilities() explicitly (all true) rather than relying on the
-// CapabilitiesOf default.
+// CapabilitiesOf default - and, since #503, the three sorts their hits carry
+// the data for: UpdatedAt, Downloads and Endorsements all come back in a
+// search from both.
 func TestBuiltinCapabilitiesExplicit(t *testing.T) {
-	all := source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}
+	all := source.Capabilities{
+		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
+		Sorts: []domain.SearchSort{domain.SortUpdated, domain.SortDownloads, domain.SortPopular},
+	}
 
 	nm, ok := source.ModSource(nexusmods.New(nil, "")).(source.CapabilityReporter)
 	require.True(t, ok, "NexusMods must implement CapabilityReporter")
