@@ -5,21 +5,36 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // CurseForge's latestFiles is NOT "the newest files, newest first". It holds
-// the newest file of each game flavor (WoW Retail, Classic Era, Cata, ... -
-// told apart by gameVersionTypeId), in no promised order, so its first entry
-// is routinely an old file for some other flavor (#504). Everything here
-// chooses the "latest" file deliberately instead of by position, and decides
-// "newer" by file identity: CurseForge file ids only ever increase.
+// the newest file of each class of file - and a file's class is whatever
+// latestFilesIndexes classifies it by: its game flavor (WoW Retail, Classic
+// Era, Cata, a Minecraft version family, ... - gameVersionTypeId) and its mod
+// loader (modLoader: Forge, Fabric, ...; 0 "Any" for the many games with no
+// loaders) - in no promised order, so its first entry is routinely an old file
+// for some other class (#504). Everything here chooses the "latest" file
+// deliberately instead of by position, decides "newer" by file identity
+// (CurseForge file ids only ever increase), and only offers a file that
+// matches the installed one on EVERY classifying dimension the mod's index
+// reports. Nothing is keyed on a game: a game whose files do not vary on a
+// dimension simply has one value (or only 0) there, and the dimension drops
+// out.
 
 // flavorSet is a set of gameVersionTypeIds.
-type flavorSet map[int]struct{}
+type flavorSet = idSet
 
-func (s flavorSet) intersects(o flavorSet) bool {
+// loaderSet is a set of modLoader values. 0 (ModLoaderAny) means "any loader",
+// and an empty set means the loader is not known; both are wildcards.
+type loaderSet = idSet
+
+// idSet is a set of CurseForge classification ids.
+type idSet map[int]struct{}
+
+func (s idSet) intersects(o idSet) bool {
 	for id := range s {
 		if _, ok := o[id]; ok {
 			return true
@@ -73,6 +88,90 @@ func fileFlavors(data Mod, vocab flavorSet) map[int]flavorSet {
 	for _, f := range data.LatestFiles {
 		if set := out[f.ID]; len(set) == 0 {
 			out[f.ID] = sortableFlavors(f, vocab)
+		}
+	}
+	return out
+}
+
+// wildcard reports whether the set constrains nothing: no loader is known, or
+// one of them is "Any".
+func (s loaderSet) wildcard() bool {
+	if len(s) == 0 {
+		return true
+	}
+	_, any := s[ModLoaderAny]
+	return any
+}
+
+// matches reports whether a file with loaders s fits an install with loaders
+// want: a wildcard on either side is never a mismatch.
+func (s loaderSet) matches(want loaderSet) bool {
+	return s.wildcard() || want.wildcard() || s.intersects(want)
+}
+
+// loaderByLowerName is CurseForge's own vocabulary for the loader entries it
+// puts in a file's gameVersions / sortableGameVersions, keyed by lower-cased
+// name (the ModLoader values of FileIndex.ModLoader).
+var loaderByLowerName = map[string]int{
+	"forge":      ModLoaderForge,
+	"cauldron":   ModLoaderCauldron,
+	"liteloader": ModLoaderLiteLoader,
+	"fabric":     ModLoaderFabric,
+	"quilt":      ModLoaderQuilt,
+	"neoforge":   ModLoaderNeoForge,
+}
+
+// loaderByName maps one of CurseForge's loader names to its ModLoader value.
+func loaderByName(name string) (int, bool) {
+	l, ok := loaderByLowerName[strings.ToLower(strings.TrimSpace(name))]
+	return l, ok
+}
+
+// loaderVocabulary is every real (non-Any) modLoader latestFilesIndexes names
+// for the mod. Empty means the mod has no loader dimension.
+func loaderVocabulary(data Mod) loaderSet {
+	vocab := loaderSet{}
+	for _, idx := range data.LatestFilesIndexes {
+		if idx.ModLoader > ModLoaderAny {
+			vocab[idx.ModLoader] = struct{}{}
+		}
+	}
+	return vocab
+}
+
+// namedLoaders is the loaders f names for itself, in the gameVersions and
+// sortableGameVersions entries CurseForge fills in for every file.
+func namedLoaders(f File) loaderSet {
+	out := loaderSet{}
+	for _, n := range f.GameVersions {
+		if l, ok := loaderByName(n); ok {
+			out[l] = struct{}{}
+		}
+	}
+	for _, v := range f.SortableGameVersions {
+		if l, ok := loaderByName(v.GameVersionName); ok {
+			out[l] = struct{}{}
+		}
+	}
+	return out
+}
+
+// fileLoaders maps each file id the document names to its loaders: those
+// latestFilesIndexes assign it, else the ones the file names itself. Only
+// meaningful for a mod with a loader dimension (loaderVocabulary non-empty).
+func fileLoaders(data Mod) map[int]loaderSet {
+	out := make(map[int]loaderSet, len(data.LatestFiles))
+	for _, idx := range data.LatestFilesIndexes {
+		set := out[idx.FileID]
+		if set == nil {
+			set = loaderSet{}
+			out[idx.FileID] = set
+		}
+		set[idx.ModLoader] = struct{}{}
+	}
+	for _, f := range data.LatestFiles {
+		if len(out[f.ID]) == 0 {
+			out[f.ID] = namedLoaders(f)
 		}
 	}
 	return out
@@ -134,14 +233,18 @@ func installedFileIDs(ids []string) []int {
 // as such.
 //
 // With recorded file ids, a candidate is an update only if its file id is
-// greater than the newest installed one, in the installed file's flavor and
-// no less stable a release type (a release install is not offered a beta).
-// The flavor comes from the installed file's own entry in latestFiles /
-// latestFilesIndexes - present while it is still the newest of its flavor. A
-// superseded install (exactly the case with a real update) is in neither, so
-// when the mod is published for several flavors and a newer file exists, its
-// flavor is read from one GetModFile; a mod with a single flavor, or no
-// newer file at all, costs nothing extra.
+// greater than the newest installed one, matches the installed file on every
+// dimension the mod's latestFilesIndexes classify files by (game flavor, and
+// mod loader where the mod has loaders; a loader of 0 "Any", or none known, on
+// either side is a wildcard), and is no less stable a release type (a release
+// install is not offered a beta). The installed file's classes come from its
+// own entry in latestFiles / latestFilesIndexes - present while it is still the
+// newest of its class. A superseded install (exactly the case with a real
+// update) is in neither, so when the mod's index spans more than one value on
+// any dimension and a newer file exists, they are read from one GetModFile
+// (its gameVersions / sortableGameVersions name the flavor and the loader); a
+// mod that is unambiguous on every dimension, or has no newer file at all,
+// costs nothing extra.
 //
 // Without recorded file ids (older installs, imports) there is no identity to
 // compare, so it falls back to the shared version comparator: the newest
@@ -168,7 +271,15 @@ func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.Ins
 	vocab := flavorVocabulary(data)
 	flavors := fileFlavors(data, vocab)
 
+	// The loader dimension exists only for a mod whose index names real loaders.
+	loaderVocab := loaderVocabulary(data)
+	var loaders map[int]loaderSet
+	if len(loaderVocab) > 0 {
+		loaders = fileLoaders(data)
+	}
+
 	var want flavorSet
+	var wantLoaders loaderSet
 	restrict := false
 	installedRelease := 0
 	known := false
@@ -180,6 +291,17 @@ func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.Ins
 			}
 			for t := range fs {
 				want[t] = struct{}{}
+			}
+		}
+		if ls, ok := loaders[id]; ok {
+			if wantLoaders == nil {
+				wantLoaders = loaderSet{}
+			}
+			for l := range ls {
+				wantLoaders[l] = struct{}{}
+			}
+			if ls.wildcard() {
+				wantLoaders[ModLoaderAny] = struct{}{}
 			}
 		}
 	}
@@ -195,7 +317,7 @@ func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.Ins
 				installedRelease = idx.ReleaseType
 			}
 		}
-	} else if len(vocab) > 1 {
+	} else if len(vocab) > 1 || len(loaderVocab) > 1 {
 		modID, err := strconv.Atoi(inst.ID)
 		if err != nil {
 			return nil, fmt.Errorf("invalid mod ID: %w", err)
@@ -205,10 +327,15 @@ func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.Ins
 			if cerr := ctx.Err(); cerr != nil {
 				return nil, cerr
 			}
-			return nil, fmt.Errorf("looking up installed file %d to learn its game flavor: %w", maxInstalled, err)
+			return nil, fmt.Errorf("looking up installed file %d to learn its game flavor and mod loader: %w", maxInstalled, err)
 		}
-		want = sortableFlavors(*f, vocab)
-		restrict = true // a flavor no longer published offers nothing
+		if len(vocab) > 1 {
+			want = sortableFlavors(*f, vocab)
+			restrict = true // a flavor no longer published offers nothing
+		}
+		if len(loaderVocab) > 0 {
+			wantLoaders = namedLoaders(*f)
+		}
 		installedRelease = f.ReleaseType
 	}
 
@@ -218,6 +345,9 @@ func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.Ins
 			continue
 		}
 		if restrict && !flavors[f.ID].intersects(want) {
+			continue
+		}
+		if len(loaderVocab) > 0 && !loaders[f.ID].matches(wantLoaders) {
 			continue
 		}
 		if installedRelease > 0 && f.ReleaseType > installedRelease {
