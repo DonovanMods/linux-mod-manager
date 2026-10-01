@@ -1706,6 +1706,13 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **CI browser tests give Chromium longer to start (#508).** On a hosted
+  runner busy with the `-race` serve suite, Chromium could take more than
+  chromedp's default 20 seconds to print its DevTools address, failing an
+  unrelated browser test with `websocket url timeout reached`. The E2E
+  harness now allows 60 seconds, the same ceiling as every browser step; a
+  prompt launch is unaffected.
+
 - **The search page forgot its tag filter after an install (#506).** The
   web UI's search page re-runs its search when a job (an install, say)
   finishes, and that re-run dropped the active tag filter — and the page

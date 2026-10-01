@@ -120,6 +120,13 @@ func TestE2EShutdownCleanupGuardExceedsGrace(t *testing.T) {
 // the ceiling only - no per-test sleeps.
 const e2eTimeout = 60 * time.Second
 
+// e2eBrowserLaunchTimeout is how long Chromium gets to print its DevTools
+// WebSocket URL - the launch itself, before any e2eTimeout step can run
+// (issue 508). The same "busy, not broken" reasoning as e2eTimeout, which
+// it matches: chromedp's own 20s default timed a launch out on a hosted
+// runner under the -race serve suite.
+const e2eBrowserLaunchTimeout = e2eTimeout
+
 // e2eLmmVersion is the fixed Options.Version every E2E-driven server
 // carries, so N-5's own scenario (the shortcuts help names the running
 // version) has something real to assert against.
@@ -594,8 +601,15 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 	// the side. 1280 is comfortably inside the supported range and still
 	// below the 1440px step at which the library reveals its extra
 	// columns, so every existing column assertion is unchanged.
+	//
+	// WSURLReadTimeout (issue 508): chromedp gives Chromium 20s to print its
+	// DevTools WebSocket URL, and a hosted runner busy with the -race serve
+	// suite has taken longer than that to launch it ("websocket url timeout
+	// reached" at 20.26s). A prompt launch is unaffected; only a stuck one
+	// takes longer to fail.
 	opts := append(slices.Clone(chromedp.DefaultExecAllocatorOptions[:]),
-		chromedp.ExecPath(binary), chromedp.WindowSize(1280, 900))
+		chromedp.ExecPath(binary), chromedp.WindowSize(1280, 900),
+		chromedp.WSURLReadTimeout(e2eBrowserLaunchTimeout))
 	// WithoutCancel, same reasoning as startE2EServer:331. t.Context() is
 	// cancelled when the test FUNCTION returns, which is BEFORE t.Cleanup
 	// runs - so deriving the allocator from it directly cancels ctx (below)
