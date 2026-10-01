@@ -262,6 +262,9 @@ func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
 // ?limit= still wins over either derivation - it says what it means
 // regardless of how many sources answered.
 // Either non-numeric value is bad input (400), the same class as ?limit=.
+//
+// ?sort= (#503) is relevance|updated|downloads|popular; see the forwarding
+// comment where it is read.
 func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -287,6 +290,11 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	// b`. Absent, Query()["tag"] is nil - never a one-element slice holding
 	// "", which a source would treat as a tag named "" (#326).
 	tags := r.URL.Query()["tag"]
+	// ?sort= is #503's twin of `lmm search --sort`: forwarded verbatim into
+	// SearchOptions.Sort, which core.Search validates (a value outside
+	// domain.SearchSorts is bad input, 400, via searchErrorStatus) and echoes
+	// on the report. Absent means relevance.
+	sortBy := domain.SearchSort(r.URL.Query().Get("sort"))
 	if limit == 0 && pageSize != 0 && sourceID != "" {
 		limit = pageSize
 	}
@@ -297,7 +305,7 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query,
-		core.SearchOptions{Limit: limit, Page: page, PageSize: pageSize, Category: category, SourceID: sourceID, Tags: tags})
+		core.SearchOptions{Limit: limit, Page: page, PageSize: pageSize, Category: category, SourceID: sourceID, Tags: tags, Sort: sortBy})
 	if err != nil {
 		s.writeAPIError(w, searchErrorStatus(err), err)
 		return
@@ -332,6 +340,8 @@ func searchErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, domain.ErrAuthRequired):
 		return http.StatusUnauthorized
+	case core.IsInvalidSearchSort(err):
+		return http.StatusBadRequest
 	case core.IsGameIdentifierInvalid(err):
 		return http.StatusBadRequest
 	case core.IsIndexUnavailable(err):
