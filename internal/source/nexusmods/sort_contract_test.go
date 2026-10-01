@@ -243,14 +243,14 @@ func selectedNodeFields(t *testing.T, query string) []string {
 		word.Reset()
 	}
 	for _, r := range after {
-		switch {
-		case r == '{':
+		switch r {
+		case '{':
 			flush()
 			depth++
-		case r == '}':
+		case '}':
 			flush()
 			depth--
-		case r == ' ' || r == '\n' || r == '\t' || r == '\r':
+		case ' ', '\n', '\t', '\r':
 			flush()
 		default:
 			word.WriteRune(r)
