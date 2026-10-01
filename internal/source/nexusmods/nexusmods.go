@@ -358,23 +358,27 @@ func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []do
 			continue
 		}
 
-		// Build map: old file ID -> new file ID from NexusMods FileUpdates (superseded files)
-		oldToNew := make(map[string]string)
+		// Old file ID -> every file ID that superseded it, from NexusMods FileUpdates.
+		// An author can supersede the replacement in turn, so the chain is followed
+		// to its end (latestListedSuccessor) rather than one hop.
+		successors := make(map[string][]string)
 		for _, fu := range fileList.FileUpdates {
-			oldToNew[strconv.Itoa(fu.OldFileID)] = strconv.Itoa(fu.NewFileID)
+			oldID := strconv.Itoa(fu.OldFileID)
+			successors[oldID] = append(successors[oldID], strconv.Itoa(fu.NewFileID))
 		}
 
-		// New version file ID -> FileData for picking new version string and changelog
+		// Listed file ID -> FileData for picking new version string and changelog
 		newFileIDs := make(map[string]FileData)
 		for _, f := range fileList.Files {
 			newFileIDs[strconv.Itoa(f.FileID)] = f
 		}
 
 		// Consider update if mod version is newer OR any installed file was superseded
+		// by a file the mod still lists
 		modVersionNewer := domain.IsNewerVersion(inst.Version, remoteMod.Version)
 		var fileReplacements map[string]string
 		for _, fid := range inst.FileIDs {
-			if newID, ok := oldToNew[fid]; ok {
+			if newID, ok := latestListedSuccessor(fid, successors, newFileIDs); ok {
 				if fileReplacements == nil {
 					fileReplacements = make(map[string]string)
 				}
@@ -390,8 +394,10 @@ func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []do
 		// Pick NewVersion: prefer mod version when it changed; else use new file's version
 		newVersion := remoteMod.Version
 		if hasFileUpdate && !modVersionNewer {
-			for _, newID := range fileReplacements {
-				if f, ok := newFileIDs[newID]; ok && f.Version != "" {
+			// Iterate the installed IDs in order so the pick is deterministic
+			// when several installed files were superseded.
+			for _, fid := range inst.FileIDs {
+				if f, ok := newFileIDs[fileReplacements[fid]]; ok && f.Version != "" {
 					newVersion = f.Version
 					break
 				}
@@ -399,7 +405,18 @@ func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []do
 		}
 
 		changelog := ""
+		if hasFileUpdate && !modVersionNewer {
+			for _, fid := range inst.FileIDs {
+				if f, ok := newFileIDs[fileReplacements[fid]]; ok && f.Changelog != "" {
+					changelog = f.Changelog
+					break
+				}
+			}
+		}
 		for _, f := range fileList.Files {
+			if changelog != "" {
+				break
+			}
 			if f.IsPrimary && f.Changelog != "" {
 				changelog = f.Changelog
 				break
@@ -421,6 +438,56 @@ func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []do
 		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(fetchErrs), errors.Join(fetchErrs...))
 	}
 	return updates, nil
+}
+
+// latestListedSuccessor follows the FileUpdates chain from fileID (A -> B -> C ...)
+// and returns the last file in it that the mod still lists, or false when no file
+// after fileID is listed. A superseded file may itself be deleted (advertising it
+// would name a file that is gone) or still listed but archived (advertising it
+// would leave the user on a stale file), so the walk does not stop at the first
+// hop. Visited IDs are tracked, so a cycle ends the walk at the last listed file
+// reached before it closes, and fileID itself is never its own replacement.
+//
+// When one file has several successors, the walk follows the one with the newest
+// upload time (FileData.UploadedTime, known only for listed files), falling back
+// to the highest file ID when the times are missing or equal. Only the chosen
+// branch is followed.
+func latestListedSuccessor(fileID string, successors map[string][]string, listed map[string]FileData) (string, bool) {
+	visited := map[string]bool{fileID: true}
+	cur, latest := fileID, ""
+	for {
+		next := ""
+		for _, cand := range successors[cur] {
+			if visited[cand] {
+				continue
+			}
+			if next == "" || newerFile(cand, next, listed) {
+				next = cand
+			}
+		}
+		if next == "" {
+			return latest, latest != ""
+		}
+		visited[next] = true
+		if _, ok := listed[next]; ok {
+			latest = next
+		}
+		cur = next
+	}
+}
+
+// newerFile reports whether file ID a is newer than b: by upload time when both
+// are listed with a time and the times differ, otherwise by the higher file ID
+// (IDs are unique and grow with upload order). Non-numeric IDs compare as 0.
+func newerFile(a, b string, listed map[string]FileData) bool {
+	fa, okA := listed[a]
+	fb, okB := listed[b]
+	if okA && okB && !fa.UploadedTime.IsZero() && !fb.UploadedTime.IsZero() && !fa.UploadedTime.Equal(fb.UploadedTime) {
+		return fa.UploadedTime.After(fb.UploadedTime)
+	}
+	ia, _ := strconv.Atoi(a)
+	ib, _ := strconv.Atoi(b)
+	return ia > ib
 }
 
 func modDataToDomain(data ModData, gameID string) domain.Mod {
