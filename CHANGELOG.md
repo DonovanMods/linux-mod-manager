@@ -1680,6 +1680,24 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **`lmm update` offered CurseForge downgrades as updates (#504).** For
+  addons published for several game flavors (WoW Retail, Classic Era, ...)
+  the check took the first entry of CurseForge's `latestFiles` as "the
+  latest" — but that list is the newest file of _each_ flavor in no
+  particular order — and reported any version that merely differed, so
+  Questie, TomTom, RareScanner and Leatrix Plus were "updated" to versions
+  years older. The check now picks the newest upload (ties to the higher
+  file id) among the files of the installed file's own flavor, and calls it
+  an update only when its file id is greater than the installed one; a beta
+  or alpha is not offered over a release install. An install superseded by
+  a newer file is not listed in the flavor index, so for a multi-flavor
+  addon in that state the check makes one extra lookup of the installed
+  file to learn its flavor (a failed lookup reports the mod as skipped
+  rather than guessing). An install with no recorded file ids is compared
+  by version and never offered an older one. The update names the exact
+  file it advertised, so applying it installs that file. The version shown
+  by search and `mod show` follows the same newest-file rule.
+
 - **The web UI's search had no way to page through results (#500).** The
   omnibar's "From sources" list is capped at 20 rows and never pages, and
   the paged search page (`/g/<game>/<profile>/search?q=`) — which has

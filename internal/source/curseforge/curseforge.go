@@ -393,16 +393,32 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 			continue
 		}
 
-		remoteMod := modToDomain(data, inst.GameID)
-		if !isNewerVersion(inst.Version, remoteMod.Version) {
+		latest, err := c.latestUpdate(ctx, data, inst)
+		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return updates, cerr
+			}
+			skipped = append(skipped, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err))
+			continue
+		}
+		if latest == nil {
 			continue
 		}
 
-		updates = append(updates, domain.Update{
+		upd := domain.Update{
 			InstalledMod: inst,
-			NewVersion:   remoteMod.Version,
+			NewVersion:   fileVersion(*latest),
 			Changelog:    "", // CurseForge changelog requires separate fetch
-		})
+		}
+		if ids := installedFileIDs(inst.FileIDs); len(ids) > 0 {
+			// Name the file the check advertised: ApplyUpdate installs the
+			// listed file with this id rather than re-deriving "the latest"
+			// from a version label, which can match another flavor's file.
+			upd.FileIDReplacements = map[string]string{
+				strconv.Itoa(slices.Max(ids)): strconv.Itoa(latest.ID),
+			}
+		}
+		updates = append(updates, upd)
 	}
 
 	if len(skipped) > 0 {
@@ -436,10 +452,11 @@ func modToDomain(data Mod, gameID string) domain.Mod {
 		category = strconv.Itoa(data.PrimaryCategoryID)
 	}
 
-	// Extract version from latest file if available
+	// The version shown is the newest file's, not latestFiles' first entry:
+	// that list is the newest file per game flavor in no promised order (#504).
 	version := ""
-	if len(data.LatestFiles) > 0 {
-		version = extractVersion(data.LatestFiles[0].DisplayName, data.LatestFiles[0].FileName)
+	if newest := newestFile(installableFiles(data.LatestFiles)); newest != nil {
+		version = fileVersion(*newest)
 	}
 
 	return domain.Mod{
@@ -502,12 +519,6 @@ func releaseTypeName(releaseType int) string {
 	default:
 		return "Unknown"
 	}
-}
-
-// isNewerVersion returns true if newVersion is newer than currentVersion
-// Simple string comparison - CurseForge versions are often file names
-func isNewerVersion(currentVersion, newVersion string) bool {
-	return currentVersion != newVersion && newVersion != ""
 }
 
 // int64Ptr returns a pointer to the given int64 value.
