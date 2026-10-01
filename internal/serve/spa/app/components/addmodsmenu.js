@@ -24,6 +24,7 @@
 import { html, useRef, useState } from "../render.js";
 import { navigate, setupPath } from "../router.js";
 import { useDismissOnOutsideOrEscape } from "../dismiss.js";
+import { useMenuPlacement } from "../menuplacement.js";
 
 /** focusOmnibar hands the keyboard to the top bar's own search field - the
  * SAME input the "search sources ↵" fan-out already reads from
@@ -38,6 +39,7 @@ export function AddModsMenu({ route, actions, state }) {
   const workshopMapped = Boolean(state?.status?.source_ids?.steamworkshop);
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const menuRef = useMenuPlacement(open);
 
   useDismissOnOutsideOrEscape(ref, open ? "add-mods" : null, () =>
     setOpen(false),
@@ -64,7 +66,7 @@ export function AddModsMenu({ route, actions, state }) {
       ${
         open &&
         html`
-          <ul class="picker__menu add-mods-menu__menu">
+          <ul class="picker__menu add-mods-menu__menu" ref=${menuRef}>
             <li>
               <button
                 type="button"

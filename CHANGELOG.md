@@ -1680,6 +1680,17 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The web UI's notifications dropdown ran off the left edge of the screen
+  (#502).** On Setup, search and the full mod page the activity bell sits near
+  the left of the header, and its tray was anchored to its right edge, so the
+  26rem tray was cut off past the viewport. That anchor assumed the bell is at
+  the far right of the top bar. Every dropdown (the activity tray, the game and
+  profile pickers, "Add mods") is now placed by measuring it when it opens: it
+  keeps its default side when it fits, opens toward the side with room when it
+  does not, is slid inside the viewport when neither side fits, and is placed
+  again if the window is resized while it is open. Menus are also capped to the
+  viewport width, so a phone-width window works.
+
 - **The web UI's search had no way to page through results (#500).** The
   omnibar's "From sources" list is capped at 20 rows and never pages, and
   the paged search page (`/g/<game>/<profile>/search?q=`) — which has

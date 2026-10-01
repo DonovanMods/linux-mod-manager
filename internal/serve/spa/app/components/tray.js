@@ -16,6 +16,7 @@
 // what went wrong far more often than to admire what went right.
 
 import { html, useEffect, useRef, useState } from "../render.js";
+import { useMenuPlacement } from "../menuplacement.js";
 import { followJob } from "../sse.js";
 import {
   frameFromEvent,
@@ -116,6 +117,7 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
   // /jobs/{id} page's 301 target, spa.go), and follows it if the URL
   // changes underneath an open tray.
   const [expanded, setExpanded] = useState(deepLinkJob || "");
+  const menuRef = useMenuPlacement();
   useEffect(() => {
     if (deepLinkJob) setExpanded(deepLinkJob);
   }, [deepLinkJob]);
@@ -155,7 +157,7 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
     `;
 
   return html`
-    <ul class="picker__menu tray">
+    <ul class="picker__menu tray" ref=${menuRef}>
       ${
         state.activityError &&
         html`<li class="tray__error">

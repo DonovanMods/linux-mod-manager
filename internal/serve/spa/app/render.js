@@ -14,6 +14,7 @@ export { h, render, Fragment } from "/vendor/preact.module.js";
 export {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useMemo,
   useCallback,
