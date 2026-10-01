@@ -5,5 +5,9 @@
   "warnings": [],
   "total_results": 0,
   "attempted_count": 1,
+  "sort": "relevance",
+  "sorts_available": [
+    "relevance"
+  ],
   "page_size": 10
 }

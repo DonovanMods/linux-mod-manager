@@ -10,6 +10,12 @@
   ],
   "total_results": 0,
   "attempted_count": 2,
+  "sort": "updated",
+  "sorts_available": [
+    "relevance",
+    "updated",
+    "downloads"
+  ],
   "skipped_unauthenticated": [
     "steamworkshop"
   ]
