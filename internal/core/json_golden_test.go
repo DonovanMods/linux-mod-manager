@@ -2113,6 +2113,27 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #505: an update whose advertised file is gone, refused rather
+			// than replaced by a same-label file of another flavor. The
+			// candidates are what the user can pick with `lmm install --file`.
+			"update_target_unavailable_error",
+			core.UpdateTargetUnavailableError{
+				SourceID: "curseforge", ModID: "4242", ModName: "Big Pack", Profile: "default",
+				TargetVersion:  "1.9.0",
+				MissingFileIDs: []string{"8999930"},
+				Advertised:     true,
+				Candidates: []core.UpdateTargetCandidate{
+					{ID: "8999990", Name: "bigpack-fabric-1.20.1-1.9.0", Version: "1.9.0", Category: "release"},
+				},
+			},
+		},
+		{
+			// #505: one candidate file. Category is omitted when the source
+			// sets none (custom sources).
+			"update_target_candidate",
+			core.UpdateTargetCandidate{ID: "x-2", Name: "pack-x", Version: "2.0"},
+		},
+		{
 			// #79: the credential a frontend cannot read and the action
 			// that fixes it. Sources is present because a single damaged
 			// row names only itself - a key-file-level failure (missing,

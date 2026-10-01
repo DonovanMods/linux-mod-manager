@@ -76,6 +76,21 @@ import (
 //
 // installedVersion == "" also switches narrowing off: with no recorded
 // version nothing can be classified.
+//
+// A file that is gone upstream is replaced by label only when nothing better
+// identifies it, and never by guess (#505). A label is not unique across a
+// mod's file classifications - CurseForge publishes one for its Forge, Fabric,
+// NeoForge and Quilt builds - so a label match could install another flavor's
+// file than the one the check advertised. A gone replacement HIT (the check
+// named that exact file) is refused with UpdateTargetUnavailableError before
+// any of the rules above run, whatever is listed under its label: one
+// same-label file can be the wrong flavor as easily as several. A gone
+// uncovered ID (#95's fallback) still takes the target-version file
+// pickVersionMatch prefers, but only when no other candidate shares that
+// file's Category (soleStandIn); otherwise it is refused the same way. The
+// NexusMods rebuild shapes above never reach either refusal: their stored
+// files are listed, and a gone main beside a new MAIN and OPTIONAL has a sole
+// MAIN stand-in.
 func selectUpdateDeployFiles(files []domain.DownloadableFile, targetVersion, installedVersion string, currentFileIDs, storedFileIDs []string, replacedIDs map[string]bool) ([]*domain.DownloadableFile, []string, error) {
 	selected, warnings, err := resolveUpdateSelection(files, targetVersion, installedVersion, storedFileIDs, replacedIDs)
 	if err != nil {
@@ -139,11 +154,6 @@ func pairAmbiguousWithReplacement(ambiguous []*domain.DownloadableFile, replacem
 // resolveUpdateSelection is selectUpdateDeployFiles' classification pass -
 // see that function's doc comment for the per-file rules it implements.
 func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, installedVersion string, storedFileIDs []string, replacedIDs map[string]bool) ([]*domain.DownloadableFile, []string, error) {
-	if targetVersion == "" || installedVersion == "" || len(storedFileIDs) == 0 {
-		sel, _, err := selectDeployFiles(files, storedFileIDs, true)
-		return sel, nil, err
-	}
-
 	byID := make(map[string]*domain.DownloadableFile, len(files))
 	var matches []*domain.DownloadableFile
 	for i := range files {
@@ -152,19 +162,42 @@ func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, inst
 			matches = append(matches, &files[i])
 		}
 	}
+
+	// #505: a file the update check advertised is the update. When the
+	// source no longer lists it, every path below would install something
+	// else - a same-label file of another flavor, or whatever stored files
+	// survive - so refuse before any of them runs.
+	var advertisedGone []string
+	for _, id := range storedFileIDs {
+		if replacedIDs[id] && byID[id] == nil {
+			advertisedGone = append(advertisedGone, id)
+		}
+	}
+	if len(advertisedGone) > 0 {
+		return nil, nil, newUpdateTargetUnavailable(targetVersion, advertisedGone, true, matches)
+	}
+
+	if targetVersion == "" || installedVersion == "" || len(storedFileIDs) == 0 {
+		sel, _, err := selectDeployFiles(files, storedFileIDs, true)
+		return sel, nil, err
+	}
 	if len(matches) == 0 {
 		sel, _, err := selectDeployFiles(files, storedFileIDs, true)
 		return sel, nil, err
 	}
 
 	var selected, ambiguous []*domain.DownloadableFile
+	var gone []string
 	chosen := make(map[string]bool, len(storedFileIDs))
 	needsReplacement := false
 	for _, id := range storedFileIDs {
 		f := byID[id]
 		switch {
 		case f == nil:
-			needsReplacement = true // gone upstream (#95's fallback case)
+			// Gone upstream (#95's fallback case). Never an advertised id:
+			// those were refused above.
+			gone = append(gone, id)
+			needsReplacement = true
 		case replacedIDs[id]:
 			if !chosen[id] {
 				selected = append(selected, f)
@@ -187,6 +220,9 @@ func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, inst
 			if !chosen[m.ID] {
 				candidates = append(candidates, m)
 			}
+		}
+		if len(candidates) > 0 && len(gone) > 0 && !soleStandIn(candidates) {
+			return nil, nil, newUpdateTargetUnavailable(targetVersion, gone, false, matches)
 		}
 		if len(candidates) > 0 {
 			for _, p := range pickVersionMatch(candidates, nil) {
@@ -223,6 +259,48 @@ func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, inst
 		return sel, nil, err
 	}
 	return selected, warnings, nil
+}
+
+// soleStandIn reports whether the file pickVersionMatch would take from
+// candidates is the only one that could stand in for a file gone upstream
+// (#505): no other candidate shares its Category, compared case-insensitively
+// like pairAmbiguousWithReplacement. The gone file itself is not listed, so
+// its own category is unknown; the pick's category is the closest evidence.
+// Category-less candidates all count as rivals - nothing tells them apart -
+// and IsPrimary is no tie-break, because CurseForge derives it from list
+// order. A MAIN beside an OPTIONAL (the NexusMods rebuild shape) still has a
+// sole stand-in; Forge and Fabric builds under one "release" label do not.
+func soleStandIn(candidates []*domain.DownloadableFile) bool {
+	picked := pickVersionMatch(candidates, nil)
+	if len(picked) != 1 {
+		return false
+	}
+	rivals := 0
+	for _, c := range candidates {
+		if strings.EqualFold(c.Category, picked[0].Category) {
+			rivals++
+		}
+	}
+	return rivals == 1
+}
+
+// newUpdateTargetUnavailable builds #505's refusal from what the selection
+// knows; ApplyUpdate fills in the mod's identity.
+func newUpdateTargetUnavailable(targetVersion string, missing []string, advertised bool, matches []*domain.DownloadableFile) *UpdateTargetUnavailableError {
+	candidates := make([]UpdateTargetCandidate, len(matches))
+	for i, m := range matches {
+		name := m.Name
+		if name == "" {
+			name = m.FileName
+		}
+		candidates[i] = UpdateTargetCandidate{ID: m.ID, Name: name, Version: m.Version, Category: m.Category}
+	}
+	return &UpdateTargetUnavailableError{
+		TargetVersion:  targetVersion,
+		MissingFileIDs: missing,
+		Advertised:     advertised,
+		Candidates:     candidates,
+	}
 }
 
 // guardNoOpUpdateSelection is the defense-in-depth backstop (PR #142 review
@@ -905,6 +983,11 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 		}
 	}
 	filesToDownload, selectionWarnings, err := selectUpdateDeployFiles(files, newVersion, mod.Version, mod.FileIDs, effectiveFileIDs, replacedIDs)
+	var unavailable *UpdateTargetUnavailableError
+	if errors.As(err, &unavailable) {
+		unavailable.SourceID, unavailable.ModID, unavailable.ModName, unavailable.Profile = mod.SourceID, mod.ID, mod.Name, profileName
+		return result, unavailable
+	}
 	if err != nil {
 		return result, fmt.Errorf("selecting files to download: %w", err)
 	}
