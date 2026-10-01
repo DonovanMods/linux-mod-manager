@@ -272,28 +272,55 @@ func (f e2eSortFixture) SearchPagePath(query, extra string) string {
 type e2eSearchRequests struct {
 	mu   sync.Mutex
 	seen []url.Values
+	// ids are the network ids of the requests in seen, and finished the ones
+	// whose response has been fully received (or failed): what lets a test
+	// wait for every request the page sent to have LANDED, rather than guess
+	// how long a late one takes.
+	ids      map[network.RequestID]bool
+	finished int
 }
 
 // recordSearchRequests starts logging f's browser's search requests. Call it
 // before the first navigation.
 func recordSearchRequests(t *testing.T, f e2eFixture) *e2eSearchRequests {
 	t.Helper()
-	rec := &e2eSearchRequests{}
+	rec := &e2eSearchRequests{ids: map[network.RequestID]bool{}}
 	chromedp.ListenTarget(f.Ctx, func(ev any) {
-		e, ok := ev.(*network.EventRequestWillBeSent)
-		if !ok {
-			return
+		switch e := ev.(type) {
+		case *network.EventRequestWillBeSent:
+			u, err := url.Parse(e.Request.URL)
+			if err != nil || u.Path != "/api/v1/search" {
+				return
+			}
+			rec.mu.Lock()
+			rec.seen = append(rec.seen, u.Query())
+			rec.ids[e.RequestID] = true
+			rec.mu.Unlock()
+		case *network.EventLoadingFinished:
+			rec.finish(e.RequestID)
+		case *network.EventLoadingFailed:
+			rec.finish(e.RequestID)
 		}
-		u, err := url.Parse(e.Request.URL)
-		if err != nil || u.Path != "/api/v1/search" {
-			return
-		}
-		rec.mu.Lock()
-		rec.seen = append(rec.seen, u.Query())
-		rec.mu.Unlock()
 	})
 	f.runInBrowser(t, network.Enable())
 	return rec
+}
+
+// finish counts id's response as received, if id is a search request.
+func (r *e2eSearchRequests) finish(id network.RequestID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ids[id] {
+		delete(r.ids, id)
+		r.finished++
+	}
+}
+
+// inFlight is how many search requests have been sent and not yet answered.
+func (r *e2eSearchRequests) inFlight() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.seen) - r.finished
 }
 
 func (r *e2eSearchRequests) all() []url.Values {
@@ -339,6 +366,29 @@ func (r *e2eSearchRequests) settled(want int) chromedp.Action {
 			&& document.querySelector('.search-page .app-booting') === null`, nil,
 			chromedp.WithPollingInterval(25*time.Millisecond)).Do(ctx)
 	})
+}
+
+// landed waits for at least want search requests to have been sent, EVERY one
+// of them to have been answered, and the page to be showing its results. It
+// is settled for a page that re-reads more than once (an install ending
+// re-reads the route and refreshes the search page, two requests): the last
+// answer to land is the one the page keeps, so reading the page any earlier
+// races it.
+func (r *e2eSearchRequests) landed(want int) chromedp.Action {
+	return chromedp.Tasks{
+		r.settled(want),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			for r.inFlight() > 0 {
+				select {
+				case <-ctx.Done():
+					return fmt.Errorf("waiting for %d search request(s) to be answered: %w", r.inFlight(), ctx.Err())
+				case <-time.After(25 * time.Millisecond):
+				}
+			}
+			return nil
+		}),
+		r.settled(want),
+	}
 }
 
 // sortOptions reads the sort select's options as "value=label", or nil when
@@ -558,11 +608,10 @@ func TestE2E_SearchSortSurvivesPaginationFiltersAndTheRefreshAfterAnInstall(t *t
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .badge--good`, chromedp.ByQuery),
-		reqs.settled(before+1),
+		// An install ending re-reads twice: the route (hydrate) and the
+		// search page (refreshSearchResults). Both are asserted below.
+		reqs.landed(before+2),
 	)
-	// Let any second re-read (the route's own and the refresh's) land.
-	time.Sleep(500 * time.Millisecond)
-	f.runInBrowser(t, reqs.settled(before+1))
 
 	followUps := reqs.after(before)
 	require.NotEmpty(t, followUps, "an install must re-read the search so its row reads Installed")
@@ -621,9 +670,8 @@ func TestE2E_SearchRefreshAfterAnInstallKeepsTheTagFilter(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .badge--good`, chromedp.ByQuery),
-		reqs.settled(before+1),
+		reqs.landed(before+2), // the route's re-read and the search page's refresh
 	)
-	time.Sleep(500 * time.Millisecond)
 
 	followUps := reqs.after(before)
 	require.NotEmpty(t, followUps)
@@ -633,7 +681,6 @@ func TestE2E_SearchRefreshAfterAnInstallKeepsTheTagFilter(t *testing.T) {
 	var tagValue string
 	var untagged bool
 	f.runInBrowser(t,
-		reqs.settled(before+1),
 		chromedp.Evaluate(`document.querySelector('.search-page input[name="tag"]').value`, &tagValue),
 		chromedp.Evaluate(`Array.from(document.querySelectorAll(".search-result__name")).some(e => /Item (04|08|12)$/.test(e.textContent.trim()))`, &untagged),
 	)
