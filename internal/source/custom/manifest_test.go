@@ -248,8 +248,8 @@ func TestManifestIsAuthenticated(t *testing.T) {
 
 func TestManifestIdentityAndCapabilities(t *testing.T) {
 	m := newLocalManifest(t)
-	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: false, Versions: true,
-		Sorts: []domain.SearchSort{domain.SortUpdated}}, m.Capabilities())
+	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: false, Versions: true}, m.Capabilities(),
+		"no sort is claimed before a search has shown the catalogue carries dates")
 	assert.Empty(t, m.AuthURL())
 
 	_, err := m.ExchangeToken(context.Background(), "code")

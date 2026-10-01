@@ -3,6 +3,7 @@ package custom
 import (
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -95,6 +96,39 @@ func sortLess(by domain.SearchSort) func(a, b *domain.Mod) bool {
 			}
 			return a.Endorsements != nil && *a.Endorsements > *b.Endorsements
 		}
+	}
+	return nil
+}
+
+// datedCatalogue remembers whether the catalogue a local source (directory,
+// manifest) last searched carried a date on at least one entry, which is
+// what decides whether the updated sort means anything for it (#503): a
+// catalogue with no dates would sort to its own order, and a sort that does
+// nothing is never offered.
+//
+// Capabilities() takes no context and fetches nothing, so the source answers
+// from what its last Search saw. That is the order core asks in: it reads
+// Capabilities only after the source has answered a search (SearchReport.
+// SortsAvailable), and before any search nothing is known, so nothing is
+// claimed. Safe for concurrent use.
+type datedCatalogue struct{ dated atomic.Bool }
+
+// note records whether any of mods - the catalogue as it stood before the
+// query filtered it - has a date.
+func (c *datedCatalogue) note(mods []domain.Mod) {
+	for i := range mods {
+		if !mods[i].UpdatedAt.IsZero() {
+			c.dated.Store(true)
+			return
+		}
+	}
+	c.dated.Store(false)
+}
+
+// sorts is the Capabilities.Sorts the last catalogue earned.
+func (c *datedCatalogue) sorts() []domain.SearchSort {
+	if c.dated.Load() {
+		return []domain.SearchSort{domain.SortUpdated}
 	}
 	return nil
 }

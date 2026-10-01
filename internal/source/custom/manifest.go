@@ -49,6 +49,8 @@ type Manifest struct {
 	httpClient *http.Client
 	now        func() time.Time // injectable for TTL tests
 
+	dated datedCatalogue // whether the last search saw any dated entry (#503)
+
 	mu        sync.Mutex
 	cached    *manifestDoc
 	fetchedAt time.Time
@@ -249,13 +251,13 @@ func (m *Manifest) ExchangeToken(ctx context.Context, code string) (*source.Toke
 
 // Capabilities implements source.CapabilityReporter. Auth reflects whether the
 // definition declares an auth block. Sorts is updated alone (#503): a
-// manifest entry may carry updated_at (an undated one sorts last), and the
-// schema has no download or endorsement count. Capabilities is answered
-// without fetching the document, so this is a fact about the schema, not
-// about which entries happen to be dated.
+// manifest entry may carry updated_at, and the schema has no download or
+// endorsement count. updated_at is optional per entry, so it is offered only
+// once a search has loaded the manifest and found a date on at least one
+// entry (see datedCatalogue); a manifest with none offers no sort.
 func (m *Manifest) Capabilities() source.Capabilities {
 	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: m.auth != nil, Versions: true,
-		Sorts: []domain.SearchSort{domain.SortUpdated}}
+		Sorts: m.dated.sorts()}
 }
 
 // TypeLabel implements source.TypeLabeler.
@@ -318,6 +320,7 @@ func (m *Manifest) Search(ctx context.Context, query source.SearchQuery) (source
 		}
 		mods = append(mods, m.toMod(mm))
 	}
+	m.dated.note(mods)
 	return searchMods(mods, query), nil
 }
 

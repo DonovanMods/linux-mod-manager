@@ -74,10 +74,24 @@ func TestSearchMods_SortKeepsTheQueryFilter(t *testing.T) {
 	assert.Equal(t, 2, res.TotalCount)
 }
 
-func TestDirectoryCapabilities_ListsUpdatedOnly(t *testing.T) {
+// A local catalogue offers the updated sort only once a search has loaded it
+// and found a date on at least one entry (#503): Capabilities reports what the
+// catalogue last searched actually carried, and core reads it after the search
+// answered. Before any search nothing is known, so nothing is offered.
+func TestDirectoryCapabilities_UpdatedOnlyWhenTheCatalogueIsDated(t *testing.T) {
 	d := newTestDirectory(t)
-	caps := d.Capabilities()
-	assert.Equal(t, []domain.SearchSort{domain.SortUpdated}, caps.Sorts, "an entry's mtime is the one field a directory fills")
+	assert.Empty(t, d.Capabilities().Sorts, "nothing is known before the first search")
+
+	_, err := d.Search(context.Background(), source.SearchQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, []domain.SearchSort{domain.SortUpdated}, d.Capabilities().Sorts,
+		"an entry's mtime is the one field a directory fills")
+
+	empty, err := NewDirectory(SourceDefinition{ID: "e", Name: "E", Type: TypeDirectory, Directory: &DirectoryConfig{Path: t.TempDir()}})
+	require.NoError(t, err)
+	_, err = empty.Search(context.Background(), source.SearchQuery{})
+	require.NoError(t, err)
+	assert.Empty(t, empty.Capabilities().Sorts, "a directory with no mods has nothing to order by date")
 }
 
 func TestDirectorySearch_SortUpdatedOrdersByModificationTime(t *testing.T) {
@@ -96,10 +110,66 @@ func TestDirectorySearch_SortUpdatedOrdersByModificationTime(t *testing.T) {
 	assert.Equal(t, []string{"archived-mod-2.0"}, modIDs(first), "page 1 is the newest, not the first alphabetically")
 }
 
-func TestManifestCapabilities_ListsUpdatedOnly(t *testing.T) {
-	m := newLocalManifest(t)
-	assert.Equal(t, []domain.SearchSort{domain.SortUpdated}, m.Capabilities().Sorts,
-		"a manifest entry has updated_at; the schema has no downloads or endorsements")
+const undatedManifestYAML = `
+version: 1
+mods:
+  - id: one
+    name: One
+    version: 1.0.0
+    files:
+      - id: main
+        filename: one.zip
+        url: https://example.com/files/one.zip
+  - id: two
+    name: Two
+    version: 2.0.0
+    updated_at: not-a-date
+    files:
+      - id: main
+        filename: two.zip
+        url: https://example.com/files/two.zip
+`
+
+func manifestFromYAML(t *testing.T, doc string) *Manifest {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "mods.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(doc), 0o644))
+	m, err := NewManifest(manifestDef(path))
+	require.NoError(t, err)
+	return m
+}
+
+func TestManifestCapabilities_UpdatedOnlyWhenAnEntryIsDated(t *testing.T) {
+	dated := manifestFromYAML(t, validManifestYAML)
+	assert.Empty(t, dated.Capabilities().Sorts, "nothing is known before the first search")
+	_, err := dated.Search(context.Background(), source.SearchQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, []domain.SearchSort{domain.SortUpdated}, dated.Capabilities().Sorts,
+		"one dated entry is enough; the schema has no downloads or endorsements")
+
+	// No entry dated (one has no updated_at, one an unparseable one): the
+	// sort would order nothing, so it is not offered.
+	undated := manifestFromYAML(t, undatedManifestYAML)
+	res, err := undated.Search(context.Background(), source.SearchQuery{})
+	require.NoError(t, err)
+	require.Len(t, res.Mods, 2)
+	assert.Empty(t, undated.Capabilities().Sorts)
+}
+
+func TestManifestCapabilities_FollowTheCatalogueAsItChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mods.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(undatedManifestYAML), 0o644))
+	m, err := NewManifest(manifestDef(path))
+	require.NoError(t, err)
+
+	_, err = m.Search(context.Background(), source.SearchQuery{})
+	require.NoError(t, err)
+	assert.Empty(t, m.Capabilities().Sorts)
+
+	require.NoError(t, os.WriteFile(path, []byte(validManifestYAML), 0o644)) // a local manifest is re-read every search
+	_, err = m.Search(context.Background(), source.SearchQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, []domain.SearchSort{domain.SortUpdated}, m.Capabilities().Sorts)
 }
 
 func TestManifestSearch_SortUpdatedPutsUndatedLast(t *testing.T) {

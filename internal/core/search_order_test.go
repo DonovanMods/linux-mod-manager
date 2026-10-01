@@ -2,12 +2,15 @@ package core_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -240,4 +243,33 @@ func TestSearchReportWithNoHitsStillCarriesTheSort(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, domain.SortDownloads, report.Sort)
 	assert.Equal(t, []domain.SearchSort{domain.SortRelevance, domain.SortDownloads}, report.SortsAvailable)
+}
+
+// A manifest offers the updated sort only when its catalogue carries a date
+// on some entry: SortsAvailable is read from what the search found, not from
+// what the schema permits.
+func TestSearchReportOffersUpdatedForAManifestOnlyIfItIsDated(t *testing.T) {
+	for _, tc := range []struct {
+		name, updatedAt string
+		want            []domain.SearchSort
+	}{
+		{"dated", "updated_at: 2026-07-01T00:00:00Z", []domain.SearchSort{domain.SortRelevance, domain.SortUpdated}},
+		{"undated", "", []domain.SearchSort{domain.SortRelevance}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "mods.yaml")
+			doc := "version: 1\nmods:\n  - id: m\n    name: Mod\n    version: 1.0.0\n    " + tc.updatedAt +
+				"\n    files:\n      - id: main\n        filename: m.zip\n        url: https://example.com/m.zip\n"
+			require.NoError(t, os.WriteFile(path, []byte(doc), 0o644))
+			src, err := custom.New(custom.SourceDefinition{ID: "repo", Name: "Repo", Type: custom.TypeManifest,
+				Manifest: &custom.ManifestConfig{URL: path}})
+			require.NoError(t, err)
+			svc, game := newAggregateTestService(t, map[string]string{"repo": ""}, src)
+
+			report, err := svc.Search(context.Background(), game, "default", "mod", core.SearchOptions{})
+			require.NoError(t, err)
+			require.Len(t, report.Mods, 1)
+			assert.Equal(t, tc.want, report.SortsAvailable)
+		})
+	}
 }
