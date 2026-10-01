@@ -1680,6 +1680,16 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The NexusMods update check follows the whole file-update chain (#507).**
+  When an author superseded a file more than once (A -> B -> C), the check
+  mapped the installed file one hop to B: if B had since been deleted it
+  advertised a file that no longer exists, and if B was merely archived it sent
+  the user to a stale file instead of C. It now walks the chain and advertises
+  the last file the mod still lists, never advertises an unlisted file (a mod
+  whose successors are all gone only updates when its version is newer), stops
+  at a cycle, and, where an update branches, follows the newest upload (highest
+  file id when times are missing). The reported version and changelog come from
+  that final file.
 - **`lmm update` offered CurseForge downgrades as updates (#504).** For
   mods whose files CurseForge classifies by game flavor (WoW Retail, Classic
   Era, a Minecraft version family, ...) or by mod loader (Forge, Fabric,

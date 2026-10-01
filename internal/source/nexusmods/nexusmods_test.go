@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -522,6 +523,181 @@ func TestNexusMods_CheckUpdates_FindsFileUpdate(t *testing.T) {
 	require.Len(t, updates, 1)
 	assert.Equal(t, "1.0.1", updates[0].NewVersion, "should use new file version")
 	assert.Equal(t, map[string]string{"100": "101"}, updates[0].FileIDReplacements)
+}
+
+// checkUpdatesForFileChain runs CheckUpdates for one installed mod (file 100,
+// mod version unchanged unless remoteVersion differs) against a mock files
+// endpoint serving the given listing, and returns the updates.
+func checkUpdatesForFileChain(t *testing.T, list ModFileList, installedVersion, remoteVersion string) []domain.Update {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/files.json") {
+			writeJSON(t, w, list)
+			return
+		}
+		writeJSON(t, w, ModData{ModID: 12345, Name: "Test Mod", Version: remoteVersion})
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{{
+		Mod:     domain.Mod{ID: "12345", Name: "Test Mod", Version: installedVersion, GameID: "skyrimspecialedition"},
+		FileIDs: []string{"100"},
+	}}
+	updates, err := nm.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	return updates
+}
+
+func TestNexusMods_CheckUpdates_ChainWithDeletedMiddleAdvertisesNewest(t *testing.T) {
+	// 100 -> 101 -> 102, but 101 was deleted: advertising 101 would be a file that
+	// is gone (#507); the newest listed file is 102.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 102, Version: "1.0.2", Changelog: "Latest"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 102},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "102"}, updates[0].FileIDReplacements)
+	assert.Equal(t, "1.0.2", updates[0].NewVersion, "NewVersion reads the final chosen file")
+}
+
+func TestNexusMods_CheckUpdates_ChainWithListedMiddleAdvertisesNewest(t *testing.T) {
+	// 100 -> 101 -> 102, 101 still listed (archived): the user must be sent to
+	// 102, not the stale 101 (#507).
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 101, Version: "1.0.1"},
+			{FileID: 102, Version: "1.0.2"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 102},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "102"}, updates[0].FileIDReplacements)
+	assert.Equal(t, "1.0.2", updates[0].NewVersion)
+}
+
+func TestNexusMods_CheckUpdates_ChainChangelogComesFromChosenFile(t *testing.T) {
+	// The superseded primary file's changelog is not the update's changelog:
+	// with only a file update (mod version unchanged) it is the chosen file's.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 100, IsPrimary: true, Version: "1.0.0", Changelog: "Old primary"},
+			{FileID: 101, Version: "1.0.1", Changelog: "Stale hop"},
+			{FileID: 102, Version: "1.0.2", Changelog: "Latest"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 102},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, "Latest", updates[0].Changelog)
+}
+
+func TestNexusMods_CheckUpdates_ChainCycleTerminates(t *testing.T) {
+	// 100 -> 101 -> 102 -> 101: the walk stops at the last listed file before
+	// the cycle closes rather than looping.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 101, Version: "1.0.1"},
+			{FileID: 102, Version: "1.0.2"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 102},
+			{OldFileID: 102, NewFileID: 101},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "102"}, updates[0].FileIDReplacements)
+}
+
+func TestNexusMods_CheckUpdates_ChainCycleBackToInstalledFile(t *testing.T) {
+	// 100 -> 101 -> 100: the installed file is the start of the chain, so it is
+	// never advertised as its own replacement.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 100, Version: "1.0.0"},
+			{FileID: 101, Version: "1.0.1"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 100},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "101"}, updates[0].FileIDReplacements)
+}
+
+func TestNexusMods_CheckUpdates_ChainWithNoListedSuccessorAdvertisesNothing(t *testing.T) {
+	// 100 -> 101 -> 102, both successors gone: no replacement is advertised and,
+	// with the mod version unchanged, no update at all.
+	list := ModFileList{
+		Files: []FileData{{FileID: 200, Version: "1.0.0"}},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 102},
+		},
+	}
+	assert.Empty(t, checkUpdatesForFileChain(t, list, "1.0.0", "1.0.0"))
+
+	// A newer mod version still reports the update, but with no file replacement.
+	updates := checkUpdatesForFileChain(t, list, "1.0.0", "2.0.0")
+	require.Len(t, updates, 1)
+	assert.Equal(t, "2.0.0", updates[0].NewVersion)
+	assert.Empty(t, updates[0].FileIDReplacements)
+}
+
+func TestNexusMods_CheckUpdates_BranchPicksNewestUpload(t *testing.T) {
+	// 100 branches to 101 and 102; the later upload wins even with the lower id.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 101, Version: "1.1.0", UploadedTime: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)},
+			{FileID: 102, Version: "1.0.5", UploadedTime: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 102},
+			{OldFileID: 100, NewFileID: 101},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "101"}, updates[0].FileIDReplacements)
+}
+
+func TestNexusMods_CheckUpdates_BranchFallsBackToHighestFileID(t *testing.T) {
+	// No upload times: the highest file id wins.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 101, Version: "1.0.1"},
+			{FileID: 103, Version: "1.0.3"},
+			{FileID: 102, Version: "1.0.2"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 103},
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 100, NewFileID: 102},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "103"}, updates[0].FileIDReplacements)
 }
 
 func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
