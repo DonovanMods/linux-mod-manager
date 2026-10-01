@@ -278,7 +278,10 @@ func (c *CurseForge) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain
 		return nil, fmt.Errorf("invalid mod ID: %w", err)
 	}
 
-	fileList, err := c.client.GetModFiles(ctx, modID)
+	// The whole list, not the API's first page: the update check advertises
+	// files by id (some only latestFilesIndexes names), and applying one - or
+	// installing an older version - resolves that id in this list.
+	fileList, err := c.client.GetAllModFiles(ctx, modID)
 	if err != nil {
 		return nil, fmt.Errorf("getting mod files: %w", err)
 	}

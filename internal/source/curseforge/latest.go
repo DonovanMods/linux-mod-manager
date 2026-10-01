@@ -192,22 +192,62 @@ func installableFiles(files []File) []File {
 	return out
 }
 
-// newestFile is the most recently uploaded of files: latest FileDate, ties to
-// the higher (later) file id, then to the earlier entry. Nil for none.
+// newestFile is the most recently uploaded of files. When every file carries
+// its upload date that is the latest FileDate, ties to the higher (later) file
+// id, then to the earlier entry. A file named only by latestFilesIndexes has no
+// date, and a date is never compared to an id, so as soon as one candidate is
+// undated the choice is by file id (CurseForge's ids only ever increase).
+// Nil for none.
 func newestFile(files []File) *File {
+	byDate := true
+	for _, f := range files {
+		if f.FileDate.IsZero() {
+			byDate = false
+			break
+		}
+	}
 	var best *File
 	for i := range files {
 		f := &files[i]
 		switch {
 		case best == nil:
 			best = f
-		case f.FileDate.After(best.FileDate):
+		case byDate && f.FileDate.After(best.FileDate):
 			best = f
-		case f.FileDate.Equal(best.FileDate) && f.ID > best.ID:
+		case (!byDate || f.FileDate.Equal(best.FileDate)) && f.ID > best.ID:
 			best = f
 		}
 	}
 	return best
+}
+
+// updateCandidates is every installable file the document names: latestFiles
+// (minus server packs) plus the files only latestFilesIndexes names. An index
+// entry carries the file's id, filename, release type, game-version type and
+// loader - enough to apply every rule of the update check without another
+// request - and CurseForge's latestFiles is a short list that does not carry
+// every file the index points at (a busy multi-loader mod's newest file for one
+// loader and game version is routinely index-only). A file named by both is one
+// candidate, the full File winning (it has its date and display name); an id
+// that is in latestFiles at all - a server pack included - is never re-added
+// from the index.
+func updateCandidates(data Mod) []File {
+	out := installableFiles(data.LatestFiles)
+	listed := make(map[int]struct{}, len(data.LatestFiles))
+	for _, f := range data.LatestFiles {
+		listed[f.ID] = struct{}{}
+	}
+	for _, idx := range data.LatestFilesIndexes {
+		if idx.FileID <= 0 {
+			continue
+		}
+		if _, ok := listed[idx.FileID]; ok {
+			continue
+		}
+		listed[idx.FileID] = struct{}{}
+		out = append(out, File{ID: idx.FileID, FileName: idx.Filename, ReleaseType: idx.ReleaseType})
+	}
+	return out
 }
 
 // fileVersion is the version a file is shown as.
@@ -232,6 +272,9 @@ func installedFileIDs(ids []string) []int {
 // mod (the caller reports it once and moves on); a context error is returned
 // as such.
 //
+// A candidate is any installable file latestFiles or latestFilesIndexes names
+// (updateCandidates).
+//
 // With recorded file ids, a candidate is an update only if its file id is
 // greater than the newest installed one, matches the installed file on every
 // dimension the mod's latestFilesIndexes classify files by (game flavor, and
@@ -248,14 +291,14 @@ func installedFileIDs(ids []string) []int {
 //
 // Without recorded file ids (older installs, imports) there is no identity to
 // compare, so it falls back to the shared version comparator: the newest
-// file whose version compares newer than the installed one.
+// latestFiles entry whose version compares newer than the installed one (an
+// index-only file, which has no flavor or loader to be matched on, is not
+// guessed at).
 func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.InstalledMod) (*File, error) {
-	files := installableFiles(data.LatestFiles)
-
 	installed := installedFileIDs(inst.FileIDs)
 	if len(installed) == 0 {
 		var newer []File
-		for _, f := range files {
+		for _, f := range installableFiles(data.LatestFiles) {
 			if v := fileVersion(f); v != "" && domain.IsNewerVersion(inst.Version, v) {
 				newer = append(newer, f)
 			}
@@ -264,6 +307,7 @@ func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.Ins
 	}
 	maxInstalled := slices.Max(installed)
 
+	files := updateCandidates(data)
 	if !slices.ContainsFunc(files, func(f File) bool { return f.ID > maxInstalled }) {
 		return nil, nil
 	}

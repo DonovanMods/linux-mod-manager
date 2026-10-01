@@ -1694,15 +1694,20 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   for any CurseForge game; a loader of "Any" (or none reported) on either
   side matches everything, and games that report no loaders are unaffected —
   and calls it an update only when its file id is greater than the installed
-  one; a beta or alpha is not offered over a release install. An install
+  one; a beta or alpha is not offered over a release install. Files that
+  only `latestFilesIndexes` names (CurseForge's `latestFiles` is a short
+  list, so a busy multi-loader mod's newest file for one loader and game
+  version is often index-only) are candidates too, at no extra request. An install
   superseded by a newer file is not listed in the index, so for a mod whose
   index spans more than one flavor or loader in that state the check makes
   one extra lookup of the installed file to learn them (a failed lookup
   reports the mod as skipped rather than guessing). An install with no
   recorded file ids is compared by version and never offered an older one.
   The update names the exact file it advertised, so applying it installs that
-  file. The version shown by search and `mod show` follows the same
-  newest-file rule.
+  file; to make that reliable the CurseForge file listing now covers every
+  page of a mod's files rather than only the API's first 50 (which also fixes
+  installing an older version of a mod with more than 50 files). The version
+  shown by search and `mod show` follows the same newest-file rule.
 
 - **The web UI's search had no way to page through results (#500).** The
   omnibar's "From sources" list is capped at 20 rows and never pages, and
