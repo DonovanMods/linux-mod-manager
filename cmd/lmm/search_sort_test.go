@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -103,4 +105,24 @@ func TestJSONGolden_SearchSorted(t *testing.T) {
 	})
 	// The exact name leads, then newest first: exact, new, old.
 	assertJSONCLIGolden(t, "search_sorted", out)
+}
+
+// TestREADMESearchSectionDocumentsSort holds the README's Search section to
+// #503's behaviour: the exact-match-first rule, the four sorts, the
+// newest-first direction of date sorts, and the JSON fields that tell a
+// frontend which sorts are meaningful.
+func TestREADMESearchSectionDocumentsSort(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	require.NoError(t, err)
+
+	const start, end = "### Search\n", "### Update check behavior"
+	from := strings.Index(string(readme), start)
+	require.Positive(t, from)
+	to := strings.Index(string(readme), end)
+	require.Greater(t, to, from)
+	section := string(readme)[from:to]
+
+	for _, want := range []string{"--sort", "relevance", "updated", "downloads", "popular", "newest first", "sorts_available", "exact"} {
+		assert.Contains(t, section, want)
+	}
 }

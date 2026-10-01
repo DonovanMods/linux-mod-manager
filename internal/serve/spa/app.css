@@ -885,7 +885,7 @@ select {
 
 /* A label wrapping its own control (issue 334's spacing pass). Without the
  * flex gap the label text sat flush against the <select> - "FilterAll" and
- * "Sort (on this page)Relevance" - which read as one word at a glance.
+ * "SortRelevance" - which read as one word at a glance.
  * Shared by the library toolbar and the search page's own sort. */
 .library__control {
   display: inline-flex;

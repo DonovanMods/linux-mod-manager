@@ -34,6 +34,7 @@ import {
   NoAnswerError,
 } from "./api.js";
 import { resolveGamePath } from "./navigation.js";
+import { RELEVANCE, effectiveSort, knownSort } from "./searchsort.js";
 import {
   connectActivity,
   isOriginMounted,
@@ -191,8 +192,13 @@ function commitSlices(seq, claim, patch, errors) {
  * bar's game picker) alongside whatever status the route itself is scoped
  * to - two cheap reads rather than one endpoint trying to answer both
  * questions.
+ *
+ * rehydrate is true for the re-reads a finished (or lost) job triggers on the
+ * route already on screen, as opposed to arriving on it: the search page
+ * then keeps the page, filters, tags and sort it is showing instead of going
+ * back to an unfiltered page 0 (issues 503, 506).
  */
-async function hydrate(route) {
+async function hydrate(route, { rehydrate = false } = {}) {
   const seq = beginHydration();
   // A read that can settle this context's toggle requests begins here - the
   // status pair below is part of it (toggleack.js#rereading).
@@ -269,7 +275,7 @@ async function hydrate(route) {
     return;
   }
   if (route.view === "search") {
-    await runSearchPage({ query: route.q ?? "", page: 0 });
+    await runSearchPage(searchPageEntry(route, rehydrate));
     return;
   }
   if (route.view !== "home") return;
@@ -702,6 +708,7 @@ async function runSearchPage({
   category = "",
   source = "",
   tags = "",
+  sort = RELEVANCE,
 }) {
   const q = (query ?? "").trim();
   searchPageSeq += 1;
@@ -729,6 +736,7 @@ async function runSearchPage({
       category,
       source,
       tags,
+      sort,
       report: null,
       error: null,
       facets,
@@ -754,11 +762,16 @@ async function runSearchPage({
         category,
         source,
         tags: splitTags(tags),
+        sort,
       },
       context,
     );
     if (searchPageSeq !== seq) return;
     const nextFacets = !category && !source ? facetsFromReport(report) : facets;
+    // The sort the page carries from here on is the one this report can
+    // actually honour: a sort no source that answered orders by is not
+    // claimed by the select and not sent again (searchsort.js).
+    const settledSort = effectiveSort(sort, report);
     store.set({
       searchPage: {
         status: "ready",
@@ -768,11 +781,13 @@ async function runSearchPage({
         category,
         source,
         tags,
+        sort: settledSort,
         report,
         error: null,
         facets: nextFacets,
       },
     });
+    writeSortToURL(q, settledSort);
   } catch (err) {
     if (searchPageSeq !== seq) return;
     store.set({
@@ -784,6 +799,7 @@ async function runSearchPage({
         category,
         source,
         tags,
+        sort,
         report: null,
         error: err instanceof ApiError ? err.message : String(err),
         // details carries a typed failure's structured facts (issue 436's
@@ -824,32 +840,57 @@ function splitTags(raw) {
     .filter(Boolean);
 }
 
-/** searchPageGoTo re-runs the search page at a different page, keeping the
- * current query/category/source/tags - the Next/Prev controls' own action. */
-function searchPageGoTo(page) {
+/** searchPageEntry is runSearchPage's arguments for the search route as it
+ * stands: a fresh search at page 0 with the route's own ?sort=, or - on a
+ * re-read of the page already on screen (hydrate's rehydrate) - the same
+ * search exactly as it is, so a finished install does not send the user back
+ * to an unfiltered first page (issues 503, 506). */
+function searchPageEntry(route, rehydrate) {
+  const query = route.q ?? "";
   const current = store.get().searchPage;
-  if (!current) return;
-  runSearchPage({
+  if (rehydrate && current && current.query === query.trim()) {
+    return searchPageState(current);
+  }
+  return { query, page: 0, sort: knownSort(route.sort) };
+}
+
+/** searchPageState is runSearchPage's arguments for a search page slice as
+ * it stands. EVERY path that re-runs or pages the search is built from this
+ * (rerunSearchPage, searchPageEntry, refreshSearchResults), so a new piece of
+ * search state has exactly one place to be carried - issue 506 was the one
+ * re-run path that spelled the list out by hand and left tags off it. */
+function searchPageState(current) {
+  return {
     query: current.query,
-    page,
+    page: current.page,
     category: current.category,
     source: current.source,
     tags: current.tags,
-  });
+    sort: current.sort,
+  };
 }
 
-/** searchPageSetCategory/searchPageSetSource apply a new filter at page 0 -
- * the category/source SELECTs' own onChange (Important 1b). */
-function searchPageSetCategory(category) {
+/** rerunSearchPage re-runs the search page's current search with some of its
+ * state replaced: the one body behind Next/Prev and every filter. */
+function rerunSearchPage(overrides) {
   const current = store.get().searchPage;
   if (!current) return;
-  runSearchPage({
-    query: current.query,
-    page: 0,
-    category,
-    source: current.source,
-    tags: current.tags,
-  });
+  runSearchPage({ ...searchPageState(current), ...overrides });
+}
+
+/** searchPageGoTo re-runs the search page at a different page, keeping the
+ * current query/category/source/tags/sort - the Next/Prev controls' own
+ * action. */
+function searchPageGoTo(page) {
+  rerunSearchPage({ page });
+}
+
+/** searchPageSetCategory/searchPageSetSource/searchPageSetSort apply a new
+ * filter or ordering at page 0 - the selects' own onChange (Important 1b;
+ * issue 503 for the sort, which is server-side like the other two: the
+ * order of a CATALOG, not a reshuffle of one page). */
+function searchPageSetCategory(category) {
+  rerunSearchPage({ page: 0, category });
 }
 
 /** searchPageSetTags applies `lmm search --tag` at page 0 (C-3). Tags are
@@ -858,27 +899,34 @@ function searchPageSetCategory(category) {
  * select, and the search page only offers it where a source actually
  * honours it. */
 function searchPageSetTags(tags) {
-  const current = store.get().searchPage;
-  if (!current) return;
-  runSearchPage({
-    query: current.query,
-    page: 0,
-    category: current.category,
-    source: current.source,
-    tags,
-  });
+  rerunSearchPage({ page: 0, tags });
 }
 
 function searchPageSetSource(source) {
-  const current = store.get().searchPage;
-  if (!current) return;
-  runSearchPage({
-    query: current.query,
-    page: 0,
-    category: current.category,
-    source,
-    tags: current.tags,
-  });
+  rerunSearchPage({ page: 0, source });
+}
+
+function searchPageSetSort(sort) {
+  rerunSearchPage({ page: 0, sort: knownSort(sort) });
+}
+
+/** writeSortToURL keeps the search route's ?sort= equal to the sort the page
+ * is showing, so a reload, a copied link and the slide-over's return path
+ * keep it (issue 503). A replace, not a push: choosing a sort is not a new
+ * place, and Back should leave the page rather than step through orderings.
+ * Nothing happens unless the search route for query q is still on screen
+ * (the answer may have arrived after the user left), or the URL already says
+ * the right thing. */
+function writeSortToURL(q, sort) {
+  const route = store.get().route;
+  if (route?.view !== "search" || (route.q ?? "").trim() !== q) return;
+  const url = new URL(window.location.href);
+  if (sort === RELEVANCE) url.searchParams.delete("sort");
+  else url.searchParams.set("sort", sort);
+  const next = url.pathname + url.search;
+  if (next !== window.location.pathname + window.location.search) {
+    navigate(next, { replace: true });
+  }
 }
 
 // modalSeq fences a slow plan against a modal that is no longer open. Each
@@ -1325,7 +1373,7 @@ async function startBatchToggle(action, mods) {
  */
 function toggleUnanswered(entry, err) {
   toggles.unanswered(entry, slices.mark());
-  hydrate(store.get().route);
+  hydrate(store.get().route, { rehydrate: true });
   const seconds = Math.round(err.deadlineMillis / 1000);
   pushToast({
     tone: "failure",
@@ -1847,13 +1895,7 @@ function dismissToast(id) {
 function refreshSearchResults() {
   const { omnibarSearch, searchPage } = store.get();
   if (omnibarSearch) searchSources(omnibarSearch.query);
-  if (searchPage)
-    runSearchPage({
-      query: searchPage.query,
-      page: searchPage.page,
-      category: searchPage.category,
-      source: searchPage.source,
-    });
+  if (searchPage) runSearchPage(searchPageState(searchPage));
 }
 
 /**
@@ -1900,7 +1942,7 @@ async function onJobDone(summary) {
   const ending = { summary, after: slices.mark(), lost: false };
   jobEndings.set(summary.id, ending);
   toggles.ended(summary.id, ending);
-  hydrate(store.get().route);
+  hydrate(store.get().route, { rehydrate: true });
   refreshSearchResults();
 
   // Wait for every currently in-flight start to bind its origin before
@@ -1971,7 +2013,7 @@ function onJobLost(jobID, err) {
   const ending = { summary, after: slices.mark(), lost: true };
   jobEndings.set(jobID, ending);
   const requests = toggles.ended(jobID, ending);
-  hydrate(store.get().route);
+  hydrate(store.get().route, { rehydrate: true });
 
   const origin = originOf(jobID);
   if (origin) clearOrigin(origin);
@@ -2067,6 +2109,7 @@ const actions = {
   searchPageSetCategory,
   searchPageSetSource,
   searchPageSetTags,
+  searchPageSetSort,
   startToggle,
   setModLock,
   clearModLock,

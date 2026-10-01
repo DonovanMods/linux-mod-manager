@@ -289,6 +289,32 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
 
 ### Added
 
+- **Search puts the exact match first and can sort (#503).** Searching
+  CurseForge for `auctionator`, a mod's own name, did not show that mod on
+  the first page. Every search — `lmm search`, `GET /api/v1/search`, the web
+  UI's search page and the omnibar — now lists a result whose name _is_ the
+  query first, ignoring case, spacing and punctuation (`Leatrix Plus` is
+  `leatrix-plus`), for every source and every sort. The rest follow the new
+  `lmm search --sort relevance|updated|downloads|popular`
+  (`GET /api/v1/search?sort=`; shell completion included): `updated` is last
+  updated with the **newest first**, `downloads` is most downloaded first,
+  `popular` is most endorsed first, and `relevance`, the default, is what
+  each source returned, as before. CurseForge and NexusMods sort on their own
+  servers, and Thunderstore, Icarus and `directory`/`manifest` sources sort
+  their whole catalogue before paging, so `--limit` and the web UI's pages
+  get the top of the order you asked for rather than a reshuffled first page;
+  a source that cannot (Steam Workshop, `api` sources) is re-ordered within
+  the page it returned. A CurseForge search whose exact-named mod is not on
+  the first page makes one extra, best-effort lookup of that mod by its slug
+  and puts it first; a failed lookup changes nothing. CurseForge's default
+  ordering is otherwise unchanged. `--json` and the API add `sort` (the order
+  the hits are in) and `sorts_available` (the sorts that mean something for
+  the sources that answered: `popular` appears only where one reports a
+  rating), and the web UI's search page replaces its old "Sort (on this
+  page)" menu with a server-side one that offers only those. NexusMods
+  search results now show their real download and endorsement counts; they
+  carried none before.
+
 - **Steam Workshop items show their author's name, not a number (#420).**
   A Workshop item's author was the creator's raw steamid64 everywhere. lmm
   now resolves it to the creator's Steam persona name: `lmm mod show`
@@ -1679,6 +1705,13 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   `lmm mod show` is unchanged.
 
 ### Fixed
+
+- **The search page forgot its tag filter after an install (#506).** The
+  web UI's search page re-runs its search when a job (an install, say)
+  finishes, and that re-run dropped the active tag filter — and the page
+  number and category too, in one of the two places that re-ran it — so
+  installing from a tag-filtered search silently widened the list. Every
+  re-run now keeps the page, category, source, tags and sort being shown.
 
 - **`lmm update` offered CurseForge downgrades as updates (#504).** For
   mods whose files CurseForge classifies by game flavor (WoW Retail, Classic

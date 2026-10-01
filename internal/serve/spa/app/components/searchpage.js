@@ -11,13 +11,17 @@
 // (main.js#runSearchPage). Category/source filtering moved SERVER-SIDE
 // there too (Important 1b, unit 5 fix wave): a filter change re-queries
 // page 0 with that option, so the count this page renders answers the
-// CATALOG for that filter, not a client-side slice of one page. Sort stays
-// client-side and page-local - it only reorders what a page already holds
-// (every SearchHit already carries its own downloads/name), which needs no
-// round trip; its own label says so (Important 1c).
+// CATALOG for that filter, not a client-side slice of one page.
+//
+// Sort is server-side too (issue 503): it used to reorder the one page already
+// fetched, which is not "most downloaded" of anything. Choosing one re-queries
+// page 0 with ?sort=, so it orders the whole catalog the sources can order.
+// The select offers only the sorts the report lists in sorts_available - a
+// sort no source that answered can order by is never shown (searchsort.js).
 
-import { html, useMemo, useState } from "../render.js";
+import { html } from "../render.js";
 import { contextPath } from "../router.js";
+import { RELEVANCE, effectiveSort, offeredSorts } from "../searchsort.js";
 import { workshopCollectionRef } from "../workshopcollection.js";
 import { SourceResultsList, skippedSignInNotice } from "./searchresults.js";
 import { ModPanel } from "./modpanel.js";
@@ -29,14 +33,8 @@ import { ErrorDetails } from "./errordetails.js";
 const TAG_CAPABLE_SOURCES = new Set(["nexusmods", "thunderstore"]);
 
 export function SearchPage({ state, route, onThemeChange, actions }) {
-  // Hooks run unconditionally, before any of the branches below return -
-  // missioncontrol.js's own rule, for the same reason: a component that
-  // calls fewer hooks on one render than another corrupts Preact's hook
-  // order on every subsequent render. Sort is the only filter still LOCAL
-  // to this component - category/source live in state.searchPage, since a
-  // filter change now re-fetches (main.js#runSearchPage).
-  const [sort, setSort] = useState("relevance");
-
+  // No hooks: every filter, the sort included, lives in state.searchPage,
+  // since a change to any of them re-fetches (main.js#runSearchPage).
   const searchPage = state.searchPage;
   const query = (route.q ?? "").trim();
   // A pasted Workshop link is not a search term, and searching for it finds
@@ -52,15 +50,10 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   // game has nothing that searches".
   const skippedNotice = skippedSignInNotice(report?.skipped_unauthenticated);
 
-  const sorted = useMemo(() => {
-    if (sort === "downloads") {
-      return [...hits].sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0));
-    }
-    if (sort === "name") {
-      return [...hits].sort((a, b) => a.name.localeCompare(b.name));
-    }
-    return hits;
-  }, [hits, sort]);
+  // The sorts worth offering for THIS report, and the one to show selected:
+  // the requested sort when the report offers it, relevance otherwise.
+  const sorts = offeredSorts(report);
+  const currentSort = effectiveSort(searchPage?.sort, report);
 
   // TAG_CAPABLE_SOURCES is the set of built-in sources whose search honours
   // ?tag= (core.SearchOptions.Tags). It is a client-side list because
@@ -132,7 +125,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   // is no catalog total on the wire (TotalResults is this page's own
   // pre-cap merge). "more available" is the has_more cue a reader needs to
   // know a Next page exists at all.
-  const pageSummary = `Page ${searchPage.page + 1} · ${sorted.length} on this page${report.has_more ? " · more available" : ""}`;
+  const pageSummary = `Page ${searchPage.page + 1} · ${hits.length} on this page${report.has_more ? " · more available" : ""}`;
 
   return html`
     ${header}
@@ -200,22 +193,32 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
             </label>
           `
         }
-        <label class="library__control">
-          Sort (on this page)
-          <select
-            name="sort"
-            value=${sort}
-            onChange=${(e) => setSort(e.currentTarget.value)}
-          >
-            <option value="relevance">Relevance</option>
-            <option value="downloads">Downloads</option>
-            <option value="name">Name</option>
-          </select>
-        </label>
+        ${
+          // Never a dead control: with relevance the only sort on offer there
+          // is nothing to choose between, so no select at all - the same rule
+          // the tag filter above follows.
+          sorts.length > 1 &&
+          html`
+            <label class="library__control">
+              Sort
+              <select
+                name="sort"
+                value=${currentSort}
+                onChange=${(e) =>
+                  actions.searchPageSetSort(e.currentTarget.value)}
+              >
+                ${sorts.map(
+                  ([name, label]) =>
+                    html`<option key=${name} value=${name}>${label}</option>`,
+                )}
+              </select>
+            </label>
+          `
+        }
       </div>
 
       ${
-        sorted.length === 0 &&
+        hits.length === 0 &&
         skippedNotice !== "" &&
         html`<p class="empty-state__hint">${skippedNotice}</p>`
       }
@@ -227,14 +230,14 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
         </p>`
       }
       ${
-        sorted.length === 0 &&
+        hits.length === 0 &&
         (report.warnings ?? []).length === 0 &&
         report.attempted_count !== 0 &&
         html`<p class="empty-state__hint">No results match this search.</p>`
       }
 
       <${SourceResultsList}
-        hits=${sorted}
+        hits=${hits}
         warnings=${report.warnings}
         state=${state}
         actions=${actions}
@@ -265,10 +268,10 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
       route.mod &&
       html`<${ModPanel}
         modKey=${route.mod}
-        contextPath=${searchPagePath(home, searchPage.query)}
+        contextPath=${searchPagePath(home, searchPage.query, currentSort)}
         rows=${[]}
         visible=${[]}
-        catalogRows=${sorted}
+        catalogRows=${hits}
         route=${route}
         state=${state}
         actions=${actions}
@@ -278,11 +281,14 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
 }
 
 /** searchPagePath is the ?mod= slide-over's own contextPath on this route -
- * the current search results (?q= preserved), not home: closing the panel
- * (or stepping through it) must land back on the results the user was
- * browsing, not navigate away from the search page entirely. */
-function searchPagePath(home, query) {
-  return `${home}/search?q=${encodeURIComponent(query)}`;
+ * the current search results (?q= and the sort preserved), not home: closing
+ * the panel (or stepping through it) must land back on the results the user
+ * was browsing, not navigate away from the search page entirely. */
+function searchPagePath(home, query, sort) {
+  const base = `${home}/search?q=${encodeURIComponent(query)}`;
+  return sort && sort !== RELEVANCE
+    ? `${base}&sort=${encodeURIComponent(sort)}`
+    : base;
 }
 
 /** CollectionOffer is the search page's answer to a pasted Steam Workshop
