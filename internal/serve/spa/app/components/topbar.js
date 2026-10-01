@@ -21,6 +21,7 @@ import { countUndeployed } from "../modrows.js";
 import { InlineJob } from "./jobprogress.js";
 import { ActivityBell } from "./tray.js";
 import { useDismissOnOutsideOrEscape } from "../dismiss.js";
+import { useMenuPlacement } from "../menuplacement.js";
 
 // DEPLOY_ORIGIN is the key the top bar's Deploy control morphs on. Origins
 // are stable strings, one per control (jobprogress.js) - a later unit's
@@ -296,6 +297,7 @@ export function TopBar({
  * real Mission Control route rather than a context that can't resolve. */
 function GamePicker({ status, games, open, onOpen, onClose }) {
   const list = games ?? [];
+  const menuRef = useMenuPlacement(open);
 
   async function pick(id) {
     onClose();
@@ -319,7 +321,7 @@ function GamePicker({ status, games, open, onOpen, onClose }) {
       ${
         open &&
         html`
-          <ul class="picker__menu game-picker__menu">
+          <ul class="picker__menu game-picker__menu" ref=${menuRef}>
             ${list.map(
               (g) => html`
                 <li key=${g.id}>
@@ -368,6 +370,7 @@ function ProfilePicker({
   actions,
 }) {
   const profiles = status.profiles ?? [];
+  const menuRef = useMenuPlacement(open);
 
   function pick(name) {
     onClose();
@@ -414,7 +417,7 @@ function ProfilePicker({
       ${
         open &&
         html`
-          <ul class="picker__menu profile-picker__menu">
+          <ul class="picker__menu profile-picker__menu" ref=${menuRef}>
             ${profiles.map(
               (p) => html`
                 <li key=${p.name} class="picker__row" data-profile=${p.name}>

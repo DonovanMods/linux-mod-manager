@@ -478,7 +478,14 @@ select {
   border-color: var(--border-subtle);
 }
 
+/* Every dropdown opens rightward from its trigger by default; menuplacement.js
+ * measures it on open and flips it to the other side (data-align="end"), or
+ * slides it inside the gutters, when it would cross the viewport (issue 502). No
+ * menu assumes where its trigger sits. --menu-gutter is the gap kept to the
+ * viewport edge; the script reads it, and the width cap below uses it, so a
+ * menu is never wider than the room there is. */
 .picker__menu {
+  --menu-gutter: var(--space-2);
   animation: menu-drop var(--motion-fast) var(--motion-ease);
   position: absolute;
   z-index: 10;
@@ -486,12 +493,18 @@ select {
   left: 0;
   margin: var(--space-1) 0 0;
   padding: var(--space-1);
-  min-width: 12rem;
+  min-width: min(12rem, calc(100vw - 2 * var(--menu-gutter)));
+  max-width: calc(100vw - 2 * var(--menu-gutter));
   list-style: none;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
   background: var(--surface-overlay);
   box-shadow: var(--shadow-raised);
+}
+
+.picker__menu[data-align="end"] {
+  right: 0;
+  left: auto;
 }
 
 .picker__item {
@@ -2116,17 +2129,8 @@ select {
 /* The activity tray.                                                      */
 /* ---------------------------------------------------------------------- */
 
-/* The bell sits at the far right of the top bar, so its menu hangs from
- * the right edge - the shared .picker__menu's left: 0 would run a 26rem
- * tray straight off the side of the viewport, which is exactly what it did
- * (the running row's progress line was cut off mid-word). */
-.activity-bell .picker__menu {
-  right: 0;
-  left: auto;
-}
-
 .tray {
-  min-width: 26rem;
+  min-width: min(26rem, calc(100vw - 2 * var(--menu-gutter)));
   max-height: 70vh;
   overflow-y: auto;
 }
