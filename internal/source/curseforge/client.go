@@ -171,8 +171,39 @@ func clampSearchPageSize(pageSize int) int {
 	return min(pageSize, maxSearchPageSize)
 }
 
-// SearchMods searches for mods with the given parameters
-func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categoryID int, pageSize, index int) ([]Mod, *Pagination, error) {
+// CurseForge's ModsSearchSortField enum values, the sortField a search sends
+// for each non-relevance domain.SearchSort (#503). The enum is Featured=1,
+// Popularity=2, LastUpdated=3, Name=4, Author=5, TotalDownloads=6,
+// Category=7, GameVersion=8, EarlyAccess=9, FeaturedReleased=10,
+// ReleasedDate=11, Rating=12. SortPopular maps to Rating (12), the closest
+// native key to the thumbs-up count (Endorsements) that core orders a page
+// by; CurseForge's own Popularity (2) is a download-velocity blend that
+// would disagree with that in-page order.
+const (
+	sortFieldLastUpdated    = 3
+	sortFieldTotalDownloads = 6
+	sortFieldRating         = 12
+)
+
+// searchSortField is the sortField for a domain.SearchSort, and false for
+// relevance (or the empty default, or anything unknown), where the search
+// sends no sort at all so CurseForge's default ordering is unchanged.
+func searchSortField(sort domain.SearchSort) (int, bool) {
+	switch sort {
+	case domain.SortUpdated:
+		return sortFieldLastUpdated, true
+	case domain.SortDownloads:
+		return sortFieldTotalDownloads, true
+	case domain.SortPopular:
+		return sortFieldRating, true
+	}
+	return 0, false
+}
+
+// SearchMods searches for mods with the given parameters. A sort other than
+// relevance is sent as sortField plus sortOrder=desc so the API pages by it;
+// relevance sends neither.
+func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categoryID int, pageSize, index int, sort domain.SearchSort) ([]Mod, *Pagination, error) {
 	pageSize = clampSearchPageSize(pageSize)
 
 	params := url.Values{}
@@ -182,6 +213,10 @@ func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categ
 	}
 	if categoryID > 0 {
 		params.Set("categoryId", strconv.Itoa(categoryID))
+	}
+	if field, ok := searchSortField(sort); ok {
+		params.Set("sortField", strconv.Itoa(field))
+		params.Set("sortOrder", "desc")
 	}
 	params.Set("pageSize", strconv.Itoa(pageSize))
 	params.Set("index", strconv.Itoa(index))
@@ -194,6 +229,25 @@ func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categ
 	}
 
 	return resp.Data, &resp.Pagination, nil
+}
+
+// SearchModBySlug looks up the mod whose slug is exactly slug in a game
+// (CurseForge's slug filter is an exact match, not a search). It returns nil
+// with no error when no mod has that slug.
+func (c *Client) SearchModBySlug(ctx context.Context, gameID int, slug string) (*Mod, error) {
+	params := url.Values{}
+	params.Set("gameId", strconv.Itoa(gameID))
+	params.Set("slug", slug)
+	params.Set("pageSize", "1")
+
+	var resp PaginatedResponse[[]Mod]
+	if err := c.doRequest(ctx, http.MethodGet, "/v1/mods/search?"+params.Encode(), &resp); err != nil {
+		return nil, fmt.Errorf("looking up mod slug %q: %w", slug, err)
+	}
+	if len(resp.Data) == 0 {
+		return nil, nil
+	}
+	return &resp.Data[0], nil
 }
 
 // GetMod fetches a single mod by ID

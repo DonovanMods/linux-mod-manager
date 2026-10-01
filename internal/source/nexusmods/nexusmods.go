@@ -85,7 +85,10 @@ func (n *NexusMods) TypeLabel() string {
 // Capabilities implements source.CapabilityReporter. NexusMods supports all
 // ModSource operations.
 func (n *NexusMods) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}
+	return source.Capabilities{
+		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
+		Sorts: []domain.SearchSort{domain.SortUpdated, domain.SortDownloads, domain.SortPopular},
+	}
 }
 
 // ExchangeToken exchanges an OAuth code for tokens.
@@ -112,7 +115,7 @@ func (n *NexusMods) Search(ctx context.Context, query source.SearchQuery) (sourc
 	}
 	offset := query.Page * pageSize
 
-	results, err := n.client.SearchMods(ctx, query.GameID, query.Query, query.Category, query.Tags, pageSize, offset)
+	results, err := n.client.SearchMods(ctx, query.GameID, query.Query, query.Category, query.Tags, query.Sort, pageSize, offset)
 	if err != nil {
 		return source.SearchResult{}, err
 	}
@@ -434,6 +437,7 @@ func modDataToDomain(data ModData, gameID string) domain.Mod {
 		Description:  data.Description,
 		GameID:       gameID,
 		Category:     strconv.Itoa(data.CategoryID),
+		Downloads:    int64(data.DownloadCount),
 		Endorsements: int64Ptr(int64(data.EndorsementCount)),
 		PictureURL:   data.PictureURL,
 		SourceURL:    fmt.Sprintf("https://www.nexusmods.com/%s/mods/%d", data.DomainName, data.ModID),

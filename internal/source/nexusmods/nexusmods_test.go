@@ -793,7 +793,10 @@ func TestNexusMods_TypeLabel(t *testing.T) {
 
 func TestNexusMods_Capabilities(t *testing.T) {
 	nm := New(nil, "")
-	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}, nm.Capabilities())
+	assert.Equal(t, source.Capabilities{
+		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
+		Sorts: []domain.SearchSort{domain.SortUpdated, domain.SortDownloads, domain.SortPopular},
+	}, nm.Capabilities())
 }
 
 func TestNexusMods_AuthInstructions(t *testing.T) {
@@ -923,4 +926,49 @@ func TestNexusMods_SearchPagingContract(t *testing.T) {
 	assert.Equal(t, []float64{10, 10}, gotCount, "the requested count goes upstream unchanged")
 	assert.Equal(t, []float64{0, 10}, gotOffset,
 		"the offset is page*pageSize: contiguous for any page size the API honours, and strided for one it does not - which is why a short page must not be paged")
+}
+
+// TestNexusMods_SearchForwardsSortAndCarriesCounts is #503's NexusMods half:
+// the query's Sort reaches the upstream as ModsSort (so the right PAGE is
+// fetched, not the first page re-ordered), and the hits carry the real
+// download and endorsement counts the sorts key on - not the zero a search
+// that never fetched them used to report.
+func TestNexusMods_SearchForwardsSortAndCarriesCounts(t *testing.T) {
+	var gotSort any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Variables map[string]any `json:"variables"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		gotSort = req.Variables["sort"]
+		_, _ = w.Write([]byte(`{"data":{"mods":{"nodes":[
+			{"modId":1,"name":"Popular","version":"1.0","downloads":5000,"endorsements":42,"uploader":{"name":"a"}},
+			{"modId":2,"name":"Quiet","version":"1.0","downloads":0,"endorsements":0,"uploader":{"name":"b"}}
+		]}}}`))
+	}))
+	defer server.Close()
+
+	nm := New(nil, "key")
+	nm.client.graphqlURL = server.URL
+
+	res, err := nm.Search(context.Background(), source.SearchQuery{GameID: "skyrim", Query: "x", Sort: domain.SortDownloads})
+	require.NoError(t, err)
+	assert.Equal(t, []any{map[string]any{"downloads": map[string]any{"direction": "DESC"}}}, gotSort)
+
+	require.Len(t, res.Mods, 2)
+	assert.Equal(t, int64(5000), res.Mods[0].Downloads)
+	require.NotNil(t, res.Mods[0].Endorsements)
+	assert.Equal(t, int64(42), *res.Mods[0].Endorsements)
+	assert.Equal(t, int64(0), res.Mods[1].Downloads)
+}
+
+// A REST mod document carries its own counts (mod_downloads,
+// endorsement_count); both flow through modDataToDomain so GetMod reports
+// them as the search now does.
+func TestModDataToDomain_CarriesCounts(t *testing.T) {
+	mod := modDataToDomain(ModData{ModID: 1, DownloadCount: 900, EndorsementCount: 12}, "skyrim")
+
+	assert.Equal(t, int64(900), mod.Downloads)
+	require.NotNil(t, mod.Endorsements)
+	assert.Equal(t, int64(12), *mod.Endorsements)
 }
