@@ -23,6 +23,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -585,6 +586,16 @@ type SearchOptions struct {
 	Page     int
 	PageSize int
 	Limit    int
+	// Sort orders the hits (#503): empty or domain.SortRelevance keeps each
+	// source's own order; updated, downloads and popular order by that field,
+	// descending. Search refuses a value outside domain.SearchSorts with an
+	// error wrapping domain.ErrInvalidSearchSort (IsInvalidSearchSort), before
+	// any source is asked. It is forwarded to every searched source - which
+	// sorts server-side when it can, so page N is the right page - and then
+	// applied again here to what came back, so the result is ordered the same
+	// way whichever source answered. Whatever the sort, a hit whose name is
+	// the query comes first (orderSearchHits).
+	Sort domain.SearchSort
 }
 
 // SearchReport is everything `lmm search` renders: the hits, the per-source
@@ -613,6 +624,13 @@ type SearchOptions struct {
 //     attempt - so a frontend that ignores this field reads a Workshop-only
 //     game as having no search-capable source at all. Empty on the
 //     single-named-source path, which returns the refusal as an error.
+//   - Sort echoes the sort the hits are in - domain.SortRelevance when none
+//     was asked for - and SortsAvailable names the sorts worth offering for
+//     this result: relevance plus each other sort at least one source that
+//     ANSWERED lists in source.Capabilities.Sorts, in domain.SearchSorts
+//     order (#503). The same rule the Tags filter follows: a frontend shows
+//     a sort only when it would order something, never one that sorts every
+//     hit by an always-empty field.
 //   - Warnings stay structured (SourceID + error), never pre-formatted
 //     lines: rendering them is the frontend's job.
 //   - Page/PageSize echo SearchOptions.Page/PageSize verbatim (#331: the
@@ -638,6 +656,9 @@ type SearchReport struct {
 	Warnings       []SourceWarning `json:"warnings"`
 	TotalResults   int             `json:"total_results"`
 	AttemptedCount int             `json:"attempted_count"`
+	// Sort and SortsAvailable are additive (#503): see the type's doc.
+	Sort           domain.SearchSort   `json:"sort"`
+	SortsAvailable []domain.SearchSort `json:"sorts_available"`
 	// SkippedUnauthenticated is omitempty: an absent key is "nothing was
 	// skipped", which is what every pre-#383 consumer already assumed.
 	SkippedUnauthenticated []string `json:"skipped_unauthenticated,omitempty"`
@@ -656,31 +677,44 @@ type SearchReport struct {
 // With no hits, the profile is never read: nothing can be marked installed,
 // and a search that found nothing must not fail on an unreadable profile.
 func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, query string, opts SearchOptions) (*SearchReport, error) {
+	sortBy, err := domain.ParseSearchSort(string(opts.Sort))
+	if err != nil {
+		return nil, err
+	}
 	report := &SearchReport{
 		GameID: game.ID, Query: query, AttemptedCount: -1,
 		Page: opts.Page, PageSize: opts.PageSize,
+		Sort: sortBy, SortsAvailable: sortsOffered(nil),
 	}
 
 	var found []domain.Mod
 	if opts.SourceID == "" {
-		agg, err := s.searchAllSources(ctx, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize, opts.Limit)
+		agg, err := s.searchAllSources(ctx, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize, opts.Limit, sortBy)
 		if err != nil {
 			return nil, err
 		}
 		found = agg.Mods
+		report.SortsAvailable = agg.Sorts
 		report.Warnings = agg.Warnings
 		report.AttemptedCount = agg.AttemptedCount
 		report.SkippedUnauthenticated = agg.SkippedUnauthenticated
 		report.HasMore = !agg.Exhausted
 	} else {
-		result, err := s.SearchMods(ctx, opts.SourceID, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize)
+		result, err := s.searchSource(ctx, opts.SourceID, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize, sortBy)
 		if err != nil {
 			return nil, err
 		}
 		found = result.Mods
+		if src, err := s.registry.Get(opts.SourceID); err == nil {
+			report.SortsAvailable = sortsOffered([]source.Capabilities{source.CapabilitiesOf(src)})
+		}
 		report.Warnings = sourceWarnings(opts.SourceID, result.Warnings)
 		report.HasMore = sourceHasMore(result, opts.Page, opts.PageSize)
 	}
+
+	// Ordered BEFORE the Limit cut below: an exact match the sources ranked
+	// 40th must survive `--limit 10`.
+	orderSearchHits(found, query, sortBy)
 
 	report.TotalResults = len(found)
 	if len(found) == 0 {

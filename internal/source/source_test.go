@@ -50,3 +50,13 @@ func TestCapabilitiesOf(t *testing.T) {
 		assert.Equal(t, Capabilities{Search: true, Dependencies: false, Updates: true, Auth: false}, caps)
 	})
 }
+
+func TestCapabilitiesSupportsSort(t *testing.T) {
+	caps := Capabilities{Sorts: []domain.SearchSort{domain.SortUpdated}}
+	assert.True(t, caps.SupportsSort(""), "the default is every source's")
+	assert.True(t, caps.SupportsSort(domain.SortRelevance))
+	assert.True(t, caps.SupportsSort(domain.SortUpdated))
+	assert.False(t, caps.SupportsSort(domain.SortDownloads))
+	assert.False(t, caps.SupportsSort(domain.SortPopular))
+	assert.False(t, Capabilities{}.SupportsSort(domain.SortUpdated))
+}

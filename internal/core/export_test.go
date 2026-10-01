@@ -236,7 +236,7 @@ func (s *Service) MergedPakOutcomesForTest(ctx context.Context, game *domain.Gam
 // caller, but core's own aggregate-search tests drive it directly to assert
 // on AggregateSearchResult's warnings/counts.
 func (s *Service) SearchAllSourcesForTest(ctx context.Context, gameID, query, category string, tags []string, page, pageSize, limit int) (AggregateSearchResult, error) {
-	return s.searchAllSources(ctx, gameID, query, category, tags, page, pageSize, limit)
+	return s.searchAllSources(ctx, gameID, query, category, tags, page, pageSize, limit, domain.SortRelevance)
 }
 
 // MaxSearchPagesPerSourceForTest exposes maxSearchPagesPerSource so #109's
