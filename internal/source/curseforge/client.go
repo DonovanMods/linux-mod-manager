@@ -290,6 +290,41 @@ func (c *Client) GetModFiles(ctx context.Context, modID int) ([]File, error) {
 	return resp.Data, nil
 }
 
+// maxModFilePages bounds GetAllModFiles' walk: 40 pages of 50 is 2000 files,
+// far beyond any real mod, so reaching it means a listing that never ends.
+const maxModFilePages = 40
+
+// GetAllModFiles fetches the mod's whole file list, newest first as the API
+// serves it: GetModFiles is one page (CurseForge's default 50 files), which is
+// not where every file a caller can name lives. Pages are appended in the API's
+// order and the walk ends at the reported totalCount, at an empty page, or -
+// as a runaway guard, returning what it has without an error - at
+// maxModFilePages. The context is honoured between pages.
+func (c *Client) GetAllModFiles(ctx context.Context, modID int) ([]File, error) {
+	const pageSize = 50
+
+	var all []File
+	for page := 0; page < maxModFilePages; page++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		params := url.Values{}
+		params.Set("pageSize", strconv.Itoa(pageSize))
+		params.Set("index", strconv.Itoa(len(all)))
+		path := fmt.Sprintf("/v1/mods/%d/files?%s", modID, params.Encode())
+
+		var resp PaginatedResponse[[]File]
+		if err := c.doRequest(ctx, http.MethodGet, path, &resp); err != nil {
+			return nil, fmt.Errorf("getting mod files: %w", err)
+		}
+		all = append(all, resp.Data...)
+		if len(resp.Data) == 0 || len(all) >= resp.Pagination.TotalCount {
+			break
+		}
+	}
+	return all, nil
+}
+
 // GetModFile fetches a specific file for a mod
 func (c *Client) GetModFile(ctx context.Context, modID, fileID int) (*File, error) {
 	path := fmt.Sprintf("/v1/mods/%d/files/%d", modID, fileID)
