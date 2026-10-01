@@ -1680,6 +1680,24 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **An update could install a different file than the one it advertised
+  (#505).** When the file an update named was no longer in the source's file
+  list, applying it fell back to any file carrying the new version's label,
+  but one label covers several builds: CurseForge publishes the same version
+  for its Forge, Fabric, NeoForge and Quilt files and for each game flavor.
+  An update offering the Forge build could therefore install the Fabric one
+  without a word. Now, if the source no longer lists a file the update check
+  named, the update fails instead of guessing; it applies to every source and
+  every game. The same happens when an installed file is gone with nothing
+  naming its successor and several files under the new version could replace
+  it (same category, where the source sets one). If exactly one could, it
+  still installs, as before. The error names the missing file and lists
+  every file under the new version. To recover, re-run `lmm update` so the
+  check names a file that exists, or pick a file explicitly with
+  `lmm install --source <source> --id <mod> --file <file-id>`. `--json` and
+  the web UI's failed update job carry the same information as data
+  (`missing_file_ids`, `advertised`, `candidates`).
+
 - **`lmm update` offered CurseForge downgrades as updates (#504).** For
   mods whose files CurseForge classifies by game flavor (WoW Retail, Classic
   Era, a Minecraft version family, ...) or by mod loader (Forge, Fabric,

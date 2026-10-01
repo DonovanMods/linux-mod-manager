@@ -706,3 +706,78 @@ func newLoaderRequirement(game *domain.Game, modName, kind, version, evidence st
 		},
 	}
 }
+
+// UpdateTargetUnavailableError refuses an update whose file is gone from the
+// source's listing when nothing identifies the file that replaces it (#505).
+//
+// The fallback it replaces picked a stand-in by version label, and a label is
+// not unique across a mod's file classifications: CurseForge publishes one
+// label for its Forge, Fabric, NeoForge and Quilt builds and for each game
+// flavor, so the fallback could install another loader's file than the one
+// the update check advertised. Two shapes are refused:
+//
+//   - Advertised: the update check named the file (a FileIDReplacements
+//     target) and that id is not listed. The source named one file and only
+//     that file is the update, so no label match stands in for it, however
+//     many there are.
+//   - Not advertised: an installed file is gone with nothing naming its
+//     successor (#95's fallback) and several files listed under the target
+//     version could replace it - same Category, where the files carry one.
+//     Exactly one such file still installs, as before.
+//
+// It follows this file's convention: Details() any puts the whole thing in
+// the --json error envelope's "details" (Ruling 3), so `lmm update --json`
+// and a failed `lmm serve` update job hand a script the candidate files as
+// data rather than inside the sentence.
+type UpdateTargetUnavailableError struct {
+	// SourceID, ModID, ModName and Profile identify the mod being updated.
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	ModName  string `json:"mod_name"`
+	Profile  string `json:"profile"`
+	// TargetVersion is the version the update moves to.
+	TargetVersion string `json:"target_version"`
+	// MissingFileIDs are the file ids the update needs that the source no
+	// longer lists.
+	MissingFileIDs []string `json:"missing_file_ids"`
+	// Advertised reports that the update check named MissingFileIDs itself
+	// (FileIDReplacements), rather than their being the installed files.
+	Advertised bool `json:"advertised"`
+	// Candidates are the files the source lists under TargetVersion, in
+	// listing order: what the user can choose from with `lmm install --file`.
+	// Empty when none is listed.
+	Candidates []UpdateTargetCandidate `json:"candidates"`
+}
+
+// UpdateTargetCandidate is one file UpdateTargetUnavailableError offers the
+// user in place of the one that is gone.
+type UpdateTargetCandidate struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	Category string `json:"category,omitempty"`
+}
+
+// Error names the missing file, every candidate, and the explicit install
+// that picks one, so a caller that only prints it can still act on it.
+func (e *UpdateTargetUnavailableError) Error() string {
+	install := fmt.Sprintf("'lmm install --source %s --id %s --profile %s --file <file-id>'", e.SourceID, e.ModID, e.Profile)
+	missing := strings.Join(e.MissingFileIDs, ", ")
+	listed := make([]string, len(e.Candidates))
+	for i, c := range e.Candidates {
+		listed[i] = fmt.Sprintf("%s %q", c.ID, c.Name)
+	}
+	if e.Advertised {
+		files := fmt.Sprintf("no file is listed under %s", e.TargetVersion)
+		if len(listed) > 0 {
+			files = fmt.Sprintf("files listed under %s: %s", e.TargetVersion, strings.Join(listed, ", "))
+		}
+		return fmt.Sprintf("cannot update %s to %s: the file the update check named (file ID %s) is no longer offered by the source, and lmm will not guess a replacement from the version label. Re-run 'lmm update' so the check names a file that exists, or install the file you want explicitly with %s; %s",
+			e.ModName, e.TargetVersion, missing, install, files)
+	}
+	return fmt.Sprintf("cannot update %s to %s: the installed file (file ID %s) is no longer offered by the source, and %d files listed under %s could replace it; lmm will not pick one by list order. Install the file you want explicitly with %s: %s",
+		e.ModName, e.TargetVersion, missing, len(e.Candidates), e.TargetVersion, install, strings.Join(listed, ", "))
+}
+
+// Details implements the --json error envelope's extension point.
+func (e *UpdateTargetUnavailableError) Details() any { return e }
