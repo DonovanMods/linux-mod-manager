@@ -7,8 +7,13 @@
 // section rather than showing an increasingly stale answer to a question
 // nobody is asking anymore - no explicit "clear" action needed, the render
 // gate does it for free.
+//
+// The fan-out is capped and never pages (main.js#OMNIBAR_FANOUT_LIMIT), so a
+// ready report ends with "See all results" - the way to the dedicated search
+// page (searchpage.js) for the same query, which does page (issue 500).
 
 import { html } from "../render.js";
+import { contextPath, navigate } from "../router.js";
 import {
   SourceResultsList,
   skippedSignInNotice,
@@ -51,6 +56,8 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   // skipped for want of a key is named once, and never reported as a game
   // with nothing that can search.
   const skippedNotice = skippedSignInNotice(report.skipped_unauthenticated);
+  const route = state.route;
+  const allResultsPath = `${contextPath(route.game, route.profile)}/search?q=${encodeURIComponent(q)}`;
 
   return html`
     <section class="library omnibar-results">
@@ -81,6 +88,18 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
         state=${state}
         actions=${actions}
       />
+      <p class="omnibar-results__all">
+        <a
+          class="button button--small"
+          data-testid="see-all-results"
+          href=${allResultsPath}
+          onClick=${(e) => {
+            e.preventDefault();
+            navigate(allResultsPath);
+          }}
+          >See all results${report.has_more ? " (more available)" : ""} →</a
+        >
+      </p>
     </section>
   `;
 }

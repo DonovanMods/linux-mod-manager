@@ -1687,6 +1687,11 @@ select {
   margin-top: var(--space-6);
 }
 
+/* issue 500: the fan-out's way to the paged search page. */
+.omnibar-results__all {
+  margin: var(--space-3) 0 0;
+}
+
 .search-results {
   margin: 0;
   padding: 0;

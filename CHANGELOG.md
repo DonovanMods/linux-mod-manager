@@ -1680,6 +1680,16 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The web UI's search had no way to page through results (#500).** The
+  omnibar's "From sources" list is capped at 20 rows and never pages, and
+  the paged search page (`/g/<game>/<profile>/search?q=`) — which has
+  Prev/Next — could only be reached by typing its address. The fan-out now
+  ends with a "See all results" link to that page for the same query. The
+  report that results did not match an edited search term could not be
+  reproduced: re-submitting an edited term replaces the rows (pinned by
+  an end-to-end test); a real-name mod missing from the first page is
+  CurseForge's own ranking, tracked in #503.
+
 - **The deploy indicator no longer claims "Deployed" before the page
   knows (#498).** The web top bar read "Deployed" for as long as the mod
   list was still loading, then switched to "N changes undeployed" and moved

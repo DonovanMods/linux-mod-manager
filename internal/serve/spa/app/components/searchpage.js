@@ -1,8 +1,8 @@
 // searchpage.js - the dedicated search page at /g/{game}/{profile}/search?q=
 // (issue 331, design doc §Search: "the escape hatch for heavy browsing - source
 // badges, star/download counts, summaries, category/source filters, sort,
-// pagination"). Reached from a deep link, or later a "search sources ↵"/
-// "See all results" affordance from the omnibar - the model for "pages that
+// pagination"). Reached from a deep link, or the omnibar fan-out's "See all
+// results" link (omnibarresults.js, issue 500) - the model for "pages that
 // earn it" (design doc), so unlike Mission Control's inline fan-out this one
 // actually leaves home: its own minimal header with a Back link, matching
 // fullmodpage.js's own pattern for the same reason.
