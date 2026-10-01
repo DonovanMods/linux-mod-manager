@@ -599,6 +599,13 @@ func (s *Service) ListSources() []source.ModSource {
 
 // SearchMods searches for mods in a source
 func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string, category string, tags []string, page, pageSize int) (source.SearchResult, error) {
+	return s.searchSource(ctx, sourceID, gameID, query, category, tags, page, pageSize, domain.SortRelevance)
+}
+
+// searchSource is SearchMods with a sort (#503): the one place a
+// source.SearchQuery is built, so the aggregate and the named-source paths
+// forward the sort identically.
+func (s *Service) searchSource(ctx context.Context, sourceID, gameID, query string, category string, tags []string, page, pageSize int, sortBy domain.SearchSort) (source.SearchResult, error) {
 	src, err := s.registry.Get(sourceID)
 	if err != nil {
 		return source.SearchResult{}, err
@@ -616,6 +623,7 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 		Tags:     tags,
 		Page:     page,
 		PageSize: pageSize,
+		Sort:     sortBy,
 	})
 	return result, classifyIndexError(sourceID, sourceGameID, err)
 }
@@ -756,6 +764,12 @@ type AggregateSearchResult struct {
 	// skip is reported instead. Sorted by source id, like the states it is
 	// built from.
 	SkippedUnauthenticated []string `json:"skipped_unauthenticated,omitempty"`
+	// Sorts are the sorts worth offering for this merge (#503): relevance
+	// plus every other sort a source that ANSWERED lists in its
+	// Capabilities.Sorts. Search copies it onto SearchReport.SortsAvailable,
+	// which is the document frontends read, so it is not part of this one's
+	// wire shape.
+	Sorts []domain.SearchSort `json:"-"`
 }
 
 // sourceHasMore reports whether res (one source's response to the given
@@ -972,7 +986,7 @@ func adoptReportedPageSize(st *searchSourceState, res source.SearchResult, first
 // heuristic, and the loop stops early for it. The heuristic is unchanged
 // here on purpose - Exhausted/HasMore keep their existing semantics - and
 // the honest fix is a per-source max-page-size capability.
-func (s *Service) searchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize, limit int) (AggregateSearchResult, error) {
+func (s *Service) searchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize, limit int, sortBy domain.SearchSort) (AggregateSearchResult, error) {
 	game, ok := s.game(gameID)
 	if !ok {
 		return AggregateSearchResult{}, fmt.Errorf("game not found: %s", gameID)
@@ -1046,7 +1060,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 				continue
 			}
 			g.Go(func() error {
-				res, err := s.SearchMods(gctx, st.id, gameID, query, category, tags, st.cursor, st.pageSize)
+				res, err := s.searchSource(gctx, st.id, gameID, query, category, tags, st.cursor, st.pageSize, sortBy)
 				if err != nil {
 					st.active = false
 					if errors.Is(err, source.ErrNotSupported) && !st.succeeded {
@@ -1132,6 +1146,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 	}
 
 	var result AggregateSearchResult
+	var answered []source.Capabilities
 	succeeded := 0
 	attemptedCount := 0
 	allExhausted := true // vacuously true until a succeeding source proves otherwise
@@ -1163,6 +1178,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 			continue
 		}
 		succeeded++
+		answered = append(answered, source.CapabilitiesOf(registeredByID[st.id]))
 		result.Warnings = append(result.Warnings, sourceWarnings(st.id, st.warnings)...)
 		result.Mods = append(result.Mods, st.mods...)
 		result.TotalCount += st.total
@@ -1171,6 +1187,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 		}
 	}
 	result.Exhausted = allExhausted
+	result.Sorts = sortsOffered(answered)
 
 	rankAggregate(result.Mods, query)
 

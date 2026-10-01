@@ -108,6 +108,11 @@ func TestCurseForge_Search(t *testing.T) {
 func TestCurseForge_SearchOffsetsAreContiguousWhenThePageSizeIsClamped(t *testing.T) {
 	var gotIndex, gotPageSize []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("slug") { // page 0's exact-name lookup is not a paged request
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[],"pagination":{}}`))
+			return
+		}
 		gotIndex = append(gotIndex, r.URL.Query().Get("index"))
 		gotPageSize = append(gotPageSize, r.URL.Query().Get("pageSize"))
 		w.Header().Set("Content-Type", "application/json")
@@ -638,7 +643,10 @@ func TestCurseForge_TypeLabel(t *testing.T) {
 
 func TestCurseForge_Capabilities(t *testing.T) {
 	cf := New(nil, "")
-	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}, cf.Capabilities())
+	assert.Equal(t, source.Capabilities{
+		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
+		Sorts: []domain.SearchSort{domain.SortUpdated, domain.SortDownloads, domain.SortPopular},
+	}, cf.Capabilities())
 }
 
 func TestCurseForge_AuthInstructions(t *testing.T) {

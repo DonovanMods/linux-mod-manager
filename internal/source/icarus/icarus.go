@@ -56,8 +56,11 @@ func (s *Icarus) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain
 	return nil, fmt.Errorf("source %q: dependencies: %w", s.ID(), source.ErrNotSupported)
 }
 
+// Capabilities: Sorts is updated alone (#503) - a catalogue document carries
+// Firestore's updateTime and mapDoc fills no download or endorsement count.
 func (s *Icarus) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: false}
+	return source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: false,
+		Sorts: []domain.SearchSort{domain.SortUpdated}}
 }
 
 func (s *Icarus) TypeLabel() string { return "built-in" }
@@ -94,6 +97,20 @@ func (s *Icarus) Search(ctx context.Context, query source.SearchQuery) (source.S
 		}
 		return mods[i].ID < mods[j].ID
 	})
+
+	// An explicit date sort (#503) reorders the whole match set before it is
+	// paged, so page N is the right page: newest first, a document with no
+	// updateTime last, ties keeping the name/ID order above. Any other sort
+	// is that order - nothing else here has data to sort on.
+	if query.Sort == domain.SortUpdated {
+		sort.SliceStable(mods, func(i, j int) bool {
+			a, b := mods[i].UpdatedAt, mods[j].UpdatedAt
+			if a.IsZero() != b.IsZero() {
+				return !a.IsZero()
+			}
+			return a.After(b)
+		})
+	}
 
 	pageSize := query.PageSize
 	if pageSize <= 0 {

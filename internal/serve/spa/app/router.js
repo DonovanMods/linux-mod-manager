@@ -8,7 +8,8 @@
 //                                             flow when no games exist)
 //   /g/{game}/{profile}                      Mission Control
 //   /g/{game}/{profile}/mod/{source}/{id}    full mod page
-//   /g/{game}/{profile}/search?q=            search page
+//   /g/{game}/{profile}/search?q=&sort=      search page (sort is optional:
+//                                             absent is relevance, issue 503)
 //   /g/{game}/{profile}/setup?section=       the Setup page (issue 333):
 //                                             games/auth/sources/import
 //
@@ -48,6 +49,10 @@ export function parseLocation(url = window.location) {
     // "slide-over on click for source results too" applies here as well as
     // on the omnibar's inline fan-out.
     route.mod = params.get("mod") || "";
+    // ?sort= is the search's ordering (issue 503), so a link, a reload and a
+    // deep link keep it. Raw here - the router does not know the vocabulary;
+    // main.js validates it against searchsort.js before it reaches the wire.
+    route.sort = params.get("sort") || "";
     return route;
   }
   if (rest[0] === "mod" && rest.length >= 3) {

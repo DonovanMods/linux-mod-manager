@@ -10,6 +10,8 @@
 //     thrown as an ApiError carrying both halves, rather than each caller
 //     inventing its own reading of a failure.
 
+import { RELEVANCE } from "./searchsort.js";
+
 const csrfToken =
   document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") ||
   "";
@@ -163,9 +165,9 @@ export const getModVersions = (sourceID, modID, context) =>
  * source are the search page's own filters, forwarded server-side (Important
  * 1b, unit 5 fix wave) rather than sliced client-side over one page's own
  * Mods - a category/source change re-queries page 0 with the new filter, so
- * the count it renders answers the CATALOG, not one page. Sort stays
- * client-side (searchpage.js): it only reorders what a page already holds,
- * which needs no round trip.
+ * the count it renders answers the CATALOG, not one page. opts.sort is
+ * issue 503's server-side ordering (searchsort.js): relevance (or none) sends
+ * nothing, because absent IS relevance on the wire.
  */
 export function search(query, opts, context) {
   const url = new URL(
@@ -179,6 +181,8 @@ export function search(query, opts, context) {
   if (opts?.limit != null) url.searchParams.set("limit", String(opts.limit));
   if (opts?.category) url.searchParams.set("category", opts.category);
   if (opts?.source) url.searchParams.set("source", opts.source);
+  if (opts?.sort && opts.sort !== RELEVANCE)
+    url.searchParams.set("sort", opts.sort);
   // ?tag= is REPEATABLE and narrows on every one it is given (AND), which
   // is why it appends rather than sets. An empty list appends nothing -
   // absent means "no filter", never a "" tag.

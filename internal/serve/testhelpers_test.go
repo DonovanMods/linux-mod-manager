@@ -258,6 +258,16 @@ func (s *fakeSource) Changelog(_ context.Context, _, modID, _ string) (string, e
 	return m.Changelog, nil
 }
 
+// Capabilities is source.CapabilitiesOf's own default for a source with no
+// reporter, plus the three sorts a fake hit's fields can order by (#503) -
+// so the search report offers them and a test can drive the sort select.
+func (s *fakeSource) Capabilities() source.Capabilities {
+	return source.Capabilities{
+		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
+		Sorts: []domain.SearchSort{domain.SortUpdated, domain.SortDownloads, domain.SortPopular},
+	}
+}
+
 var _ source.ModSource = (*fakeSource)(nil)
 var _ source.ChangelogProvider = (*fakeSource)(nil)
 

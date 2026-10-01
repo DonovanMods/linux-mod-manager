@@ -241,7 +241,7 @@ func (idx *residentIndex) match(query source.SearchQuery) (matches []scored, hid
 		}
 		matches = append(matches, scored{row: i, score: row.score(terms)})
 	}
-	idx.rank(matches)
+	idx.rank(matches, query.Sort)
 	return matches, hidden
 }
 
@@ -271,7 +271,27 @@ func requiredCategories(query source.SearchQuery) []string {
 // rank orders matches: live packages before deprecated ones, then score,
 // then most recently updated, then name. The last two keys are what make
 // paging STABLE - two queries for page 1 and page 2 must not interleave.
-func (idx *residentIndex) rank(matches []scored) {
+//
+// An explicit date sort (#503) is the one ordering that is not that
+// relevance order: it is purely by date_updated, newest first, deprecated
+// packages included at their date - the user asked "what changed most
+// recently", not "what matches best". Score then name still break ties, so
+// paging stays stable. Any other sort (including none) is the relevance
+// order: the index keeps no downloads or ratings to order by.
+func (idx *residentIndex) rank(matches []scored, by domain.SearchSort) {
+	if by == domain.SortUpdated {
+		sort.SliceStable(matches, func(i, j int) bool {
+			a, b := &idx.terms[matches[i].row], &idx.terms[matches[j].row]
+			if !a.updated.Equal(b.updated) {
+				return a.updated.After(b.updated)
+			}
+			if matches[i].score != matches[j].score {
+				return matches[i].score > matches[j].score
+			}
+			return a.fullName < b.fullName
+		})
+		return
+	}
 	sort.SliceStable(matches, func(i, j int) bool {
 		a, b := &idx.terms[matches[i].row], &idx.terms[matches[j].row]
 		if da, db := idx.rows[matches[i].row].Deprecated, idx.rows[matches[j].row].Deprecated; da != db {

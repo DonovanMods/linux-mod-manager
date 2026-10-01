@@ -51,7 +51,7 @@ func TestClient_SearchMods(t *testing.T) {
 	client := NewClient(server.Client(), "test-api-key")
 	client.SetBaseURL(server.URL)
 
-	mods, pagination, err := client.SearchMods(context.Background(), 432, "jei", 0, 20, 0)
+	mods, pagination, err := client.SearchMods(context.Background(), 432, "jei", 0, 20, 0, "")
 	require.NoError(t, err)
 	require.Len(t, mods, 1)
 
@@ -200,7 +200,7 @@ func TestClient_AuthRequired(t *testing.T) {
 	client := NewClient(server.Client(), "")
 	client.SetBaseURL(server.URL)
 
-	_, _, err := client.SearchMods(context.Background(), 432, "test", 0, 20, 0)
+	_, _, err := client.SearchMods(context.Background(), 432, "test", 0, 20, 0, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "API key required")
 }

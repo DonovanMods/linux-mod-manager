@@ -6,25 +6,28 @@ import "time"
 
 // ModData represents a mod from the NexusMods REST API
 type ModData struct {
-	ModID                int       `json:"mod_id"`
-	GameID               int       `json:"game_id"`
-	DomainName           string    `json:"domain_name"`
-	Name                 string    `json:"name"`
-	Summary              string    `json:"summary"`
-	Description          string    `json:"description"`
-	Version              string    `json:"version"`
-	Author               string    `json:"author"`
-	UploadedBy           string    `json:"uploaded_by"`
-	UploadedByProfileURL string    `json:"uploaded_users_profile_url"`
-	CategoryID           int       `json:"category_id"`
-	PictureURL           string    `json:"picture_url"`
-	ContainsAdultContent bool      `json:"contains_adult_content"`
-	Status               string    `json:"status"`
-	Available            bool      `json:"available"`
-	EndorsementCount     int       `json:"endorsement_count"`
-	CreatedTime          time.Time `json:"created_time"`
-	UpdatedTime          time.Time `json:"updated_time"`
-	AllowRating          bool      `json:"allow_rating"`
+	ModID                int    `json:"mod_id"`
+	GameID               int    `json:"game_id"`
+	DomainName           string `json:"domain_name"`
+	Name                 string `json:"name"`
+	Summary              string `json:"summary"`
+	Description          string `json:"description"`
+	Version              string `json:"version"`
+	Author               string `json:"author"`
+	UploadedBy           string `json:"uploaded_by"`
+	UploadedByProfileURL string `json:"uploaded_users_profile_url"`
+	CategoryID           int    `json:"category_id"`
+	PictureURL           string `json:"picture_url"`
+	ContainsAdultContent bool   `json:"contains_adult_content"`
+	Status               string `json:"status"`
+	Available            bool   `json:"available"`
+	EndorsementCount     int    `json:"endorsement_count"`
+	// DownloadCount is the REST document's mod_downloads and, for a search
+	// hit, the GraphQL Mod.downloads: the count the downloads sort keys on.
+	DownloadCount int       `json:"mod_downloads"`
+	CreatedTime   time.Time `json:"created_time"`
+	UpdatedTime   time.Time `json:"updated_time"`
+	AllowRating   bool      `json:"allow_rating"`
 }
 
 // FileData represents a mod file from the NexusMods REST API

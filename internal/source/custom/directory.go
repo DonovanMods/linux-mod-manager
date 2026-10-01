@@ -20,6 +20,8 @@ type Directory struct {
 	id   string
 	name string
 	path string // absolute, verified at construction
+
+	dated datedCatalogue // whether the last scan found any dated entry (#503)
 }
 
 // NewDirectory constructs a directory source from a validated definition.
@@ -62,9 +64,13 @@ func (d *Directory) ExchangeToken(ctx context.Context, code string) (*source.Tok
 	return nil, fmt.Errorf("source %q: authentication: %w", d.id, source.ErrNotSupported)
 }
 
-// Capabilities implements source.CapabilityReporter.
+// Capabilities implements source.CapabilityReporter. Sorts is updated alone
+// (#503): an entry's modification time is the one date a directory has, and
+// there is no download or endorsement count to read from a folder. It is
+// offered only once a search has scanned the directory and found an entry
+// (see datedCatalogue), so an empty directory offers no sort.
 func (d *Directory) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Updates: true}
+	return source.Capabilities{Search: true, Updates: true, Sorts: d.dated.sorts()}
 }
 
 // TypeLabel implements source.TypeLabeler.
@@ -211,6 +217,7 @@ func (d *Directory) Search(ctx context.Context, query source.SearchQuery) (sourc
 	for _, dm := range scanned {
 		mods = append(mods, dm.mod)
 	}
+	d.dated.note(mods)
 	return searchMods(mods, query), nil
 }
 

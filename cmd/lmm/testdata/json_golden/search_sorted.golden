@@ -1,0 +1,71 @@
+{
+  "game_id": "g1",
+  "query": "auctionator",
+  "mods": [
+    {
+      "id": "exact",
+      "source_id": "src",
+      "name": "Auctionator",
+      "version": "3.0",
+      "author": "",
+      "summary": "",
+      "description": "",
+      "game_id": "g1",
+      "category": "",
+      "downloads": 5,
+      "endorsements": 1,
+      "picture_url": "",
+      "source_url": "",
+      "files": [],
+      "dependencies": [],
+      "updated_at": "<TIME>",
+      "installed": false
+    },
+    {
+      "id": "new",
+      "source_id": "src",
+      "name": "Auction Helper",
+      "version": "2.0",
+      "author": "",
+      "summary": "",
+      "description": "",
+      "game_id": "g1",
+      "category": "",
+      "downloads": 30,
+      "endorsements": 70,
+      "picture_url": "",
+      "source_url": "",
+      "files": [],
+      "dependencies": [],
+      "updated_at": "<TIME>",
+      "installed": false
+    },
+    {
+      "id": "old",
+      "source_id": "src",
+      "name": "Auctionator Classic",
+      "version": "1.0",
+      "author": "",
+      "summary": "",
+      "description": "",
+      "game_id": "g1",
+      "category": "",
+      "downloads": 900,
+      "endorsements": 4,
+      "picture_url": "",
+      "source_url": "",
+      "files": [],
+      "dependencies": [],
+      "updated_at": "<TIME>",
+      "installed": false
+    }
+  ],
+  "warnings": [],
+  "total_results": 3,
+  "attempted_count": 1,
+  "sort": "updated",
+  "sorts_available": [
+    "relevance"
+  ],
+  "page_size": 10
+}

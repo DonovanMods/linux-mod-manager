@@ -223,6 +223,7 @@ type pageSizeSpySource struct {
 	id          string
 	gotPage     int
 	gotPageSize int
+	gotSort     domain.SearchSort
 	calls       int
 }
 
@@ -241,6 +242,7 @@ func (s *pageSizeSpySource) Search(ctx context.Context, q source.SearchQuery) (s
 	s.calls++
 	s.gotPage = q.Page
 	s.gotPageSize = q.PageSize
+	s.gotSort = q.Sort
 	return source.SearchResult{Mods: []domain.Mod{{ID: "m1", SourceID: s.id, Name: "Mod One"}}, TotalCount: 1}, nil
 }
 func (s *pageSizeSpySource) GetMod(context.Context, string, string) (*domain.Mod, error) {

@@ -27,7 +27,8 @@ type searchStubSource struct {
 	caps    *source.Capabilities // nil = no CapabilityReporter (assumed fully capable)
 	result  source.SearchResult
 	err     error
-	gotGame string // records the GameID the source was queried with
+	gotGame string            // records the GameID the source was queried with
+	gotSort domain.SearchSort // records the Sort the source was queried with (#503)
 }
 
 func (s *searchStubSource) ID() string                  { return s.id }
@@ -39,6 +40,7 @@ func (s *searchStubSource) ExchangeToken(context.Context, string) (*source.Token
 }
 func (s *searchStubSource) Search(ctx context.Context, q source.SearchQuery) (source.SearchResult, error) {
 	s.gotGame = q.GameID
+	s.gotSort = q.Sort
 	if s.err != nil {
 		return source.SearchResult{}, s.err
 	}

@@ -479,3 +479,67 @@ func TestServer_APISearch_OutOfRangePagingParams_Renders400(t *testing.T) {
 		})
 	}
 }
+
+// #503: ?sort= is SearchOptions.Sort. The report echoes it, orders by it, and
+// an unknown value is bad input through the same error envelope as any other
+// bad query parameter.
+func TestServer_APISearch_SortParam_OrdersAndEchoes(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Boots Small", Downloads: 10}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake", Name: "Boots Huge", Downloads: 9000}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "3", SourceID: "fake", Name: "Boots Mid", Downloads: 500}})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&sort=downloads", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var report core.SearchReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	assert.Equal(t, domain.SortDownloads, report.Sort)
+	assert.Equal(t, []domain.SearchSort{domain.SortRelevance, domain.SortUpdated, domain.SortDownloads, domain.SortPopular}, report.SortsAvailable)
+	require.Len(t, report.Mods, 3)
+	assert.Equal(t, []string{"2", "3", "1"}, []string{report.Mods[0].ID, report.Mods[1].ID, report.Mods[2].ID})
+
+	want, err := svc.Search(context.Background(), game, "default", "boots", core.SearchOptions{Sort: domain.SortDownloads})
+	require.NoError(t, err)
+	requireEncodesLike(t, rec.Body.Bytes(), want)
+}
+
+func TestServer_APISearch_NoSortParam_IsRelevance(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Boots"}})
+	svc, _ := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots", nil))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var report core.SearchReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	assert.Equal(t, domain.SortRelevance, report.Sort)
+}
+
+func TestServer_APISearch_UnknownSortParam_Renders400(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Boots"}})
+	svc, _ := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	for _, target := range []string{
+		"http://" + testAddr + "/api/v1/search?q=boots&sort=newest",
+		"http://" + testAddr + "/api/v1/search?q=boots&sort=newest&source=fake",
+	} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+
+		require.Equal(t, http.StatusBadRequest, rec.Code, target)
+		var envelope apiErrorEnvelope
+		decodeStrict(t, rec.Body.Bytes(), &envelope)
+		assert.Contains(t, envelope.Error, `"newest"`)
+		assert.Contains(t, envelope.Error, "downloads", "the refusal names the valid values")
+	}
+}

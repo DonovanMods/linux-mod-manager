@@ -171,7 +171,7 @@ func captureSearchVariables(t *testing.T, category string, tags []string) map[st
 
 	client := NewClient(server.Client(), "test-key")
 	client.graphqlURL = server.URL
-	if _, err := client.SearchMods(context.Background(), "skyrimspecialedition", "armour", category, tags, 20, 0); err != nil {
+	if _, err := client.SearchMods(context.Background(), "skyrimspecialedition", "armour", category, tags, "", 20, 0); err != nil {
 		t.Fatalf("SearchMods: %v", err)
 	}
 	if captured == nil {

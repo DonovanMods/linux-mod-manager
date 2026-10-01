@@ -76,7 +76,8 @@ func TestAuthInstructionsNameTheFreeKeyAndItsConfidentiality(t *testing.T) {
 func TestCapabilities_Tier2DeclaresSearchAndAuth(t *testing.T) {
 	src := steamworkshop.New(steamworkshop.Options{SteamRoots: []string{t.TempDir()}})
 	assert.Equal(t,
-		source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: true, Versions: false},
+		source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: true, Versions: false,
+			Sorts: []domain.SearchSort{domain.SortUpdated, domain.SortDownloads}},
 		src.Capabilities())
 }
 

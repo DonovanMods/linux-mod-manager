@@ -3,6 +3,7 @@ package nexusmods
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -111,7 +112,7 @@ func TestClient_SearchMods_FiltersByQuery(t *testing.T) {
 	client.graphqlURL = server.URL
 
 	// Search returns results from GraphQL API
-	mods, err := client.SearchMods(context.Background(), "starrupture", "orestack", "", nil, 10, 0)
+	mods, err := client.SearchMods(context.Background(), "starrupture", "orestack", "", nil, "", 10, 0)
 	require.NoError(t, err)
 	assert.Len(t, mods, 2)
 }
@@ -347,7 +348,7 @@ func TestClient_SearchMods_UsesGraphQL(t *testing.T) {
 	client := NewClient(nil, "testapikey")
 	client.graphqlURL = server.URL + "/v2/graphql"
 
-	mods, err := client.SearchMods(context.Background(), "starrupture", "ore", "", nil, 10, 0)
+	mods, err := client.SearchMods(context.Background(), "starrupture", "ore", "", nil, "", 10, 0)
 	require.NoError(t, err)
 	assert.Len(t, mods, 3)
 
@@ -391,7 +392,7 @@ func TestClient_SearchMods_MultipleTagsAllIncluded(t *testing.T) {
 	client.graphqlURL = server.URL
 
 	// Search with multiple tags
-	_, err := client.SearchMods(context.Background(), "skyrimspecialedition", "armor", "", []string{"armor", "clothing", "hdt"}, 10, 0)
+	_, err := client.SearchMods(context.Background(), "skyrimspecialedition", "armor", "", []string{"armor", "clothing", "hdt"}, "", 10, 0)
 	require.NoError(t, err)
 
 	// Verify all tags are in the filter
@@ -506,4 +507,71 @@ func TestClient_GetDownloadLinks(t *testing.T) {
 	assert.Len(t, links, 2)
 	assert.Equal(t, "Nexus CDN", links[0].Name)
 	assert.Contains(t, links[0].URI, "cf-files.nexusmods.com")
+}
+
+// TestClient_SearchMods_SendsTheSortVariable pins #503's request body, per
+// sort: the exact `sort` variable NexusMods' ModsSort takes, always
+// DESCending (most recently updated, most downloaded, most endorsed first),
+// and no variable at all for relevance or none.
+func TestClient_SearchMods_SendsTheSortVariable(t *testing.T) {
+	tests := []struct {
+		sort domain.SearchSort
+		want any
+	}{
+		{domain.SortUpdated, []any{map[string]any{"updatedAt": map[string]any{"direction": "DESC"}}}},
+		{domain.SortDownloads, []any{map[string]any{"downloads": map[string]any{"direction": "DESC"}}}},
+		{domain.SortPopular, []any{map[string]any{"endorsements": map[string]any{"direction": "DESC"}}}},
+		{domain.SortRelevance, nil},
+		{"", nil},
+	}
+	for _, tt := range tests {
+		t.Run("sort="+string(tt.sort), func(t *testing.T) {
+			var vars map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					Variables map[string]any `json:"variables"`
+				}
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+				vars = req.Variables
+				_, _ = w.Write([]byte(`{"data":{"mods":{"nodes":[]}}}`))
+			}))
+			defer server.Close()
+
+			client := NewClient(nil, "testapikey")
+			client.graphqlURL = server.URL
+
+			_, err := client.SearchMods(context.Background(), "skyrim", "x", "", nil, tt.sort, 10, 0)
+			require.NoError(t, err)
+			require.NotNil(t, vars)
+			if tt.want == nil {
+				assert.NotContains(t, vars, "sort")
+				return
+			}
+			assert.Equal(t, tt.want, vars["sort"])
+		})
+	}
+}
+
+// TestClient_SearchMods_DecodesDownloadsAndEndorsements pins that the
+// GraphQL node's counts reach ModData (#503): the sorts key on them, and a
+// hit that dropped them would sort - and show - as zero.
+func TestClient_SearchMods_DecodesDownloadsAndEndorsements(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		assert.Contains(t, string(body), "downloads")
+		assert.Contains(t, string(body), "endorsements")
+		_, _ = w.Write([]byte(`{"data":{"mods":{"nodes":[
+			{"modId":1,"name":"Big","version":"1","downloads":123456,"endorsements":789,"uploader":{"name":"a"}}
+		]}}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.graphqlURL = server.URL
+
+	mods, err := client.SearchMods(context.Background(), "skyrim", "x", "", nil, "", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, mods, 1)
+	assert.Equal(t, 123456, mods[0].DownloadCount)
+	assert.Equal(t, 789, mods[0].EndorsementCount)
 }

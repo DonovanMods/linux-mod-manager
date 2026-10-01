@@ -40,6 +40,10 @@
   "warnings": [],
   "total_results": 3,
   "attempted_count": 1,
+  "sort": "relevance",
+  "sorts_available": [
+    "relevance"
+  ],
   "page_size": 2,
   "has_more": true
 }

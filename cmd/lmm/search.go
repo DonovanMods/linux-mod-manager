@@ -24,6 +24,7 @@ var (
 	searchCategory string
 	searchTags     []string
 	searchRefresh  bool
+	searchSort     string
 )
 
 var searchCmd = &cobra.Command{
@@ -43,6 +44,15 @@ searching, for a package published in the last few hours. Thunderstore
 packages flagged NSFW are left out unless you ask for them with
 --tag NSFW (or --category NSFW); --tag Deprecated finds deprecated ones.
 
+Hits whose name is exactly the query (ignoring case, spaces and punctuation:
+"Leatrix Plus" is "leatrix-plus") always come first. The rest follow in the
+order --sort names: relevance (the default; each source's own order), updated
+(last updated, newest first), downloads (most downloaded first) or popular
+(most endorsed or liked first, where a source reports it). Sources that can
+sort server-side do, so --limit gets you the top of THAT order rather than a
+reshuffled first page; a source with nothing to sort by is left in its own
+order for that sort.
+
 Use --category and --tag to filter results; support varies by source.
 --category is honored by NexusMods and CurseForge; --tag is currently
 NexusMods only. Custom sources (directory/manifest/API) ignore both.
@@ -61,7 +71,8 @@ Examples:
   lmm search skyui --game skyrim-se
   lmm search "immersive armor" --game skyrim-se --source nexusmods
   lmm search "armor" --game skyrim-se --category Armour --tag lore-friendly
-  lmm search "armor" --game skyrim-se --profile survival`,
+  lmm search "armor" --game skyrim-se --profile survival
+  lmm search "armor" --game skyrim-se --sort updated`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runSearch,
 }
@@ -72,9 +83,33 @@ func init() {
 	searchCmd.Flags().StringVarP(&searchProfile, "profile", "p", "", "profile to check for installed mods (default: active profile)")
 	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (NexusMods: the category name; CurseForge: its numeric id)")
 	searchCmd.Flags().StringSliceVar(&searchTags, "tag", nil, "filter by tag (repeatable; source-specific)")
+	searchCmd.Flags().StringVar(&searchSort, "sort", string(domain.SortRelevance), "order results by relevance, updated (newest first), downloads (most first) or popular (most endorsed first); an exact name match always leads")
+	if err := searchCmd.RegisterFlagCompletionFunc("sort", completeSearchSort); err != nil {
+		panic(err) // a programming error: --sort is declared on the line above
+	}
 	searchCmd.Flags().BoolVar(&searchRefresh, "refresh", false, "rebuild a locally cached source index (Thunderstore) before searching")
 
 	rootCmd.AddCommand(searchCmd)
+}
+
+// searchSortDescriptions is what shell completion says beside each --sort
+// value (#503).
+var searchSortDescriptions = map[domain.SearchSort]string{
+	domain.SortRelevance: "each source's own order (default)",
+	domain.SortUpdated:   "last updated, newest first",
+	domain.SortDownloads: "most downloaded first",
+	domain.SortPopular:   "most endorsed first, where a source reports it",
+}
+
+// completeSearchSort completes --sort from domain.SearchSorts, so a new sort
+// shows up in completion the moment it exists.
+func completeSearchSort(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+	sorts := domain.SearchSorts()
+	out := make([]string, len(sorts))
+	for i, s := range sorts {
+		out[i] = string(s) + "\t" + searchSortDescriptions[s]
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -167,6 +202,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		Tags:     searchTags,
 		PageSize: searchPageSize(searchLimit),
 		Limit:    searchLimit,
+		Sort:     domain.SearchSort(searchSort),
 	}
 	if searchSource == "" {
 		// Guard: game must have at least one configured source

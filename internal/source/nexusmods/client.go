@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 )
 
@@ -162,14 +163,16 @@ func (c *Client) GetTrending(ctx context.Context, gameDomain string) ([]ModData,
 
 // graphqlSearchQuery is the GraphQL query for searching mods
 const graphqlSearchQuery = `
-query SearchMods($filter: ModsFilter, $count: Int, $offset: Int) {
-  mods(filter: $filter, count: $count, offset: $offset) {
+query SearchMods($filter: ModsFilter, $sort: [ModsSort!], $count: Int, $offset: Int) {
+  mods(filter: $filter, sort: $sort, count: $count, offset: $offset) {
     nodes {
       modId
       name
       summary
       version
       updatedAt
+      downloads
+      endorsements
       uploader { name }
     }
   }
@@ -207,7 +210,13 @@ type graphqlModsResponse struct {
 				// 3339), requested so a search hit carries the date the
 				// search surfaces show (#433). Zero when absent.
 				UpdatedAt time.Time `json:"updatedAt"`
-				Uploader  struct {
+				// Downloads and Endorsements are the Mod type's `downloads:
+				// Int!` and `endorsements: Int!`, requested so a search hit
+				// carries the counts the downloads and popular sorts key on
+				// (#503) rather than a fabricated zero.
+				Downloads    int `json:"downloads"`
+				Endorsements int `json:"endorsements"`
+				Uploader     struct {
 					Name string `json:"name"`
 				} `json:"uploader"`
 			} `json:"nodes"`
@@ -248,7 +257,15 @@ type graphqlRequirementsResponse struct {
 //
 // category is the category NAME as NexusMods spells it ("Armour"): the
 // schema offers no id-keyed category filter.
-func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category string, tags []string, limit, offset int) (mods []ModData, err error) {
+//
+// sort selects the upstream ordering (#503), so the PAGE fetched is the
+// right one rather than the first page re-ordered: updated, downloads and
+// popular map to the ModsSort members updatedAt, downloads and endorsements,
+// each DESCending. Relevance and the empty value send no `sort` variable at
+// all, which leaves the upstream's default ordering untouched.
+// testdata/modssort-schema.json records ModsSort and sort_contract_test.go
+// checks this very variable against it offline.
+func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category string, tags []string, sort domain.SearchSort, limit, offset int) (mods []ModData, err error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -281,13 +298,20 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 		filter["tag"] = tagFilters
 	}
 
+	variables := map[string]interface{}{
+		"filter": filter,
+		"count":  limit,
+		"offset": offset,
+	}
+	if member := modsSortMember(sort); member != "" {
+		variables["sort"] = []map[string]interface{}{
+			{member: map[string]interface{}{"direction": "DESC"}},
+		}
+	}
+
 	reqBody := graphqlRequest{
-		Query: graphqlSearchQuery,
-		Variables: map[string]interface{}{
-			"filter": filter,
-			"count":  limit,
-			"offset": offset,
-		},
+		Query:     graphqlSearchQuery,
+		Variables: variables,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -346,10 +370,27 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 			Version:     node.Version,
 			Author:      node.Uploader.Name,
 			UpdatedTime: node.UpdatedAt,
+
+			DownloadCount:    node.Downloads,
+			EndorsementCount: node.Endorsements,
 		}
 	}
 
 	return results, nil
+}
+
+// modsSortMember names the ModsSort member a search sort orders by, or "" for
+// relevance (and the empty value), which sends no sort at all.
+func modsSortMember(sort domain.SearchSort) string {
+	switch sort {
+	case domain.SortUpdated:
+		return "updatedAt"
+	case domain.SortDownloads:
+		return "downloads"
+	case domain.SortPopular:
+		return "endorsements"
+	}
+	return ""
 }
 
 // GetModFiles fetches files for a mod

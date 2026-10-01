@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -112,9 +113,13 @@ func (c *CurseForge) TypeLabel() string {
 }
 
 // Capabilities implements source.CapabilityReporter. CurseForge supports all
-// ModSource operations.
+// ModSource operations, and its hits carry UpdatedAt, Downloads and
+// Endorsements (thumbsUpCount), so every sort is meaningful.
 func (c *CurseForge) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}
+	return source.Capabilities{
+		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
+		Sorts: []domain.SearchSort{domain.SortUpdated, domain.SortDownloads, domain.SortPopular},
+	}
 }
 
 // resolveGameID converts a game identifier (numeric ID or slug) to a numeric ID.
@@ -180,7 +185,7 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) (sour
 		}
 	}
 
-	results, pagination, err := c.client.SearchMods(ctx, gameID, query.Query, categoryID, pageSize, index)
+	results, pagination, err := c.client.SearchMods(ctx, gameID, query.Query, categoryID, pageSize, index, query.Sort)
 	if err != nil {
 		return source.SearchResult{}, err
 	}
@@ -190,21 +195,113 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) (sour
 		mods[i] = modToDomain(r, query.GameID)
 	}
 
-	// Sort results: prioritize name matches over description/tag matches
-	queryLower := strings.ToLower(query.Query)
-	sort.SliceStable(mods, func(i, j int) bool {
-		iNameMatch := strings.Contains(strings.ToLower(mods[i].Name), queryLower)
-		jNameMatch := strings.Contains(strings.ToLower(mods[j].Name), queryLower)
-		if iNameMatch && !jNameMatch {
-			return true
+	// Relevance only: prioritize name matches over description/tag matches.
+	// Any other sort was applied by the API itself, and re-sorting the page
+	// here would undo it.
+	if _, sorted := searchSortField(query.Sort); !sorted {
+		queryLower := strings.ToLower(query.Query)
+		sort.SliceStable(mods, func(i, j int) bool {
+			iNameMatch := strings.Contains(strings.ToLower(mods[i].Name), queryLower)
+			jNameMatch := strings.Contains(strings.ToLower(mods[j].Name), queryLower)
+			if iNameMatch && !jNameMatch {
+				return true
+			}
+			if !iNameMatch && jNameMatch {
+				return false
+			}
+			return mods[i].Downloads > mods[j].Downloads
+		})
+	}
+
+	if query.Page == 0 {
+		exact, err := c.exactNameHit(ctx, gameID, query, mods)
+		if err != nil {
+			return source.SearchResult{}, err
 		}
-		if !iNameMatch && jNameMatch {
-			return false
+		if exact != nil {
+			mods = append([]domain.Mod{*exact}, mods...)
 		}
-		return mods[i].Downloads > mods[j].Downloads
-	})
+	}
 
 	return source.SearchResult{Mods: mods, TotalCount: pagination.TotalCount, Page: query.Page, PageSize: pageSize}, nil
+}
+
+// exactNameHit finds the mod whose name IS the query when the fetched first
+// page does not already hold one (#503): CurseForge's default ordering can
+// bury a mod's own exact name below page 1, and core puts exact-name hits
+// first, so the page has to contain it. It spends one slug request, only on a
+// non-empty query with a usable slug, and keeps the hit only when its own
+// name passes the exact-name rule, so a slug collision cannot promote an
+// unrelated mod. The lookup is best-effort: any failure yields no hit and no
+// error, except a cancelled or expired context, which is returned.
+func (c *CurseForge) exactNameHit(ctx context.Context, gameID int, query source.SearchQuery, page []domain.Mod) (*domain.Mod, error) {
+	if query.Query == "" || slices.ContainsFunc(page, func(m domain.Mod) bool { return nameMatchesQuery(m.Name, query.Query) }) {
+		return nil, nil
+	}
+	slug := slugForQuery(query.Query)
+	if slug == "" {
+		return nil, nil
+	}
+
+	hit, err := c.client.SearchModBySlug(ctx, gameID, slug)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil || hit == nil || !nameMatchesQuery(hit.Name, query.Query) {
+		return nil, nil
+	}
+	if slices.ContainsFunc(page, func(m domain.Mod) bool { return m.ID == strconv.Itoa(hit.ID) }) {
+		return nil, nil
+	}
+	mod := modToDomain(*hit, query.GameID)
+	return &mod, nil
+}
+
+// nameMatchesQuery is the exact-name rule core orders search results by
+// (source packages cannot import core, so it is restated here): equal
+// ignoring case and surrounding space, or equal after folding both to their
+// lowercase letters and digits. An empty query matches nothing.
+func nameMatchesQuery(name, query string) bool {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(name), q) {
+		return true
+	}
+	fq := foldAlnum(q)
+	return fq != "" && fq == foldAlnum(name)
+}
+
+// foldAlnum lowercases s and drops everything but letters and digits.
+func foldAlnum(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// slugForQuery is the CurseForge slug a mod named query would have:
+// lowercase, each run of non-alphanumerics a single '-', no leading or
+// trailing '-'. It is empty when the query has no letters or digits.
+func slugForQuery(query string) string {
+	var b strings.Builder
+	pendingDash := false
+	for _, r := range strings.ToLower(query) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if pendingDash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			pendingDash = false
+			b.WriteRune(r)
+		} else {
+			pendingDash = true
+		}
+	}
+	return b.String()
 }
 
 // GetMod retrieves a specific mod

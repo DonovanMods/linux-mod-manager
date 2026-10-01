@@ -75,7 +75,8 @@ func TestDirectoryIdentityAndCapabilities(t *testing.T) {
 	d := newTestDirectory(t)
 	assert.Equal(t, "my-mods", d.ID())
 	assert.Equal(t, "My Mods", d.Name())
-	assert.Equal(t, source.Capabilities{Search: true, Updates: true}, d.Capabilities())
+	assert.Equal(t, source.Capabilities{Search: true, Updates: true}, d.Capabilities(),
+		"no sort is claimed before a search has shown the catalogue carries dates")
 	assert.Empty(t, d.AuthURL())
 
 	_, err := d.ExchangeToken(context.Background(), "code")

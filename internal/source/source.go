@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -36,6 +37,13 @@ type SearchQuery struct {
 	Tags     []string // Optional tag filters (source-specific)
 	Page     int
 	PageSize int
+	// Sort asks the source to order its hits by this key before it pages
+	// (#503), so page N is the right page rather than a reordered one. Empty
+	// or SortRelevance means the source's own order. A source that cannot
+	// sort server-side ignores it: core re-orders whatever page comes back,
+	// so the contract holds either way. Updated/downloads/popular are
+	// always descending.
+	Sort domain.SearchSort
 }
 
 // ModSource is the interface for mod repositories
@@ -320,6 +328,25 @@ type Capabilities struct {
 	// version data yields ErrNotSupported even when this is true (see
 	// core.ResolveVersionFiles).
 	Versions bool
+	// Sorts are the orderings other than relevance (domain.SortUpdated,
+	// SortDownloads, SortPopular) that are MEANINGFUL for this source's
+	// hits: the source fills in the field - UpdatedAt, Downloads,
+	// Endorsements - that the sort keys on. A source that also honours
+	// SearchQuery.Sort lists the same value; it needs no separate flag,
+	// because core orders every result list itself either way (#503).
+	// Frontends offer a sort only when some searched source lists it, so a
+	// sort that would order every hit by a field that is always empty is
+	// never shown. Relevance is implicit and never listed.
+	Sorts []domain.SearchSort
+}
+
+// SupportsSort reports whether c lists sort. Relevance (and the empty
+// default) is supported by every source.
+func (c Capabilities) SupportsSort(sort domain.SearchSort) bool {
+	if sort == "" || sort == domain.SortRelevance {
+		return true
+	}
+	return slices.Contains(c.Sorts, sort)
 }
 
 // CapabilityReporter is implemented by sources that support only a subset of

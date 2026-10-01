@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
@@ -147,8 +148,12 @@ func (s *Source) TypeLabel() string { return "built-in" }
 // map lookup. Each became true in the commit that implemented it: declaring
 // a capability before the method exists is a false claim to every frontend
 // that branches on one.
+//
+// Sorts is updated alone (#503): the index keeps date_updated per package
+// and no download or rating counts, so that is the one ordering whose field
+// the hits carry, and Search sorts the whole match set by it before paging.
 func (s *Source) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: false, Versions: true}
+	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: false, Versions: true, Sorts: []domain.SearchSort{domain.SortUpdated}}
 }
 
 // ValidateGameIdentifier implements source.GameIdentifierValidator: the

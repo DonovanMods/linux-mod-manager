@@ -40,5 +40,9 @@
   "warnings": [],
   "total_results": 2,
   "attempted_count": 1,
+  "sort": "relevance",
+  "sorts_available": [
+    "relevance"
+  ],
   "page_size": 10
 }

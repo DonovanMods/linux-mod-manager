@@ -108,8 +108,15 @@ func (s *Source) TypeLabel() string { return "built-in" }
 //
 // Dependencies and Versions are false permanently - a Workshop item has
 // neither concept.
+//
+// Sorts are updated and downloads (#503): a search hit carries time_updated
+// and lifetime_subscriptions (modFromDetails), so both orderings have data.
+// There is no popular - the Workshop reports no endorsement count - and no
+// native sort: searchParams ranks by Valve's own query_type, so core orders
+// the page that comes back.
 func (s *Source) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: true, Versions: false}
+	return source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: true, Versions: false,
+		Sorts: []domain.SearchSort{domain.SortUpdated, domain.SortDownloads}}
 }
 
 // AuthURL: unsupported - Tier 1 is entirely keyless.

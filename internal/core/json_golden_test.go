@@ -1334,6 +1334,10 @@ func TestJSONGoldens(t *testing.T) {
 				Warnings:       []core.SourceWarning{{SourceID: "curseforge", ErrorMessage: "network down"}},
 				TotalResults:   0,
 				AttemptedCount: 2,
+				// #503: always present - the sort the hits are in and the
+				// sorts a frontend may offer for this result.
+				Sort:           domain.SortUpdated,
+				SortsAvailable: []domain.SearchSort{domain.SortRelevance, domain.SortUpdated, domain.SortDownloads},
 				// #383 (F1): omitempty, so the key only appears when a
 				// searchable source really was skipped for want of a key.
 				SkippedUnauthenticated: []string{"steamworkshop"},
