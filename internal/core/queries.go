@@ -644,6 +644,19 @@ type SearchOptions struct {
 //     page; `/api/v1/search` called with no page params sets NEITHER, so
 //     its document carries neither. The two differ in exactly that way and
 //     no other.
+//   - With a Limit and a PageSize on page 0 (`lmm search --limit N`, the omnibar's
+//     limit) each searched source - the aggregate and a named --source alike -
+//     is asked for its following pages until Limit unique hits are held, it
+//     has no more, a page adds nothing new, or maxSearchPagesPerSource pages
+//     were fetched (#511). A hit a source repeats on a later page is held
+//     once. The combined list is ordered, then cut to Limit; TotalResults
+//     counts the unique hits fetched (so it may exceed Limit by up to one
+//     page, and falls short of the sources' own totals), PageSize is the
+//     caller's request echoed verbatim - not the size a clamping source
+//     served - and HasMore still describes the SOURCES, not the cut: true
+//     while any source might hold rows that were not fetched (including
+//     when the cap or the Limit stopped the fetching), false only when every
+//     source said it was out.
 //   - HasMore reports whether the sources queried might have a page N+1:
 //     AggregateSearchResult.Exhausted negated on the aggregate path,
 //     sourceHasMore's own per-source heuristic on a named --source. Always
@@ -701,7 +714,7 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 		report.SkippedUnauthenticated = agg.SkippedUnauthenticated
 		report.HasMore = !agg.Exhausted
 	} else {
-		result, err := s.searchSource(ctx, opts.SourceID, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize, sortBy)
+		result, hasMore, err := s.searchNamedSource(ctx, opts.SourceID, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize, opts.Limit, sortBy)
 		if err != nil {
 			return nil, err
 		}
@@ -710,7 +723,7 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 			report.SortsAvailable = sortsOffered([]source.Capabilities{source.CapabilitiesOf(src)})
 		}
 		report.Warnings = sourceWarnings(opts.SourceID, result.Warnings)
-		report.HasMore = sourceHasMore(result, opts.Page, opts.PageSize)
+		report.HasMore = hasMore
 	}
 
 	// Ordered BEFORE the Limit cut below: an exact match the sources ranked

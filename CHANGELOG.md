@@ -1706,6 +1706,21 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **`lmm search --limit` above a source's page cap fills the limit (#511).**
+  `lmm search -g wow auctionator --limit 100` returned 51 hits with
+  `has_more: true`: CurseForge serves 50 rows a page and says so, but the
+  exact-name hit #503 adds in front of the first page made it 51, which the
+  paging guard read as a source that cannot be paged safely, so the search
+  stopped after one page. A source that names the page size it serves may
+  now return extra rows on a page without ending the fill; a hit repeated on
+  a later page is kept once; a page that adds nothing new stops the fill;
+  and `--source` pages a limit exactly as the all-sources search does (it
+  asked for one page before). Up to 10 pages are fetched per source,
+  stopping at the limit or when the source has no more, the combined list
+  is ordered before it is cut to the limit, and cancelling stops between
+  pages. `total_results` counts the unique hits fetched and `has_more`
+  stays true while any source might hold more.
+
 - **Search ranks name matches after the exact match, and CurseForge
   relevance asks for Popularity (#509).** `lmm search -g wow auctionator`
   returned Auctionator first and then 50 add-ons that only mention it in

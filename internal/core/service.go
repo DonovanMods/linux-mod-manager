@@ -628,6 +628,64 @@ func (s *Service) searchSource(ctx context.Context, sourceID, gameID, query stri
 	return result, classifyIndexError(sourceID, sourceGameID, err)
 }
 
+// searchNamedSource is searchSource for `--source`, filling a Limit the way
+// searchAllSources does for the aggregate (#511): when the caller wants a
+// number of hits (searchLimitRounds), the source's following pages are
+// fetched - at most maxSearchPagesPerSource, stopping as soon as limit hits
+// are held, the source has nothing more, or a page adds nothing new - and the
+// ctx is checked between pages. A later page's failure is a warning on the
+// result with the earlier pages' hits kept, exactly like the aggregate; the
+// first page's failure is the error. hasMore is the sources' own
+// "might hold more" for the pages fetched (it stays true after a cut by
+// limit or the page cap), never a statement about the Limit.
+//
+// Without a limit, with an explicit page, or with no page size it is one
+// searchSource call and sourceHasMore, as before.
+func (s *Service) searchNamedSource(ctx context.Context, sourceID, gameID, query, category string, tags []string, page, pageSize, limit int, sortBy domain.SearchSort) (res source.SearchResult, hasMore bool, err error) {
+	rounds := searchLimitRounds(page, pageSize, limit)
+	if rounds == 1 {
+		res, err = s.searchSource(ctx, sourceID, gameID, query, category, tags, page, pageSize, sortBy)
+		return res, sourceHasMore(res, page, pageSize), err
+	}
+
+	st := &searchSourceState{id: sourceID, cursor: page, pageSize: pageSize}
+	var first source.SearchResult
+	pages, failed := 0, false
+	for round := range rounds {
+		if round > 0 {
+			if err := ctx.Err(); err != nil {
+				return source.SearchResult{}, false, err
+			}
+		}
+		pageRes, err := s.searchSource(ctx, sourceID, gameID, query, category, tags, st.cursor, st.pageSize, sortBy)
+		if err != nil {
+			if !st.succeeded {
+				return source.SearchResult{}, false, err
+			}
+			st.warnings = appendNewWarnings(st.warnings, []error{err})
+			st.hasMore = true // cut short by a failure: it might have more
+			failed = true
+			break
+		}
+		if pages == 0 {
+			first = pageRes
+		}
+		pages++
+		st.absorb(pageRes, page, true)
+		if !st.active || len(st.mods) >= limit {
+			break
+		}
+	}
+	if pages == 1 && !failed {
+		// One page answered it: keep the single-round has-more rule the
+		// named path always had, rather than the aggregate's optimistic
+		// union, so `--source x` documents do not change for a limit that
+		// one page fills.
+		st.hasMore = sourceHasMore(first, page, pageSize)
+	}
+	return source.SearchResult{Mods: st.mods, TotalCount: st.total, Page: page, PageSize: st.pageSize, Warnings: st.warnings}, st.hasMore, nil
+}
+
 // SourcesForGame resolves gameID and returns the subset of its configured
 // sources (game.SourceIDs keys) that are currently registered, sorted by
 // ID(). A SourceIDs key with no matching registration is silently skipped -
@@ -801,6 +859,25 @@ func sourceHasMore(res source.SearchResult, page, pageSize int) bool {
 // still reports Exhausted false, so a caller can offer another page.
 const maxSearchPagesPerSource = 10
 
+// searchLimitRounds is how many page rounds a search may run per source: the
+// Limit-driven fill of #109/#511 (up to maxSearchPagesPerSource) when the
+// caller wants a NUMBER of hits and is not driving its own paging, else one.
+// Every other shape stays exactly one round:
+//
+//   - limit <= 0: there is no target to fill, so nothing to loop toward.
+//   - pageSize <= 0: no page size means no next-page concept at all
+//     (sourceHasMore's own rule), so there is no cursor to advance.
+//   - page > 0: the caller is driving its OWN pagination cursor - `lmm
+//     serve`'s search page sends page+page_size and no limit - and pulling
+//     pages past the one it asked for would swallow the hits it is about to
+//     request as its next page.
+func searchLimitRounds(page, pageSize, limit int) int {
+	if limit > 0 && pageSize > 0 && page == 0 {
+		return maxSearchPagesPerSource
+	}
+	return 1
+}
+
 // searchSourceState is one source's own cursor and accumulated results
 // across searchAllSources' page rounds. Each round's goroutine owns exactly
 // one element, so the fields are written without synchronisation.
@@ -850,6 +927,77 @@ type searchSourceState struct {
 	warnings []error
 	mods     []domain.Mod
 	total    int // the source's most recently reported TotalCount
+	// seen is the ids already in mods. A source can return the same mod on
+	// two pages - CurseForge's slug lookup (#503) puts an exact-name hit at
+	// the front of page 0 that also sits in its natural place on a later
+	// page - and a merged list must hold it once (#511).
+	seen map[string]struct{}
+}
+
+// addMods appends the hits of one page that st does not hold yet and returns
+// how many were new.
+func (st *searchSourceState) addMods(mods []domain.Mod) int {
+	if st.seen == nil {
+		st.seen = make(map[string]struct{}, len(mods))
+	}
+	added := 0
+	for _, m := range mods {
+		if m.ID != "" {
+			if _, dup := st.seen[m.ID]; dup {
+				continue
+			}
+			st.seen[m.ID] = struct{}{}
+		}
+		st.mods = append(st.mods, m)
+		added++
+	}
+	return added
+}
+
+// absorb folds one successful page into st and decides whether to ask for
+// the next one. page is the page index the caller STARTED at: the paging
+// rules below rest on "the rows fetched so far are exactly [0, len)", a claim
+// about page 0 and not about the cursor (#361, review N10). paging is true
+// when the caller is filling a limit (searchLimitRounds); otherwise one round
+// runs and st.active only records the single-round has-more answer.
+func (st *searchSourceState) absorb(res source.SearchResult, page int, paging bool) {
+	firstRound := page == 0 && st.cursor == page
+	st.succeeded = true
+	st.warnings = appendNewWarnings(st.warnings, res.Warnings)
+	added := st.addMods(res.Mods)
+	st.total = res.TotalCount
+	if paging {
+		// #361: a source that clamped the request AND named the size it
+		// served is paged at THAT size from here on, rather than being
+		// stopped by sourceIsPageable below. Lowering it before the two
+		// heuristics run is what makes them agree with the request that
+		// will actually be sent next round.
+		adoptReportedPageSize(st, res, firstRound)
+
+		// The two questions are kept apart: what this source might still
+		// hold, and whether we can safely ask it for that. A clamping
+		// source answers yes and no.
+		//
+		// Has-more is the UNION of the two heuristics, as it was before
+		// sourceIsPageable existed: they answer differently for a source
+		// returning SHORT pages (pagedSourceHasMore is right) and for one
+		// returning MORE than the page size it was asked for
+		// (sourceHasMore is right, and it is what a `--limit 2` against a
+		// source handing back its whole three-mod catalogue reports), and
+		// neither is wrong about the source it describes. The optimism
+		// costs nothing now: it only ever reaches Exhausted, never a round
+		// trip.
+		st.hasMore = sourceHasMore(res, st.cursor, st.pageSize) ||
+			pagedSourceHasMore(res, len(st.mods), st.pageSize)
+		// A page that added nothing new makes no progress - a source that
+		// ignores the page index and repeats itself would otherwise be
+		// asked maxSearchPagesPerSource times for the same rows (#511).
+		st.active = st.hasMore && sourceIsPageable(res, st.pageSize) && added > 0
+	} else {
+		st.hasMore = sourceHasMore(res, st.cursor, st.pageSize)
+		st.active = st.hasMore
+	}
+	st.cursor++
 }
 
 // pagedSourceHasMore is sourceHasMore's counterpart for searchAllSources'
@@ -908,12 +1056,25 @@ func pagedSourceHasMore(res source.SearchResult, fetched, pageSize int) bool {
 // of the caller's limit. That is the deliberate trade - a short answer is
 // visibly short, while a strided one looks exactly like a complete one
 // after rankAggregate has reordered it.
+//
+// One exception to "exactly the size asked for" (#511): a source that NAMES
+// the size it serves, equal to the one asked for, may hand back MORE rows
+// than that. CurseForge's #503 slug lookup puts an exact-name hit in front
+// of page 0, so a 50-row page arrives as 51. Offsets are still the page
+// index times the named size, so the page was full and the next one starts
+// where it ended; what the guard exists to catch is a SHORT page, and this
+// one is not. A source that names no size keeps the strict rule, because
+// "more rows than asked for" is then equally what a source dumping its
+// whole catalogue looks like.
 func sourceIsPageable(res source.SearchResult, pageSize int) bool {
 	if pageSize <= 0 {
 		return false
 	}
 	if res.PageSize > 0 && res.PageSize != pageSize {
 		return false
+	}
+	if res.PageSize == pageSize {
+		return len(res.Mods) >= pageSize
 	}
 	return len(res.Mods) == pageSize
 }
@@ -936,9 +1097,10 @@ func sourceIsPageable(res source.SearchResult, pageSize int) bool {
 //     inferring page 0 from the paging loop's own entry condition.
 //   - Only a size SMALLER than the one requested - a source answering with
 //     a bigger page than it was asked for is not clamping.
-//   - Only when the rows returned match the size claimed. A source that
-//     reports a page size it does not actually serve is lying, and paging
-//     on its number would skip the difference.
+//   - Only when the rows returned cover the size claimed (#511: more is
+//     fine - an extra hit in front of the page, see sourceIsPageable).
+//     A source that reports a page size it does not actually serve is
+//     lying, and paging on its number would skip the difference.
 //
 // A source that clamps without reporting it (NexusMods) reports no PageSize
 // at all, fails the second guard, and is still stopped after one page.
@@ -949,7 +1111,7 @@ func adoptReportedPageSize(st *searchSourceState, res source.SearchResult, first
 	if res.PageSize <= 0 || res.PageSize >= st.pageSize {
 		return false
 	}
-	if len(res.Mods) != res.PageSize {
+	if len(res.Mods) < res.PageSize {
 		return false
 	}
 	st.pageSize = res.PageSize
@@ -970,15 +1132,9 @@ func adoptReportedPageSize(st *searchSourceState, res source.SearchResult, first
 // limit > 0, the search keeps advancing the cursor of every source that
 // might still have a page N+1 until the merged hit count reaches limit,
 // every source is exhausted, or maxSearchPagesPerSource rounds have run.
-// Every other shape stays exactly one round:
-//
-//   - limit <= 0: there is no target to fill, so nothing to loop toward.
-//   - pageSize <= 0: no page size means no next-page concept at all
-//     (sourceHasMore's own rule), so there is no cursor to advance.
-//   - page > 0: the caller is driving its OWN pagination cursor - `lmm
-//     serve`'s search page sends page+page_size and no limit - and pulling
-//     pages past the one it asked for would swallow the hits it is about to
-//     request as its next page.
+// Every other shape stays exactly one round (searchLimitRounds). The named
+// --source path fills a limit the same way (searchNamedSource, #511), and a
+// hit a source repeats on a later page is held once (searchSourceState.addMods).
 //
 // Known limit (#109's own Tier-2 note): a source that silently CLAMPS the
 // requested page size while reporting neither a TotalCount nor its
@@ -1035,13 +1191,17 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 		st.active = true
 	}
 
-	rounds := 1
-	if limit > 0 && pageSize > 0 && page == 0 {
-		rounds = maxSearchPagesPerSource
-	}
+	rounds := searchLimitRounds(page, pageSize, limit)
 	paging := rounds > 1
 
-	for range rounds {
+	for round := range rounds {
+		// Between pages, never inside one: a cancelled search stops asking
+		// instead of reporting the cancellation as every source's warning.
+		if round > 0 {
+			if err := ctx.Err(); err != nil {
+				return AggregateSearchResult{}, err
+			}
+		}
 		anyActive := false
 		for i := range states {
 			if states[i].active {
@@ -1087,50 +1247,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 					st.err = err
 					return nil // never abort the group: siblings keep searching
 				}
-				// page == 0 is not redundant with the cursor test: it is
-				// what makes it MEAN "first round". paging is only true
-				// when the caller started at page 0 (see rounds above), so
-				// the two agree today - but the guard below rests on "the
-				// rows fetched so far are exactly [0, len)", which is a
-				// claim about page 0, not about the cursor. Stating both
-				// keeps the precondition local to the code that needs it
-				// rather than two frames away (#361, review N10).
-				firstRound := page == 0 && st.cursor == page
-				st.succeeded = true
-				st.warnings = appendNewWarnings(st.warnings, res.Warnings)
-				st.mods = append(st.mods, res.Mods...)
-				st.total = res.TotalCount
-				if paging {
-					// #361: a source that clamped the request AND named the
-					// size it served is paged at THAT size from here on,
-					// rather than being stopped by sourceIsPageable below.
-					// Lowering it before the two heuristics run is what
-					// makes them agree with the request that will actually
-					// be sent next round.
-					adoptReportedPageSize(st, res, firstRound)
-
-					// The two questions are kept apart: what this source
-					// might still hold, and whether we can safely ask it
-					// for that. A clamping source answers yes and no.
-					//
-					// Has-more is the UNION of the two heuristics, as it
-					// was before sourceIsPageable existed: they answer
-					// differently for a source returning SHORT pages
-					// (pagedSourceHasMore is right) and for one returning
-					// MORE than the page size it was asked for
-					// (sourceHasMore is right, and it is what a `--limit 2`
-					// against a source handing back its whole three-mod
-					// catalogue reports), and neither is wrong about the
-					// source it describes. The optimism costs nothing now:
-					// it only ever reaches Exhausted, never a round trip.
-					st.hasMore = sourceHasMore(res, st.cursor, st.pageSize) ||
-						pagedSourceHasMore(res, len(st.mods), st.pageSize)
-					st.active = st.hasMore && sourceIsPageable(res, st.pageSize)
-				} else {
-					st.hasMore = sourceHasMore(res, st.cursor, st.pageSize)
-					st.active = st.hasMore
-				}
-				st.cursor++
+				st.absorb(res, page, paging)
 				return nil
 			})
 		}
