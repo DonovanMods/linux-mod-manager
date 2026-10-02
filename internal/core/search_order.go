@@ -22,7 +22,11 @@ import (
 //     first, with an unknown date last; downloads is Downloads, most first;
 //     popular is Endorsements, most first, with a source that reports no
 //     rating (nil) after one that reports zero; relevance leaves the
-//     sources' own order alone.
+//     sources' own order alone, except that (#509) it ranks a hit whose
+//     name contains the query (nameContainsQuery) ahead of one that does
+//     not - exact, then name-contains, then the rest, each in source
+//     order. Only relevance has that middle tier: an explicit sort means
+//     "order by this field", and a name match must not outrank it.
 //  3. Ties keep the order they arrived in (every step is stable).
 //
 // Sources that can sort server-side do (source.SearchQuery.Sort), which is
@@ -55,6 +59,32 @@ func nameMatchesQuery(name, query string) bool {
 	}
 	key := searchNameKey(q)
 	return key != "" && searchNameKey(name) == key
+}
+
+// nameContainsQuery reports whether name holds the query (#509): the query's
+// letters and digits, folded by searchNameKey, appear in the folded name as
+// one run - or every whitespace-separated word of the query does, in any
+// order and place ("bank value" finds "Value of the Warband Bank"). Words
+// that fold to nothing are ignored, and a query with no word left matches
+// nothing. Containment, so it is wider than nameMatchesQuery's equality,
+// which core ranks above it.
+func nameContainsQuery(name, query string) bool {
+	nameKey := searchNameKey(name)
+	if key := searchNameKey(query); key != "" && strings.Contains(nameKey, key) {
+		return true
+	}
+	words := 0
+	for _, w := range strings.Fields(query) {
+		key := searchNameKey(w)
+		if key == "" {
+			continue
+		}
+		if !strings.Contains(nameKey, key) {
+			return false
+		}
+		words++
+	}
+	return words > 0
 }
 
 // compareHits orders two hits by sort alone: negative when a belongs before
@@ -106,18 +136,24 @@ func orderSearchHits(mods []domain.Mod, query string, sort domain.SearchSort) {
 	if sort != domain.SortRelevance && sort != "" {
 		slices.SortStableFunc(mods, func(a, b domain.Mod) int { return compareHits(sort, &a, &b) })
 	}
-	// Stable partition: exact matches, then everything else, each keeping
-	// the order the sort (or the source) left it in.
+	// Stable partition: exact matches, then (relevance only) names that
+	// contain the query, then everything else, each keeping the order the
+	// sort (or the source) left it in.
+	tiered := sort == domain.SortRelevance || sort == ""
 	exact := make([]domain.Mod, 0, 2)
+	contains := make([]domain.Mod, 0, len(mods))
 	rest := make([]domain.Mod, 0, len(mods))
 	for _, m := range mods {
-		if nameMatchesQuery(m.Name, query) {
+		switch {
+		case nameMatchesQuery(m.Name, query):
 			exact = append(exact, m)
-		} else {
+		case tiered && nameContainsQuery(m.Name, query):
+			contains = append(contains, m)
+		default:
 			rest = append(rest, m)
 		}
 	}
-	copy(mods, append(exact, rest...))
+	copy(mods, slices.Concat(exact, contains, rest))
 }
 
 // sortsOffered is the sorts a frontend may offer for results that came from

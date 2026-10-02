@@ -57,6 +57,17 @@ type pagingStubSource struct {
 	// a source claiming an effective page size it does not actually serve
 	// (#361's dishonest-clamp guard).
 	reportedPageSize int
+	// prependOnPageZero, when set, is put in front of page 0's rows only -
+	// CurseForge's #503 slug lookup, which adds a hit the page did not hold
+	// and so serves pageSize+1 rows. The same mod may also arrive in its
+	// natural place on a later page.
+	prependOnPageZero *domain.Mod
+	// ignorePage models a source that answers every page index with page 0's
+	// rows while still naming its page size.
+	ignorePage bool
+	// onSearch, when set, runs at the top of every Search with the page
+	// index (a hook to cancel a context mid-loop).
+	onSearch func(page int)
 
 	mu    sync.Mutex
 	pages []int // every page index requested, in call order
@@ -94,6 +105,9 @@ func (p *pagingStubSource) Search(_ context.Context, q source.SearchQuery) (sour
 	p.mu.Lock()
 	p.pages = append(p.pages, q.Page)
 	p.mu.Unlock()
+	if p.onSearch != nil {
+		p.onSearch(q.Page)
+	}
 
 	if p.failOnPage >= 0 && q.Page == p.failOnPage {
 		return source.SearchResult{}, errPagingStub
@@ -120,11 +134,18 @@ func (p *pagingStubSource) Search(_ context.Context, q source.SearchQuery) (sour
 		stride = q.PageSize
 	}
 	start := q.Page * stride
+	if p.ignorePage {
+		start = 0
+	}
 	if start > len(p.catalog) {
 		start = len(p.catalog)
 	}
 	end := min(start+size, len(p.catalog))
-	res := source.SearchResult{Mods: p.catalog[start:end], Page: q.Page, PageSize: size}
+	rows := p.catalog[start:end]
+	if q.Page == 0 && p.prependOnPageZero != nil {
+		rows = append([]domain.Mod{*p.prependOnPageZero}, rows...)
+	}
+	res := source.SearchResult{Mods: rows, Page: q.Page, PageSize: size}
 	if p.reportedPageSize > 0 {
 		res.PageSize = p.reportedPageSize
 	}

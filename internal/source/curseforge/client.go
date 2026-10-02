@@ -180,14 +180,15 @@ func clampSearchPageSize(pageSize int) int {
 // by; CurseForge's own Popularity (2) is a download-velocity blend that
 // would disagree with that in-page order.
 const (
+	sortFieldPopularity     = 2
 	sortFieldLastUpdated    = 3
 	sortFieldTotalDownloads = 6
 	sortFieldRating         = 12
 )
 
-// searchSortField is the sortField for a domain.SearchSort, and false for
-// relevance (or the empty default, or anything unknown), where the search
-// sends no sort at all so CurseForge's default ordering is unchanged.
+// searchSortField is the sortField for a domain.SearchSort the user chose,
+// and false for relevance (or the empty default, or anything unknown).
+// Relevance is not "no sort": see requestSortField.
 func searchSortField(sort domain.SearchSort) (int, bool) {
 	switch sort {
 	case domain.SortUpdated:
@@ -200,9 +201,28 @@ func searchSortField(sort domain.SearchSort) (int, bool) {
 	return 0, false
 }
 
-// SearchMods searches for mods with the given parameters. A sort other than
-// relevance is sent as sortField plus sortOrder=desc so the API pages by it;
-// relevance sends neither.
+// requestSortField is the sortField a search sends for sort: the native key
+// of an explicit sort, and Popularity (2) for relevance (#509). Measured
+// against the live API (gameId=1, searchFilter=auctionator, pageSize=50),
+// CurseForge's unsorted default put no name match in its first 50 hits,
+// while Popularity, descending, put the exact mod first and 18 more name
+// matches behind it. That is a download-velocity blend, not the Rating that
+// SortPopular maps to; relevance only needs it as the best server-side
+// stand-in for "what the user means", and core tiers the page afterwards.
+// Anything unknown sends no sort.
+func requestSortField(sort domain.SearchSort) (int, bool) {
+	if field, ok := searchSortField(sort); ok {
+		return field, true
+	}
+	if sort == domain.SortRelevance || sort == "" {
+		return sortFieldPopularity, true
+	}
+	return 0, false
+}
+
+// SearchMods searches for mods with the given parameters. Every known sort
+// is sent as sortField plus sortOrder=desc so the API pages by it; relevance
+// asks for Popularity (requestSortField).
 func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categoryID int, pageSize, index int, sort domain.SearchSort) ([]Mod, *Pagination, error) {
 	pageSize = clampSearchPageSize(pageSize)
 
@@ -214,7 +234,7 @@ func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categ
 	if categoryID > 0 {
 		params.Set("categoryId", strconv.Itoa(categoryID))
 	}
-	if field, ok := searchSortField(sort); ok {
+	if field, ok := requestSortField(sort); ok {
 		params.Set("sortField", strconv.Itoa(field))
 		params.Set("sortOrder", "desc")
 	}

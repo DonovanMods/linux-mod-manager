@@ -140,6 +140,63 @@ func TestSearchRelevanceKeepsTheSourcesOrderBehindExactMatches(t *testing.T) {
 	assert.Equal(t, []string{"z", "a"}, got, "relevance is the source's own order, not a re-sort")
 }
 
+// #509: relevance is tiered - exact name, then names that contain the query
+// (same fold) or every one of its words, then the rest - and stable within
+// each tier. The explicit sorts keep only the exact-first rule.
+
+func TestSearchRelevanceTiersNameMatchesBehindTheExactMatch(t *testing.T) {
+	got := searchIDs(t, "auctionator", core.SearchOptions{},
+		sortHit("x1", "Warband Bank Value"),
+		sortHit("n1", "Auctionator ClassicFix"),
+		sortHit("x2", "Grind Tracker"),
+		sortHit("n2", "Better Auctionator-Price History"),
+		sortHit("exact", "Auctionator"),
+		sortHit("n3", "AUCTIONATOR to TSM"))
+	assert.Equal(t, []string{"exact", "n1", "n2", "n3", "x1", "x2"}, got,
+		"exact, then name-contains in source order, then the rest in source order")
+}
+
+func TestSearchRelevanceContainsUsesTheSameFoldAsTheExactRule(t *testing.T) {
+	got := searchIDs(t, "Leatrix Plus", core.SearchOptions{},
+		sortHit("x", "Unrelated"),
+		sortHit("c", "My leatrix_plus Companion"),
+		sortHit("d", "LeatrixPlus Dark Theme"))
+	assert.Equal(t, []string{"c", "d", "x"}, got)
+}
+
+func TestSearchRelevanceNameHoldingEveryQueryWordIsTierTwo(t *testing.T) {
+	got := searchIDs(t, "bank value", core.SearchOptions{},
+		sortHit("x", "Bank Tools"),
+		sortHit("w", "Value of the Warband Bank"),
+		sortHit("y", "Value Only"))
+	assert.Equal(t, []string{"w", "x", "y"}, got,
+		"every word, in any order, beats a name holding only some of them")
+}
+
+func TestSearchRelevanceTiersAreStableAndCutAfterOrdering(t *testing.T) {
+	got := searchIDs(t, "foo", core.SearchOptions{Limit: 2},
+		sortHit("r1", "Nope One"),
+		sortHit("r2", "Nope Two"),
+		sortHit("n1", "Big Foo Pack"),
+		sortHit("n2", "Foo Extras"))
+	assert.Equal(t, []string{"n1", "n2"}, got, "a tier-2 hit the source ranked 3rd survives --limit 2")
+}
+
+func TestSearchRelevanceEmptyQueryHasNoTiers(t *testing.T) {
+	got := searchIDs(t, "", core.SearchOptions{}, sortHit("a", "Zeta"), sortHit("b", "Alpha"))
+	assert.Equal(t, []string{"a", "b"}, got)
+}
+
+func TestSearchExplicitSortsDoNotTierNameMatches(t *testing.T) {
+	// The name match with fewer downloads must stay behind the bigger
+	// unrelated hit: only relevance has tier 2.
+	got := searchIDs(t, "foo", core.SearchOptions{Sort: domain.SortDownloads},
+		domain.Mod{ID: "small", Name: "Foo Pack", Downloads: 1},
+		domain.Mod{ID: "big", Name: "Unrelated", Downloads: 99},
+		domain.Mod{ID: "exact", Name: "Foo", Downloads: 0})
+	assert.Equal(t, []string{"exact", "big", "small"}, got)
+}
+
 func TestSearchLimitCutsAfterOrdering(t *testing.T) {
 	// The exact match is the 4th hit; a --limit 2 that cut first would lose it.
 	got := searchIDs(t, "auctionator", core.SearchOptions{Limit: 2},
