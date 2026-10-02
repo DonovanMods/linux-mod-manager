@@ -141,12 +141,20 @@ delimited block of `app.css` (`@control-system begin` … `end`).
   `--control-height-sm` (1.5rem), `--control-padding-x`/`-sm`, `--control-radius`,
   `--control-border-width`, `--control-font-size`/`-sm` and `--control-line-height`. `.button`,
   `select` and the text-like inputs all use it, and `box-sizing: border-box` makes the height
-  exact, so controls sharing a row line up. A row of controls should wrap between them
-  (`flex-wrap`) rather than squeeze a label onto two lines.
+  exact, so controls sharing a row line up. A label is centred on both axes, with
+  `line-height: 1` on the button itself: Chrome rounds a positive half-leading down to whole
+  pixels, so a line box taller than the text set every label about a pixel high. A label never
+  wraps (`white-space: nowrap`; the prose-shaped `--link` and `--tile` excepted). A row of
+  controls wraps between them (`flex-wrap`), and a container too narrow for one label is a
+  layout to fix: the attention cards' minimum width is the widest footer on one line (26rem),
+  and Setup's Games table sizes its columns to their content and lets only the paths give.
 - **Variants**: `.button` (secondary, the default), `--primary` (the one main action of a bar,
-  card footer or modal footer), `--quiet` (borderless at rest, bordered on hover and focus:
-  pickers - a control naming a current value you change, such as the game/profile pickers and
-  the theme toggle - menu triggers, icon-only and close buttons) and `--danger`. Three shapes
+  card footer or modal footer), `--quiet` (borderless at rest, bordered on hover and focus) and
+  `--danger`. Quiet is only for a control with an affordance of its own: a picker or menu
+  trigger, which draws its ▾ (the game/profile pickers, Add mods, the activity bell), or a
+  glyph-only `--icon` button (?, ✕, ‹ ›). A text-only control with no glyph reads as a label
+  when it has no boundary at rest, so it stays secondary. The theme toggle is one: it cycles on
+  a click rather than opening a choice. Three shapes
   cover the remaining cases: `--link` (reads as text: a row's own name, an inline "View"),
   `--tab` (a tab in a tablist; `aria-selected` carries the underline) and `--tile` (a whole
   card that is one button, the game chooser).
@@ -164,8 +172,12 @@ delimited block of `app.css` (`@control-system begin` … `end`).
 Ratchets: `control_system_test.go` fails the build if a `<button>` carries neither `button` nor
 `menu-item`, or if a rule outside the control block sets height, padding, border, radius or type
 size on a selector that targets a button (element classes may place a control - margin,
-position, flex, colour - but not reshape it). `e2e_controls_test.go` holds every control in the
-top bar and the library toolbar to one computed height in both themes.
+position, flex, colour - but not reshape it), or if a `--quiet` button is neither `--icon` nor a
+`picker__trigger`. `e2e_controls_test.go` holds every control in the top bar and the library
+toolbar to one computed height in both themes. `e2e_control_centring_test.go` holds labels in
+the bars, card footers, a picker menu, the slide-over and Setup's Games table to vertically
+centred (±1px) and single-line text at 1280px. It also requires the attention cards' footers
+to fit one row and the omnibar's placeholder to show whole.
 
 ## Architecture
 

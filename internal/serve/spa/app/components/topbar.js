@@ -216,7 +216,7 @@ export function TopBar({
           class="omnibar"
           name="q"
           aria-label="Filter your library or search sources"
-          placeholder="Filter your library, or press Enter to search sources…"
+          placeholder="Filter your library — Enter searches sources"
           value=${query}
           onInput=${(e) => onQueryChange(e.currentTarget.value)}
           onKeyDown=${(e) => {
@@ -283,7 +283,7 @@ export function TopBar({
       </button>
       <button
         type="button"
-        class="button button--quiet theme-toggle"
+        class="button theme-toggle"
         onClick=${() => onThemeChange(cycleTheme())}
       >
         Theme: ${currentTheme()}

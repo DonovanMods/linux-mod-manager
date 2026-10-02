@@ -220,6 +220,33 @@ func TestEveryButtonUsesTheControlSystem(t *testing.T) {
 	}
 }
 
+// quietAffordanceClasses are the classes that give a quiet button an
+// affordance of its own: a glyph-only control (✕, ?, ‹ ›, the bell) or a
+// picker/menu trigger, which draws its ▾.
+var quietAffordanceClasses = []string{"button--icon", "picker__trigger"}
+
+// TestQuietButtonsCarryTheirOwnAffordance fails on a borderless
+// (button--quiet) <button> that is neither glyph-only nor a menu trigger.
+// Borderless at rest, a text-only control with no ▾ reads as a label - the
+// theme toggle's "Theme: system" did, until it became a secondary button
+// (#518) - so a text-only control keeps a visible boundary at rest.
+func TestQuietButtonsCarryTheirOwnAffordance(t *testing.T) {
+	for _, b := range buttonTags(t) {
+		value, isExpr, ok := classValue(b.tag)
+		if !ok {
+			continue
+		}
+		names := classNames(value, isExpr)
+		if !slices.Contains(names, "button--quiet") {
+			continue
+		}
+		if !slices.ContainsFunc(names, func(c string) bool { return slices.Contains(quietAffordanceClasses, c) }) {
+			t.Errorf("%s:%d: a quiet button with no affordance of its own - a text-only control is a secondary .button (a visible boundary at rest); .button--quiet is for glyph-only (.button--icon) controls and menu triggers (.picker__trigger, with their ▾): %s",
+				filepath.ToSlash(b.file), b.line, strings.Join(names, " "))
+		}
+	}
+}
+
 // TestButtonScan_ReadsEveryClassShape pins the scanner's own reach: a
 // multi-line tag with handlers, a class value with an interpolation, a
 // bare-expression class, and prose in a comment that is not a tag.

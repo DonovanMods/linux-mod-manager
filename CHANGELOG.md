@@ -70,13 +70,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Buttons come in four variants (secondary, primary, quiet, danger) plus
   link, tab and tile shapes, and pickers, menus and the activity tray use one
   menu-item style. Small buttons are kept for dense contexts (rows, cards'
-  item rows, menus), never beside default-size controls. The game/profile
-  pickers, "Add mods", the activity bell and the theme toggle are quiet
-  buttons instead of unstyled text, and the search box shows one clear
-  button instead of two. Ratchets fail the build if a `<button>` is styled
-  outside the system or a rule outside the control block reshapes one, and
-  a browser test holds the top bar and library toolbar to one control height
-  in both themes.
+  item rows, menus), never beside default-size controls. Every label is
+  centred in its button and never wraps. The game/profile pickers, "Add
+  mods" and the activity bell are quiet buttons instead of unstyled text;
+  the theme toggle, a text-only control with no ▾, is a bordered secondary
+  button, since a borderless one read as a label. The search box shows one
+  clear button instead of two, and its placeholder is short enough to show
+  whole at 1280px. Attention cards are at least wide enough for the widest
+  footer on one line, so at 1280px they sit two across and the Updates
+  card's actions fit one row. Setup's Games table sizes its columns to their
+  content, with the paths ellipsised and "Edit…" in its own trailing
+  column, so no cell breaks a name or a button label. Ratchets fail the
+  build if a `<button>` is styled outside the system, a rule outside the
+  control block reshapes one, or a quiet button has no glyph or ▾ of its
+  own. Browser tests hold the top bar and library toolbar to one control
+  height in both themes, and labels to centred, single-line text.
 
 - **CI test pushes include the v2 branch (#492).** The test workflow now runs
   for pushes to `main`, `develop`, and `v2`, while preserving pull-request

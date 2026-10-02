@@ -214,7 +214,7 @@ export function App({ state, onThemeChange, actions }) {
       <span class="app-bar__brand">LMM</span>
       <button
         type="button"
-        class="button button--quiet theme-toggle"
+        class="button theme-toggle"
         onClick=${() => onThemeChange(cycleTheme())}
       >
         Theme: ${currentTheme()}

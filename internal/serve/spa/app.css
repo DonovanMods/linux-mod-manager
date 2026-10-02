@@ -321,11 +321,17 @@ pre,
  *   .button                  secondary: bordered, on the raised surface
  *   .button--primary         THE action of its context - at most one per
  *                            bar, card footer or modal footer
- *   .button--quiet           borderless at rest, bordered on hover/focus:
- *                            pickers (a control naming a current value
- *                            you change - the game/profile pickers, the
- *                            theme toggle), menu triggers, icon-only and
- *                            close buttons
+ *   .button--quiet           borderless at rest, bordered on hover/focus -
+ *                            ONLY for a control with an affordance of its
+ *                            own: a picker or menu trigger, which draws its
+ *                            ▾ (the game/profile pickers, Add mods, the
+ *                            bell), or a glyph-only .button--icon (?, ✕,
+ *                            ‹ ›). A text-only control with no glyph reads
+ *                            as a label without a boundary at rest, so it
+ *                            stays secondary - the theme toggle, which
+ *                            cycles on a click rather than opening a
+ *                            choice (TestQuietButtonsCarryTheirOwn
+ *                            Affordance)
  *   .button--danger          destroys or removes something
  *   .button--link            reads as text, not as a box: a row's own
  *                            name that opens it, an inline "View"
@@ -333,6 +339,10 @@ pre,
  *                            carries its underline
  *   .button--tile            a whole card that is one button (the game
  *                            chooser)
+ *
+ * A label never wraps (white-space: nowrap) - a control too narrow for its
+ * label is a layout to fix, not a label to break - except the text-shaped
+ * .button--link and the card-shaped .button--tile, which are prose.
  *
  * Sizes and shapes:
  *   (default)                --control-height: every bar and toolbar, card
@@ -377,7 +387,15 @@ input[type="password"] {
   background: var(--surface-raised);
   color: var(--text-primary);
   font-weight: inherit;
+  /* A label's line box is exactly its type size, so the flex centring above
+   * centres the TEXT, not a taller line box with the text at its top:
+   * Chrome rounds a positive half-leading down to whole pixels, which put
+   * every label at --control-line-height ~1px high, with the spare space
+   * below it. A line box no taller than the font's own ascent + descent has
+   * a negative half-leading, which stays symmetric. */
+  line-height: 1;
   text-align: center;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -423,6 +441,7 @@ input[type="password"] {
   font-size: inherit;
   line-height: inherit;
   text-align: left;
+  white-space: normal;
 }
 
 .button--link:hover:not(:disabled) {
@@ -459,6 +478,7 @@ input[type="password"] {
   font-size: inherit;
   line-height: inherit;
   text-align: left;
+  white-space: normal;
   box-shadow: var(--shadow-raised);
 }
 
@@ -486,6 +506,8 @@ input[type="password"] {
   padding: var(--space-1) var(--space-2);
   border: 0;
   background: transparent;
+  /* Centred like a .button's label, for the same reason (see .button). */
+  line-height: 1;
   color: var(--text-primary);
   text-align: left;
   text-decoration: none;
@@ -795,15 +817,20 @@ input[type="search"]::-webkit-search-decoration {
  * (the profile card) and the fourth dropped onto a row of its own with two
  * card-widths of empty space beside it.
  *
- * auto-fit with a real minimum says the same thing without counting: at the
- * 1080p baseline three cards fill the row and a fourth wraps under; from
- * about 1500px up all four sit across. The minimum is what keeps a card
- * readable - a Health card squeezed to 15rem wraps every finding onto three
- * lines.
+ * auto-fit with a real minimum says the same thing without counting. The
+ * minimum is what keeps a card readable - a Health card squeezed to 15rem
+ * wraps every finding onto three lines - and it is the widest card footer
+ * on one line: the Updates card's three default-size actions (Check again,
+ * Update all, Update selected) plus its padding, about 26rem (issue 518).
+ * Anything narrower wrapped that footer onto a second line, which made
+ * the card taller than its row neighbours. So at 1280px the cards sit two
+ * across, from about 1330px three, and from about 1760px - which includes
+ * the 1080p baseline - all four. Below one card's minimum a card takes the
+ * full width (the min() with 100%) rather than overflowing the page.
  */
 .attention-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr));
   gap: var(--space-4);
   margin-bottom: var(--space-6);
 }
@@ -2967,22 +2994,66 @@ a.row-menu__item.mod-page-link {
   border-bottom: 1px solid var(--border-subtle);
 }
 
-/*
- * The games table's two PATH columns (issue 334's density pass). A game
- * installed under a long Steam library path pushed the Default column off
- * the right-hand edge and stretched every other row to match. Each path
- * column now takes a share of the width and ellipsises what does not fit;
- * the full value is on the cell's own title, so nothing is lost.
- */
 .setup-table {
   table-layout: fixed;
 }
 
+/*
+ * The games table (issue 334's density pass, reworked by issue 518). A game
+ * installed under a long Steam library path pushed the Default column off
+ * the right-hand edge, so the two PATH columns are the ones that give: each
+ * ellipsises what does not fit, with the full value on its title, so
+ * nothing is lost. The table lays out automatically rather than in equal
+ * fixed shares, so every other column - a name, a value and the button that
+ * edits it - is as wide as its content needs: a button label never wraps
+ * (the control block's nowrap), and a fixed share too narrow for one is
+ * what used to break "Edit sources…" across two lines. `max-width: 0` is
+ * what lets a path column shrink below its text instead of forcing the
+ * table wider. The shares leave the content-sized columns their natural
+ * width at 1280px (a percentage column is served before an automatic one,
+ * so a larger share squeezes the names and the value cells instead), and
+ * the mod path's is larger by its "Edit mod path…" button, so both paths
+ * show the same length. At a narrow width every column gives way to its
+ * minimum and the paths keep what is left.
+ */
+.setup-table--games {
+  table-layout: auto;
+}
+
 .setup-table .col--path {
-  width: 32%;
+  width: 16%;
+  max-width: 0;
+}
+
+.setup-table .col--path-with-action {
+  width: 26%;
+}
+
+.setup-table__path {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* A path and the button that edits it, on one line: the path gives way
+ * (ellipsis), the button never does. */
+.setup-table__value {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.setup-table__value > .button {
+  flex: none;
+}
+
+/* The games table's own row action (Edit…, which opens every editor),
+ * last and as narrow as its button. */
+.setup-table__row-actions {
+  width: 1%;
+  white-space: nowrap;
 }
 
 /* N-2 (= epic M-4): the earlier fix put `display: flex` directly on the

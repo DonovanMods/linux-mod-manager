@@ -273,16 +273,19 @@ export function SetupGames({
   // the cell says so (adaptercell.js).
   return html`
     <div class="setup-section" data-testid="setup-games">
-      <table class="setup-table">
+      <table class="setup-table setup-table--games">
         <thead>
           <tr>
             <th>Name</th>
             <th class="col--path">Install path</th>
-            <th class="col--path">Mod path</th>
+            <th class="col--path col--path-with-action">Mod path</th>
             <th>Adapter</th>
             <th>Sources</th>
             <th>Loader</th>
             <th>Default</th>
+            <th class="setup-table__row-actions">
+              <span class="visually-hidden">Actions</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -291,35 +294,28 @@ export function SetupGames({
               <tr key=${g.id}>
                 <td class="setup-table__name">
                   <span>${g.name}</span>${" "}
-                  <span class="mono empty-state__hint">${g.id}</span>${" "}
-                  <button
-                    type="button"
-                    class="button button--small"
-                    data-action="edit-game"
-                    data-game=${g.id}
-                    aria-expanded=${editingAll(g.id) ? "true" : "false"}
-                    disabled=${busyID === g.id || sources === null}
-                    onClick=${() => toggleEditGame(g)}
-                  >
-                    ${editingAll(g.id) ? "Close editors" : "Edit…"}
-                  </button>
+                  <span class="mono empty-state__hint">${g.id}</span>
                 </td>
-                <td class="col--path mono" title=${g.install_path}>
-                  ${g.install_path}
+                <td class="col--path" title=${g.install_path}>
+                  <span class="mono setup-table__path">${g.install_path}</span>
                 </td>
-                <td class="col--path" title=${g.mod_path}>
-                  <span class="mono">${g.mod_path}</span>${" "}
-                  <button
-                    type="button"
-                    class="button button--small"
-                    data-action="edit-mod-path"
-                    data-game=${g.id}
-                    aria-expanded=${editingModPath?.id === g.id ? "true" : "false"}
-                    disabled=${busyID === g.id}
-                    onClick=${() => toggleModPathEditor(g)}
-                  >
-                    ${editingModPath?.id === g.id ? "Cancel" : "Edit mod path…"}
-                  </button>
+                <td class="col--path col--path-with-action">
+                  <div class="setup-table__value">
+                    <span class="mono setup-table__path" title=${g.mod_path}
+                      >${g.mod_path}</span
+                    >
+                    <button
+                      type="button"
+                      class="button button--small"
+                      data-action="edit-mod-path"
+                      data-game=${g.id}
+                      aria-expanded=${editingModPath?.id === g.id ? "true" : "false"}
+                      disabled=${busyID === g.id}
+                      onClick=${() => toggleModPathEditor(g)}
+                    >
+                      ${editingModPath?.id === g.id ? "Cancel" : "Edit mod path…"}
+                    </button>
+                  </div>
                   <${ModPathWarning}
                     error=${g.mod_path_error}
                     gameID=${g.id}
@@ -381,11 +377,24 @@ export function SetupGames({
                     html`<p class="modal__error">${rowError.message}</p>`
                   }
                 </td>
+                <td class="setup-table__row-actions">
+                  <button
+                    type="button"
+                    class="button button--small"
+                    data-action="edit-game"
+                    data-game=${g.id}
+                    aria-expanded=${editingAll(g.id) ? "true" : "false"}
+                    disabled=${busyID === g.id || sources === null}
+                    onClick=${() => toggleEditGame(g)}
+                  >
+                    ${editingAll(g.id) ? "Close editors" : "Edit…"}
+                  </button>
+                </td>
               </tr>
               ${
                 editing?.id === g.id &&
                 html`<tr key=${`${g.id}-sources`} class="setup-table__editor">
-                  <td colspan="7">
+                  <td colspan="8">
                     <${SourcesMapEditor}
                       sources=${sources}
                       value=${editing.map}
@@ -407,7 +416,7 @@ export function SetupGames({
               ${
                 editingModPath?.id === g.id &&
                 html`<tr key=${`${g.id}-mod-path`} class="setup-table__editor">
-                  <td colspan="7">
+                  <td colspan="8">
                     <${ModPathEditor}
                       gameID=${g.id}
                       value=${editingModPath.value}
@@ -422,7 +431,7 @@ export function SetupGames({
               ${
                 editingLoader?.id === g.id &&
                 html`<tr key=${`${g.id}-loader`} class="setup-table__editor">
-                  <td colspan="7">
+                  <td colspan="8">
                     <${GameLoaderEditor}
                       value=${editingLoader.draft}
                       disabled=${busyID === g.id}

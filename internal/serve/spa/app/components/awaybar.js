@@ -79,7 +79,7 @@ export function AwayBar({ state, route, home, onThemeChange, actions }) {
       </button>
       <button
         type="button"
-        class="button button--quiet theme-toggle"
+        class="button theme-toggle"
         onClick=${() => onThemeChange(cycleTheme())}
       >
         Theme: ${currentTheme()}
