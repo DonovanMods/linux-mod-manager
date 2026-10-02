@@ -40,7 +40,7 @@ func TestNew_V18AddsTheLedgerColumnsToAV17Database(t *testing.T) {
 
 	var version int
 	require.NoError(t, upgraded.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 18, version)
+	assert.GreaterOrEqual(t, version, 18)
 
 	states, err := upgraded.DeployedFileStates(ctx, "g", "a.pak")
 	require.NoError(t, err)

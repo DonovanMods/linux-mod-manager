@@ -52,6 +52,10 @@ type DB struct {
 	keyPath string
 	keyMu   sync.Mutex
 	key     []byte
+
+	// now is the clock the stored timestamps come from; nil means
+	// time.Now. A test swaps it to write rows in chosen zones.
+	now func() time.Time
 }
 
 // Options configures Open beyond the database path.

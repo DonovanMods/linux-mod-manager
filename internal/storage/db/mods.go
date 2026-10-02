@@ -19,7 +19,29 @@ func updatedAtValue(mod *domain.InstalledMod) any {
 	if mod.UpdatedAt.IsZero() {
 		return nil
 	}
-	return mod.UpdatedAt.UTC()
+	return formatTime(mod.UpdatedAt)
+}
+
+// decodeModTimes reads the installed_at and updated_at text of one row (both
+// selected CAST AS TEXT, so the driver does not guess a type), accepting every
+// form the columns have held. A NULL installed_at or text that is none of
+// those forms is an error, as it was when the driver did the scan: a damaged
+// row must not read as a mod that merely has no date (#236). A NULL updated_at
+// is the zero time, which is what "the source never said" means.
+func decodeModTimes(installedAt, updatedAt *string) (installed, updated time.Time, err error) {
+	if installedAt == nil {
+		return time.Time{}, time.Time{}, errors.New("installed_at is NULL")
+	}
+	var ok bool
+	if installed, ok = parseStoredTime(*installedAt); !ok {
+		return time.Time{}, time.Time{}, fmt.Errorf("installed_at %q is not a recognised time", *installedAt)
+	}
+	if updatedAt != nil {
+		if updated, ok = parseStoredTime(*updatedAt); !ok {
+			return time.Time{}, time.Time{}, fmt.Errorf("updated_at %q is not a recognised time", *updatedAt)
+		}
+	}
+	return installed, updated, nil
 }
 
 func encodeFileIDs(fileIDs []string) (string, error) {
@@ -86,7 +108,7 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 			external = excluded.external,
 			external_path = excluded.external_path,
 			updated_at = excluded.updated_at
-	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, time.Now(), prevVersion, prevFileIDs, mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL, mod.External, mod.ExternalPath, updatedAtValue(mod))
+	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, formatTime(d.clock()), prevVersion, prevFileIDs, mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL, mod.External, mod.ExternalPath, updatedAtValue(mod))
 	if err != nil {
 		return fmt.Errorf("saving installed mod: %w", err)
 	}
@@ -194,7 +216,7 @@ func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID strin
 // GetInstalledMods returns all installed mods for a game/profile combination
 func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (mods []domain.InstalledMod, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, convert_paks, external, external_path, updated_at
+		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, CAST(installed_at AS TEXT), previous_version, previous_file_ids, link_method, manual_download, summary, source_url, convert_paks, external, external_path, CAST(updated_at AS TEXT)
 		FROM installed_mods
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY installed_at ASC
@@ -207,11 +229,11 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 		var mod domain.InstalledMod
 		var prevVersion *string
 		var prevFileIDs *string
-		var updatedAt *time.Time
+		var installedAt, updatedAt *string
 		err := rows.Scan(
 			&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 			&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
-			&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
+			&mod.Enabled, &mod.Deployed, &installedAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
 			&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath, &updatedAt,
 		)
 		if err != nil {
@@ -221,8 +243,10 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 		if prevVersion != nil {
 			mod.PreviousVersion = *prevVersion
 		}
-		if updatedAt != nil {
-			mod.UpdatedAt = updatedAt.UTC()
+		mod.InstalledAt, mod.UpdatedAt, err = decodeModTimes(installedAt, updatedAt)
+		if err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scanning installed mod: %w", err)
 		}
 		mod.PreviousFileIDs, err = decodeFileIDs(prevFileIDs)
 		if err != nil {
@@ -457,17 +481,17 @@ func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profi
 	var mod domain.InstalledMod
 	var prevVersion *string
 	var prevFileIDs *string
-	var updatedAt *time.Time
+	var installedAt, updatedAt *string
 	err := d.QueryRowContext(ctx, `
 		SELECT source_id, mod_id, game_id, profile_name, name, version, author,
-		       update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download,
-		       summary, source_url, convert_paks, external, external_path, updated_at
+		       update_policy, enabled, deployed, CAST(installed_at AS TEXT), previous_version, previous_file_ids, link_method, manual_download,
+		       summary, source_url, convert_paks, external, external_path, CAST(updated_at AS TEXT)
 		FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName).Scan(
 		&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 		&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
-		&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
+		&mod.Enabled, &mod.Deployed, &installedAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
 		&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath, &updatedAt,
 	)
 	if err != nil {
@@ -480,8 +504,9 @@ func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profi
 	if prevVersion != nil {
 		mod.PreviousVersion = *prevVersion
 	}
-	if updatedAt != nil {
-		mod.UpdatedAt = updatedAt.UTC()
+	mod.InstalledAt, mod.UpdatedAt, err = decodeModTimes(installedAt, updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("querying installed mod: %w", err)
 	}
 	mod.PreviousFileIDs, err = decodeFileIDs(prevFileIDs)
 	if err != nil {

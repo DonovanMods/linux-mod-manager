@@ -1735,6 +1735,25 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Install and update times are stored as UTC RFC 3339, not Go's
+  `time.String()` text (#515).** `installed_mods.installed_at` and
+  `updated_at` were written as local-zone wall-clock text with the process's
+  monotonic clock attached, such as
+  `2026-10-01 13:30:57.086694056 -0400 EDT m=+1.598230846`.
+  `ORDER BY installed_at` sorted that text, so mods
+  installed from different zones or across a DST change listed out of order,
+  the `m=` half leaked how long lmm had been running, and any other tool
+  reading the database had to cope with the format. Both columns are now
+  written as UTC with a fixed nine-digit fraction
+  (`2026-10-01T17:30:57.086694056Z`), which sorts as the instant does.
+  Migration 19 rewrites the existing rows on the next open, reading the
+  `String()` form with or without its `m=` suffix, the zone-abbreviation
+  and no-abbreviation variants, and SQLite's own `CURRENT_TIMESTAMP` text; a
+  value it cannot read is left exactly as it was and logged. Reads accept
+  every form, so a row the migration missed still loads. The other `DATETIME`
+  columns are filled by SQLite's `CURRENT_TIMESTAMP`, already UTC and
+  sortable, and are unchanged.
+
 - **A manually downloaded mod no longer stays NO CHECKSUM forever (#514).**
   A mod whose author has turned off third-party downloads (CurseForge) is
   fetched by hand and imported, but the import recorded no checksum, and
