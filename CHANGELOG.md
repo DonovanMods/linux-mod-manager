@@ -1774,6 +1774,24 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Search results line up in columns (#520).** On the search page and in
+  the omnibar's "From sources" rows, each row used to place its version,
+  source, author and date wherever its own content left room, so a row with
+  an author started its version further left than the rows around it. The
+  results are now one grid: name, version, source, author, date (and, on
+  the search page, downloads) and the actions each line up down the list,
+  whether or not a row has an author or a date. A source whose search failed
+  is a marked notice naming the source ("Search failed on …") rather than
+  centred text under the list, and the search page's list uses the page's
+  full width, as the library does. Four smaller layout fixes from the same
+  review: navigation arrows (Prev/Next, Back to library, See all results,
+  More info, the slide-over's steps) are drawn as an icon centred on their
+  label instead of a fallback-font glyph that sat low; Archive import's
+  "Choose archive…" is its own width instead of the panel's; the Setup tabs
+  no longer change width when the bold active tab moves; and the attention
+  cards' titles no longer have an extra 1em gap above them. A link drawn as
+  a button (Setup's Download, "See all results") is no longer underlined.
+
 - **Install and update times are stored as UTC RFC 3339, not Go's
   `time.String()` text (#515).** `installed_mods.installed_at` and
   `updated_at` were written as local-zone wall-clock text with the process's

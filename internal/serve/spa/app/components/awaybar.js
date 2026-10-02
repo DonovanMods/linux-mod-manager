@@ -22,6 +22,7 @@ import { navigate } from "../router.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { useDismissOnOutsideOrEscape } from "../dismiss.js";
 import { ActivityBell } from "./tray.js";
+import { Arrow } from "./arrow.js";
 
 /** BackLink is the one navigation control an away-from-home route keeps. */
 function BackLink({ to }) {
@@ -32,7 +33,7 @@ function BackLink({ to }) {
       e.preventDefault();
       navigate(to);
     }}
-    >← Back to library</a
+    ><${Arrow} dir="left" /> Back to library</a
   >`;
 }
 

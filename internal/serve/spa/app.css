@@ -395,6 +395,9 @@ input[type="password"] {
    * a negative half-leading, which stays symmetric. */
   line-height: 1;
   text-align: center;
+  /* A link drawn as a button (Setup's Download, the fan-out's "See all
+   * results") is a button, not underlined text (issue 520). */
+  text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -449,11 +452,30 @@ input[type="password"] {
 }
 
 .button--tab {
+  /* A column, so the bold twin below stacks under the label rather than
+   * beside it (issue 520). */
+  flex-direction: column;
+  gap: 0;
   border-width: 0 0 2px;
   border-color: transparent;
   border-radius: 0;
   background: transparent;
   color: var(--text-secondary);
+}
+
+/* The selected tab's label is bold, and bold is wider: without this a tab
+ * grew when selected and every tab after it moved (issue 520). An
+ * invisible, zero-height bold copy of the label (data-label) holds every
+ * tab at its bold width all the time. Its alternative text is empty, so a
+ * screen reader does not hear the label twice. */
+.button--tab[data-label]::after {
+  content: attr(data-label) / "";
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 700;
+  pointer-events: none;
+  user-select: none;
 }
 
 .button--tab:hover:not(:disabled) {
@@ -495,6 +517,16 @@ input[type="password"] {
 
 .button--icon.button--small {
   min-width: var(--control-height-sm);
+}
+
+/* The arrow icon (components/arrow.js, issue 520): one em square in the
+ * label's own box, so a control's flex centring centres it and a text
+ * link's middle alignment sits it on the words' centre line. */
+.arrow {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  vertical-align: middle;
 }
 
 .menu-item {
@@ -852,7 +884,9 @@ input[type="search"]::-webkit-search-decoration {
  * defaults (1.5em, bold, 0.83em margins) would resize and re-space every
  * card. The tag carries the meaning; the appearance is unchanged. */
 .card__title {
-  margin: 1em 0;
+  /* The card's own padding is the space above its title (issue 520): a 1em
+   * margin on top of it doubled the gap before a card's first line. */
+  margin: 0 0 var(--space-3);
   font: inherit;
 }
 
@@ -891,7 +925,7 @@ input[type="search"]::-webkit-search-decoration {
  * verified …" (issue 334). Muted and small: it qualifies the card, it is
  * not one of its rows. */
 .card__meta {
-  margin: calc(var(--space-2) * -1) 0 var(--space-3);
+  margin: calc(var(--space-1) * -1) 0 var(--space-3);
   color: var(--text-muted);
   font-size: 0.85em;
 }
@@ -1551,7 +1585,9 @@ a.row-menu__item.mod-page-link {
 }
 
 .slide-over__more {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   margin-top: var(--space-4);
   color: var(--accent);
 }
@@ -1926,16 +1962,38 @@ a.row-menu__item.mod-page-link {
   margin: var(--space-3) 0 0;
 }
 
+/*
+ * Issue 520: the result list is one grid with named columns, and each row
+ * (and the row inside it) is a subgrid of it, so a column is as wide as its
+ * widest cell down the whole list - a table's rule without a table's
+ * markup, which keeps each result a list item. Every row renders every cell
+ * (an absent author or date is an empty cell), so a row with an author
+ * starts its version, source and actions exactly where a row without one
+ * does. The name takes the slack; the rest size to their content. The
+ * search page's detailed list adds a downloads column.
+ */
 .search-results {
+  display: grid;
+  grid-template-columns:
+    [name] minmax(10rem, 1fr) [version] auto [badges] auto [author] auto
+    [updated] auto [actions] auto;
+  column-gap: var(--space-4);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+.search-results--detailed {
+  grid-template-columns:
+    [name] minmax(10rem, 1fr) [version] auto [badges] auto [author] auto
+    [updated] auto [downloads] auto [actions] auto;
+}
+
 .search-result {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  row-gap: var(--space-1);
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -1947,45 +2005,43 @@ a.row-menu__item.mod-page-link {
 /* the row of name/version/badges/action - the omnibar's own layout, and
  * the search page's own `detailed` first line above its summary. */
 .search-result__row {
-  display: flex;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.search-result--warning {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--warn);
 }
 
 .search-result__name {
-  flex: 1;
+  grid-column: name;
+  justify-self: start;
   font-weight: 700;
 }
 
 /*
- * The trailing facts get fixed widths (issue 334's density pass) so they
- * line up as COLUMNS down a page of results, rather than each row placing
- * them wherever its own name happens to end. Truncated rather than wrapped:
- * a result row is one line, and an author with a long name must not make
- * its row twice as tall as its neighbours.
+ * The trailing facts are truncated rather than wrapped: a result row is one
+ * line, and an author with a long name must not make its row twice as tall
+ * as its neighbours, nor its column half the list's width.
  */
 .search-result__version,
 .search-result__author,
 .search-result__updated,
 .search-result__downloads {
-  flex: 0 0 auto;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .search-result__version {
-  width: 6rem;
+  grid-column: version;
+  max-width: 10rem;
   color: var(--text-secondary);
   font-size: 0.9em;
+}
+
+.search-result__badges {
+  grid-column: badges;
+  display: flex;
+  gap: var(--space-2);
 }
 
 .search-result__source {
@@ -1994,7 +2050,8 @@ a.row-menu__item.mod-page-link {
 }
 
 .search-result__author {
-  width: 10rem;
+  grid-column: author;
+  max-width: 12rem;
   color: var(--text-muted);
   font-size: 0.85em;
 }
@@ -2008,26 +2065,78 @@ a.row-menu__item.mod-page-link {
 }
 
 .search-result__updated {
-  width: 10rem;
+  grid-column: updated;
   color: var(--text-muted);
   font-size: 0.85em;
 }
 
 .search-result__downloads {
-  width: 9rem;
+  grid-column: downloads;
   color: var(--text-muted);
   font-size: 0.85em;
   text-align: right;
 }
 
+/* The row's controls, at the end of the row: the install control (or its
+ * inline job) always sits at the list's right edge, with the source-page
+ * link before it. */
+.search-result__actions {
+  grid-column: actions;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
 .search-result__summary {
+  grid-column: name / -1;
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.85em;
 }
 
-.search-page {
-  max-width: 60rem;
+/* A source that failed (issue 520): a notice across the whole row, named
+ * for its source - the same marked block the mod-path warning is. */
+.search-result--warning {
+  display: block;
+  padding: var(--space-2) 0 0;
+}
+
+.search-warning {
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--warn);
+  background: var(--surface-sunken);
+}
+
+.search-warning__title {
+  margin: 0;
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.search-warning__detail {
+  margin: var(--space-1) 0 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* Narrow screens: the columns become a wrapping line per result rather
+ * than a grid wider than the page. */
+@media (max-width: 48rem) {
+  .search-results,
+  .search-result {
+    display: block;
+  }
+
+  .search-result__row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+  }
+
+  .search-result__actions {
+    margin-left: auto;
+  }
 }
 
 .search-page__toolbar {
@@ -2485,6 +2594,9 @@ a.row-menu__item.mod-page-link {
 }
 
 .mod-page__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   color: var(--text-secondary);
 }
 
@@ -2918,6 +3030,12 @@ a.row-menu__item.mod-page-link {
    first-run page already puts between its sections. */
 .setup-section + .setup-section {
   margin-top: var(--space-6);
+}
+
+/* Archive import's "Choose archive…" (issue 520): a button its own width,
+ * not a bar stretched across the column the section lays out. */
+.setup-import__pick {
+  align-self: flex-start;
 }
 
 /* The keyboard-shortcuts help's own table (issue 334's gate review,

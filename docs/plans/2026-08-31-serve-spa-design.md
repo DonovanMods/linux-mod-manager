@@ -95,6 +95,11 @@ returns to home exactly as left.
   swallowed.
 - **Search page** (escape hatch, and the model for "pages that earn it"): source badges, star/
   download counts, summaries, category/source filters, sort, pagination.
+- **Result rows** (#520), on the search page and in the omnibar's fan-out alike: one grid with
+  named columns (name, version, source, author, date, downloads on the page, actions), each
+  row a subgrid of it, and every cell always rendered, so the columns line up down the list
+  whether or not a row has an author or a date. A failed source is a notice region named for
+  it ("Search failed on …"), after the hits.
 
 ### Jobs
 
@@ -164,6 +169,11 @@ delimited block of `app.css` (`@control-system begin` … `end`).
   beside a text input is default size, as the input is. `--icon` makes a glyph-only control
   square at either size.
 - **Menus**: `.menu-item` is one item in a picker, a row's ⋯ menu or the activity tray.
+- **Tabs** (#520): a tab reserves its bold label's width (a hidden, zero-height bold copy
+  from `data-label`), so selecting one never moves its neighbours.
+- **Arrows** (#520): a navigation arrow (Prev/Next, Back to library, More info, the
+  slide-over's steps) is `components/arrow.js`'s inline SVG, centred in the label's own box,
+  never a "←"/"→" glyph from a fallback font.
 - **Focus**: one 2px `--focus-ring` outline on every control (inset on a menu item, whose menu
   would clip it).
 - **Search**: the browser's own search-cancel is hidden; the omnibar's clear button also resets
@@ -175,7 +185,8 @@ size on a selector that targets a button (element classes may place a control - 
 position, flex, colour - but not reshape it), or if a `--quiet` button is neither `--icon` nor a
 `picker__trigger`. `e2e_controls_test.go` holds every control in the top bar and the library
 toolbar to one computed height in both themes. `e2e_control_centring_test.go` holds labels in
-the bars, card footers, a picker menu, the slide-over and Setup's Games table to vertically
+the bars, card footers, a picker menu, the slide-over, Setup's Games table (and, since #520,
+its Sources and search-index tables, buttons and button-styled links alike) to vertically
 centred (±1px) and single-line text at 1280px. It also requires the attention cards' footers
 to fit one row and the omnibar's placeholder to show whole.
 

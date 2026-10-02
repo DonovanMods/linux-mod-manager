@@ -28,6 +28,7 @@ import { ModPanel } from "./modpanel.js";
 import { AwayBar } from "./awaybar.js";
 import { codeSpans } from "../errortext.js";
 import { ErrorDetails } from "./errordetails.js";
+import { Arrow } from "./arrow.js";
 
 // See tagsSupported below.
 const TAG_CAPABLE_SOURCES = new Set(["nexusmods", "thunderstore"]);
@@ -251,7 +252,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
           disabled=${searchPage.page === 0}
           onClick=${() => actions.searchPageGoTo(searchPage.page - 1)}
         >
-          ← Prev
+          <${Arrow} dir="left" /> Prev
         </button>
         <span class="mono">Page ${searchPage.page + 1}</span>
         <button
@@ -260,7 +261,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
           disabled=${!report.has_more}
           onClick=${() => actions.searchPageGoTo(searchPage.page + 1)}
         >
-          Next →
+          Next <${Arrow} dir="right" />
         </button>
       </div>
     </main>

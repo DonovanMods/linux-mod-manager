@@ -151,7 +151,7 @@ export function SetupImportArchive({ state, actions }) {
         !upload &&
         !jobActive &&
         html`
-          <label class="button">
+          <label class="button setup-import__pick">
             ${uploading ? "Uploading…" : "Choose archive…"}
             <input
               ref=${fileInput}
