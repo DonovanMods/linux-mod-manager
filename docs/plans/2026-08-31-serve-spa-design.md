@@ -149,20 +149,27 @@ delimited block of `app.css` (`@control-system begin` … `end`).
   exact, so controls sharing a row line up. A label is centred on both axes, with
   `line-height: 1` on the button itself: Chrome rounds a positive half-leading down to whole
   pixels, so a line box taller than the text set every label about a pixel high. A label never
-  wraps (`white-space: nowrap`; the prose-shaped `--link` and `--tile` excepted). A row of
+  wraps (`white-space: nowrap`; the prose-shaped `--link`, `--tile` and `--prose` excepted, which
+  wrap between words and are never clipped). A row of
   controls wraps between them (`flex-wrap`), and a container too narrow for one label is a
   layout to fix: the attention cards' minimum width is the widest footer on one line (26rem),
-  and Setup's Games table sizes its columns to their content and lets only the paths give.
+  and Setup's tables size their columns to their content (in the Games table only the paths give).
 - **Variants**: `.button` (secondary, the default), `--primary` (the one main action of a bar,
   card footer or modal footer), `--quiet` (borderless at rest, bordered on hover and focus) and
   `--danger`. Quiet is only for a control with an affordance of its own: a picker or menu
   trigger, which draws its ▾ (the game/profile pickers, Add mods, the activity bell), or a
   glyph-only `--icon` button (?, ✕, ‹ ›). A text-only control with no glyph reads as a label
   when it has no boundary at rest, so it stays secondary. The theme toggle is one: it cycles on
-  a click rather than opening a choice. Three shapes
+  a click rather than opening a choice. Four shapes
   cover the remaining cases: `--link` (reads as text: a row's own name, an inline "View"),
-  `--tab` (a tab in a tablist; `aria-selected` carries the underline) and `--tile` (a whole
-  card that is one button, the game chooser).
+  `--tab` (a tab in a tablist; `aria-selected` carries the underline), `--tile` (a whole
+  card that is one button, the game chooser) and `--prose` (a bordered button whose label is a
+  title of any length, the add-game picker's game names: it wraps between words, left-aligned).
+  The layout is never checked in one font alone (#521): the text is the host's own system-ui
+  face, so every E2E layout check also runs under a wide sans and a monospace face
+  (`e2e_font_face_test.go`). The omnibar's search box cannot shrink below its own placeholder (an
+  invisible sizer carries the text a second time), so a bar too full for it wraps instead of
+  clipping it, and Setup's tables lay out automatically, sized to their content.
 - **Sizes**: default everywhere - bars, toolbars, card footers, modal footers, forms - and
   `--small` only in dense contexts: table rows, a card's item rows, menus, inline result rows.
   Small never sits beside default-size controls in one bar, toolbar or footer, and a button

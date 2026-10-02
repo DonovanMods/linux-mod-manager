@@ -43,6 +43,15 @@ const DEPLOY_ORIGIN = "deploy";
 // control that does is a control the user has lost.
 const SWITCH_ORIGIN = "switch";
 
+// OMNIBAR_PLACEHOLDER is the omnibar's only instruction, so it is shown
+// whole or not at all (issue 521): the search box carries it twice, once as
+// the placeholder and once in an invisible sizer that the box cannot shrink
+// below, so a bar with too little room for it wraps instead of clipping it.
+// Short, because the room is whatever the host's font and the game's name
+// leave: a wide face or a long title turns a cut-off sentence into a
+// two-row bar, not into "Filter your library — Ente".
+const OMNIBAR_PLACEHOLDER = "Filter · Enter searches sources";
+
 export function TopBar({
   state,
   status,
@@ -210,48 +219,53 @@ export function TopBar({
         </button>
       <//>
       <div class="app-bar__search" role="search">
-        <input
-          ref=${omnibarRef}
-          type="search"
-          class="omnibar"
-          name="q"
-          aria-label="Filter your library or search sources"
-          placeholder="Filter your library — Enter searches sources"
-          value=${query}
-          onInput=${(e) => onQueryChange(e.currentTarget.value)}
-          onKeyDown=${(e) => {
-            if (e.key === "Enter") actions.searchSources(query);
-            else if (e.key === "Escape") {
-              // Without preventDefault, a WebKit-family browser's own
-              // built-in "clear a search field on Escape" behaviour fires
-              // alongside this handler - it empties the DOM value but
-              // never touches state.omnibarSearch, leaving the "From
-              // sources" rows on screen under a blank field.
-              e.preventDefault();
-              clearOmnibar();
-            }
-          }}
-        />
-        ${
-          query.trim() &&
-          html`
-            <button
-              type="button"
-              class="button button--quiet button--icon omnibar__clear"
-              aria-label="Clear search"
-              onClick=${clearOmnibar}
-            >
-              ✕
-            </button>
-            <button
-              type="button"
-              class="button omnibar__fanout"
-              onClick=${() => actions.searchSources(query)}
-            >
-              search sources ↵
-            </button>
-          `
-        }
+        <span class="omnibar__sizer" aria-hidden="true"
+          >${OMNIBAR_PLACEHOLDER}</span
+        >
+        <div class="app-bar__search-row">
+          <input
+            ref=${omnibarRef}
+            type="search"
+            class="omnibar"
+            name="q"
+            aria-label="Filter your library or search sources"
+            placeholder=${OMNIBAR_PLACEHOLDER}
+            value=${query}
+            onInput=${(e) => onQueryChange(e.currentTarget.value)}
+            onKeyDown=${(e) => {
+              if (e.key === "Enter") actions.searchSources(query);
+              else if (e.key === "Escape") {
+                // Without preventDefault, a WebKit-family browser's own
+                // built-in "clear a search field on Escape" behaviour fires
+                // alongside this handler - it empties the DOM value but
+                // never touches state.omnibarSearch, leaving the "From
+                // sources" rows on screen under a blank field.
+                e.preventDefault();
+                clearOmnibar();
+              }
+            }}
+          />
+          ${
+            query.trim() &&
+            html`
+              <button
+                type="button"
+                class="button button--quiet button--icon omnibar__clear"
+                aria-label="Clear search"
+                onClick=${clearOmnibar}
+              >
+                ✕
+              </button>
+              <button
+                type="button"
+                class="button omnibar__fanout"
+                onClick=${() => actions.searchSources(query)}
+              >
+                search sources ↵
+              </button>
+            `
+          }
+        </div>
       </div>
       <${ActivityBell}
         state=${state}

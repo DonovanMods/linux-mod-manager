@@ -815,7 +815,7 @@ export function GameAddForm({
                         <span class="setup-detect__name">
                           <button
                             type="button"
-                            class="button button--small"
+                            class="button button--small button--prose"
                             data-action="pick-installed-row"
                             disabled=${g.already_configured}
                             onClick=${() => applyDetected(g)}

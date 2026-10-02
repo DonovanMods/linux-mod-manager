@@ -1774,6 +1774,27 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The web UI holds its layout in whatever font your system uses (#521).**
+  Its text is drawn in your system's own sans-serif, and the layout had only
+  been checked in one of them: in a wider face (DejaVu Sans, Ubuntu's
+  default, or a monospace) the omnibar's placeholder was cut off, a game's
+  name, adapter and "Edit sources…"/"Edit loader…" in Setup's Games table
+  broke across lines, a custom source's Download/Edit/Delete wrapped onto
+  two rows, the library's heading broke across lines, and the add-game
+  picker's long game names pushed its list past its box. The omnibar's instruction is now shorter ("Filter · Enter
+  searches sources") and the search box never shrinks below it: where the
+  top bar has no room for it — a wide font, a long game name — the bar
+  wraps rather than clipping the text. Setup's tables size their columns to
+  their content, so a value stays beside the button that edits it, an id is
+  never split, and a table's actions are as wide as its widest row's
+  buttons. The library's heading keeps its width, and a crowded toolbar
+  wraps between its controls instead. The picker's game names are prose-shaped buttons that wrap
+  between words, never inside one. Every layout check in the browser tests
+  now also runs under a wide sans and a monospace face, so a layout that
+  only fits the developer's font fails locally instead of on CI; a mod's
+  slide-over test also now waits for the mod's own panel instead of reading
+  its loading placeholder.
+
 - **`lmm serve` no longer keeps serving a stale game set after a same-size
   `games.yaml` rewrite (#524).** Change detection compared only the file's
   size and modification time, so two writes inside one filesystem timestamp

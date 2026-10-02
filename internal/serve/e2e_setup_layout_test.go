@@ -78,47 +78,50 @@ const longDetectName = "The Elder Scrolls V: Skyrim Special Edition Anniversary 
 
 // TestE2E_AddGamePicker_IsFluidAlignedAndUntruncated opens the first-run
 // detect list and picker (three unconfigured games, one with a very long
-// name) at a narrow and a wide viewport.
+// name) at a narrow and a wide viewport, in every layout face.
 func TestE2E_AddGamePicker_IsFluidAlignedAndUntruncated(t *testing.T) {
 	f := newE2EFixtureNoGames(t)
 	steam := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
 	writeSteamAppManifest(t, steam.SteamRoot, "777777",
 		"SkyrimSpecialEditionAnniversaryUpgradeDeluxe", longDetectName)
 
-	measure := func(width int) (detect, picker listLayout) {
-		f.runInBrowser(t,
-			chromedp.EmulateViewport(int64(width), 1000),
-			chromedp.Navigate(f.BaseURL+"/"),
-			pollUntil(`document.querySelectorAll('[data-testid="setup-detect"] .setup-detect__row').length === 3`),
-			chromedp.Evaluate(fmt.Sprintf(listLayoutJS, `[data-testid="setup-detect"]`), &detect),
-			pollUntil(`document.querySelector('[data-testid="setup-add-game"]') !== null`),
-			clickWhenSettled(`[data-action="pick-installed"]`),
-			pollUntil(`document.querySelectorAll('[data-action="pick-installed-row"]').length === 3`),
-			chromedp.Evaluate(fmt.Sprintf(listLayoutJS, `[data-testid="setup-add-picker"]`), &picker),
-		)
-		return detect, picker
-	}
+	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
+		measure := func(width int) (detect, picker listLayout) {
+			f.runInBrowser(t,
+				chromedp.EmulateViewport(int64(width), 1000),
+				chromedp.Navigate(f.BaseURL+"/"),
+				pollUntil(`document.querySelectorAll('[data-testid="setup-detect"] .setup-detect__row').length === 3`),
+				faceInEffect(face),
+				chromedp.Evaluate(fmt.Sprintf(listLayoutJS, `[data-testid="setup-detect"]`), &detect),
+				pollUntil(`document.querySelector('[data-testid="setup-add-game"]') !== null`),
+				clickWhenSettled(`[data-action="pick-installed"]`),
+				pollUntil(`document.querySelectorAll('[data-action="pick-installed-row"]').length === 3`),
+				chromedp.Evaluate(fmt.Sprintf(listLayoutJS, `[data-testid="setup-add-picker"]`), &picker),
+			)
+			return detect, picker
+		}
 
-	for _, width := range []int{800, 1600} {
-		detect, picker := measure(width)
-		for list, got := range map[string]listLayout{"detect": detect, "picker": picker} {
-			name := fmt.Sprintf("%dpx %s", width, list)
-			assert.Equal(t, 3, got.Rows, name)
-			assert.Zero(t, got.ClippedNames, "%s: a game name is never cut off", name)
-			assert.Zero(t, got.SplitNameWords, "%s: a game name never wraps mid-word", name)
-			assert.Zero(t, got.ClippedPaths, "%s: an install path wraps rather than being cut off", name)
-			assert.Equal(t, 1, got.NameColumns, "%s: the names start on one line", name)
-			assert.Equal(t, 1, got.PathColumns, "%s: the paths form a column beside them", name)
-			assert.GreaterOrEqual(t, got.NarrowestPath, 150,
-				"%s: a long name does not starve the path column", name)
-			assert.False(t, got.ListOverflows, "%s: the list fits its box", name)
-			assert.False(t, got.Overflows, "%s: nothing reaches past the viewport", name)
+		for _, width := range []int{800, 1600} {
+			detect, picker := measure(width)
+			for list, got := range map[string]listLayout{"detect": detect, "picker": picker} {
+				name := fmt.Sprintf("%dpx %s", width, list)
+				assert.Equal(t, 3, got.Rows, name)
+				assert.Zero(t, got.ClippedNames, "%s: a game name is never cut off", name)
+				assert.Zero(t, got.SplitNameWords, "%s: a game name never wraps mid-word", name)
+				assert.Zero(t, got.ClippedPaths, "%s: an install path wraps rather than being cut off", name)
+				assert.Equal(t, 1, got.NameColumns, "%s: the names start on one line", name)
+				assert.Equal(t, 1, got.PathColumns, "%s: the paths form a column beside them", name)
+				assert.GreaterOrEqual(t, got.NarrowestPath, 150,
+					"%s: a long name does not starve the path column", name)
+				assert.False(t, got.ListOverflows, "%s: the list fits its box", name)
+				assert.False(t, got.Overflows, "%s: nothing reaches past the viewport", name)
+			}
+			if width == 800 {
+				assert.Greater(t, picker.FormWidth, 480,
+					"the form follows its panel's width rather than a fixed 30rem")
+			}
 		}
-		if width == 800 {
-			assert.Greater(t, picker.FormWidth, 480,
-				"the form follows its panel's width rather than a fixed 30rem")
-		}
-	}
+	})
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
@@ -172,6 +175,9 @@ func TestE2E_AddGame_ConfiguredGameIsEditedNotOfferedAgain(t *testing.T) {
 			}
 			editSel := fmt.Sprintf(`[data-action="edit-game"][data-game=%q]`, f.Game.ID)
 			f.runInBrowser(t,
+				// Edit… stays disabled until Setup's own sources read lands,
+				// and a click on a disabled button is dropped without a word.
+				pollUntil(fmt.Sprintf(`document.querySelector(%q)?.disabled === false`, editSel)),
 				clickWhenSettled(editSel),
 				pollUntil(`document.querySelector('[data-action="save-loader"]') !== null`),
 				chromedp.Evaluate(`({

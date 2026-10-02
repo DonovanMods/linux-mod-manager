@@ -2016,7 +2016,11 @@ func TestE2E_FullModPage_EnableDisableWorks(t *testing.T) {
 	require.Equal(t, "Disable", label, "Alpha Mod is seeded enabled")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.mod-page__section button`, chromedp.ByQuery),
+		// Settled, not merely visible (#521): the page's other sections
+		// land on their own reads and can still move the toggle when the
+		// click is dispatched, which under a loaded -race run sent it to
+		// whatever had taken the button's old spot.
+		clickWhenSettled(`.mod-page__section button`),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 	)
 

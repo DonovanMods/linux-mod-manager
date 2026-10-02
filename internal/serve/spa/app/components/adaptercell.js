@@ -13,13 +13,15 @@ import { codeSpans } from "../errortext.js";
 /** AdapterCell renders game's adapter for a table cell. */
 export function AdapterCell({ game }) {
   if (!game.adapter_error) {
-    return html`<span class="mono" data-testid="adapter-cell"
+    return html`<span class="mono setup-table__token" data-testid="adapter-cell"
       >${game.effective_adapter || "generic-files"}</span
     >`;
   }
   return html`
     <div data-testid="adapter-cell" data-refused="true">
-      <span class="mono">${game.adapter || "generic-files"}</span>${" "}
+      <span class="mono setup-table__token"
+        >${game.adapter || "generic-files"}</span
+      >${" "}
       <span class="badge badge--danger">refused</span>
       <${AdapterError} game=${game} />
     </div>
