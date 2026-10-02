@@ -289,6 +289,35 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
 
 ### Added
 
+- **A link to a mod's page, everywhere, and on every failed download
+  (#513).** A mod that can't be downloaded — an author who has turned API
+  downloads off, a removed file, a flaky host — used to leave you with an
+  error and no way to the mod's page. The web UI now shows an **Open on
+  Nexus Mods** link (the mod's own source) wherever a mod is shown: the slide-over (installed or a
+  search result), the full mod page, search and omnibar rows, and the library
+  row's ⋯ menu. It opens in a new tab (`rel="noopener noreferrer"`), and a
+  failed install or update job shows it beside the failure, with a line on
+  importing the file when the source won't hand it to lmm at all. In the
+  terminal, every install and update download failure now ends with
+  `Download it manually from: <url>` — not only the one CurseForge message
+  `lmm install` used to match on its text — and a bulk `lmm update` lists the
+  page of each mod it couldn't download. A refused manual download also
+  keeps the source's own reason in the error (`download unavailable via API:
+mod author has disabled third-party downloads; …`), which the old
+  message dropped.
+
+  The page travels as typed data, not text: a failed download is now a
+  `core.DownloadError` whose `--json` / `/api/v1` error envelope carries
+  `details` `{source_id, mod_id, mod_name, mod_url, manual_download}` (a Steam
+  Workshop failure keeps its own keys beside these), and an entry in a bulk
+  update's `failed` list gains `mod_url` when the failure was a download.
+  Sources report a refused download as `source.ErrManualDownload`; CurseForge's
+  third-party opt-out is the first. **Only `http:` and `https:` URLs are
+  ever a link or a "visit" line** (`domain.SafeWebURL`, and the same rule in
+  the browser): a custom manifest's `url` is the author's data, so a
+  `javascript:`, `data:` or `file:` URL, or a relative one, shows nothing —
+  and `lmm mod show` prints `URL:` only for a plain web address too.
+
 - **Search puts the exact match first and can sort (#503).** Searching
   CurseForge for `auctionator`, a mod's own name, did not show that mod on
   the first page. Every search — `lmm search`, `GET /api/v1/search`, the web

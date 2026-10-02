@@ -1,0 +1,6 @@
+{
+  "mod": "curseforge:7",
+  "name": "Broken Mod",
+  "error": "downloading update: mod author has disabled third-party downloads",
+  "mod_url": "https://www.curseforge.com/minecraft/mc-mods/broken-mod"
+}

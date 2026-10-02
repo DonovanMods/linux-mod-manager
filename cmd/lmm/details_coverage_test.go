@@ -29,8 +29,12 @@ var detailsCoverage = map[string]string{
 	"core.AdapterRefusedError": "TestReportError_JSON_AdapterRefusedError",
 	// #373's ambiguous bare mod ID: the candidate sources reach the
 	// envelope as data, not only as the sentence.
-	"core.AmbiguousModError":      "TestReportError_JSON_AmbiguousModError",
-	"core.ConflictError":          "TestReportError_JSON_ConflictError",
+	"core.AmbiguousModError": "TestReportError_JSON_AmbiguousModError",
+	"core.ConflictError":     "TestReportError_JSON_ConflictError",
+	// #513: a failed download carries the mod's page (and whether the
+	// source refuses automated downloads) as data, for the terminal's
+	// "Download it manually from" line and the web UI's "Open on <source>".
+	"core.DownloadError":          "TestReportError_JSON_DownloadError",
 	"core.ExternalModError":       "TestReportError_JSON_ExternalModError",
 	"core.GameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
 	// #410: a game whose identifier for a source is missing or malformed -

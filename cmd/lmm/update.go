@@ -476,8 +476,26 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	printBatchSkips(result.Skipped)
+	printBatchDownloadPages(result.Failed)
 
 	return finish()
+}
+
+// printBatchDownloadPages lists the page of each mod whose download failed in
+// a bulk update (#513), so the user can fetch those by hand: the per-item
+// "✗" lines already said what failed, this says where to go. A failure that
+// was not a download, or whose mod gave no usable page, is left out.
+func printBatchDownloadPages(failed []core.UpdateBatchFailure) {
+	var lines []string
+	for _, f := range failed {
+		if f.ModURL != "" {
+			lines = append(lines, fmt.Sprintf("  %s: %s", f.Name, f.ModURL))
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Printf("\nDownload it manually from:\n%s\n", strings.Join(lines, "\n"))
 }
 
 // printBatchSkips renders the batch's declined rows, split by WHY they were

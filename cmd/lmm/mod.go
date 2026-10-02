@@ -728,8 +728,8 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	if mod.Endorsements != nil {
 		fmt.Printf("Endorsements: %d\n", *mod.Endorsements)
 	}
-	if mod.SourceURL != "" {
-		fmt.Printf("URL: %s\n", mod.SourceURL)
+	if pageURL := mod.PageURL(); pageURL != "" {
+		fmt.Printf("URL: %s\n", pageURL)
 	}
 	if mod.PictureURL != "" {
 		fmt.Printf("Image: %s\n", mod.PictureURL)

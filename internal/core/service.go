@@ -1501,7 +1501,17 @@ func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain
 	return s.downloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, sink)
 }
 
-func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
+// downloadModToCache fetches file into gameCache. Any failure comes back as a
+// *DownloadError carrying the mod's page (#513), with the failure's own text.
+func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*DownloadModResult, error) {
+	result, err := s.fetchFileToCache(ctx, gameCache, sourceID, game, mod, file, sink)
+	if err != nil {
+		return nil, asDownloadError(err, sourceID, mod)
+	}
+	return result, nil
+}
+
+func (s *Service) fetchFileToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
 
 	// Note: We intentionally do NOT check if cache exists here.
 	// A mod can have multiple downloadable files (e.g., main mod + optional patches),

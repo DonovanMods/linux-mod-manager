@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 )
 
@@ -84,7 +85,7 @@ func (c *Client) mapError(status int, body []byte, path string) error {
 		// File-download endpoints answer 403 when the mod author has opted out
 		// of third-party distribution; everything else is treated as auth.
 		if strings.Contains(path, "/files/") && strings.Contains(path, "/download-url") {
-			return fmt.Errorf("mod author has disabled third-party downloads; visit CurseForge website to download manually")
+			return &source.ManualDownloadError{Reason: "mod author has disabled third-party downloads; visit CurseForge website to download manually"}
 		}
 		if len(body) > 0 {
 			return fmt.Errorf("%w: access denied (check API key): %s", domain.ErrAuthRequired, string(body))

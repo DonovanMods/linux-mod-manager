@@ -25,6 +25,7 @@ import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { authorTitle, displayAuthor } from "../author.js";
 import { InlineJob } from "./jobprogress.js";
+import { ModPageLink } from "./modpagelink.js";
 
 /** modUrl builds the ?mod= URL for row, on the given base path - the same
  * annotation library.js#openRow writes, reused here for </-> stepping. */
@@ -242,6 +243,13 @@ export function ModPanel({
             <span class="mono">${catalogMod.version}</span> ·
             <span class="badge">${catalogMod.source_id}</span>
           </p>
+          <p class="slide-over__page">
+            <${ModPageLink}
+              url=${catalogMod.source_url}
+              sourceID=${catalogMod.source_id}
+              modName=${catalogMod.name}
+            />
+          </p>
           ${
             catalogMod.summary &&
             html`<p class="slide-over__summary">${catalogMod.summary}</p>`
@@ -396,6 +404,14 @@ export function ModPanel({
               displayVersion(row)
             }${row.hasUpdate && html` → ${row.updateTarget}`}</span
           >
+        </p>
+
+        <p class="slide-over__page">
+          <${ModPageLink}
+            url=${row.source_url}
+            sourceID=${row.source_id}
+            modName=${row.name}
+          />
         </p>
 
         ${row.external && html`<${ManagedBySteam} row=${row} />`}

@@ -52,6 +52,7 @@ import { contextPath } from "../router.js";
 import { loadModJobHistory, candidateJobKey } from "../jobhistory.js";
 import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
+import { ModPageLink } from "./modpagelink.js";
 import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
@@ -213,6 +214,14 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             displayVersion(installedMod)
           }</span
         >${" "}installed ${installed?.locked && " · locked"}
+      </p>
+
+      <p class="mod-page__link">
+        <${ModPageLink}
+          url=${installedMod.source_url || modPage.detail?.mod?.source_url}
+          sourceID=${sourceID}
+          modName=${installedMod.name}
+        />
       </p>
 
       ${

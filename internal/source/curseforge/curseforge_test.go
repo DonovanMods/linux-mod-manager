@@ -853,3 +853,23 @@ func TestCurseForge_Description(t *testing.T) {
 		assert.Contains(t, err.Error(), "exceeds")
 	})
 }
+
+// TestCurseForge_GetDownloadURL_AuthorOptOutIsAManualDownload (#513): the 403
+// a mod author's opt-out of third-party distribution draws is classified as
+// source.ErrManualDownload - so core never has to match the sentence - and
+// keeps the sentence the user has always read.
+func TestCurseForge_GetDownloadURL_AuthorOptOutIsAManualDownload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	_, err := cf.GetDownloadURL(context.Background(), &domain.Mod{ID: "238222"}, "4567")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, source.ErrManualDownload)
+	assert.NotErrorIs(t, err, domain.ErrAuthRequired)
+	assert.Contains(t, err.Error(), "mod author has disabled third-party downloads; visit CurseForge website to download manually")
+}

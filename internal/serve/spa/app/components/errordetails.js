@@ -13,7 +13,13 @@
 
 import { html } from "../render.js";
 import { codeSpans } from "../errortext.js";
-import { adapterRefusalFor, loaderSetupFor, retryAtFor } from "../failures.js";
+import {
+  adapterRefusalFor,
+  downloadFailureFor,
+  loaderSetupFor,
+  retryAtFor,
+} from "../failures.js";
+import { ModPageLink } from "./modpagelink.js";
 import { DocumentView } from "./documentview.js";
 
 /** loaderLabel spells a loader kind the way its own project does. An
@@ -35,6 +41,18 @@ export function ErrorDetails({ details }) {
   const refusal = adapterRefusalFor(details);
   if (refusal) return html`<${AdapterRefusal} refusal=${refusal} />`;
 
+  // Issue 513: a failed download names the mod's page. A Steam Workshop
+  // failure is also a download failure, and its own keys (the tool's output
+  // tail among them) still belong on screen - so the page goes ABOVE the
+  // generic document view there rather than replacing it.
+  const download = downloadFailureFor(details);
+  if (download) {
+    return details.published_file_id
+      ? html`<${DownloadPage} failure=${download} />
+          <${DocumentView} value=${details} />`
+      : html`<${DownloadPage} failure=${download} />`;
+  }
+
   const retry = retryAtFor(details);
   if (retry) {
     // A clock time for today's resumption, the date too for a later one -
@@ -51,6 +69,37 @@ export function ErrorDetails({ details }) {
   }
 
   return html`<${DocumentView} value=${details} />`;
+}
+
+/**
+ * DownloadPage is a failed download's way out (issue 513): the mod's page on
+ * its source, as an "Open on <source>" link. For a source that refuses
+ * automated downloads it also says what to do with the file once it is
+ * fetched by hand. Renders nothing when there is neither a usable page nor
+ * anything extra to say - the message above already gave the reason.
+ */
+export function DownloadPage({ failure }) {
+  if (!failure.url && !failure.manual) return null;
+  return html`
+    <div
+      class="download-page"
+      data-testid="download-page"
+      data-manual=${failure.manual ? "true" : undefined}
+    >
+      ${
+        failure.manual &&
+        html`<p class="download-page__hint">
+          This source doesn't let lmm download this file. Get it from the mod's
+          page, then add it with Add mods → Import an archive.
+        </p>`
+      }
+      <${ModPageLink}
+        url=${failure.url}
+        sourceID=${failure.sourceID}
+        modName=${failure.modName}
+      />
+    </div>
+  `;
 }
 
 /**

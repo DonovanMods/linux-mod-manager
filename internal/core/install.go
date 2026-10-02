@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -2334,8 +2333,8 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 			if dlErr != nil {
 				reason := fmt.Sprintf("download failed: %v", dlErr)
 				emit(ModEvent{Scope: fileScope, Phase: InstallDownloadFailed, Detail: reason})
-				if strings.Contains(dlErr.Error(), "third-party downloads") && mod.SourceURL != "" {
-					return st, fmt.Errorf("download unavailable via API")
+				if errors.Is(dlErr, source.ErrManualDownload) && mod.PageURL() != "" {
+					return st, fmt.Errorf("download unavailable via API: %w", dlErr)
 				}
 				return st, fmt.Errorf("download failed: %w", dlErr)
 			}
