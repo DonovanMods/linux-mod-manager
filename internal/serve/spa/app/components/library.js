@@ -28,6 +28,7 @@ import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { authorTitle, displayAuthor } from "../author.js";
 import { AddModsMenu } from "./addmodsmenu.js";
+import { ModPageLink } from "./modpagelink.js";
 import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import { InlineJob } from "./jobprogress.js";
 
@@ -516,6 +517,12 @@ export function Library({
     const origin = (action) => modOrigin(row, action);
     return html`
       <div class="row-menu">
+        <${ModPageLink}
+          className="row-menu__item"
+          url=${row.source_url}
+          sourceID=${row.source_id}
+          modName=${row.name}
+        />
         ${
           // issue 417: Update is no longer in here. A mod with an update
           // pending now carries a VISIBLE button in its own actions cell -

@@ -1281,6 +1281,52 @@ select {
   color: var(--text-secondary);
 }
 
+/* issue 513: "Open on <source>" - a mod's page on its source, wherever the
+ * mod is shown. One class for every placement; the wrappers collapse when
+ * the link renders nothing (a missing or unsafe URL). */
+.mod-page-link {
+  color: var(--accent);
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
+.mod-page-link:hover {
+  color: var(--accent-hover);
+}
+
+.slide-over__page,
+.mod-page__link {
+  margin: 0 0 var(--space-3);
+}
+
+.slide-over__page:empty,
+.mod-page__link:empty {
+  display: none;
+}
+
+.search-result__page {
+  flex: 0 0 auto;
+  font-size: 0.85em;
+}
+
+/* In the row menu the link is an item like the buttons beside it. */
+a.row-menu__item.mod-page-link {
+  display: block;
+  color: var(--text-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* issue 513: a failed download's way out. */
+.download-page {
+  margin: var(--space-2) 0 0;
+}
+
+.download-page__hint {
+  margin: 0 0 var(--space-1);
+  color: var(--text-secondary);
+}
+
 .slide-over__settings {
   display: flex;
   flex-wrap: wrap;

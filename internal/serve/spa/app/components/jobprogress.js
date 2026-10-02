@@ -29,8 +29,12 @@ import {
 } from "../jobresult.js";
 import { codeSpans } from "../errortext.js";
 import { OverwriteButton } from "./tray.js";
-import { explainerFor, loaderSetupFor } from "../failures.js";
-import { LoaderSetup } from "./errordetails.js";
+import {
+  downloadFailureFor,
+  explainerFor,
+  loaderSetupFor,
+} from "../failures.js";
+import { DownloadPage, LoaderSetup } from "./errordetails.js";
 import { PurgeResultDetails } from "./purgeresult.js";
 
 /**
@@ -119,6 +123,10 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   // shown, for the same reason - "Failed: needs BepInEx" alone leaves the
   // user with the one sentence that says nothing about what to do.
   const loader = failed ? loaderSetupFor(summary?.error?.details) : null;
+  // Issue 513: a failed download carries the mod's page; it renders where
+  // the failure is shown, like the explainers above.
+  const download = failed ? downloadFailureFor(summary?.error?.details) : null;
+  const downloadShown = Boolean(download && (download.url || download.manual));
   // I3, unit 6 fix wave: a batch job's own `state` is "succeeded" even when
   // every item inside it failed (progress.js#resultTally's own doc
   // comment) - the tone class follows the TALLY, not the bare state, for
@@ -133,7 +141,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
     !failed && summary?.kind === "switch" ? resultWarnings : NO_NOTICES;
   return html`
     <div
-      class="job-progress job-progress--${tone} ${explainer || loader || notices.length > 0 || purgeResult ? "job-progress--explained" : ""}"
+      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || notices.length > 0 || purgeResult ? "job-progress--explained" : ""}"
       data-job=${jobID}
       data-state=${state}
       role="status"
@@ -179,6 +187,12 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
         loader &&
         html`<div class="job-progress__explainer">
           <${LoaderSetup} loader=${loader} />
+        </div>`
+      }
+      ${
+        downloadShown &&
+        html`<div class="job-progress__explainer">
+          <${DownloadPage} failure=${download} />
         </div>`
       }
       ${

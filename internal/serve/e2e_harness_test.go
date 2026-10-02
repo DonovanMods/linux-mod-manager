@@ -1179,6 +1179,9 @@ type e2eSearchSource struct {
 	// deps is each mod's dependency list, by mod id - empty for every mod
 	// but the ones a dependency scenario adds (#448).
 	deps map[string][]domain.ModReference
+	// urlErrs makes GetDownloadURL fail for a mod, by id - a source that
+	// will not serve its file (#513).
+	urlErrs map[string]error
 }
 
 func newE2ESearchSource(t *testing.T, id string) *e2eSearchSource {
@@ -1276,6 +1279,9 @@ func (s *e2eSearchSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]dom
 // cache-warm oracle the conflict-overwrite scenario asserts on.
 func (s *e2eSearchSource) GetDownloadURL(_ context.Context, mod *domain.Mod, fileID string) (string, error) {
 	s.urlRequests.Add(1)
+	if err := s.urlErrs[mod.ID]; err != nil {
+		return "", err
+	}
 	return s.server.URL + "/" + mod.ID + "/" + fileID, nil
 }
 

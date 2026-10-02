@@ -17,6 +17,7 @@ import { authorTitle, displayAuthor } from "../author.js";
 import { navigate } from "../router.js";
 import { codeSpans } from "../errortext.js";
 import { InlineJob } from "./jobprogress.js";
+import { ModPageLink } from "./modpagelink.js";
 
 /** installOrigin is the stable per-mod control key an inline install job
  * morphs on - jobprogress.js's own documented convention
@@ -120,6 +121,12 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
           downloads &&
           html`<span class="search-result__downloads">${downloads}</span>`
         }
+        <${ModPageLink}
+          className="search-result__page"
+          url=${hit.source_url}
+          sourceID=${hit.source_id}
+          modName=${hit.name}
+        />
         <${InlineJob} origin=${origin} state=${state} actions=${actions}>
           ${
             hit.installed

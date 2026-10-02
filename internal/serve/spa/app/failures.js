@@ -21,6 +21,8 @@
 // for; every other failed kind still renders its details in full with no
 // action under them.
 
+import { safeWebUrl } from "./weburl.js";
+
 // conflictKinds is every plan kind whose *core.ConflictError this failure
 // implies "re-plan and set accept_conflicts" for - both take that exact
 // wire field, so retryInstallOverwrite's re-plan-and-apply shape (main.js)
@@ -77,6 +79,36 @@ export function explainerFor(job) {
     reason: details.reason,
     tool: details.tool ?? "",
     outputTail: details.output_tail ?? "",
+  };
+}
+
+/**
+ * downloadFailureFor returns the failed download a failure's TYPED details
+ * describe (core.DownloadError, issue 513), or null when they describe
+ * something else.
+ *
+ * Identified by structure - `source_id`, `mod_id` and `manual_download`
+ * together are the shape no other Details() type has - never by the message.
+ * `url` is the mod's page, already vetted by core, and vetted AGAIN here
+ * (weburl.js): this is the last stop before an href. `manual` says the
+ * source will not hand the file to lmm at all, so the page is not just
+ * somewhere to read about the mod but where the file has to come from.
+ */
+export function downloadFailureFor(details) {
+  if (!details || typeof details !== "object") return null;
+  if (
+    !details.source_id ||
+    !details.mod_id ||
+    !("manual_download" in details)
+  ) {
+    return null;
+  }
+  return {
+    sourceID: details.source_id,
+    modID: details.mod_id,
+    modName: details.mod_name ?? "",
+    url: safeWebUrl(details.mod_url),
+    manual: Boolean(details.manual_download),
   };
 }
 

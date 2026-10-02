@@ -236,3 +236,28 @@ func TestApplyUpdateBatch_DownloadFailureCarriesTheModPage(t *testing.T) {
 	require.True(t, errors.As(result.Failed[0].Cause(), &dl))
 	assert.Equal(t, page, dl.ModURL)
 }
+
+// detailsOf is what the --json / /api/v1 error envelope would attach for err.
+func detailsOf(err error) any {
+	var withDetails interface{ Details() any }
+	if errors.As(err, &withDetails) {
+		return withDetails.Details()
+	}
+	return nil
+}
+
+// TestDownloadError_DoesNotShadowAnotherTypedRefusal: a refusal that comes out
+// of the download path with typed details of its own (a game's loader
+// precondition, say) keeps them - the envelope must not be replaced by the
+// download's, or the web UI loses the setup steps it renders from them.
+func TestDownloadError_DoesNotShadowAnotherTypedRefusal(t *testing.T) {
+	refusal := &core.LoaderRequiredError{}
+	svc, game, mod, file := downloadFailureFixture(t, refusal, "https://example.test/mods/42")
+
+	_, err := svc.DownloadModForTest(context.Background(), "dl-src", game, mod, file, nil)
+	require.Error(t, err)
+
+	var dl *core.DownloadError
+	assert.False(t, errors.As(err, &dl), "a typed refusal is not re-labelled as a download failure")
+	assert.Equal(t, refusal.Details(), detailsOf(err))
+}

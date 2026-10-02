@@ -93,6 +93,15 @@ func asDownloadError(err error, sourceID string, mod *domain.Mod) error {
 	if errors.As(err, &already) {
 		return err
 	}
+	// A refusal with typed details of its own (a game's loader precondition,
+	// ...) keeps them: the envelope reads the OUTERMOST Details(), so wrapping
+	// would replace what a frontend renders from them. The Steam Workshop
+	// failure is the exception - DownloadError.Details inlines its keys.
+	var typed interface{ Details() any }
+	var workshop *WorkshopFetchError
+	if errors.As(err, &typed) && !errors.As(err, &workshop) {
+		return err
+	}
 	return &DownloadError{
 		SourceID:       sourceID,
 		ModID:          mod.ID,
