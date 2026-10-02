@@ -293,8 +293,10 @@ export function SetupGames({
             (g) => html`
               <tr key=${g.id}>
                 <td class="setup-table__name">
-                  <span>${g.name}</span>${" "}
-                  <span class="mono empty-state__hint">${g.id}</span>
+                  <span class="setup-table__name-text">
+                    <span>${g.name}</span>${" "}
+                    <span class="mono empty-state__hint">${g.id}</span>
+                  </span>
                 </td>
                 <td class="col--path" title=${g.install_path}>
                   <span class="mono setup-table__path">${g.install_path}</span>
@@ -324,44 +326,48 @@ export function SetupGames({
                 </td>
                 <td><${AdapterCell} game=${g} /></td>
                 <td>
-                  <span class="mono"
-                    >${Object.keys(g.source_ids ?? {}).join(", ") || "—"}</span
-                  >${" "}
-                  <button
-                    type="button"
-                    class="button button--small"
-                    data-action="edit-sources"
-                    data-game=${g.id}
-                    disabled=${busyID === g.id || sources === null}
-                    onClick=${() =>
-                      setEditing(
-                        editing?.id === g.id
-                          ? null
-                          : { id: g.id, map: { ...(g.source_ids ?? {}) } },
-                      )}
-                  >
-                    ${editing?.id === g.id ? "Cancel" : "Edit sources…"}
-                  </button>
+                  <div class="setup-table__value">
+                    <span class="mono"
+                      >${Object.keys(g.source_ids ?? {}).join(", ") || "—"}</span
+                    >
+                    <button
+                      type="button"
+                      class="button button--small"
+                      data-action="edit-sources"
+                      data-game=${g.id}
+                      disabled=${busyID === g.id || sources === null}
+                      onClick=${() =>
+                        setEditing(
+                          editing?.id === g.id
+                            ? null
+                            : { id: g.id, map: { ...(g.source_ids ?? {}) } },
+                        )}
+                    >
+                      ${editing?.id === g.id ? "Cancel" : "Edit sources…"}
+                    </button>
+                  </div>
                 </td>
                 <td>
-                  <span class="mono" data-testid="loader-cell"
-                    >${g.loader?.kind ?? "—"}</span
-                  >${" "}
-                  <button
-                    type="button"
-                    class="button button--small"
-                    data-action="edit-loader"
-                    data-game=${g.id}
-                    disabled=${busyID === g.id}
-                    onClick=${() =>
-                      setEditingLoader(
-                        editingLoader?.id === g.id
-                          ? null
-                          : { id: g.id, draft: loaderDraft(g.loader) },
-                      )}
-                  >
-                    ${editingLoader?.id === g.id ? "Cancel" : "Edit loader…"}
-                  </button>
+                  <div class="setup-table__value">
+                    <span class="mono" data-testid="loader-cell"
+                      >${g.loader?.kind ?? "—"}</span
+                    >
+                    <button
+                      type="button"
+                      class="button button--small"
+                      data-action="edit-loader"
+                      data-game=${g.id}
+                      disabled=${busyID === g.id}
+                      onClick=${() =>
+                        setEditingLoader(
+                          editingLoader?.id === g.id
+                            ? null
+                            : { id: g.id, draft: loaderDraft(g.loader) },
+                        )}
+                    >
+                      ${editingLoader?.id === g.id ? "Cancel" : "Edit loader…"}
+                    </button>
+                  </div>
                 </td>
                 <td>
                   <button

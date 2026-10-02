@@ -339,10 +339,14 @@ pre,
  *                            carries its underline
  *   .button--tile            a whole card that is one button (the game
  *                            chooser)
+ *   .button--prose           a bordered button whose label is a title of
+ *                            any length (the add-game picker's game names)
  *
  * A label never wraps (white-space: nowrap) - a control too narrow for its
  * label is a layout to fix, not a label to break - except the text-shaped
- * .button--link and the card-shaped .button--tile, which are prose.
+ * .button--link, the card-shaped .button--tile and the title-shaped
+ * .button--prose, which are prose: they wrap between words, never inside
+ * one, and are never clipped.
  *
  * Sizes and shapes:
  *   (default)                --control-height: every bar and toolbar, card
@@ -519,6 +523,24 @@ input[type="password"] {
   min-width: var(--control-height-sm);
 }
 
+/* A title is as long as its game's name, so no layout can promise it a
+ * line of its own in every font: "The Elder Scrolls V: Skyrim Special
+ * Edition Anniversary Upgrade Deluxe" is ~450px in DejaVu Sans and ~560px
+ * in a monospace, in a list capped near 700px that still owes the install
+ * path beside it a column (issue 521). It wraps between words, left
+ * aligned, at the readable line height a multi-line label needs; a thin
+ * block padding keeps a wrapped label off its border without making a
+ * one-line one taller than its size's control height. */
+.button--prose {
+  justify-content: flex-start;
+  padding-block: 0.125rem;
+  line-height: var(--control-line-height);
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 /* The arrow icon (components/arrow.js, issue 520): one em square in the
  * label's own box, so a control's flex centring centres it and a text
  * link's middle alignment sits it on the words' centre line. */
@@ -664,15 +686,46 @@ input[type="search"]::-webkit-search-decoration {
   gap: var(--space-2) var(--space-4);
 }
 
-/* The search wrapper takes the bar's slack AND gives it back: `min-width: 0`
- * rather than a floor, so it is the control that shrinks when the bar runs
- * out of room, instead of the bar overflowing the page. The omnibar itself
- * then grows to fill the wrapper the same way. */
+/* The search wrapper takes the bar's slack AND gives it back: it is the
+ * control that shrinks when the bar runs out of room, instead of the bar
+ * overflowing the page - but never below its own placeholder, the
+ * omnibar's only instruction (issue 521). That text's width is the host
+ * font's to decide (DejaVu Sans is a tenth wider than Liberation Sans, a
+ * monospace wider still) and the room is whatever the game's name leaves,
+ * so no fixed width or ch count can promise it fits. So the placeholder is
+ * set a second time, in an invisible sizer stacked in the same grid cell as
+ * the row holding the field: the cell is never narrower than the sizer
+ * (min-width: auto is the grid's own min-content), and a bar without room
+ * for the whole placeholder wraps the search onto a row of its own rather
+ * than cutting it off. max-width keeps a viewport narrower than the
+ * placeholder from overflowing the page. The row's clear and "search
+ * sources" controls fit inside the sizer's width, so typing does not change
+ * the search's footprint. */
 .app-bar__search {
+  display: grid;
+  flex: 1 1 12rem;
+  min-width: auto;
+  max-width: 100%;
+}
+
+.omnibar__sizer {
+  grid-area: 1 / 1;
+  min-width: max-content;
+  height: 0;
+  padding: 0 var(--space-2);
+  border: solid transparent;
+  border-width: 0 var(--control-border-width);
+  font-size: var(--control-font-size);
+  white-space: nowrap;
+  visibility: hidden;
+  overflow: clip;
+}
+
+.app-bar__search-row {
   display: flex;
+  grid-area: 1 / 1;
   align-items: center;
   gap: var(--space-2);
-  flex: 1 1 12rem;
   min-width: 0;
 }
 
@@ -1092,9 +1145,15 @@ input[type="search"]::-webkit-search-decoration {
   margin-bottom: var(--space-3);
 }
 
+/* The heading takes the toolbar's slack but never gives up its own width
+ * (issue 521): a zero flex basis made it the first thing to shrink, so a
+ * wide font broke "LIBRARY (3)" across two lines while the controls beside
+ * it kept theirs. Now a toolbar without room wraps between its controls,
+ * the way every row of controls does. */
 .library__toolbar .section-header {
   margin: 0;
-  flex: 1;
+  flex: 1 0 auto;
+  white-space: nowrap;
 }
 
 /* A label wrapping its own control (issue 334's spacing pass). Without the
@@ -3112,10 +3171,6 @@ a.row-menu__item.mod-page-link {
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.setup-table {
-  table-layout: fixed;
-}
-
 /*
  * The games table (issue 334's density pass, reworked by issue 518). A game
  * installed under a long Steam library path pushed the Default column off
@@ -3133,9 +3188,23 @@ a.row-menu__item.mod-page-link {
  * the mod path's is larger by its "Edit mod path…" button, so both paths
  * show the same length. At a narrow width every column gives way to its
  * minimum and the paths keep what is left.
+ *
+ * Every Setup table lays out this way (issue 521): a fixed layout's equal
+ * shares are rem budgets, and a label's width is the host font's - a wider
+ * face than the developer's wrapped "Edit sources…" under its value and a
+ * custom source's three actions onto two rows. Each cell's minimum is set
+ * below so the automatic layout keeps the facts that must stay on one line
+ * on one line: a value and the button that edits it, an adapter id, and a
+ * game's name and id up to a reading measure.
  */
-.setup-table--games {
-  table-layout: auto;
+.setup-table__name-text {
+  display: block;
+  width: max-content;
+  max-width: 20rem;
+}
+
+.setup-table__token {
+  white-space: nowrap;
 }
 
 .setup-table .col--path {
@@ -3155,8 +3224,9 @@ a.row-menu__item.mod-page-link {
   text-overflow: ellipsis;
 }
 
-/* A path and the button that edits it, on one line: the path gives way
- * (ellipsis), the button never does. */
+/* A value and the button that edits it, on one line: the value gives way
+ * (a path ellipsises, a list of sources wraps between its ids), the button
+ * never does. */
 .setup-table__value {
   display: flex;
   align-items: center;
@@ -3183,14 +3253,15 @@ a.row-menu__item.mod-page-link {
    width. A fixed width on the CELL keeps every row's last column the same
    size regardless of content; the flex layout for the buttons themselves
    moves to an inner span (setup-table__actions-group) that never has to be
-   a table-cell in the first place. */
+   a table-cell in the first place. Issue 521: under the automatic layout
+   the width is a floor, not a budget - the column is as wide as the widest
+   row's buttons on one line, however wide the host's font draws them. */
 .setup-table__actions {
   width: 14rem;
 }
 
 .setup-table__actions-group {
   display: flex;
-  flex-wrap: wrap;
   gap: var(--space-2);
 }
 

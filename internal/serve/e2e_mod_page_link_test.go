@@ -209,14 +209,22 @@ func TestE2E_ModPageLink_UnsafeURLsRenderNoLink(t *testing.T) {
 	}
 	f.runInBrowser(t,
 		chromedp.Navigate(f.SlideOverPath("fake", "evil")),
-		chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
-		// Settled: the changelog section has finished loading.
-		pollUntil(`!document.querySelector(".slide-over")?.textContent.includes("Loading changelog")`),
+		// Hydrated, then the mod's own panel (#521): until the library's
+		// mod list lands the slide-over is its "Mod details" placeholder,
+		// which has no link wrapper and no changelog - reading the title
+		// (or counting links, a zero that would pass vacuously) there was
+		// the flake. .slide-over__page is rendered only by a real mod's
+		// panel; the changelog status says that panel has settled.
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		pollUntil(`document.querySelector(".slide-over .slide-over__page") !== null &&
+			document.querySelector('.slide-over [data-changelog-status]:not([data-changelog-status="loading"])') !== null`),
 		textContent(`.slide-over .section-header`, &slideOverTitle),
 		count(".slide-over a.mod-page-link", &slideOver),
 		chromedp.Navigate(f.ModPagePath("fake", "evil")),
+		// The title and the link wrapper render in the same pass, once the
+		// mod's own read has landed: a zero below is a real zero.
 		chromedp.WaitVisible(`.mod-page__title`, chromedp.ByQuery),
-		pollUntil(`!document.querySelector(".mod-page")?.textContent.includes("Loading")`),
+		chromedp.WaitReady(`.mod-page__link`, chromedp.ByQuery),
 		count(".mod-page a.mod-page-link", &fullPage),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
@@ -230,7 +238,7 @@ func TestE2E_ModPageLink_UnsafeURLsRenderNoLink(t *testing.T) {
 		chromedp.WaitVisible(searchResultRow("fake", "evilfound"), chromedp.ByQuery),
 		count(searchResultRow("fake", "evilfound")+" a.mod-page-link", &omnibarRow),
 		chromedp.Click(searchResultRow("fake", "evilfound")+" .search-result__name", chromedp.ByQuery),
-		chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
+		chromedp.WaitReady(`.slide-over .slide-over__page`, chromedp.ByQuery),
 		count(`a[href^="javascript:" i], a[href^="data:" i], a[href^="file:" i]`, &anyUnsafeHref),
 	)
 	assert.Equal(t, "Evil Mod", slideOverTitle)
@@ -305,7 +313,7 @@ func TestE2E_ModPageLink_FailedInstallJobShowsThePage(t *testing.T) {
 		textContent(row+` .job-progress__text`, &message),
 		pollUntil(`document.querySelector('.search-result[data-mod="fake/broken"] .job-progress a.mod-page-link')?.textContent.includes("E2E Search Source")`),
 		linkIn(row+" .job-progress", &inline),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="failed"]`, chromedp.ByQuery),
 		pollUntil(`document.querySelector('.tray__failure a.mod-page-link')?.textContent.includes("E2E Search Source")`),
 		linkIn(".tray__failure", &tray),

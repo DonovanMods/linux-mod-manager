@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/chromedp/cdproto/accessibility"
 	"github.com/chromedp/cdproto/cdp"
@@ -135,38 +134,42 @@ func axString(v *accessibility.Value) string {
 func TestE2E_SearchResultsShareColumns(t *testing.T) {
 	f := newE2EFixtureWithSearchableMods(t)
 
-	var page []resultColumn
-	var pageRegion string
-	var listWidth, mainWidth float64
-	f.runInBrowser(t,
-		chromedp.EmulateViewport(1280, 900),
-		chromedp.Navigate(f.SearchPagePath("o")),
-		chromedp.WaitVisible(searchResultRow("fake", e2eSearchInstallModID), chromedp.ByQuery),
-		chromedp.WaitVisible(`.search-result--warning`, chromedp.ByQuery),
-		chromedp.Evaluate(resultColumnsJS+`(".search-page")`, &page),
-		warningRegionName("upstream unavailable", &pageRegion),
-		chromedp.Evaluate(`document.querySelector(".search-page .search-results").getBoundingClientRect().width`, &listWidth),
-		chromedp.Evaluate(`(() => { const m = document.querySelector(".search-page"); const s = getComputedStyle(m);
-			return m.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight); })()`, &mainWidth),
-	)
-	assertColumnsAlign(t, "search page", page)
-	assert.Contains(t, pageRegion, "flaky", "search page: the failure is a region named for its source")
-	assert.InDelta(t, mainWidth, listWidth, 1, "search page: the result list takes the page's content width, as the library does")
+	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
+		var page []resultColumn
+		var pageRegion string
+		var listWidth, mainWidth float64
+		f.runInBrowser(t,
+			chromedp.EmulateViewport(1280, 900),
+			chromedp.Navigate(f.SearchPagePath("o")),
+			chromedp.WaitVisible(searchResultRow("fake", e2eSearchInstallModID), chromedp.ByQuery),
+			chromedp.WaitVisible(`.search-result--warning`, chromedp.ByQuery),
+			faceInEffect(face),
+			chromedp.Evaluate(resultColumnsJS+`(".search-page")`, &page),
+			warningRegionName("upstream unavailable", &pageRegion),
+			chromedp.Evaluate(`document.querySelector(".search-page .search-results").getBoundingClientRect().width`, &listWidth),
+			chromedp.Evaluate(`(() => { const m = document.querySelector(".search-page"); const s = getComputedStyle(m);
+				return m.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight); })()`, &mainWidth),
+		)
+		assertColumnsAlign(t, "search page", page)
+		assert.Contains(t, pageRegion, "flaky", "search page: the failure is a region named for its source")
+		assert.InDelta(t, mainWidth, listWidth, 1, "search page: the result list takes the page's content width, as the library does")
 
-	var omnibar []resultColumn
-	var omnibarRegion string
-	f.runInBrowser(t,
-		chromedp.EmulateViewport(1280, 900),
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		chromedp.SendKeys(`.omnibar`, "o", chromedp.ByQuery),
-		chromedp.KeyEvent(kb.Enter),
-		chromedp.WaitVisible(`.omnibar-results .search-result--warning`, chromedp.ByQuery),
-		chromedp.Evaluate(resultColumnsJS+`(".omnibar-results")`, &omnibar),
-		warningRegionName("upstream unavailable", &omnibarRegion),
-	)
-	assertColumnsAlign(t, "omnibar fan-out", omnibar)
-	assert.Contains(t, omnibarRegion, "flaky", "omnibar fan-out: the failure is a region named for its source")
+		var omnibar []resultColumn
+		var omnibarRegion string
+		f.runInBrowser(t,
+			chromedp.EmulateViewport(1280, 900),
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+			chromedp.SendKeys(`.omnibar`, "o", chromedp.ByQuery),
+			chromedp.KeyEvent(kb.Enter),
+			chromedp.WaitVisible(`.omnibar-results .search-result--warning`, chromedp.ByQuery),
+			faceInEffect(face),
+			chromedp.Evaluate(resultColumnsJS+`(".omnibar-results")`, &omnibar),
+			warningRegionName("upstream unavailable", &omnibarRegion),
+		)
+		assertColumnsAlign(t, "omnibar fan-out", omnibar)
+		assert.Contains(t, omnibarRegion, "flaky", "omnibar fan-out: the failure is a region named for its source")
+	})
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
@@ -177,29 +180,32 @@ func TestE2E_SearchResultsShareColumns(t *testing.T) {
 func TestE2E_SearchPagerArrowsAreCentred(t *testing.T) {
 	f := newE2EFixtureWithSearchableMods(t)
 
-	var arrows []struct {
-		Label  string   `json:"label"`
-		Arrow  *float64 `json:"arrow"`
-		Button float64  `json:"button"`
-	}
-	f.runInBrowser(t,
-		chromedp.EmulateViewport(1280, 900),
-		chromedp.Navigate(f.SearchPagePath("o")),
-		chromedp.WaitVisible(`.search-page__pager`, chromedp.ByQuery),
-		chromedp.Evaluate(`[...document.querySelectorAll(".search-page__pager .button, .app-bar__nav a")].map((el) => {
-			const mid = (r) => (r.top + r.bottom) / 2;
-			const icon = el.querySelector("svg");
-			const box = el.getBoundingClientRect();
-			return { label: el.textContent.trim(), arrow: icon ? mid(icon.getBoundingClientRect()) : null, button: mid(box) };
-		})`, &arrows),
-	)
-	require.Len(t, arrows, 3, "Prev, Next and Back to library")
-	for _, a := range arrows {
-		require.NotNil(t, a.Arrow, "%q draws its arrow as an icon, not a fallback-font glyph", a.Label)
-		assert.InDelta(t, a.Button, *a.Arrow, 1, "%q: its arrow's centre is %.1fpx from the control's", a.Label, *a.Arrow-a.Button)
-		assert.NotContains(t, a.Label, "←", "%q: no text arrow beside the icon", a.Label)
-		assert.NotContains(t, a.Label, "→", "%q: no text arrow beside the icon", a.Label)
-	}
+	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
+		var arrows []struct {
+			Label  string   `json:"label"`
+			Arrow  *float64 `json:"arrow"`
+			Button float64  `json:"button"`
+		}
+		f.runInBrowser(t,
+			chromedp.EmulateViewport(1280, 900),
+			chromedp.Navigate(f.SearchPagePath("o")),
+			chromedp.WaitVisible(`.search-page__pager`, chromedp.ByQuery),
+			faceInEffect(face),
+			chromedp.Evaluate(`[...document.querySelectorAll(".search-page__pager .button, .app-bar__nav a")].map((el) => {
+				const mid = (r) => (r.top + r.bottom) / 2;
+				const icon = el.querySelector("svg");
+				const box = el.getBoundingClientRect();
+				return { label: el.textContent.trim(), arrow: icon ? mid(icon.getBoundingClientRect()) : null, button: mid(box) };
+			})`, &arrows),
+		)
+		require.Len(t, arrows, 3, "Prev, Next and Back to library")
+		for _, a := range arrows {
+			require.NotNil(t, a.Arrow, "%q draws its arrow as an icon, not a fallback-font glyph", a.Label)
+			assert.InDelta(t, a.Button, *a.Arrow, 1, "%q: its arrow's centre is %.1fpx from the control's", a.Label, *a.Arrow-a.Button)
+			assert.NotContains(t, a.Label, "←", "%q: no text arrow beside the icon", a.Label)
+			assert.NotContains(t, a.Label, "→", "%q: no text arrow beside the icon", a.Label)
+		}
+	})
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
@@ -209,27 +215,30 @@ func TestE2E_SearchPagerArrowsAreCentred(t *testing.T) {
 func TestE2E_SetupTabsKeepTheirWidths(t *testing.T) {
 	f := newE2EFixtureWithAttention(t)
 
-	tabWidths := `[...document.querySelectorAll(".setup-nav__tab")].map((b) => b.getBoundingClientRect().width)`
-	var initial []float64
-	f.runInBrowser(t,
-		chromedp.EmulateViewport(1280, 900),
-		chromedp.Navigate(f.SetupPath("games")),
-		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
-		chromedp.Evaluate(tabWidths, &initial),
-	)
-	require.Len(t, initial, 5)
-	for _, section := range []string{"auth", "sources", "archive", "adopt", "games"} {
-		var now []float64
+	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
+		tabWidths := `[...document.querySelectorAll(".setup-nav__tab")].map((b) => b.getBoundingClientRect().width)`
+		var initial []float64
 		f.runInBrowser(t,
-			clickWhenSettled(`.setup-nav__tab[data-section="`+section+`"]`),
-			pollUntil(`document.querySelector('.setup-nav__tab[data-section="`+section+`"]').getAttribute("aria-selected") === "true"`),
-			chromedp.Evaluate(tabWidths, &now),
+			chromedp.EmulateViewport(1280, 900),
+			chromedp.Navigate(f.SetupPath("games")),
+			chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
+			faceInEffect(face),
+			chromedp.Evaluate(tabWidths, &initial),
 		)
-		require.Len(t, now, len(initial))
-		for i := range initial {
-			assert.InDelta(t, initial[i], now[i], 0.5, "with %s active, tab %d is %.2fpx wide (was %.2fpx)", section, i, now[i], initial[i])
+		require.Len(t, initial, 5)
+		for _, section := range []string{"auth", "sources", "archive", "adopt", "games"} {
+			var now []float64
+			f.runInBrowser(t,
+				clickWhenSettled(`.setup-nav__tab[data-section="`+section+`"]`),
+				pollUntil(`document.querySelector('.setup-nav__tab[data-section="`+section+`"]').getAttribute("aria-selected") === "true"`),
+				chromedp.Evaluate(tabWidths, &now),
+			)
+			require.Len(t, now, len(initial))
+			for i := range initial {
+				assert.InDelta(t, initial[i], now[i], 0.5, "with %s active, tab %d is %.2fpx wide (was %.2fpx)", section, i, now[i], initial[i])
+			}
 		}
-	}
+	})
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
@@ -239,16 +248,19 @@ func TestE2E_SetupTabsKeepTheirWidths(t *testing.T) {
 func TestE2E_ArchivePickerSizesToItsLabel(t *testing.T) {
 	f := newE2EFixtureWithAttention(t)
 
-	var picker, panel float64
-	f.runInBrowser(t,
-		chromedp.EmulateViewport(1280, 900),
-		chromedp.Navigate(f.SetupPath("archive")),
-		chromedp.WaitVisible(`[data-testid="setup-import-archive"] .button`, chromedp.ByQuery),
-		chromedp.Evaluate(`document.querySelector('[data-testid="setup-import-archive"] .button').getBoundingClientRect().width`, &picker),
-		chromedp.Evaluate(`document.querySelector('[data-testid="setup-import-archive"]').getBoundingClientRect().width`, &panel),
-	)
-	require.Positive(t, panel)
-	assert.Less(t, picker, panel/2, "Choose archive… is %.0fpx wide in a %.0fpx panel", picker, panel)
+	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
+		var picker, panel float64
+		f.runInBrowser(t,
+			chromedp.EmulateViewport(1280, 900),
+			chromedp.Navigate(f.SetupPath("archive")),
+			chromedp.WaitVisible(`[data-testid="setup-import-archive"] .button`, chromedp.ByQuery),
+			faceInEffect(face),
+			chromedp.Evaluate(`document.querySelector('[data-testid="setup-import-archive"] .button').getBoundingClientRect().width`, &picker),
+			chromedp.Evaluate(`document.querySelector('[data-testid="setup-import-archive"]').getBoundingClientRect().width`, &panel),
+		)
+		require.Positive(t, panel)
+		assert.Less(t, picker, panel/2, "Choose archive… is %.0fpx wide in a %.0fpx panel", picker, panel)
+	})
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
@@ -258,21 +270,24 @@ func TestE2E_ArchivePickerSizesToItsLabel(t *testing.T) {
 func TestE2E_AttentionCardTitlesSitAtTheirCardsTop(t *testing.T) {
 	f := newE2EFixtureWithAttention(t)
 
-	var gaps map[string]float64
-	f.runInBrowser(t,
-		chromedp.EmulateViewport(1280, 900),
-		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.card--updates .card__title`, chromedp.ByQuery),
-		chromedp.Evaluate(`Object.fromEntries([...document.querySelectorAll(".card")].map((card) => {
-			const title = card.querySelector(".card__title");
-			const inner = card.getBoundingClientRect().top + card.clientTop + parseFloat(getComputedStyle(card).paddingTop);
-			return [card.className, title.getBoundingClientRect().top - inner];
-		}))`, &gaps),
-	)
-	require.Contains(t, gaps, "card card--updates")
-	for card, gap := range gaps {
-		assert.InDelta(t, 0, gap, 1, "%s: its title starts %.1fpx below the card's padding", card, gap)
-	}
+	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
+		var gaps map[string]float64
+		f.runInBrowser(t,
+			chromedp.EmulateViewport(1280, 900),
+			chromedp.Navigate(f.HomePath()),
+			chromedp.WaitVisible(`.card--updates .card__title`, chromedp.ByQuery),
+			faceInEffect(face),
+			chromedp.Evaluate(`Object.fromEntries([...document.querySelectorAll(".card")].map((card) => {
+				const title = card.querySelector(".card__title");
+				const inner = card.getBoundingClientRect().top + card.clientTop + parseFloat(getComputedStyle(card).paddingTop);
+				return [card.className, title.getBoundingClientRect().top - inner];
+			}))`, &gaps),
+		)
+		require.Contains(t, gaps, "card card--updates")
+		for card, gap := range gaps {
+			assert.InDelta(t, 0, gap, 1, "%s: its title starts %.1fpx below the card's padding", card, gap)
+		}
+	})
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
@@ -287,37 +302,39 @@ func TestE2E_SetupSourcesTables_NothingWraps(t *testing.T) {
 	_, err := app.SaveSourceDefinition(f.Ctx, f.Svc, "", []byte(yaml))
 	require.NoError(t, err)
 
-	var got map[string][]labelBox
-	var actionRows map[string]int
-	var overflows bool
-	f.runInBrowser(t,
-		chromedp.EmulateViewport(1280, 900),
-		chromedp.Navigate(f.SetupPath("sources")),
-		chromedp.WaitVisible(`tr[data-source="my-mods"] [data-action="edit-source"]`, chromedp.ByQuery),
-		chromedp.WaitVisible(indexRow("lethal-company")+` [data-action="refresh-index"]`, chromedp.ByQuery),
-		chromedp.Sleep(200*time.Millisecond),
-		measureLabels(`{
-			"sources table": "[data-testid=\"setup-sources\"] table",
-			"indexes table": "[data-testid=\"source-indexes\"] table",
-		}`, &got),
-		chromedp.Evaluate(`Object.fromEntries([...document.querySelectorAll(".setup-table__actions")]
-			.filter((cell) => cell.querySelector(".button"))
-			.map((cell, i) => [cell.closest("tr").dataset.index ?? cell.closest("tr").dataset.source ?? String(i),
-				new Set([...cell.querySelectorAll(".button")].map((b) => Math.round(b.getBoundingClientRect().top))).size]))`, &actionRows),
-		chromedp.Evaluate(`document.documentElement.scrollWidth > window.innerWidth`, &overflows),
-	)
-	assertLabelsCentred(t, "sources table", got["sources table"])
-	assertLabelsCentred(t, "indexes table", got["indexes table"])
-	labels := []string{}
-	for _, b := range got["sources table"] {
-		labels = append(labels, b.Label)
-	}
-	assert.Subset(t, labels, []string{"Download", "Edit", "Delete"}, "the custom source's own actions are measured")
-	require.Contains(t, actionRows, "my-mods")
-	require.Contains(t, actionRows, "lethal-company")
-	for row, n := range actionRows {
-		assert.Equal(t, 1, n, "%s: its actions wrap onto %d rows", row, n)
-	}
-	assert.False(t, overflows, "the sources tables fit the page")
+	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
+		var got map[string][]labelBox
+		var actionRows map[string]int
+		var overflows bool
+		f.runInBrowser(t,
+			chromedp.EmulateViewport(1280, 900),
+			chromedp.Navigate(f.SetupPath("sources")),
+			chromedp.WaitVisible(`tr[data-source="my-mods"] [data-action="edit-source"]`, chromedp.ByQuery),
+			chromedp.WaitVisible(indexRow("lethal-company")+` [data-action="refresh-index"]`, chromedp.ByQuery),
+			faceInEffect(face),
+			measureLabels(`{
+				"sources table": "[data-testid=\"setup-sources\"] table",
+				"indexes table": "[data-testid=\"source-indexes\"] table",
+			}`, &got),
+			chromedp.Evaluate(`Object.fromEntries([...document.querySelectorAll(".setup-table__actions")]
+				.filter((cell) => cell.querySelector(".button"))
+				.map((cell, i) => [cell.closest("tr").dataset.index ?? cell.closest("tr").dataset.source ?? String(i),
+					new Set([...cell.querySelectorAll(".button")].map((b) => Math.round(b.getBoundingClientRect().top))).size]))`, &actionRows),
+			chromedp.Evaluate(`document.documentElement.scrollWidth > window.innerWidth`, &overflows),
+		)
+		assertLabelsCentred(t, "sources table", got["sources table"])
+		assertLabelsCentred(t, "indexes table", got["indexes table"])
+		labels := []string{}
+		for _, b := range got["sources table"] {
+			labels = append(labels, b.Label)
+		}
+		assert.Subset(t, labels, []string{"Download", "Edit", "Delete"}, "the custom source's own actions are measured")
+		require.Contains(t, actionRows, "my-mods")
+		require.Contains(t, actionRows, "lethal-company")
+		for row, n := range actionRows {
+			assert.Equal(t, 1, n, "%s: its actions wrap onto %d rows", row, n)
+		}
+		assert.False(t, overflows, "the sources tables fit the page")
+	})
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }

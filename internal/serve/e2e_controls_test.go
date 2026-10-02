@@ -150,35 +150,38 @@ func assertOneHeight(t *testing.T, where string, controls []barControl) {
 func TestE2E_BarControlsShareOneHeight(t *testing.T) {
 	f := newE2EFixtureWithAttention(t)
 
-	for _, theme := range []string{"light", "dark"} {
-		t.Run(theme, func(t *testing.T) {
-			var got barControlsReport
-			var cancelDisplay string
-			f.runInBrowser(t,
-				chromedp.Navigate(f.HomePath()),
-				chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-				chromedp.WaitVisible(`.library__toolbar`, chromedp.ByQuery),
-				chromedp.Evaluate(`document.documentElement.setAttribute("data-theme", "`+theme+`")`, nil),
-				chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
-				chromedp.WaitVisible(`.omnibar__clear`, chromedp.ByQuery),
-				chromedp.Evaluate(barControlsJS, &got),
-				css.Enable(),
-				nativeSearchCancelDisplay("omnibar", &cancelDisplay),
-			)
+	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
+		for _, theme := range []string{"light", "dark"} {
+			t.Run(theme, func(t *testing.T) {
+				var got barControlsReport
+				var cancelDisplay string
+				f.runInBrowser(t,
+					chromedp.Navigate(f.HomePath()),
+					chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+					chromedp.WaitVisible(`.library__toolbar`, chromedp.ByQuery),
+					faceInEffect(face),
+					chromedp.Evaluate(`document.documentElement.setAttribute("data-theme", "`+theme+`")`, nil),
+					chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+					chromedp.WaitVisible(`.omnibar__clear`, chromedp.ByQuery),
+					chromedp.Evaluate(barControlsJS, &got),
+					css.Enable(),
+					nativeSearchCancelDisplay("omnibar", &cancelDisplay),
+				)
 
-			assertOneHeight(t, theme+" top bar", got.Bar)
-			assertOneHeight(t, theme+" library toolbar", got.Toolbar)
-			if len(got.Bar) > 0 && len(got.Toolbar) > 0 {
-				assert.InDelta(t, got.Bar[0].Height, got.Toolbar[0].Height, 0.5,
-					"%s: the top bar and the library toolbar use the same default control height", theme)
-			}
-			for trigger, quiet := range got.QuietTriggers {
-				assert.True(t, quiet, "%s: the %s trigger is a quiet button (button button--quiet)", theme, trigger)
-			}
-			assert.Equal(t, 1, got.OwnClears, "%s: the search box has its own clear control", theme)
-			assert.Equal(t, "none", cancelDisplay,
-				"%s: the browser's own search-cancel is hidden, so the search box shows one clear control, not two", theme)
-		})
-	}
+				assertOneHeight(t, theme+" top bar", got.Bar)
+				assertOneHeight(t, theme+" library toolbar", got.Toolbar)
+				if len(got.Bar) > 0 && len(got.Toolbar) > 0 {
+					assert.InDelta(t, got.Bar[0].Height, got.Toolbar[0].Height, 0.5,
+						"%s: the top bar and the library toolbar use the same default control height", theme)
+				}
+				for trigger, quiet := range got.QuietTriggers {
+					assert.True(t, quiet, "%s: the %s trigger is a quiet button (button button--quiet)", theme, trigger)
+				}
+				assert.Equal(t, 1, got.OwnClears, "%s: the search box has its own clear control", theme)
+				assert.Equal(t, "none", cancelDisplay,
+					"%s: the browser's own search-cancel is hidden, so the search box shows one clear control, not two", theme)
+			})
+		}
+	})
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }

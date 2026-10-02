@@ -68,8 +68,8 @@ type e2eVerifyResultRow struct {
 func repairAllFromHealthCard(f e2eSearchFixture) []chromedp.Action {
 	return []chromedp.Action{
 		chromedp.Navigate(f.HomePath()),
-		chromedp.WaitVisible(`.card--health [data-action="repair-all"]`, chromedp.ByQuery),
-		chromedp.Click(`.card--health [data-action="repair-all"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		clickWhenSettled(`.card--health [data-action="repair-all"]`),
 		chromedp.WaitVisible(`.modal[data-kind="verify_fix"] .plan--verify-fix`, chromedp.ByQuery),
 		chromedp.Click(`.modal[data-kind="verify_fix"] [data-action="confirm"]`, chromedp.ByQuery),
 		waitGone(`.modal[data-kind="verify_fix"]`),
@@ -167,7 +167,7 @@ func TestE2E_VerifyFixResult_InTheActivityTray(t *testing.T) {
 	var events string
 	f.runInBrowser(t, repairAllFromHealthCard(f)...)
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="succeeded"]`, chromedp.ByQuery),
 		pollUntil(`document.querySelector('.tray__row [data-testid="verify-fix-result"] a.mod-page-link')?.textContent.includes("E2E Search Source")`),
 		chromedp.Evaluate(resultRowsJS(".tray__row"), &view),
