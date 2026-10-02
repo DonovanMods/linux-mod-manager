@@ -1595,8 +1595,16 @@ func TestE2E_SetupGamesEditSourcesMapsAnExistingGame(t *testing.T) {
 		chromedp.WaitVisible(`[data-testid="sources-map"]`, chromedp.ByQuery),
 		clickWhenSettled(`input[name="source-my-mods"]`),
 		clickWhenSettled(`[data-action="save-sources"]`),
-		chromedp.Poll(`document.querySelector('[data-testid="setup-games"]')?.textContent.includes("my-mods")`,
-			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		// NOT "setup-games contains my-mods": the sources-map editor is a
+		// table row INSIDE that container and its checkbox is labelled
+		// my-mods, so that text is there before Save is even clicked (#524).
+		// The editor only unmounts once the PUT has answered, and the row's
+		// own sources cell lists my-mods only after the list is re-fetched.
+		waitGone(`[data-testid="sources-map"]`),
+		pollUntil(`(() => {
+			const cell = document.querySelector('[data-action="edit-sources"][data-game="g1"]')?.closest("td");
+			return !!cell && cell.querySelector("span.mono")?.textContent.includes("my-mods");
+		})()`),
 	)
 
 	games := f.Svc.ListGames()
