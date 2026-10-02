@@ -13,6 +13,7 @@ import (
 type migrationExec interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 func (d *DB) migrate(ctx context.Context) error {
@@ -46,6 +47,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV16,
 		migrateV17,
 		migrateV18,
+		d.migrateV19,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -421,6 +423,94 @@ func migrateV18(ctx context.Context, d migrationExec) error {
 		}
 		if _, err := d.ExecContext(ctx, "ALTER TABLE deployed_files ADD COLUMN "+col.name+" "+col.decl); err != nil {
 			return fmt.Errorf("adding deployed_files.%s: %w", col.name, err)
+		}
+	}
+	return nil
+}
+
+// migrateV19 rewrites installed_mods.installed_at and updated_at into
+// storedTimeLayout (#515). Until now SaveInstalledMod handed the driver a bare
+// time.Time, which it stored as time.Time.String(): local-zone text with the
+// monotonic reading attached ("2026-10-01 13:30:57.086694056 -0400 EDT
+// m=+1.598230846"). That text sorts by wall clock in whatever zone wrote it,
+// so ORDER BY installed_at misordered rows across zones and DST, and the
+// "m=" half is process uptime that has no meaning once stored.
+//
+// Each value is parsed (parseStoredTime takes the String() form with or
+// without its suffix, the driver's formats and CURRENT_TIMESTAMP's) and
+// stored back as UTC. A value that is already in the new form is rewritten
+// to itself, so a re-run is harmless. A value that cannot be parsed is left
+// exactly as it was and logged - never dropped, never zeroed. Reading it
+// then fails, naming the column and the text, as an unreadable row always
+// has.
+//
+// The other DATETIME columns (deployed_files.deployed_at, auth_tokens.
+// created_at/updated_at, schema_migrations.applied_at) are filled by SQLite's
+// CURRENT_TIMESTAMP, which is already UTC and fixed-width, so they stay.
+func (d *DB) migrateV19(ctx context.Context, q migrationExec) error {
+	// CAST drops the declared DATETIME type, so the driver returns the stored
+	// text instead of a time.Time it has already parsed (and, for the junk
+	// this migration must survive, failed to).
+	rows, err := q.QueryContext(ctx, `
+		SELECT id, CAST(installed_at AS TEXT), CAST(updated_at AS TEXT)
+		FROM installed_mods
+	`)
+	if err != nil {
+		return fmt.Errorf("reading installed_mods timestamps: %w", err)
+	}
+	type rewrite struct {
+		id                 int64
+		installed, updated *string
+	}
+	var todo []rewrite
+	for rows.Next() {
+		var id int64
+		var installed, updated *string
+		if err := rows.Scan(&id, &installed, &updated); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scanning installed_mods timestamps: %w", err)
+		}
+		next := rewrite{id: id}
+		var changed bool
+		for _, c := range []struct {
+			col  string
+			from *string
+			to   **string
+		}{{"installed_at", installed, &next.installed}, {"updated_at", updated, &next.updated}} {
+			if c.from == nil {
+				continue
+			}
+			t, ok := parseStoredTime(*c.from)
+			if !ok {
+				d.log.Warn("leaving an unparseable timestamp as it was", "table", "installed_mods", "id", id, "column", c.col, "value", *c.from)
+				continue
+			}
+			if text := formatTime(t); text != *c.from {
+				*c.to = &text
+				changed = true
+			}
+		}
+		if changed {
+			todo = append(todo, next)
+		}
+	}
+	rowsErr := rows.Err()
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("closing installed_mods timestamps: %w", err)
+	}
+	if rowsErr != nil {
+		return rowsErr
+	}
+
+	// The reader is closed first: the migration holds one connection, and a
+	// second statement cannot run on it beside an open cursor.
+	for _, r := range todo {
+		if _, err := q.ExecContext(ctx, `
+			UPDATE installed_mods
+			SET installed_at = COALESCE(?, installed_at), updated_at = COALESCE(?, updated_at)
+			WHERE id = ?
+		`, r.installed, r.updated, r.id); err != nil {
+			return fmt.Errorf("rewriting installed_mods timestamps: %w", err)
 		}
 	}
 	return nil
