@@ -741,16 +741,6 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 			// lmm's heartbeats interleave, and a scrollback of both is what
 			// a user needs when a steamcmd run goes wrong.
 			fmt.Printf("  %s\n", p.Detail)
-		case core.InstallDownloadFailed:
-			if strings.Contains(p.Detail, "third-party downloads") && mod.SourceURL != "" {
-				fmt.Println()
-				fmt.Println("  ⚠  This mod author has disabled API downloads.")
-				fmt.Println("  To install manually:")
-				fmt.Println()
-				fmt.Printf("    1. Download from: %s\n", mod.SourceURL)
-				fmt.Printf("    2. Import:        lmm import <downloaded-file> --id %s\n", mod.ID)
-				fmt.Println()
-			}
 		case core.InstallChecksumComputed:
 			fmt.Printf("  Checksum: %s\n", truncateChecksum(p.Detail))
 		case core.InstallCompiling:

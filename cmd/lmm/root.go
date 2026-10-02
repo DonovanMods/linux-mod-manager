@@ -401,6 +401,7 @@ func reportError(err error) {
 	} else {
 		fmt.Fprintf(os.Stderr, "%s %v\n", colorRed("Error:"), err)
 		reportExternalToolOutput(err)
+		reportDownloadPage(err)
 		reportLoaderSetup(err)
 	}
 }
@@ -421,6 +422,32 @@ func reportLoaderSetup(err error) {
 	fmt.Fprintf(os.Stderr, "\nTo set up the %s loader for this game:\n", loaderErr.Kind)
 	for i, step := range loaderErr.Setup {
 		fmt.Fprintf(os.Stderr, "  %d. %s\n", i+1, step)
+	}
+}
+
+// downloadHint is the line every download failure ends with when its mod has
+// a page to send the user to (#513): where to get the file by hand. The URL
+// is core's - already limited to http(s) by domain.SafeWebURL.
+func downloadHint(url string) string {
+	return "Download it manually from: " + url
+}
+
+// reportDownloadPage prints, under the error line, the page of the mod whose
+// download failed (#513): the typed data core's *DownloadError carries,
+// rather than a match on the failure's text. A source that refuses automated
+// downloads altogether (CurseForge's third-party opt-out) also gets the
+// command that imports the file once it is fetched.
+//
+// --json carries the same facts in the envelope's details, so this is the
+// terminal half only. A failure with no usable page prints nothing.
+func reportDownloadPage(err error) {
+	var dl *core.DownloadError
+	if !errors.As(err, &dl) || dl.ModURL == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n%s\n", downloadHint(dl.ModURL))
+	if dl.ManualDownload {
+		fmt.Fprintf(os.Stderr, "Then import it: lmm import <downloaded-file> --id %s\n", dl.ModID)
 	}
 }
 
