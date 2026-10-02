@@ -89,7 +89,7 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
       <div class="search-result__row">
         <button
           type="button"
-          class="search-result__name"
+          class="button button--link search-result__name"
           onClick=${() => openSearchResult(hit)}
         >
           ${hit.name}

@@ -693,7 +693,7 @@ func TestE2E_FirstRunManualAdd_CatalogPickLandsOnMissionControl(t *testing.T) {
 		retrySetValue(`select[name="add-source"]`, "catalogsrc"),
 		chromedp.WaitVisible(`input[name="add-query"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-query"]`, "mine", chromedp.ByQuery),
-		clickWhenSettled(`.setup-add__catalog button.button--small`),
+		clickWhenSettled(`.setup-add__catalog [data-action="catalog-search"]`),
 		chromedp.WaitVisible(`.setup-add__matches button`, chromedp.ByQuery),
 		clickWhenSettled(`.setup-add__matches button`),
 		chromedp.SendKeys(`input[name="add-install-path"]`, install, chromedp.ByQuery),
@@ -724,7 +724,7 @@ func TestE2E_FirstRunManualAdd_CatalogAuthRequiredNamesTheSourceNotADeadEnd(t *t
 		retrySetValue(`select[name="add-source"]`, "catalogsrc"),
 		chromedp.WaitVisible(`input[name="add-query"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-query"]`, "mine", chromedp.ByQuery),
-		clickWhenSettled(`.setup-add__catalog button.button--small`),
+		clickWhenSettled(`.setup-add__catalog [data-action="catalog-search"]`),
 		chromedp.WaitVisible(`.setup-add__catalog .modal__error`, chromedp.ByQuery),
 	)
 
@@ -804,7 +804,7 @@ func TestE2E_ManualAdd_GameIDFieldErrorOpensAdvancedAndRendersInline(t *testing.
 		retrySetValue(`select[name="add-source"]`, "catalogsrc"),
 		chromedp.WaitVisible(`input[name="add-query"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-query"]`, "weird", chromedp.ByQuery),
-		clickWhenSettled(`.setup-add__catalog button.button--small`),
+		clickWhenSettled(`.setup-add__catalog [data-action="catalog-search"]`),
 		chromedp.WaitVisible(`.setup-add__matches button`, chromedp.ByQuery),
 		clickWhenSettled(`.setup-add__matches button`),
 		chromedp.SendKeys(`input[name="add-install-path"]`, install, chromedp.ByQuery),

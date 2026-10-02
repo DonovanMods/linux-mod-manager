@@ -145,9 +145,7 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
         html`
           <div class="empty-state empty-state--error">
             <p>Couldn't scan for Steam installs: ${error}</p>
-            <button type="button" class="button button--small" onClick=${scan}>
-              Retry
-            </button>
+            <button type="button" class="button" onClick=${scan}>Retry</button>
           </div>
         `
       }
@@ -261,7 +259,7 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
           </ul>
           <button
             type="button"
-            class="button button--primary button--small"
+            class="button button--primary"
             data-action="add-detected"
             disabled=${busy || selected.size === 0}
             onClick=${addSelected}
@@ -774,7 +772,7 @@ export function GameAddForm({
 
       <button
         type="button"
-        class="button button--small"
+        class="button"
         data-action="pick-installed"
         onClick=${() => (pickerOpen ? setPickerOpen(false) : openPicker())}
       >
@@ -907,7 +905,8 @@ export function GameAddForm({
             </label>
             <button
               type="button"
-              class="button button--small"
+              class="button"
+              data-action="catalog-search"
               disabled=${searching || !spec.query.trim()}
               onClick=${search}
             >

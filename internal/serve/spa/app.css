@@ -66,6 +66,21 @@
    * rather than a bare black no token set chose. */
   --scrim: rgb(16 21 28 / 40%);
 
+  /* Controls (issue 518): the one scale every button, select and text input
+   * is drawn at, so controls that share a row line up (the control block
+   * below says which size goes where). Sizes, not colours - defined once
+   * here, like the motion tokens, so every theme has the same ones. Rem,
+   * not em: a control inside a smaller-type container is still a control. */
+  --control-height: 2rem;
+  --control-height-sm: 1.5rem;
+  --control-padding-x: var(--space-3);
+  --control-padding-x-sm: var(--space-2);
+  --control-radius: var(--radius);
+  --control-border-width: 1px;
+  --control-font-size: 0.9375rem;
+  --control-font-size-sm: 0.8125rem;
+  --control-line-height: 1.25;
+
   /* Motion (issue 334, owner demo 1: "mild UI animations for the slide-over
    * and a consistent motion language app-wide").
    *
@@ -288,17 +303,99 @@ pre,
   color: var(--danger);
 }
 
+/* @control-system begin */
 /* ---------------------------------------------------------------------- */
-/* Buttons and controls - shared by the top bar, the cards, the library.   */
+/* The control system (issue 518) - every button, select and text input.  */
 /* ---------------------------------------------------------------------- */
 
+/*
+ * One system draws every control in this application, so that controls
+ * sharing a row line up and a control's look says what it does. The rules
+ * below are the ONLY place a button's height, padding, border, radius or
+ * type size is set (control_system_test.go's TestNoControlStylingOutside
+ * TheControlBlock); an element class may still place a control - margin,
+ * position, flex, colour - but never reshape it. Every <button> carries
+ * "button" or "menu-item" (TestEveryButtonUsesTheControlSystem).
+ *
+ * Variants (one per button; default is the secondary action):
+ *   .button                  secondary: bordered, on the raised surface
+ *   .button--primary         THE action of its context - at most one per
+ *                            bar, card footer or modal footer
+ *   .button--quiet           borderless at rest, bordered on hover/focus -
+ *                            ONLY for a control with an affordance of its
+ *                            own: a picker or menu trigger, which draws its
+ *                            ▾ (the game/profile pickers, Add mods, the
+ *                            bell), or a glyph-only .button--icon (?, ✕,
+ *                            ‹ ›). A text-only control with no glyph reads
+ *                            as a label without a boundary at rest, so it
+ *                            stays secondary - the theme toggle, which
+ *                            cycles on a click rather than opening a
+ *                            choice (TestQuietButtonsCarryTheirOwn
+ *                            Affordance)
+ *   .button--danger          destroys or removes something
+ *   .button--link            reads as text, not as a box: a row's own
+ *                            name that opens it, an inline "View"
+ *   .button--tab             one tab in a role="tablist"; aria-selected
+ *                            carries its underline
+ *   .button--tile            a whole card that is one button (the game
+ *                            chooser)
+ *
+ * A label never wraps (white-space: nowrap) - a control too narrow for its
+ * label is a layout to fix, not a label to break - except the text-shaped
+ * .button--link and the card-shaped .button--tile, which are prose.
+ *
+ * Sizes and shapes:
+ *   (default)                --control-height: every bar and toolbar, card
+ *                            footers, modal footers, forms
+ *   .button--small           --control-height-sm: ONLY in dense contexts -
+ *                            table rows, cards' item rows, menus, inline
+ *                            result rows - and NEVER beside default-size
+ *                            controls in one bar, toolbar or footer
+ *   .button--icon            square: a glyph-only control (✕, ?, ‹ ›);
+ *                            combines with either size
+ *
+ *   .menu-item               one item in a dropdown menu (the pickers, a
+ *                            row's ⋯ menu, the activity tray's rows)
+ *
+ * select and the text-like inputs share the default height, border and
+ * type size, so a Filter select sits level with the buttons beside it.
+ * box-sizing is border-box everywhere (the universal rule above), which is
+ * what makes a min-height of --control-height the control's exact height.
+ */
+
+.button,
+.menu-item,
+select,
+textarea,
+input[type="search"],
+input[type="text"],
+input[type="password"] {
+  border-radius: var(--control-radius);
+  font-family: inherit;
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
+}
+
 .button {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--control-height);
+  padding: 0 var(--control-padding-x);
+  border: var(--control-border-width) solid var(--border-strong);
   background: var(--surface-raised);
   color: var(--text-primary);
-  font: inherit;
+  font-weight: inherit;
+  /* A label's line box is exactly its type size, so the flex centring above
+   * centres the TEXT, not a taller line box with the text at its top:
+   * Chrome rounds a positive half-leading down to whole pixels, which put
+   * every label at --control-line-height ~1px high, with the spare space
+   * below it. A line box no taller than the font's own ascent + descent has
+   * a negative half-leading, which stays symmetric. */
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -317,21 +414,116 @@ pre,
   background: var(--accent-hover);
 }
 
-.button--small {
-  padding: 0 var(--space-2);
-  font-size: 0.85em;
-}
-
 .button--danger {
   border-color: var(--danger);
   color: var(--danger);
+}
+
+.button--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.button--quiet:hover:not(:disabled),
+.button--quiet[aria-expanded="true"] {
+  border-color: var(--border-strong);
+}
+
+.button--link {
+  display: inline-block;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-primary);
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
+  white-space: normal;
+}
+
+.button--link:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.button--tab {
+  border-width: 0 0 2px;
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.button--tab:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+.button--tab[aria-selected="true"],
+.button--tab[aria-selected="true"]:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.button--tile {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  min-height: 0;
+  padding: var(--space-4);
+  border-color: var(--border-subtle);
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
+  white-space: normal;
+  box-shadow: var(--shadow-raised);
+}
+
+.button--small {
+  min-height: var(--control-height-sm);
+  padding: 0 var(--control-padding-x-sm);
+  font-size: var(--control-font-size-sm);
+}
+
+.button--icon {
+  min-width: var(--control-height);
+  padding: 0;
+}
+
+.button--icon.button--small {
+  min-width: var(--control-height-sm);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-height);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  background: transparent;
+  /* Centred like a .button's label, for the same reason (see .button). */
+  line-height: 1;
+  color: var(--text-primary);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--surface-sunken);
 }
 
 /* Issue 442: a disabled control is marked with certified tokens - muted
    text on the sunken surface, a quiet border - rather than faded to half
    strength, so no rule anywhere paints at partial opacity
    (TestPartialOpacityIsAllowListed's allow-list is empty). A native
-   checkbox or radio keeps the browser's own disabled rendering. */
+   checkbox or radio keeps the browser's own disabled rendering. The
+   borderless variants stay borderless: only their text dims. */
 .button:disabled,
 input:disabled,
 select:disabled {
@@ -341,31 +533,57 @@ select:disabled {
   cursor: not-allowed;
 }
 
+.button--quiet:disabled,
+.button--link:disabled,
+.button--tab:disabled,
+.menu-item:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* One focus ring for every control. A menu item draws it inside its own
+ * box: the menu around it clips anything outside (the tray scrolls). */
+.button:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.menu-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+select,
 input[type="search"],
 input[type="text"],
-select {
-  padding: var(--space-1) var(--space-2);
+input[type="password"] {
+  height: var(--control-height);
+  padding: 0 var(--space-2);
   /* --border-strong, not --border-subtle (issue 334's a11y pass): a control
    * whose fill barely differs from the page behind it has only its border
    * to identify it as a control, which WCAG 2.1 SC 1.4.11 holds to 3:1.
    * --border-subtle stays what its name says - a divider between things
    * that are already obviously separate. */
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border: var(--control-border-width) solid var(--border-strong);
   background: var(--surface-sunken);
   color: var(--text-primary);
-  font: inherit;
 }
 
-.theme-toggle {
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
+/* A search field carries this application's own clear control
+ * (.omnibar__clear), which also resets what the search fanned out; the
+ * browser's built-in cancel only empties the field, and drawing both put
+ * two ✕ side by side (issue 518). */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration {
+  display: none;
+  appearance: none;
 }
+/* @control-system end */
 
 /* ---------------------------------------------------------------------- */
 /* Top bar.                                                                */
@@ -464,20 +682,6 @@ select {
   position: relative;
 }
 
-.picker__trigger {
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.picker__trigger:hover {
-  border-color: var(--border-subtle);
-}
-
 /* Every dropdown opens rightward from its trigger by default; menuplacement.js
  * measures it on open and flips it to the other side (data-align="end"), or
  * slides it inside the gutters, when it would cross the viewport (issue 502). No
@@ -507,23 +711,6 @@ select {
   left: auto;
 }
 
-.picker__item {
-  display: block;
-  width: 100%;
-  padding: var(--space-1) var(--space-2);
-  border: none;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.picker__item:hover:not(:disabled) {
-  background: var(--surface-sunken);
-}
-
 /* One profile row: its name (the plain view change) on the left, its
  * "Switch and deploy…" (the real mutation) on the right - issue 334. The
  * action is always rendered, never revealed on hover: a keyboard user must
@@ -540,20 +727,7 @@ select {
 
 .picker__action {
   flex: 0 0 auto;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 0.85em;
   white-space: nowrap;
-  cursor: pointer;
-}
-
-.picker__action:hover {
-  border-color: var(--accent);
-  color: var(--text-primary);
 }
 
 /* A dropdown drops - the shortest duration in the set, because a menu that
@@ -643,15 +817,20 @@ select {
  * (the profile card) and the fourth dropped onto a row of its own with two
  * card-widths of empty space beside it.
  *
- * auto-fit with a real minimum says the same thing without counting: at the
- * 1080p baseline three cards fill the row and a fourth wraps under; from
- * about 1500px up all four sit across. The minimum is what keeps a card
- * readable - a Health card squeezed to 15rem wraps every finding onto three
- * lines.
+ * auto-fit with a real minimum says the same thing without counting. The
+ * minimum is what keeps a card readable - a Health card squeezed to 15rem
+ * wraps every finding onto three lines - and it is the widest card footer
+ * on one line: the Updates card's three default-size actions (Check again,
+ * Update all, Update selected) plus its padding, about 26rem (issue 518).
+ * Anything narrower wrapped that footer onto a second line, which made
+ * the card taller than its row neighbours. So at 1280px the cards sit two
+ * across, from about 1330px three, and from about 1760px - which includes
+ * the 1080p baseline - all four. Below one card's minimum a card takes the
+ * full width (the min() with 100%) rather than overflowing the page.
  */
 .attention-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr));
   gap: var(--space-4);
   margin-bottom: var(--space-6);
 }
@@ -832,6 +1011,7 @@ select {
  * (issue 334's density pass). */
 .card__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }
@@ -1061,20 +1241,6 @@ select {
 /* A <button>, not a bare <td onClick> (M6): the row-open affordance is the
  * primary navigation on the primary screen, so it must be reachable by
  * keyboard (Tab, then Enter/Space), not mouse-only. */
-.mod-row__name {
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.mod-row__name:hover {
-  color: var(--accent);
-}
-
 .mod-row__badges {
   white-space: nowrap;
 }
@@ -1135,20 +1301,6 @@ select {
 
 .game-card {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-  box-shadow: var(--shadow-raised);
-}
-
-.game-card:hover:not(:disabled) {
-  border-color: var(--accent);
 }
 
 .game-card__name {
@@ -1258,20 +1410,6 @@ select {
   gap: var(--space-2);
 }
 
-.slide-over__close,
-.slide-over__step {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 1.2em;
-  cursor: pointer;
-}
-
-.slide-over__step:disabled {
-  color: var(--border-strong);
-  cursor: default;
-}
-
 .slide-over__meta {
   margin: 0 0 var(--space-4);
   color: var(--text-secondary);
@@ -1311,7 +1449,6 @@ select {
 
 /* In the row menu the link is an item like the buttons beside it. */
 a.row-menu__item.mod-page-link {
-  display: block;
   color: var(--text-primary);
   text-decoration: none;
   white-space: nowrap;
@@ -1537,14 +1674,6 @@ a.row-menu__item.mod-page-link {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.modal__close {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 1.1em;
-  cursor: pointer;
 }
 
 .modal__body {
@@ -1788,12 +1917,6 @@ a.row-menu__item.mod-page-link {
   white-space: nowrap;
 }
 
-/* issue 340: the omnibar's own way back once it has fanned out. */
-.omnibar__clear {
-  padding: 0 var(--space-2);
-  line-height: 1;
-}
-
 .omnibar-results {
   margin-top: var(--space-6);
 }
@@ -1839,18 +1962,7 @@ a.row-menu__item.mod-page-link {
 
 .search-result__name {
   flex: 1;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
   font-weight: 700;
-  text-align: left;
-  cursor: pointer;
-}
-
-.search-result__name:hover {
-  text-decoration: underline;
 }
 
 /*
@@ -2053,10 +2165,7 @@ a.row-menu__item.mod-page-link {
 }
 
 .job-progress__dismiss {
-  border: none;
-  background: transparent;
   color: var(--text-muted);
-  cursor: pointer;
 }
 
 /* issue 269 Tier 3: a Workshop download failure carries a reason the user can
@@ -2208,19 +2317,11 @@ a.row-menu__item.mod-page-link {
 
 .toast__link {
   margin-top: var(--space-1);
-  padding: 0;
-  border: none;
-  background: none;
   color: var(--accent);
-  font: inherit;
-  cursor: pointer;
 }
 
 .toast__dismiss {
-  border: none;
-  background: transparent;
   color: var(--text-muted);
-  cursor: pointer;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -2268,18 +2369,11 @@ a.row-menu__item.mod-page-link {
   border-bottom: none;
 }
 
+/* The row's summary is a menu item; it reaches the row's own edges, so its
+ * hover fill spans the row and its text lines up with the detail below. */
 .tray__summary {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  width: auto;
+  margin: 0 calc(-1 * var(--space-2));
 }
 
 .tray__kind {
@@ -2554,21 +2648,6 @@ a.row-menu__item.mod-page-link {
   box-shadow: var(--shadow-raised);
 }
 
-.row-menu__item {
-  padding: var(--space-2);
-  border: none;
-  border-radius: var(--radius);
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.row-menu__item:hover {
-  background: var(--surface-sunken);
-}
-
 /* ---------------------------------------------------------------------- */
 /* The reorder modal (issue 332): drag-and-drop + a keyboard/button path, and   */
 /* its live conflict preview.                                              */
@@ -2825,26 +2904,6 @@ a.row-menu__item.mod-page-link {
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.setup-nav__tab {
-  padding: var(--space-2) var(--space-3);
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.setup-nav__tab:hover {
-  color: var(--text-primary);
-}
-
-.setup-nav__tab--active {
-  border-bottom-color: var(--accent);
-  color: var(--text-primary);
-  font-weight: 700;
-}
-
 .setup-section {
   display: flex;
   flex-direction: column;
@@ -2935,22 +2994,66 @@ a.row-menu__item.mod-page-link {
   border-bottom: 1px solid var(--border-subtle);
 }
 
-/*
- * The games table's two PATH columns (issue 334's density pass). A game
- * installed under a long Steam library path pushed the Default column off
- * the right-hand edge and stretched every other row to match. Each path
- * column now takes a share of the width and ellipsises what does not fit;
- * the full value is on the cell's own title, so nothing is lost.
- */
 .setup-table {
   table-layout: fixed;
 }
 
+/*
+ * The games table (issue 334's density pass, reworked by issue 518). A game
+ * installed under a long Steam library path pushed the Default column off
+ * the right-hand edge, so the two PATH columns are the ones that give: each
+ * ellipsises what does not fit, with the full value on its title, so
+ * nothing is lost. The table lays out automatically rather than in equal
+ * fixed shares, so every other column - a name, a value and the button that
+ * edits it - is as wide as its content needs: a button label never wraps
+ * (the control block's nowrap), and a fixed share too narrow for one is
+ * what used to break "Edit sources…" across two lines. `max-width: 0` is
+ * what lets a path column shrink below its text instead of forcing the
+ * table wider. The shares leave the content-sized columns their natural
+ * width at 1280px (a percentage column is served before an automatic one,
+ * so a larger share squeezes the names and the value cells instead), and
+ * the mod path's is larger by its "Edit mod path…" button, so both paths
+ * show the same length. At a narrow width every column gives way to its
+ * minimum and the paths keep what is left.
+ */
+.setup-table--games {
+  table-layout: auto;
+}
+
 .setup-table .col--path {
-  width: 32%;
+  width: 16%;
+  max-width: 0;
+}
+
+.setup-table .col--path-with-action {
+  width: 26%;
+}
+
+.setup-table__path {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* A path and the button that edits it, on one line: the path gives way
+ * (ellipsis), the button never does. */
+.setup-table__value {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.setup-table__value > .button {
+  flex: none;
+}
+
+/* The games table's own row action (Edit…, which opens every editor),
+ * last and as narrow as its button. */
+.setup-table__row-actions {
+  width: 1%;
+  white-space: nowrap;
 }
 
 /* N-2 (= epic M-4): the earlier fix put `display: flex` directly on the

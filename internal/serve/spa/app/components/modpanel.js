@@ -225,7 +225,7 @@ export function ModPanel({
         <div class="slide-over__panel" ref=${panelRef} tabindex="-1">
           <button
             type="button"
-            class="slide-over__close"
+            class="button button--quiet button--icon slide-over__close"
             onClick=${close}
             aria-label="Close"
           >
@@ -321,7 +321,7 @@ export function ModPanel({
         <div class="slide-over__panel" ref=${panelRef} tabindex="-1">
           <button
             type="button"
-            class="slide-over__close"
+            class="button button--quiet button--icon slide-over__close"
             onClick=${close}
             aria-label="Close"
           >
@@ -359,7 +359,7 @@ export function ModPanel({
         <div class="slide-over__nav">
           <button
             type="button"
-            class="slide-over__step"
+            class="button button--quiet button--icon slide-over__step"
             disabled=${!prevRow}
             aria-label="Previous mod"
             onClick=${() => prevRow && navigate(modUrl(contextPath, prevRow))}
@@ -368,7 +368,7 @@ export function ModPanel({
           </button>
           <button
             type="button"
-            class="slide-over__step"
+            class="button button--quiet button--icon slide-over__step"
             disabled=${!nextRow}
             aria-label="Next mod"
             onClick=${() => nextRow && navigate(modUrl(contextPath, nextRow))}
@@ -377,7 +377,7 @@ export function ModPanel({
           </button>
           <button
             type="button"
-            class="slide-over__close"
+            class="button button--quiet button--icon slide-over__close"
             onClick=${close}
             aria-label="Close"
           >

@@ -151,7 +151,7 @@ export function SetupImportArchive({ state, actions }) {
         !upload &&
         !jobActive &&
         html`
-          <label class="button button--small">
+          <label class="button">
             ${uploading ? "Uploading…" : "Choose archive…"}
             <input
               ref=${fileInput}
@@ -236,7 +236,7 @@ export function SetupImportArchive({ state, actions }) {
               >
                 <button
                   type="button"
-                  class="button button--primary button--small"
+                  class="button button--primary"
                   data-action="import-archive"
                   onClick=${startPlan}
                 >
@@ -248,7 +248,7 @@ export function SetupImportArchive({ state, actions }) {
                 html`
                   <button
                     type="button"
-                    class="button button--small"
+                    class="button"
                     disabled=${jobActive}
                     title=${jobActive ? "This upload is already being imported" : undefined}
                     onClick=${cancelUpload}

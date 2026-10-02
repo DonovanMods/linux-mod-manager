@@ -69,7 +69,7 @@ export function SetupAdopt({ state, actions }) {
         <${InlineJob} origin=${ADOPT_ORIGIN} state=${state} actions=${actions}>
           <button
             type="button"
-            class="button button--primary button--small"
+            class="button button--primary"
             data-action="plan-adopt"
             onClick=${start}
           >
@@ -97,7 +97,7 @@ export function SetupAdopt({ state, actions }) {
             >
               <button
                 type="button"
-                class="button button--primary button--small"
+                class="button button--primary"
                 data-action="plan-workshop-adopt"
                 onClick=${startWorkshop}
               >

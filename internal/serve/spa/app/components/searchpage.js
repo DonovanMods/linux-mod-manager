@@ -247,7 +247,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
       <div class="search-page__pager">
         <button
           type="button"
-          class="button button--small"
+          class="button"
           disabled=${searchPage.page === 0}
           onClick=${() => actions.searchPageGoTo(searchPage.page - 1)}
         >
@@ -256,7 +256,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
         <span class="mono">Page ${searchPage.page + 1}</span>
         <button
           type="button"
-          class="button button--small"
+          class="button"
           disabled=${!report.has_more}
           onClick=${() => actions.searchPageGoTo(searchPage.page + 1)}
         >

@@ -216,7 +216,7 @@ export function TopBar({
           class="omnibar"
           name="q"
           aria-label="Filter your library or search sources"
-          placeholder="Filter your library, or press Enter to search sources…"
+          placeholder="Filter your library — Enter searches sources"
           value=${query}
           onInput=${(e) => onQueryChange(e.currentTarget.value)}
           onKeyDown=${(e) => {
@@ -237,7 +237,7 @@ export function TopBar({
           html`
             <button
               type="button"
-              class="button button--small omnibar__clear"
+              class="button button--quiet button--icon omnibar__clear"
               aria-label="Clear search"
               onClick=${clearOmnibar}
             >
@@ -245,7 +245,7 @@ export function TopBar({
             </button>
             <button
               type="button"
-              class="button button--small omnibar__fanout"
+              class="button omnibar__fanout"
               onClick=${() => actions.searchSources(query)}
             >
               search sources ↵
@@ -263,7 +263,7 @@ export function TopBar({
       />
       <button
         type="button"
-        class="button button--small"
+        class="button button--quiet button--icon"
         data-action="shortcuts"
         title="Keyboard shortcuts"
         aria-label="Keyboard shortcuts"
@@ -273,7 +273,7 @@ export function TopBar({
       </button>
       <button
         type="button"
-        class="button button--small"
+        class="button"
         data-action="setup"
         title="Setup"
         aria-label="Setup"
@@ -283,7 +283,7 @@ export function TopBar({
       </button>
       <button
         type="button"
-        class="theme-toggle"
+        class="button theme-toggle"
         onClick=${() => onThemeChange(cycleTheme())}
       >
         Theme: ${currentTheme()}
@@ -310,7 +310,7 @@ function GamePicker({ status, games, open, onOpen, onClose }) {
     <div class="picker game-picker">
       <button
         type="button"
-        class="picker__trigger game-picker__trigger"
+        class="button button--quiet picker__trigger game-picker__trigger"
         data-picker="game"
         aria-haspopup="true"
         aria-expanded=${open ? "true" : "false"}
@@ -327,7 +327,7 @@ function GamePicker({ status, games, open, onOpen, onClose }) {
                 <li key=${g.id}>
                   <button
                     type="button"
-                    class="picker__item"
+                    class="menu-item picker__item"
                     onClick=${() => pick(g.id)}
                   >
                     ${g.name}
@@ -405,7 +405,7 @@ function ProfilePicker({
     <div class="picker profile-picker">
       <button
         type="button"
-        class="picker__trigger profile-picker__trigger"
+        class="button button--quiet picker__trigger profile-picker__trigger"
         data-picker="profile"
         data-profile=${route.profile}
         aria-haspopup="true"
@@ -423,7 +423,7 @@ function ProfilePicker({
                 <li key=${p.name} class="picker__row" data-profile=${p.name}>
                   <button
                     type="button"
-                    class="picker__item"
+                    class="menu-item picker__item"
                     onClick=${() => pick(p.name)}
                   >
                     ${p.name}
@@ -432,7 +432,7 @@ function ProfilePicker({
                     !p.is_default &&
                     html`<button
                       type="button"
-                      class="picker__action"
+                      class="button button--small picker__action"
                       data-action="switch"
                       data-profile=${p.name}
                       onClick=${() => switchTo(p.name)}
@@ -447,7 +447,7 @@ function ProfilePicker({
             <li>
               <button
                 type="button"
-                class="picker__item"
+                class="menu-item picker__item"
                 onClick=${() => {
                   onClose();
                   actions.openProfilesModal();

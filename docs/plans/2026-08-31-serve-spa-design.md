@@ -131,6 +131,54 @@ confident uppercase-tracked headers. Light: same hues re-weighted on paper-white
 for ≥1080p desktop: comfortable rows, three-across cards, slide-over ≈ 40% width. System font
 stack; `ui-monospace` for versions/paths/phases.
 
+### Controls (#518)
+
+One control system draws every button, select and text input: our own, not a CSS framework
+(owner decision, 2026-10-02; Tailwind is reconsidered after 2.0 in #519). It lives in one
+delimited block of `app.css` (`@control-system begin` … `end`).
+
+- **Scale** (`:root` tokens, shared by every theme): `--control-height` (2rem) and
+  `--control-height-sm` (1.5rem), `--control-padding-x`/`-sm`, `--control-radius`,
+  `--control-border-width`, `--control-font-size`/`-sm` and `--control-line-height`. `.button`,
+  `select` and the text-like inputs all use it, and `box-sizing: border-box` makes the height
+  exact, so controls sharing a row line up. A label is centred on both axes, with
+  `line-height: 1` on the button itself: Chrome rounds a positive half-leading down to whole
+  pixels, so a line box taller than the text set every label about a pixel high. A label never
+  wraps (`white-space: nowrap`; the prose-shaped `--link` and `--tile` excepted). A row of
+  controls wraps between them (`flex-wrap`), and a container too narrow for one label is a
+  layout to fix: the attention cards' minimum width is the widest footer on one line (26rem),
+  and Setup's Games table sizes its columns to their content and lets only the paths give.
+- **Variants**: `.button` (secondary, the default), `--primary` (the one main action of a bar,
+  card footer or modal footer), `--quiet` (borderless at rest, bordered on hover and focus) and
+  `--danger`. Quiet is only for a control with an affordance of its own: a picker or menu
+  trigger, which draws its ▾ (the game/profile pickers, Add mods, the activity bell), or a
+  glyph-only `--icon` button (?, ✕, ‹ ›). A text-only control with no glyph reads as a label
+  when it has no boundary at rest, so it stays secondary. The theme toggle is one: it cycles on
+  a click rather than opening a choice. Three shapes
+  cover the remaining cases: `--link` (reads as text: a row's own name, an inline "View"),
+  `--tab` (a tab in a tablist; `aria-selected` carries the underline) and `--tile` (a whole
+  card that is one button, the game chooser).
+- **Sizes**: default everywhere - bars, toolbars, card footers, modal footers, forms - and
+  `--small` only in dense contexts: table rows, a card's item rows, menus, inline result rows.
+  Small never sits beside default-size controls in one bar, toolbar or footer, and a button
+  beside a text input is default size, as the input is. `--icon` makes a glyph-only control
+  square at either size.
+- **Menus**: `.menu-item` is one item in a picker, a row's ⋯ menu or the activity tray.
+- **Focus**: one 2px `--focus-ring` outline on every control (inset on a menu item, whose menu
+  would clip it).
+- **Search**: the browser's own search-cancel is hidden; the omnibar's clear button also resets
+  what the search fanned out, so it is the one ✕.
+
+Ratchets: `control_system_test.go` fails the build if a `<button>` carries neither `button` nor
+`menu-item`, or if a rule outside the control block sets height, padding, border, radius or type
+size on a selector that targets a button (element classes may place a control - margin,
+position, flex, colour - but not reshape it), or if a `--quiet` button is neither `--icon` nor a
+`picker__trigger`. `e2e_controls_test.go` holds every control in the top bar and the library
+toolbar to one computed height in both themes. `e2e_control_centring_test.go` holds labels in
+the bars, card footers, a picker menu, the slide-over and Setup's Games table to vertically
+centred (±1px) and single-line text at 1280px. It also requires the attention cards' footers
+to fit one row and the omnibar's placeholder to show whole.
+
 ## Architecture
 
 ```text
