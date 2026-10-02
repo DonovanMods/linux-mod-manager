@@ -10,6 +10,9 @@
 // Source:   https://unpkg.com/htm@3.1.1/dist/htm.module.js
 // SHA-256:  ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4
 //           (of the UPSTREAM artifact as fetched, byte for byte)
+// License:  Apache-2.0, Copyright 2018 Google Inc.
+//           Full text: LICENSE.htm (this directory) and, with every
+//           third-party notice, THIRD_PARTY_NOTICES at the repo root.
 //
 // This file is that artifact verbatim, with 1 local edit:
 //  1. a header comment (these lines)

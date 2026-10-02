@@ -1,4 +1,4 @@
-.PHONY: all build run install test test-race test-verbose coverage fmt vet lint clean help man
+.PHONY: all build run install test test-race test-verbose coverage fmt vet lint clean help man notices
 
 # Build variables
 BINARY_NAME := lmm
@@ -94,6 +94,10 @@ update:
 ## man: Regenerate man pages from the command tree
 man:
 	@GOCACHE=$(GOCACHE_LOCAL) go run $(MAIN_PATH) gen-man docs/man/man1
+
+## notices: Regenerate THIRD_PARTY_NOTICES from go list -deps and the vendored SPA files
+notices:
+	@GOCACHE=$(GOCACHE_LOCAL) go run ./tools/notices
 
 ## clean: Remove build artifacts
 clean:
