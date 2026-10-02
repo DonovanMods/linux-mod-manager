@@ -754,7 +754,18 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				row.ProfileName = plan.To
 				row.Enabled = true
 				row.Deployed = true
+				// #514: the copy describes the same cached bytes, so it
+				// carries the source row's checksums (#372's rule,
+				// importCachedMod) instead of reading NO CHECKSUM.
+				checksums, msgs := s.rowChecksums(ctx, game, im)
 				err = s.saveInstalledMod(ctx, &row)
+				if err == nil {
+					for _, msg := range append(msgs, s.recordFileChecksums(ctx, row.SourceID, row.ID, game.ID, plan.To, checksums)...) {
+						msg = "Warning: " + strings.TrimPrefix(msg, "Warning: ")
+						result.Notes = append(result.Notes, msg)
+						emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
+					}
+				}
 			}
 			if err != nil {
 				msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)

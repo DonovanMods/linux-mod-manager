@@ -873,3 +873,21 @@ func TestCurseForge_GetDownloadURL_AuthorOptOutIsAManualDownload(t *testing.T) {
 	assert.NotErrorIs(t, err, domain.ErrAuthRequired)
 	assert.Contains(t, err.Error(), "mod author has disabled third-party downloads; visit CurseForge website to download manually")
 }
+
+// TestCurseForge_GetDownloadURL_ErrorCarriesNoStepPrefix (#514): core's
+// download path names the step ("getting download URL: ") once for every
+// source, so the source returns the refusal itself - the client and this
+// adapter each adding the same prefix rendered it three times over.
+func TestCurseForge_GetDownloadURL_ErrorCarriesNoStepPrefix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	_, err := cf.GetDownloadURL(context.Background(), &domain.Mod{ID: "238222"}, "4567")
+	require.Error(t, err)
+	assert.Equal(t, "mod author has disabled third-party downloads; visit CurseForge website to download manually", err.Error())
+}

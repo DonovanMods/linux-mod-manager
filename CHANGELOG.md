@@ -1735,6 +1735,29 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A manually downloaded mod no longer stays NO CHECKSUM forever (#514).**
+  A mod whose author has turned off third-party downloads (CurseForge) is
+  fetched by hand and imported, but the import recorded no checksum, and
+  `lmm verify --fix` could only fill one by downloading the file again —
+  which the source refuses — so every verify warned `NO CHECKSUM` and the
+  repair failed every time. `lmm import <archive>` now records the archive's
+  md5 for the file it resolves, as a download does, and `lmm import` scan
+  mode records the adopted file's md5 in copy mode. When `--fix` meets a
+  file its source won't serve, it fills the checksum from the mod's own
+  complete cache entry without downloading anything and says so ("Checksum
+  filled from the cached files (the source won't serve this file)"); a
+  locked mod qualifies too, since its own cache entry moves no version. An
+  existing install's checksum fills on the next `lmm verify --fix`. Only
+  when the cache entry is missing or incomplete does the warning stand,
+  and every failed verify re-download now names the mod's page ("Download
+  it manually from: …", and `mod_url` on the finding in `--json`). The
+  failure text no longer repeats itself: "getting download URL:" was
+  added by the CurseForge client, its adapter and core, and is now added
+  once, by core. Three metadata-only writes that silently dropped every
+  stored checksum now keep them: `lmm import` scan mode's metadata
+  backfill, `lmm mod edit` without a re-link, and `lmm profile switch`
+  copying a mod's row from another profile.
+
 - **`lmm search --limit` above a source's page cap fills the limit (#511).**
   `lmm search -g wow auctionator --limit 100` returned 51 hits with
   `has_more: true`: CurseForge serves 50 rows a page and says so, but the

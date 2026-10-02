@@ -14,6 +14,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -363,8 +364,14 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	if !plan.Relink {
 		// A re-link already saved mod under its new identity above; saving it again here
 		// would be a harmless but redundant duplicate write.
+		// #514: the full-row save re-keys installed_mod_files, dropping every
+		// checksum; an edit changes no file, so they are carried across.
+		checksums, msgs := s.rowChecksums(ctx, game, mod)
 		if err := s.saveInstalledMod(ctx, &mod); err != nil {
 			return nil, fmt.Errorf("saving changes: %w", err)
+		}
+		for _, msg := range append(msgs, s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profileName, checksums)...) {
+			warn("%s", strings.TrimPrefix(msg, "Warning: "))
 		}
 	}
 

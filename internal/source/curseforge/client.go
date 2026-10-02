@@ -411,13 +411,15 @@ func (c *Client) GetModFile(ctx context.Context, modID, fileID int) (*File, erro
 	return &resp.Data, nil
 }
 
-// GetDownloadURL fetches the download URL for a mod file
+// GetDownloadURL fetches the download URL for a mod file. Its error is the
+// request's own, unprefixed: the one caller (CurseForge.GetDownloadURL)
+// passes it to core, which names the step for every source (#514).
 func (c *Client) GetDownloadURL(ctx context.Context, modID, fileID int) (string, error) {
 	path := fmt.Sprintf("/v1/mods/%d/files/%d/download-url", modID, fileID)
 
 	var resp StringDownloadURL
 	if err := c.doRequest(ctx, http.MethodGet, path, &resp); err != nil {
-		return "", fmt.Errorf("getting download URL: %w", err)
+		return "", err
 	}
 	return resp.Data, nil
 }

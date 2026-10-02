@@ -766,6 +766,14 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 		return result, fmt.Errorf("failed to save mod: %w", err)
 	}
+	// #514: the row exists now, so its files get a checksum. The import has
+	// the archive in hand, so that is the archive's md5 - the value a
+	// download of the same file records. Left empty, the row read NO
+	// CHECKSUM, which only a re-download could fill, and a file its source
+	// will not serve (the reason most imports happen) never could.
+	for _, msg := range s.recordFileChecksums(ctx, result.Mod.SourceID, result.Mod.ID, game.ID, profileName, archiveChecksums(archivePath, result.FileIDs, warn)) {
+		warn("%s", msg)
+	}
 
 	// v2 Phase 3 Ruling 16 (B): the same lazy profile creation the install
 	// flows do, through the same helper - which compares with errors.Is
@@ -836,6 +844,26 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	// it could not put back, are this flow's to report.
 	s.takeCaptureWarnings(game.ID, OpImport, ImportArchiveWarning, &result.Warnings, emit)
 	return result, nil
+}
+
+// archiveChecksums gives every one of fileIDs the md5 of the archive at
+// path: each is a file ID this one archive was recorded under (#514). A
+// hashing failure is reported through warn and records nothing - the import
+// itself succeeded, and the row is only as it was before.
+func archiveChecksums(path string, fileIDs []string, warn func(string, ...any)) []fileChecksum {
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	sum, err := md5File(path)
+	if err != nil {
+		warn("could not checksum %s: %v", filepath.Base(path), err)
+		return nil
+	}
+	checksums := make([]fileChecksum, 0, len(fileIDs))
+	for _, id := range fileIDs {
+		checksums = append(checksums, fileChecksum{fileID: id, checksum: sum})
+	}
+	return checksums
 }
 
 // discardImportedCacheEntry removes the cache entry THIS ImportArchive call

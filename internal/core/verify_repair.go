@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // redownloadModFile re-downloads a single mod file and extracts it to the
@@ -67,6 +68,90 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 		return false, fmt.Errorf("saving checksum: %w", err)
 	}
 	return true, nil
+}
+
+// populateChecksum is the NO CHECKSUM repair: it fills fileID's empty
+// checksum, reporting whether one was persisted and whether it came from the
+// cache rather than a download.
+//
+// A re-download is the usual way, but a file its source will not serve
+// (source.ErrManualDownload - a CurseForge author's third-party opt-out) can
+// never be re-downloaded, so the warning could never clear (#514). For such
+// a file - a row already flagged ManualDownload, or one whose re-download
+// was just refused that way - the checksum is computed from the mod's own
+// cache entry instead (fillChecksumFromCache). verify only ever checks a
+// checksum's presence, so a cache-derived value is as good as a download's.
+// A flagged row tries the cache FIRST and never asks the source when that
+// works; the flag is not trusted further than that, so an incomplete entry
+// still falls back to the download.
+//
+// Filling from the recorded version's own cache entry moves nothing, so it
+// is allowed for a LOCKED ref too; only the download carries #325's gate.
+func (r *verifyRun) populateChecksum(mod *domain.InstalledMod, fileID string, ref *domain.ModReference) (persisted, fromCache bool, err error) {
+	if mod.ManualDownload {
+		if filled, ferr := r.fillChecksumFromCache(mod, fileID); filled || ferr != nil {
+			return filled, filled, ferr
+		}
+	}
+	persisted, err = r.redownloadModFile(r.ctx, mod, fileID, ref)
+	if mod.ManualDownload || !errors.Is(err, source.ErrManualDownload) {
+		return persisted, false, err
+	}
+	filled, ferr := r.fillChecksumFromCache(mod, fileID)
+	if ferr != nil {
+		return false, false, ferr
+	}
+	if !filled {
+		return false, false, err // nothing to fill from: the refusal stands
+	}
+	return true, true, nil
+}
+
+// fillChecksumFromCache records fileID's checksum from mod's cache entry,
+// without downloading anything (#514), when that entry is complete for the
+// file: its completion marker is present and checksumFromCache can fold its
+// recorded members (or hash its retained original). It reports false, with
+// no error, when there is nothing complete to fill from; the error is only a
+// failure to store what was computed.
+func (r *verifyRun) fillChecksumFromCache(mod *domain.InstalledMod, fileID string) (bool, error) {
+	gameCache := r.svc.GetGameCache(r.game)
+	if !gameCache.HasFileIDs(r.game.ID, mod.SourceID, mod.ID, mod.Version, []string{fileID}) {
+		return false, nil
+	}
+	checksum, err := checksumFromCache(gameCache, r.game.ID, mod.SourceID, mod.ID, mod.Version, fileID)
+	if err != nil {
+		// A recorded member that is gone or unreadable: the entry is not
+		// complete after all, so there is nothing honest to record.
+		r.svc.logger().Debug("cannot fill checksum from cache", "mod", mod.ID, "file", fileID, "err", err)
+		return false, nil
+	}
+	if checksum == "" {
+		return false, nil
+	}
+	if err := r.svc.saveFileChecksum(r.ctx, mod.SourceID, mod.ID, r.game.ID, r.profile, fileID, checksum); err != nil {
+		return false, fmt.Errorf("saving checksum from the cached files: %w", err)
+	}
+	return true, nil
+}
+
+// downloadPage is the page of the mod whose repair download failed - the
+// place to fetch the file by hand - when err carries one (#513's
+// *DownloadError, already limited to http(s)); "" otherwise.
+func downloadPage(err error) string {
+	var dl *DownloadError
+	if errors.As(err, &dl) {
+		return dl.ModURL
+	}
+	return ""
+}
+
+// emitDownloadPage writes the sub-line naming a failed repair download's
+// page under the failure's own, when there is one (#514). The finding's
+// ModURL carries the same page for --json and the web UI.
+func (r *verifyRun) emitDownloadPage(page string) {
+	if page != "" {
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Download it manually from: " + page})
+	}
 }
 
 // downloadWarningSink carries a re-download's download-time warnings

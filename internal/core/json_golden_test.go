@@ -1078,6 +1078,17 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #514: a --fix re-download that failed names the mod's page,
+			// so --json and the web UI can offer it. omitzero, so every
+			// other row (verify_finding above) carries no key at all.
+			"verify_finding_download_failed",
+			core.VerifyFinding{
+				ModID: "8939586", ModName: "Auctionator", FileID: "1", Status: "no_checksum",
+				Note:   "getting download URL: mod author has disabled third-party downloads; visit CurseForge website to download manually",
+				ModURL: "https://www.curseforge.com/wow/addons/auctionator",
+			},
+		},
+		{
 			// Findings is deliberately left nil to pin that a nil slice
 			// marshals as "[]", not "null" - a clean verify run reports it.
 			// Cached (#336) is set for the same reason Force is on
