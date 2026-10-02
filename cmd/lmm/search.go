@@ -83,13 +83,21 @@ func init() {
 	searchCmd.Flags().StringVarP(&searchProfile, "profile", "p", "", "profile to check for installed mods (default: active profile)")
 	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (NexusMods: the category name; CurseForge: its numeric id)")
 	searchCmd.Flags().StringSliceVar(&searchTags, "tag", nil, "filter by tag (repeatable; source-specific)")
-	searchCmd.Flags().StringVar(&searchSort, "sort", string(domain.SortRelevance), "order results by relevance, updated (newest first), downloads (most first) or popular (most endorsed first); an exact name match always leads")
-	if err := searchCmd.RegisterFlagCompletionFunc("sort", completeSearchSort); err != nil {
-		panic(err) // a programming error: --sort is declared on the line above
-	}
+	addSearchSortFlag(searchCmd, &searchSort)
 	searchCmd.Flags().BoolVar(&searchRefresh, "refresh", false, "rebuild a locally cached source index (Thunderstore) before searching")
 
 	rootCmd.AddCommand(searchCmd)
+}
+
+// addSearchSortFlag declares --sort on a command that lists search results -
+// `lmm search` and `lmm install <query>` (#512) - with the one wording and the
+// one completion, so the two cannot drift. The value is validated where it is
+// used (domain.ParseSearchSort), so a bad one is the same error everywhere.
+func addSearchSortFlag(cmd *cobra.Command, dest *string) {
+	cmd.Flags().StringVar(dest, "sort", string(domain.SortRelevance), "order results by relevance, updated (newest first), downloads (most first) or popular (most endorsed first); an exact name match always leads")
+	if err := cmd.RegisterFlagCompletionFunc("sort", completeSearchSort); err != nil {
+		panic(err) // a programming error: --sort is declared on the line above
+	}
 }
 
 // searchSortDescriptions is what shell completion says beside each --sort

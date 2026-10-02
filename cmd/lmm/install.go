@@ -14,6 +14,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/spf13/cobra"
 )
@@ -229,9 +230,12 @@ func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, valida
 }
 
 // searchAndSelectMods runs an interactive paginated search for query and returns
-// the user's selection. If only one match exists or installYes is set, it auto-
-// selects without prompting. Returns ErrCancelled if the user types 'q'.
-func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, source, query, profileName string) ([]*domain.Mod, error) {
+// the user's selection. The listing follows core's search ordering contract (an
+// exact-name match first, then sortBy; #512). If only one match exists it is
+// selected without prompting; with installYes and several, only a hit named
+// exactly like the query is (otherwise installNoExactMatchError - a guess is
+// never installed). Returns ErrCancelled if the user types 'q'.
+func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, source, query, profileName string, sortBy domain.SearchSort) ([]*domain.Mod, error) {
 	const displayPageSize = 10
 
 	// Ruling 15: the header announces an interactive search whose listing
@@ -242,7 +246,7 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 		fmt.Printf("Searching for \"%s\"...\n\n", query)
 	}
 
-	searchResult, err := service.SearchMods(ctx, source, gameID, query, "", nil, 0, displayPageSize)
+	searchResult, err := service.SearchModsOrdered(ctx, source, gameID, query, sortBy, 0, displayPageSize)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return nil, authPromptError(source)
@@ -271,9 +275,19 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 		}
 	}
 
-	// Trivial selections
-	if len(searchResult.Mods) == 1 || installYes {
+	// Trivial selection: one hit is the only possible answer.
+	if len(searchResult.Mods) == 1 {
 		return []*domain.Mod{&searchResult.Mods[0]}, nil
+	}
+
+	// -y with several hits (#512): core ordered the page, so an exact-name
+	// match is first. Anything else would be a guess, and -y exists for
+	// scripts that cannot look at the answer.
+	if installYes {
+		if top := &searchResult.Mods[0]; core.NameMatchesQuery(top.Name, query) {
+			return []*domain.Mod{top}, nil
+		}
+		return nil, newInstallNoExactMatchError(query, searchResult)
 	}
 
 	// Non-interactive rule (Ruling 2): more than one match with no -y/--yes
@@ -333,14 +347,14 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 		}
 		if (input == "n" || input == "N") && hasMore {
 			currentPage++
-			currentResult, err = service.SearchMods(ctx, source, gameID, query, "", nil, currentPage, displayPageSize)
+			currentResult, err = service.SearchModsOrdered(ctx, source, gameID, query, sortBy, currentPage, displayPageSize)
 			if err != nil {
 				return nil, fmt.Errorf("search failed: %w", err)
 			}
 			if len(currentResult.Mods) == 0 {
 				fmt.Println("No more results.")
 				currentPage--
-				currentResult, err = service.SearchMods(ctx, source, gameID, query, "", nil, currentPage, displayPageSize)
+				currentResult, err = service.SearchModsOrdered(ctx, source, gameID, query, sortBy, currentPage, displayPageSize)
 				if err != nil {
 					return nil, fmt.Errorf("search failed: %w", err)
 				}
@@ -350,7 +364,7 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 		}
 		if (input == "p" || input == "P") && currentPage > 0 {
 			currentPage--
-			currentResult, err = service.SearchMods(ctx, source, gameID, query, "", nil, currentPage, displayPageSize)
+			currentResult, err = service.SearchModsOrdered(ctx, source, gameID, query, sortBy, currentPage, displayPageSize)
 			if err != nil {
 				return nil, fmt.Errorf("search failed: %w", err)
 			}
@@ -385,6 +399,7 @@ var (
 	skipVerify          bool
 	installForce        bool
 	installNoDeps       bool
+	installSort         string
 )
 
 var installCmd = &cobra.Command{
@@ -396,6 +411,13 @@ A search query finds the mod interactively; --id skips the search and
 fetches the mod directly by its source-specific ID. Combine --id with
 --file to also skip the interactive file-selection prompt, installing the
 exact file(s) you name (comma-separated for more than one).
+
+The result list is ordered like 'lmm search': a mod whose name is exactly
+the query comes first, then the rest by --sort (relevance, the default;
+updated and downloads, newest and most first; popular). With -y/--yes and
+several results, the mod named exactly like the query is installed; if none
+is, nothing is installed and the top candidates are listed so you can pick
+one with --id.
 
 Use -s/--source to pick which configured source to search or fetch from.
 If omitted and the game has more than one configured source, you are
@@ -417,7 +439,8 @@ Examples:
   lmm install "skyui" --game skyrim-se --profile survival
   lmm install --id 12345 --game skyrim-se
   lmm install --id 12345 --file 67890 --game skyrim-se   # skip search and file prompt
-  lmm install "mod name" -g skyrim-se -y       # Auto-select and auto-confirm
+  lmm install "skyui" -g skyrim-se --sort downloads   # most downloaded first
+  lmm install "mod name" -g skyrim-se -y       # Install the exact-name match, auto-confirm
   lmm install "mod name" -g skyrim-se --no-deps  # Skip dependencies`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runInstall,
@@ -429,11 +452,13 @@ func init() {
 	installCmd.Flags().StringVar(&installVersion, "version", "", "specific version to install (default: latest; archived files are searched automatically)")
 	installCmd.Flags().StringVar(&installModID, "id", "", "mod ID (skips search)")
 	installCmd.Flags().StringVar(&installFileID, "file", "", "file ID(s), comma-separated (skips file selection)")
-	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "auto-select first/primary option (no prompts)")
+	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "auto-confirm; of several search results, install the one named exactly like the query (refused if none is), else the first/primary option (no prompts)")
 	installCmd.Flags().BoolVar(&installShowArchived, "show-archived", false, "show archived/old files")
 	installCmd.Flags().BoolVar(&skipVerify, "skip-verify", false, "skip checksum storage and display")
 	installCmd.Flags().BoolVarP(&installForce, "force", "f", false, "install without conflict prompts")
 	installCmd.Flags().BoolVar(&installNoDeps, "no-deps", false, "skip automatic dependency installation")
+
+	addSearchSortFlag(installCmd, &installSort)
 
 	rootCmd.AddCommand(installCmd)
 }
@@ -511,6 +536,13 @@ func runInstall(cmd *cobra.Command, args []string) error {
 }
 
 func doInstall(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
+	// --sort is checked first, before anything is read or fetched - the
+	// same refusal `lmm search` gives for a value outside the set.
+	sortBy, err := domain.ParseSearchSort(installSort)
+	if err != nil {
+		return err
+	}
+
 	// A --file value that parses to ZERO IDs (only commas/whitespace) fails
 	// fast, before any search or fetch - otherwise it would silently degrade
 	// into "no --file at all": selectInstallFiles' flag branch would return
@@ -554,7 +586,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 			return fmt.Errorf("failed to fetch mod: %w", err)
 		}
 	} else {
-		selectedMods, err := searchAndSelectMods(ctx, service, game.ID, installSource, args[0], profileName)
+		selectedMods, err := searchAndSelectMods(ctx, service, game.ID, installSource, args[0], profileName, sortBy)
 		if err != nil {
 			return err
 		}
@@ -1405,3 +1437,66 @@ func installedRefNames(refs []core.InstalledRef) []string {
 	}
 	return names
 }
+
+// maxInstallCandidates caps the candidates installNoExactMatchError names: a
+// refusal is a short list to choose from, not the search page.
+const maxInstallCandidates = 10
+
+// installCandidate is one hit a refused `install -y` offers: the --id that
+// installs it, and the name that lets a person (or script) recognise it.
+type installCandidate struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// installNoExactMatchError is `lmm install <query> -y` refusing to guess
+// (#512): the search found several mods and none is named like the query, so
+// auto-installing the top hit would install something nobody chose. It is a
+// confirmation-required refusal (errors.Is core.ErrConfirmationRequired - the
+// same exit code as every other prompt a flag could not answer) that, unlike
+// the bare sentinel, hands back the way out as data: Details() puts Query,
+// the top Candidates (capped at maxInstallCandidates, in the order the
+// listing showed them) and the Remedy in the --json envelope, so a script can
+// retry with `--id` without parsing the sentence. Total is how many hits the
+// search found, which says whether Candidates is all of them.
+type installNoExactMatchError struct {
+	Query      string             `json:"query"`
+	Candidates []installCandidate `json:"candidates"`
+	Total      int                `json:"total"`
+	Remedy     string             `json:"remedy"`
+}
+
+func newInstallNoExactMatchError(query string, result source.SearchResult) *installNoExactMatchError {
+	n := min(len(result.Mods), maxInstallCandidates)
+	candidates := make([]installCandidate, n)
+	for i := 0; i < n; i++ {
+		candidates[i] = installCandidate{ID: result.Mods[i].ID, Name: result.Mods[i].Name}
+	}
+	return &installNoExactMatchError{
+		Query:      query,
+		Candidates: candidates,
+		Total:      max(result.TotalCount, len(result.Mods)),
+		Remedy:     "pass --id <id> to install one of the candidates directly",
+	}
+}
+
+// Error names the query, the refusal and the candidates, so the plain-mode
+// line is as actionable as the envelope.
+func (e *installNoExactMatchError) Error() string {
+	parts := make([]string, len(e.Candidates))
+	for i, c := range e.Candidates {
+		parts[i] = fmt.Sprintf("%s (%s)", c.ID, c.Name)
+	}
+	more := ""
+	if e.Total > len(e.Candidates) {
+		more = fmt.Sprintf(", and %d more", e.Total-len(e.Candidates))
+	}
+	return fmt.Sprintf("confirmation required: -y/--yes only installs a result named exactly %q, and none of the %d is; nothing was installed - %s. Candidates: %s%s",
+		e.Query, e.Total, e.Remedy, strings.Join(parts, ", "), more)
+}
+
+// Unwrap makes errors.Is(err, core.ErrConfirmationRequired) true.
+func (e *installNoExactMatchError) Unwrap() error { return core.ErrConfirmationRequired }
+
+// Details implements the --json error envelope's extension point.
+func (e *installNoExactMatchError) Details() any { return e }

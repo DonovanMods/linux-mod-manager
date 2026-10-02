@@ -154,7 +154,7 @@ const (
 	// remedySelectSource answers resolveSource's source picker.
 	remedySelectSource = "pass -s/--source to select a mod source"
 	// remedyPickInstallMod answers `lmm install`'s search-result picker.
-	remedyPickInstallMod = "pass -y/--yes to auto-select the first result, or --id to install a specific mod directly"
+	remedyPickInstallMod = "pass -y/--yes to install the result named exactly like the query, or --id to install a specific mod directly"
 	// remedyNameAuthSource answers `lmm auth login`/`logout`'s source
 	// picker, which has no flag of its own - the source is positional.
 	remedyNameAuthSource = "pass the source ID as a positional argument (e.g. lmm auth logout <source>)"
