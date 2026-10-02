@@ -40,6 +40,7 @@ archives:
     files:
       - README.md
       - LICENSE
+      - THIRD_PARTY_NOTICES
       - CHANGELOG.md
       - docs/man/man1/**
 
@@ -90,6 +91,11 @@ nfpms:
       # three formats; the only thing given up is rpm's %license marking.
       - src: LICENSE
         dst: /usr/share/doc/lmm/LICENSE
+      # The third-party notices (#522) ride beside LICENSE, plain for the
+      # same reason: the compiled-in Go modules and the vendored SPA
+      # libraries need their notices to accompany every binary package.
+      - src: THIRD_PARTY_NOTICES
+        dst: /usr/share/doc/lmm/THIRD_PARTY_NOTICES
     # .7z and .rar mod archives are extracted by shelling out to the system
     # tool; .zip is native Go. Soft dependencies, never hard ones - lmm is
     # fully usable without them, and each ecosystem names them differently.
@@ -109,7 +115,11 @@ aurs:
     description: Terminal-based mod manager for Linux - CLI and local web UI for NexusMods, CurseForge and custom sources
     maintainers:
       - Donovan C. Young <dyoung522@gmail.com>
-    license: MIT
+    # One SPDX expression (goreleaser renders this field as a single
+    # license=() element): lmm's own MIT plus every id in
+    # THIRD_PARTY_NOTICES. internal/notices' TestGoreleaserShipsNotices
+    # fails if it drifts from the generated set (#522).
+    license: Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND LicenseRef-PublicDomain AND MIT
     private_key: "{{ .Env.AUR_KEY }}"
     git_url: ssh://aur@aur.archlinux.org/lmm-bin.git
     # A release without the AUR deploy key still has to succeed: the secret
@@ -126,6 +136,7 @@ aurs:
     package: |-
       install -Dm755 "./lmm" "${pkgdir}/usr/bin/lmm"
       install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/lmm-bin/LICENSE"
+      install -Dm644 "./THIRD_PARTY_NOTICES" "${pkgdir}/usr/share/licenses/lmm-bin/THIRD_PARTY_NOTICES"
       install -Dm644 "./README.md" "${pkgdir}/usr/share/doc/lmm/README.md"
       install -Dm644 "./CHANGELOG.md" "${pkgdir}/usr/share/doc/lmm/CHANGELOG.md"
 

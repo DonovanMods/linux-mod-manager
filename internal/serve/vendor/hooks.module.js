@@ -8,6 +8,9 @@
 // Source:   https://unpkg.com/preact@10.29.8/hooks/dist/hooks.module.js
 // SHA-256:  a6ee626f2d01570592dd569a792e3f050154aa02890eead8c223fa3ed5aa3d5a
 //           (of the UPSTREAM artifact as fetched, byte for byte)
+// License:  MIT, Copyright (c) 2015-present Jason Miller
+//           Full text: LICENSE.preact (this directory) and, with every
+//           third-party notice, THIRD_PARTY_NOTICES at the repo root.
 //
 // This file is that artifact verbatim, with 2 local edits:
 //  1. a header comment (these lines)

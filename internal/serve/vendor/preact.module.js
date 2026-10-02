@@ -10,6 +10,9 @@
 // Source:   https://unpkg.com/preact@10.29.8/dist/preact.module.js
 // SHA-256:  c30e721ebfdc6e2ad4c18c14d2dfb82667829c8aec27de1207774e3fc16858a8
 //           (of the UPSTREAM artifact as fetched, byte for byte)
+// License:  MIT, Copyright (c) 2015-present Jason Miller
+//           Full text: LICENSE.preact (this directory) and, with every
+//           third-party notice, THIRD_PARTY_NOTICES at the repo root.
 //
 // This file is that artifact verbatim, with 1 local edit:
 //  1. a header comment (these lines)

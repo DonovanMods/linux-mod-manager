@@ -57,6 +57,12 @@ Coordinator final evidence recorded before this checklist was finalized:
   assets, generated shell completions and packaged man pages; install and
   smoke-test the applicable packages on supported Linux systems. These checks
   have not been run locally because GoReleaser is absent.
+- [ ] Confirm `THIRD_PARTY_NOTICES` is current (`make notices` leaves no diff;
+  the `internal/notices` drift test passes) and that it lands in every
+  package (#522): in each `.tar.gz` at the archive root, at
+  `/usr/share/doc/lmm/THIRD_PARTY_NOTICES` in the `.deb`, `.rpm` and `.apk`,
+  and at `/usr/share/licenses/lmm-bin/THIRD_PARTY_NOTICES` in the AUR
+  package, whose `license=` must list every SPDX id the file names.
 - [ ] Decide whether the `AUR_KEY` secret is configured and whether this cut
   should publish to AUR. The current config skips AUR upload when the secret
   is empty.
@@ -78,9 +84,9 @@ Coordinator final evidence recorded before this checklist was finalized:
    `## [2.0.0] - 2026-08-30` section in `CHANGELOG.md`, re-date that section
    to the actual cut date, and leave a fresh `[Unreleased]` heading. Reuse or
    update its existing `[2.0.0]` comparison reference; do not add a second
-   v2.0.0 section or reference. Regenerate man pages if they changed. Keep
+   v2.0.0 section or reference. Regenerate man pages (`make man`) and the third-party notices (`make notices`) if they changed. Keep
    `cmd/lmm/root.go` at `2.0.0` and the module path at `/v2`.
-2. Review the release diff, run `make test`, `make vet`, and `make man`, then
+2. Review the release diff, run `make test`, `make vet`, `make man`, and `make notices`, then
    commit the release preparation on `v2`.
 3. Create `v2.0.0` on the approved release commit and push the branch and tag
    to the project's release remote. The release workflow runs only for `v*`
