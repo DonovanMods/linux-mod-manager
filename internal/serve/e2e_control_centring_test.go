@@ -15,7 +15,7 @@ import (
 )
 
 // labelCentringJS measures every visible text-labelled control under each
-// named root - a .button (bar the text-shaped link and the card-shaped
+// named root - a .button, a <button> or a link drawn as one (bar the text-shaped link and the card-shaped
 // tile) or a .menu-item: the control's border box against the box of its
 // own text (a Range over its contents), and how many lines that text takes.
 const labelCentringJS = `((roots) => {
@@ -23,7 +23,7 @@ const labelCentringJS = `((roots) => {
 	for (const [name, sel] of Object.entries(roots)) {
 		const root = document.querySelector(sel);
 		if (!root) { out[name] = null; continue; }
-		out[name] = [...root.querySelectorAll("button.button, button.menu-item")]
+		out[name] = [...root.querySelectorAll("button.button, a.button, button.menu-item")]
 			.filter((b) => {
 				const r = b.getBoundingClientRect();
 				return r.width > 0 && r.height > 0 && b.textContent.trim() !== "" &&

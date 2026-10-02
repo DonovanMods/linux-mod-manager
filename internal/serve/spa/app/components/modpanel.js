@@ -26,6 +26,7 @@ import { displayVersion } from "../version.js";
 import { authorTitle, displayAuthor } from "../author.js";
 import { InlineJob } from "./jobprogress.js";
 import { ModPageLink } from "./modpagelink.js";
+import { Arrow } from "./arrow.js";
 
 /** modUrl builds the ?mod= URL for row, on the given base path - the same
  * annotation library.js#openRow writes, reused here for </-> stepping. */
@@ -364,7 +365,7 @@ export function ModPanel({
             aria-label="Previous mod"
             onClick=${() => prevRow && navigate(modUrl(contextPath, prevRow))}
           >
-            ←
+            <${Arrow} dir="left" />
           </button>
           <button
             type="button"
@@ -373,7 +374,7 @@ export function ModPanel({
             aria-label="Next mod"
             onClick=${() => nextRow && navigate(modUrl(contextPath, nextRow))}
           >
-            →
+            <${Arrow} dir="right" />
           </button>
           <button
             type="button"
@@ -595,7 +596,7 @@ export function ModPanel({
             );
           }}
         >
-          More info →
+          More info <${Arrow} dir="right" />
         </a>
       </div>
     </div>

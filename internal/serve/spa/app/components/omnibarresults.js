@@ -19,6 +19,7 @@ import {
   skippedSignInNotice,
   warningsCaption,
 } from "./searchresults.js";
+import { Arrow } from "./arrow.js";
 
 export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   const q = (query ?? "").trim();
@@ -97,8 +98,9 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
             e.preventDefault();
             navigate(allResultsPath);
           }}
-          >See all results${report.has_more ? " (more available)" : ""} →</a
-        >
+          >See all results${report.has_more ? " (more available)" : ""}${" "}
+          <${Arrow} dir="right"
+        /></a>
       </p>
     </section>
   `;

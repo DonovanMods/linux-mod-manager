@@ -95,22 +95,23 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
           ${hit.name}
         </button>
         <span class="mono search-result__version">${displayVersion(hit)}</span>
-        <span class="badge search-result__source" title="Source"
-          >${hit.source_id}</span
+        <span class="search-result__badges">
+          <span class="badge search-result__source" title="Source"
+            >${hit.source_id}</span
+          >
+          ${
+            detailed &&
+            hit.category &&
+            html`<span class="badge search-result__category"
+              >${hit.category}</span
+            >`
+          }
+        </span>
+        <span
+          class="search-result__author"
+          title=${displayAuthor(hit) ? authorTitle(hit) : undefined}
+          >${displayAuthor(hit)}</span
         >
-        ${
-          detailed &&
-          hit.category &&
-          html`<span class="badge search-result__category"
-            >${hit.category}</span
-          >`
-        }
-        ${
-          displayAuthor(hit) &&
-          html`<span class="search-result__author" title=${authorTitle(hit)}
-            >${displayAuthor(hit)}</span
-          >`
-        }
         <span
           class="search-result__updated"
           data-testid="search-result-updated"
@@ -118,35 +119,37 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
           >${updated}</span
         >
         ${
-          downloads &&
+          detailed &&
           html`<span class="search-result__downloads">${downloads}</span>`
         }
-        <${ModPageLink}
-          className="search-result__page"
-          url=${hit.source_url}
-          sourceID=${hit.source_id}
-          modName=${hit.name}
-        />
-        <${InlineJob} origin=${origin} state=${state} actions=${actions}>
-          ${
-            hit.installed
-              ? html`<span class="badge badge--good">Installed</span>`
-              : html`<button
-                  type="button"
-                  class="button button--small search-result__install"
-                  onClick=${() =>
-                    actions.openPlan({
-                      kind: "install",
-                      origin,
-                      title: `Install ${hit.name}`,
-                      confirmLabel: "Install",
-                      options: { source_id: hit.source_id, mod_id: hit.id },
-                    })}
-                >
-                  Install
-                </button>`
-          }
-        <//>
+        <span class="search-result__actions">
+          <${ModPageLink}
+            className="search-result__page"
+            url=${hit.source_url}
+            sourceID=${hit.source_id}
+            modName=${hit.name}
+          />
+          <${InlineJob} origin=${origin} state=${state} actions=${actions}>
+            ${
+              hit.installed
+                ? html`<span class="badge badge--good">Installed</span>`
+                : html`<button
+                    type="button"
+                    class="button button--small search-result__install"
+                    onClick=${() =>
+                      actions.openPlan({
+                        kind: "install",
+                        origin,
+                        title: `Install ${hit.name}`,
+                        confirmLabel: "Install",
+                        options: { source_id: hit.source_id, mod_id: hit.id },
+                      })}
+                  >
+                    Install
+                  </button>`
+            }
+          <//>
+        </span>
       </div>
       ${
         detailed &&
@@ -187,7 +190,19 @@ export function skippedSignInNotice(skipped) {
 /** SourceResultsList renders every hit, THEN per-source warnings (M3: a
  * warning ahead of the real hits it sits beside read as the headline result,
  * not a footnote about one source among several). detailed forwards to
- * SourceResultRow - see its own doc comment. */
+ * SourceResultRow - see its own doc comment.
+ *
+ * Issue 520: the list is ONE grid, and each row lays its cells into the
+ * list's own named columns (app.css, .search-results), so a column is as
+ * wide as its widest cell down the whole list and a row with an author
+ * starts its version where a row without one does. Every cell is always
+ * rendered - an absent author or date is an empty cell, never a missing
+ * one - so a row never shifts the columns after it. The detailed list adds
+ * a downloads column, hence its own modifier.
+ *
+ * A failed source is a notice region spanning the whole row, named for the
+ * source ("Search failed on flaky"), so a screen reader's landmark list
+ * says which source it is about and it reads as a notice, not as a result. */
 export function SourceResultsList({
   hits,
   warnings,
@@ -196,7 +211,7 @@ export function SourceResultsList({
   detailed,
 }) {
   return html`
-    <ul class="search-results">
+    <ul class="search-results ${detailed ? "search-results--detailed" : ""}">
       ${hits.map(
         (hit) => html`
           <${SourceResultRow}
@@ -214,11 +229,27 @@ export function SourceResultsList({
             key=${`warn-${w.source_id}`}
             class="search-result search-result--warning"
           >
-            <span class="badge badge--warn">${w.source_id}</span>
-            ${codeSpans(w.error)}
+            <${SearchWarning} warning=${w} />
           </li>
         `,
       )}
     </ul>
+  `;
+}
+
+/** SearchWarning is one source's search failure, as a labelled notice. The
+ * id is per source: one list never names the same source twice, and the two
+ * lists that render warnings (the omnibar's fan-out, the search page) are
+ * never on screen together. */
+function SearchWarning({ warning }) {
+  const titleID = `search-warning-${warning.source_id}`;
+  return html`
+    <section class="search-warning" aria-labelledby=${titleID}>
+      <p class="search-warning__title" id=${titleID}>
+        Search failed on${" "}
+        <span class="badge badge--warn">${warning.source_id}</span>
+      </p>
+      <p class="search-warning__detail">${codeSpans(warning.error)}</p>
+    </section>
   `;
 }
