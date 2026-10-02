@@ -50,7 +50,12 @@ function GameCard({ game }) {
   }
 
   return html`
-    <button type="button" class="game-card" onClick=${open} disabled=${pending}>
+    <button
+      type="button"
+      class="button button--tile game-card"
+      onClick=${open}
+      disabled=${pending}
+    >
       <span class="game-card__name">${game.name}</span>
       ${game.is_default && html`<span class="game-card__default">Default</span>`}
       <span class="game-card__meta">

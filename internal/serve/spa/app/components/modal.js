@@ -117,7 +117,7 @@ export function Modal({
           <p class="modal__title">${title}</p>
           <button
             type="button"
-            class="modal__close"
+            class="button button--quiet button--icon modal__close"
             aria-label="Close"
             onClick=${() => closeRef.current?.()}
           >

@@ -261,14 +261,14 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
           />
           <button
             type="submit"
-            class="button button--small button--primary"
+            class="button button--primary"
             disabled=${busy || !nameInput.trim()}
           >
             ${busy ? "Saving…" : "Save"}
           </button>
           <button
             type="button"
-            class="button button--small"
+            class="button"
             disabled=${busy}
             onClick=${reset}
           >
@@ -406,7 +406,7 @@ function CreateProfileForm({ context, afterMutation }) {
         />
         <button
           type="submit"
-          class="button button--small button--primary"
+          class="button button--primary"
           disabled=${busy || !name.trim()}
         >
           ${busy ? "Creating…" : "Create"}
@@ -451,7 +451,7 @@ function ImportProfileForm({ actions, close }) {
   return html`
     <div class="profiles-import">
       <h3 class="plan__heading">Import a profile</h3>
-      <label class="button button--small">
+      <label class="button">
         ${busy ? "Reading…" : "Choose file…"}
         <input
           type="file"
@@ -522,7 +522,7 @@ export function ImportCollectionForm({ actions, close }) {
       />
       <button
         type="submit"
-        class="button button--small button--primary"
+        class="button button--primary"
         disabled=${!ref.trim()}
       >
         Import collection

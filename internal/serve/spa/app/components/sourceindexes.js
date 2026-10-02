@@ -355,7 +355,7 @@ function PrunePanel({ onChanged }) {
       <div class="setup-section__actions">
         <button
           type="button"
-          class="button button--small"
+          class="button"
           data-action="prune-indexes"
           disabled=${busy}
           onClick=${() => runPreview(all)}
@@ -434,7 +434,7 @@ function PrunePanel({ onChanged }) {
       <div class="setup-section__actions">
         <button
           type="button"
-          class="button button--small button--danger"
+          class="button button--danger"
           data-action="confirm-prune"
           disabled=${busy || removals.length === 0}
           onClick=${confirm}
@@ -443,7 +443,7 @@ function PrunePanel({ onChanged }) {
         </button>
         <button
           type="button"
-          class="button button--small"
+          class="button"
           data-action="cancel-prune"
           disabled=${busy}
           onClick=${() => {

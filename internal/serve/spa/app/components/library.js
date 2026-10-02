@@ -76,7 +76,7 @@ function NoMatches({ query, filter, onFilterChange }) {
         html`<p class="empty-state__actions">
           <button
             type="button"
-            class="button button--small"
+            class="button"
             data-action="clear-filter"
             onClick=${() => onFilterChange("all")}
           >
@@ -518,7 +518,7 @@ export function Library({
     return html`
       <div class="row-menu">
         <${ModPageLink}
-          className="row-menu__item"
+          className="menu-item row-menu__item"
           url=${row.source_url}
           sourceID=${row.source_id}
           modName=${row.name}
@@ -534,7 +534,7 @@ export function Library({
         }
         <button
           type="button"
-          class="row-menu__item"
+          class="menu-item row-menu__item"
           onClick=${() => {
             setMenuKey(null);
             actions.openPlan({
@@ -550,7 +550,7 @@ export function Library({
         </button>
         <button
           type="button"
-          class="row-menu__item"
+          class="menu-item row-menu__item"
           onClick=${() => toggleLock(row)}
         >
           ${row.locked ? "Unlock" : "Lock"}
@@ -563,7 +563,7 @@ export function Library({
           // asked, and the row's own badge is what answers it.
           html`<button
             type="button"
-            class="row-menu__item"
+            class="menu-item row-menu__item"
             data-action="row-verify"
             title="Re-checks every mod in this profile — lmm verifies a profile as a whole"
             onClick=${() => {
@@ -582,7 +582,7 @@ export function Library({
           row.hasHealthIssue &&
           html`<button
             type="button"
-            class="row-menu__item"
+            class="menu-item row-menu__item"
             data-action="row-repair"
             onClick=${() => {
               setMenuKey(null);
@@ -603,7 +603,7 @@ export function Library({
           row.convert_paks !== undefined &&
           html`<button
             type="button"
-            class="row-menu__item"
+            class="menu-item row-menu__item"
             data-action="toggle-convert"
             onClick=${() => toggleConvert(row)}
           >
@@ -620,7 +620,7 @@ export function Library({
           !row.external &&
           html`<button
             type="button"
-            class="row-menu__item"
+            class="menu-item row-menu__item"
             data-action="relink"
             onClick=${() => {
               setMenuKey(null);
@@ -638,7 +638,7 @@ export function Library({
         }
         <button
           type="button"
-          class="row-menu__item"
+          class="menu-item row-menu__item"
           onClick=${() => {
             setMenuKey(null);
             actions.openReorderModal({
@@ -816,7 +816,7 @@ export function Library({
         />
         <button
           type="button"
-          class="button button--small"
+          class="button"
           data-action="check-updates"
           disabled=${checking}
           aria-busy=${checking ? "true" : null}
@@ -831,7 +831,7 @@ export function Library({
         >
           <button
             type="button"
-            class="button button--small"
+            class="button"
             data-action="update-all"
             disabled=${updatableRows().length === 0}
             title=${
@@ -846,7 +846,7 @@ export function Library({
         <//>
         <button
           type="button"
-          class="button button--small"
+          class="button"
           data-action="verify"
           disabled=${verifying}
           aria-busy=${verifying ? "true" : null}
@@ -856,7 +856,7 @@ export function Library({
         </button>
         <button
           type="button"
-          class="button button--small"
+          class="button"
           data-action="reorder"
           onClick=${openReorder}
         >
@@ -999,7 +999,7 @@ export function Library({
                         <td class="col--name">
                           <button
                             type="button"
-                            class="mod-row__name"
+                            class="button button--link mod-row__name"
                             onClick=${() => openRow(row)}
                           >
                             ${row.name}

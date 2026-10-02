@@ -59,9 +59,7 @@ export function SetupAuth() {
     return html`
       <div class="empty-state empty-state--error">
         <p>Couldn't load authentication status: ${error}</p>
-        <button type="button" class="button button--small" onClick=${reload}>
-          Retry
-        </button>
+        <button type="button" class="button" onClick=${reload}>Retry</button>
       </div>
     `;
   }
@@ -219,7 +217,7 @@ function AuthSourceRow({ source, onChanged }) {
                 />
                 <button
                   type="submit"
-                  class="button button--small button--primary"
+                  class="button button--primary"
                   disabled=${busy || !apiKey}
                 >
                   ${busy ? "Checking…" : "Log in"}

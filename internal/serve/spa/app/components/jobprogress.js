@@ -169,7 +169,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
       }
       <button
         type="button"
-        class="job-progress__dismiss"
+        class="button button--quiet button--icon job-progress__dismiss"
         aria-label="Dismiss"
         onClick=${onDismiss}
       >

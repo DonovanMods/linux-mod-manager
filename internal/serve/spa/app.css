@@ -66,6 +66,21 @@
    * rather than a bare black no token set chose. */
   --scrim: rgb(16 21 28 / 40%);
 
+  /* Controls (issue 518): the one scale every button, select and text input
+   * is drawn at, so controls that share a row line up (the control block
+   * below says which size goes where). Sizes, not colours - defined once
+   * here, like the motion tokens, so every theme has the same ones. Rem,
+   * not em: a control inside a smaller-type container is still a control. */
+  --control-height: 2rem;
+  --control-height-sm: 1.5rem;
+  --control-padding-x: var(--space-3);
+  --control-padding-x-sm: var(--space-2);
+  --control-radius: var(--radius);
+  --control-border-width: 1px;
+  --control-font-size: 0.9375rem;
+  --control-font-size-sm: 0.8125rem;
+  --control-line-height: 1.25;
+
   /* Motion (issue 334, owner demo 1: "mild UI animations for the slide-over
    * and a consistent motion language app-wide").
    *
@@ -288,17 +303,81 @@ pre,
   color: var(--danger);
 }
 
+/* @control-system begin */
 /* ---------------------------------------------------------------------- */
-/* Buttons and controls - shared by the top bar, the cards, the library.   */
+/* The control system (issue 518) - every button, select and text input.  */
 /* ---------------------------------------------------------------------- */
 
+/*
+ * One system draws every control in this application, so that controls
+ * sharing a row line up and a control's look says what it does. The rules
+ * below are the ONLY place a button's height, padding, border, radius or
+ * type size is set (control_system_test.go's TestNoControlStylingOutside
+ * TheControlBlock); an element class may still place a control - margin,
+ * position, flex, colour - but never reshape it. Every <button> carries
+ * "button" or "menu-item" (TestEveryButtonUsesTheControlSystem).
+ *
+ * Variants (one per button; default is the secondary action):
+ *   .button                  secondary: bordered, on the raised surface
+ *   .button--primary         THE action of its context - at most one per
+ *                            bar, card footer or modal footer
+ *   .button--quiet           borderless at rest, bordered on hover/focus:
+ *                            pickers (a control naming a current value
+ *                            you change - the game/profile pickers, the
+ *                            theme toggle), menu triggers, icon-only and
+ *                            close buttons
+ *   .button--danger          destroys or removes something
+ *   .button--link            reads as text, not as a box: a row's own
+ *                            name that opens it, an inline "View"
+ *   .button--tab             one tab in a role="tablist"; aria-selected
+ *                            carries its underline
+ *   .button--tile            a whole card that is one button (the game
+ *                            chooser)
+ *
+ * Sizes and shapes:
+ *   (default)                --control-height: every bar and toolbar, card
+ *                            footers, modal footers, forms
+ *   .button--small           --control-height-sm: ONLY in dense contexts -
+ *                            table rows, cards' item rows, menus, inline
+ *                            result rows - and NEVER beside default-size
+ *                            controls in one bar, toolbar or footer
+ *   .button--icon            square: a glyph-only control (✕, ?, ‹ ›);
+ *                            combines with either size
+ *
+ *   .menu-item               one item in a dropdown menu (the pickers, a
+ *                            row's ⋯ menu, the activity tray's rows)
+ *
+ * select and the text-like inputs share the default height, border and
+ * type size, so a Filter select sits level with the buttons beside it.
+ * box-sizing is border-box everywhere (the universal rule above), which is
+ * what makes a min-height of --control-height the control's exact height.
+ */
+
+.button,
+.menu-item,
+select,
+textarea,
+input[type="search"],
+input[type="text"],
+input[type="password"] {
+  border-radius: var(--control-radius);
+  font-family: inherit;
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
+}
+
 .button {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--control-height);
+  padding: 0 var(--control-padding-x);
+  border: var(--control-border-width) solid var(--border-strong);
   background: var(--surface-raised);
   color: var(--text-primary);
-  font: inherit;
+  font-weight: inherit;
+  text-align: center;
   cursor: pointer;
 }
 
@@ -317,21 +396,112 @@ pre,
   background: var(--accent-hover);
 }
 
-.button--small {
-  padding: 0 var(--space-2);
-  font-size: 0.85em;
-}
-
 .button--danger {
   border-color: var(--danger);
   color: var(--danger);
+}
+
+.button--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.button--quiet:hover:not(:disabled),
+.button--quiet[aria-expanded="true"] {
+  border-color: var(--border-strong);
+}
+
+.button--link {
+  display: inline-block;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-primary);
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
+}
+
+.button--link:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.button--tab {
+  border-width: 0 0 2px;
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.button--tab:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+.button--tab[aria-selected="true"],
+.button--tab[aria-selected="true"]:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.button--tile {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  min-height: 0;
+  padding: var(--space-4);
+  border-color: var(--border-subtle);
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
+  box-shadow: var(--shadow-raised);
+}
+
+.button--small {
+  min-height: var(--control-height-sm);
+  padding: 0 var(--control-padding-x-sm);
+  font-size: var(--control-font-size-sm);
+}
+
+.button--icon {
+  min-width: var(--control-height);
+  padding: 0;
+}
+
+.button--icon.button--small {
+  min-width: var(--control-height-sm);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-height);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--surface-sunken);
 }
 
 /* Issue 442: a disabled control is marked with certified tokens - muted
    text on the sunken surface, a quiet border - rather than faded to half
    strength, so no rule anywhere paints at partial opacity
    (TestPartialOpacityIsAllowListed's allow-list is empty). A native
-   checkbox or radio keeps the browser's own disabled rendering. */
+   checkbox or radio keeps the browser's own disabled rendering. The
+   borderless variants stay borderless: only their text dims. */
 .button:disabled,
 input:disabled,
 select:disabled {
@@ -341,31 +511,57 @@ select:disabled {
   cursor: not-allowed;
 }
 
+.button--quiet:disabled,
+.button--link:disabled,
+.button--tab:disabled,
+.menu-item:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* One focus ring for every control. A menu item draws it inside its own
+ * box: the menu around it clips anything outside (the tray scrolls). */
+.button:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.menu-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+select,
 input[type="search"],
 input[type="text"],
-select {
-  padding: var(--space-1) var(--space-2);
+input[type="password"] {
+  height: var(--control-height);
+  padding: 0 var(--space-2);
   /* --border-strong, not --border-subtle (issue 334's a11y pass): a control
    * whose fill barely differs from the page behind it has only its border
    * to identify it as a control, which WCAG 2.1 SC 1.4.11 holds to 3:1.
    * --border-subtle stays what its name says - a divider between things
    * that are already obviously separate. */
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border: var(--control-border-width) solid var(--border-strong);
   background: var(--surface-sunken);
   color: var(--text-primary);
-  font: inherit;
 }
 
-.theme-toggle {
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
+/* A search field carries this application's own clear control
+ * (.omnibar__clear), which also resets what the search fanned out; the
+ * browser's built-in cancel only empties the field, and drawing both put
+ * two ✕ side by side (issue 518). */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration {
+  display: none;
+  appearance: none;
 }
+/* @control-system end */
 
 /* ---------------------------------------------------------------------- */
 /* Top bar.                                                                */
@@ -464,20 +660,6 @@ select {
   position: relative;
 }
 
-.picker__trigger {
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.picker__trigger:hover {
-  border-color: var(--border-subtle);
-}
-
 /* Every dropdown opens rightward from its trigger by default; menuplacement.js
  * measures it on open and flips it to the other side (data-align="end"), or
  * slides it inside the gutters, when it would cross the viewport (issue 502). No
@@ -507,23 +689,6 @@ select {
   left: auto;
 }
 
-.picker__item {
-  display: block;
-  width: 100%;
-  padding: var(--space-1) var(--space-2);
-  border: none;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.picker__item:hover:not(:disabled) {
-  background: var(--surface-sunken);
-}
-
 /* One profile row: its name (the plain view change) on the left, its
  * "Switch and deploy…" (the real mutation) on the right - issue 334. The
  * action is always rendered, never revealed on hover: a keyboard user must
@@ -540,20 +705,7 @@ select {
 
 .picker__action {
   flex: 0 0 auto;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 0.85em;
   white-space: nowrap;
-  cursor: pointer;
-}
-
-.picker__action:hover {
-  border-color: var(--accent);
-  color: var(--text-primary);
 }
 
 /* A dropdown drops - the shortest duration in the set, because a menu that
@@ -832,6 +984,7 @@ select {
  * (issue 334's density pass). */
 .card__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }
@@ -1061,20 +1214,6 @@ select {
 /* A <button>, not a bare <td onClick> (M6): the row-open affordance is the
  * primary navigation on the primary screen, so it must be reachable by
  * keyboard (Tab, then Enter/Space), not mouse-only. */
-.mod-row__name {
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.mod-row__name:hover {
-  color: var(--accent);
-}
-
 .mod-row__badges {
   white-space: nowrap;
 }
@@ -1135,20 +1274,6 @@ select {
 
 .game-card {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-  box-shadow: var(--shadow-raised);
-}
-
-.game-card:hover:not(:disabled) {
-  border-color: var(--accent);
 }
 
 .game-card__name {
@@ -1258,20 +1383,6 @@ select {
   gap: var(--space-2);
 }
 
-.slide-over__close,
-.slide-over__step {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 1.2em;
-  cursor: pointer;
-}
-
-.slide-over__step:disabled {
-  color: var(--border-strong);
-  cursor: default;
-}
-
 .slide-over__meta {
   margin: 0 0 var(--space-4);
   color: var(--text-secondary);
@@ -1311,7 +1422,6 @@ select {
 
 /* In the row menu the link is an item like the buttons beside it. */
 a.row-menu__item.mod-page-link {
-  display: block;
   color: var(--text-primary);
   text-decoration: none;
   white-space: nowrap;
@@ -1537,14 +1647,6 @@ a.row-menu__item.mod-page-link {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.modal__close {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 1.1em;
-  cursor: pointer;
 }
 
 .modal__body {
@@ -1788,12 +1890,6 @@ a.row-menu__item.mod-page-link {
   white-space: nowrap;
 }
 
-/* issue 340: the omnibar's own way back once it has fanned out. */
-.omnibar__clear {
-  padding: 0 var(--space-2);
-  line-height: 1;
-}
-
 .omnibar-results {
   margin-top: var(--space-6);
 }
@@ -1839,18 +1935,7 @@ a.row-menu__item.mod-page-link {
 
 .search-result__name {
   flex: 1;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
   font-weight: 700;
-  text-align: left;
-  cursor: pointer;
-}
-
-.search-result__name:hover {
-  text-decoration: underline;
 }
 
 /*
@@ -2053,10 +2138,7 @@ a.row-menu__item.mod-page-link {
 }
 
 .job-progress__dismiss {
-  border: none;
-  background: transparent;
   color: var(--text-muted);
-  cursor: pointer;
 }
 
 /* issue 269 Tier 3: a Workshop download failure carries a reason the user can
@@ -2208,19 +2290,11 @@ a.row-menu__item.mod-page-link {
 
 .toast__link {
   margin-top: var(--space-1);
-  padding: 0;
-  border: none;
-  background: none;
   color: var(--accent);
-  font: inherit;
-  cursor: pointer;
 }
 
 .toast__dismiss {
-  border: none;
-  background: transparent;
   color: var(--text-muted);
-  cursor: pointer;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -2268,18 +2342,11 @@ a.row-menu__item.mod-page-link {
   border-bottom: none;
 }
 
+/* The row's summary is a menu item; it reaches the row's own edges, so its
+ * hover fill spans the row and its text lines up with the detail below. */
 .tray__summary {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  width: auto;
+  margin: 0 calc(-1 * var(--space-2));
 }
 
 .tray__kind {
@@ -2554,21 +2621,6 @@ a.row-menu__item.mod-page-link {
   box-shadow: var(--shadow-raised);
 }
 
-.row-menu__item {
-  padding: var(--space-2);
-  border: none;
-  border-radius: var(--radius);
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.row-menu__item:hover {
-  background: var(--surface-sunken);
-}
-
 /* ---------------------------------------------------------------------- */
 /* The reorder modal (issue 332): drag-and-drop + a keyboard/button path, and   */
 /* its live conflict preview.                                              */
@@ -2823,26 +2875,6 @@ a.row-menu__item.mod-page-link {
   gap: var(--space-2);
   margin: 0 0 var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
-}
-
-.setup-nav__tab {
-  padding: var(--space-2) var(--space-3);
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.setup-nav__tab:hover {
-  color: var(--text-primary);
-}
-
-.setup-nav__tab--active {
-  border-bottom-color: var(--accent);
-  color: var(--text-primary);
-  font-weight: 700;
 }
 
 .setup-section {

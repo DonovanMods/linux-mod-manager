@@ -131,6 +131,42 @@ confident uppercase-tracked headers. Light: same hues re-weighted on paper-white
 for ≥1080p desktop: comfortable rows, three-across cards, slide-over ≈ 40% width. System font
 stack; `ui-monospace` for versions/paths/phases.
 
+### Controls (#518)
+
+One control system draws every button, select and text input: our own, not a CSS framework
+(owner decision, 2026-10-02; Tailwind is reconsidered after 2.0 in #519). It lives in one
+delimited block of `app.css` (`@control-system begin` … `end`).
+
+- **Scale** (`:root` tokens, shared by every theme): `--control-height` (2rem) and
+  `--control-height-sm` (1.5rem), `--control-padding-x`/`-sm`, `--control-radius`,
+  `--control-border-width`, `--control-font-size`/`-sm` and `--control-line-height`. `.button`,
+  `select` and the text-like inputs all use it, and `box-sizing: border-box` makes the height
+  exact, so controls sharing a row line up. A row of controls should wrap between them
+  (`flex-wrap`) rather than squeeze a label onto two lines.
+- **Variants**: `.button` (secondary, the default), `--primary` (the one main action of a bar,
+  card footer or modal footer), `--quiet` (borderless at rest, bordered on hover and focus:
+  pickers - a control naming a current value you change, such as the game/profile pickers and
+  the theme toggle - menu triggers, icon-only and close buttons) and `--danger`. Three shapes
+  cover the remaining cases: `--link` (reads as text: a row's own name, an inline "View"),
+  `--tab` (a tab in a tablist; `aria-selected` carries the underline) and `--tile` (a whole
+  card that is one button, the game chooser).
+- **Sizes**: default everywhere - bars, toolbars, card footers, modal footers, forms - and
+  `--small` only in dense contexts: table rows, a card's item rows, menus, inline result rows.
+  Small never sits beside default-size controls in one bar, toolbar or footer, and a button
+  beside a text input is default size, as the input is. `--icon` makes a glyph-only control
+  square at either size.
+- **Menus**: `.menu-item` is one item in a picker, a row's ⋯ menu or the activity tray.
+- **Focus**: one 2px `--focus-ring` outline on every control (inset on a menu item, whose menu
+  would clip it).
+- **Search**: the browser's own search-cancel is hidden; the omnibar's clear button also resets
+  what the search fanned out, so it is the one ✕.
+
+Ratchets: `control_system_test.go` fails the build if a `<button>` carries neither `button` nor
+`menu-item`, or if a rule outside the control block sets height, padding, border, radius or type
+size on a selector that targets a button (element classes may place a control - margin,
+position, flex, colour - but not reshape it). `e2e_controls_test.go` holds every control in the
+top bar and the library toolbar to one computed height in both themes.
+
 ## Architecture
 
 ```text

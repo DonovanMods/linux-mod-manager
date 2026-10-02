@@ -116,7 +116,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
               aria-controls="setup-panel"
               tabindex=${section === s.key ? "0" : "-1"}
               data-section=${s.key}
-              class="setup-nav__tab ${section === s.key ? "setup-nav__tab--active" : ""}"
+              class="button button--tab setup-nav__tab"
               onClick=${() => selectSection(s.key)}
               onKeyDown=${(e) => onTabKeyDown(e, i)}
             >

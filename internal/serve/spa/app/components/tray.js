@@ -89,7 +89,7 @@ export function ActivityBell({
     <div class="picker activity-bell">
       <button
         type="button"
-        class="picker__trigger activity-bell__trigger"
+        class="button button--quiet picker__trigger activity-bell__trigger"
         data-picker="activity"
         aria-label=${`Activity (${count})`}
         aria-haspopup="true"
@@ -208,7 +208,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
     <li class="tray__row" data-job=${job.id} data-state=${label}>
       <button
         type="button"
-        class="tray__summary"
+        class="menu-item tray__summary"
         aria-expanded=${expanded ? "true" : "false"}
         onClick=${onToggle}
       >

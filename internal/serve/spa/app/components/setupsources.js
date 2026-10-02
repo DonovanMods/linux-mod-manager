@@ -81,9 +81,7 @@ export function SetupSources({ onChanged } = {}) {
     return html`
       <div class="empty-state empty-state--error">
         <p>Couldn't load sources: ${error}</p>
-        <button type="button" class="button button--small" onClick=${reload}>
-          Retry
-        </button>
+        <button type="button" class="button" onClick=${reload}>Retry</button>
       </div>
     `;
   }
@@ -131,7 +129,7 @@ export function SetupSources({ onChanged } = {}) {
       <div class="setup-section__actions">
         <button
           type="button"
-          class="button button--small"
+          class="button"
           data-action="new-source"
           onClick=${() => setEditing((v) => (v === "" ? null : ""))}
         >
@@ -400,7 +398,7 @@ function SourceEditor({ id, onSaved, onCancel }) {
       <div class="setup-section__actions">
         <button
           type="button"
-          class="button button--small"
+          class="button"
           data-action="validate-source"
           disabled=${busy}
           onClick=${runValidate}
@@ -409,7 +407,7 @@ function SourceEditor({ id, onSaved, onCancel }) {
         </button>
         <button
           type="button"
-          class="button button--small button--primary"
+          class="button button--primary"
           data-action="save-source"
           disabled=${busy || !validated}
           onClick=${save}
@@ -418,7 +416,7 @@ function SourceEditor({ id, onSaved, onCancel }) {
         </button>
         <button
           type="button"
-          class="button button--small"
+          class="button"
           data-action="cancel-source-edit"
           onClick=${onCancel}
         >

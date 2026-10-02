@@ -327,7 +327,7 @@ function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
               <div class="card__actions">
                 <button
                   type="button"
-                  class="button button--small"
+                  class="button"
                   data-action="check-updates"
                   onClick=${onRefresh}
                 >
@@ -518,11 +518,7 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                 )}
               </ul>
               <div class="card__actions">
-                <button
-                  type="button"
-                  class="button button--small"
-                  onClick=${onReverify}
-                >
+                <button type="button" class="button" onClick=${onReverify}>
                   Re-verify
                 </button>
                 <${InlineJob}

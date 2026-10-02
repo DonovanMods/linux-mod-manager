@@ -54,7 +54,7 @@ export function AddModsMenu({ route, actions, state }) {
     <div class="picker add-mods-menu" ref=${ref}>
       <button
         type="button"
-        class="picker__trigger add-mods-menu__trigger"
+        class="button button--quiet picker__trigger add-mods-menu__trigger"
         data-picker="add-mods"
         data-action="add-mods"
         aria-haspopup="true"
@@ -70,7 +70,7 @@ export function AddModsMenu({ route, actions, state }) {
             <li>
               <button
                 type="button"
-                class="picker__item"
+                class="menu-item picker__item"
                 onClick=${() => pick(focusOmnibar)}
               >
                 Search sources…
@@ -79,7 +79,7 @@ export function AddModsMenu({ route, actions, state }) {
             <li>
               <button
                 type="button"
-                class="picker__item"
+                class="menu-item picker__item"
                 onClick=${() =>
                   pick(() =>
                     navigate(setupPath(route.game, route.profile, "archive")),
@@ -91,7 +91,7 @@ export function AddModsMenu({ route, actions, state }) {
             <li>
               <button
                 type="button"
-                class="picker__item"
+                class="menu-item picker__item"
                 onClick=${() =>
                   pick(() =>
                     navigate(setupPath(route.game, route.profile, "adopt")),
@@ -106,7 +106,7 @@ export function AddModsMenu({ route, actions, state }) {
                 <li>
                   <button
                     type="button"
-                    class="picker__item"
+                    class="menu-item picker__item"
                     data-action="track-workshop"
                     onClick=${() =>
                       pick(() =>

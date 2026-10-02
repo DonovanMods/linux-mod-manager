@@ -231,7 +231,7 @@ export function ModPathEditor({
       />
       <button
         type="button"
-        class="button button--small button--primary"
+        class="button button--primary"
         data-action="save-mod-path"
         disabled=${busy}
         onClick=${onSave}

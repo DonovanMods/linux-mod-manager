@@ -59,7 +59,7 @@ export function Toasts({ toasts, route, onDismiss, actions }) {
                 html`
                   <button
                     type="button"
-                    class="toast__link"
+                    class="button button--link toast__link"
                     data-action="toast-action"
                     onClick=${() => {
                       onDismiss(toast.id);
@@ -76,7 +76,7 @@ export function Toasts({ toasts, route, onDismiss, actions }) {
                 html`
                   <button
                     type="button"
-                    class="toast__link"
+                    class="button button--link toast__link"
                     onClick=${() => {
                       onDismiss(toast.id);
                       navigate(
@@ -91,7 +91,7 @@ export function Toasts({ toasts, route, onDismiss, actions }) {
             </div>
             <button
               type="button"
-              class="toast__dismiss"
+              class="button button--quiet button--icon button--small toast__dismiss"
               aria-label="Dismiss"
               onClick=${() => onDismiss(toast.id)}
             >

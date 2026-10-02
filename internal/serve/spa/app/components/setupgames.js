@@ -254,9 +254,7 @@ export function SetupGames({
     return html`
       <div class="empty-state empty-state--error">
         <p>Couldn't load games: ${error}</p>
-        <button type="button" class="button button--small" onClick=${reload}>
-          Retry
-        </button>
+        <button type="button" class="button" onClick=${reload}>Retry</button>
       </div>
     `;
   }
@@ -455,14 +453,14 @@ export function SetupGames({
       <div class="setup-section__actions">
         <button
           type="button"
-          class="button button--small"
+          class="button"
           onClick=${() => setShowDetect((v) => !v)}
         >
           ${showDetect ? "Hide detect" : "Detect games…"}
         </button>
         <button
           type="button"
-          class="button button--small"
+          class="button"
           onClick=${() => {
             setDetected(null);
             setShowAdd((v) => !v);

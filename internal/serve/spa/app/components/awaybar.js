@@ -69,7 +69,7 @@ export function AwayBar({ state, route, home, onThemeChange, actions }) {
       />
       <button
         type="button"
-        class="button button--small"
+        class="button button--quiet button--icon"
         data-action="shortcuts"
         title="Keyboard shortcuts"
         aria-label="Keyboard shortcuts"
@@ -79,7 +79,7 @@ export function AwayBar({ state, route, home, onThemeChange, actions }) {
       </button>
       <button
         type="button"
-        class="theme-toggle"
+        class="button button--quiet theme-toggle"
         onClick=${() => onThemeChange(cycleTheme())}
       >
         Theme: ${currentTheme()}

@@ -62,6 +62,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The web UI draws every control from one system (#518).** Buttons,
+  selects and text inputs share one size scale (`--control-height` and
+  `--control-height-sm`, with matching padding, radius and type size), so
+  controls in one row line up: the top bar and the library toolbar are all
+  default size, and the Filter/Sort selects match the buttons beside them.
+  Buttons come in four variants (secondary, primary, quiet, danger) plus
+  link, tab and tile shapes, and pickers, menus and the activity tray use one
+  menu-item style. Small buttons are kept for dense contexts (rows, cards'
+  item rows, menus), never beside default-size controls. The game/profile
+  pickers, "Add mods", the activity bell and the theme toggle are quiet
+  buttons instead of unstyled text, and the search box shows one clear
+  button instead of two. Ratchets fail the build if a `<button>` is styled
+  outside the system or a rule outside the control block reshapes one, and
+  a browser test holds the top bar and library toolbar to one control height
+  in both themes.
+
 - **CI test pushes include the v2 branch (#492).** The test workflow now runs
   for pushes to `main`, `develop`, and `v2`, while preserving pull-request
   validation.
