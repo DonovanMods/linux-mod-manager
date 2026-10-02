@@ -1774,6 +1774,21 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **`lmm serve` no longer keeps serving a stale game set after a same-size
+  `games.yaml` rewrite (#524).** Change detection compared only the file's
+  size and modification time, so two writes inside one filesystem timestamp
+  tick that left the byte count equal (swapping one path for another of the
+  same length, as `lmm game edit` does) looked unchanged and were never
+  reloaded; the #487 cache-path guard then reasoned over a stale
+  `cache_path`. `ReloadGames` now fingerprints the file's content (SHA-256),
+  at about 5 microseconds per check for a 25-game file, so it is exact with
+  no timing window. The flaky hosted-CI failure of
+  `TestSaveGame_CachePathChangeWithoutDeploymentAndManualEditRecovery` was
+  this. Test-only, also from #524: the Setup E2E test
+  `TestE2E_SetupGamesEditSourcesMapsAnExistingGame` now waits for the
+  sources editor to close and the row's Sources cell to update, instead of
+  text the still-open editor already satisfied.
+
 - **Every release package now ships the third-party license notices (#522).**
   `lmm` compiles in a couple of dozen Go modules (cobra, the modernc SQLite
   stack, the YAML libraries and others) and embeds the vendored preact and

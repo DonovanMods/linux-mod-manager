@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -163,4 +164,44 @@ func TestReloadGames_DoesNotUndoAServeSideSave(t *testing.T) {
 		ids = append(ids, g.ID)
 	}
 	assert.Equal(t, []string{"one", "web"}, ids)
+}
+
+// TestReloadGames_SeesASameSizeRewriteWithAnIdenticalMtime pins #524: two
+// writes inside one filesystem timestamp tick that leave the byte count
+// equal (swapping one path for another of the same length) are
+// indistinguishable by size and mtime. os.Chtimes makes the collision
+// deterministic instead of a matter of the filesystem's tick, and the
+// pinned time is well in the past so no "recent mtime" heuristic could
+// excuse a miss.
+func TestReloadGames_SeesASameSizeRewriteWithAnIdenticalMtime(t *testing.T) {
+	svc, configDir := newReloadService(t)
+	pathA, pathB := t.TempDir(), t.TempDir()
+	require.Equal(t, len(pathA), len(pathB), "t.TempDir paths share a shape; the rewrite must be same-size")
+	gamesYAML := func(modPath string) string {
+		return "games:\n  one:\n    name: one\n    install_path: " + pathA + "\n    mod_path: " + modPath + "\n"
+	}
+	file := filepath.Join(configDir, "games.yaml")
+	pinned := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+
+	writeGamesYAML(t, configDir, gamesYAML(pathA))
+	require.NoError(t, os.Chtimes(file, pinned, pinned))
+	reloaded, err := svc.ReloadGames()
+	require.NoError(t, err)
+	require.True(t, reloaded)
+	before, err := svc.GetGame("one")
+	require.NoError(t, err)
+	require.Equal(t, pathA, before.ModPath)
+
+	writeGamesYAML(t, configDir, gamesYAML(pathB))
+	require.NoError(t, os.Chtimes(file, pinned, pinned))
+	info, err := os.Stat(file)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(gamesYAML(pathA))), info.Size(), "size must be unchanged for the test to mean anything")
+
+	reloaded, err = svc.ReloadGames()
+	require.NoError(t, err)
+	assert.True(t, reloaded, "a content change must reload even when size and mtime match")
+	after, err := svc.GetGame("one")
+	require.NoError(t, err)
+	assert.Equal(t, pathB, after.ModPath)
 }
