@@ -1706,6 +1706,22 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Search ranks name matches after the exact match, and CurseForge
+  relevance asks for Popularity (#509).** `lmm search -g wow auctionator`
+  returned Auctionator first and then 50 add-ons that only mention it in
+  their summary, in arbitrary order: measured against the live CurseForge
+  API, its unsorted default put none of the 50 hits' names near the query,
+  while Popularity order, descending, put Auctionator first with 18 name
+  matches behind it. CurseForge's relevance search now sends
+  `sortField=2&sortOrder=desc` (the explicit `--sort` values are unchanged),
+  and relevance ordering in core is tiered for every source: a name that is
+  the query, then names that contain it (ignoring case and punctuation, as
+  the exact rule does) or contain all of its words, then everything else,
+  each tier in the order the sources returned it. `--sort updated`,
+  `downloads` and `popular` still lead with the exact match and are
+  otherwise unchanged. #503's slug lookup still finds an exact-name mod that
+  is not on the first page.
+
 - **CI browser tests give Chromium longer to start (#508).** On a hosted
   runner busy with the `-race` serve suite, Chromium could take more than
   chromedp's default 20 seconds to print its DevTools address, failing an

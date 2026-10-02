@@ -98,8 +98,11 @@ func TestClient_SearchMods_SortParams(t *testing.T) {
 		{domain.SortUpdated, "3"},
 		{domain.SortDownloads, "6"},
 		{domain.SortPopular, "12"},
-		{domain.SortRelevance, ""},
-		{"", ""},
+		// #509: relevance asks for Popularity, descending - measured live,
+		// CurseForge's unsorted default buries name matches below page 1.
+		{domain.SortRelevance, "2"},
+		{"", "2"},
+		{"bogus", ""},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.sort), func(t *testing.T) {
@@ -111,8 +114,8 @@ func TestClient_SearchMods_SortParams(t *testing.T) {
 			require.Len(t, stub.queries, 1)
 			q := stub.queries[0]
 			if tt.wantField == "" {
-				assert.False(t, q.Has("sortField"), "relevance sends no sortField")
-				assert.False(t, q.Has("sortOrder"), "relevance sends no sortOrder")
+				assert.False(t, q.Has("sortField"), "an unknown sort sends no sortField")
+				assert.False(t, q.Has("sortOrder"), "an unknown sort sends no sortOrder")
 				return
 			}
 			assert.Equal(t, tt.wantField, q.Get("sortField"))

@@ -587,7 +587,8 @@ type SearchOptions struct {
 	PageSize int
 	Limit    int
 	// Sort orders the hits (#503): empty or domain.SortRelevance keeps each
-	// source's own order; updated, downloads and popular order by that field,
+	// source's own order behind two name tiers (#509: names that contain the
+	// query, then the rest); updated, downloads and popular order by that field,
 	// descending. Search refuses a value outside domain.SearchSorts with an
 	// error wrapping domain.ErrInvalidSearchSort (IsInvalidSearchSort), before
 	// any source is asked. It is forwarded to every searched source - which

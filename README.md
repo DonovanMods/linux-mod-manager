@@ -2480,12 +2480,12 @@ The `UPDATED` column is when the source last changed the mod: an age for anythin
 
 **Ordering and `--sort`.** A result whose name _is_ your query always comes first — compared without regard to case, spacing or punctuation, so `lmm search auctionator` leads with `Auctionator` and `Leatrix Plus` is `leatrix-plus` — and that holds for every source and every sort. The rest follow in the order `--sort` names:
 
-| `--sort`              | Order                                                                                                      |
-| --------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `relevance` (default) | each source's own order; across several sources, name matches first, then most downloaded                  |
-| `updated`             | last updated, **newest first** (a mod with no known date comes last)                                       |
-| `downloads`           | most downloaded first                                                                                      |
-| `popular`             | most endorsed (liked, thumbed-up) first; a source that reports no rating comes after one that reports zero |
+| `--sort`              | Order                                                                                                                                                                       |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `relevance` (default) | exact name, then names containing your query (or all its words), then the rest in each source's own order; across several sources, name matches first, then most downloaded |
+| `updated`             | last updated, **newest first** (a mod with no known date comes last)                                                                                                        |
+| `downloads`           | most downloaded first                                                                                                                                                       |
+| `popular`             | most endorsed (liked, thumbed-up) first; a source that reports no rating comes after one that reports zero                                                                  |
 
 Ties keep the order the sources returned them in. Where a source can sort on its own server — CurseForge, NexusMods, and the sources that hold their whole catalogue to search it (Thunderstore, Icarus, and `directory`/`manifest` sources) — it does, so `--limit 10 --sort updated` is the ten most recently updated mods _that source has_, not the newest of whatever its first page happened to hold. A source that can't (Steam Workshop, `api` sources) is re-ordered within the page it returned. `--sort` is refused up front, naming the four values, when it is anything else.
 
