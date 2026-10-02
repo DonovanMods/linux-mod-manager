@@ -1706,6 +1706,23 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **CurseForge versions that aren't dotted no longer show as blank (#510).**
+  Search, `lmm mod show` and the update check read a CurseForge file's
+  version by looking for a dotted number (`1.2.3`), so a mod versioned by a
+  build number or a git-describe label — Auctionator's files are `339` and
+  `339-1-g23f0261` — showed an empty VERSION, and its update was never
+  offered because the check skips a file it can't put a version on. A dotted
+  version is still read first (`jei-1.20.1-15.3.0.4` is `15.3.0.4`). When
+  there is none, the file's display name is the version if it is a bare
+  label (one token, no spaces, starting with a digit or `v` and a digit),
+  otherwise the label after the mod's name in the file name
+  (`Auctionator-339-1-g23f0261.zip` is `339-1-g23f0261`); a prose name such
+  as "Auctionator for Classic" is never taken as a version. Installs record
+  the same version. Any CurseForge game gets this; nothing is specific to
+  one. A mod installed before the #504 fix can still record a stale version
+  (Auctionator's says `8.3.1.0`, a 2020 file, for an install of `339`); the
+  next `lmm update` rewrites it.
+
 - **CI browser tests give Chromium longer to start (#508).** On a hosted
   runner busy with the `-race` serve suite, Chromium could take more than
   chromedp's default 20 seconds to print its DevTools address, failing an
