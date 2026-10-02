@@ -389,7 +389,7 @@ func (c *CurseForge) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain
 			ID:          strconv.Itoa(f.ID),
 			Name:        f.DisplayName,
 			FileName:    f.FileName,
-			Version:     extractVersion(f.DisplayName, f.FileName),
+			Version:     fileVersion(f),
 			Size:        f.FileLength,
 			IsPrimary:   i == 0, // First file is typically the latest/main
 			Category:    releaseTypeName(f.ReleaseType),
@@ -583,28 +583,85 @@ func modToDomain(data Mod, gameID string) domain.Mod {
 // The optional suffix must start with a letter (to avoid matching 1.20.1-15.3.0 as one version).
 var versionRegex = regexp.MustCompile(`[vV]?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:[-+][a-zA-Z][\w.]*)?)`)
 
-// extractVersion attempts to extract a version string from a display name or filename
-// Returns the last version-like pattern found (mod version typically comes after MC version)
+// maxBareVersionLen bounds a bare version label: a real one ("339-1-g23f0261")
+// is short, and anything much longer is a title that merely starts with a digit.
+const maxBareVersionLen = 32
+
+// fileExtensions are the archive extensions stripped from a file name before
+// it is read for a version.
+var fileExtensions = []string{".jar", ".zip", ".7z", ".rar"}
+
+// stripFileExtension removes one known archive extension from name.
+func stripFileExtension(name string) string {
+	for _, ext := range fileExtensions {
+		if trimmed, ok := strings.CutSuffix(name, ext); ok {
+			return trimmed
+		}
+	}
+	return name
+}
+
+// bareVersionLabel returns s as a version when it is nothing but a version
+// label: one token (no whitespace) that starts with a digit, or a v/V then a
+// digit, of reasonable length. A leading v/V is dropped, as the dotted
+// extraction does. Otherwise "".
+func bareVersionLabel(s string) string {
+	if s == "" || len(s) > maxBareVersionLen || strings.ContainsAny(s, " \t\r\n") {
+		return ""
+	}
+	label := strings.TrimLeft(s, "vV")
+	if len(s)-len(label) > 1 || label == "" || label[0] < '0' || label[0] > '9' {
+		return ""
+	}
+	return label
+}
+
+// fileNameVersionLabel reads a bare version label out of a file name:
+// "Auctionator-339-1-g23f0261.zip" is "339-1-g23f0261". Everything before the
+// first digit must be a prefix ending in a '-' or '_' (the mod's name), so a
+// digit inside a word ("Mod2-Pro") is not taken for a version.
+func fileNameVersionLabel(fileName string) string {
+	base := stripFileExtension(fileName)
+	i := strings.IndexAny(base, "0123456789")
+	if i < 0 {
+		return ""
+	}
+	// A 'v' right before the digit belongs to the label ("Thing-v12").
+	if i > 0 && (base[i-1] == 'v' || base[i-1] == 'V') {
+		i--
+	}
+	if i > 0 && base[i-1] != '-' && base[i-1] != '_' {
+		return ""
+	}
+	return bareVersionLabel(base[i:])
+}
+
+// extractVersion attempts to extract a version string from a display name or filename.
+//
+// A dotted version wins: it returns the last version-like pattern found in the
+// display name, else in the file name (the mod version typically comes after
+// the game version in "jei-1.20.1-15.3.0.4"). A file whose version is not
+// dotted - a build number ("339") or a git-describe label ("339-1-g23f0261") -
+// has none, so then the display name itself is the version when it is a bare
+// label, and otherwise the label the file name carries after the mod's name
+// (#510). A prose display name ("Auctionator for Classic") is never a version.
 func extractVersion(displayName, fileName string) string {
-	// Try to extract version from displayName first, then fileName
 	for _, s := range []string{displayName, fileName} {
 		if s == "" {
 			continue
 		}
-		// Strip file extension for cleaner matching
-		base := strings.TrimSuffix(s, ".jar")
-		base = strings.TrimSuffix(base, ".zip")
-		base = strings.TrimSuffix(base, ".7z")
-		base = strings.TrimSuffix(base, ".rar")
+		base := stripFileExtension(s)
 
-		// Find all version matches and take the last one
-		// (mod version typically comes after MC version in filenames like "jei-1.20.1-15.3.0.4")
+		// Find all version matches and take the last one.
 		matches := versionRegex.FindAllStringSubmatch(base, -1)
 		if len(matches) > 0 {
 			return matches[len(matches)-1][1]
 		}
 	}
-	return "" // No version found
+	if v := bareVersionLabel(displayName); v != "" {
+		return v
+	}
+	return fileNameVersionLabel(fileName)
 }
 
 // releaseTypeName converts a release type code to a name
