@@ -149,7 +149,10 @@ func TestVerifyFix_NoChecksum_SourceRefusesDownload_FillsFromCache(t *testing.T)
 
 	assert.Equal(t, int32(1), src.urlCalls.Load(), "the re-download is tried first, and refused")
 	assert.Zero(t, result.Warnings)
-	assert.Equal(t, []core.VerifyFinding{{ModID: "8939586", ModName: "Auctionator", FileID: "1", Status: "ok"}}, result.Findings)
+	// Repair carries the sub-line's sentence on the row itself: an "ok" row
+	// would otherwise look untouched in the result document (#517).
+	assert.Equal(t, []core.VerifyFinding{{ModID: "8939586", ModName: "Auctionator", FileID: "1", Status: "ok",
+		Repair: "Checksum filled from the cached files (the source won't serve this file)"}}, result.Findings)
 	assert.NotEmpty(t, storedChecksum(t, svc, game.ID, "msrc", "8939586", "1"))
 
 	var row *core.VerifyEvent
@@ -198,6 +201,7 @@ func TestVerifyFix_NoChecksum_SourceRefusesDownload_IncompleteCacheKeepsWarningW
 	assert.Equal(t, "no_checksum", f.Status)
 	assert.Equal(t, "getting download URL: "+manualReason, f.Note)
 	assert.Equal(t, "https://example.test/mods/auctionator", f.ModURL)
+	assert.Equal(t, "msrc", f.SourceID, "the page's source rides with it, so a frontend can name the link (#517)")
 	assert.Empty(t, storedChecksum(t, svc, game.ID, "msrc", "8939586", "1"))
 
 	var lines []string
@@ -226,6 +230,7 @@ func TestVerifyFix_Missing_DownloadFailure_ShowsThePage(t *testing.T) {
 	f := findingFor(t, result, "8939586")
 	assert.Equal(t, "missing", f.Status)
 	assert.Equal(t, "https://example.test/mods/auctionator", f.ModURL)
+	assert.Equal(t, "msrc", f.SourceID)
 	details := repairDetails(verifyEvents(*rec))
 	require.Len(t, details, 2)
 	assert.Equal(t, "Download it manually from: https://example.test/mods/auctionator", details[1].Detail)

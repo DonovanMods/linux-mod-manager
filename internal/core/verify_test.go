@@ -774,7 +774,9 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 
 		require.Equal(t, 0, result.Issues, "a successful redownload resolves the missing issue")
 		require.Equal(t, 0, result.Warnings)
-		require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "ok"}}, result.Findings)
+		// Repair is what makes this "ok" row read as repaired in the result
+		// document: nothing else distinguishes it from an untouched row (#517).
+		require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "ok", Repair: "Re-downloaded OK"}}, result.Findings)
 
 		details := repairDetails(events)
 		require.Len(t, details, 1)
@@ -852,7 +854,7 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 
 		require.Equal(t, 0, result.Issues)
 		require.Equal(t, 0, result.Warnings, "a persisted checksum never counted as a warning in the first place")
-		require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "ok"}}, result.Findings)
+		require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "ok", Repair: "Checksum recorded from a fresh download"}}, result.Findings)
 
 		// The "checksum populated" outcome is a main-line "ok" row, not a
 		// RepairDetail sub-line - the CLI renders it via ChecksumPopulated,
@@ -1172,6 +1174,7 @@ func TestVerify_Fix_VersionMismatch_NotDeployed_RepairsCacheAndRecord(t *testing
 	f := mismatchFinding(t, result.Findings)
 	require.Equal(t, "ok", f.Status)
 	require.Empty(t, f.Note, "no blocked-rename/sibling note - nothing to report")
+	require.Equal(t, "Repaired: 1.5 → 1.0", f.Repair)
 
 	gameCache := svc.GetGameCache(game)
 	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must exist under the effective version")

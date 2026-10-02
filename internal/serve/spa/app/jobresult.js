@@ -12,6 +12,7 @@
 import { useEffect, useState } from "./render.js";
 import { jobStatus } from "./api.js";
 import { resultTally } from "./progress.js";
+import { repairOutcome } from "./verify.js";
 
 // tallyCache is a page-lifetime Map from job id to its own (possibly null)
 // read of the result - {tally, warnings} - so the SAME finished job showing in two places at once (a row's
@@ -59,6 +60,14 @@ export function useJobResultPurge(jobID, jobState) {
   return useJobResultRead(jobID, jobState)?.purge ?? null;
 }
 
+// useJobResultVerify returns a finished verify_fix job's repair outcome -
+// {repaired, attention}, each a list of findings - or null when the job is
+// not one, is still running, or repaired nothing and left nothing failing.
+// Same shared read as every other result reader (issue 517).
+export function useJobResultVerify(jobID, jobState) {
+  return useJobResultRead(jobID, jobState)?.verify ?? null;
+}
+
 const NO_WARNINGS = [];
 
 /** readResult is what the cache holds for one finished job's status/result. */
@@ -78,7 +87,16 @@ function readResult(status) {
     status?.kind === "purge" && (kept.length > 0 || removedPaths > 0)
       ? result
       : null;
-  return { tally: resultTally(result), warnings, purge };
+  // core.VerifyReport: the findings are one level down, under `result`.
+  const outcome =
+    status?.kind === "verify_fix"
+      ? repairOutcome(result?.result?.findings)
+      : null;
+  const verify =
+    outcome && (outcome.repaired.length > 0 || outcome.attention.length > 0)
+      ? outcome
+      : null;
+  return { tally: resultTally(result), warnings, purge, verify };
 }
 
 function useJobResultRead(jobID, jobState) {

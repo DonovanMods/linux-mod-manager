@@ -6,7 +6,8 @@
       {
         "mod_id": "mod1",
         "mod_name": "Mod One",
-        "status": "ok"
+        "status": "ok",
+        "repair": "Repaired: 1.5 → 1.0"
       },
       {
         "mod_id": "mod1",

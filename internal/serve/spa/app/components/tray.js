@@ -26,10 +26,15 @@ import {
   resultTallyLabel,
   resultTallyTone,
 } from "../progress.js";
-import { useJobResultPurge, useJobResultTally } from "../jobresult.js";
+import {
+  useJobResultPurge,
+  useJobResultTally,
+  useJobResultVerify,
+} from "../jobresult.js";
 import { ErrorDetails } from "./errordetails.js";
 import { nextStepFor } from "../failures.js";
 import { PurgeResultDetails } from "./purgeresult.js";
+import { VerifyFixResult } from "./verifyfixresult.js";
 
 // maxStreamedEvents caps what one expanded entry keeps. core's downloader
 // emits a DownloadEvent per read - thousands for a large mod - and the
@@ -193,6 +198,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
   // a batch that applied nothing.
   const tally = useJobResultTally(job.id, job.state);
   const purgeResult = useJobResultPurge(job.id, job.state);
+  const repairResult = useJobResultVerify(job.id, job.state);
   const tone =
     job.state === "succeeded" && tally ? resultTallyTone(tally) : job.state;
   const stateText =
@@ -236,6 +242,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
       }
       ${job.state === "failed" && html`<${FailureNextStep} job=${job} actions=${actions} />`}
       <${PurgeResultDetails} result=${purgeResult} />
+      <${VerifyFixResult} outcome=${repairResult} />
       ${
         // I1, unit 8 gate review: a count alone ("1 skipped") leaves the
         // reader to guess, and a lock refusal is not a guessable outcome.
@@ -349,13 +356,18 @@ function JobEventStream({ jobID }) {
     setEvents([]);
     setEnded(false);
     return followJob(jobID, {
-      onEvent: (event) =>
+      onEvent: (event) => {
+        // A verify event that is only a healthy file's tick has nothing to
+        // say (frameFromEvent): it would bury the repairs under thousands
+        // of "ok" lines.
+        const frame = frameFromEvent(event);
+        if (!frame) return;
         setEvents((previous) =>
-          [
-            ...previous,
-            { key: ++seq.current, frame: frameFromEvent(event) },
-          ].slice(-maxStreamedEvents),
-        ),
+          [...previous, { key: ++seq.current, frame }].slice(
+            -maxStreamedEvents,
+          ),
+        );
+      },
       onDone: () => setEnded(true),
     });
   }, [jobID]);

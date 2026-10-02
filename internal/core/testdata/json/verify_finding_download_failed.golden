@@ -4,5 +4,6 @@
   "file_id": "1",
   "status": "no_checksum",
   "note": "getting download URL: mod author has disabled third-party downloads; visit CurseForge website to download manually",
-  "mod_url": "https://www.curseforge.com/wow/addons/auctionator"
+  "mod_url": "https://www.curseforge.com/wow/addons/auctionator",
+  "source_id": "curseforge"
 }

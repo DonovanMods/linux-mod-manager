@@ -1084,8 +1084,19 @@ func TestJSONGoldens(t *testing.T) {
 			"verify_finding_download_failed",
 			core.VerifyFinding{
 				ModID: "8939586", ModName: "Auctionator", FileID: "1", Status: "no_checksum",
-				Note:   "getting download URL: mod author has disabled third-party downloads; visit CurseForge website to download manually",
-				ModURL: "https://www.curseforge.com/wow/addons/auctionator",
+				Note:     "getting download URL: mod author has disabled third-party downloads; visit CurseForge website to download manually",
+				ModURL:   "https://www.curseforge.com/wow/addons/auctionator",
+				SourceID: "curseforge",
+			},
+		},
+		{
+			// #517: a row a --fix run repaired to "ok" says how, so the web
+			// UI can tell it from an untouched one. omitzero, so every
+			// other row carries no key at all.
+			"verify_finding_repaired",
+			core.VerifyFinding{
+				ModID: "8939586", ModName: "Auctionator", FileID: "1", Status: "ok",
+				Repair: "Checksum filled from the cached files (the source won't serve this file)",
 			},
 		},
 		{
