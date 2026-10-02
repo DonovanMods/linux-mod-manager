@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,4 +101,26 @@ func TestReloadGames_DropsTheVerifyMemoWhenTheGameSetChanges(t *testing.T) {
 	require.True(t, reloaded)
 	assert.Nil(t, svc.verifyMemoLookup(key, fingerprint),
 		"a game repointed at another directory must not keep the previous directory's verdict")
+}
+
+// BenchmarkFingerprintGamesFile prices the per-request content check
+// ReloadGames now makes (#524): a read and SHA-256 of a realistic 25-game
+// games.yaml. The gamesFileState doc comment cites it.
+func BenchmarkFingerprintGamesFile(b *testing.B) {
+	dir := b.TempDir()
+	body := "games:\n"
+	for i := range 25 {
+		id := "game" + strconv.Itoa(i)
+		body += "  " + id + ":\n    name: Game " + id + "\n    install_path: /home/user/.local/share/Steam/steamapps/common/" + id +
+			"\n    mod_path: /home/user/.local/share/Steam/steamapps/common/" + id + "/mods\n    link_method: symlink\n" +
+			"    source_ids:\n      nexusmods: " + id + "\n      curseforge: " + id + "\n"
+	}
+	require.NoError(b, os.WriteFile(filepath.Join(dir, "games.yaml"), []byte(body), 0o644))
+	b.SetBytes(int64(len(body)))
+	b.ReportAllocs()
+	for b.Loop() {
+		if !fingerprintGamesFile(dir).exists {
+			b.Fatal("games.yaml not fingerprinted")
+		}
+	}
 }

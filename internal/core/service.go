@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -121,7 +122,7 @@ type Service struct {
 	gamesMu      sync.RWMutex
 	games        map[string]*domain.Game
 	// gamesStat fingerprints the games.yaml the snapshot above was loaded
-	// from, so ReloadGames can skip the parse when nothing moved (#376).
+	// from, so ReloadGames can skip the parse when nothing changed (#376, #524).
 	// Guarded by gamesMu, like games itself.
 	gamesStat gamesFileState
 	opSem     chan struct{}
@@ -232,7 +233,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	// write that lands between the two makes the next ReloadGames re-read
 	// (a wasted parse), where the other order would make it skip one (a
 	// missed change) - #376.
-	gamesStat := statGamesFile(cfg.ConfigDir)
+	gamesStat := fingerprintGamesFile(cfg.ConfigDir)
 	games, err := config.LoadGames(cfg.ConfigDir)
 	if err != nil {
 		if closeErr := database.Close(); closeErr != nil {
@@ -2213,41 +2214,47 @@ func (s *Service) LoadGamesFromDisk() (map[string]*domain.Game, error) {
 	return config.LoadGames(s.configDir)
 }
 
-// gamesFileState is a cheap fingerprint of games.yaml: whether it exists,
-// and the size and modification time it had when the in-memory snapshot
-// was loaded from it. Two of these comparing equal is ReloadGames' licence
-// to skip a re-read.
+// gamesFileState fingerprints games.yaml by CONTENT: whether it exists, and
+// the SHA-256 of its bytes. Two of these comparing equal is ReloadGames'
+// licence to skip a re-parse.
 //
-// The modification time is nanoseconds since the epoch rather than a
-// time.Time (P2 review Nit 11). time.Time's own documentation says not to
-// compare with ==: the struct carries a wall clock, an optional monotonic
-// reading and a *Location, so two values naming the same instant can
-// compare unequal. It happened to be safe here - os.Stat's ModTime() goes
-// through time.Unix, which attaches no monotonic reading and always uses
-// the same time.Local pointer - but that is a property of this one caller,
-// not of the type, and the next struct someone compares with == will not
-// inherit it. An int64 is unambiguously comparable.
+// A stat-only fingerprint (size + mtime) was the design until #524, and it
+// is unsound: two writes inside one filesystem timestamp tick that leave the
+// byte count equal - swapping one path for another of the same length, the
+// "racy git" problem - look unchanged, and a restore that preserves mtime
+// (cp -p, rsync -t, touch -r) can collide deliberately. Git's own cure is to
+// distrust a stat only while the mtime is younger than the last load, which
+// keeps the one-stat steady state but depends on a safety window (1s ext3,
+// 2s FAT, arbitrary on network filesystems and under clock skew) and still
+// misses the preserved-mtime case, whose mtime is old by construction.
+//
+// Hashing every check is exact with no window to tune, and it is cheap
+// because games.yaml is small - one entry per game, tens of lines each - and
+// the page cache serves the read. Measured by BenchmarkFingerprintGamesFile
+// (25 games, ~6.5 KiB): about 5 microseconds and 7 KiB of allocation per
+// check, noise next to the SQLite query and JSON encode of the request it
+// rides on. ReloadGames runs once per serve request, never in a loop.
 type gamesFileState struct {
-	exists  bool
-	size    int64
-	modTime int64
+	exists bool
+	sum    [sha256.Size]byte
 }
 
-// statGamesFile fingerprints games.yaml. Any stat failure - including the
-// file not existing, which is the normal pre-first-game state - reports the
-// zero fingerprint, so an appearing or disappearing file is itself a
-// change.
-func statGamesFile(configDir string) gamesFileState {
-	info, err := os.Stat(filepath.Join(configDir, "games.yaml"))
+// fingerprintGamesFile fingerprints games.yaml. Any read failure - including
+// the file not existing, which is the normal pre-first-game state - reports
+// the zero fingerprint, so an appearing or disappearing file is itself a
+// change, and an unreadable one is left for LoadGames to report.
+func fingerprintGamesFile(configDir string) gamesFileState {
+	data, err := os.ReadFile(filepath.Join(configDir, "games.yaml"))
 	if err != nil {
 		return gamesFileState{}
 	}
-	return gamesFileState{exists: true, size: info.Size(), modTime: info.ModTime().UnixNano()}
+	return gamesFileState{exists: true, sum: sha256.Sum256(data)}
 }
 
 // ReloadGames re-reads games.yaml into this Service's in-memory game set
-// when the file has moved since the set was loaded, and reports whether it
-// did. An unchanged file costs one stat.
+// when the file's content has changed since the set was loaded, and reports
+// whether it did. An unchanged file costs one read and hash (see
+// gamesFileState for why that, not a stat, and what it costs).
 //
 // It exists for `lmm serve` (#376), the one frontend that outlives the
 // load NewService performs: the CLI writes games.yaml in another process,
@@ -2268,15 +2275,17 @@ func statGamesFile(configDir string) gamesFileState {
 // game's ModPath under a live Service, and the memo does not fingerprint
 // the game record. An unchanged file costs nothing.
 //
-// The mtime/size fingerprint is deliberately cheap rather than exact. A
-// rewrite that preserves both - same byte count, same nanosecond - is
-// missed; nothing lmm itself writes can do that, and the alternative (a
-// content hash, or an inotify watch) buys precision this does not need.
+// The change test is content, not mtime/size: a same-size rewrite inside one
+// timestamp tick must not be missed (#524).
+//
+// The fingerprint is taken BEFORE LoadGames reads, as NewService does: a write
+// landing between the two leaves a stored sum older than the loaded set, so
+// the next call re-reads (a wasted parse) rather than skipping a change.
 func (s *Service) ReloadGames() (bool, error) {
 	s.gamesMu.Lock()
 	defer s.gamesMu.Unlock()
 
-	current := statGamesFile(s.configDir)
+	current := fingerprintGamesFile(s.configDir)
 	if current == s.gamesStat {
 		return false, nil
 	}
@@ -2345,7 +2354,7 @@ func (s *Service) saveGame(ctx context.Context, game *domain.Game) error {
 	// The map and the file now agree, so re-fingerprint rather than leave
 	// ReloadGames a change it would only re-read to learn what this
 	// function just did (#376).
-	s.gamesStat = statGamesFile(s.configDir)
+	s.gamesStat = fingerprintGamesFile(s.configDir)
 	return nil
 }
 
