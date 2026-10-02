@@ -273,3 +273,56 @@ func TestSearchReportOffersUpdatedForAManifestOnlyIfItIsDated(t *testing.T) {
 		})
 	}
 }
+
+// #512: `lmm install <query>` pages one named source through
+// SearchModsOrdered, which applies the same contract core.Search does - so
+// the picker (and -y's pick) lead with the mod whose name IS the query
+// instead of whatever the source ranked first.
+
+func orderedIDs(t *testing.T, query string, sort domain.SearchSort, mods ...domain.Mod) ([]string, *searchStubSource) {
+	t.Helper()
+	stub := &searchStubSource{id: "alpha", result: source.SearchResult{Mods: mods, TotalCount: len(mods)}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, stub)
+	result, err := svc.SearchModsOrdered(context.Background(), "alpha", game.ID, query, sort, 0, 10)
+	require.NoError(t, err)
+	ids := make([]string, len(result.Mods))
+	for i, m := range result.Mods {
+		ids[i] = m.ID
+	}
+	return ids, stub
+}
+
+func TestSearchModsOrdered_ExactNameMatchLeadsWhateverTheSourcesOrder(t *testing.T) {
+	got, _ := orderedIDs(t, "auctionator", domain.SortRelevance,
+		sortHit("a", "Auctionator Classic Skin"),
+		sortHit("b", "Auction House Tools"),
+		sortHit("c", "Auctionator"))
+	assert.Equal(t, []string{"c", "a", "b"}, got)
+}
+
+func TestSearchModsOrdered_ForwardsTheSortAndAppliesItBehindTheExactMatch(t *testing.T) {
+	got, stub := orderedIDs(t, "auctionator", domain.SortDownloads,
+		domain.Mod{ID: "small", Name: "Auctionator Lite", Downloads: 5},
+		domain.Mod{ID: "exact", Name: "Auctionator", Downloads: 1},
+		domain.Mod{ID: "big", Name: "Auction Pack", Downloads: 900})
+	assert.Equal(t, domain.SortDownloads, stub.gotSort, "the source is asked for the sort")
+	assert.Equal(t, []string{"exact", "big", "small"}, got)
+}
+
+func TestSearchModsOrdered_EmptySortIsRelevanceAndAnUnknownOneIsRefusedBeforeTheSource(t *testing.T) {
+	_, stub := orderedIDs(t, "q", "", sortHit("a", "A"))
+	assert.Equal(t, domain.SortRelevance, stub.gotSort, "never an empty string a source must interpret")
+
+	stub = &searchStubSource{id: "alpha", result: source.SearchResult{Mods: mods("alpha", "x")}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, stub)
+	stub.gotSort = "untouched"
+	_, err := svc.SearchModsOrdered(context.Background(), "alpha", game.ID, "q", "newest", 0, 10)
+	require.ErrorIs(t, err, domain.ErrInvalidSearchSort)
+	assert.Equal(t, domain.SearchSort("untouched"), stub.gotSort, "the source was never asked")
+}
+
+func TestNameMatchesQuery_IsTheExportedRuleSearchOrderingUses(t *testing.T) {
+	assert.True(t, core.NameMatchesQuery("Leatrix Plus", "leatrix-plus"))
+	assert.False(t, core.NameMatchesQuery("SkyUI", "sky"), "equality, never containment")
+	assert.False(t, core.NameMatchesQuery("anything", "  "), "an empty query matches nothing")
+}

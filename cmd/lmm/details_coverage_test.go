@@ -73,6 +73,9 @@ var detailsCoverage = map[string]string{
 	// shape.
 	"core.WorkshopFetchError": "TestReportError_JSON_WorkshopFetchError",
 	"sourceValidationError":   "TestReportError_JSON_SourceValidationError",
+	// #512: `install -y` with several hits and none named like the query -
+	// the candidates and the --id remedy reach the envelope as data.
+	"installNoExactMatchError": "TestReportError_JSON_InstallNoExactMatchError",
 }
 
 // TestDetailsTypesAreCovered enforces detailsCoverage: every type found to

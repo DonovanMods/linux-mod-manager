@@ -19,6 +19,14 @@ fetches the mod directly by its source-specific ID. Combine --id with
 exact file(s) you name (comma-separated for more than one).
 
 .PP
+The result list is ordered like 'lmm search': a mod whose name is exactly
+the query comes first, then the rest by --sort (relevance, the default;
+updated and downloads, newest and most first; popular). With -y/--yes and
+several results, the mod named exactly like the query is installed; if none
+is, nothing is installed and the top candidates are listed so you can pick
+one with --id.
+
+.PP
 Use -s/--source to pick which configured source to search or fetch from.
 If omitted and the game has more than one configured source, you are
 prompted to choose (or, with -y, the first source alphabetically is used
@@ -43,7 +51,8 @@ Examples:
   lmm install "skyui" --game skyrim-se --profile survival
   lmm install --id 12345 --game skyrim-se
   lmm install --id 12345 --file 67890 --game skyrim-se   # skip search and file prompt
-  lmm install "mod name" -g skyrim-se -y       # Auto-select and auto-confirm
+  lmm install "skyui" -g skyrim-se --sort downloads   # most downloaded first
+  lmm install "mod name" -g skyrim-se -y       # Install the exact-name match, auto-confirm
   lmm install "mod name" -g skyrim-se --no-deps  # Skip dependencies
 
 
@@ -80,6 +89,10 @@ Examples:
 	skip checksum storage and display
 
 .PP
+\fB--sort\fP="relevance"
+	order results by relevance, updated (newest first), downloads (most first) or popular (most endorsed first); an exact name match always leads
+
+.PP
 \fB-s\fP, \fB--source\fP=""
 	mod source (default: the sole configured source; prompts when several are configured, -y picks the first alphabetically)
 
@@ -89,7 +102,7 @@ Examples:
 
 .PP
 \fB-y\fP, \fB--yes\fP[=false]
-	auto-select first/primary option (no prompts)
+	auto-confirm; of several search results, install the one named exactly like the query (refused if none is), else the first/primary option (no prompts)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

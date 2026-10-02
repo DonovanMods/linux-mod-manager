@@ -602,6 +602,34 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 	return s.searchSource(ctx, sourceID, gameID, query, category, tags, page, pageSize, domain.SortRelevance)
 }
 
+// SearchModsOrdered is SearchMods for a frontend that shows one named
+// source's page to a person (`lmm install <query>`, #512): the page is asked
+// of the source in sortBy and then put through the search ordering contract
+// (#503) - a hit whose name IS the query first, the rest in the sort - so
+// the picker's first row and an auto-pick agree with `lmm search`. Paging is
+// the source's own: page N is the source's page N, ordered within itself, so
+// next/prev keep working. An empty sortBy is relevance; one outside
+// domain.SearchSorts wraps domain.ErrInvalidSearchSort before any source is
+// asked.
+func (s *Service) SearchModsOrdered(ctx context.Context, sourceID, gameID, query string, sortBy domain.SearchSort, page, pageSize int) (source.SearchResult, error) {
+	sortBy, err := domain.ParseSearchSort(string(sortBy))
+	if err != nil {
+		return source.SearchResult{}, err
+	}
+	result, err := s.searchSource(ctx, sourceID, gameID, query, "", nil, page, pageSize, sortBy)
+	if err != nil {
+		return result, err
+	}
+	orderSearchHits(result.Mods, query, sortBy)
+	return result, nil
+}
+
+// NameMatchesQuery reports whether a hit called name IS the query - the same
+// equality rule the search ordering contract leads with (#503), exported so a
+// frontend deciding whether a hit earned an auto-pick (`lmm install -y`,
+// #512) asks core rather than carrying a second copy of it.
+func NameMatchesQuery(name, query string) bool { return nameMatchesQuery(name, query) }
+
 // searchSource is SearchMods with a sort (#503): the one place a
 // source.SearchQuery is built, so the aggregate and the named-source paths
 // forward the sort identically.

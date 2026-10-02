@@ -526,7 +526,7 @@ func TestSearchAndSelectMods_JSONOutputRequiresYesOrID(t *testing.T) {
 	var mods []*domain.Mod
 	err := assertStdinNeverRead(t, func() error {
 		var err error
-		mods, err = searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "query", "default")
+		mods, err = searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "query", "default", domain.SortRelevance)
 		return err
 	})
 
@@ -546,7 +546,7 @@ func TestSearchAndSelectMods_JSONOutputSingleMatchNeedsNoFlag(t *testing.T) {
 		{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 	}
 
-	mods, err := searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "query", "default")
+	mods, err := searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "query", "default", domain.SortRelevance)
 
 	require.NoError(t, err)
 	require.Len(t, mods, 1)
@@ -601,6 +601,10 @@ type fakeInstallSource struct {
 	// test in this file relies on.
 	searchResults []domain.Mod
 
+	// searchSorts records the Sort each Search call was asked for, in call
+	// order (#512): the observable form of "install forwarded --sort".
+	searchSorts []domain.SearchSort
+
 	// changelogs is keyed by mod ID; SetChangelog populates it. Every
 	// fakeInstallSource implements source.ChangelogProvider unconditionally
 	// (#87) - a mod ID with no entry returns "", the ordinary "nothing to
@@ -652,6 +656,7 @@ func (s *fakeInstallSource) ExchangeToken(ctx context.Context, code string) (*so
 	return nil, nil
 }
 func (s *fakeInstallSource) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
+	s.searchSorts = append(s.searchSorts, query.Sort)
 	if s.searchResults != nil {
 		return source.SearchResult{Mods: s.searchResults, TotalCount: len(s.searchResults), Warnings: s.searchWarnings}, nil
 	}
@@ -1918,7 +1923,7 @@ func TestSearchAndSelectMods_EOFNamesTheSameRemedyAsJSON(t *testing.T) {
 	var selErr error
 	captureStdout(t, func() error {
 		withStdin(t, "", func() {
-			_, selErr = searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "Alpha", "default")
+			_, selErr = searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "Alpha", "default", domain.SortRelevance)
 		})
 		return nil
 	})

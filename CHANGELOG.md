@@ -1706,6 +1706,20 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **`lmm install <query>` orders its results like `lmm search`, and `-y` no
+  longer installs a guess (#512).** The install picker listed a source's raw
+  order, so the mod named exactly like your query could sit behind fuzzier
+  hits, and `-y` installed whatever came first. The picker now follows
+  search's ordering (the exact-name match first, then `--sort`), and
+  `lmm install --sort relevance|updated|downloads|popular` is new, with the
+  same completion and help as `lmm search --sort` (date sorts are newest
+  first). **Behaviour change for `-y`/`--yes`:** with several results it
+  installs only a mod whose name is exactly the query; when none is, it
+  installs nothing and refuses (exit code for "confirmation required"), naming
+  up to 10 candidates with their ids and the `--id` remedy - under `--json` as
+  `details.candidates`. A single result is still installed as before, and
+  `--json` without `-y` is unchanged.
+
 - **CurseForge versions that aren't dotted no longer show as blank (#510).**
   Search, `lmm mod show` and the update check read a CurseForge file's
   version by looking for a dotted number (`1.2.3`), so a mod versioned by a
