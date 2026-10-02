@@ -116,7 +116,9 @@ type VerifyFinding struct {
 	//	stale_compile         always, on a plain run: --fix's merged-pak
 	//	                      resync (syncMergedPakPass) regenerates it
 	//	missing               a non-local source: redownloadModFile
-	//	no_checksum           a non-local source: redownload-to-populate
+	//	no_checksum           a non-local source: redownload-to-populate,
+	//	                      or, for a file the source won't serve, a fill
+	//	                      from the mod's own complete cache entry (#514)
 	//	needs_reingest        a non-local source: redownload re-ingests
 	//	version_mismatch      a non-local source AND an UNLOCKED ref - a
 	//	                      locked ref's Version is the lock's target, and
@@ -193,6 +195,12 @@ type VerifyFinding struct {
 	// beside a missing row that offers Repair; the refusal for the second
 	// one arrives on the repaired document, as note "locked".
 	FixableReason string `json:"fixable_reason,omitzero"`
+
+	// ModURL is the mod's page on its source, set on a row whose --fix
+	// re-download failed (#514): the place to fetch the file by hand. Taken
+	// from the failure's *DownloadError, so it is already limited to http(s)
+	// by domain.SafeWebURL; empty when the source gave no usable page.
+	ModURL string `json:"mod_url,omitzero"`
 
 	// External marks a row about a Steam Workshop item lmm tracks but never
 	// deployed (#429): an "ok" row naming a present item, which the
@@ -1337,7 +1345,10 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(rerr)})
 					} else {
 						r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
+						page := downloadPage(rerr)
+						r.result.Findings[len(r.result.Findings)-1].ModURL = page
 						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
+						r.emitDownloadPage(page)
 					}
 				} else {
 					// Same convention as MISSING/NO CHECKSUM's own --fix
@@ -1375,7 +1386,10 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(err)})
 				case err != nil:
 					r.resolveLast("missing", err.Error())
+					page := downloadPage(err)
+					r.result.Findings[len(r.result.Findings)-1].ModURL = page
 					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
+					r.emitDownloadPage(page)
 				case persisted:
 					r.resolveLast("ok", "")
 					r.result.Issues--
@@ -1404,12 +1418,13 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 				// The row waits for the re-download's outcome, so the
 				// re-download's own sub-lines wait for the row.
 				release := r.holdDetails()
-				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
+				persisted, fromCache, err := r.populateChecksum(mod, f.FileID, ref)
 				held := release()
 
 				row := VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"}
 				var extras VerifyEvent
-				var detail string
+				var detail, page string
+				var fixed bool
 				switch {
 				case errors.Is(err, ErrModLocked):
 					// #325 (review I2): refused, not failed - see the
@@ -1422,6 +1437,13 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 				case err != nil:
 					r.result.Warnings++
 					row.Note, detail = err.Error(), fmt.Sprintf("Re-download to populate checksum failed: %v", err)
+					page = downloadPage(err)
+					row.ModURL = page
+				case fromCache:
+					// #514: populated, but not by the re-download the
+					// plain "checksum populated" line implies - say how.
+					row.Status, extras.ChecksumPopulated = "ok", true
+					detail, fixed = "Checksum filled from the cached files (the source won't serve this file)", true
 				case persisted:
 					row.Status, extras.ChecksumPopulated = "ok", true
 				default:
@@ -1437,8 +1459,9 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 					r.emitEv(ev)
 				}
 				if detail != "" {
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: detail})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: detail, Fixed: fixed})
 				}
+				r.emitDownloadPage(page)
 				continue
 			}
 			r.result.Warnings++

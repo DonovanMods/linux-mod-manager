@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -510,9 +511,16 @@ func (s *Service) ApplyAdoptBackfill(ctx context.Context, game *domain.Game, pla
 		if im.SourceURL == "" && mod.SourceURL != "" {
 			updated.SourceURL = mod.SourceURL
 		}
+		// #514: the full-row save re-keys installed_mod_files, dropping every
+		// checksum; a metadata backfill changes no file, so they are carried
+		// across.
+		checksums, msgs := s.rowChecksums(ctx, game, im)
 		if err := s.saveInstalledMod(ctx, &updated); err != nil {
 			note(im, AdoptBackfillNote, fmt.Sprintf("%s: metadata save failed: %v", im.Name, err))
 			continue
+		}
+		for _, msg := range append(msgs, s.recordFileChecksums(ctx, im.SourceID, im.ID, game.ID, im.ProfileName, checksums)...) {
+			note(im, AdoptBackfillNote, fmt.Sprintf("%s: %s", im.Name, strings.TrimPrefix(msg, "Warning: ")))
 		}
 
 		result.Backfilled++
@@ -697,6 +705,18 @@ func (s *Service) adoptScannedMod(ctx context.Context, game *domain.Game, r Scan
 	}
 	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 		return fmt.Errorf("saving to database: %w", err)
+	}
+	// #514: a copy-mode adoption cached the scanned file's own bytes, so its
+	// md5 is what a download of the resolved file records. Extract mode
+	// writes no cache entry, so there is nothing of lmm's to fingerprint and
+	// the row is left as it was (verify reports that entry missing anyway).
+	if game.DeployMode == domain.DeployCopy {
+		warn := func(format string, args ...any) {
+			step(r, AdoptNote, "Warning: "+fmt.Sprintf(format, args...))
+		}
+		for _, msg := range s.recordFileChecksums(ctx, r.Mod.SourceID, r.Mod.ID, game.ID, profileName, archiveChecksums(r.FilePath, fileIDs, warn)) {
+			warn("%s", msg)
+		}
 	}
 
 	pm := s.NewProfileManager()

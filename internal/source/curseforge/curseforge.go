@@ -413,12 +413,10 @@ func (c *CurseForge) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID
 		return "", fmt.Errorf("invalid file ID: %w", err)
 	}
 
-	url, err := c.client.GetDownloadURL(ctx, modID, fID)
-	if err != nil {
-		return "", fmt.Errorf("getting download URL: %w", err)
-	}
-
-	return url, nil
+	// Returned as it came (#514): core's download path names the step
+	// ("getting download URL: ") once for every source, so a prefix here -
+	// or in the client - only repeats it.
+	return c.client.GetDownloadURL(ctx, modID, fID)
 }
 
 // CheckUpdates checks for available updates.
