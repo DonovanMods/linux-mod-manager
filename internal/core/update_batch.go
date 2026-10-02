@@ -25,6 +25,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -96,6 +97,10 @@ type UpdateBatchFailure struct {
 	// wire: a JSON document cannot carry a typed error, so a caller that
 	// needs to branch on the cause must be in-process and use Cause below.
 	Error string `json:"error"`
+	// ModURL is the mod's page on its source when the failure was a download
+	// (#513) and the page is a plain http(s) address - the one fact of the
+	// typed error a job result document needs to keep. Omitted otherwise.
+	ModURL string `json:"mod_url,omitzero"`
 
 	// cause is the original error, kept for an in-process caller. It is
 	// deliberately unexported: it is not part of the wire contract, and a
@@ -328,9 +333,12 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 			Total:   total,
 		}
 		fail := func(err error) {
-			result.Failed = append(result.Failed, UpdateBatchFailure{
-				Mod: key, Name: mod.Name, Error: err.Error(), cause: err,
-			})
+			failure := UpdateBatchFailure{Mod: key, Name: mod.Name, Error: err.Error(), cause: err}
+			var dl *DownloadError
+			if errors.As(err, &dl) {
+				failure.ModURL = dl.ModURL
+			}
+			result.Failed = append(result.Failed, failure)
 			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemFailed, Detail: err.Error()})
 		}
 

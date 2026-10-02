@@ -689,6 +689,37 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #513: a failed download as the envelope's details. mod_url is
+			// the mod's page, only ever an http(s) URL; manual_download says
+			// the source will not serve the file itself, so it has to be
+			// fetched from that page.
+			"download_error",
+			(&core.DownloadError{
+				SourceID: "curseforge", ModID: "238222", ModName: "Just Enough Items",
+				ModURL: "https://www.curseforge.com/minecraft/mc-mods/jei", ManualDownload: true,
+				Err: errors.New("mod author has disabled third-party downloads"),
+			}).Details(),
+		},
+		{
+			// #513: and with no page to send the user to - the keys that
+			// have nothing to say are left out.
+			"download_error_no_page",
+			(&core.DownloadError{SourceID: "custom", ModID: "m1", Err: errors.New("boom")}).Details(),
+		},
+		{
+			// #513: a Steam Workshop failure keeps the keys the web UI
+			// recognises it by (published_file_id, reason, ...) and gains
+			// the mod's page beside them.
+			"download_error_workshop",
+			(&core.DownloadError{
+				SourceID: "steamworkshop", ModID: "42", ModName: "Some Item",
+				ModURL: "https://steamcommunity.com/sharedfiles/filedetails/?id=42",
+				Err: &core.WorkshopFetchError{
+					AppID: "1133870", PublishedFileID: "42", Reason: "the publisher disallows anonymous downloads", Tool: "steamcmd",
+				},
+			}).Details(),
+		},
+		{
 			// #410: a game whose identifier for a source is missing or
 			// malformed. game_id and source are what the web UI needs to
 			// open the sources editor on the right row; value is what
@@ -1809,6 +1840,16 @@ func TestJSONGoldens(t *testing.T) {
 				Mod:   "curseforge:7",
 				Name:  "Broken Mod",
 				Error: "fetching mod: source unavailable",
+			},
+		},
+		{
+			// #513: a failure that was a download carries the mod's page.
+			"update_batch_failure_download",
+			core.UpdateBatchFailure{
+				Mod:    "curseforge:7",
+				Name:   "Broken Mod",
+				Error:  "downloading update: mod author has disabled third-party downloads",
+				ModURL: "https://www.curseforge.com/minecraft/mc-mods/broken-mod",
 			},
 		},
 		{

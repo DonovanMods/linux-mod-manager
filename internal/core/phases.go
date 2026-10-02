@@ -342,11 +342,10 @@ const (
 	// equivalent is InstallDepDownloadDone.
 	InstallDownloadDone
 	// InstallDownloadFailed fires when a STRICT-path (primary) file
-	// download fails; Detail carries "download failed: %v" (the CLI checks
-	// Detail for the "third-party downloads" substring itself, mirroring
-	// doInstall's own check, to print the manual-install notice using the
-	// plan's own Mod.SourceURL/ID - already in the CLI's enclosing scope,
-	// so it isn't duplicated onto the event). Always fatal - the BATCH
+	// download fails; Detail carries "download failed: %v". The mod's page
+	// and whether the source refuses automated downloads are typed data on
+	// the *DownloadError ApplyInstall then returns (#513), not something a
+	// frontend recovers from Detail's text. Always fatal - the BATCH
 	// path's equivalent (InstallDepSkipped) never is.
 	InstallDownloadFailed
 	// InstallChecksumComputed fires once a checksum has been computed and

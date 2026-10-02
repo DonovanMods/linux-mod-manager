@@ -316,6 +316,26 @@ var ErrInvalidReference = errors.New("reference not recognised by this source")
 // gracefully (hide the action, show a notice) rather than treat it as a failure.
 var ErrNotSupported = errors.New("operation not supported by this source")
 
+// ErrManualDownload classifies a download a source will not serve through
+// its API - a mod author who has opted out of third-party distribution, for
+// one - so the file has to be fetched by hand from the mod's page (#513).
+// Branch with errors.Is; a source returns a *ManualDownloadError so its own
+// sentence survives.
+var ErrManualDownload = errors.New("this mod's file can only be downloaded manually")
+
+// ManualDownloadError is the error a source returns for ErrManualDownload,
+// with its own explanation as the text.
+type ManualDownloadError struct {
+	// Reason is the sentence the user reads.
+	Reason string
+}
+
+// Error is Reason.
+func (e *ManualDownloadError) Error() string { return e.Reason }
+
+// Is makes errors.Is(err, ErrManualDownload) true.
+func (e *ManualDownloadError) Is(target error) bool { return target == ErrManualDownload }
+
 // Capabilities reports which optional operations a source supports.
 type Capabilities struct {
 	Search       bool
