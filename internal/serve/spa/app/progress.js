@@ -362,6 +362,7 @@ export function resultTallyTone(tally) {
  */
 export function frameFromEvent({ type, data } = {}) {
   const event = data ?? {};
+  if (type === "verify") return verifyFrame(event);
   return {
     type,
     phase: event.phase,
@@ -374,4 +375,34 @@ export function frameFromEvent({ type, data } = {}) {
     downloaded: event.downloaded,
     total_bytes: event.total_bytes,
   };
+}
+
+// verifyFrame is a core.VerifyEvent's frame, or null for one with nothing to
+// say (issue 517). A verify run emits an event per file checked - mostly healthy
+// ones - so only what a person reads is kept: a repair's sub-line (its own
+// words, "Checksum filled from the cached files ..."), a finding that is a
+// problem or was just fixed, and the sync warning. The per-file ok tick, the
+// run's begin marker and the verbose diagnostics are dropped.
+function verifyFrame(event) {
+  const frame = { type: "verify", op: event.op };
+  switch (event.kind) {
+    case "repair_detail":
+    case "sync_warning":
+      return { ...frame, detail: event.detail };
+    case "finding": {
+      const finding = event.finding ?? {};
+      if (finding.status === "ok" && !event.checksum_populated) return null;
+      return {
+        ...frame,
+        mod_name: finding.mod_name || event.mod_name,
+        detail:
+          finding.note ||
+          (event.checksum_populated
+            ? "checksum populated"
+            : (finding.status ?? "").replaceAll("_", " ")),
+      };
+    }
+    default:
+      return null;
+  }
 }

@@ -202,6 +202,22 @@ type VerifyFinding struct {
 	// by domain.SafeWebURL; empty when the source gave no usable page.
 	ModURL string `json:"mod_url,omitzero"`
 
+	// SourceID names the source ModURL is a page of (#517), set whenever
+	// ModURL is: a frontend names the link "Open on <source>", and the row
+	// carries no other source to name. Same key as DownloadError's details.
+	SourceID string `json:"source_id,omitzero"`
+
+	// Repair is what a --fix run did to make this row healthy, in the
+	// words of the repair's own sub-line (#517): "Re-downloaded OK",
+	// "Checksum filled from the cached files (...)". It is set only on a
+	// row a repair resolved to "ok", because that is the one outcome the
+	// row cannot tell on its own - a repaired "ok" and an untouched "ok"
+	// are otherwise the same document, and a run's repair sub-lines are
+	// events, which a long run's bounded ring drops long before a person
+	// opens the finished job. The "fixed_*" statuses are self-describing
+	// (their Note says what was done) and leave it empty.
+	Repair string `json:"repair,omitzero"`
+
 	// External marks a row about a Steam Workshop item lmm tracks but never
 	// deployed (#429): an "ok" row naming a present item, which the
 	// presence check is ALL lmm can verify about it, or its
@@ -1346,7 +1362,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 					} else {
 						r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
 						page := downloadPage(rerr)
-						r.result.Findings[len(r.result.Findings)-1].ModURL = page
+						r.setDownloadPage(mod, page)
 						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
 						r.emitDownloadPage(page)
 					}
@@ -1387,11 +1403,12 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 				case err != nil:
 					r.resolveLast("missing", err.Error())
 					page := downloadPage(err)
-					r.result.Findings[len(r.result.Findings)-1].ModURL = page
+					r.setDownloadPage(mod, page)
 					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
 					r.emitDownloadPage(page)
 				case persisted:
 					r.resolveLast("ok", "")
+					r.result.Findings[len(r.result.Findings)-1].Repair = "Re-downloaded OK"
 					r.result.Issues--
 					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded OK", Fixed: true})
 				default:
@@ -1439,13 +1456,18 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 					row.Note, detail = err.Error(), fmt.Sprintf("Re-download to populate checksum failed: %v", err)
 					page = downloadPage(err)
 					row.ModURL = page
+					if page != "" {
+						row.SourceID = mod.SourceID
+					}
 				case fromCache:
 					// #514: populated, but not by the re-download the
 					// plain "checksum populated" line implies - say how.
 					row.Status, extras.ChecksumPopulated = "ok", true
 					detail, fixed = "Checksum filled from the cached files (the source won't serve this file)", true
+					row.Repair = detail
 				case persisted:
 					row.Status, extras.ChecksumPopulated = "ok", true
+					row.Repair = "Checksum recorded from a fresh download"
 				default:
 					// The download succeeded but produced no checksum to
 					// store - nothing was written, so the warning stands
@@ -1722,6 +1744,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Note: " + note})
 					}
 					r.resolveLast("ok", note)
+					r.result.Findings[len(r.result.Findings)-1].Repair = fmt.Sprintf("Repaired: %s → %s", recorded, effective)
 					r.result.Issues--
 				}
 			}

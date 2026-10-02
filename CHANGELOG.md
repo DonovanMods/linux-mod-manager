@@ -289,6 +289,21 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
 
 ### Added
 
+- **The web UI shows what a repair did, and what still fails (#517).** A
+  `verify --fix` job (the Health card's **Repair** and **Repair all**) used to
+  finish with a bare "Done": the findings and the repair's own notes were
+  never rendered. Its result now lists, on the Health card and in the
+  activity tray, **Still needs attention** first — each mod, "Still failing",
+  the reason, and an **Open on …** link to its page when a re-download failed
+  — then **Repaired**: each mod, "Repaired", and what was done ("Checksum
+  filled from the cached files (the source won't serve this file)"). Healthy
+  files are left out. Expanding the job in the tray also reads the repair's
+  sub-lines out as it ran. To make that possible a repaired finding in
+  `lmm verify --fix --json` and `/api/v1` gains `repair` (the sentence for a
+  row a repair resolved to `ok`, which was otherwise indistinguishable from an
+  untouched one), and a finding with a `mod_url` gains `source_id`; both are
+  additive and absent otherwise.
+
 - **A link to a mod's page, everywhere, and on every failed download
   (#513).** A mod that can't be downloaded — an author who has turned API
   downloads off, a removed file, a flaky host — used to leave you with an

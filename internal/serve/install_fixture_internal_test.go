@@ -59,6 +59,9 @@ type installSource struct {
 	server      *httptest.Server
 	mods        map[string]*installSourceMod
 	urlRequests atomic.Int64
+	// refuse makes GetDownloadURL fail for a mod, by id - a source that
+	// will not serve the file (#517).
+	refuse map[string]error
 }
 
 // newInstallSource builds the catalog and starts its download server.
@@ -191,6 +194,9 @@ func (s *installSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domai
 // the cache-warm oracle the conflict-overwrite test asserts on.
 func (s *installSource) GetDownloadURL(_ context.Context, mod *domain.Mod, fileID string) (string, error) {
 	s.urlRequests.Add(1)
+	if err := s.refuse[mod.ID]; err != nil {
+		return "", err
+	}
 	return s.server.URL + "/" + mod.ID + "/" + fileID, nil
 }
 

@@ -25,6 +25,7 @@ import {
 import {
   useJobResultPurge,
   useJobResultTally,
+  useJobResultVerify,
   useJobResultWarnings,
 } from "../jobresult.js";
 import { codeSpans } from "../errortext.js";
@@ -36,6 +37,7 @@ import {
 } from "../failures.js";
 import { DownloadPage, LoaderSetup } from "./errordetails.js";
 import { PurgeResultDetails } from "./purgeresult.js";
+import { VerifyFixResult } from "./verifyfixresult.js";
 
 /**
  * InlineJob renders children when origin has no job, and that job's live
@@ -86,6 +88,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   const tally = useJobResultTally(jobID, state);
   const resultWarnings = useJobResultWarnings(jobID, state);
   const purgeResult = useJobResultPurge(jobID, state);
+  const repairResult = useJobResultVerify(jobID, state);
 
   if (state === "running") {
     const fraction = progressFraction(frame);
@@ -141,7 +144,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
     !failed && summary?.kind === "switch" ? resultWarnings : NO_NOTICES;
   return html`
     <div
-      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || notices.length > 0 || purgeResult ? "job-progress--explained" : ""}"
+      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || notices.length > 0 || purgeResult || repairResult ? "job-progress--explained" : ""}"
       data-job=${jobID}
       data-state=${state}
       role="status"
@@ -183,6 +186,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
           </p>`,
       )}
       <${PurgeResultDetails} result=${purgeResult} />
+      <${VerifyFixResult} outcome=${repairResult} />
       ${
         loader &&
         html`<div class="job-progress__explainer">

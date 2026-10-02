@@ -1322,6 +1322,58 @@ a.row-menu__item.mod-page-link {
   margin: var(--space-2) 0 0;
 }
 
+/* issue 517: what a finished verify --fix job repaired, and what still fails.
+ * Status is always said in words; the colour only reinforces it. */
+.verify-result {
+  flex-basis: 100%;
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.verify-result__group + .verify-result__group {
+  margin-top: var(--space-2);
+}
+
+.verify-result__heading {
+  margin: 0 0 var(--space-1);
+  color: var(--text-primary);
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.verify-result__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.verify-result__row {
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.verify-result__status {
+  font-weight: 600;
+}
+
+.verify-result__status--attention {
+  color: var(--danger);
+}
+
+.verify-result__status--repaired {
+  color: var(--good);
+}
+
+.verify-result__mod {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.verify-result__more {
+  margin: var(--space-1) 0 0;
+}
+
 .download-page__hint {
   margin: 0 0 var(--space-1);
   color: var(--text-secondary);

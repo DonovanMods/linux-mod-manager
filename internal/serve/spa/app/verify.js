@@ -27,3 +27,37 @@ export function findingLabel(f) {
   }
   return label;
 }
+
+/** isRepaired reports whether a --fix run repaired this finding (issue 517).
+ *
+ * The "fixed_*" statuses say so themselves. A repair that resolves a row to
+ * "ok" cannot - a repaired "ok" and an untouched one are the same status - so
+ * core marks it with the repair's own sentence in `repair`. */
+export function isRepaired(f) {
+  if (typeof f?.status !== "string") return false;
+  return (
+    f.status.startsWith("fixed_") || (f.status === "ok" && Boolean(f.repair))
+  );
+}
+
+/** repairOutcome splits a finished --fix run's findings into the two groups
+ * worth reading: what it repaired, and what still needs attention. Every
+ * other row - a healthy file, a skipped one - is neither, and is left out
+ * so the list stays about the repair rather than about the profile. */
+export function repairOutcome(findings) {
+  const repaired = [];
+  const attention = [];
+  for (const f of Array.isArray(findings) ? findings : []) {
+    if (isRepaired(f)) repaired.push(f);
+    else if (f?.status && f.status !== "ok" && f.status !== "skipped") {
+      attention.push(f);
+    }
+  }
+  return { repaired, attention };
+}
+
+/** repairNote is the sentence saying what a repair did: the row's own
+ * `repair`, or - for a "fixed_*" row - its note. */
+export function repairNote(f) {
+  return f.repair || f.note || "";
+}

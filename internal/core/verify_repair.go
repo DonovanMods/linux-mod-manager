@@ -145,6 +145,17 @@ func downloadPage(err error) string {
 	return ""
 }
 
+// setDownloadPage records a failed repair download's page on the finding
+// just reported, with the source it is a page of (#517); nothing when err
+// carried none.
+func (r *verifyRun) setDownloadPage(mod *domain.InstalledMod, page string) {
+	if page == "" {
+		return
+	}
+	last := &r.result.Findings[len(r.result.Findings)-1]
+	last.ModURL, last.SourceID = page, mod.SourceID
+}
+
 // emitDownloadPage writes the sub-line naming a failed repair download's
 // page under the failure's own, when there is one (#514). The finding's
 // ModURL carries the same page for --json and the web UI.

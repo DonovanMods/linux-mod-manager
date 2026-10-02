@@ -83,6 +83,8 @@ export const jobEventTypes = [
   "warning",
   "merge",
   "update_check",
+  // verify --fix's repair sub-lines (issue 517).
+  "verify",
 ];
 
 /** activityReopenMillis is how long a closed activity stream waits before
