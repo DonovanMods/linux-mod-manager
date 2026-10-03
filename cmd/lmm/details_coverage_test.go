@@ -53,6 +53,8 @@ var detailsCoverage = map[string]string{
 	// #528: an install_path change refused because it is not a move of
 	// the whole folder - the counts and the profiles to purge, as data.
 	"core.GameInstallPathInUseError": "TestReportError_JSON_GameInstallPathInUseError",
+	// #529: the folder chooser's refusal - the path and the reason as data.
+	"core.DirectoryListError": "TestReportError_JSON_DirectoryListError",
 	// #359's plan-time loader precondition: the setup steps reach the
 	// envelope as DATA, so the web UI renders the same sentences the
 	// terminal prints instead of carrying its own copy in JavaScript.

@@ -100,3 +100,18 @@ func TestReportError_JSON_GameInstallPathInUseError(t *testing.T) {
 		"  }\n"+
 		"}\n", out)
 }
+
+func TestReportError_JSON_DirectoryListError(t *testing.T) {
+	withJSONOutput(t)
+
+	err := &core.DirectoryListError{Path: "relative/dir", Reason: core.DirectoryNotAbsolute}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"\\\"relative/dir\\\" is not an absolute path: give a path starting with / or ~\",\n"+
+		"  \"details\": {\n"+
+		"    \"path\": \"relative/dir\",\n"+
+		"    \"reason\": \"not_absolute\"\n"+
+		"  }\n"+
+		"}\n", out)
+}
