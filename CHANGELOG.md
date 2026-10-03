@@ -1827,7 +1827,14 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   `--json` envelope's `details`: the counts, whether the old folder still
   exists, and each profile to purge first). Profile override files are not
   tracked, so after a move the next deploy writes them into the new folder;
-  copies left in the old one are not removed.
+  copies left in the old one are not removed. The same policy holds for
+  every other writer of an install path: `lmm game detect`, `lmm init` and
+  `POST /api/v1/games/detect` repairing a configured game found at a new
+  path (a Steam library that moved) re-root it when it is a move, and
+  otherwise leave that game exactly as it was and report it as a per-game
+  finding - the detect result's new `refused` list, each with the same
+  error and details - while the rest of the selection is still added; the
+  command then exits with that error (409 on the wire).
 
 - **The library's "Load order" heading no longer wraps, and the add-game
   toggle no longer stretches (#526).** The library table's heading read

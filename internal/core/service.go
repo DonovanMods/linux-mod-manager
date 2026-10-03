@@ -2323,7 +2323,10 @@ func (s *Service) ReloadGames() (bool, error) {
 // Replacing an entry is refused, as `lmm game edit --mod-path` is
 // (refuseModPathMove), when it would move the game's mod_path out from
 // under files deployed there (#451). A cache_path change also requires
-// purging every recorded deployment first (#487).
+// purging every recorded deployment first (#487). An install_path change
+// follows #528's policy (refuseInstallPathMove) - a correction, or a move
+// whose deployed files are re-rooted with it, or GameInstallPathInUseError -
+// so no writer of a game's install_path gets round it.
 func (s *Service) SaveGame(ctx context.Context, game *domain.Game) error {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -2331,6 +2334,16 @@ func (s *Service) SaveGame(ctx context.Context, game *domain.Game) error {
 	}
 	defer release()
 	if prior, ok := s.game(game.ID); ok {
+		if !samePath(game.InstallPath, prior.InstallPath) {
+			reroot, err := s.refuseInstallPathMove(ctx, prior, game, followInstallPath(prior, game.InstallPath))
+			if err != nil {
+				return err
+			}
+			if err := s.refuseCachePathMove(ctx, prior, game.CachePath); err != nil {
+				return err
+			}
+			return s.saveEditedGame(ctx, game, reroot)
+		}
 		if err := s.refuseModPathMove(ctx, prior, game.ModPath); err != nil {
 			return err
 		}

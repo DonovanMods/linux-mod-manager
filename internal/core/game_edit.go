@@ -404,6 +404,18 @@ func (s *Service) refuseInstallPathMove(ctx context.Context, game, updated *doma
 	return &ledgerReroot{from: from, to: updated.ModPath, back: game.ModPath}, nil
 }
 
+// isInUseRefusal reports whether err is one of the refusals
+// refuseInstallPathMove makes because of what lmm has recorded against the
+// game's folder - the per-game finding a detect repair reports
+// (GameDetectRefusal) rather than a failure of the whole selection.
+func isInUseRefusal(err error) bool {
+	var installInUse *GameInstallPathInUseError
+	var modPathInUse *GameModPathInUseError
+	var stranded *ModPathMissingError
+	return errors.As(err, &installInUse) || errors.As(err, &modPathInUse) ||
+		errors.As(err, &stranded) || errors.Is(err, ErrActiveProfileUnknown)
+}
+
 // GameInstallPathInUseError refuses an install_path change (#528) while lmm
 // has files recorded against the game's folder and the change is not a
 // move of that whole folder: the old install path still exists, or some of

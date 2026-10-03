@@ -506,12 +506,16 @@ func (s *Server) handleAPIGameDetectApply(w http.ResponseWriter, r *http.Request
 // taken game id is a collision (409, matching POST /api/v1/games), and so is
 // a repair that would move the mod_path of a game with files deployed
 // (core.GameModPathInUseError, or core.ErrActiveProfileUnknown - 409 as on
-// PUT /api/v1/games/{id}, #427 review F1); anything else is a real write
-// failure (500). A REJECTED selector never reaches here -
-// SelectDetectedGames answered 400 above.
+// PUT /api/v1/games/{id}, #427 review F1), and a repair refused under #528's
+// install-path policy (core.GameDetectRefusedError: the rest of the
+// selection applied, and the details' "refused" names each game left
+// alone); anything else is a real write failure (500). A REJECTED selector
+// never reaches here - SelectDetectedGames answered 400 above.
 func gameDetectApplyErrorStatus(err error) int {
 	var modPathInUse *core.GameModPathInUseError
-	if errors.Is(err, core.ErrGameExists) || errors.As(err, &modPathInUse) || errors.Is(err, core.ErrActiveProfileUnknown) {
+	var refused *core.GameDetectRefusedError
+	if errors.Is(err, core.ErrGameExists) || errors.As(err, &modPathInUse) || errors.Is(err, core.ErrActiveProfileUnknown) ||
+		errors.As(err, &refused) {
 		return http.StatusConflict
 	}
 	return http.StatusInternalServerError

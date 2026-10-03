@@ -187,6 +187,11 @@ other change is refused with the purge each profile needs first. Profile
 override files are not tracked; after a move, the next deploy writes them
 into the new folder.
 
+`lmm game detect` (and `lmm init`, and the web UI's detect) holds a repair
+of a configured game it finds at a new path to the same rule: a move is
+re-rooted, and any other change is reported for that game - it is left as
+it was - while the rest of the selection is still added.
+
 #### Changing `mod_path` with files deployed
 
 lmm records each deployed file relative to the `mod_path` it was deployed

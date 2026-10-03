@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -87,4 +88,41 @@ func TestAPIGameSources_InstallPathRefusals(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, game.InstallPath, reloaded.InstallPath)
 	})
+}
+
+// TestAPIGameDetectApply_RefusesAnInstallPathRepairAsAFinding (#528): the
+// detect apply's repair of a configured game found at a new install path,
+// while its old folder - with files deployed in it - still exists, is
+// refused with the edit's own typed error, as a per-game finding in the
+// partial result's "refused"; 409, and nothing written for that game.
+func TestAPIGameDetectApply_RefusesAnInstallPathRepairAsAFinding(t *testing.T) {
+	s := newGamesServer(t)
+	install := fakeSteamApp(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
+	old := t.TempDir()
+	game := &domain.Game{
+		ID: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: old,
+		ModPath: filepath.Join(old, "Data"), SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"},
+	}
+	require.NoError(t, os.MkdirAll(game.ModPath, 0o755))
+	require.NoError(t, s.svc.SaveGame(t.Context(), game))
+	deployOneModFile(t, s.svc, game)
+
+	rec := doAPI(s, http.MethodPost, "/api/v1/games/detect", `{"select":["skyrim-se"]}`)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+	var env struct {
+		Error   string                `json:"error"`
+		Details core.GameDetectResult `json:"details"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	assert.Contains(t, env.Error, "not repairing skyrim-se")
+	require.Len(t, env.Details.Refused, 1)
+	assert.Equal(t, "skyrim-se", env.Details.Refused[0].GameID)
+	details, ok := env.Details.Refused[0].Details.(map[string]any)
+	require.True(t, ok, "details: %#v", env.Details.Refused[0].Details)
+	assert.Equal(t, install, details["new_install_path"])
+	assert.Equal(t, true, details["old_install_path_exists"])
+
+	reloaded, err := s.svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, old, reloaded.InstallPath)
 }

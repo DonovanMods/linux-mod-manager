@@ -87,10 +87,14 @@ CURATED one explicitly to re-add/repair it (this replays the same
 games.yaml + default-profile overwrite 'lmm game add' always performs, so
 a repair also resets the default profile's mod list). An
 already-configured UNCURATED row is refused instead of overwritten -
-change it with 'lmm game edit'. Each added game gets a source mapping,
-the symlink link method, and an empty default profile; edit games.yaml
-afterwards for anything more specific, including the NexusMods slug if
-none was detected.
+change it with 'lmm game edit'. A repair that moves a game's install path
+follows 'lmm game edit --install-path's rule: with files deployed, only a
+move of the whole folder is accepted (the files are then recorded where
+they are); otherwise that game is left as it was and reported, the rest
+of the selection is still added, and the command fails with the refusal.
+Each added game gets a source mapping, the symlink link method, and an
+empty default profile; edit games.yaml afterwards for anything more
+specific, including the NexusMods slug if none was detected.
 
 Use --all or --select to decide non-interactively (required under
 --json, which never reads stdin): --all selects every not-yet-configured
