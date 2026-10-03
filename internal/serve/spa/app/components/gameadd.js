@@ -772,7 +772,7 @@ export function GameAddForm({
 
       <button
         type="button"
-        class="button"
+        class="button setup-add__pick"
         data-action="pick-installed"
         onClick=${() => (pickerOpen ? setPickerOpen(false) : openPicker())}
       >

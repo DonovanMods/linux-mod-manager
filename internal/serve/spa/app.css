@@ -1247,6 +1247,14 @@ input[type="search"]::-webkit-search-decoration {
   text-align: right;
 }
 
+/* The heading is the short "Order" (issue 526), the full "Load order" kept
+ * for assistive tech and the hover title: "LOAD ORDER" wrapped onto two lines
+ * in every face, and a column wide enough for it would spend the table's
+ * width on a one- or two-digit number. nowrap holds it to one line anyway. */
+.library__table th.col--order {
+  white-space: nowrap;
+}
+
 .library__table th.col--version,
 .library__table td.col--version,
 .library__table th.col--installed,
@@ -3389,6 +3397,13 @@ a.row-menu__item.mod-page-link {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+/* "Pick an installed game…" / "Hide installed games" (issue 526): a button
+ * its own width, as .setup-import__pick is, not a bar stretched across the
+ * column the form lays out. */
+.setup-add__pick {
+  align-self: flex-start;
 }
 
 .setup-add > .plan__control,
