@@ -337,6 +337,22 @@ export const gameCatalog = (sourceID, query) => {
   return get(url.pathname + url.search);
 };
 
+/** Lists the subfolders of an absolute path on the machine lmm serve runs on
+ * (issue 529's folder chooser): core.DirectoryListing. `nearest` answers for
+ * the closest existing folder when path is empty, relative or missing (the
+ * chooser's opening move); without it a bad path is a refusal whose details
+ * carry {path, reason}. */
+export const listDirectories = (
+  path,
+  { hidden = false, nearest = false } = {},
+) => {
+  const url = new URL("/api/v1/fs/dirs", window.location.origin);
+  url.searchParams.set("path", path ?? "");
+  if (hidden) url.searchParams.set("hidden", "1");
+  if (nearest) url.searchParams.set("nearest", "1");
+  return get(url.pathname + url.search);
+};
+
 /** Creates a game from a gameAddRequest-shaped spec: core.GameListEntry, the
  * same row listGames() returns - splice it straight in rather than
  * re-reading. */

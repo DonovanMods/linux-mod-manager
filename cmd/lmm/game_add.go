@@ -142,6 +142,7 @@ func init() {
 	gameAddCmd.Flags().StringVar(&gameAddFromDetected, "from-detected", "",
 		"Steam app id of an installed game to prefill from (list them with 'lmm game detect --include-unknown')")
 	gameAddCmd.MarkFlagsMutuallyExclusive("id", "query")
+	markDirectoryFlags(gameAddCmd, "path", "mod-path")
 }
 
 // runGameAdd opens a service and runs the add flow. Unlike the pre-#307

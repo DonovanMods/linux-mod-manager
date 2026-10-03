@@ -2598,6 +2598,35 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #529: the folder chooser's listing - one symlinked folder, one
+			// hidden, one unreadable - and the Nearest fallback's Requested.
+			"directory_listing",
+			core.DirectoryListing{
+				Path: "/home/me/Games", Parent: "/home/me", Requested: "/home/me/Games/Valheim",
+				Entries: []core.DirectoryEntry{
+					{Name: ".cache", Path: "/home/me/Games/.cache", Hidden: true, Readable: true},
+					{Name: "locked", Path: "/home/me/Games/locked"},
+					{Name: "steam", Path: "/home/me/Games/steam", Readable: true, Symlink: true},
+				},
+			},
+		},
+		{
+			// #529: one folder in a listing.
+			"directory_entry",
+			core.DirectoryEntry{Name: "steam", Path: "/home/me/Games/steam", Hidden: false, Readable: true, Symlink: true},
+		},
+		{
+			// #529: the chooser's refusal as the envelope's details.
+			"directory_list_error",
+			core.DirectoryListError{Path: "/home/me/gone", Reason: core.DirectoryNotFound},
+		},
+		{
+			// #529: a listing with nothing in it says [] and has no parent
+			// at the root.
+			"directory_listing_empty",
+			core.DirectoryListing{Path: "/", Entries: []core.DirectoryEntry{}},
+		},
+		{
 			// #359: the loader declaration as a frontend sends it - four
 			// unparsed strings, so a rejection can name the wire field.
 			"loader_spec",

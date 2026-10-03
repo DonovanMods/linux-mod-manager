@@ -3559,6 +3559,18 @@ a.row-menu__item.mod-page-link {
   outline-offset: 2px;
 }
 
+/* issue 529: the Insert folder path… button under the YAML editor. */
+.source-editor__insert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.source-editor__insert > .empty-state__hint {
+  margin: 0;
+}
+
 .source-editor__report {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-subtle);
@@ -3814,4 +3826,109 @@ a.row-menu__item.mod-page-link {
 .listed-off__hint {
   flex: 1 1 12rem;
   font-size: 0.9em;
+}
+
+/* Folder chooser (issue 529, folderpicker.js): a directory input with its
+   Browse… button, and the modal behind the button. */
+.folder-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.folder-field > input[type="text"] {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.folder-field > .button {
+  flex: none;
+}
+
+.folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.folder-picker__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.folder-picker__bar > input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.folder-picker__crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.folder-picker__answer > p {
+  margin: 0;
+}
+
+.folder-picker__list {
+  height: 16rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  list-style: none;
+}
+
+.folder-picker__list:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.folder-picker__entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.folder-picker__entry:hover {
+  background: var(--surface-raised);
+}
+
+/* The highlighted row is marked by more than colour: a bar and weight. */
+.folder-picker__entry[aria-selected="true"] {
+  background: var(--surface-raised);
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: 700;
+}
+
+.folder-picker__entry--locked {
+  color: var(--text-muted);
+}
+
+.folder-picker__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.folder-picker__tag {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.folder-picker__empty {
+  padding: var(--space-3);
+  color: var(--text-muted);
 }

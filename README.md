@@ -282,6 +282,11 @@ lmm completion fish > ~/.config/fish/completions/lmm.fish
 Start a new shell afterwards. To try one without installing it, source it in
 the current shell instead: `source <(lmm completion bash)`.
 
+Every flag that takes a folder — `--config`, `--data`, `lmm game add`'s
+`--path` and `--mod-path`, `lmm game edit`'s `--install-path` and
+`--mod-path` — completes folders only, never files. The web UI's equivalent
+is the **Browse…** button beside each folder field.
+
 ## Quick Start
 
 ### `lmm init` — the guided first run
@@ -1634,6 +1639,7 @@ GET  /api/v1/conflicts?order=
 GET  /api/v1/games
 GET  /api/v1/games/catalog?source=&q=
 GET  /api/v1/games/detect?all=
+GET  /api/v1/fs/dirs?path=&hidden=&nearest=
 GET  /api/v1/auth
 GET  /api/v1/sources
 GET  /api/v1/sources/{id}/definition
@@ -1641,6 +1647,18 @@ GET  /api/v1/sources/{id}/index?game=
 GET  /api/v1/indexes
 GET  /api/v1/snapshots
 ```
+
+`GET /api/v1/fs/dirs` is the web UI's folder chooser (a browser cannot name a
+folder, so the page browses the machine `lmm serve` runs on): the subfolders
+of one absolute path (`~` is expanded), sorted case-insensitively, never a
+file — `core.DirectoryListing` with each folder's `name`, `path`, `hidden`,
+`readable` and `symlink` flag (a symlinked folder is marked, never followed).
+`hidden=1` includes dot-folders; `nearest=1` answers for the closest existing
+folder when the path is empty, relative or missing (`requested` says what was
+asked for). A refusal is the error envelope with `details` `{path, reason}`:
+400 `not_absolute` or `not_a_directory`, 404 `not_found`, 403
+`permission_denied`. It is a read-only GET behind the same Host allow-list as
+the rest of the API and sends no CORS headers.
 
 `GET /api/v1/conflicts?order=` is the reorder preview: a comma-separated
 list of mod ids (`source:modid`, or a bare mod id where it is unambiguous)

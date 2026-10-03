@@ -349,6 +349,29 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
 
 ### Added
 
+- **A folder chooser for every path field (#529).** A mistyped install or
+  mod path saves a game that does not work, and a browser cannot help: its
+  file input never reveals a real path and cannot pick a folder. So `lmm serve` now browses its own machine. Each directory
+  field — the game editor's **Install path** and **Mod path**, and the
+  add-game form's — has a **Browse…** button beside it that opens a chooser:
+  an editable path bar, breadcrumbs and **Up**, the subfolders of where you
+  are (double-click or Enter to open one, Backspace to go up, a **Show hidden
+  folders** switch), and **Choose this folder**. It opens at what the field
+  holds, or the nearest folder above it that exists, or your home folder;
+  Escape or **Cancel** leaves the field alone. Typing a path still works. The
+  chooser lists folders only — never a file — marks a symlinked folder
+  without following it, and sits behind the same Host allow-list as the rest
+  of the API: `GET /api/v1/fs/dirs?path=&hidden=&nearest=` (see the README),
+  backed by a new `core.Service.ListDirectories`. On the command line,
+  `--config`, `--data`, `lmm game add --path`/`--mod-path` and
+  `lmm game edit --install-path`/`--mod-path` now complete folders only in
+  bash, zsh and fish. The custom-source editor's `directory.path` is part of a
+  YAML document, so it has an **Insert folder path…** button under the
+  editor instead: it opens the same chooser (at the selected text if that is
+  an absolute path, else your home folder), inserts the chosen path at the
+  cursor — over any selection — and puts the cursor back in the editor just
+  after it. The YAML is never parsed.
+
 - **The web UI shows what a repair did, and what still fails (#517).** A
   `verify --fix` job (the Health card's **Repair** and **Repair all**) used to
   finish with a bare "Done": the findings and the repair's own notes were

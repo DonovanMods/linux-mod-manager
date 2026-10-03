@@ -1,0 +1,28 @@
+{
+  "path": "/home/me/Games",
+  "parent": "/home/me",
+  "requested": "/home/me/Games/Valheim",
+  "entries": [
+    {
+      "name": ".cache",
+      "path": "/home/me/Games/.cache",
+      "hidden": true,
+      "readable": true,
+      "symlink": false
+    },
+    {
+      "name": "locked",
+      "path": "/home/me/Games/locked",
+      "hidden": false,
+      "readable": false,
+      "symlink": false
+    },
+    {
+      "name": "steam",
+      "path": "/home/me/Games/steam",
+      "hidden": false,
+      "readable": true,
+      "symlink": true
+    }
+  ]
+}

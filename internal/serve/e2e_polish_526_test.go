@@ -137,7 +137,9 @@ func TestE2E_AddGameFormFieldsShareOneWidth(t *testing.T) {
 				const fields = {};
 				for (const el of form.querySelectorAll('input:not([type=checkbox]), select')) {
 					if (el.getClientRects().length === 0) continue;
-					fields[el.name || el.getAttribute("aria-label")] = el.getBoundingClientRect().width;
+					// A directory field is its input plus its Browse… button
+					// (#529): the field is the row, not the input in it.
+					fields[el.name || el.getAttribute("aria-label")] = (el.closest(".folder-field") ?? el).getBoundingClientRect().width;
 				}
 				return {
 					fields,
