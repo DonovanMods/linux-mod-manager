@@ -172,6 +172,10 @@ func TestE2E_SetupGamesTable_NothingWraps(t *testing.T) {
 		assertLabelsCentred(t, "setup games table", got["games table"])
 		require.Len(t, cellLines, 6, "name, adapter, sources, loader, default and the row's actions")
 		for _, c := range cellLines {
+			if c.Cell == "Actions" {
+				assert.Zero(t, c.Lines, "the row's pencil (#525) carries no text")
+				continue
+			}
 			assert.Equal(t, 1, c.Lines, "the %s cell is laid out on %d lines - a short name and its id, an id, and a value with its button each fit one", c.Cell, c.Lines)
 		}
 		assert.False(t, overflows, "the games table fits the page")

@@ -328,7 +328,7 @@ func TestE2E_SetupSourcesTables_NothingWraps(t *testing.T) {
 		for _, b := range got["sources table"] {
 			labels = append(labels, b.Label)
 		}
-		assert.Subset(t, labels, []string{"Download", "Edit", "Delete"}, "the custom source's own actions are measured")
+		assert.Subset(t, labels, []string{"Download", "Delete"}, "the custom source's own text actions are measured (its Edit is a pencil, #525)")
 		require.Contains(t, actionRows, "my-mods")
 		require.Contains(t, actionRows, "lethal-company")
 		for row, n := range actionRows {

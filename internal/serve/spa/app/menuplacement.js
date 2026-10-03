@@ -23,9 +23,11 @@ import { useEffect, useLayoutEffect, useRef } from "./render.js";
 /** gutterPx reads the menu's --menu-gutter token (app.css) as pixels, so the
  * gap kept to the viewport edge is the stylesheet's one number rather than a
  * second copy of it here. A custom property keeps the unit it was written
- * in, so rem has to be resolved against the root font size. */
-function gutterPx(menu) {
-  const raw = getComputedStyle(menu).getPropertyValue("--menu-gutter").trim();
+ * in, so rem has to be resolved against the root font size. The tooltip
+ * (tooltip.js, issue 525) keeps the same kind of gap and reads its own
+ * property through the same code. */
+export function gutterPx(menu, property = "--menu-gutter") {
+  const raw = getComputedStyle(menu).getPropertyValue(property).trim();
   const value = parseFloat(raw);
   if (!Number.isFinite(value)) return 0;
   if (raw.endsWith("rem")) {

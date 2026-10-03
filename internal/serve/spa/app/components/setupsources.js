@@ -13,6 +13,7 @@
 
 import { html, useEffect, useState } from "../render.js";
 import { SourceIndexes } from "./sourceindexes.js";
+import { EditButton } from "./pencil.js";
 import {
   ApiError,
   listSources,
@@ -244,14 +245,12 @@ function SourceRow({ source, inUseBy, gameNames, onEdit, onChanged }) {
               >
                 Download
               </a>
-              <button
-                type="button"
-                class="button button--small"
+              <${EditButton}
+                label=${`Edit source ${source.name || source.id}`}
+                tip="Edit source"
                 data-action="edit-source"
                 onClick=${onEdit}
-              >
-                Edit
-              </button>
+              />
               <button
                 type="button"
                 class="button button--small button--danger"

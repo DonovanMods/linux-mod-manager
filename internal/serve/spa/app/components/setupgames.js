@@ -23,6 +23,7 @@ import {
 import { GameDetectSection, GameAddForm } from "./gameadd.js";
 import { ModPathEditor, ModPathWarning } from "./modpath.js";
 import { AdapterCell } from "./adaptercell.js";
+import { EditButton } from "./pencil.js";
 
 /** setDefaultGame/clearDefaultGame are this section's own two mutations -
  * thin single-step writes (api_games.go, issue 333) with nothing to preview, the
@@ -156,7 +157,7 @@ export function SetupGames({
     );
   }
 
-  // issue 421: "Edit…" opens every editor the row has - sources, mod path,
+  // issue 421: the row's pencil opens every editor the row has - sources, mod path,
   // loader - at once, the one place a configured game changes now that the
   // add flows no longer offer it; each keeps its own Save, since each is
   // its own request. An editor already open keeps its draft; pressed with
@@ -306,17 +307,15 @@ export function SetupGames({
                     <span class="mono setup-table__path" title=${g.mod_path}
                       >${g.mod_path}</span
                     >
-                    <button
-                      type="button"
-                      class="button button--small"
+                    <${EditButton}
+                      label=${`Edit mod path for ${g.name}`}
+                      tip="Edit mod path"
                       data-action="edit-mod-path"
                       data-game=${g.id}
-                      aria-expanded=${editingModPath?.id === g.id ? "true" : "false"}
+                      expanded=${editingModPath?.id === g.id}
                       disabled=${busyID === g.id}
                       onClick=${() => toggleModPathEditor(g)}
-                    >
-                      ${editingModPath?.id === g.id ? "Cancel" : "Edit mod path…"}
-                    </button>
+                    />
                   </div>
                   <${ModPathWarning}
                     error=${g.mod_path_error}
@@ -330,11 +329,12 @@ export function SetupGames({
                     <span class="mono"
                       >${Object.keys(g.source_ids ?? {}).join(", ") || "—"}</span
                     >
-                    <button
-                      type="button"
-                      class="button button--small"
+                    <${EditButton}
+                      label=${`Edit sources for ${g.name}`}
+                      tip="Edit sources"
                       data-action="edit-sources"
                       data-game=${g.id}
+                      expanded=${editing?.id === g.id}
                       disabled=${busyID === g.id || sources === null}
                       onClick=${() =>
                         setEditing(
@@ -342,9 +342,7 @@ export function SetupGames({
                             ? null
                             : { id: g.id, map: { ...(g.source_ids ?? {}) } },
                         )}
-                    >
-                      ${editing?.id === g.id ? "Cancel" : "Edit sources…"}
-                    </button>
+                    />
                   </div>
                 </td>
                 <td>
@@ -352,11 +350,12 @@ export function SetupGames({
                     <span class="mono" data-testid="loader-cell"
                       >${g.loader?.kind ?? "—"}</span
                     >
-                    <button
-                      type="button"
-                      class="button button--small"
+                    <${EditButton}
+                      label=${`Edit loader for ${g.name}`}
+                      tip="Edit loader"
                       data-action="edit-loader"
                       data-game=${g.id}
+                      expanded=${editingLoader?.id === g.id}
                       disabled=${busyID === g.id}
                       onClick=${() =>
                         setEditingLoader(
@@ -364,9 +363,7 @@ export function SetupGames({
                             ? null
                             : { id: g.id, draft: loaderDraft(g.loader) },
                         )}
-                    >
-                      ${editingLoader?.id === g.id ? "Cancel" : "Edit loader…"}
-                    </button>
+                    />
                   </div>
                 </td>
                 <td>
@@ -384,17 +381,15 @@ export function SetupGames({
                   }
                 </td>
                 <td class="setup-table__row-actions">
-                  <button
-                    type="button"
-                    class="button button--small"
+                  <${EditButton}
+                    label=${`Edit ${g.name}`}
+                    tip=${`Edit ${g.name}`}
                     data-action="edit-game"
                     data-game=${g.id}
-                    aria-expanded=${editingAll(g.id) ? "true" : "false"}
+                    expanded=${editingAll(g.id)}
                     disabled=${busyID === g.id || sources === null}
                     onClick=${() => toggleEditGame(g)}
-                  >
-                    ${editingAll(g.id) ? "Close editors" : "Edit…"}
-                  </button>
+                  />
                 </td>
               </tr>
               ${
