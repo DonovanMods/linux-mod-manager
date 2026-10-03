@@ -30,6 +30,7 @@ import { UpdatesBatchPlanView } from "./plan_updates.js";
 import { VerifyFixPlanView } from "./plan_verify_fix.js";
 import { ProfileImportPlanView } from "./plan_profile_import.js";
 import { ImportArchivePlanView } from "./plan_import_archive.js";
+import { UpdateFromArchivePlanView } from "./plan_update_from_archive.js";
 import { AdoptPlanView } from "./plan_adopt.js";
 import { WorkshopAdoptPlanView } from "./plan_workshop_adopt.js";
 import { SwitchPlanView } from "./plan_switch.js";
@@ -55,6 +56,8 @@ const renderers = {
   // issue 333's two Setup-surface kinds.
   import_archive: ImportArchivePlanView,
   adopt: AdoptPlanView,
+  // issue 530: "Update from file…" over an uploaded archive.
+  update_from_archive: UpdateFromArchivePlanView,
   // issue 269 Tier 1: tracking the Steam Workshop items Steam already
   // downloaded. Its preview leads with what the job will NOT do.
   workshop_adopt: WorkshopAdoptPlanView,

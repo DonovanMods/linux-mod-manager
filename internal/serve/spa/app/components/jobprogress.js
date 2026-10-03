@@ -23,6 +23,7 @@ import {
   resultTallyTone,
 } from "../progress.js";
 import {
+  useJobResultDownloads,
   useJobResultPurge,
   useJobResultTally,
   useJobResultVerify,
@@ -89,6 +90,9 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   const resultWarnings = useJobResultWarnings(jobID, state);
   const purgeResult = useJobResultPurge(jobID, state);
   const repairResult = useJobResultVerify(jobID, state);
+  // Issue 530: a failed update item's download way out (its page, and
+  // "Update from file…" when the source refused the download).
+  const batchDownloads = useJobResultDownloads(jobID, state);
 
   if (state === "running") {
     const fraction = progressFraction(frame);
@@ -144,7 +148,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
     !failed && summary?.kind === "switch" ? resultWarnings : NO_NOTICES;
   return html`
     <div
-      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || notices.length > 0 || purgeResult || repairResult ? "job-progress--explained" : ""}"
+      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || batchDownloads.length > 0 || notices.length > 0 || purgeResult || repairResult ? "job-progress--explained" : ""}"
       data-job=${jobID}
       data-state=${state}
       role="status"
@@ -187,6 +191,15 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
       )}
       <${PurgeResultDetails} result=${purgeResult} />
       <${VerifyFixResult} outcome=${repairResult} />
+      ${batchDownloads.map(
+        (d) =>
+          html`<div
+            key=${`${d.sourceID}:${d.modID}`}
+            class="job-progress__explainer"
+          >
+            <${DownloadPage} failure=${d} actions=${actions} />
+          </div>`,
+      )}
       ${
         loader &&
         html`<div class="job-progress__explainer">
@@ -196,7 +209,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
       ${
         downloadShown &&
         html`<div class="job-progress__explainer">
-          <${DownloadPage} failure=${download} />
+          <${DownloadPage} failure=${download} actions=${actions} />
         </div>`
       }
       ${

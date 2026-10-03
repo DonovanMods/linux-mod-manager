@@ -30,8 +30,9 @@ import {
   useJobResultPurge,
   useJobResultTally,
   useJobResultVerify,
+  useJobResultDownloads,
 } from "../jobresult.js";
-import { ErrorDetails } from "./errordetails.js";
+import { DownloadPage, ErrorDetails } from "./errordetails.js";
 import { nextStepFor } from "../failures.js";
 import { PurgeResultDetails } from "./purgeresult.js";
 import { VerifyFixResult } from "./verifyfixresult.js";
@@ -199,6 +200,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
   const tally = useJobResultTally(job.id, job.state);
   const purgeResult = useJobResultPurge(job.id, job.state);
   const repairResult = useJobResultVerify(job.id, job.state);
+  const batchDownloads = useJobResultDownloads(job.id, job.state);
   const tone =
     job.state === "succeeded" && tally ? resultTallyTone(tally) : job.state;
   const stateText =
@@ -243,6 +245,14 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
       ${job.state === "failed" && html`<${FailureNextStep} job=${job} actions=${actions} />`}
       <${PurgeResultDetails} result=${purgeResult} />
       <${VerifyFixResult} outcome=${repairResult} />
+      ${batchDownloads.map(
+        (d) =>
+          html`<${DownloadPage}
+            key=${`${d.sourceID}:${d.modID}`}
+            failure=${d}
+            actions=${actions}
+          />`,
+      )}
       ${
         // I1, unit 8 gate review: a count alone ("1 skipped") leaves the
         // reader to guess, and a lock refusal is not a guessable outcome.
@@ -328,7 +338,7 @@ function FailureNextStep({ job, actions }) {
     <div class="tray__failure">
       <p class="tray__failure-message">${envelope.error ?? "failed"}</p>
       <${OverwriteButton} job=${job} actions=${actions} />
-      <${ErrorDetails} details=${envelope.details} />
+      <${ErrorDetails} details=${envelope.details} actions=${actions} />
     </div>
   `;
 }

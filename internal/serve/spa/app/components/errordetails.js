@@ -20,6 +20,11 @@ import {
   retryAtFor,
 } from "../failures.js";
 import { ModPageLink } from "./modpagelink.js";
+import {
+  UpdateFromFileButton,
+  updateFromFileLabel,
+  updateFromFileOrigin,
+} from "./updatefromfile.js";
 import { DocumentView } from "./documentview.js";
 
 /** loaderLabel spells a loader kind the way its own project does. An
@@ -30,9 +35,10 @@ function loaderLabel(kind) {
 
 /**
  * ErrorDetails renders an error envelope's `details`, or nothing when there
- * are none.
+ * are none. `actions`, when given, lets a failed download offer "Update from
+ * file…" (DownloadPage).
  */
-export function ErrorDetails({ details }) {
+export function ErrorDetails({ details, actions }) {
   if (!details) return null;
 
   const loader = loaderSetupFor(details);
@@ -48,9 +54,9 @@ export function ErrorDetails({ details }) {
   const download = downloadFailureFor(details);
   if (download) {
     return details.published_file_id
-      ? html`<${DownloadPage} failure=${download} />
+      ? html`<${DownloadPage} failure=${download} actions=${actions} />
           <${DocumentView} value=${details} />`
-      : html`<${DownloadPage} failure=${download} />`;
+      : html`<${DownloadPage} failure=${download} actions=${actions} />`;
   }
 
   const retry = retryAtFor(details);
@@ -75,11 +81,18 @@ export function ErrorDetails({ details }) {
  * DownloadPage is a failed download's way out (issue 513): the mod's page on
  * its source, as an "Open on <source>" link. For a source that refuses
  * automated downloads it also says what to do with the file once it is
- * fetched by hand. Renders nothing when there is neither a usable page nor
- * anything extra to say - the message above already gave the reason.
+ * fetched by hand - and, for a mod that is already installed (a failed
+ * update, issue 530), offers "Update from file…" right beside the link, so
+ * the file goes back the way it came. A mod that is not installed yet is
+ * pointed at the archive import instead: there is nothing to update. Renders
+ * nothing when there is neither a usable page nor anything extra to say -
+ * the message above already gave the reason.
  */
-export function DownloadPage({ failure }) {
+export function DownloadPage({ failure, actions }) {
   if (!failure.url && !failure.manual) return null;
+  const updatable =
+    failure.manual &&
+    actions?.isModInstalled?.(failure.sourceID, failure.modID);
   return html`
     <div
       class="download-page"
@@ -89,15 +102,32 @@ export function DownloadPage({ failure }) {
       ${
         failure.manual &&
         html`<p class="download-page__hint">
-          This source doesn't let lmm download this file. Get it from the mod's
-          page, then add it with Add mods → Import an archive.
+          ${
+            updatable
+              ? `This source doesn't let lmm download this file. Download it from the mod's page, then hand it to lmm with "${updateFromFileLabel}" below.`
+              : "This source doesn't let lmm download this file. Get it from the mod's page, then add it with Add mods → Import an archive."
+          }
         </p>`
       }
-      <${ModPageLink}
-        url=${failure.url}
-        sourceID=${failure.sourceID}
-        modName=${failure.modName}
-      />
+      <div class="download-page__actions">
+        <${ModPageLink}
+          url=${failure.url}
+          sourceID=${failure.sourceID}
+          modName=${failure.modName}
+        />
+        ${
+          updatable &&
+          html`<${UpdateFromFileButton}
+            mod=${{
+              source_id: failure.sourceID,
+              id: failure.modID,
+              name: failure.modName,
+            }}
+            origin=${updateFromFileOrigin(failure.sourceID, failure.modID)}
+            actions=${actions}
+          />`
+        }
+      </div>
     </div>
   `;
 }

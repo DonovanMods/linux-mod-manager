@@ -1657,6 +1657,25 @@ a.row-menu__item.mod-page-link {
   color: var(--text-secondary);
 }
 
+/* issue 530: "Open on <source>" and "Update from file…" side by side, the
+ * button wrapping under the link when the surface is narrow. */
+.download-page__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* issue 530: the version a plan could not work out, asked for in the
+ * confirm modal - the field and its button on one row, wrapping when the
+ * modal is narrow. */
+.version-prompt__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
 .slide-over__settings {
   display: flex;
   flex-wrap: wrap;
@@ -1676,8 +1695,15 @@ a.row-menu__item.mod-page-link {
   font-size: 0.9em;
 }
 
+/* Wraps, and lines its controls up at the top (issue 530): an installed
+ * mod's row holds four actions, and a finished job's explained chip (a
+ * failed download's way out) is far taller than a button - stretched to
+ * it, every button beside it grew to match, and the row ran off the
+ * panel's edge. */
 .slide-over__actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: var(--space-3);
   margin: var(--space-4) 0;
 }

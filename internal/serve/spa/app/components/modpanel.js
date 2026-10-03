@@ -26,6 +26,7 @@ import { displayVersion } from "../version.js";
 import { authorTitle, displayAuthor } from "../author.js";
 import { InlineJob } from "./jobprogress.js";
 import { ModPageLink } from "./modpagelink.js";
+import { UpdateFromFileButton } from "./updatefromfile.js";
 import { Arrow } from "./arrow.js";
 
 /** modUrl builds the ?mod= URL for row, on the given base path - the same
@@ -491,6 +492,23 @@ export function ModPanel({
                     : pendingToggleLabel(toggleRequested.want)
                 }
               </button>
+            <//>`
+          }
+          ${
+            // issue 530: the update a source would not download, from the
+            // archive the user fetched by hand.
+            !row.external &&
+            html`<${InlineJob}
+              origin=${origin("update_from_file")}
+              state=${state}
+              actions=${actions}
+            >
+              <${UpdateFromFileButton}
+                mod=${{ source_id: row.source_id, id: row.id, name: row.name }}
+                origin=${origin("update_from_file")}
+                actions=${actions}
+                locked=${row.locked}
+              />
             <//>`
           }
           <${InlineJob}

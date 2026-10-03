@@ -113,6 +113,35 @@ export function downloadFailureFor(details) {
 }
 
 /**
+ * batchDownloadFailuresFor returns the failed downloads an update batch's
+ * RESULT reports (core.UpdateBatchResult's `failed[]`, issue 530) in
+ * downloadFailureFor's shape - one per failed item that carries its mod's
+ * page or says the source refused the download. A failed update arrives as a
+ * finished batch, not a failed job, so its typed error never reaches an
+ * error envelope; these two facts are what the result keeps of it.
+ */
+export function batchDownloadFailuresFor(result) {
+  if (!result || !Array.isArray(result.failed)) return [];
+  const out = [];
+  for (const item of result.failed) {
+    if (!item || typeof item.mod !== "string") continue;
+    const at = item.mod.indexOf(":");
+    if (at <= 0) continue;
+    const url = safeWebUrl(item.mod_url);
+    const manual = Boolean(item.manual_download);
+    if (!url && !manual) continue;
+    out.push({
+      sourceID: item.mod.slice(0, at),
+      modID: item.mod.slice(at + 1),
+      modName: item.name ?? "",
+      url,
+      manual,
+    });
+  }
+  return out;
+}
+
+/**
  * loaderSetupFor returns the loader refusal a failure's TYPED details
  * describe (core.LoaderRequiredError, issue 423), or null when they
  * describe something else.
