@@ -1788,6 +1788,19 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The library's "Load order" heading no longer wraps, and the add-game
+  toggle no longer stretches (#526).** The library table's heading read
+  "LOAD / ORDER" on two lines in every font at 1280px and wider; it is now
+  the one-word "ORDER" (the full "Load order" stays as its accessible name
+  and hover title), which keeps the column compact. In first-run setup,
+  "Add a game manually"'s "Pick an installed game…" / "Hide installed games"
+  button ran the full width of the panel; it now sizes to its label, as
+  "Choose archive…" does. The same form's "Add game" button now sizes to
+  its label too, and its mod-loader fields (the select and, once a loader is
+  chosen, version, runtime and bootstrap) take the same width as every other
+  field instead of the panel's whole width. All of it is held by browser
+  tests in all three stress faces.
+
 - **The web UI holds its layout in whatever font your system uses (#521).**
   Its text is drawn in your system's own sans-serif, and the layout had only
   been checked in one of them: in a wider face (DejaVu Sans, Ubuntu's

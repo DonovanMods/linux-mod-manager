@@ -906,7 +906,10 @@ export function Library({
                     <th class="col--author">Author</th>
                     <th class="col--source">Source</th>
                     <th class="col--badges">Badges</th>
-                    <th class="col--order">Load order</th>
+                    <th class="col--order" title="Load order">
+                      <span aria-hidden="true">Order</span>
+                      <span class="visually-hidden">Load order</span>
+                    </th>
                     <th class="col--method">Method</th>
                     <th class="col--installed">Installed</th>
                     <th class="col--menu">
