@@ -937,19 +937,9 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 
 	// #97: a locked ref refuses update-apply entirely - the lock's whole
 	// contract. Checked before any network or hook side effect.
-	if prof, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
-		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
-			return result, LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref)
-		}
-	} else if cerr := ctx.Err(); cerr != nil {
-		// Ruling 16 (C): the fall-through below is for a profile that
-		// cannot hold a lock; a cancelled read is a profile we never got to
-		// ask, and letting it through would update a locked mod.
-		return result, cerr
+	if err := s.refuseLockedUpdate(ctx, game, profileName, &mod); err != nil {
+		return result, err
 	}
-	// (A missing/unreadable profile falls through - matches
-	// PlanProfileSwitch's ignore-errors precedent for profile loads: a lock
-	// cannot exist in an unloadable profile.)
 
 	newMod, err := s.GetMod(ctx, mod.SourceID, game.ID, mod.ID)
 	if err != nil {
@@ -1030,20 +1020,68 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	}
 	emit(StepEvent{Scope: scope, Phase: UpdateDownloadDone})
 
-	// Task 6 item d (cancel-then-drain): checked between the download step
-	// above and the hook/deploy (Replace) steps below, at minimum - a
-	// cancelled ctx aborts here, before running any before_each hook or
-	// touching the deployed files, leaving the OLD version fully deployed
-	// and untouched (the partial-result convention - see this function's
-	// doc comment).
+	err = s.commitUpdate(ctx, game, profileName, updateCommit{
+		mod:       mod,
+		newMod:    newMod,
+		fileIDs:   downloadedFileIDs,
+		checksums: checksums,
+		changelog: upd.Changelog,
+		scope:     scope,
+		hooks:     hooks,
+		runner:    runner,
+		hookCtx:   hookCtx,
+	}, opts, result, emit)
+	return result, err
+}
+
+// updateCommit is everything commitUpdate needs once the new version's files
+// are in the cache: ApplyUpdate gets there by downloading them, and
+// ApplyUpdateFromArchive (#530) by ingesting the archive the user fetched by
+// hand. From that point on the two flows are one.
+type updateCommit struct {
+	// mod is the installed row being updated, as it stands before the update.
+	mod domain.InstalledMod
+	// newMod is the new version - cached under newMod.Version, which is the
+	// version the DB row and the profile ref record.
+	newMod *domain.Mod
+	// fileIDs is the new file set, recorded on the row and the ref.
+	fileIDs []string
+	// checksums are the new files' checksums (#372, #514).
+	checksums []fileChecksum
+	// changelog rides into the result verbatim.
+	changelog string
+	scope     Scope
+	hooks     *ResolvedHooks
+	runner    *HookRunner
+	hookCtx   HookContext
+}
+
+// commitUpdate is the update flow from "the new files are cached" to the
+// end: the before_each hooks, the Replace over the old deployment, the
+// after_each hooks, the DB version swap (which records previous_version and
+// previous_file_ids for rollback), the checksums, the link method, the
+// profile ref, and the merged-pak sync - with ApplyUpdate's compensations on
+// a failed DB or profile write. On success it fills result's identity
+// fields; on error result keeps whatever diagnostics it gathered.
+func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileName string, c updateCommit, opts UpdateOptions, result *UpdateApplyResult, emit func(Event)) error {
+	mod, newMod, scope := c.mod, c.newMod, c.scope
+	hooks, runner, hookCtx := c.hooks, c.runner, c.hookCtx
+	downloadedFileIDs, checksums, effectiveVersion := c.fileIDs, c.checksums, newMod.Version
+
+	// Task 6 item d (cancel-then-drain): checked between the step that
+	// cached the new files (a download, or #530's archive ingest) and the
+	// hook/deploy (Replace) steps below, at minimum - a cancelled ctx aborts
+	// here, before running any before_each hook or touching the deployed
+	// files, leaving the OLD version fully deployed and untouched (the
+	// partial-result convention - see ApplyUpdate's doc comment).
 	if err := ctx.Err(); err != nil {
-		return result, err
+		return err
 	}
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
 	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.before_each", hooks.GetUninstallBeforeEach()); err != nil {
 		if !opts.Force {
-			return result, fmt.Errorf("uninstall.before_each hook failed: %w", err)
+			return fmt.Errorf("uninstall.before_each hook failed: %w", err)
 		}
 		msg := fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err)
 		result.Warnings = append(result.Warnings, msg)
@@ -1052,14 +1090,14 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 
 	linkMethod, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
 	if err != nil {
-		return result, err
+		return err
 	}
 	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
 	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
 		if !opts.Force {
-			return result, fmt.Errorf("install.before_each hook failed: %w", err)
+			return fmt.Errorf("install.before_each hook failed: %w", err)
 		}
 		msg := fmt.Sprintf("install.before_each hook failed (forced): %v", err)
 		result.Warnings = append(result.Warnings, msg)
@@ -1076,7 +1114,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// new file's sole members, not leave both deployed. See
 	// Installer.ReplaceForUpdate / resolveSharedDirUpdate.
 	if err := installer.ReplaceForUpdate(ctx, game, &mod.Mod, newMod, profileName, mod.FileIDs, downloadedFileIDs); err != nil {
-		return result, fmt.Errorf("deploying update: %w", err)
+		return fmt.Errorf("deploying update: %w", err)
 	}
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
@@ -1097,7 +1135,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 		if rerr := installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs); rerr != nil {
 			s.logger().Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
 		}
-		return result, fmt.Errorf("updating database: %w", err)
+		return fmt.Errorf("updating database: %w", err)
 	}
 
 	// #372: applyModUpdate has just rewritten the installed_mod_files rows,
@@ -1124,14 +1162,14 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 		if rerr := installer.ReplaceForUpdate(rctx, game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs); rerr != nil {
 			s.logger().Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
 		}
-		return result, fmt.Errorf("updating profile: %w", err)
+		return fmt.Errorf("updating profile: %w", err)
 	}
 
 	result.Mod = modRef
 	result.Name = mod.Name
 	result.FromVersion = mod.Version
 	result.ToVersion = effectiveVersion
-	result.Changelog = upd.Changelog
+	result.Changelog = c.changelog
 	result.Status = UpdateUpdated
 
 	// Review finding 5: an update deploys over whatever is at the path, so
@@ -1155,5 +1193,5 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 		}
 	}
 
-	return result, nil
+	return nil
 }

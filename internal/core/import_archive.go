@@ -294,70 +294,11 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	entryPreExists := !ident.minted &&
 		gameCache.Exists(game.ID, ident.sourceID, ident.modID, ident.version)
 
-	// The game's ADAPTER answers the format questions for a DeployCompile
-	// game (#256/#412), and a game whose adapter cannot compile fails HERE
-	// for the same reason importWithIdentity fails: without it core cannot
-	// tell a native merge archive from anything else.
-	var mc adapter.MergeCompiler
-	if game.DeployMode == domain.DeployCompile {
-		if mc, err = s.adapterCompiler(game); err != nil {
-			return nil, err
-		}
-	}
-	kind := classifyImportArchive(game, mc, filename)
-
-	var members []archiveMember
-	switch kind {
-	case importKindMergeSource, importKindConvertPak:
-		// The ingest validates before it retains; a plan that skipped this
-		// would promise an import that cannot happen.
-		if err := mc.ValidateSource(archivePath); err != nil {
-			return nil, fmt.Errorf("validating %s: %w", filename, err)
-		}
-	case importKindExtract:
-		if !NewExtractor().CanExtract(archivePath) {
-			return nil, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
-		}
-		if members, err = listArchiveMembers(ctx, NewExtractor(), archivePath); err != nil {
-			return nil, err
-		}
-	}
-
-	// modName comes from the RAW listing (importedModName), before any
-	// rewrite, for the same reason the ingest derives it before normalising:
-	// a normalised shape-A BepInEx tree has BepInEx as its sole top-level
-	// directory, and naming the mod after that would be absurd.
-	modName := importedModName(game, kind, filename, ident.version, members)
-	files, err := importDeployablePaths(kind, filename, members)
+	contents, err := s.planArchiveContents(ctx, game, archivePath, ident.version)
 	if err != nil {
 		return nil, err
 	}
-
-	// #353: the plan and the ingest share ONE Layout AND one derivation of
-	// its inputs - the same member list and the same mod name, read off the
-	// archive before either side rewrites anything - so a plan can never
-	// promise a path the ingest places somewhere else. An extract-mode
-	// import is the only kind whose members an adapter has a say over - a
-	// retained merge source and a copied artifact are single files under
-	// their own names.
-	var warnings []string
-	if kind == importKindExtract {
-		// #359/#413: refuse before computing a plan that would promise a
-		// plugin the game has nothing to load it with. Plan time is the
-		// earliest an archive import can answer this, and the answer costs
-		// nothing beyond the listing already read.
-		if err := s.requireAdapterClaim(game, modName, files); err != nil {
-			return nil, err
-		}
-		layout, lerr := s.archiveLayout(game, modName, files)
-		if lerr != nil {
-			return nil, lerr
-		}
-		warnings = layout.Warnings
-		if files, lerr = rewritePlannedPaths(layout, files); lerr != nil {
-			return nil, lerr
-		}
-	}
+	kind, modName, files, warnings := contents.kind, contents.modName, contents.files, contents.warnings
 
 	plan := &ImportArchivePlan{
 		Archive:        archivePath,
@@ -408,6 +349,95 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 		return nil, err
 	}
 	return plan, nil
+}
+
+// archiveContents is what ONE archive would contribute to a game, read off
+// its listing without extracting it: how the ingest will treat it, the mod
+// name it derives, the game-dir-relative files it places (after the game
+// adapter's layout), and the adapter's layout diagnostics.
+type archiveContents struct {
+	kind     importArchiveKind
+	modName  string
+	files    []string
+	warnings []string
+}
+
+// planArchiveContents lists archivePath and derives archiveContents through
+// the very functions the ingest (importWithIdentity) uses, so a plan can
+// never promise a path the ingest places somewhere else. version is the
+// version the ingest will cache under; it only feeds the derived mod name.
+// Shared by PlanImportArchive and PlanUpdateFromArchive (#530). Every
+// reason an archive cannot be ingested at all is returned unprefixed - see
+// PlanImportArchive's ERROR PREFIXES note.
+func (s *Service) planArchiveContents(ctx context.Context, game *domain.Game, archivePath, version string) (*archiveContents, error) {
+	// The game's ADAPTER answers the format questions for a DeployCompile
+	// game (#256/#412), and a game whose adapter cannot compile fails HERE
+	// for the same reason importWithIdentity fails: without it core cannot
+	// tell a native merge archive from anything else.
+	var mc adapter.MergeCompiler
+	var err error
+	if game.DeployMode == domain.DeployCompile {
+		if mc, err = s.adapterCompiler(game); err != nil {
+			return nil, err
+		}
+	}
+	filename := filepath.Base(archivePath)
+	kind := classifyImportArchive(game, mc, filename)
+
+	var members []archiveMember
+	switch kind {
+	case importKindMergeSource, importKindConvertPak:
+		// The ingest validates before it retains; a plan that skipped this
+		// would promise an import that cannot happen.
+		if err := mc.ValidateSource(archivePath); err != nil {
+			return nil, fmt.Errorf("validating %s: %w", filename, err)
+		}
+	case importKindExtract:
+		if !NewExtractor().CanExtract(archivePath) {
+			return nil, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
+		}
+		if members, err = listArchiveMembers(ctx, NewExtractor(), archivePath); err != nil {
+			return nil, err
+		}
+	}
+
+	// modName comes from the RAW listing (importedModName), before any
+	// rewrite, for the same reason the ingest derives it before normalising:
+	// a normalised shape-A BepInEx tree has BepInEx as its sole top-level
+	// directory, and naming the mod after that would be absurd.
+	modName := importedModName(game, kind, filename, version, members)
+	files, err := importDeployablePaths(kind, filename, members)
+	if err != nil {
+		return nil, err
+	}
+
+	// #353: the plan and the ingest share ONE Layout AND one derivation of
+	// its inputs - the same member list and the same mod name, read off the
+	// archive before either side rewrites anything - so a plan can never
+	// promise a path the ingest places somewhere else. An extract-mode
+	// import is the only kind whose members an adapter has a say over - a
+	// retained merge source and a copied artifact are single files under
+	// their own names.
+	var warnings []string
+	if kind == importKindExtract {
+		// #359/#413: refuse before computing a plan that would promise a
+		// plugin the game has nothing to load it with. Plan time is the
+		// earliest an archive import can answer this, and the answer costs
+		// nothing beyond the listing already read.
+		if err := s.requireAdapterClaim(game, modName, files); err != nil {
+			return nil, err
+		}
+		layout, lerr := s.archiveLayout(game, modName, files)
+		if lerr != nil {
+			return nil, lerr
+		}
+		warnings = layout.Warnings
+		if files, lerr = rewritePlannedPaths(layout, files); lerr != nil {
+			return nil, lerr
+		}
+	}
+
+	return &archiveContents{kind: kind, modName: modName, files: files, warnings: warnings}, nil
 }
 
 // ImportArchive imports one local archive into profileName: PlanImportArchive

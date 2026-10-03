@@ -152,6 +152,14 @@ var checkedApplies = map[string]planThenApply{
 			return err
 		}
 	},
+	"ApplyUpdateFromArchive": func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) func() error {
+		plan, err := svc.PlanUpdateFromArchive(context.Background(), g, "default", "acme", "m1", fx.archive, core.UpdateFromArchiveOptions{Version: "2.0"})
+		require.NoError(t, err)
+		return func() error {
+			_, err := svc.ApplyUpdateFromArchive(context.Background(), g, plan, core.UpdateFromArchiveOptions{}, nil)
+			return err
+		}
+	},
 	"ApplyUpdateBatch": func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) func() error {
 		plan, err := svc.PlanUpdateBatchFrom(context.Background(), g, "default", []domain.Update{fx.update}, nil)
 		require.NoError(t, err)
