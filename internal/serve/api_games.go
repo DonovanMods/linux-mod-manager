@@ -245,6 +245,13 @@ type gameSourcesRequest struct {
 	// of them pass (core.Service.EditGame), so one body can move a game onto
 	// bepinex at its root, or off it.
 	ModPath *string `json:"mod_path,omitempty"`
+	// InstallPath, when present, sets the game's `install_path:` (#528) by
+	// the rules `lmm game edit --install-path` applies: an existing
+	// directory, a mod_path inside it moving with it, and - with files
+	// deployed - only as a move of the whole folder
+	// (core.GameInstallPathInUseError, 409, otherwise). A relative
+	// "mod_path" in the same body is relative to the new install path.
+	InstallPath *string `json:"install_path,omitempty"`
 	// Loader is #359's declaration, additive: a body carrying it edits the
 	// LOADER instead of the source map, the mod path or the adapter.
 	//
@@ -285,9 +292,9 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	editsLoader := req.Loader != nil || req.LoaderSet
-	if editsLoader && (len(req.Sources) > 0 || req.Adapter != nil || req.ModPath != nil) {
+	if editsLoader && (len(req.Sources) > 0 || req.Adapter != nil || req.ModPath != nil || req.InstallPath != nil) {
 		s.writeAPIError(w, http.StatusBadRequest,
-			errors.New("edit the loader in separate requests: send \"loader\" on its own, or \"sources\"/\"adapter\"/\"mod_path\" without it"))
+			errors.New("edit the loader in separate requests: send \"loader\" on its own, or \"sources\"/\"adapter\"/\"mod_path\"/\"install_path\" without it"))
 		return
 	}
 
@@ -307,8 +314,8 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 	// compose in either direction. A body with no sources leaves the map
 	// alone, unless it carries nothing at all, which is the empty-map
 	// refusal it always was.
-	edit := core.GameEdit{Sources: req.Sources, Adapter: req.Adapter, ModPath: req.ModPath}
-	if edit.Sources == nil && edit.Adapter == nil && edit.ModPath == nil {
+	edit := core.GameEdit{Sources: req.Sources, Adapter: req.Adapter, ModPath: req.ModPath, InstallPath: req.InstallPath}
+	if edit.Sources == nil && edit.Adapter == nil && edit.ModPath == nil && edit.InstallPath == nil {
 		edit.Sources = map[string]string{}
 	}
 	entry, err := s.svc.EditGame(r.Context(), r.PathValue("id"), edit)
@@ -349,17 +356,23 @@ func (s *Server) handleAPIGameDetail(w http.ResponseWriter, r *http.Request) {
 // collision on `lmm game add`/POST /api/v1/games is classified) - as is a
 // mod_path move refused for files deployed under it, or for profile files
 // that do not say which profile's those are (core.ErrActiveProfileUnknown,
-// #445 review F2) - and anything else is a real write failure (500).
+// #445 review F2), an install_path change that is not a move of the whole
+// folder (#528), or one refused because files are already stranded under
+// another mod_path (core.ModPathMissingError) - and anything else is a real
+// write failure (500).
 func gameSourcesErrorStatus(err error) int {
 	var specErr *core.GameSpecError
 	var inUseErr *core.GameSourceInUseError
 	var modPathInUseErr *core.GameModPathInUseError
+	var installPathInUseErr *core.GameInstallPathInUseError
+	var strandedErr *core.ModPathMissingError
 	switch {
 	case errors.Is(err, domain.ErrGameNotFound):
 		return http.StatusNotFound
 	case errors.As(err, &specErr):
 		return http.StatusBadRequest
-	case errors.As(err, &inUseErr), errors.As(err, &modPathInUseErr), errors.Is(err, core.ErrActiveProfileUnknown):
+	case errors.As(err, &inUseErr), errors.As(err, &modPathInUseErr), errors.As(err, &installPathInUseErr),
+		errors.As(err, &strandedErr), errors.Is(err, core.ErrActiveProfileUnknown):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

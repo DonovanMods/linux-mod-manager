@@ -1788,6 +1788,25 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A game's install path can be changed (#528).** It was fixed once the
+  game was added - a path mistyped at `lmm game add`, or a Steam library
+  that moved, meant hand-editing `games.yaml`. Now
+  `lmm game edit <id> --install-path <dir>` (and `install_path` in
+  `PUT /api/v1/games/{id}`) sets it: "~/" is expanded, and the directory must exist. A mod path
+  inside the install path moves with it, and a relative `--mod-path` in
+  the same run is relative to the new one; a mod path outside it (a Proton
+  prefix, Documents) stays where it is. With nothing deployed the edit is
+  just a correction. With files deployed, or game files lmm replaced and
+  backed up, lmm takes it only as a move of the whole folder: the old
+  install path must be gone and every file it recorded - and every replaced
+  file's backup target - must be at the same place under the new one; it
+  then records the deployed files there, and restores the backups there.
+  Anything else is refused with `GameInstallPathInUseError` (in the
+  `--json` envelope's `details`: the counts, whether the old folder still
+  exists, and each profile to purge first). Profile override files are not
+  tracked, so after a move the next deploy writes them into the new folder;
+  copies left in the old one are not removed.
+
 - **The library's "Load order" heading no longer wraps, and the add-game
   toggle no longer stretches (#526).** The library table's heading read
   "LOAD / ORDER" on two lines in every font at 1280px and wider; it is now

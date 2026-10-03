@@ -2,7 +2,7 @@
 .TH "LMM" "1" "Sep 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
-lmm-game-edit - Edit a configured game's sources, mod path, adapter or loader
+lmm-game-edit - Edit a configured game's sources, install path, mod path, adapter or loader
 
 
 .SH SYNOPSIS
@@ -65,9 +65,23 @@ are cached, and names the profile file to edit instead. A BepInEx game deploys i
 its install path, so that is its mod path.
 
 .PP
---source, --remove-source, --adapter and --mod-path are one edit: every
-change is checked before any is written, so a run applies all of them or
-none. That is also what lets --mod-path and --adapter move a game onto
+--install-path sets the directory the game is installed in - the fix for
+a path mistyped at 'lmm game add', or for a game whose Steam library
+moved. It must be an existing directory, and "~/" is your home directory.
+A mod path inside the install path moves with it (with --mod-path in the
+same run, a relative mod path is relative to the new install path); one
+outside it stays where it is. With nothing deployed this is just a
+correction. With files deployed (or game files lmm replaced and backed
+up), lmm accepts it only as a move of the whole game folder: the old
+install path must be gone, and every file lmm recorded must be at the same
+place under the new one - lmm then records them there. Otherwise the
+refusal names the purge each profile needs first. Profile override files
+are not tracked; the next deploy writes them into the new folder.
+
+.PP
+--source, --remove-source, --adapter, --mod-path and --install-path are
+one edit: every change is checked before any is written, so a run applies
+all of them or none. That is also what lets --mod-path and --adapter move a game onto
 bepinex, or off it, in one run.
 
 .PP
@@ -79,6 +93,7 @@ Examples:
   lmm game edit icarus --source local-mods= --remove-source nexusmods
   lmm game edit human-host --mod-path "~/.steam/steam/steamapps/common/Human Host"
   lmm game edit valheim --mod-path /games/valheim --adapter bepinex
+  lmm game edit valheim --install-path ~/Games/SteamLibrary/steamapps/common/Valheim
   lmm game edit valheim --adapter generic-files --mod-path BepInEx/plugins
   lmm game edit valheim --loader bepinex --loader-version 5.4.23.5 --loader-bootstrap proton
   lmm game edit valheim --loader ""
@@ -92,6 +107,10 @@ Examples:
 .PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for edit
+
+.PP
+\fB--install-path\fP=""
+	set the game's install directory (must exist; "~/" is your home directory); a mod path inside it moves with it
 
 .PP
 \fB--loader\fP=""

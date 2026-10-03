@@ -278,3 +278,39 @@ func TestDeleteDeployedFilesExcept_KeepsRowsForTheNamedPaths(t *testing.T) {
 		{GameID: "g", Profile: "p", RelativePath: "c", SourceID: "s", ModID: "m", ModPath: "/old"},
 	}, records)
 }
+
+// TestRerootDeployedFiles_MovesOnlyTheNamedRoots pins #528's ledger move: a
+// game folder that moved takes its deployed-file records with it. Rows
+// recorded under one of the named roots - "" naming a row that recorded
+// none - are re-rooted onto the new mod_path; rows under any other root,
+// and every other game's rows, are left as they were.
+func TestRerootDeployedFiles_MovesOnlyTheNamedRoots(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	ctx := t.Context()
+
+	for _, rec := range []db.DeployedFileRecord{
+		{GameID: "g", Profile: "default", RelativePath: "a.pak", SourceID: "src", ModID: "m", ModPath: "/old/mods"},
+		{GameID: "g", Profile: "other", RelativePath: "b.pak", SourceID: "src", ModID: "m"},
+		{GameID: "g", Profile: "default", RelativePath: "c.pak", SourceID: "src", ModID: "m", ModPath: "/elsewhere"},
+		{GameID: "h", Profile: "default", RelativePath: "a.pak", SourceID: "src", ModID: "m", ModPath: "/old/mods"},
+	} {
+		require.NoError(t, database.RecordDeployedFile(ctx, rec))
+	}
+
+	n, err := database.RerootDeployedFiles(ctx, "g", []string{"/old/mods", ""}, "/new/mods")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), n)
+
+	roots, err := database.DeployedFileRoots(ctx, "g")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []db.DeployedRoot{
+		{Profile: "default", ModPath: "/elsewhere", Files: 1},
+		{Profile: "default", ModPath: "/new/mods", Files: 1},
+		{Profile: "other", ModPath: "/new/mods", Files: 1},
+	}, roots)
+	other, err := database.DeployedFileRoots(ctx, "h")
+	require.NoError(t, err)
+	assert.Equal(t, []db.DeployedRoot{{Profile: "default", ModPath: "/old/mods", Files: 1}}, other)
+}

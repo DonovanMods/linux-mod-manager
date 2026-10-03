@@ -41,12 +41,15 @@ func resetGameEditFlags(t *testing.T) {
 	t.Helper()
 	sources, remove := gameEditSources, gameEditRemove
 	modPath, modPathSet := gameEditModPath, gameEditModPathSet
+	installPath, installPathSet := gameEditInstallPath, gameEditInstallPathSet
 	t.Cleanup(func() {
 		gameEditSources, gameEditRemove = sources, remove
 		gameEditModPath, gameEditModPathSet = modPath, modPathSet
+		gameEditInstallPath, gameEditInstallPathSet = installPath, installPathSet
 	})
 	gameEditSources, gameEditRemove = nil, nil
 	gameEditModPath, gameEditModPathSet = "", false
+	gameEditInstallPath, gameEditInstallPathSet = "", false
 }
 
 func TestGameEditCmd_Structure(t *testing.T) {

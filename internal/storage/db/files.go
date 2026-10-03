@@ -192,6 +192,42 @@ func (d *DB) DeployedFileRoots(ctx context.Context, gameID string) (roots []Depl
 	return roots, rows.Err()
 }
 
+// RerootDeployedFiles records every gameID row deployed under one of from as
+// deployed under to instead, in one transaction, and returns how many rows
+// it changed. "" in from names the rows that recorded no mod_path. It is
+// #528's ledger move: a game folder that moved took its deployed files
+// with it, still at the same paths relative to the mod_path.
+func (d *DB) RerootDeployedFiles(ctx context.Context, gameID string, from []string, to string) (int64, error) {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	var total int64
+	for _, root := range from {
+		query := `UPDATE deployed_files SET mod_path = ? WHERE game_id = ? AND mod_path = ?`
+		args := []any{to, gameID, root}
+		if root == "" {
+			query = `UPDATE deployed_files SET mod_path = ? WHERE game_id = ? AND (mod_path IS NULL OR mod_path = '')`
+			args = args[:2]
+		}
+		res, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return 0, fmt.Errorf("re-rooting deployed files: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("re-rooting deployed files: %w", err)
+		}
+		total += n
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing re-rooted deployed files: %w", err)
+	}
+	return total, nil
+}
+
 // GetLastDeployTime returns the most recent deployed_at recorded for
 // gameID/profileName across every tracked file (#106a's dashboard "Last
 // deploy" row), or nil if the profile has never had a file deployed. A

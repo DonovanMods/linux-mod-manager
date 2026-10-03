@@ -610,6 +610,12 @@ func TestServeJSONGoldens(t *testing.T) {
 			gameSourcesRequest{ModPath: new("/games/valheim"), Adapter: new("bepinex")},
 		},
 		{
+			// #528: the install-path edit, with the relative mod_path the
+			// same body may carry - relative to the NEW install path.
+			"game_install_path_request",
+			gameSourcesRequest{InstallPath: new("/mnt/library/valheim"), ModPath: new("BepInEx/plugins")},
+		},
+		{
 			// The detect apply's body: which listing rows to add, named by
 			// 1-based index or slug (core.SelectDetectedGames resolves
 			// both, so the golden carries one of each).

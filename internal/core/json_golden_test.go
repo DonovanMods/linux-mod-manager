@@ -2054,6 +2054,28 @@ func TestJSONGoldens(t *testing.T) {
 			core.DeployedUnder{ModPath: "/games/skyrim-se/Data", Files: 3, Profiles: []string{"default"}},
 		},
 		{
+			// #528: an install_path change that is not a move of the whole
+			// folder - the old one is still there.
+			"game_install_path_in_use_error",
+			core.GameInstallPathInUseError{
+				GameID: "valheim", InstallPath: "/games/valheim", NewInstallPath: "/mnt/library/valheim",
+				ModPath: "/games/valheim/BepInEx/plugins", NewModPath: "/mnt/library/valheim/BepInEx/plugins",
+				DeployedFiles: 3, Profiles: []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 3}},
+				OldInstallPathExists: true,
+			},
+		},
+		{
+			// #528: a move whose new folder lacks some of what lmm recorded,
+			// including a replaced file's backup target.
+			"game_install_path_in_use_error_missing",
+			core.GameInstallPathInUseError{
+				GameID: "valheim", InstallPath: "/games/valheim", NewInstallPath: "/mnt/library/valheim",
+				ModPath: "/games/valheim/BepInEx/plugins", NewModPath: "/mnt/library/valheim/BepInEx/plugins",
+				DeployedFiles: 3, Profiles: []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 3}},
+				Originals: 2, MissingFiles: 1, MissingOriginals: 1,
+			},
+		},
+		{
 			// #451: a move refused while files are deployed under a
 			// mod_path other than the current one.
 			"game_mod_path_in_use_error_deployed_under",
