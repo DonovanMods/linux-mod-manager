@@ -17,6 +17,7 @@ import {
   loaderDraft,
   loaderSpec,
 } from "./gameloader.js";
+import { FolderField } from "./folderpicker.js";
 import { ModPathInUse, modPathInUseFor } from "./modpath.js";
 
 /** gameDraft is the editor's local state for one game row: every field as
@@ -157,21 +158,34 @@ export function GameEditor({
 
   const textField = (field, label, ref, name, hint) => {
     const err = fieldError(field);
+    const input = html`
+      <input
+        id=${ids[field]}
+        ref=${ref}
+        type="text"
+        class=${field === "name" ? "" : "mono"}
+        name=${name}
+        value=${draft[field]}
+        disabled=${busy}
+        aria-invalid=${err ? "true" : undefined}
+        aria-describedby=${err ? `${ids[field]}-error` : `${ids[field]}-hint`}
+        onInput=${(e) => patch({ [field]: e.currentTarget.value })}
+      />
+    `;
     return html`
       <div class="game-editor__field">
         <label class="plan__control" for=${ids[field]}>${label}</label>
-        <input
-          id=${ids[field]}
-          ref=${ref}
-          type="text"
-          class=${field === "name" ? "" : "mono"}
-          name=${name}
-          value=${draft[field]}
-          disabled=${busy}
-          aria-invalid=${err ? "true" : undefined}
-          aria-describedby=${err ? `${ids[field]}-error` : `${ids[field]}-hint`}
-          onInput=${(e) => patch({ [field]: e.currentTarget.value })}
-        />
+        ${
+          field === "install_path"
+            ? html`<${FolderField}
+                value=${draft.install_path}
+                label="install path"
+                disabled=${busy}
+                onChoose=${(path) => patch({ install_path: path })}
+                >${input}<//
+              >`
+            : input
+        }
         ${
           /* One live region per field, mounted with the panel and never
           removed, so a refusal is announced (the issue 442 rule). */ ""
@@ -206,18 +220,26 @@ export function GameEditor({
         )}
         <div class="game-editor__field" data-testid="mod-path-editor">
           <label class="plan__control" for=${ids.mod_path}>Mod path</label>
-          <input
-            id=${ids.mod_path}
-            ref=${modPathRef}
-            type="text"
-            class="mono"
-            name="mod-path"
+          <${FolderField}
             value=${draft.mod_path}
+            fallback=${draft.install_path}
+            label="mod path"
             disabled=${busy}
-            aria-invalid=${modPathErr && !inUse ? "true" : undefined}
-            aria-describedby=${modPathErr ? `${ids.mod_path}-error` : `${ids.mod_path}-hint`}
-            onInput=${(e) => patch({ mod_path: e.currentTarget.value })}
-          />
+            onChoose=${(path) => patch({ mod_path: path })}
+          >
+            <input
+              id=${ids.mod_path}
+              ref=${modPathRef}
+              type="text"
+              class="mono"
+              name="mod-path"
+              value=${draft.mod_path}
+              disabled=${busy}
+              aria-invalid=${modPathErr && !inUse ? "true" : undefined}
+              aria-describedby=${modPathErr ? `${ids.mod_path}-error` : `${ids.mod_path}-hint`}
+              onInput=${(e) => patch({ mod_path: e.currentTarget.value })}
+            />
+          <//>
           <div
             class="game-editor__answer mod-path-editor__answer"
             role="status"

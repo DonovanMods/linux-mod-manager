@@ -32,6 +32,7 @@ import {
   updateGameSources,
 } from "../api.js";
 import { navigate, setupPath } from "../router.js";
+import { FolderField } from "./folderpicker.js";
 import { SourcesMapEditor } from "./sourcesmap.js";
 import { GameLoaderEditor, loaderDraft, loaderSpec } from "./gameloader.js";
 
@@ -1030,30 +1031,45 @@ export function GameAddForm({
               </div>
             `
           : html`
-              <label class="plan__control">
-                Install path
-                <input
-                  type="text"
-                  name="add-install-path"
+              <div class="plan__control">
+                <label for="add-install-path">Install path</label>
+                <${FolderField}
                   value=${spec.installPath}
-                  onInput=${(e) => patch({ installPath: e.currentTarget.value })}
-                />
-              </label>
+                  label="install path"
+                  onChoose=${(path) => patch({ installPath: path })}
+                >
+                  <input
+                    type="text"
+                    id="add-install-path"
+                    name="add-install-path"
+                    value=${spec.installPath}
+                    onInput=${(e) => patch({ installPath: e.currentTarget.value })}
+                  />
+                <//>
+              </div>
               ${errorFor("install_path") && html`<p class="modal__error">${errorFor("install_path")}</p>`}
             `
       }
 
-      <label class="plan__control">
-        Mod path
+      <div class="plan__control">
+        <label for="add-mod-path">Mod path</label>
         <span class="empty-state__hint">${modPathHint}</span>
-        <input
-          type="text"
-          name="add-mod-path"
+        <${FolderField}
           value=${spec.modPath}
-          placeholder=${modPathPlaceholder}
-          onInput=${(e) => patch({ modPath: e.currentTarget.value })}
-        />
-      </label>
+          fallback=${detectedRow ? detectedRow.install_path : spec.installPath}
+          label="mod path"
+          onChoose=${(path) => patch({ modPath: path })}
+        >
+          <input
+            type="text"
+            id="add-mod-path"
+            name="add-mod-path"
+            value=${spec.modPath}
+            placeholder=${modPathPlaceholder}
+            onInput=${(e) => patch({ modPath: e.currentTarget.value })}
+          />
+        <//>
+      </div>
       ${errorFor("mod_path") && html`<p class="modal__error">${errorFor("mod_path")}</p>`}
 
       <${GameLoaderEditor}
