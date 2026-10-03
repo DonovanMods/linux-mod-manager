@@ -72,6 +72,10 @@ func applyUpdateFromFile(ctx context.Context, service *core.Service, game *domai
 		if line := archiveMatchLine(plan); line != "" {
 			fmt.Printf("  %s\n", line)
 		}
+		if plan.Match == core.ArchiveMatchMismatch {
+			mismatch := &core.ArchiveMismatchError{ArchiveName: plan.ArchiveName, Advertised: *plan.Advertised, Matched: plan.MatchedFile}
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", mismatch.Sentence())
+		}
 		for _, w := range plan.Warnings {
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}

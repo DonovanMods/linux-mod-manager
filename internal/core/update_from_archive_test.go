@@ -198,8 +198,7 @@ func TestUpdateFromArchive_Mismatch_RefusedUnlessAccepted(t *testing.T) {
 	assert.Equal(t, core.ArchiveMatchMismatch, plan.Match)
 	assert.Equal(t, "201", plan.MatchedFile.ID)
 	assert.Equal(t, []string{"201"}, plan.FileIDs)
-	require.Len(t, plan.Warnings, 1)
-	assert.Contains(t, plan.Warnings[0], "not the update the source advertised (Auctionator-2.0.zip)")
+	assert.Empty(t, plan.Warnings, "the mismatch is Match's to state, not a warning's")
 
 	_, err := f.svc.ApplyUpdateFromArchive(context.Background(), f.game, plan, core.UpdateFromArchiveOptions{}, nil)
 	var mismatch *core.ArchiveMismatchError
@@ -341,4 +340,20 @@ func TestUpdateFromArchive_External_Refused(t *testing.T) {
 	_, err := f.svc.PlanUpdateFromArchive(context.Background(), f.game, "default", "msrc", "42",
 		f.archive(t, "Auctionator-2.0.zip"), core.UpdateFromArchiveOptions{})
 	require.Error(t, err)
+}
+
+// #530: a batch update whose source refuses the download says so on the
+// wire, so the web UI can offer "Update from file…" beside the mod's page -
+// the job result document is all it has.
+func TestApplyUpdateBatch_ManualDownloadFailureSaysSo(t *testing.T) {
+	f := newFromFileFixture(t)
+	row := f.row(t)
+	plan, err := f.svc.PlanUpdateBatchFrom(context.Background(), f.game, "default", []domain.Update{{InstalledMod: *row, NewVersion: "2.0",
+		FileIDReplacements: map[string]string{"100": "200"}}}, nil)
+	require.NoError(t, err)
+	result, err := f.svc.ApplyUpdateBatch(context.Background(), f.game, plan, core.UpdateBatchOptions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Failed, 1)
+	assert.True(t, result.Failed[0].ManualDownload)
+	assert.Equal(t, "https://example.test/mods/auctionator", result.Failed[0].ModURL)
 }

@@ -1617,7 +1617,7 @@ func TestJSONGoldens(t *testing.T) {
 				Refusal:         "Sample Mod is locked at v1.2.2 in profile default - unlock with 'lmm mod unlock -s curseforge -p default 42' first",
 				Files:           []string{"SampleMod/SampleMod.esp"},
 				Hooks:           []string{"install.before_each"},
-				Warnings:        []string{"Sample-Mod-Classic-1.2.3 (1).zip is the source's file Sample-Mod-Classic-1.2.3.zip, not the update the source advertised (Sample-Mod-1.2.3.zip) - it may be another flavor or loader's build"},
+				Warnings:        []string{"could not check curseforge for an update: request timed out"},
 			},
 		},
 		{
@@ -1913,6 +1913,14 @@ func TestJSONGoldens(t *testing.T) {
 					Mod:   "curseforge:7",
 					Name:  "Broken Mod",
 					Error: "fetching mod: source unavailable",
+				}, {
+					// #513/#530: a download the source refused - the page to
+					// fetch it from, and that it must be fetched by hand.
+					Mod:            "curseforge:8",
+					Name:           "Manual Mod",
+					Error:          "downloading update: mod author has disabled third-party downloads",
+					ModURL:         "https://www.curseforge.com/minecraft/mc-mods/manual-mod",
+					ManualDownload: true,
 				}},
 				Skipped: []core.UpdateApplyResult{{
 					Mod:         domain.ModReference{SourceID: "nexusmods", ModID: "9", Version: "1.0", Locked: true},

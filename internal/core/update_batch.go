@@ -101,6 +101,11 @@ type UpdateBatchFailure struct {
 	// (#513) and the page is a plain http(s) address - the one fact of the
 	// typed error a job result document needs to keep. Omitted otherwise.
 	ModURL string `json:"mod_url,omitzero"`
+	// ManualDownload reports that the source refuses to serve the file
+	// through its API (DownloadError.ManualDownload): it has to be fetched by
+	// hand from ModURL, and the web UI offers "Update from file..." for it
+	// (#530). Omitted otherwise.
+	ManualDownload bool `json:"manual_download,omitzero"`
 
 	// cause is the original error, kept for an in-process caller. It is
 	// deliberately unexported: it is not part of the wire contract, and a
@@ -336,7 +341,7 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 			failure := UpdateBatchFailure{Mod: key, Name: mod.Name, Error: err.Error(), cause: err}
 			var dl *DownloadError
 			if errors.As(err, &dl) {
-				failure.ModURL = dl.ModURL
+				failure.ModURL, failure.ManualDownload = dl.ModURL, dl.ManualDownload
 			}
 			result.Failed = append(result.Failed, failure)
 			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemFailed, Detail: err.Error()})

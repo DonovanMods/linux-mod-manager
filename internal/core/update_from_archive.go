@@ -133,9 +133,10 @@ type UpdateFromArchivePlan struct {
 	Files []string `json:"files"`
 	// Hooks lists the update hooks Apply would run, in run order.
 	Hooks []string `json:"hooks"`
-	// Warnings holds the plan's diagnostics, unprefixed: a mismatch, a
-	// failed update check, no file ID to record, the adapter's layout notes.
-	// Never nil.
+	// Warnings holds the plan's diagnostics, unprefixed: a failed update
+	// check, no file ID to record, the adapter's layout notes. A mismatch is
+	// not among them - Match states it, and a frontend words it beside its
+	// own way to proceed (ArchiveMismatchError.Sentence). Never nil.
 	Warnings []string `json:"warnings"`
 
 	// matchedFileID is the file whose completion marker Apply stamps.
@@ -160,12 +161,12 @@ type ArchiveMismatchError struct {
 
 // Error names both files and the way to proceed anyway.
 func (e *ArchiveMismatchError) Error() string {
-	return e.sentence() + "; update from it anyway with --accept-mismatch"
+	return e.Sentence() + "; update from it anyway with --accept-mismatch"
 }
 
-// sentence is the refusal without its remedy - the plan's warning, which a
-// frontend words its own way to proceed beside.
-func (e *ArchiveMismatchError) sentence() string {
+// Sentence is the refusal without its remedy, for a frontend that words its
+// own way to proceed beside it - the CLI's plan warning.
+func (e *ArchiveMismatchError) Sentence() string {
 	is := "a file the source does not list"
 	if e.Matched != nil {
 		is = fmt.Sprintf("the source's file %s", e.Matched.FileName)
@@ -184,6 +185,12 @@ type archiveMismatchDetails struct {
 	Advertised  ArchiveFileRef  `json:"advertised"`
 	Matched     *ArchiveFileRef `json:"matched,omitempty"`
 }
+
+// ErrArchiveIsInstalledVersion is PlanUpdateFromArchive's refusal of an
+// archive that resolves to the version already installed: the ingest keys
+// the cache by version, so it would overwrite the live entry the deployment
+// and a rollback both read. Callers branch with errors.Is.
+var ErrArchiveIsInstalledVersion = errors.New("the archive is the installed version")
 
 // ArchiveVersionRequiredError is PlanUpdateFromArchive's refusal when
 // nothing says which version an archive is: no advertised or listed file
@@ -259,12 +266,11 @@ func (s *Service) PlanUpdateFromArchive(ctx context.Context, game *domain.Game, 
 		return nil, err
 	}
 	if plan.ToVersion == mod.Version {
-		return nil, fmt.Errorf("%s is already at v%s, the version %s holds - nothing to update", mod.Name, mod.Version, plan.ArchiveName)
+		return nil, fmt.Errorf("%w: %s is already at v%s, the version %s holds - nothing to update", ErrArchiveIsInstalledVersion, mod.Name, mod.Version, plan.ArchiveName)
 	}
-	switch {
-	case plan.Match == ArchiveMatchMismatch:
-		warn("%s", (&ArchiveMismatchError{ArchiveName: plan.ArchiveName, Advertised: *plan.Advertised, Matched: plan.MatchedFile}).sentence())
-	case len(plan.FileIDs) == 0 && mod.SourceID != domain.SourceLocal:
+	// A mismatch is not repeated here: Match/Advertised/MatchedFile state
+	// it, and each frontend words it beside its own way to proceed.
+	if plan.Match != ArchiveMatchMismatch && len(plan.FileIDs) == 0 && mod.SourceID != domain.SourceLocal {
 		warn("%s is no file the source lists, so no file ID is recorded: future update checks compare versions only", plan.ArchiveName)
 	}
 

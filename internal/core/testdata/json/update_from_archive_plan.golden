@@ -53,6 +53,6 @@
     "install.before_each"
   ],
   "warnings": [
-    "Sample-Mod-Classic-1.2.3 (1).zip is the source's file Sample-Mod-Classic-1.2.3.zip, not the update the source advertised (Sample-Mod-1.2.3.zip) - it may be another flavor or loader's build"
+    "could not check curseforge for an update: request timed out"
   ]
 }
