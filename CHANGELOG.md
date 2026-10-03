@@ -366,7 +366,11 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
   `--config`, `--data`, `lmm game add --path`/`--mod-path` and
   `lmm game edit --install-path`/`--mod-path` now complete folders only in
   bash, zsh and fish. The custom-source editor's `directory.path` is part of a
-  YAML document, so it has no Browse… button yet.
+  YAML document, so it has an **Insert folder path…** button under the
+  editor instead: it opens the same chooser (at the selected text if that is
+  an absolute path, else your home folder), inserts the chosen path at the
+  cursor — over any selection — and puts the cursor back in the editor just
+  after it. The YAML is never parsed.
 
 - **The web UI shows what a repair did, and what still fails (#517).** A
   `verify --fix` job (the Health card's **Repair** and **Repair all**) used to

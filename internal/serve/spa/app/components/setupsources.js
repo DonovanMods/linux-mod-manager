@@ -11,7 +11,8 @@
 // advisory here (a plain annotation on the row); the DELETE route's own 409
 // is still what actually refuses a removal a game maps, naming the games.
 
-import { html, useEffect, useState } from "../render.js";
+import { html, useEffect, useRef, useState } from "../render.js";
+import { BrowseButton, isAbsolutePathText } from "./folderpicker.js";
 import { SourceIndexes } from "./sourceindexes.js";
 import { EditButton } from "./pencil.js";
 import {
@@ -283,6 +284,22 @@ function SourceEditor({ id, onSaved, onCancel }) {
   // way to supply from the UI at all.
   const [probeID, setProbeID] = useState("");
   const [saveError, setSaveError] = useState(null);
+  const textareaRef = useRef(null);
+  // The selection the Insert folder path… button was pressed over, and where
+  // the caret goes once the inserted text is in the textarea.
+  const insertRange = useRef({ start: 0, end: 0 });
+  const caretAfter = useRef(null);
+
+  // After every render, but it only acts once after an insertion: hand the keyboard back to the textarea
+  // with the caret just past what was inserted.
+  useEffect(() => {
+    const at = caretAfter.current;
+    const el = textareaRef.current;
+    if (at === null || !el) return;
+    caretAfter.current = null;
+    el.focus();
+    el.setSelectionRange(at, at);
+  });
 
   useEffect(() => {
     if (!id) return;
@@ -295,6 +312,33 @@ function SourceEditor({ id, onSaved, onCancel }) {
 
   function onEdit(e) {
     setYaml(e.currentTarget.value);
+    setValidated(false);
+    setReport(null);
+  }
+
+  // The textarea keeps its selection while the chooser is open, but it is
+  // read when the button is pressed, so what is replaced is what was
+  // selected THEN.
+  function rememberSelection() {
+    const el = textareaRef.current;
+    insertRange.current = {
+      start: el?.selectionStart ?? yaml.length,
+      end: el?.selectionEnd ?? yaml.length,
+    };
+  }
+
+  // The chooser opens at the selected text when that is an absolute path,
+  // and at the home folder otherwise. The YAML is never parsed.
+  function selectionStart() {
+    const { start, end } = insertRange.current;
+    const selected = yaml.slice(start, end).trim();
+    return isAbsolutePathText(selected) ? selected : "";
+  }
+
+  function insertPath(path) {
+    const { start, end } = insertRange.current;
+    caretAfter.current = start + path.length;
+    setYaml(yaml.slice(0, start) + path + yaml.slice(end));
     setValidated(false);
     setReport(null);
   }
@@ -363,10 +407,30 @@ function SourceEditor({ id, onSaved, onCancel }) {
         </div>
         <textarea
           class="source-editor__textarea mono"
+          ref=${textareaRef}
+          name="source-yaml"
+          aria-label="Source definition (YAML)"
           spellcheck=${false}
           value=${yaml}
           onInput=${onEdit}
         ></textarea>
+      </div>
+
+      <div class="source-editor__insert">
+        <${BrowseButton}
+          text="Insert folder path…"
+          action="insert-folder-path"
+          label="a folder to insert"
+          start=${() => {
+            rememberSelection();
+            return selectionStart();
+          }}
+          onChoose=${insertPath}
+        />
+        <span class="empty-state__hint"
+          >Puts a folder's absolute path at the cursor, over any selected
+          text.</span
+        >
       </div>
 
       <label class="plan__control plan__control--inline">

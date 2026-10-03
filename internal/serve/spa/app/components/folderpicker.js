@@ -346,13 +346,84 @@ export function FolderPicker({
 
 let fieldSerial = 0;
 
+/** isAbsolutePathText reports whether text can name a starting folder by
+ * itself: absolute, or ~ (core expands it). Anything else - empty, or
+ * relative - cannot. */
+export function isAbsolutePathText(text) {
+  const t = (text ?? "").trim();
+  return t.startsWith("/") || t === "~" || t.startsWith("~/");
+}
+
+/**
+ * BrowseButton is a button that opens the chooser and reports the folder
+ * chosen. FolderField puts one beside a directory input; the custom-source
+ * editor, whose path lives inside a YAML textarea, puts one under it.
+ *
+ *   start      where the chooser opens: a path, or a function returning one
+ *              that is called when the button is pressed
+ *   onOpen     called when the button is pressed, before the chooser opens
+ *              (a textarea records its selection here)
+ *   label      what is being chosen, for the chooser's title
+ *   text       the button's visible label (default "Browse…")
+ *   ariaLabel  its accessible name when that is longer than its text
+ *   action     its data-action
+ *   onChoose   called with the chosen absolute path, after the chooser has
+ *              closed and focus has returned to this button
+ */
+export function BrowseButton({
+  start,
+  onOpen,
+  label,
+  text = "Browse…",
+  ariaLabel,
+  action = "browse-folder",
+  disabled,
+  onChoose,
+}) {
+  const [open, setOpen] = useState(null); // null, or where it opened
+  const id = useRef(null);
+  if (id.current === null) id.current = `folder-browse-${++fieldSerial}`;
+
+  return html`
+    <button
+      type="button"
+      id=${id.current}
+      class="button"
+      data-action=${action}
+      aria-label=${ariaLabel}
+      disabled=${disabled}
+      onClick=${() => {
+        onOpen?.();
+        setOpen({ at: typeof start === "function" ? start() : (start ?? "") });
+      }}
+    >
+      ${text}
+    </button>
+    ${
+      open &&
+      html`<${Portal}>
+        <${FolderPicker}
+          start=${open.at}
+          title=${`Choose ${label}`}
+          openerSelector=${`#${id.current}`}
+          onCancel=${() => setOpen(null)}
+          onChoose=${(path) => {
+            setOpen(null);
+            onChoose(path);
+          }}
+        />
+      <//>`
+    }
+  `;
+}
+
 /**
  * FolderField is a directory input with its "Browse…" button: the input the
  * caller already had, and the chooser behind the button. Typing still works.
  *
  * `children` is the <input> itself, supplied by the caller so it keeps its
  * own id, name, ARIA wiring and handlers; this component only lays the row
- * out, owns the picker's open state, and hands a chosen path to onChoose.
+ * out and hands a chosen path to onChoose.
  *
  *   value        the field's current text (the picker opens there)
  *   fallback     where to open when value is empty or relative - a mod path
@@ -369,45 +440,17 @@ export function FolderField({
   onChoose,
   children,
 }) {
-  const [open, setOpen] = useState(false);
-  const id = useRef(null);
-  if (id.current === null) id.current = `folder-browse-${++fieldSerial}`;
-
-  // A relative value (or none) cannot name a starting folder by itself.
   const text = (value ?? "").trim();
-  const absolute =
-    text.startsWith("/") || text === "~" || text.startsWith("~/");
-  const start = absolute ? text : (fallback ?? "");
-
   return html`
     <div class="folder-field">
       ${children}
-      <button
-        type="button"
-        id=${id.current}
-        class="button"
-        data-action="browse-folder"
-        aria-label=${`Browse… ${label}`}
+      <${BrowseButton}
+        start=${isAbsolutePathText(text) ? text : (fallback ?? "")}
+        label=${label}
+        ariaLabel=${`Browse… ${label}`}
         disabled=${disabled}
-        onClick=${() => setOpen(true)}
-      >
-        Browse…
-      </button>
-      ${
-        open &&
-        html`<${Portal}>
-          <${FolderPicker}
-            start=${start}
-            title=${`Choose ${label}`}
-            openerSelector=${`#${id.current}`}
-            onCancel=${() => setOpen(false)}
-            onChoose=${(path) => {
-              setOpen(false);
-              onChoose(path);
-            }}
-          />
-        <//>`
-      }
+        onChoose=${onChoose}
+      />
     </div>
   `;
 }
