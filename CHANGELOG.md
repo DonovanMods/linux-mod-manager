@@ -369,8 +369,11 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
   both; otherwise the version comes from the archive's name or
   `--version`. The web UI offers **Update from file…** in the mod's
   slide-over, its full page and its library-row menu, and beside **Open on
-  <source>** on a failed install, update or repair whose source refused the
-  download; it uploads the archive and runs the same plan and job.
+  <source>** wherever a failed download of an installed mod is shown -
+  including a failed update, whose result now shows the mod's page too -
+  when its source refused the download; it uploads the archive and runs the
+  same plan and job. A failed batch update's `failed[]` entries carry
+  `manual_download` for this.
 
 - **The web UI shows what a repair did, and what still fails (#517).** A
   `verify --fix` job (the Health card's **Repair** and **Repair all**) used to
