@@ -142,6 +142,7 @@ func init() {
 		"the game's Unity scripting backend: mono or il2cpp (default: read from the install directory)")
 	gameEditCmd.Flags().StringVar(&gameEditLoaderBootstrap, "loader-bootstrap", "",
 		"how the loader is injected: native or proton (default: read from the install directory)")
+	markDirectoryFlags(gameEditCmd, "install-path", "mod-path")
 }
 
 func runGameEdit(cmd *cobra.Command, args []string) error {

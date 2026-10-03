@@ -126,6 +126,24 @@ func computeDisplayVersion(ver, describe string) string {
 	return fmt.Sprintf("%s (dev: %s)", ver, describe)
 }
 
+// markDirectoryFlags gives each named flag of cmd (a local one, or a
+// persistent one cmd declares) the shell's directory-only completion (#529):
+// Tab proposes folders and never files. It registers a completion function
+// rather than calling cobra's MarkFlagDirname, which only annotates the flag
+// for bash v1 completion and does nothing for the generated bash/zsh/fish
+// scripts. TestDirectoryFlagsOfferDirectoryOnlyCompletion holds every
+// directory flag to it.
+func markDirectoryFlags(cmd *cobra.Command, names ...string) {
+	for _, name := range names {
+		err := cmd.RegisterFlagCompletionFunc(name, func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveFilterDirs
+		})
+		if err != nil {
+			panic(err) // a programming error: the flag is declared before this call
+		}
+	}
+}
+
 func init() {
 	// Persistent flags available to all commands
 	rootCmd.PersistentFlags().StringVar(&configDir, "config", "", "config directory (default: $XDG_CONFIG_HOME/lmm or ~/.config/lmm)")
@@ -135,6 +153,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output JSON instead of text; mutating commands print their result, --dry-run prints the plan; never prompts")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output (NO_COLOR env is also honored)")
+	markDirectoryFlags(rootCmd, "config", "data")
 	logLevel = "off"
 	rootCmd.PersistentFlags().Var(logLevelFlag{&logLevel}, logLevelFlagName, "diagnostic log level written to stderr (off, error, warn, info, debug)")
 	rootCmd.SetFlagErrorFunc(logLevelFlagErrorFunc)
