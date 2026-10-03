@@ -185,10 +185,11 @@ delimited block of `app.css` (`@control-system begin` … `end`).
   `EditButton` - a `--quiet --icon --small` button drawing an inline-SVG pencil (like the
   arrows: `currentColor`, no icon font, no asset) - never a repeated "Edit <field>…" text
   button, which duplicates the column header and crowds the row. Its accessible name, from
-  `aria-label`, carries the field and the row ("Edit mod path for Skyrim"; the row's own
-  pencil is "Edit Skyrim"); an open editor is `aria-expanded`, not a changed label. An
+  `aria-label`, carries the row ("Edit Skyrim" - since #527 a Games row has one pencil,
+  which opens the game's one editor panel with a single Save; a per-field pencil would name
+  the field too); an open editor is `aria-expanded`, not a changed label. An
   action ("Set default", Download, Delete) stays a word. Any control may carry
-  `data-tooltip="Edit mod path"` and `app/tooltip.js` draws it: on hover AND keyboard
+  `data-tooltip="Edit Skyrim"` and `app/tooltip.js` draws it: on hover AND keyboard
   `:focus-visible`, dismissed by Escape, one shared `aria-hidden` element with no role
   (the `aria-label` is the name; the tooltip is for sighted people and never announces it
   twice). It is `position: fixed` from the trigger's measured box - below, flipped above at

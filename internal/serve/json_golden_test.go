@@ -592,9 +592,9 @@ func TestServeJSONGoldens(t *testing.T) {
 			}},
 		},
 		{
-			// #359: the same route's OTHER edit. One request, one edit - a
-			// body carrying both a source map and a loader is refused - so
-			// this golden carries the loader alone, and loader_set is what
+			// #359: the loader member. Since #527 it may share a body with
+			// the others (game_edit_request); this golden carries it alone,
+			// and loader_set is what
 			// distinguishes "remove the declaration" (present, null) from
 			// "leave it alone" (absent).
 			"game_loader_request",
@@ -608,6 +608,16 @@ func TestServeJSONGoldens(t *testing.T) {
 			// game's remedy pairs it with - the mod path is written first.
 			"game_mod_path_request",
 			gameSourcesRequest{ModPath: new("/games/valheim"), Adapter: new("bepinex")},
+		},
+		{
+			// #527: the Setup page's one game editor - every field it
+			// changed, in one body, written once or not at all.
+			"game_edit_request",
+			gameSourcesRequest{
+				Name: new("Valheim (modded)"), InstallPath: new("/mnt/library/valheim"),
+				ModPath: new("BepInEx/plugins"), Sources: map[string]string{"thunderstore": "valheim"},
+				Loader: &core.LoaderSpec{Kind: "bepinex", Version: "5.4.23.5"}, LoaderSet: true,
+			},
 		},
 		{
 			// #528: the install-path edit, with the relative mod_path the

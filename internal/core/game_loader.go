@@ -98,39 +98,9 @@ func (spec *LoaderSpec) loader() (*domain.GameLoader, error) {
 // it changes is which rules apply - the archive-root normaliser's two
 // ambiguous shapes (#358), the plan-time precondition, and the verify tier -
 // from the next command onwards.
+//
+// Since #527 it is EditGame with only a loader, so the same all-or-nothing
+// write serves both this narrow edit and the web UI's whole-game editor.
 func (s *Service) UpdateGameLoader(ctx context.Context, gameID string, loader *LoaderSpec) (*GameListEntry, error) {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
-	game, ok := s.game(gameID)
-	if !ok {
-		return nil, domain.ErrGameNotFound
-	}
-
-	declared, err := loader.loader()
-	if err != nil {
-		return nil, err
-	}
-
-	// A COPY: s.game returns the pointer the in-memory set holds, which
-	// concurrent readers are walking right now (UpdateGameSources' own
-	// reasoning). saveGame publishes the replacement atomically.
-	updated := *game
-	updated.Loader = declared
-	if err := s.saveGame(ctx, &updated); err != nil {
-		return nil, err
-	}
-
-	defaultGame, err := s.DefaultGame(ctx)
-	if err != nil {
-		return nil, err
-	}
-	entry, err := s.newGameListEntry(ctx, &updated, defaultGame)
-	if err != nil {
-		return nil, err
-	}
-	return &entry, nil
+	return s.EditGame(ctx, gameID, GameEdit{Loader: loader, LoaderSet: true})
 }

@@ -633,7 +633,7 @@ flags it until one side changes. [docs/adapters.md](docs/adapters.md#loader)
 has the whole rule.
 
 The same thing from the command line, or in the web UI's Setup → Games row
-(the **Edit loader…** control):
+(its pencil opens the game's editor, which has the loader fields):
 
 ```bash
 lmm game add --name "Lethal Company" --source nexusmods --id lethalcompany   --path "$HOME/.steam/steam/steamapps/common/Lethal Company"   --mod-path "$HOME/.steam/steam/steamapps/common/Lethal Company"   --loader bepinex --loader-version 5.4.23.5
@@ -1443,8 +1443,9 @@ Confirm will submit.
 
 The **Setup page** (`/g/{game}/{profile}/setup`) holds everything
 administrative, in five sections: **Games** (the configured games table with
-its sources, **Edit sources…**, **Edit mod path…** and **Edit loader…** per
-row, Steam detection, manual add, set/clear the default), **Authentication**
+its sources; each row's pencil opens one editor for the game's name, install
+path, mod path, sources and loader, with one Save that writes them all or
+nothing; Steam detection, manual add, set/clear the default), **Authentication**
 (per-source status, log in and out, the environment variable each source
 reads shown beside its field, orphaned-token removal), **Sources**
 (a line-numbered YAML editor for custom sources with validate-then-save and
@@ -1770,7 +1771,10 @@ rewrites that map (`lmm game edit`'s twin) and answers with the same row:
 the body's `sources` object is the FULL map the game ends up with, so an
 omitted source id is removed. An id no registered source claims is a 400
 whose `details.field` is `"sources"`, an unknown game is a 404, and an
-empty map is refused — a game must keep at least one source. `GET /api/v1/games/catalog` is the
+empty map is refused — a game must keep at least one source. The same body
+may carry `name`, `install_path`, `mod_path`, `adapter` and `loader` (with
+`loader_set`; `null` removes the declaration): every member present is
+checked before any is written, so a refusal writes nothing. `GET /api/v1/games/catalog` is the
 game-add form's search, over any source with a searchable catalog
 (CurseForge today); a source without one answers 400, which is the signal
 to ask for an identifier instead. `POST /api/v1/games` answers 400 with a

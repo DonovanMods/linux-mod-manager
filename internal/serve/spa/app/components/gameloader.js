@@ -14,7 +14,7 @@
 import { ModPathWarning } from "./modpath.js";
 import { AdapterError } from "./adaptercell.js";
 import { html, useEffect, useState } from "../render.js";
-import { ApiError, getGameDetail, updateGameLoader } from "../api.js";
+import { ApiError, getGameDetail } from "../api.js";
 
 /** The two closed vocabularies, matching domain.ValidLoaderRuntimes and
  * domain.ValidLoaderBootstraps. "" is a real value in both - "not answered
@@ -227,5 +227,3 @@ export function GameLoaderPanel({ gameID, refreshKey, onSetModPath }) {
     </div>
   `;
 }
-
-export { updateGameLoader };

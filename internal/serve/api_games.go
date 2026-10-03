@@ -220,16 +220,20 @@ func gameAddErrorStatus(err error) int {
 	}
 }
 
-// gameSourcesRequest is PUT /api/v1/games/{id}'s body: the FULL source map
-// the game should end up with, keyed by registered source id with that
-// game's identifier for each ("skyrimspecialedition", "1704", or "" for a
-// source that keys the game by nothing else).
+// gameSourcesRequest is PUT /api/v1/games/{id}'s body: every member a
+// configured game's edit can carry (#527 - the Setup page's one game
+// editor sends all the fields it changed in one body), each optional and
+// each leaving its key alone when absent. core.Service.EditGame checks them
+// all against the game they leave before it writes any.
 //
-// A replacement, not a patch: an id the map omits is removed, which is the
-// only way a form can express "stop using this source" without a second
-// verb. The CLI's `lmm game edit --source/--remove-source` flags are a
-// delta it resolves into exactly this map before calling the same core
-// seam.
+// "sources" is the FULL source map the game should end up with, keyed by
+// registered source id with that game's identifier for each
+// ("skyrimspecialedition", "1704", or "" for a source that keys the game by
+// nothing else). A replacement, not a patch: an id the map omits is
+// removed, which is the only way a form can express "stop using this
+// source" without a second verb. The CLI's `lmm game edit
+// --source/--remove-source` flags are a delta it resolves into exactly this
+// map before calling the same core seam.
 type gameSourcesRequest struct {
 	Sources map[string]string `json:"sources"`
 	// Adapter, when PRESENT, sets the game's `adapter:` key (#353); the
@@ -252,14 +256,12 @@ type gameSourcesRequest struct {
 	// (core.GameInstallPathInUseError, 409, otherwise). A relative
 	// "mod_path" in the same body is relative to the new install path.
 	InstallPath *string `json:"install_path,omitempty"`
-	// Loader is #359's declaration, additive: a body carrying it edits the
-	// LOADER instead of the source map, the mod path or the adapter.
-	//
-	// One request, one edit. Each is a complete statement on its own and
-	// each is its own gated write, so handling both in one request would
-	// make a partial failure - sources written, loader not - expressible
-	// with no way to report it; a body carrying both is refused rather than
-	// silently ordered, which is the same rule `lmm game edit` follows.
+	// Name, when present, sets the display name (#527); blank is refused
+	// on field "name".
+	Name *string `json:"name,omitempty"`
+	// Loader is #359's declaration. Since #527 it is one more member of the
+	// same edit rather than an edit of its own: a body may carry it beside
+	// any of the others, and a refusal of any member writes none of them.
 	//
 	// Clearing needs the difference between "absent" and "null", so this is
 	// a pointer to a pointer's worth of state: LoaderSet says the member was
@@ -291,31 +293,18 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	editsLoader := req.Loader != nil || req.LoaderSet
-	if editsLoader && (len(req.Sources) > 0 || req.Adapter != nil || req.ModPath != nil || req.InstallPath != nil) {
-		s.writeAPIError(w, http.StatusBadRequest,
-			errors.New("edit the loader in separate requests: send \"loader\" on its own, or \"sources\"/\"adapter\"/\"mod_path\"/\"install_path\" without it"))
-		return
+	// ONE core edit (#427 review F6, #527): every member is checked,
+	// against the game the whole body leaves, before any is written - so a
+	// bad map cannot leave the mod_path moved, the adapter and the mod_path
+	// compose in either direction, and the Setup editor's one Save is one
+	// write. A body with no sources leaves the map alone, unless it carries
+	// nothing at all, which is the empty-map refusal it always was.
+	edit := core.GameEdit{
+		Name: req.Name, Sources: req.Sources, Adapter: req.Adapter, ModPath: req.ModPath, InstallPath: req.InstallPath,
+		Loader: req.Loader, LoaderSet: req.Loader != nil || req.LoaderSet,
 	}
-
-	if editsLoader {
-		entry, err := s.svc.UpdateGameLoader(r.Context(), r.PathValue("id"), req.Loader)
-		if err != nil {
-			s.writeAPIError(w, gameSourcesErrorStatus(err), err)
-			return
-		}
-		s.writeJSON(w, http.StatusOK, entry)
-		return
-	}
-
-	// ONE core edit (#427 review F6): every member is checked, against the
-	// game the whole body leaves, before any is written - so a bad map
-	// cannot leave the mod_path moved, and the adapter and the mod_path
-	// compose in either direction. A body with no sources leaves the map
-	// alone, unless it carries nothing at all, which is the empty-map
-	// refusal it always was.
-	edit := core.GameEdit{Sources: req.Sources, Adapter: req.Adapter, ModPath: req.ModPath, InstallPath: req.InstallPath}
-	if edit.Sources == nil && edit.Adapter == nil && edit.ModPath == nil && edit.InstallPath == nil {
+	if edit.Name == nil && edit.Sources == nil && edit.Adapter == nil && edit.ModPath == nil &&
+		edit.InstallPath == nil && !edit.LoaderSet {
 		edit.Sources = map[string]string{}
 	}
 	entry, err := s.svc.EditGame(r.Context(), r.PathValue("id"), edit)

@@ -154,11 +154,16 @@ func TestAPIGameSources_ModPathRefusals(t *testing.T) {
 		assert.Equal(t, game.ModPath, reloaded.ModPath)
 	})
 
-	t.Run("with the loader is 400", func(t *testing.T) {
+	// #527: with a refused loader beside it, the mod_path is not written
+	// either - one edit, all or nothing.
+	t.Run("with a refused loader writes neither", func(t *testing.T) {
 		s, game := newMissingModPathServer(t)
 		rec := doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se",
-			`{"mod_path":`+jsonString(game.InstallPath)+`,"loader":{"kind":"bepinex"}}`)
+			`{"mod_path":`+jsonString(game.InstallPath)+`,"loader":{"kind":""}}`)
 		require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+		reloaded, err := s.svc.GetGame("skyrim-se")
+		require.NoError(t, err)
+		assert.Equal(t, game.ModPath, reloaded.ModPath)
 	})
 
 	t.Run("an unknown game is 404", func(t *testing.T) {

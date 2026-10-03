@@ -62,6 +62,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Setup → Games edits a game in one panel with one Save (#527).** A row
+  had a pencil for its mod path, its sources and its loader, plus the row's
+  own pencil that opened all three editors, each with its own Save - three
+  requests, any of which could succeed while another failed. The per-field
+  pencils are gone: the row's one pencil ("Edit Skyrim Special Edition")
+  opens a single panel with every field the game has - name, install path
+  (#528), mod path, sources and loader - and one **Save** and one
+  **Cancel** (**Close** once nothing is changed). Save sends the fields you
+  changed in one request, and lmm checks all of them before writing any:
+  a refusal writes nothing, and is shown under the field it is about (an
+  install path that does not exist, a mod path with files deployed under
+  it - with the ordered steps that clear it - a source still in use, a
+  loader value). After a save the panel stays open on the saved values,
+  so the loader status below it, with the Steam launch option to paste,
+  is re-read in place. Cancel discards the draft and puts focus back on
+  the pencil. Underneath, `PUT /api/v1/games/{id}` takes the whole edit
+  additively - a new `name` member, and `loader` may now share a body with
+  the other fields instead of being refused - and `core.GameEdit` carries
+  `Name`, `InstallPath` and the loader, so `Service.EditGame` is the one
+  all-or-nothing write (`UpdateGameLoader` is a thin wrapper over it). The
+  path columns take the room the pencils freed.
+
 - **Setup's tables edit with a pencil, not a repeated "Edit…" label (#525).**
   Every Games row used to repeat "Edit mod path…", "Edit sources…", "Edit
   loader…" and "Edit…", crowding the table and duplicating its column

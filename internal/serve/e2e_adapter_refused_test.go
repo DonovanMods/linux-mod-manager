@@ -33,7 +33,7 @@ func TestE2E_SetupGames_ARefusedAdapterShowsAsRefused(t *testing.T) {
 	assert.Contains(t, cell, `unknown adapter "no-such-adapter"`, "core's sentence, where the adapter is shown")
 
 	f.runInBrowser(t,
-		chromedp.Click(`button[data-action="edit-loader"]`, chromedp.ByQuery),
+		clickWhenSettled(`button[data-action="edit-game"]`),
 		pollUntil(`document.querySelector('[data-testid="loader-panel"] [data-testid="adapter-error"]') !== null`),
 		textContent(`[data-testid="loader-panel"] [data-testid="adapter-error"]`, &panel),
 	)

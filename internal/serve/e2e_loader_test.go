@@ -36,12 +36,14 @@ func TestE2E_SetupGames_DeclareALoaderAndReadTheLaunchOption(t *testing.T) {
 		// No loader yet.
 		chromedp.Text(`[data-testid="loader-cell"]`, &cell, chromedp.ByQuery),
 
-		chromedp.Click(`button[data-action="edit-loader"]`, chromedp.ByQuery),
+		clickWhenSettled(`button[data-action="edit-game"]`),
 		chromedp.WaitVisible(`[data-testid="loader-editor"]`, chromedp.ByQuery),
 		chromedp.SetValue(`select[name="loader-kind"]`, "bepinex", chromedp.ByQuery),
 		chromedp.WaitVisible(`input[name="loader-version"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="loader-version"]`, "5.4.23.5", chromedp.ByQuery),
-		chromedp.Click(`button[data-action="save-loader"]`, chromedp.ByQuery),
+		// The game editor's one Save (#527); the panel stays open on the
+		// saved values, with the loader panel under it.
+		chromedp.Click(`button[data-action="save-game"]`, chromedp.ByQuery),
 
 		// The row re-reads, and the panel below it re-reads the game
 		// directory - which is where the launch option comes from.
@@ -79,7 +81,7 @@ func TestE2E_SetupGames_LoaderPanelReportsWhatIsMissing(t *testing.T) {
 		chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
 		chromedp.Click(`.setup-nav__tab[data-section="games"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
-		chromedp.Click(`button[data-action="edit-loader"]`, chromedp.ByQuery),
+		clickWhenSettled(`button[data-action="edit-game"]`),
 		chromedp.WaitVisible(`[data-testid="loader-panel"]`, chromedp.ByQuery),
 		chromedp.Text(`[data-testid="loader-installed"]`, &installed, chromedp.ByQuery),
 	)

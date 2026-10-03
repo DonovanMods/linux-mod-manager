@@ -30,12 +30,13 @@ import (
 )
 
 // GameEdit is one edit of a configured game's games.yaml entry - what `lmm
-// game edit` and `PUT /api/v1/games/{id}` send (#326, #353, #427). A nil
-// member leaves its key alone.
-//
-// The loader is not here: it is its own edit (UpdateGameLoader), and both
-// frontends refuse a request that combines it with these.
+// game edit` and `PUT /api/v1/games/{id}` send (#326, #353, #427), and since
+// #527 everything the web UI's one game editor saves at once. A nil member
+// (and LoaderSet false) leaves its key alone.
 type GameEdit struct {
+	// Name, when non-nil, sets the display name; it is trimmed, and an
+	// empty one is refused.
+	Name *string
 	// Sources, when non-nil, REPLACES the game's source map - the map
 	// handed over is the map the game ends up with, which is what makes
 	// "remove this source" expressible at all. `lmm game edit`'s
@@ -55,6 +56,12 @@ type GameEdit struct {
 	// old install path follows it there; see refuseInstallPathMove for what
 	// lmm requires of the files it recorded under the old one.
 	InstallPath *string
+	// Loader, when LoaderSet, REPLACES the mod-loader declaration (#359):
+	// the spec handed over is the declaration the game ends up with, and a
+	// nil one removes it. It changes no deployed state - see
+	// UpdateGameLoader.
+	Loader    *LoaderSpec
+	LoaderSet bool
 }
 
 // EditGame applies edit to gameID's games.yaml entry and returns the game's
@@ -81,7 +88,8 @@ type GameEdit struct {
 //   - domain.ErrGameNotFound for an unknown game - the 404 every other
 //     game-scoped route already answers with.
 //   - GameSpecError, whose Field is the wire key PUT /api/v1/games/{id}
-//     takes ("install_path", "sources", "adapter", "mod_path"), so an SPA marks the
+//     takes ("name", "install_path", "sources", "adapter", "mod_path",
+//     "loader.kind", "loader.runtime", "loader.bootstrap"), so an SPA marks the
 //     offending input rather than parsing a sentence. See validatedSourceMap
 //     for the source map's rules. An adapter must be registered, and must
 //     compose with the rest of the entry the edit leaves (AdapterFor: a
@@ -142,6 +150,26 @@ func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEd
 	// could close; saveGame publishes the replacement atomically.
 	updated := *game
 	changed := false
+
+	// The fields that are only input come first, so a typo is reported
+	// before anything about the game's state.
+	if edit.Name != nil {
+		name := strings.TrimSpace(*edit.Name)
+		if name == "" {
+			return nil, false, nil, newGameSpecError("name", *edit.Name, "a display name is required")
+		}
+		if name != game.Name {
+			updated.Name, changed = name, true
+		}
+	}
+
+	if edit.LoaderSet {
+		declared, err := edit.Loader.loader()
+		if err != nil {
+			return nil, false, nil, err
+		}
+		updated.Loader, changed = declared, true
+	}
 
 	if edit.Sources != nil {
 		cleaned, err := s.validatedSourceMap(edit.Sources)

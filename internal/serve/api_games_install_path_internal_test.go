@@ -71,10 +71,20 @@ func TestAPIGameSources_InstallPathRefusals(t *testing.T) {
 		assert.Equal(t, game.InstallPath, reloaded.InstallPath)
 	})
 
-	t.Run("with the loader is 400", func(t *testing.T) {
-		s, _ := newMissingModPathServer(t)
+	// #527: a refused name beside it, and the install path is not written
+	// either.
+	t.Run("with a refused name writes neither", func(t *testing.T) {
+		s, game := newMissingModPathServer(t)
 		rec := doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se",
-			`{"install_path":`+jsonString(t.TempDir())+`,"loader":{"kind":"bepinex"}}`)
+			`{"install_path":`+jsonString(t.TempDir())+`,"name":"  "}`)
 		require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+		var env struct {
+			Details core.GameSpecError `json:"details"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+		assert.Equal(t, "name", env.Details.Field)
+		reloaded, err := s.svc.GetGame("skyrim-se")
+		require.NoError(t, err)
+		assert.Equal(t, game.InstallPath, reloaded.InstallPath)
 	})
 }

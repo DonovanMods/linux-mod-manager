@@ -2,28 +2,25 @@
 // configured games table, the same detect/add flows the first-run chooser
 // uses (gameadd.js), and default-game set/clear.
 
-import { html, useEffect, useState } from "../render.js";
+import { html, useEffect, useRef, useState } from "../render.js";
 import {
   ApiError,
   listGames,
   listSources,
-  updateGameSources,
-  updateGameModPath,
+  updateGame,
   post,
   del,
 } from "../api.js";
-import { SourcesMapEditor } from "./sourcesmap.js";
-import {
-  GameLoaderEditor,
-  GameLoaderPanel,
-  loaderDraft,
-  loaderSpec,
-  updateGameLoader,
-} from "./gameloader.js";
 import { GameDetectSection, GameAddForm } from "./gameadd.js";
-import { ModPathEditor, ModPathWarning } from "./modpath.js";
+import { ModPathWarning } from "./modpath.js";
 import { AdapterCell } from "./adaptercell.js";
 import { EditButton } from "./pencil.js";
+import {
+  GameEditor,
+  gameDraft,
+  gameEditBody,
+  gameEditErrorField,
+} from "./gameeditor.js";
 
 /** setDefaultGame/clearDefaultGame are this section's own two mutations -
  * thin single-step writes (api_games.go, issue 333) with nothing to preview, the
@@ -50,51 +47,48 @@ export function SetupGames({
   const [busyID, setBusyID] = useState(null);
   const [rowError, setRowError] = useState(null);
   const [sources, setSources] = useState(null);
-  // Which row's source map is open for editing, and the draft it holds.
-  // One at a time: two open editors over the same replacement-shaped PUT is
-  // two ways to lose an edit.
-  const [editing, setEditing] = useState(null); // {id, map}
-  // Which row's LOADER is open, and its draft. Separate from `editing`
-  // because the two are separate requests (api_games.go refuses a body
-  // carrying both), so they are separate controls rather than one editor
-  // whose Save means two different writes.
-  const [editingLoader, setEditingLoader] = useState(null); // {id, draft}
-  // Bumped after a loader save so the open panel re-reads the game directory
-  // instead of guessing what changed.
+  // Which row's editor is open (issue 527), the draft it holds, and where
+  // focus goes when it opens. One at a time: the panel is the one place a
+  // configured game changes, and two open over the same game is two ways to
+  // lose an edit. A deep link (router.js#modPathEditPath - every "Set mod
+  // path…" action outside this table) opens it on arrival, focused on the
+  // mod path and prefilled with core's suggestion when the link carries one.
+  const [editingGame, setEditingGame] = useState(null); // {id, draft, focus}
+  const [gameError, setGameError] = useState(null); // {id, message, field, details}
+  // The row whose last save succeeded, so the panel can say so until the
+  // next change.
+  const [savedID, setSavedID] = useState(null);
+  // Bumped after a save so the open loader panel re-reads the game
+  // directory instead of guessing what changed.
   const [loaderKey, setLoaderKey] = useState(0);
-  // Which row's MOD PATH is open (issue 460), its draft, and the answer its
-  // last save got. A deep link (router.js#modPathEditPath - every "Set mod
-  // path…" action outside this table) opens it on arrival, prefilled with
-  // core's suggestion when the link carries one.
-  const [editingModPath, setEditingModPath] = useState(null); // {id, value}
-  const [modPathError, setModPathError] = useState(null); // {id, message, field, details}
+  // The deep link already acted on, so a reload of the rows does not reopen
+  // a panel the user has closed.
+  const deepLinked = useRef("");
 
   async function reload() {
     try {
       const rows = await listGames();
       setGames(rows);
       setError(null);
+      return rows;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
+      return null;
     }
   }
 
   useEffect(() => {
-    if (!editModPath) return;
-    setEditingModPath((current) =>
-      current?.id === editModPath
-        ? current
-        : { id: editModPath, value: suggestedModPath, deepLinked: true },
-    );
-  }, [editModPath, suggestedModPath]);
-
-  // A deep link with no suggestion prefills the game's current mod_path,
-  // once the rows are in - the value the user is about to correct.
-  useEffect(() => {
-    if (!games || !editingModPath?.deepLinked || editingModPath.value) return;
-    const row = games.find((g) => g.id === editingModPath.id);
-    if (row) setEditingModPath({ id: row.id, value: row.mod_path ?? "" });
-  }, [games, editingModPath]);
+    const key = `${editModPath}\u0000${suggestedModPath}`;
+    if (!editModPath || !games || deepLinked.current === key) return;
+    const row = games.find((g) => g.id === editModPath);
+    if (!row) return;
+    deepLinked.current = key;
+    const draft = gameDraft(row);
+    if (suggestedModPath) draft.mod_path = suggestedModPath;
+    setGameError(null);
+    setSavedID(null);
+    setEditingGame({ id: row.id, draft, focus: "mod_path" });
+  }, [editModPath, suggestedModPath, games]);
 
   useEffect(() => {
     reload();
@@ -105,117 +99,74 @@ export function SetupGames({
       .catch(() => setSources([]));
   }, []);
 
-  async function saveSources() {
-    if (!editing) return;
-    setBusyID(editing.id);
+  // The row's pencil opens the panel, and closes it - discarding the draft -
+  // when it is already open.
+  function toggleEditGame(g) {
+    setGameError(null);
     setRowError(null);
-    try {
-      await updateGameSources(editing.id, editing.map);
-      setEditing(null);
-      await reload();
-      await actions.reloadStatus();
-    } catch (err) {
-      // The 409 a removal that would orphan installed mods answers with
-      // names the mods; the envelope's own message already says so, so it
-      // is rendered verbatim rather than re-worded here.
-      setRowError({
-        id: editing.id,
-        message: err instanceof ApiError ? err.message : String(err),
-      });
-    } finally {
-      setBusyID(null);
-    }
-  }
-
-  async function saveLoader() {
-    if (!editingLoader) return;
-    setBusyID(editingLoader.id);
-    setRowError(null);
-    try {
-      await updateGameLoader(editingLoader.id, loaderSpec(editingLoader.draft));
-      setLoaderKey((k) => k + 1);
-      await reload();
-      await actions.reloadStatus();
-    } catch (err) {
-      // A rejected value's envelope already names the field and the valid
-      // set, so it is rendered verbatim rather than re-worded here.
-      setRowError({
-        id: editingLoader.id,
-        message: err instanceof ApiError ? err.message : String(err),
-      });
-    } finally {
-      setBusyID(null);
-    }
-  }
-
-  function toggleModPathEditor(g) {
-    setModPathError(null);
-    setEditingModPath(
-      editingModPath?.id === g.id
+    setSavedID(null);
+    setEditingGame(
+      editingGame?.id === g.id
         ? null
-        : { id: g.id, value: g.mod_path ?? "" },
+        : { id: g.id, draft: gameDraft(g), focus: "name" },
     );
   }
 
-  // issue 421: the row's pencil opens every editor the row has - sources, mod path,
-  // loader - at once, the one place a configured game changes now that the
-  // add flows no longer offer it; each keeps its own Save, since each is
-  // its own request. An editor already open keeps its draft; pressed with
-  // all three open, it closes them.
-  const editingAll = (id) =>
-    editing?.id === id && editingModPath?.id === id && editingLoader?.id === id;
-
-  function toggleEditGame(g) {
-    setModPathError(null);
-    setRowError(null);
-    if (editingAll(g.id)) {
-      setEditing(null);
-      setEditingModPath(null);
-      setEditingLoader(null);
-      return;
-    }
-    if (editing?.id !== g.id) {
-      setEditing({ id: g.id, map: { ...(g.source_ids ?? {}) } });
-    }
-    if (editingModPath?.id !== g.id) {
-      setEditingModPath({ id: g.id, value: g.mod_path ?? "" });
-    }
-    if (editingLoader?.id !== g.id) {
-      setEditingLoader({ id: g.id, draft: loaderDraft(g.loader) });
-    }
+  function cancelEditGame(id) {
+    setEditingGame(null);
+    setGameError(null);
+    setSavedID(null);
+    // The panel's controls are going away; focus goes back to the pencil
+    // that opened it rather than to <body>.
+    document
+      .querySelector(`[data-action="edit-game"][data-game="${CSS.escape(id)}"]`)
+      ?.focus();
   }
 
-  // openOrFocusModPath is the row warning's and the loader panel's own
-  // "Set mod path…" action (review F4): when that row's editor is not open
-  // yet, it opens it (ModPathEditor's own mount effect then takes focus);
-  // when it is ALREADY open, toggling would close it, so the action instead
-  // moves focus into the input that is already on screen - never a silent
-  // no-op for a click the user just made.
+  // openOrFocusModPath is the row warning's own "Set mod path…" action
+  // (review F4): it opens the row's panel on the mod path, or - when that
+  // panel is ALREADY open - moves focus into its mod path input, never a
+  // silent no-op for a click the user just made.
   function openOrFocusModPath(g) {
-    if (editingModPath?.id === g.id) {
+    if (editingGame?.id === g.id) {
       document.getElementById(`mod-path-${g.id}`)?.focus();
       return;
     }
-    toggleModPathEditor(g);
+    setGameError(null);
+    setSavedID(null);
+    setEditingGame({ id: g.id, draft: gameDraft(g), focus: "mod_path" });
   }
 
-  async function saveModPath() {
-    if (!editingModPath) return;
-    const { id, value } = editingModPath;
+  // saveGame is the panel's one Save: every changed field in ONE request,
+  // which core checks as a whole and writes once, or not at all. The panel
+  // stays open on the saved values - the loader panel under it re-reads the
+  // game directory, which is where the Steam launch option comes from.
+  async function saveGame() {
+    if (!editingGame) return;
+    const { id, draft } = editingGame;
+    const row = games.find((g) => g.id === id);
+    const body = row ? gameEditBody(row, draft) : {};
+    if (Object.keys(body).length === 0) return;
     setBusyID(id);
-    setModPathError(null);
+    setGameError(null);
+    setSavedID(null);
     try {
-      await updateGameModPath(id, value);
-      setEditingModPath(null);
+      const entry = await updateGame(id, body);
       await reload();
+      setEditingGame((current) =>
+        current?.id === id ? { ...current, draft: gameDraft(entry) } : current,
+      );
+      setSavedID(id);
+      setLoaderKey((k) => k + 1);
       await actions.reloadStatus();
     } catch (err) {
       const api = err instanceof ApiError;
-      setModPathError({
+      const details = api ? (err.details ?? null) : null;
+      setGameError({
         id,
         message: api ? err.message : String(err),
-        field: api ? (err.details?.field ?? "") : "",
-        details: api ? err.details : null,
+        field: gameEditErrorField(details),
+        details,
       });
     } finally {
       setBusyID(null);
@@ -279,7 +230,7 @@ export function SetupGames({
           <tr>
             <th>Name</th>
             <th class="col--path">Install path</th>
-            <th class="col--path col--path-with-action">Mod path</th>
+            <th class="col--path">Mod path</th>
             <th>Adapter</th>
             <th>Sources</th>
             <th>Loader</th>
@@ -302,21 +253,10 @@ export function SetupGames({
                 <td class="col--path" title=${g.install_path}>
                   <span class="mono setup-table__path">${g.install_path}</span>
                 </td>
-                <td class="col--path col--path-with-action">
-                  <div class="setup-table__value">
-                    <span class="mono setup-table__path" title=${g.mod_path}
-                      >${g.mod_path}</span
-                    >
-                    <${EditButton}
-                      label=${`Edit mod path for ${g.name}`}
-                      tip="Edit mod path"
-                      data-action="edit-mod-path"
-                      data-game=${g.id}
-                      expanded=${editingModPath?.id === g.id}
-                      disabled=${busyID === g.id}
-                      onClick=${() => toggleModPathEditor(g)}
-                    />
-                  </div>
+                <td class="col--path">
+                  <span class="mono setup-table__path" title=${g.mod_path}
+                    >${g.mod_path}</span
+                  >
                   <${ModPathWarning}
                     error=${g.mod_path_error}
                     gameID=${g.id}
@@ -325,46 +265,14 @@ export function SetupGames({
                 </td>
                 <td><${AdapterCell} game=${g} /></td>
                 <td>
-                  <div class="setup-table__value">
-                    <span class="mono"
-                      >${Object.keys(g.source_ids ?? {}).join(", ") || "—"}</span
-                    >
-                    <${EditButton}
-                      label=${`Edit sources for ${g.name}`}
-                      tip="Edit sources"
-                      data-action="edit-sources"
-                      data-game=${g.id}
-                      expanded=${editing?.id === g.id}
-                      disabled=${busyID === g.id || sources === null}
-                      onClick=${() =>
-                        setEditing(
-                          editing?.id === g.id
-                            ? null
-                            : { id: g.id, map: { ...(g.source_ids ?? {}) } },
-                        )}
-                    />
-                  </div>
+                  <span class="mono"
+                    >${Object.keys(g.source_ids ?? {}).join(", ") || "—"}</span
+                  >
                 </td>
                 <td>
-                  <div class="setup-table__value">
-                    <span class="mono" data-testid="loader-cell"
-                      >${g.loader?.kind ?? "—"}</span
-                    >
-                    <${EditButton}
-                      label=${`Edit loader for ${g.name}`}
-                      tip="Edit loader"
-                      data-action="edit-loader"
-                      data-game=${g.id}
-                      expanded=${editingLoader?.id === g.id}
-                      disabled=${busyID === g.id}
-                      onClick=${() =>
-                        setEditingLoader(
-                          editingLoader?.id === g.id
-                            ? null
-                            : { id: g.id, draft: loaderDraft(g.loader) },
-                        )}
-                    />
-                  </div>
+                  <span class="mono" data-testid="loader-cell"
+                    >${g.loader?.kind ?? "—"}</span
+                  >
                 </td>
                 <td>
                   <button
@@ -386,71 +294,31 @@ export function SetupGames({
                     tip=${`Edit ${g.name}`}
                     data-action="edit-game"
                     data-game=${g.id}
-                    expanded=${editingAll(g.id)}
+                    expanded=${editingGame?.id === g.id}
                     disabled=${busyID === g.id || sources === null}
                     onClick=${() => toggleEditGame(g)}
                   />
                 </td>
               </tr>
               ${
-                editing?.id === g.id &&
-                html`<tr key=${`${g.id}-sources`} class="setup-table__editor">
+                editingGame?.id === g.id &&
+                html`<tr key=${`${g.id}-editor`} class="setup-table__editor">
                   <td colspan="8">
-                    <${SourcesMapEditor}
+                    <${GameEditor}
+                      game=${g}
                       sources=${sources}
-                      value=${editing.map}
-                      disabled=${busyID === g.id}
-                      onChange=${(map) => setEditing({ id: g.id, map })}
-                    />
-                    <button
-                      type="button"
-                      class="button button--small button--primary"
-                      data-action="save-sources"
-                      disabled=${busyID === g.id}
-                      onClick=${saveSources}
-                    >
-                      ${busyID === g.id ? "Saving…" : "Save sources"}
-                    </button>
-                  </td>
-                </tr>`
-              }
-              ${
-                editingModPath?.id === g.id &&
-                html`<tr key=${`${g.id}-mod-path`} class="setup-table__editor">
-                  <td colspan="8">
-                    <${ModPathEditor}
-                      gameID=${g.id}
-                      value=${editingModPath.value}
+                      draft=${editingGame.draft}
+                      focus=${editingGame.focus}
                       busy=${busyID === g.id}
-                      error=${modPathError?.id === g.id ? modPathError : null}
-                      onChange=${(value) => setEditingModPath({ id: g.id, value })}
-                      onSave=${saveModPath}
-                    />
-                  </td>
-                </tr>`
-              }
-              ${
-                editingLoader?.id === g.id &&
-                html`<tr key=${`${g.id}-loader`} class="setup-table__editor">
-                  <td colspan="8">
-                    <${GameLoaderEditor}
-                      value=${editingLoader.draft}
-                      disabled=${busyID === g.id}
-                      onChange=${(draft) => setEditingLoader({ id: g.id, draft })}
-                    />
-                    <button
-                      type="button"
-                      class="button button--small button--primary"
-                      data-action="save-loader"
-                      disabled=${busyID === g.id}
-                      onClick=${saveLoader}
-                    >
-                      ${busyID === g.id ? "Saving…" : "Save loader"}
-                    </button>
-                    <${GameLoaderPanel}
-                      gameID=${g.id}
-                      onSetModPath=${() => openOrFocusModPath(g)}
-                      refreshKey=${loaderKey}
+                      error=${gameError?.id === g.id ? gameError : null}
+                      saved=${savedID === g.id}
+                      loaderKey=${loaderKey}
+                      onChange=${(draft) => {
+                        setSavedID(null);
+                        setEditingGame({ ...editingGame, draft });
+                      }}
+                      onSave=${saveGame}
+                      onCancel=${() => cancelEditGame(g.id)}
                     />
                   </td>
                 </tr>`

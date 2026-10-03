@@ -85,7 +85,8 @@ one edit: every change is checked before any is written, so a run applies
 all of them or none. That is also what lets --mod-path and --adapter move a game onto
 bepinex, or off it, in one run.
 
-Sources and the loader are separate edits: pass one or the other.
+The loader is a separate edit on the command line: pass --loader, or the
+other flags. (The web UI's game editor saves both in one request.)
 
 Examples:
   lmm game edit skyrim-se --source curseforge=skyrim

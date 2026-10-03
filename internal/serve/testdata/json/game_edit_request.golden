@@ -1,0 +1,13 @@
+{
+  "sources": {
+    "thunderstore": "valheim"
+  },
+  "mod_path": "BepInEx/plugins",
+  "install_path": "/mnt/library/valheim",
+  "name": "Valheim (modded)",
+  "loader": {
+    "kind": "bepinex",
+    "version": "5.4.23.5"
+  },
+  "loader_set": true
+}
