@@ -23,6 +23,21 @@ game with more than one configured source it also avoids an interactive
 source prompt for the bulk check.
 
 .PP
+--from-file <archive> updates the mod from an archive you downloaded by
+hand - for a source that refuses API downloads (e.g. a CurseForge mod
+whose author disabled third-party downloads). The source, mod ID, game
+and profile come from the installed mod. When the update check advertises
+a file, the archive's name is compared with it (case-insensitively,
+ignoring a browser's " (1)" duplicate suffix): on a match its version and
+file ID are recorded, so later update checks stay correct; another file -
+a different flavor or loader's build - is refused unless you pass
+--accept-mismatch. Without an advertised file, a file the source lists
+under the archive's name supplies them, else the version comes from the
+archive's name or --version. The lock and update policy are kept, the
+previous version is preserved for 'lmm update rollback', and hooks run as
+for any update.
+
+.PP
 If the update check itself fails partway through (e.g. a source outage),
 whatever was learned before the failure is still printed and the command
 exits non-zero rather than silently claiming success.
@@ -51,6 +66,11 @@ recompile against the current base pak.
     "recompiled", or "recompile_available" (--dry-run, same-version
     base-pak recompile); reason is set only when status is "skipped"
     ("pinned", "local", or "locked").
+  - With --from-file and --dry-run, the update-from-file plan: {archive,
+    archive_name, mod, from_version, to_version, file_ids, match,
+    matched_file?, match_normalized?, advertised?, locked, refusal?,
+    files, hooks, warnings}. match is "advertised", "mismatch", "listed"
+    or "none". Without --dry-run, the single-mod document above.
   - 'update rollback' emits the rollback document: {mod, mod_name,
     from_version, to_version, status, reason, warnings, notes}, with
     status "rolled_back" or "skipped".
@@ -62,9 +82,14 @@ Examples:
   lmm update 12345 --game skyrim-se --source nexusmods  # Disambiguate by source
   lmm update --game skyrim-se --all              # Apply all available updates
   lmm update --game skyrim-se --dry-run          # Show what would update
+  lmm update 12345 --game wow --from-file ~/Downloads/Mod-2.0.zip  # Update from a downloaded archive
 
 
 .SH OPTIONS
+\fB--accept-mismatch\fP[=false]
+	with --from-file: update even when the archive is not the file the update check advertised
+
+.PP
 \fB--all\fP[=false]
 	apply all available updates
 
@@ -75,6 +100,10 @@ Examples:
 .PP
 \fB-f\fP, \fB--force\fP[=false]
 	continue even if hooks fail
+
+.PP
+\fB--from-file\fP=""
+	update the mod from an archive you downloaded (for a source that refuses API downloads)
 
 .PP
 \fB-h\fP, \fB--help\fP[=false]
@@ -91,6 +120,10 @@ Examples:
 .PP
 \fB-s\fP, \fB--source\fP=""
 	mod source for a single-mod update (default: the sole configured source; prompts when several are configured). A bulk check never needs it
+
+.PP
+\fB--version\fP=""
+	with --from-file: the version to record (default: the matched source file's, else the archive name's)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

@@ -29,6 +29,7 @@ import { displayVersion } from "../version.js";
 import { authorTitle, displayAuthor } from "../author.js";
 import { AddModsMenu } from "./addmodsmenu.js";
 import { ModPageLink } from "./modpagelink.js";
+import { UpdateFromFileButton } from "./updatefromfile.js";
 import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import { InlineJob } from "./jobprogress.js";
 
@@ -609,6 +610,20 @@ export function Library({
           >
             ${row.convert_paks ? "Disable pak conversion" : "Enable pak conversion"}
           </button>`
+        }
+        ${
+          // issue 530: an update from an archive the user downloaded - the
+          // way out for a source that refuses API downloads. Steam owns an
+          // EXTERNAL row's updates, so it gets none.
+          !row.external &&
+          html`<${UpdateFromFileButton}
+            menu
+            mod=${{ source_id: row.source_id, id: row.id, name: row.name }}
+            origin=${origin("update_from_file")}
+            actions=${actions}
+            locked=${row.locked}
+            onOpen=${() => setMenuKey(null)}
+          />`
         }
         ${
           // issue 365 (b): an EXTERNAL row has no link to move - Steam owns

@@ -1,0 +1,58 @@
+{
+  "archive": "/downloads/Sample-Mod-Classic-1.2.3 (1).zip",
+  "archive_name": "Sample-Mod-Classic-1.2.3 (1).zip",
+  "mod": {
+    "id": "42",
+    "source_id": "curseforge",
+    "name": "Sample Mod",
+    "version": "1.2.2",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "skyrim-se",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "2026-08-27T12:00:00Z",
+    "profile_name": "default",
+    "update_policy": "notify",
+    "installed_at": "2026-08-27T12:00:00Z",
+    "enabled": false,
+    "deployed": false,
+    "link_method": "symlink",
+    "manual_download": false,
+    "convert_paks": false
+  },
+  "from_version": "1.2.2",
+  "to_version": "1.2.3",
+  "file_ids": [
+    "5002"
+  ],
+  "match": "mismatch",
+  "matched_file": {
+    "id": "5002",
+    "file_name": "Sample-Mod-Classic-1.2.3.zip",
+    "version": "1.2.3"
+  },
+  "match_normalized": true,
+  "advertised": {
+    "id": "5001",
+    "file_name": "Sample-Mod-1.2.3.zip",
+    "version": "1.2.3"
+  },
+  "locked": true,
+  "locked_version": "1.2.2",
+  "refusal": "Sample Mod is locked at v1.2.2 in profile default - unlock with 'lmm mod unlock -s curseforge -p default 42' first",
+  "files": [
+    "SampleMod/SampleMod.esp"
+  ],
+  "hooks": [
+    "install.before_each"
+  ],
+  "warnings": [
+    "could not check curseforge for an update: request timed out"
+  ]
+}

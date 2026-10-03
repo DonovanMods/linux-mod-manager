@@ -6,12 +6,12 @@
 //
 // One entry describes one mutation flow end to end - how its request body
 // decodes, how its Plan is computed, what is stored server-side between
-// Plan and Apply, and how its Apply runs. Eighteen kinds are registered
-// today: the sixteen plan kinds - deploy, install, uninstall, updates,
+// Plan and Apply, and how its Apply runs. Nineteen kinds are registered
+// today: the seventeen plan kinds - deploy, install, uninstall, updates,
 // rollback, switch, profile_apply, profile_import, profile_sync, purge,
-// mod_relink, verify_fix, import_archive, adopt, workshop_adopt and
-// snapshot_restore - here, plus the two plan-free toggles in
-// kind_toggle.go.
+// mod_relink, verify_fix, import_archive, update_from_archive, adopt,
+// workshop_adopt and snapshot_restore - here, plus the two plan-free
+// toggles in kind_toggle.go.
 //
 // The table used to carry a browser-form half as well (planKind.Form, the
 // confirm-page decoders and display types). That went with the
@@ -159,6 +159,7 @@ func planErrorStatus(err error) int {
 		refused      *core.AdapterRefusedError
 		precondition *core.AdapterPreconditionError
 		moved        *core.ModPathMissingError
+		needVersion  *core.ArchiveVersionRequiredError
 	)
 
 	switch {
@@ -173,6 +174,12 @@ func planErrorStatus(err error) int {
 		return http.StatusConflict
 	case core.IsGameIdentifierInvalid(err):
 		return http.StatusBadRequest
+	// #530: an archive whose version nothing names is answered by sending
+	// the version; one that is the installed version, by another archive.
+	case errors.As(err, &needVersion):
+		return http.StatusBadRequest
+	case errors.Is(err, core.ErrArchiveIsInstalledVersion):
+		return http.StatusConflict
 	case core.IsIndexUnavailable(err):
 		return http.StatusBadGateway
 	case errors.Is(err, errBadPlanRequest):

@@ -110,6 +110,10 @@ var gatedPlans = []gatedPlan{
 		_, err := svc.PlanUpdate(context.Background(), g, "default", "acme", "m1")
 		return err
 	}},
+	{"PlanUpdateFromArchive", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanUpdateFromArchive(context.Background(), g, "default", "acme", "m1", fx.archive, core.UpdateFromArchiveOptions{Version: "2.0"})
+		return err
+	}},
 	{"PlanUpdateFrom", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 		_, err := svc.PlanUpdateFrom(context.Background(), g, "default", fx.update)
 		return err

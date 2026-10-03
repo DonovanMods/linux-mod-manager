@@ -13,6 +13,7 @@ import { useEffect, useState } from "./render.js";
 import { jobStatus } from "./api.js";
 import { resultTally } from "./progress.js";
 import { repairOutcome } from "./verify.js";
+import { batchDownloadFailuresFor } from "./failures.js";
 
 // tallyCache is a page-lifetime Map from job id to its own (possibly null)
 // read of the result - {tally, warnings} - so the SAME finished job showing in two places at once (a row's
@@ -68,7 +69,16 @@ export function useJobResultVerify(jobID, jobState) {
   return useJobResultRead(jobID, jobState)?.verify ?? null;
 }
 
+// useJobResultDownloads returns a finished update batch's failed downloads
+// (failures.js#batchDownloadFailuresFor) - each one's page, and whether the
+// file has to be fetched by hand - or an empty list. Same shared read
+// (issue 530).
+export function useJobResultDownloads(jobID, jobState) {
+  return useJobResultRead(jobID, jobState)?.downloads ?? NO_DOWNLOADS;
+}
+
 const NO_WARNINGS = [];
+const NO_DOWNLOADS = [];
 
 /** readResult is what the cache holds for one finished job's status/result. */
 function readResult(status) {
@@ -96,7 +106,11 @@ function readResult(status) {
     outcome && (outcome.repaired.length > 0 || outcome.attention.length > 0)
       ? outcome
       : null;
-  return { tally: resultTally(result), warnings, purge, verify };
+  const downloads =
+    status?.kind === "updates"
+      ? batchDownloadFailuresFor(result)
+      : NO_DOWNLOADS;
+  return { tally: resultTally(result), warnings, purge, verify, downloads };
 }
 
 function useJobResultRead(jobID, jobState) {

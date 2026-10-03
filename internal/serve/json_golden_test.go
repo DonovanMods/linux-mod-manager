@@ -473,6 +473,23 @@ func TestServeJSONGoldens(t *testing.T) {
 			importArchiveApplyRequest{AcceptConflicts: true, Force: true, SkipHooks: true},
 		},
 		{
+			// #530's update_from_archive halves. The plan request names a
+			// staged upload and the INSTALLED mod it updates; version is
+			// only sent once a plan has answered version_required. The apply
+			// request's accept_mismatch is "Update anyway".
+			"update_from_archive_plan_request",
+			updateFromArchivePlanRequest{
+				UploadID: "0123456789abcdef0123456789abcdef",
+				SourceID: "curseforge",
+				ModID:    "8939586",
+				Version:  "339-1",
+			},
+		},
+		{
+			"update_from_archive_apply_request",
+			updateFromArchiveApplyRequest{AcceptMismatch: true, Force: true, SkipHooks: true},
+		},
+		{
 			// #333's upload receipt: the opaque handle a plan request names
 			// the archive by, and what was actually staged.
 			"upload_response",

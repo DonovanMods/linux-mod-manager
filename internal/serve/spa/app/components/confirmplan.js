@@ -25,6 +25,7 @@ import { html } from "../render.js";
 import { Modal } from "./modal.js";
 import { ErrorDetails } from "./errordetails.js";
 import { planRendererFor } from "./planrenderers.js";
+import { VersionPrompt } from "./plan_update_from_archive.js";
 import { codeSpans } from "../errortext.js";
 
 /**
@@ -80,6 +81,12 @@ export function ConfirmPlanModal({ modal, state, actions }) {
   // click the machine has already said no to.
   const relinkRefused =
     kind === "mod_relink" && status === "ready" && Boolean(plan?.refusal);
+  // Issue 530: the same for an update from file of a locked mod - Apply
+  // refuses a lock outright, so there is nothing for Confirm to start.
+  const fromFileRefused =
+    kind === "update_from_archive" &&
+    status === "ready" &&
+    Boolean(plan?.refusal);
 
   // The type-the-name gate (C-3): a kind listed in typedNameFor keeps
   // Confirm disabled until the user has typed back the thing they are about
@@ -102,8 +109,17 @@ export function ConfirmPlanModal({ modal, state, actions }) {
   // label topbar.js sets before the plan even exists. The plan is the
   // thing that knows which case this is, so it overrides the label rather
   // than the opener guessing up front.
+  //
+  // Issue 530: an archive that is not the file the update check advertised
+  // is a question this click answers - main.js#confirmPlan sends
+  // accept_mismatch for exactly this plan - so the label says what the
+  // click decides.
   const effectiveConfirmLabel =
-    kind === "switch" && plan?.flag_only ? "Mark as active" : confirmLabel;
+    kind === "switch" && plan?.flag_only
+      ? "Mark as active"
+      : kind === "update_from_archive" && plan?.match === "mismatch"
+        ? "Update anyway"
+        : confirmLabel;
 
   const footer =
     status === "error"
@@ -131,7 +147,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
             type="button"
             class="button button--primary"
             data-action="confirm"
-            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || !nameTyped}
+            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || !nameTyped}
             onClick=${actions.confirmPlan}
           >
             ${busy ? "Starting…" : (effectiveConfirmLabel ?? "Confirm")}
@@ -148,14 +164,18 @@ export function ConfirmPlanModal({ modal, state, actions }) {
     >
       ${
         status === "planning"
-          ? html`<p class="modal__pending">Computing the plan…</p>`
+          ? modal.upload
+            ? html`<${UploadProgress} upload=${modal.upload} />`
+            : html`<p class="modal__pending">Computing the plan…</p>`
           : status === "error"
-            ? html`
-                <div class="modal__error">
-                  <p>${codeSpans(error)}</p>
-                  <${ErrorDetails} details=${details} />
-                </div>
-              `
+            ? details?.version_required
+              ? html`<${VersionPrompt} details=${details} actions=${actions} />`
+              : html`
+                  <div class="modal__error">
+                    <p>${codeSpans(error)}</p>
+                    <${ErrorDetails} details=${details} actions=${actions} />
+                  </div>
+                `
             : html`<${PlanView}
                 plan=${plan}
                 modal=${modal}
@@ -164,6 +184,29 @@ export function ConfirmPlanModal({ modal, state, actions }) {
               />`
       }
     <//>
+  `;
+}
+
+/**
+ * UploadProgress is the planning state of a plan that first has a file to
+ * send (issue 530's "Update from file…"): the archive's name and how much of
+ * it has reached the server. Cancel closes the modal, which stops the
+ * upload (main.js#updateFromFileChosen).
+ */
+function UploadProgress({ upload }) {
+  const pct = upload.total
+    ? Math.round((upload.loaded / upload.total) * 100)
+    : 0;
+  return html`
+    <div class="modal__pending" data-testid="upload-progress">
+      <p>Uploading <span class="mono">${upload.name}</span>…</p>
+      <div class="job-progress">
+        <div class="job-progress__bar">
+          <div class="job-progress__fill" style=${`width: ${pct}%`}></div>
+        </div>
+        <span class="job-progress__text">${`${pct}%`}</span>
+      </div>
+    </div>
   `;
 }
 

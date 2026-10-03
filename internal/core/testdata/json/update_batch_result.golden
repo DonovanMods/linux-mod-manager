@@ -23,6 +23,13 @@
       "mod": "curseforge:7",
       "name": "Broken Mod",
       "error": "fetching mod: source unavailable"
+    },
+    {
+      "mod": "curseforge:8",
+      "name": "Manual Mod",
+      "error": "downloading update: mod author has disabled third-party downloads",
+      "mod_url": "https://www.curseforge.com/minecraft/mc-mods/manual-mod",
+      "manual_download": true
     }
   ],
   "skipped": [

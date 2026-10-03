@@ -349,6 +349,32 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
 
 ### Added
 
+- **Update a mod from a file you downloaded (#530).** A source that will
+  not serve a file through its API - a CurseForge author who disabled
+  third-party downloads - used to leave an update with one way forward:
+  download the file by hand and `lmm import` it, re-entering the source and
+  mod ID, which installed it fresh, with no previous version to roll back
+  to. `lmm update <mod-id> --from-file <archive>` (with `-g`, `-p`,
+  `--dry-run`, `--json`) now applies the archive as an update of the
+  installed mod: its identity is the installed mod's, the lock and update
+  policy are kept (a locked mod is refused, as any update is), the previous
+  version is recorded for `lmm update rollback`, the archive's checksum is
+  stored, hooks run, and a deployed mod is redeployed. When the update check
+  advertises a file, the archive's name is compared with it -
+  case-insensitively, ignoring a browser's ` (1)` duplicate suffix - and a
+  match records that file's version **and file ID**, so later file-ID
+  based checks stay correct; another file (a different flavor or loader's
+  build) is refused unless `--accept-mismatch` is given. With nothing
+  advertised, a file the source lists under the archive's name supplies
+  both; otherwise the version comes from the archive's name or
+  `--version`. The web UI offers **Update from file…** in the mod's
+  slide-over, its full page and its library-row menu, and beside **Open on
+  <source>** wherever a failed download of an installed mod is shown -
+  including a failed update, whose result now shows the mod's page too -
+  when its source refused the download; it uploads the archive and runs the
+  same plan and job. A failed batch update's `failed[]` entries carry
+  `manual_download` for this.
+
 - **A folder chooser for every path field (#529).** A mistyped install or
   mod path saves a game that does not work, and a browser cannot help: its
   file input never reveals a real path and cannot pick a folder. So `lmm serve` now browses its own machine. Each directory

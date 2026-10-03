@@ -1593,6 +1593,41 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #530: every optional key populated - a mismatch carries both
+			// the advertised and the matched file, the normalised-match flag,
+			// a lock refusal and a hook. The unexported marker/fingerprint/
+			// snapshot fields must not appear at all.
+			"update_from_archive_plan",
+			core.UpdateFromArchivePlan{
+				Archive:     "/downloads/Sample-Mod-Classic-1.2.3 (1).zip",
+				ArchiveName: "Sample-Mod-Classic-1.2.3 (1).zip",
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "curseforge", Name: "Sample Mod", Version: "1.2.2", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				FromVersion:     "1.2.2",
+				ToVersion:       "1.2.3",
+				FileIDs:         []string{"5002"},
+				Match:           core.ArchiveMatchMismatch,
+				MatchedFile:     &core.ArchiveFileRef{ID: "5002", FileName: "Sample-Mod-Classic-1.2.3.zip", Version: "1.2.3"},
+				MatchNormalized: true,
+				Advertised:      &core.ArchiveFileRef{ID: "5001", FileName: "Sample-Mod-1.2.3.zip", Version: "1.2.3"},
+				Locked:          true,
+				LockedVersion:   "1.2.2",
+				Refusal:         "Sample Mod is locked at v1.2.2 in profile default - unlock with 'lmm mod unlock -s curseforge -p default 42' first",
+				Files:           []string{"SampleMod/SampleMod.esp"},
+				Hooks:           []string{"install.before_each"},
+				Warnings:        []string{"could not check curseforge for an update: request timed out"},
+			},
+		},
+		{
+			// #530: ArchiveFileRef alone - the advertised/matched file
+			// reference both the plan and ArchiveMismatchError's details
+			// carry. Version is omitempty: a source with no file labels.
+			"archive_file_ref",
+			core.ArchiveFileRef{ID: "5001", FileName: "Sample-Mod-1.2.3.zip"},
+		},
+		{
 			// #269: what a workshop scan says - the app, the libraries it
 			// was found in, and the items themselves. Warnings left empty
 			// to pin that its omitempty drops the key on a clean scan.
@@ -1878,6 +1913,14 @@ func TestJSONGoldens(t *testing.T) {
 					Mod:   "curseforge:7",
 					Name:  "Broken Mod",
 					Error: "fetching mod: source unavailable",
+				}, {
+					// #513/#530: a download the source refused - the page to
+					// fetch it from, and that it must be fetched by hand.
+					Mod:            "curseforge:8",
+					Name:           "Manual Mod",
+					Error:          "downloading update: mod author has disabled third-party downloads",
+					ModURL:         "https://www.curseforge.com/minecraft/mc-mods/manual-mod",
+					ManualDownload: true,
 				}},
 				Skipped: []core.UpdateApplyResult{{
 					Mod:         domain.ModReference{SourceID: "nexusmods", ModID: "9", Version: "1.0", Locked: true},

@@ -31,6 +31,10 @@ var detailsCoverage = map[string]string{
 	// envelope as data, not only as the sentence.
 	"core.AmbiguousModError": "TestReportError_JSON_AmbiguousModError",
 	"core.ConflictError":     "TestReportError_JSON_ConflictError",
+	// #530: update-from-file's two refusals - the advertised and matched
+	// files, and the archive that needs a version - as data.
+	"core.ArchiveMismatchError":        "TestReportError_JSON_ArchiveMismatchError",
+	"core.ArchiveVersionRequiredError": "TestReportError_JSON_ArchiveVersionRequiredError",
 	// #513: a failed download carries the mod's page (and whether the
 	// source refuses automated downloads) as data, for the terminal's
 	// "Download it manually from" line and the web UI's "Open on <source>".

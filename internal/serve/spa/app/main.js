@@ -31,9 +31,13 @@ import {
   getModFiles,
   getModVersions,
   search as apiSearch,
+  uploadArchive,
+  deleteUpload,
+  maxUploadBytes,
   ApiError,
   NoAnswerError,
 } from "./api.js";
+import { updateFromFileInputID } from "./components/updatefromfile.js";
 import { resolveGamePath } from "./navigation.js";
 import { RELEVANCE, effectiveSort, knownSort } from "./searchsort.js";
 import {
@@ -1029,6 +1033,99 @@ async function openPlan({
   }
 }
 
+// updateFromFileTarget is the mod the last "Update from file…" click named
+// ({mod, origin}), waiting for the one file input (updatefromfile.js) to
+// deliver a file. A dialog the user cancels delivers nothing, and the next
+// click replaces it.
+let updateFromFileTarget = null;
+
+/** updateFromFile opens the file dialog for "Update from file…" on mod
+ * ({source_id, id, name}), whose job reports under origin (issue 530). */
+function updateFromFile(mod, origin) {
+  updateFromFileTarget = { mod, origin };
+  document.getElementById(updateFromFileInputID)?.click();
+}
+
+/**
+ * updateFromFileChosen uploads the file the dialog delivered, with its
+ * progress shown in the confirm modal, then plans the update over the staged
+ * upload - from there it is the ordinary plan/confirm/job pipeline.
+ *
+ * Closing the modal while the upload runs stops it: the modal's sequence
+ * number moves on (closeModal), and the next progress tick aborts the
+ * request; an upload that finished just after that is deleted again rather
+ * than left staged for nothing.
+ */
+async function updateFromFileChosen(file) {
+  const target = updateFromFileTarget;
+  updateFromFileTarget = null;
+  if (!target) return;
+  const { mod, origin } = target;
+  const title = `Update ${mod.name ?? mod.id} from file`;
+  modalSeq += 1;
+  const seq = modalSeq;
+  const base = {
+    type: "plan",
+    kind: "update_from_archive",
+    origin,
+    title,
+    confirmLabel: "Update",
+    seq,
+  };
+  if (file.size > maxUploadBytes) {
+    store.set({
+      modal: {
+        ...base,
+        status: "error",
+        error: `${file.name} is larger than the ${Math.round(maxUploadBytes / 1024 ** 3)} GB upload limit.`,
+        details: null,
+      },
+    });
+    return;
+  }
+  const controller = new AbortController();
+  const showProgress = (loaded, total) => {
+    if (modalSeq !== seq) {
+      controller.abort();
+      return;
+    }
+    store.set({
+      modal: {
+        ...base,
+        status: "planning",
+        upload: { name: file.name, loaded, total: total || file.size },
+      },
+    });
+  };
+  showProgress(0, file.size);
+  let staged;
+  try {
+    staged = await uploadArchive(file, {
+      onProgress: showProgress,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (modalSeq !== seq || err?.name === "AbortError") return;
+    store.set({ modal: { ...base, status: "error", ...describe(err) } });
+    return;
+  }
+  if (modalSeq !== seq) {
+    deleteUpload(staged.upload_id).catch(() => {});
+    return;
+  }
+  await openPlan({
+    kind: "update_from_archive",
+    origin,
+    title,
+    confirmLabel: "Update",
+    options: {
+      upload_id: staged.upload_id,
+      source_id: mod.source_id,
+      mod_id: mod.id,
+    },
+  });
+}
+
 /**
  * replanWith re-computes the OPEN plan with one plan-time option changed
  * (C-3, epic live review).
@@ -1489,9 +1586,15 @@ async function confirmPlan() {
   if (!modal || modal.status !== "ready") return;
 
   store.set({ modal: { ...modal, status: "starting" } });
+  // Issue 530: confirming a mismatched update-from-file plan IS the answer
+  // to its one question - confirmplan.js labels that click "Update anyway".
+  const applyOptions =
+    modal.kind === "update_from_archive" && modal.plan?.match === "mismatch"
+      ? { ...(modal.applyOptions ?? {}), accept_mismatch: true }
+      : modal.applyOptions;
   await startBinding(modal.origin, async () => {
     try {
-      const { id: jobID } = await startJob(modal.planID, modal.applyOptions);
+      const { id: jobID } = await startJob(modal.planID, applyOptions);
       if (store.get().modal?.seq !== modal.seq) return;
       if (overwriteRetryKinds.has(modal.kind)) {
         rememberInstallRequest(
@@ -2102,6 +2205,15 @@ const actions = {
   closeModal,
   closePlan: closeModal,
   confirmPlan,
+  updateFromFile,
+  updateFromFileChosen,
+  // isModInstalled answers from the library document on screen whether a
+  // mod is installed in the current profile - what decides if a failed
+  // download can offer "Update from file…" (errordetails.js, issue 530).
+  isModInstalled: (sourceID, modID) =>
+    (store.get().mods?.mods ?? []).some(
+      (m) => m.source_id === sourceID && m.id === modID,
+    ),
   setPlanOptions,
   setPlanConfirmationText,
   replanWith,

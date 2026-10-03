@@ -53,6 +53,7 @@ import { loadModJobHistory, candidateJobKey } from "../jobhistory.js";
 import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
 import { ModPageLink } from "./modpagelink.js";
+import { UpdateFromFileButton } from "./updatefromfile.js";
 import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
@@ -268,6 +269,22 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             </button>
           <//>`
         }
+        ${
+          // issue 530: see modpanel.js's twin.
+          !installedMod.external &&
+          html`<${InlineJob}
+            origin=${origin("update_from_file")}
+            state=${state}
+            actions=${actions}
+          >
+            <${UpdateFromFileButton}
+              mod=${{ source_id: sourceID, id: modID, name: installedMod.name }}
+              origin=${origin("update_from_file")}
+              actions=${actions}
+              locked=${lockedActions}
+            />
+          <//>`
+        }
         <${InlineJob}
           origin=${origin("uninstall")}
           state=${state}
@@ -328,7 +345,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
           This mod is locked${lockedVersion ? ` to ${lockedVersion}` : ""}.
           Unlock it (<span class="mono"
             >lmm mod unlock ${sourceID}:${modID}</span
-          >) to re-link it.
+          >) to update it from a file or re-link it.
         </p>`
       }
       ${

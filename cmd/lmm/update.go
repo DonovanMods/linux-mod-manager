@@ -83,6 +83,20 @@ in conflict). -s/--source is resolved once up front either way, so on a
 game with more than one configured source it also avoids an interactive
 source prompt for the bulk check.
 
+--from-file <archive> updates the mod from an archive you downloaded by
+hand - for a source that refuses API downloads (e.g. a CurseForge mod
+whose author disabled third-party downloads). The source, mod ID, game
+and profile come from the installed mod. When the update check advertises
+a file, the archive's name is compared with it (case-insensitively,
+ignoring a browser's " (1)" duplicate suffix): on a match its version and
+file ID are recorded, so later update checks stay correct; another file -
+a different flavor or loader's build - is refused unless you pass
+--accept-mismatch. Without an advertised file, a file the source lists
+under the archive's name supplies them, else the version comes from the
+archive's name or --version. The lock and update policy are kept, the
+previous version is preserved for 'lmm update rollback', and hooks run as
+for any update.
+
 If the update check itself fails partway through (e.g. a source outage),
 whatever was learned before the failure is still printed and the command
 exits non-zero rather than silently claiming success.
@@ -109,6 +123,11 @@ recompile against the current base pak.
     "recompiled", or "recompile_available" (--dry-run, same-version
     base-pak recompile); reason is set only when status is "skipped"
     ("pinned", "local", or "locked").
+  - With --from-file and --dry-run, the update-from-file plan: {archive,
+    archive_name, mod, from_version, to_version, file_ids, match,
+    matched_file?, match_normalized?, advertised?, locked, refusal?,
+    files, hooks, warnings}. match is "advertised", "mismatch", "listed"
+    or "none". Without --dry-run, the single-mod document above.
   - 'update rollback' emits the rollback document: {mod, mod_name,
     from_version, to_version, status, reason, warnings, notes}, with
     status "rolled_back" or "skipped".
@@ -118,7 +137,8 @@ Examples:
   lmm update 12345 --game skyrim-se              # Update specific mod
   lmm update 12345 --game skyrim-se --source nexusmods  # Disambiguate by source
   lmm update --game skyrim-se --all              # Apply all available updates
-  lmm update --game skyrim-se --dry-run          # Show what would update`,
+  lmm update --game skyrim-se --dry-run          # Show what would update
+  lmm update 12345 --game wow --from-file ~/Downloads/Mod-2.0.zip  # Update from a downloaded archive`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runUpdate,
 }
@@ -168,6 +188,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
+	if err := checkUpdateFromFileFlags(args); err != nil {
+		return err
+	}
 	// #375: the source is resolved inside the single-mod branch below, not
 	// here. The bulk check walks every installed mod against ITS OWN
 	// recorded source and never reads updateSource, so resolving it up front
@@ -243,6 +266,11 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			case 0:
 				return fmt.Errorf("mod %s not found in profile %s", modID, profileName)
 			case 1:
+				if candidates[0].SourceID == domain.SourceLocal && updateFromFile != "" {
+					// #530: a local mod has no source to check, but an
+					// archive in hand updates it all the same.
+					return applyUpdateFromFile(ctx, service, game, candidates[0], profileName)
+				}
 				if candidates[0].SourceID == domain.SourceLocal {
 					// Present, just not checkable — informational, not an error.
 					if jsonOutput {
@@ -290,6 +318,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			}
 		}
 
+		if updateFromFile != "" {
+			return applyUpdateFromFile(ctx, service, game, targetMod, profileName)
+		}
 		return applySingleUpdate(ctx, service, game, targetMod, profileName)
 	}
 
@@ -954,37 +985,39 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		SkipHooks: noHooks,
 	}
 
-	progress := func(e core.Event) {
-		p, ok := lineOf(e)
-		if !ok {
-			return
+	return service.ApplyUpdate(ctx, game, plan, opts, quietSink(updateProgress))
+}
+
+// updateProgress prints an update apply's progress events - shared by
+// ApplyUpdate and ApplyUpdateFromArchive (#530), which emit one vocabulary.
+func updateProgress(e core.Event) {
+	p, ok := lineOf(e)
+	if !ok {
+		return
+	}
+	switch p.Phase {
+	case core.UpdateDownloading:
+		if verbose && !jsonOutput {
+			printProgressLine("\r  Downloading: %.1f%%", p.Percent)
 		}
-		switch p.Phase {
-		case core.UpdateDownloading:
-			if verbose && !jsonOutput {
-				printProgressLine("\r  Downloading: %.1f%%", p.Percent)
-			}
-		case core.UpdateDownloadDone:
-			if verbose && !jsonOutput {
-				fmt.Println()
-			}
-		case core.WorkshopFetchStarted, core.WorkshopFetchProgress, core.WorkshopFetchDone:
-			// Not verbose-gated, unlike the download percentage above: a
-			// Fetcher's shell-out can run for twenty minutes, and the
-			// silence is the problem it exists to solve.
-			if !jsonOutput {
-				fmt.Printf("  %s\n", p.Detail)
-			}
-		case core.UpdateBeforeEachForced, core.UpdateWarning:
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
-		case core.UpdateNote:
-			if verbose && !jsonOutput {
-				fmt.Printf("  %s\n", p.Detail)
-			}
+	case core.UpdateDownloadDone:
+		if verbose && !jsonOutput {
+			fmt.Println()
+		}
+	case core.WorkshopFetchStarted, core.WorkshopFetchProgress, core.WorkshopFetchDone:
+		// Not verbose-gated, unlike the download percentage above: a
+		// Fetcher's shell-out can run for twenty minutes, and the
+		// silence is the problem it exists to solve.
+		if !jsonOutput {
+			fmt.Printf("  %s\n", p.Detail)
+		}
+	case core.UpdateBeforeEachForced, core.UpdateWarning:
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+	case core.UpdateNote:
+		if verbose && !jsonOutput {
+			fmt.Printf("  %s\n", p.Detail)
 		}
 	}
-
-	return service.ApplyUpdate(ctx, game, plan, opts, quietSink(progress))
 }
 
 // applyRecompile applies a #197 merged-pak staleness row via
