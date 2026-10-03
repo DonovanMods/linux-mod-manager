@@ -3399,15 +3399,19 @@ a.row-menu__item.mod-page-link {
   gap: var(--space-3);
 }
 
-/* "Pick an installed game…" / "Hide installed games" (issue 526): a button
- * its own width, as .setup-import__pick is, not a bar stretched across the
- * column the form lays out. */
-.setup-add__pick {
+/* "Pick an installed game…" / "Hide installed games" and "Add game" (issue
+ * 526): a button its own width, as .setup-import__pick is, not a bar
+ * stretched across the column the form lays out. */
+.setup-add__pick,
+.setup-add__submit {
   align-self: flex-start;
 }
 
+/* The mod-loader editor sits in its own wrapper (gameloader.js), so its
+ * fields need the measure the form's direct children get (issue 526). */
 .setup-add > .plan__control,
-.setup-add__advanced .plan__control {
+.setup-add__advanced .plan__control,
+.setup-add .loader-editor .plan__control {
   max-width: 60ch;
 }
 

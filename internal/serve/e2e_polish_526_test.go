@@ -107,3 +107,53 @@ func TestE2E_AddGamePickToggleSizesToItsLabel(t *testing.T) {
 	})
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
+
+// TestE2E_AddGameFormFieldsShareOneWidth holds every field of the add-game
+// form to one width - the Source select, the text inputs, the Advanced game
+// id, and the mod-loader select and its follow-up fields, which sit in a
+// wrapper the form's own width rule did not reach - and its submit button
+// to its label's width, in every face.
+func TestE2E_AddGameFormFieldsShareOneWidth(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+
+	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
+		var got struct {
+			Fields map[string]float64 `json:"fields"`
+			Submit float64            `json:"submit"`
+			Form   float64            `json:"form"`
+		}
+		f.runInBrowser(t,
+			chromedp.EmulateViewport(1280, 900),
+			chromedp.Navigate(f.BaseURL+"/"),
+			pollUntil(`document.querySelector('[data-testid="setup-add-game"]') !== null`),
+			faceInEffect(face),
+			// Open everything that hides a field: Advanced, and the
+			// loader's follow-up fields behind a chosen loader.
+			chromedp.Evaluate(`document.querySelector('[data-testid="setup-add-advanced"]').open = true`, nil),
+			chromedp.SetValue(`select[name="loader-kind"]`, "bepinex", chromedp.ByQuery),
+			pollUntil(`document.querySelector('select[name="loader-runtime"]') !== null`),
+			chromedp.Evaluate(`(() => {
+				const form = document.querySelector('[data-testid="setup-add-game"]');
+				const fields = {};
+				for (const el of form.querySelectorAll('input:not([type=checkbox]), select')) {
+					if (el.getClientRects().length === 0) continue;
+					fields[el.name || el.getAttribute("aria-label")] = el.getBoundingClientRect().width;
+				}
+				return {
+					fields,
+					submit: form.querySelector('[data-action="add-game"]').getBoundingClientRect().width,
+					form: form.getBoundingClientRect().width,
+				};
+			})()`, &got),
+		)
+		require.GreaterOrEqual(t, len(got.Fields), 7, "source, identifier, game id, name, install path, mod path, loader fields: %v", got.Fields)
+		require.Positive(t, got.Form)
+		first := got.Fields["add-source"]
+		require.Positive(t, first)
+		for name, width := range got.Fields {
+			assert.InDelta(t, first, width, 1, "field %q is %.0fpx wide, the Source select %.0fpx", name, width, first)
+		}
+		assert.Less(t, got.Submit, got.Form/2, "Add game is %.0fpx wide in a %.0fpx form", got.Submit, got.Form)
+	})
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}

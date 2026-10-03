@@ -1086,7 +1086,7 @@ export function GameAddForm({
 
       <button
         type="submit"
-        class="button button--primary"
+        class="button button--primary setup-add__submit"
         data-action="add-game"
         disabled=${
           busy ||
