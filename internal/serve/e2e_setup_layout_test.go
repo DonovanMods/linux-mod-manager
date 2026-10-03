@@ -2,7 +2,7 @@ package serve_test
 
 // #421: Setup -> Add Game is as wide as its panel, the installed-games list
 // lines its names up and does not truncate them, and a game that is already
-// configured is changed with "Edit…" on its Games-table row rather than
+// configured is changed with the pencil on its Games-table row rather than
 // offered again by either add flow.
 
 import (
@@ -127,7 +127,7 @@ func TestE2E_AddGamePicker_IsFluidAlignedAndUntruncated(t *testing.T) {
 
 // TestE2E_AddGame_ConfiguredGameIsEditedNotOfferedAgain configures the
 // detect fixture's curated game, then checks both add flows list only the
-// other one (and say why), and that the row's "Edit…" opens every editor.
+// other one (and say why), and that the row's pencil opens every editor.
 func TestE2E_AddGame_ConfiguredGameIsEditedNotOfferedAgain(t *testing.T) {
 	f := newE2EFixture(t)
 	steam := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
@@ -161,11 +161,11 @@ func TestE2E_AddGame_ConfiguredGameIsEditedNotOfferedAgain(t *testing.T) {
 			assert.Equal(t, 1, pickRows, "the configured game is not offered by the picker")
 			assert.Equal(t, []string{steam.UnknownName}, pickNames)
 			assert.Contains(t, pickNote, "1 already-configured game is not listed")
-			assert.Contains(t, pickNote, "Edit…")
+			assert.Contains(t, pickNote, "pencil on its row")
 			assert.Equal(t, 1, detectRows, "nor by the detect list")
 			require.Len(t, detectNames, 1)
 			assert.Contains(t, detectNames[0], steam.UnknownName)
-			assert.Contains(t, detectNote, "Edit…")
+			assert.Contains(t, detectNote, "pencil on its row")
 
 			var label, expanded string
 			var editors struct {
@@ -185,7 +185,7 @@ func TestE2E_AddGame_ConfiguredGameIsEditedNotOfferedAgain(t *testing.T) {
 					modPath: document.querySelector('.setup-table__editor input') !== null,
 					loader: document.querySelector('[data-action="save-loader"]') !== null,
 				})`, &editors),
-				textContent(editSel, &label),
+				chromedp.AttributeValue(editSel, "aria-label", &label, nil, chromedp.ByQuery),
 				chromedp.AttributeValue(editSel, "aria-expanded", &expanded, nil, chromedp.ByQuery),
 				clickWhenSettled(editSel),
 				waitGone(`.setup-table__editor`),
@@ -193,7 +193,7 @@ func TestE2E_AddGame_ConfiguredGameIsEditedNotOfferedAgain(t *testing.T) {
 			assert.True(t, editors.Sources, "Edit… opens the sources editor")
 			assert.True(t, editors.ModPath, "and the mod path editor")
 			assert.True(t, editors.Loader, "and the loader editor")
-			assert.Equal(t, "Close editors", label)
+			assert.Equal(t, "Edit "+f.Game.Name, label, "the pencil's name does not change when the editors open; aria-expanded says so")
 			assert.Equal(t, "true", expanded)
 		})
 	}

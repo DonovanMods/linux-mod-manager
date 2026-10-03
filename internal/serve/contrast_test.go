@@ -68,14 +68,17 @@ var textPairs = struct {
 	// The pairs that are not foreground-on-surface: text painted on a
 	// SEMANTIC fill. --accent-contrast exists for exactly one job (the
 	// primary button's label, and the activity bell's count badge) and
-	// --text-inverted for one more (the failed-jobs badge on --danger),
-	// so each is asserted against the fill it was created for - including
+	// --text-inverted for two more (the failed-jobs badge on --danger and
+	// the tooltip on --text-primary), so each is asserted against the fill it was created for - including
 	// the hover state, which is a different colour and just as readable a
 	// surface must be.
 	explicit: [][2]string{
 		{"--accent-contrast", "--accent"},
 		{"--accent-contrast", "--accent-hover"},
 		{"--text-inverted", "--danger"},
+		// The tooltip (issue 525) is the inverse of the page: its text on
+		// the primary text colour as its fill.
+		{"--text-inverted", "--text-primary"},
 	},
 }
 

@@ -15,6 +15,7 @@ import {
   documentTitle,
 } from "./router.js";
 import { currentTheme, setTheme } from "./theme.js";
+import { installTooltips } from "./tooltip.js";
 import { coldIndexNotice } from "./indexnotice.js";
 import {
   get,
@@ -2196,6 +2197,7 @@ function go(route) {
 // the first paint; re-applying it here is what keeps this module the owner
 // of every change after that one (theme.js).
 setTheme(currentTheme());
+installTooltips();
 
 store.subscribe(draw);
 onRouteChange(go);

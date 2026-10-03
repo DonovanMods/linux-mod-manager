@@ -181,6 +181,20 @@ delimited block of `app.css` (`@control-system begin` … `end`).
 - **Arrows** (#520): a navigation arrow (Prev/Next, Back to library, More info, the
   slide-over's steps) is `components/arrow.js`'s inline SVG, centred in the label's own box,
   never a "←"/"→" glyph from a fallback font.
+- **Pencils and tooltips** (#525): a table row's "edit this value" is `components/pencil.js`'s
+  `EditButton` - a `--quiet --icon --small` button drawing an inline-SVG pencil (like the
+  arrows: `currentColor`, no icon font, no asset) - never a repeated "Edit <field>…" text
+  button, which duplicates the column header and crowds the row. Its accessible name, from
+  `aria-label`, carries the field and the row ("Edit mod path for Skyrim"; the row's own
+  pencil is "Edit Skyrim"); an open editor is `aria-expanded`, not a changed label. An
+  action ("Set default", Download, Delete) stays a word. Any control may carry
+  `data-tooltip="Edit mod path"` and `app/tooltip.js` draws it: on hover AND keyboard
+  `:focus-visible`, dismissed by Escape, one shared `aria-hidden` element with no role
+  (the `aria-label` is the name; the tooltip is for sighted people and never announces it
+  twice). It is `position: fixed` from the trigger's measured box - below, flipped above at
+  the bottom edge, slid inside the viewport gutters at the sides (`menuplacement.js`'s
+  rule) - so no table or scroller clips it. Its colours are `--text-inverted` on
+  `--text-primary`, a pair `TestThemeTokenContrast` certifies in both themes.
 - **Focus**: one 2px `--focus-ring` outline on every control (inset on a menu item, whose menu
   would clip it).
 - **Search**: the browser's own search-cancel is hidden; the omnibar's clear button also resets

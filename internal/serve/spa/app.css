@@ -551,6 +551,46 @@ input[type="password"] {
   vertical-align: middle;
 }
 
+/* The pencil icon (components/pencil.js, issue 525): the arrow's own rule -
+ * one em square in the control's own box, so the flex centring every
+ * control already has centres it. A touch larger than the label's text:
+ * a glyph-only control has nothing else to say what it is. */
+.pencil {
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+}
+
+/* The tooltip (app/tooltip.js, issue 525): one element, appended to <body>
+ * and positioned fixed from the measured trigger, so a table cell or a
+ * scrolling container never clips it. It is the inverse of the page - the
+ * primary text colour as its fill, the inverted one as its text, a pair
+ * contrast_test.go holds to 4.5:1 in both themes. It never takes the
+ * pointer (a tooltip is not something to click) and is hidden, not removed,
+ * between uses. --tooltip-gutter is the gap kept to the viewport edge. */
+.tooltip {
+  --tooltip-gutter: var(--space-2);
+
+  position: fixed;
+  z-index: 70;
+  width: max-content;
+  max-width: min(20rem, calc(100vw - 2 * var(--tooltip-gutter)));
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  background: var(--text-primary);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-inverted);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.tooltip[data-visible="true"] {
+  visibility: visible;
+}
+
 .menu-item {
   display: flex;
   align-items: center;

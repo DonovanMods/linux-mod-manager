@@ -41,7 +41,7 @@ import { GameLoaderEditor, loaderDraft, loaderSpec } from "./gameloader.js";
  * with no curated known-games entry is shown, not silently dropped - it
  * just has no checkbox, since a detect selection can only name a known row
  * (GameDetectEntry.Index is 0 for one). Already-configured rows are not
- * listed (issue 421) - the Games table's "Edit…" is where a configured game
+ * listed (issue 421) - the Games table's row pencil (Edit) is where a configured game
  * changes - apart from one whose mod path needs repair, which is listed
  * with its control disabled: `lmm game detect --select` can still repair
  * one from the CLI, but a checklist offering to silently overwrite an
@@ -125,8 +125,8 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
     }
   }
 
-  // issue 421: a configured game is changed with "Edit…" in the Games
-  // table, not offered here again - except one that needs repair, which
+  // issue 421: a configured game is changed with the pencil on its row
+  // in the Games table, not offered here again - except one that needs repair, which
   // stays listed (disabled) so the scan can say so (issue 460).
   const scanned = listing?.games ?? [];
   const games = offeredGames(scanned);
@@ -305,7 +305,7 @@ function offeredGames(games) {
 /** configuredHiddenLabel says why a scan lists fewer games than it found. */
 function configuredHiddenLabel(count) {
   const noun = count === 1 ? "game is" : "games are";
-  return `${count} already-configured ${noun} not listed - change ${count === 1 ? "it" : "them"} with "Edit…" in the Games table.`;
+  return `${count} already-configured ${noun} not listed - change ${count === 1 ? "it" : "them"} with the pencil on ${count === 1 ? "its" : "their"} row in the Games table.`;
 }
 
 /**

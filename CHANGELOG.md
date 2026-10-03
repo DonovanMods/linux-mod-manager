@@ -62,6 +62,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Setup's tables edit with a pencil, not a repeated "Edit…" label (#525).**
+  Every Games row used to repeat "Edit mod path…", "Edit sources…", "Edit
+  loader…" and "Edit…", crowding the table and duplicating its column
+  headers. Each is now a pencil icon button beside the value it edits, with
+  a tooltip ("Edit mod path") on hover and on keyboard focus; Escape
+  dismisses it. The accessible name still says which row: "Edit mod path
+  for Skyrim Special Edition", and the row's own pencil is "Edit Skyrim
+  Special Edition". An open editor is announced with `aria-expanded` rather
+  than a changed label. A custom source's Edit in Setup → Sources is a pencil
+  the same way ("Edit source My Mods"); "Set default", Download and Delete
+  stay words, since they are actions rather than edits. The tooltip is one
+  shared, token-coloured element placed from the measured trigger, so it is
+  never clipped by a table or the page's right edge.
+
 - **The web UI draws every control from one system (#518).** Buttons,
   selects and text inputs share one size scale (`--control-height` and
   `--control-height-sm`, with matching padding, radius and type size), so
