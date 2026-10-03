@@ -50,6 +50,9 @@ var detailsCoverage = map[string]string{
 	// missing-mod_path refusal with its repair, reach the envelope as data.
 	"core.GameModPathInUseError": "TestReportError_JSON_GameModPathInUseError",
 	"core.ModPathMissingError":   "TestReportError_JSON_ModPathMissingError",
+	// #528: an install_path change refused because it is not a move of
+	// the whole folder - the counts and the profiles to purge, as data.
+	"core.GameInstallPathInUseError": "TestReportError_JSON_GameInstallPathInUseError",
 	// #359's plan-time loader precondition: the setup steps reach the
 	// envelope as DATA, so the web UI renders the same sentences the
 	// terminal prints instead of carrying its own copy in JavaScript.

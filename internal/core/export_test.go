@@ -371,3 +371,24 @@ func (s *Service) GetFileChecksumForTest(ctx context.Context, sourceID, modID, g
 func NoticeTextAtForTest(n source.Notice, now time.Time) string {
 	return noticeText(n, now)
 }
+
+// RestoreOriginalsForTest writes every original game's store holds back to
+// where it goes under game's CURRENT paths (originalDestination) - a
+// snapshot restore's originals stage, without the snapshot (#528).
+func (s *Service) RestoreOriginalsForTest(game *domain.Game) error {
+	store := s.originalsStoreFor(game.ID)
+	rows, err := store.list()
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		dest, err := originalDestination(game, row)
+		if err != nil {
+			return err
+		}
+		if err := store.restore(row, dest); err != nil {
+			return err
+		}
+	}
+	return nil
+}

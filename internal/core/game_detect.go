@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -276,6 +277,74 @@ type GameDetectResult struct {
 	// they were (#465): a repair creates a default profile only for a game
 	// with none, and those land in Profiles instead.
 	KeptProfiles []string `json:"kept_profiles,omitempty"`
+	// Refused names each already-configured game whose repair would change
+	// its install_path and is not a valid move under #528's policy (files
+	// deployed under the old folder while it still exists, say). It is
+	// left exactly as it was, the rest of the selection still applies, and
+	// the apply answers a GameDetectRefusedError naming them all.
+	Refused []GameDetectRefusal `json:"refused,omitempty"`
+}
+
+// GameDetectRefusal is one GameDetectResult.Refused finding: the configured
+// game a detected row would have repaired, and the refusal - the same typed
+// error `lmm game edit --install-path` gives (GameInstallPathInUseError, or
+// GameModPathInUseError for a mod_path the catalog moves elsewhere).
+type GameDetectRefusal struct {
+	// GameID is the configured game's id, Slug the detected row's.
+	GameID string `json:"game_id"`
+	Slug   string `json:"slug"`
+	// Error is the refusal's sentence, which names what to run first.
+	Error string `json:"error"`
+	// Details is the refusal's own --json details document, when it has
+	// one.
+	Details any `json:"details,omitempty"`
+	// Err is the refusal itself, for errors.As.
+	Err error `json:"-"`
+}
+
+// newGameDetectRefusal records err as gameID's finding.
+func newGameDetectRefusal(gameID, slug string, err error) GameDetectRefusal {
+	r := GameDetectRefusal{GameID: gameID, Slug: slug, Error: err.Error(), Err: err}
+	var detailed interface{ Details() any }
+	if errors.As(err, &detailed) {
+		r.Details = detailed.Details()
+	}
+	return r
+}
+
+// GameDetectRefusedError is what a detect apply answers when it refused to
+// repair one or more configured games (GameDetectResult.Refused) and
+// everything else in the selection applied. errors.As reaches each
+// refusal's typed error through it.
+type GameDetectRefusedError struct {
+	Refused []GameDetectRefusal
+}
+
+// Error names each refused game and why.
+func (e *GameDetectRefusedError) Error() string {
+	msgs := make([]string, len(e.Refused))
+	for i, r := range e.Refused {
+		msgs[i] = fmt.Sprintf("not repairing %s from the catalog: %s", r.GameID, r.Error)
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// Unwrap exposes every refusal's own error.
+func (e *GameDetectRefusedError) Unwrap() []error {
+	errs := make([]error, len(e.Refused))
+	for i, r := range e.Refused {
+		errs[i] = r.Err
+	}
+	return errs
+}
+
+// refusedError is result's GameDetectRefusedError, or nil when nothing was
+// refused.
+func (r *GameDetectResult) refusedError() error {
+	if len(r.Refused) == 0 {
+		return nil
+	}
+	return &GameDetectRefusedError{Refused: r.Refused}
 }
 
 // Completed is how many of the applied games finished - games.yaml written
@@ -317,7 +386,10 @@ func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGa
 	defer release()
 
 	result := &GameDetectResult{}
-	return result, s.applyGameDetectLocked(ctx, games, result)
+	if _, err := s.applyGameDetectLocked(ctx, games, result); err != nil {
+		return result, err
+	}
+	return result, result.refusedError()
 }
 
 // applyGameDetectLocked is ApplyGameDetect's loop without the gate, so
@@ -325,11 +397,13 @@ func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGa
 // a single mutation slot (Ruling: exported mutating methods take the slot,
 // their unexported implementations do not, so flows compose). It appends to
 // result as it goes, which is what lets a caller report exactly how far a
-// partial failure got.
-func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.DetectedGame, result *GameDetectResult) error {
+// partial failure got. A repair refused under #528's install-path policy is
+// not a failure: it is recorded in result.Refused, returned in refused, and
+// the loop goes on.
+func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.DetectedGame, result *GameDetectResult) (refused []domain.DetectedGame, err error) {
 	existing, err := s.LoadGamesFromDisk()
 	if err != nil {
-		return fmt.Errorf("loading games: %w", err)
+		return nil, fmt.Errorf("loading games: %w", err)
 	}
 	pm := s.NewProfileManager()
 	for _, g := range games {
@@ -344,7 +418,7 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 			err = normalizeSourceIdentifiers(game.SourceIDs, s.sourceIgnoresGameIdentifier)
 		}
 		if err != nil {
-			return fmt.Errorf("converting detected game %s: %w", g.Slug, err)
+			return refused, fmt.Errorf("converting detected game %s: %w", g.Slug, err)
 		}
 		// #406 review F1: this install path may already be a game under a
 		// different id - the one detection derived before the known-games
@@ -353,22 +427,39 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		// profiles, mods and deployed links already hang off, rather than a
 		// second game over the same directory.
 		prior := ConfiguredGameFor(existing, g)
+		var reroot *ledgerReroot
 		if prior != nil {
 			var notice string
 			game, notice = repairedGame(prior, game)
-			// #427 review F1: the repair rewrites mod_path, which is exactly
-			// the move `lmm game edit --mod-path` refuses under a live
-			// deployment - the same check, before anything is written.
-			if err := s.refuseModPathMove(ctx, prior, game.ModPath); err != nil {
-				return fmt.Errorf("repairing %s from the catalog would move its mod_path: %w", prior.ID, err)
+			if !samePath(game.InstallPath, prior.InstallPath) {
+				// #528: the repair moves the install path - a Steam library
+				// that moved - so it is held to `lmm game edit
+				// --install-path`'s policy: a correction, or a move whose
+				// deployed files are re-rooted with it. Anything else is a
+				// finding for this game alone.
+				reroot, err = s.refuseInstallPathMove(ctx, prior, game, followInstallPath(prior, game.InstallPath))
+				if err != nil {
+					if !isInUseRefusal(err) {
+						return refused, fmt.Errorf("repairing %s from the catalog: %w", prior.ID, err)
+					}
+					result.Refused = append(result.Refused, newGameDetectRefusal(prior.ID, g.Slug, err))
+					refused = append(refused, g)
+					continue
+				}
+			} else if err := s.refuseModPathMove(ctx, prior, game.ModPath); err != nil {
+				// #427 review F1: the repair rewrites mod_path, which is
+				// exactly the move `lmm game edit --mod-path` refuses under a
+				// live deployment - the same check, before anything is
+				// written.
+				return refused, fmt.Errorf("repairing %s from the catalog would move its mod_path: %w", prior.ID, err)
 			}
 			if notice != "" {
 				result.Warnings = append(result.Warnings, notice)
 			}
 		}
 
-		if err := s.saveGame(ctx, game); err != nil {
-			return fmt.Errorf("saving game %s: %w", game.ID, err)
+		if err := s.saveEditedGame(ctx, game, reroot); err != nil {
+			return refused, fmt.Errorf("saving game %s: %w", game.ID, err)
 		}
 		// The set was loaded once, before the loop; keep it current so a
 		// LATER row resolving to this same game repairs what was just
@@ -386,7 +477,7 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		if prior != nil {
 			none, err := pm.isFirstProfile(game.ID)
 			if err != nil {
-				return fmt.Errorf("repairing %s: %w", game.ID, err)
+				return refused, fmt.Errorf("repairing %s: %w", game.ID, err)
 			}
 			if !none {
 				if result.Profiles == nil {
@@ -397,11 +488,11 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 			}
 		}
 		if _, err := pm.CreateOrResetDefaultAfterGameSave(ctx, game.ID); err != nil {
-			return fmt.Errorf("creating default profile for %s: %w", game.ID, err)
+			return refused, fmt.Errorf("creating default profile for %s: %w", game.ID, err)
 		}
 		result.Profiles = append(result.Profiles, game.ID+"/default")
 	}
-	return nil
+	return refused, nil
 }
 
 // repairedGame applies a detected candidate to the games.yaml entry that
@@ -484,7 +575,10 @@ func repairedGame(prior, detected *domain.Game) (*domain.Game, string) {
 // Curated rows are applied first, whatever order they were named in, and the
 // returned rows are in that same apply order - one-for-one with the leading
 // entries of result.Saved/result.Profiles - so a caller can name each added
-// game beside its own result row without re-deriving the split.
+// game beside its own result row without re-deriving the split. A curated
+// row whose repair was refused (#528, result.Refused) is moved to the end,
+// after the uncurated ones, so that holds; the rest of the selection still
+// applies, and the error is then a GameDetectRefusedError.
 //
 // ONE beginOp covers the lot: a selection is one user action, and the
 // per-row AddGame calls the CLI used to make took N+1 slots, which a
@@ -500,7 +594,17 @@ func (s *Service) ApplyDetectSelection(ctx context.Context, selected []domain.De
 	}
 	defer release()
 
-	if err := s.applyGameDetectLocked(ctx, curated, result); err != nil {
+	refused, err := s.applyGameDetectLocked(ctx, curated, result)
+	if len(refused) > 0 {
+		applied = applied[:0:0]
+		for _, g := range curated {
+			if !slices.ContainsFunc(refused, func(r domain.DetectedGame) bool { return r.Slug == g.Slug }) {
+				applied = append(applied, g)
+			}
+		}
+		applied = append(append(applied, uncurated...), refused...)
+	}
+	if err != nil {
 		return applied, result, err
 	}
 	for _, g := range uncurated {
@@ -517,7 +621,7 @@ func (s *Service) ApplyDetectSelection(ctx context.Context, selected []domain.De
 		result.Saved = append(result.Saved, entry.ID)
 		result.Profiles = append(result.Profiles, entry.ID+"/default")
 	}
-	return applied, result, nil
+	return applied, result, result.refusedError()
 }
 
 // splitDetectedSelection separates a selection into the curated rows (the

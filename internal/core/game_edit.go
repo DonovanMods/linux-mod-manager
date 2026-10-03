@@ -30,12 +30,13 @@ import (
 )
 
 // GameEdit is one edit of a configured game's games.yaml entry - what `lmm
-// game edit` and `PUT /api/v1/games/{id}` send (#326, #353, #427). A nil
-// member leaves its key alone.
-//
-// The loader is not here: it is its own edit (UpdateGameLoader), and both
-// frontends refuse a request that combines it with these.
+// game edit` and `PUT /api/v1/games/{id}` send (#326, #353, #427), and since
+// #527 everything the web UI's one game editor saves at once. A nil member
+// (and LoaderSet false) leaves its key alone.
 type GameEdit struct {
+	// Name, when non-nil, sets the display name; it is trimmed, and an
+	// empty one is refused.
+	Name *string
 	// Sources, when non-nil, REPLACES the game's source map - the map
 	// handed over is the map the game ends up with, which is what makes
 	// "remove this source" expressible at all. `lmm game edit`'s
@@ -46,8 +47,21 @@ type GameEdit struct {
 	// the game back to the adapter Service.AdapterName derives for it.
 	Adapter *string
 	// ModPath, when non-nil, sets `mod_path:`, resolved by the rules `lmm
-	// game add` applies (relative to install_path, "~/" expanded).
+	// game add` applies (relative to install_path, "~/" expanded). With
+	// InstallPath in the same edit, a relative value is relative to the NEW
+	// install path.
 	ModPath *string
+	// InstallPath, when non-nil, sets `install_path:` (#528): "~/"
+	// expanded, and it must be an existing directory. A mod_path inside the
+	// old install path follows it there; see refuseInstallPathMove for what
+	// lmm requires of the files it recorded under the old one.
+	InstallPath *string
+	// Loader, when LoaderSet, REPLACES the mod-loader declaration (#359):
+	// the spec handed over is the declaration the game ends up with, and a
+	// nil one removes it. It changes no deployed state - see
+	// UpdateGameLoader.
+	Loader    *LoaderSpec
+	LoaderSet bool
 }
 
 // EditGame applies edit to gameID's games.yaml entry and returns the game's
@@ -74,7 +88,8 @@ type GameEdit struct {
 //   - domain.ErrGameNotFound for an unknown game - the 404 every other
 //     game-scoped route already answers with.
 //   - GameSpecError, whose Field is the wire key PUT /api/v1/games/{id}
-//     takes ("sources", "adapter", "mod_path"), so an SPA marks the
+//     takes ("name", "install_path", "sources", "adapter", "mod_path",
+//     "loader.kind", "loader.runtime", "loader.bootstrap"), so an SPA marks the
 //     offending input rather than parsing a sentence. See validatedSourceMap
 //     for the source map's rules. An adapter must be registered, and must
 //     compose with the rest of the entry the edit leaves (AdapterFor: a
@@ -84,6 +99,9 @@ type GameEdit struct {
 //   - GameSourceInUseError when a removed source still has installed mods.
 //   - GameModPathInUseError when the mod_path would move while any profile
 //     has files deployed under it (refuseModPathMove).
+//   - GameInstallPathInUseError when the install_path would change while
+//     lmm has files recorded against the game's folder and the change is
+//     not a move of the whole folder (refuseInstallPathMove, #528).
 //
 // A mod_path move that would turn a game its adapter accepts into one
 // AdapterFor refuses (`adapter: bepinex` off the game root) is refused on
@@ -101,12 +119,12 @@ func (s *Service) EditGame(ctx context.Context, gameID string, edit GameEdit) (*
 		return nil, domain.ErrGameNotFound
 	}
 
-	updated, changed, err := s.editedGame(ctx, game, edit)
+	updated, changed, reroot, err := s.editedGame(ctx, game, edit)
 	if err != nil {
 		return nil, err
 	}
 	if changed {
-		if err := s.saveGame(ctx, updated); err != nil {
+		if err := s.saveEditedGame(ctx, updated, reroot); err != nil {
 			return nil, err
 		}
 	}
@@ -122,9 +140,10 @@ func (s *Service) EditGame(ctx context.Context, gameID string, edit GameEdit) (*
 	return &entry, nil
 }
 
-// editedGame is EditGame's checks: the game edit leaves, and whether it
-// differs from game enough to write. It writes nothing.
-func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEdit) (*domain.Game, bool, error) {
+// editedGame is EditGame's checks: the game edit leaves, whether it differs
+// from game enough to write, and the deployed-file records an install_path
+// move takes along (nil when it takes none). It writes nothing.
+func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEdit) (*domain.Game, bool, *ledgerReroot, error) {
 	// A COPY: s.game returns the pointer the in-memory set holds, which
 	// concurrent readers (GetGame, ListGames, SourcesForGame) are walking
 	// right now. Mutating it in place would be a data race no lock here
@@ -132,13 +151,33 @@ func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEd
 	updated := *game
 	changed := false
 
+	// The fields that are only input come first, so a typo is reported
+	// before anything about the game's state.
+	if edit.Name != nil {
+		name := strings.TrimSpace(*edit.Name)
+		if name == "" {
+			return nil, false, nil, newGameSpecError("name", *edit.Name, "a display name is required")
+		}
+		if name != game.Name {
+			updated.Name, changed = name, true
+		}
+	}
+
+	if edit.LoaderSet {
+		declared, err := edit.Loader.loader()
+		if err != nil {
+			return nil, false, nil, err
+		}
+		updated.Loader, changed = declared, true
+	}
+
 	if edit.Sources != nil {
 		cleaned, err := s.validatedSourceMap(edit.Sources)
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 		if err := s.refuseRemovingReferencedSources(ctx, game, cleaned); err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 		updated.SourceIDs = cleaned
 		changed = true
@@ -149,34 +188,305 @@ func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEd
 		changed = true
 	}
 
-	moved := false
-	if edit.ModPath != nil {
-		raw := config.ExpandPath(strings.TrimSpace(*edit.ModPath))
-		if raw == "" {
-			return nil, false, newGameSpecError("mod_path", "", "a mod path is required")
-		}
-		resolved, err := resolveModPathValue(game.InstallPath, raw)
+	// #528: the install path first, because a mod_path inside it follows it
+	// and a relative --mod-path in the same edit resolves against it.
+	installMoved := false
+	followed := game.ModPath
+	if edit.InstallPath != nil {
+		install, err := installPathValue(*edit.InstallPath)
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
-		// Setting the value the game already has - in any spelling of it -
-		// moves nothing.
-		if !samePath(resolved, game.ModPath) {
-			updated.ModPath = resolved
-			moved, changed = true, true
+		if !samePath(install, game.InstallPath) {
+			followed = followInstallPath(game, install)
+			updated.InstallPath, updated.ModPath = install, followed
+			installMoved, changed = true, true
 		}
 	}
 
-	if err := s.refuseAdapterComposition(game, &updated, edit.Adapter != nil, moved); err != nil {
-		return nil, false, err
-	}
-	if moved {
-		if err := s.refuseModPathMove(ctx, game, updated.ModPath); err != nil {
-			return nil, false, err
+	if edit.ModPath != nil {
+		raw := config.ExpandPath(strings.TrimSpace(*edit.ModPath))
+		if raw == "" {
+			return nil, false, nil, newGameSpecError("mod_path", "", "a mod path is required")
+		}
+		resolved, err := resolveModPathValue(updated.InstallPath, raw)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		// Setting the value the game already has - in any spelling of it -
+		// moves nothing.
+		updated.ModPath = game.ModPath
+		if !samePath(resolved, game.ModPath) {
+			updated.ModPath = resolved
+			changed = true
 		}
 	}
-	return &updated, changed, nil
+	moved := !samePath(updated.ModPath, game.ModPath)
+
+	if err := s.refuseAdapterComposition(game, &updated, edit.Adapter != nil, moved || installMoved); err != nil {
+		return nil, false, nil, err
+	}
+	switch {
+	case installMoved:
+		reroot, err := s.refuseInstallPathMove(ctx, game, &updated, followed)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		return &updated, changed, reroot, nil
+	case moved:
+		if err := s.refuseModPathMove(ctx, game, updated.ModPath); err != nil {
+			return nil, false, nil, err
+		}
+	}
+	return &updated, changed, nil, nil
 }
+
+// installPathValue is the install_path an edit writes (#528): trimmed and
+// "~/" expanded the way `lmm game add` takes one, absolute, and an existing
+// directory - the game is there now, so a path that is not is a typo.
+func installPathValue(value string) (string, error) {
+	install := config.ExpandPath(strings.TrimSpace(value))
+	if install == "" {
+		return "", newGameSpecError("install_path", "", "the game's install path is required")
+	}
+	if !filepath.IsAbs(install) {
+		return "", newGameSpecError("install_path", install, "the install path must be absolute")
+	}
+	if err := requireDir(install); err != nil {
+		return "", &GameSpecError{Field: "install_path", Value: install, Reason: err.Error(), Err: err}
+	}
+	return filepath.Clean(install), nil
+}
+
+// followInstallPath is where game's mod_path goes when its install path
+// becomes install (#528): the same place inside the new folder when it lay
+// inside the old one - "mod_path: Data" is part of the game folder, however
+// games.yaml spells it - and where it was otherwise, since a mod_path
+// elsewhere (a Proton prefix, Documents) is not part of the folder.
+func followInstallPath(game *domain.Game, install string) string {
+	if game.ModPath == "" || game.InstallPath == "" {
+		return game.ModPath
+	}
+	oldInstall, modPath := filepath.Clean(game.InstallPath), filepath.Clean(game.ModPath)
+	if !pathWithin(modPath, oldInstall) {
+		return game.ModPath
+	}
+	rel, err := filepath.Rel(oldInstall, modPath)
+	if err != nil {
+		return game.ModPath
+	}
+	return filepath.Join(install, rel)
+}
+
+// ledgerReroot is the deployed-file records an install_path move takes
+// along (#528): every row recorded under one of from is re-recorded under
+// to, and back is where they go again if games.yaml cannot be written.
+type ledgerReroot struct {
+	from     []string
+	to, back string
+}
+
+// saveEditedGame writes EditGame's result: games.yaml, and with it the
+// ledger an install_path move takes along. The two are one change, so once
+// the ledger is re-rooted cancellation cannot split them (Ruling 16), and a
+// games.yaml write that fails puts the ledger back.
+func (s *Service) saveEditedGame(ctx context.Context, updated *domain.Game, reroot *ledgerReroot) error {
+	if reroot == nil {
+		return s.saveGame(ctx, updated)
+	}
+	ctx = context.WithoutCancel(ctx)
+	if _, err := s.db.RerootDeployedFiles(ctx, updated.ID, reroot.from, reroot.to); err != nil {
+		return err
+	}
+	if err := s.saveGame(ctx, updated); err != nil {
+		if _, undo := s.db.RerootDeployedFiles(ctx, updated.ID, []string{reroot.to}, reroot.back); undo != nil {
+			return fmt.Errorf("%w (and recording the deployed files under %s again failed: %w)", err, reroot.back, undo)
+		}
+		return err
+	}
+	return nil
+}
+
+// refuseInstallPathMove is the in-use check for an install_path change
+// (#528), the coordinator-approved policy. What lmm has recorded against
+// the game's folder is its deployed files (relative to the mod_path, when
+// the mod_path moves with the install path) and the originals it backed up
+// before replacing a file (relative to the install path, and to the
+// mod_path when that moves). With none of that, the edit is a CORRECTION
+// and goes ahead. With any, it goes ahead only as a MOVE of the whole
+// folder: the old install path is gone and every recorded file - and every
+// backed-up original's target - is at the same place under the new one,
+// with every backup intact. The deployed files' records then follow
+// (the returned ledgerReroot). Anything else is a GameInstallPathInUseError.
+//
+// A mod_path the same edit sends somewhere other than where it would follow
+// to is a mod_path move, and refuseModPathMove decides it; files recorded
+// under a mod_path other than the current one (#451) refuse the move with
+// that problem, which has to be resolved first.
+func (s *Service) refuseInstallPathMove(ctx context.Context, game, updated *domain.Game, followed string) (*ledgerReroot, error) {
+	modMoves := !samePath(updated.ModPath, game.ModPath)
+	inUse := &GameInstallPathInUseError{
+		GameID: game.ID, InstallPath: game.InstallPath, NewInstallPath: updated.InstallPath, ModPath: game.ModPath,
+	}
+	var from []string
+	switch {
+	case modMoves && !samePath(updated.ModPath, followed):
+		if err := s.refuseModPathMove(ctx, game, updated.ModPath); err != nil {
+			return nil, err
+		}
+		inUse.NewModPath = updated.ModPath
+	case modMoves:
+		inUse.NewModPath = updated.ModPath
+		if problem, err := modPathMovedProblem(ctx, s.db, game); err != nil || problem != nil {
+			if err != nil {
+				return nil, err
+			}
+			return nil, problem
+		}
+		records, err := s.db.DeployedPathRecords(ctx, game.ID)
+		if err != nil {
+			return nil, err
+		}
+		counts := map[string]int{}
+		for rel, recs := range records {
+			for _, r := range recs {
+				counts[r.Profile]++
+				if !slices.Contains(from, r.ModPath) {
+					from = append(from, r.ModPath)
+				}
+			}
+			inUse.DeployedFiles += len(recs)
+			if _, err := os.Lstat(filepath.Join(updated.ModPath, filepath.FromSlash(rel))); err != nil {
+				inUse.MissingFiles += len(recs)
+			}
+		}
+		for _, profile := range slices.Sorted(maps.Keys(counts)) {
+			inUse.Profiles = append(inUse.Profiles, ProfileDeployedFiles{Profile: profile, DeployedFiles: counts[profile]})
+		}
+	}
+
+	if store := s.originalsStoreFor(game.ID); store != nil {
+		rows, err := store.list()
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if row.Root == OriginalRootModPath && !modMoves {
+				continue
+			}
+			inUse.Originals++
+			dest, err := originalDestination(updated, row)
+			if err == nil {
+				err = store.verify(row)
+			}
+			if err == nil {
+				_, err = os.Lstat(dest)
+			}
+			if err != nil {
+				inUse.MissingOriginals++
+			}
+		}
+	}
+
+	if inUse.DeployedFiles == 0 && inUse.Originals == 0 {
+		return nil, nil
+	}
+	if _, err := os.Lstat(game.InstallPath); !errors.Is(err, fs.ErrNotExist) {
+		inUse.OldInstallPathExists = true
+	}
+	if inUse.OldInstallPathExists || inUse.MissingFiles > 0 || inUse.MissingOriginals > 0 {
+		return nil, inUse
+	}
+	if inUse.DeployedFiles == 0 {
+		return nil, nil
+	}
+	slices.Sort(from)
+	return &ledgerReroot{from: from, to: updated.ModPath, back: game.ModPath}, nil
+}
+
+// isInUseRefusal reports whether err is one of the refusals
+// refuseInstallPathMove makes because of what lmm has recorded against the
+// game's folder - the per-game finding a detect repair reports
+// (GameDetectRefusal) rather than a failure of the whole selection.
+func isInUseRefusal(err error) bool {
+	var installInUse *GameInstallPathInUseError
+	var modPathInUse *GameModPathInUseError
+	var stranded *ModPathMissingError
+	return errors.As(err, &installInUse) || errors.As(err, &modPathInUse) ||
+		errors.As(err, &stranded) || errors.Is(err, ErrActiveProfileUnknown)
+}
+
+// GameInstallPathInUseError refuses an install_path change (#528) while lmm
+// has files recorded against the game's folder and the change is not a
+// move of that whole folder: the old install path still exists, or some of
+// what lmm recorded is not at the same place under the new one.
+type GameInstallPathInUseError struct {
+	GameID         string `json:"game_id"`
+	InstallPath    string `json:"install_path"`
+	NewInstallPath string `json:"new_install_path"`
+	ModPath        string `json:"mod_path"`
+	// NewModPath is where the mod_path would have moved with the install
+	// path; empty when it stays where it is.
+	NewModPath string `json:"new_mod_path,omitempty"`
+	// DeployedFiles is how many deployed-file records would move with the
+	// mod_path, and Profiles each profile's share of them - each is purged
+	// on its own.
+	DeployedFiles int                    `json:"deployed_files"`
+	Profiles      []ProfileDeployedFiles `json:"profiles,omitempty"`
+	// Originals is how many backed-up originals (files lmm replaced) would
+	// be restored somewhere else after the change.
+	Originals int `json:"originals,omitzero"`
+	// OldInstallPathExists is set when InstallPath is still there, so the
+	// change cannot be a move of the folder.
+	OldInstallPathExists bool `json:"old_install_path_exists"`
+	// MissingFiles and MissingOriginals count what a move would have had to
+	// find under NewInstallPath and did not (an original also counts when
+	// its backup is gone or damaged).
+	MissingFiles     int `json:"missing_files,omitzero"`
+	MissingOriginals int `json:"missing_originals,omitzero"`
+}
+
+// Error names what is recorded, why the change is not a move, and the way
+// out.
+func (e *GameInstallPathInUseError) Error() string {
+	var recorded []string
+	if e.DeployedFiles > 0 {
+		recorded = append(recorded, fmt.Sprintf("%d deployed file(s) under %s", e.DeployedFiles, e.ModPath))
+	}
+	if e.Originals > 0 {
+		recorded = append(recorded, fmt.Sprintf("backups of %d game file(s) it replaced", e.Originals))
+	}
+	msg := fmt.Sprintf("cannot change install_path for game %s from %s to %s: lmm recorded %s against the current folder, and changes the install path with them only as a move of the whole folder",
+		e.GameID, e.InstallPath, e.NewInstallPath, strings.Join(recorded, " and "))
+	if e.OldInstallPathExists {
+		msg += fmt.Sprintf(", but %s still exists", e.InstallPath)
+	} else {
+		var missing []string
+		if e.MissingFiles > 0 {
+			missing = append(missing, fmt.Sprintf("%d of the deployed files", e.MissingFiles))
+		}
+		if e.MissingOriginals > 0 {
+			missing = append(missing, fmt.Sprintf("%d of the replaced files", e.MissingOriginals))
+		}
+		msg += fmt.Sprintf(": %s is gone, but %s are not at the same place under %s", e.InstallPath, strings.Join(missing, " and "), e.NewInstallPath)
+	}
+	if len(e.Profiles) > 0 {
+		purges := make([]string, 0, len(e.Profiles))
+		for _, p := range e.Profiles {
+			purges = append(purges, fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, p.Profile))
+		}
+		msg += fmt.Sprintf("; purge them first - run %s - then change install_path, then run `lmm deploy --game %s`",
+			strings.Join(purges, ", then "), e.GameID)
+	}
+	if e.Originals > 0 {
+		msg += "; lmm puts each replaced file back relative to the install path, so with those recorded the old folder has to be gone and the new one has to hold them"
+	}
+	return msg
+}
+
+// Details returns the error itself for the --json error envelope's
+// "details" field (Ruling 3).
+func (e *GameInstallPathInUseError) Details() any { return e }
 
 // refuseAdapterComposition is EditGame's AdapterFor check on the game the
 // edit leaves (updated), blamed on the key the user asked to change.

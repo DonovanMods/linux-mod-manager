@@ -442,6 +442,39 @@ func TestJSONGoldens(t *testing.T) {
 			core.GameDetectResult{Saved: []string{"skyrim-se"}, Profiles: []string{}, Warnings: []string{}, KeptProfiles: []string{"skyrim-se"}},
 		},
 		{
+			// #528: one refused repair on its own - the finding a detect
+			// result's "refused" lists.
+			"game_detect_refusal",
+			core.GameDetectRefusal{
+				GameID: "valheim", Slug: "valheim",
+				Error: "cannot change install_path for game valheim from /games/valheim to /mnt/library/valheim: ...",
+				Details: &core.GameInstallPathInUseError{
+					GameID: "valheim", InstallPath: "/games/valheim", NewInstallPath: "/mnt/library/valheim",
+					ModPath: "/games/valheim/Mods", DeployedFiles: 1,
+					Profiles: []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 1}}, OldInstallPathExists: true,
+				},
+			},
+		},
+		{
+			// #528: a repair that would change a configured game's
+			// install_path and is not a valid move is a per-game finding,
+			// carrying the same typed error's details; the rest applied.
+			"game_detect_result_refused",
+			core.GameDetectResult{
+				Saved: []string{"fallout4"}, Profiles: []string{"fallout4/default"}, Warnings: []string{},
+				Refused: []core.GameDetectRefusal{{
+					GameID: "valheim", Slug: "valheim",
+					Error: "cannot change install_path for game valheim from /games/valheim to /mnt/library/valheim: ...",
+					Details: &core.GameInstallPathInUseError{
+						GameID: "valheim", InstallPath: "/games/valheim", NewInstallPath: "/mnt/library/valheim",
+						ModPath: "/games/valheim/BepInEx/plugins", NewModPath: "/mnt/library/valheim/BepInEx/plugins",
+						DeployedFiles: 3, Profiles: []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 3}},
+						OldInstallPathExists: true,
+					},
+				}},
+			},
+		},
+		{
 			"merged_artifact_effect",
 			core.MergedArtifactEffect{Action: core.MergedArtifactResync, Path: "zzz_LMM_Merged_P.pak"},
 		},
@@ -2052,6 +2085,28 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			"deployed_under",
 			core.DeployedUnder{ModPath: "/games/skyrim-se/Data", Files: 3, Profiles: []string{"default"}},
+		},
+		{
+			// #528: an install_path change that is not a move of the whole
+			// folder - the old one is still there.
+			"game_install_path_in_use_error",
+			core.GameInstallPathInUseError{
+				GameID: "valheim", InstallPath: "/games/valheim", NewInstallPath: "/mnt/library/valheim",
+				ModPath: "/games/valheim/BepInEx/plugins", NewModPath: "/mnt/library/valheim/BepInEx/plugins",
+				DeployedFiles: 3, Profiles: []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 3}},
+				OldInstallPathExists: true,
+			},
+		},
+		{
+			// #528: a move whose new folder lacks some of what lmm recorded,
+			// including a replaced file's backup target.
+			"game_install_path_in_use_error_missing",
+			core.GameInstallPathInUseError{
+				GameID: "valheim", InstallPath: "/games/valheim", NewInstallPath: "/mnt/library/valheim",
+				ModPath: "/games/valheim/BepInEx/plugins", NewModPath: "/mnt/library/valheim/BepInEx/plugins",
+				DeployedFiles: 3, Profiles: []core.ProfileDeployedFiles{{Profile: "default", DeployedFiles: 3}},
+				Originals: 2, MissingFiles: 1, MissingOriginals: 1,
+			},
 		},
 		{
 			// #451: a move refused while files are deployed under a

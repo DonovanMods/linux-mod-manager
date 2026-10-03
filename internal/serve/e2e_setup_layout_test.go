@@ -127,7 +127,8 @@ func TestE2E_AddGamePicker_IsFluidAlignedAndUntruncated(t *testing.T) {
 
 // TestE2E_AddGame_ConfiguredGameIsEditedNotOfferedAgain configures the
 // detect fixture's curated game, then checks both add flows list only the
-// other one (and say why), and that the row's pencil opens every editor.
+// other one (and say why), and that the row's pencil opens the game's one
+// editor (#527), with every field in it.
 func TestE2E_AddGame_ConfiguredGameIsEditedNotOfferedAgain(t *testing.T) {
 	f := newE2EFixture(t)
 	steam := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
@@ -169,9 +170,11 @@ func TestE2E_AddGame_ConfiguredGameIsEditedNotOfferedAgain(t *testing.T) {
 
 			var label, expanded string
 			var editors struct {
+				Panels  int  `json:"panels"`
 				Sources bool `json:"sources"`
 				ModPath bool `json:"modPath"`
 				Loader  bool `json:"loader"`
+				Saves   int  `json:"saves"`
 			}
 			editSel := fmt.Sprintf(`[data-action="edit-game"][data-game=%q]`, f.Game.ID)
 			f.runInBrowser(t,
@@ -179,21 +182,25 @@ func TestE2E_AddGame_ConfiguredGameIsEditedNotOfferedAgain(t *testing.T) {
 				// and a click on a disabled button is dropped without a word.
 				pollUntil(fmt.Sprintf(`document.querySelector(%q)?.disabled === false`, editSel)),
 				clickWhenSettled(editSel),
-				pollUntil(`document.querySelector('[data-action="save-loader"]') !== null`),
+				pollUntil(`document.querySelector('[data-action="save-game"]') !== null`),
 				chromedp.Evaluate(`({
-					sources: document.querySelector('[data-action="save-sources"]') !== null,
-					modPath: document.querySelector('.setup-table__editor input') !== null,
-					loader: document.querySelector('[data-action="save-loader"]') !== null,
+					panels: document.querySelectorAll('[data-testid="game-editor"]').length,
+					sources: document.querySelector('[data-testid="game-editor"] [data-testid="sources-map"]') !== null,
+					modPath: document.querySelector('[data-testid="game-editor"] input[name="mod-path"]') !== null,
+					loader: document.querySelector('[data-testid="game-editor"] [data-testid="loader-editor"]') !== null,
+					saves: document.querySelectorAll('[data-testid="setup-games"] [data-action^="save-"]').length,
 				})`, &editors),
 				chromedp.AttributeValue(editSel, "aria-label", &label, nil, chromedp.ByQuery),
 				chromedp.AttributeValue(editSel, "aria-expanded", &expanded, nil, chromedp.ByQuery),
 				clickWhenSettled(editSel),
 				waitGone(`.setup-table__editor`),
 			)
-			assert.True(t, editors.Sources, "Edit… opens the sources editor")
-			assert.True(t, editors.ModPath, "and the mod path editor")
-			assert.True(t, editors.Loader, "and the loader editor")
-			assert.Equal(t, "Edit "+f.Game.Name, label, "the pencil's name does not change when the editors open; aria-expanded says so")
+			assert.Equal(t, 1, editors.Panels, "the pencil opens one editor panel")
+			assert.True(t, editors.Sources, "holding the sources")
+			assert.True(t, editors.ModPath, "the mod path")
+			assert.True(t, editors.Loader, "and the loader")
+			assert.Equal(t, 1, editors.Saves, "with one Save")
+			assert.Equal(t, "Edit "+f.Game.Name, label, "the pencil's name does not change when the editor opens; aria-expanded says so")
 			assert.Equal(t, "true", expanded)
 		})
 	}

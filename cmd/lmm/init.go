@@ -225,11 +225,30 @@ func initStepGames(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader
 		selected[i] = known[n-1]
 	}
 	result, applyErr := service.ApplyGameDetect(ctx, selected)
-	for i := range result.Completed() {
-		cmd.Printf("  Added %s (%s)\n", selected[i].Name, selected[i].Slug)
+	// By id, not by position: a repair refused under #528's install-path
+	// policy (result.Refused) is skipped while the rest apply, so the
+	// completed games are not always the leading entries of `selected`.
+	names := make(map[string]string, len(selected))
+	for _, g := range selected {
+		names[g.Slug] = g.Name
+	}
+	for _, id := range result.Saved[:result.Completed()] {
+		name := names[id]
+		if game, err := service.GetGame(id); err == nil {
+			name = game.Name
+		}
+		cmd.Printf("  Added %s (%s)\n", name, id)
 	}
 	for _, w := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+	var refused *core.GameDetectRefusedError
+	if errors.As(applyErr, &refused) {
+		// Per-game findings, not a stop: everything else was applied.
+		for _, r := range refused.Refused {
+			cmd.Printf("  Not repaired: %s: %s\n", r.GameID, r.Error)
+		}
+		applyErr = nil
 	}
 	if applyErr != nil {
 		// Partial success is the honest report: result.Completed() counted

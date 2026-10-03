@@ -62,6 +62,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Setup → Games edits a game in one panel with one Save (#527).** A row
+  had a pencil for its mod path, its sources and its loader, plus the row's
+  own pencil that opened all three editors, each with its own Save - three
+  requests, any of which could succeed while another failed. The per-field
+  pencils are gone: the row's one pencil ("Edit Skyrim Special Edition")
+  opens a single panel with every field the game has - name, install path
+  (#528), mod path, sources and loader - and one **Save** and one
+  **Cancel** (**Close** once nothing is changed). Save sends the fields you
+  changed in one request, and lmm checks all of them before writing any:
+  a refusal writes nothing, and is shown under the field it is about (an
+  install path that does not exist, a mod path with files deployed under
+  it - with the ordered steps that clear it - a source still in use, a
+  loader value). After a save the panel stays open on the saved values,
+  so the loader status below it, with the Steam launch option to paste,
+  is re-read in place. Cancel discards the draft and puts focus back on
+  the pencil. Underneath, `PUT /api/v1/games/{id}` takes the whole edit
+  additively - a new `name` member, and `loader` may now share a body with
+  the other fields instead of being refused - and `core.GameEdit` carries
+  `Name`, `InstallPath` and the loader, so `Service.EditGame` is the one
+  all-or-nothing write (`UpdateGameLoader` is a thin wrapper over it). The
+  path columns take the room the pencils freed.
+
 - **Setup's tables edit with a pencil, not a repeated "Edit…" label (#525).**
   Every Games row used to repeat "Edit mod path…", "Edit sources…", "Edit
   loader…" and "Edit…", crowding the table and duplicating its column
@@ -1787,6 +1809,32 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   `lmm mod show` is unchanged.
 
 ### Fixed
+
+- **A game's install path can be changed (#528).** It was fixed once the
+  game was added - a path mistyped at `lmm game add`, or a Steam library
+  that moved, meant hand-editing `games.yaml`. Now
+  `lmm game edit <id> --install-path <dir>` (and `install_path` in
+  `PUT /api/v1/games/{id}`) sets it: "~/" is expanded, and the directory must exist. A mod path
+  inside the install path moves with it, and a relative `--mod-path` in
+  the same run is relative to the new one; a mod path outside it (a Proton
+  prefix, Documents) stays where it is. With nothing deployed the edit is
+  just a correction. With files deployed, or game files lmm replaced and
+  backed up, lmm takes it only as a move of the whole folder: the old
+  install path must be gone and every file it recorded - and every replaced
+  file's backup target - must be at the same place under the new one; it
+  then records the deployed files there, and restores the backups there.
+  Anything else is refused with `GameInstallPathInUseError` (in the
+  `--json` envelope's `details`: the counts, whether the old folder still
+  exists, and each profile to purge first). Profile override files are not
+  tracked, so after a move the next deploy writes them into the new folder;
+  copies left in the old one are not removed. The same policy holds for
+  every other writer of an install path: `lmm game detect`, `lmm init` and
+  `POST /api/v1/games/detect` repairing a configured game found at a new
+  path (a Steam library that moved) re-root it when it is a move, and
+  otherwise leave that game exactly as it was and report it as a per-game
+  finding - the detect result's new `refused` list, each with the same
+  error and details - while the rest of the selection is still added; the
+  command then exits with that error (409 on the wire).
 
 - **The library's "Load order" heading no longer wraps, and the add-game
   toggle no longer stretches (#526).** The library table's heading read

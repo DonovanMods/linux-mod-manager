@@ -17,7 +17,7 @@ import (
 
 var gameEditCmd = &cobra.Command{
 	Use:   "edit <game-id>",
-	Short: "Edit a configured game's sources, mod path, adapter or loader",
+	Short: "Edit a configured game's sources, install path, mod path, adapter or loader",
 	Long: `Change which mod sources a configured game maps, and what this game's
 identifier is with each of them - the games.yaml "sources:" map.
 
@@ -67,18 +67,33 @@ to download it from), the refusal says which version is listed and which
 are cached, and names the profile file to edit instead. A BepInEx game deploys into
 its install path, so that is its mod path.
 
---source, --remove-source, --adapter and --mod-path are one edit: every
-change is checked before any is written, so a run applies all of them or
-none. That is also what lets --mod-path and --adapter move a game onto
+--install-path sets the directory the game is installed in - the fix for
+a path mistyped at 'lmm game add', or for a game whose Steam library
+moved. It must be an existing directory, and "~/" is your home directory.
+A mod path inside the install path moves with it (with --mod-path in the
+same run, a relative mod path is relative to the new install path); one
+outside it stays where it is. With nothing deployed this is just a
+correction. With files deployed (or game files lmm replaced and backed
+up), lmm accepts it only as a move of the whole game folder: the old
+install path must be gone, and every file lmm recorded must be at the same
+place under the new one - lmm then records them there. Otherwise the
+refusal names the purge each profile needs first. Profile override files
+are not tracked; the next deploy writes them into the new folder.
+
+--source, --remove-source, --adapter, --mod-path and --install-path are
+one edit: every change is checked before any is written, so a run applies
+all of them or none. That is also what lets --mod-path and --adapter move a game onto
 bepinex, or off it, in one run.
 
-Sources and the loader are separate edits: pass one or the other.
+The loader is a separate edit on the command line: pass --loader, or the
+other flags. (The web UI's game editor saves both in one request.)
 
 Examples:
   lmm game edit skyrim-se --source curseforge=skyrim
   lmm game edit icarus --source local-mods= --remove-source nexusmods
   lmm game edit human-host --mod-path "~/.steam/steam/steamapps/common/Human Host"
   lmm game edit valheim --mod-path /games/valheim --adapter bepinex
+  lmm game edit valheim --install-path ~/Games/SteamLibrary/steamapps/common/Valheim
   lmm game edit valheim --adapter generic-files --mod-path BepInEx/plugins
   lmm game edit valheim --loader bepinex --loader-version 5.4.23.5 --loader-bootstrap proton
   lmm game edit valheim --loader ""
@@ -95,6 +110,10 @@ var (
 	// gameEditModPathSet records that --mod-path was passed at all, so
 	// `--mod-path ""` reaches core's refusal instead of reading as absent.
 	gameEditModPathSet bool
+	// gameEditInstallPath/Set are --install-path (#528), Set for the same
+	// reason as gameEditModPathSet.
+	gameEditInstallPath    string
+	gameEditInstallPathSet bool
 
 	gameEditLoader          string
 	gameEditLoaderVersion   string
@@ -111,6 +130,8 @@ func init() {
 		"drop a source mapping by its source id (repeatable)")
 	gameEditCmd.Flags().StringVar(&gameEditModPath, "mod-path", "",
 		"set the directory lmm deploys mods into (relative to the install path unless absolute)")
+	gameEditCmd.Flags().StringVar(&gameEditInstallPath, "install-path", "",
+		`set the game's install directory (must exist; "~/" is your home directory); a mod path inside it moves with it`)
 	gameEditCmd.Flags().StringVar(&gameEditAdapter, "adapter", "",
 		`set the game adapter; the empty string ("") clears it, so the game uses its derived adapter (generic-files unless deploy_mode or BepInEx selects one)`)
 	gameEditCmd.Flags().StringVar(&gameEditLoader, "loader", "",
@@ -126,6 +147,7 @@ func init() {
 func runGameEdit(cmd *cobra.Command, args []string) error {
 	adapterSet := cmd.Flags().Changed("adapter")
 	gameEditModPathSet = cmd.Flags().Changed("mod-path")
+	gameEditInstallPathSet = cmd.Flags().Changed("install-path")
 	return withGameWriteService(cmd, args[0], func(ctx context.Context, service *core.Service) error {
 		// Changed("loader") rather than a non-empty value, so `--loader ""`
 		// is an explicit "this game has no loader after all" and reaches
@@ -148,8 +170,8 @@ func runGameEdit(cmd *cobra.Command, args []string) error {
 // sources written, loader not - expressible. The command refuses a run that
 // asks for more than one rather than picking an order.
 func doGameEditLoader(ctx context.Context, service *core.Service, gameID string, adapterSet bool) error {
-	if len(gameEditSources) > 0 || len(gameEditRemove) > 0 || adapterSet || gameEditModPathSet {
-		return fmt.Errorf("edit the loader separately: pass --loader, or --source/--remove-source/--adapter/--mod-path, not both")
+	if len(gameEditSources) > 0 || len(gameEditRemove) > 0 || adapterSet || gameEditModPathSet || gameEditInstallPathSet {
+		return fmt.Errorf("edit the loader separately: pass --loader, or --source/--remove-source/--adapter/--mod-path/--install-path, not both")
 	}
 
 	spec, err := loaderSpecFromFlags(gameEditLoader, gameEditLoaderVersion, gameEditLoaderRuntime, gameEditLoaderBootstrap)
@@ -194,8 +216,8 @@ func doGameEditLoader(ctx context.Context, service *core.Service, gameID string,
 // the two frontends' paths.
 func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapterSet bool) error {
 	editsSources := len(gameEditSources) > 0 || len(gameEditRemove) > 0
-	if !editsSources && !adapterSet && !gameEditModPathSet {
-		return fmt.Errorf("nothing to edit: pass --source <id>=<identifier>, --remove-source <id>, --adapter <name>, or --mod-path <path>")
+	if !editsSources && !adapterSet && !gameEditModPathSet && !gameEditInstallPathSet {
+		return fmt.Errorf("nothing to edit: pass --source <id>=<identifier>, --remove-source <id>, --adapter <name>, --mod-path <path>, or --install-path <dir>")
 	}
 
 	game, err := service.GetGame(gameID)
@@ -222,6 +244,10 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 	if gameEditModPathSet {
 		edit.ModPath = &gameEditModPath
 	}
+	// #528: core expands "~/" and owns the move policy.
+	if gameEditInstallPathSet {
+		edit.InstallPath = &gameEditInstallPath
+	}
 
 	entry, err := service.EditGame(ctx, gameID, edit)
 	if err != nil {
@@ -236,6 +262,12 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 	}
 
 	var lines []string
+	if gameEditInstallPathSet {
+		lines = append(lines, "install path set to "+entry.InstallPath)
+		if !gameEditModPathSet && entry.ModPath != game.ModPath {
+			lines = append(lines, "mod path moved with it to "+entry.ModPath)
+		}
+	}
 	if gameEditModPathSet {
 		lines = append(lines, "mod path set to "+entry.ModPath)
 		if entry.ModPathError != "" {

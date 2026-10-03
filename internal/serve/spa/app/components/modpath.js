@@ -6,9 +6,11 @@
 // Core decides all of it. `mod_path_error` is ModPathProblem's sentence,
 // present only when the directory needs attention (one lmm deployed into
 // has gone, typically); `GameModPathInUseError` carries the ORDERED steps
-// that clear a refused move. This file renders them and invents nothing.
+// that clear a refused move. This file renders them and invents nothing;
+// the mod path INPUT is one field of the game editor (gameeditor.js, issue
+// 527).
 
-import { html, useEffect, useRef } from "../render.js";
+import { html } from "../render.js";
 import { codeSpans } from "../errortext.js";
 import { navigate, modPathEditPath } from "../router.js";
 
@@ -182,90 +184,6 @@ export function ModPathInUse({ details, message }) {
         <summary>lmm's full explanation</summary>
         <p>${codeSpans(message)}</p>
       </details>
-    </div>
-  `;
-}
-
-/**
- * ModPathEditor is the mod-path input and its Save, with the three answers
- * a PUT can give rendered in place: a 400 marks the input, a 409 renders
- * ModPathInUse, anything else is shown verbatim.
- */
-export function ModPathEditor({
-  gameID,
-  value,
-  error,
-  busy,
-  onChange,
-  onSave,
-}) {
-  const inputID = `mod-path-${gameID}`;
-  const fieldError = error?.field === "mod_path" ? error.message : "";
-  const inUse = modPathInUseFor(error?.details);
-  const inputRef = useRef(null);
-
-  // Review F4: this component only ever exists while the editor is open
-  // (setupgames.js mounts it conditionally, keyed per row), so mounting IS
-  // "the editor opened" - from the deep link, from the row's own "Edit mod
-  // path…", or from a warning's "Set mod path…" for a row not yet open.
-  // Without this a keyboard user lands on Setup > Games with focus still on
-  // `<body>` and has to tab through the whole page to reach the input.
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  return html`
-    <div class="mod-path-editor" data-testid="mod-path-editor">
-      <label class="plan__control" for=${inputID}>Mod path</label>
-      <input
-        id=${inputID}
-        ref=${inputRef}
-        type="text"
-        class="mono"
-        name="mod-path"
-        value=${value}
-        disabled=${busy}
-        aria-invalid=${fieldError ? "true" : undefined}
-        aria-describedby=${fieldError ? `${inputID}-error` : undefined}
-        onInput=${(e) => onChange(e.currentTarget.value)}
-      />
-      <button
-        type="button"
-        class="button button--primary"
-        data-action="save-mod-path"
-        disabled=${busy}
-        onClick=${onSave}
-      >
-        ${busy ? "Saving…" : "Save mod path"}
-      </button>
-      ${
-        /* One live region, mounted with the editor and never removed, so the
-        answer a Save gets is announced (the issue 442 rule): a region
-        inserted together with its text is not reliably read out. */ ""
-      }
-      <div class="mod-path-editor__answer" role="status">
-        ${
-          fieldError &&
-          html`<p
-            class="modal__error"
-            id=${`${inputID}-error`}
-            data-testid="mod-path-field-error"
-          >
-            ${codeSpans(fieldError)}
-          </p>`
-        }
-        ${inUse && html`<${ModPathInUse} details=${inUse} message=${error.message} />`}
-        ${
-          error &&
-          !fieldError &&
-          !inUse &&
-          html`<p class="modal__error">${codeSpans(error.message)}</p>`
-        }
-      </div>
-      <p class="empty-state__hint">
-        The directory the game loads mods from. lmm refuses the move while files
-        are deployed under the old one, and says what to run first.
-      </p>
     </div>
   `;
 }

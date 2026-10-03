@@ -2,7 +2,7 @@ package serve_test
 
 // #460, the web half of #427: a game whose mod_path lmm deployed into has
 // gone is flagged everywhere the game is shown, with the action that
-// repairs it; the Games table edits the mod path; and a move refused for
+// repairs it; the Games table's one editor (#527) edits the mod path; and a move refused for
 // files still deployed under the old directory reads as the ordered steps
 // that clear it.
 
@@ -87,10 +87,10 @@ func TestE2E_ModPathEditor_RowActionRefocusesWhenAlreadyOpen(t *testing.T) {
 		chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
 		chromedp.Click(`.setup-nav__tab[data-section="games"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
-		clickWhenSettled(`[data-testid="setup-games"] [data-action="edit-mod-path"]`),
+		clickWhenSettled(`[data-testid="setup-games"] [data-action="edit-game"]`),
 		chromedp.WaitVisible(`[data-testid="mod-path-editor"] input[name="mod-path"]`, chromedp.ByQuery),
 		// Move focus elsewhere so the row action's effect is unambiguous.
-		chromedp.Evaluate(`document.querySelector('[data-testid="setup-games"] [data-action="edit-mod-path"]').focus()`, nil),
+		chromedp.Evaluate(`document.querySelector('[data-testid="setup-games"] [data-action="edit-game"]').focus()`, nil),
 		clickWhenSettled(`[data-testid="setup-games"] td [data-testid="mod-path-error"] [data-action="set-mod-path"]`),
 		chromedp.Evaluate(`document.activeElement === document.querySelector('[data-testid="mod-path-editor"] input[name="mod-path"]')`, &reopenedFocus),
 	)
@@ -121,17 +121,17 @@ func TestE2E_ModPathEditor_MarksARejectedValueAndOrdersTheRefusal(t *testing.T) 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()+"/setup?section=games"),
 		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
-		chromedp.Click(`button[data-action="edit-mod-path"]`, chromedp.ByQuery),
+		clickWhenSettled(`button[data-action="edit-game"]`),
 		chromedp.WaitVisible(`[data-testid="mod-path-editor"]`, chromedp.ByQuery),
 		// The answer region exists before any answer does (issue 442).
 		chromedp.Evaluate(`document.querySelector('.mod-path-editor__answer[role="status"]') !== null`, &ok),
 		setValue(file),
-		chromedp.Click(`button[data-action="save-mod-path"]`, chromedp.ByQuery),
+		chromedp.Click(`button[data-action="save-game"]`, chromedp.ByQuery),
 		pollUntil(`document.querySelector('[data-testid="mod-path-field-error"]') !== null`),
 		chromedp.AttributeValue(`input[name="mod-path"]`, "aria-invalid", &invalid, nil, chromedp.ByQuery),
 
 		setValue(f.Game.InstallPath),
-		chromedp.Click(`button[data-action="save-mod-path"]`, chromedp.ByQuery),
+		chromedp.Click(`button[data-action="save-game"]`, chromedp.ByQuery),
 		pollUntil(`document.querySelector('[data-testid="mod-path-in-use"]') !== null`),
 		chromedp.Evaluate(`[...document.querySelectorAll('.mod-path-in-use__step')].map(li => li.dataset.command)`, &steps),
 		textContent(`.mod-path-in-use__title`, &title),
@@ -154,8 +154,8 @@ func TestE2E_ModPathEditor_MarksARejectedValueAndOrdersTheRefusal(t *testing.T) 
 	_, err = f.Svc.PurgeProfile(t.Context(), f.Game, f.Profile, mods, core.PurgeOptions{}, nil)
 	require.NoError(t, err)
 	f.runInBrowser(t,
-		chromedp.Click(`button[data-action="save-mod-path"]`, chromedp.ByQuery),
-		waitGone(`[data-testid="mod-path-editor"]`),
+		chromedp.Click(`button[data-action="save-game"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="game-saved"]`, chromedp.ByQuery),
 		pollUntil(`[...document.querySelectorAll('[data-testid="setup-games"] td.col--path .mono')].some(e => e.textContent.trim() === `+jsString(f.Game.InstallPath)+`)`),
 	)
 	game, err = f.Svc.GetGame(f.Game.ID)

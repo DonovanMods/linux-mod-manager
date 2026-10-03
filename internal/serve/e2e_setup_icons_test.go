@@ -1,9 +1,10 @@
 package serve_test
 
 // #525: Setup's tables edit a row with a pencil icon button, not a repeated
-// "Edit <field>…" text button. These scenarios hold the pencil's accessible
-// name, its tooltip (on hover AND on keyboard focus, never clipped), and the
-// layout in every face.
+// "Edit <field>…" text button. #527: a Games row has ONE pencil, which opens
+// the game's one editor - the per-field pencils are gone. These scenarios
+// hold the pencil's accessible name, its tooltip (on hover AND on keyboard
+// focus, never clipped), and the layout in every face.
 
 import (
 	"context"
@@ -68,8 +69,8 @@ func newE2EFixtureWithSetupGames(t *testing.T) e2eFixture {
 	return f
 }
 
-// pencilSel is one row's pencil for a field (data-action edit-mod-path,
-// edit-sources, edit-loader or edit-game).
+// pencilSel is one row's pencil (data-action edit-game, the only one a
+// Games row has since #527).
 func pencilSel(action, game string) string {
 	return fmt.Sprintf(`[data-testid="setup-games"] [data-action=%q][data-game=%q]`, action, game)
 }
@@ -164,13 +165,15 @@ func assertTooltipShows(t *testing.T, where, want string, got tooltipState) {
 }
 
 // TestE2E_SetupGames_EditsArePencilsWithTheRowInTheirName: no "Edit
-// <field>..." text is left in the Games table; each pencil's accessible name,
-// as Chrome computes it, says which game it edits.
+// <field>..." text is left in the Games table, and (#527) no per-field
+// pencil either - each row has one pencil, whose accessible name, as Chrome
+// computes it, says which game it edits.
 func TestE2E_SetupGames_EditsArePencilsWithTheRowInTheirName(t *testing.T) {
 	f := newE2EFixtureWithSetupGames(t)
 
 	var texts []string
-	var withIcon, total int
+	var actions []string
+	var withIcon int
 	names := map[string]e2eAXNode{}
 	games := map[string]string{"skyrim": "Skyrim Special Edition", "valheim": "Valheim", "g1": "Fixture Game"}
 	f.runInBrowser(t,
@@ -179,37 +182,31 @@ func TestE2E_SetupGames_EditsArePencilsWithTheRowInTheirName(t *testing.T) {
 		setupGamesReady(),
 		chromedp.Evaluate(`[...document.querySelectorAll('[data-testid="setup-games"] button')]
 			.map((b) => b.textContent.trim()).filter((t) => /^Edit/.test(t) || t === "Cancel")`, &texts),
-		chromedp.Evaluate(`document.querySelectorAll('[data-testid="setup-games"] button[data-action^="edit-"]').length`, &total),
+		chromedp.Evaluate(`[...document.querySelectorAll('[data-testid="setup-games"] button[data-action^="edit-"]')].map((b) => b.dataset.action)`, &actions),
 		chromedp.Evaluate(`document.querySelectorAll('[data-testid="setup-games"] button[data-action^="edit-"].button--quiet.button--icon.button--small svg[aria-hidden="true"]').length`, &withIcon),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			for id := range games {
-				for _, action := range []string{"edit-mod-path", "edit-sources", "edit-loader", "edit-game"} {
-					var ax e2eAXNode
-					if err := accessibleNodeOf(pencilSel(action, id), &ax).Do(ctx); err != nil {
-						return err
-					}
-					names[action+"/"+id] = ax
+				var ax e2eAXNode
+				if err := accessibleNodeOf(pencilSel("edit-game", id), &ax).Do(ctx); err != nil {
+					return err
 				}
+				names[id] = ax
 			}
 			return nil
 		}),
 	)
 
 	assert.Empty(t, texts, "no visible \"Edit ...\" text label remains in the Games table")
-	assert.Equal(t, 28, total, "four pencils on each of the seven rows")
-	assert.Equal(t, total, withIcon, "every one is a quiet small icon button drawing an aria-hidden SVG")
+	require.Len(t, actions, 7, "one pencil on each of the seven rows")
+	for _, action := range actions {
+		assert.Equal(t, "edit-game", action, "the per-field pencils (mod path, sources, loader) are gone")
+	}
+	assert.Equal(t, len(actions), withIcon, "every one is a quiet small icon button drawing an aria-hidden SVG")
 	for id, name := range games {
-		for action, want := range map[string]string{
-			"edit-mod-path": "Edit mod path for " + name,
-			"edit-sources":  "Edit sources for " + name,
-			"edit-loader":   "Edit loader for " + name,
-			"edit-game":     "Edit " + name,
-		} {
-			ax := names[action+"/"+id]
-			assert.False(t, ax.Ignored, "%s/%s", action, id)
-			assert.Equal(t, "button", ax.Role, "%s/%s", action, id)
-			assert.Equal(t, want, ax.Name, "%s/%s", action, id)
-		}
+		ax := names[id]
+		assert.False(t, ax.Ignored, id)
+		assert.Equal(t, "button", ax.Role, id)
+		assert.Equal(t, "Edit "+name, ax.Name, id)
 	}
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
@@ -238,21 +235,21 @@ func TestE2E_Tooltip_ShowsOnHoverAndOnKeyboardFocusAndStaysInView(t *testing.T) 
 				pointerTo(`.setup-nav__tab[data-section="auth"]`),
 				pollUntil(`document.querySelector(".tooltip")?.dataset.visible !== "true"`),
 				chromedp.Evaluate(tooltipStateJS, &left),
-				// Keyboard focus, on a field pencil.
-				focusByKeyboard(pencilSel("edit-mod-path", "skyrim")),
-				chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).matches(":focus-visible")`, pencilSel("edit-mod-path", "skyrim")), &focusVisible),
+				// Keyboard focus, on another row's pencil.
+				focusByKeyboard(pencilSel("edit-game", "skyrim")),
+				chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).matches(":focus-visible")`, pencilSel("edit-game", "skyrim")), &focusVisible),
 				pollUntil(`document.querySelector(".tooltip")?.dataset.visible === "true"`),
 				chromedp.Evaluate(tooltipStateJS, &focus),
 				// Escape dismisses it without moving focus (WCAG 1.4.13).
 				chromedp.KeyEvent(kb.Escape),
 				pollUntil(`document.querySelector(".tooltip")?.dataset.visible !== "true"`),
 				chromedp.Evaluate(tooltipStateJS, &esc),
-				chromedp.Evaluate(fmt.Sprintf(`document.activeElement === document.querySelector(%q)`, pencilSel("edit-mod-path", "skyrim")), &afterEsc.Visible),
+				chromedp.Evaluate(fmt.Sprintf(`document.activeElement === document.querySelector(%q)`, pencilSel("edit-game", "skyrim")), &afterEsc.Visible),
 			)
 			assertTooltipShows(t, where+" hover", "Edit Valheim", hover)
 			assert.False(t, left.Visible, "%s: leaving the pencil hides its tooltip", where)
 			require.True(t, focusVisible, "%s: the scenario really arrived by keyboard", where)
-			assertTooltipShows(t, where+" focus", "Edit mod path", focus)
+			assertTooltipShows(t, where+" focus", "Edit Skyrim Special Edition", focus)
 			assert.False(t, esc.Visible, "%s: Escape dismisses the tooltip", where)
 			assert.True(t, afterEsc.Visible, "%s: and leaves focus on the pencil", where)
 		}
@@ -260,57 +257,63 @@ func TestE2E_Tooltip_ShowsOnHoverAndOnKeyboardFocusAndStaysInView(t *testing.T) 
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
-// TestE2E_Tooltip_NamesEveryFieldPencil: each field's tooltip names the
-// field, not the row.
-func TestE2E_Tooltip_NamesEveryFieldPencil(t *testing.T) {
+// TestE2E_SetupGames_RowPencilOpensTheOneEditor (#527): the row's pencil
+// opens ONE panel holding every field the row edits - name, install path,
+// mod path, sources and loader - with one Save and one Cancel; aria-expanded
+// says it is open, the name does not change, and the pencil closes it again.
+func TestE2E_SetupGames_RowPencilOpensTheOneEditor(t *testing.T) {
 	f := newE2EFixtureWithSetupGames(t)
 
-	for action, want := range map[string]string{
-		"edit-mod-path": "Edit mod path",
-		"edit-sources":  "Edit sources",
-		"edit-loader":   "Edit loader",
-		"edit-game":     "Edit Fallout 4",
-	} {
-		var got tooltipState
-		f.runInBrowser(t,
-			chromedp.EmulateViewport(1280, 900),
-			chromedp.Navigate(f.SetupPath("games")),
-			setupGamesReady(),
-			focusByKeyboard(pencilSel(action, "fallout4")),
-			pollUntil(`document.querySelector(".tooltip")?.dataset.visible === "true"`),
-			chromedp.Evaluate(tooltipStateJS, &got),
-		)
-		assertTooltipShows(t, action, want, got)
+	var expanded, name string
+	var panel struct {
+		Panels  int  `json:"panels"`
+		Name    bool `json:"name"`
+		Install bool `json:"install"`
+		ModPath bool `json:"modPath"`
+		Sources bool `json:"sources"`
+		Loader  bool `json:"loader"`
+		Saves   int  `json:"saves"`
+		Cancels int  `json:"cancels"`
+		Focused bool `json:"focused"`
 	}
-	assertNoUncaughtErrors(t, f.BrowserErrors())
-}
-
-// TestE2E_SetupGames_PencilsStillOpenTheirEditors: the pencil is the same
-// control the text button was - same data-action, same editor, and an open
-// editor is announced by aria-expanded rather than by a changed label.
-func TestE2E_SetupGames_PencilsStillOpenTheirEditors(t *testing.T) {
-	f := newE2EFixtureWithSetupGames(t)
-
-	for action, editor := range map[string]string{
-		"edit-mod-path": `[data-testid="setup-games"] .setup-table__editor input`,
-		"edit-sources":  `[data-testid="setup-games"] [data-action="save-sources"]`,
-		"edit-loader":   `[data-testid="loader-editor"]`,
-	} {
-		var expanded, name string
-		f.runInBrowser(t,
-			chromedp.EmulateViewport(1280, 900),
-			chromedp.Navigate(f.SetupPath("games")),
-			setupGamesReady(),
-			clickWhenSettled(pencilSel(action, "valheim")),
-			chromedp.WaitVisible(editor, chromedp.ByQuery),
-			chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).getAttribute("aria-expanded") ?? ""`, pencilSel(action, "valheim")), &expanded),
-			chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).getAttribute("aria-label")`, pencilSel(action, "valheim")), &name),
-			clickWhenSettled(pencilSel(action, "valheim")),
-			waitGone(`.setup-table__editor`),
-		)
-		assert.Equal(t, "true", expanded, action)
-		assert.Contains(t, name, "Valheim", "%s: the name does not change when the editor opens", action)
-	}
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1280, 900),
+		chromedp.Navigate(f.SetupPath("games")),
+		setupGamesReady(),
+		clickWhenSettled(pencilSel("edit-game", "valheim")),
+		chromedp.WaitVisible(`[data-testid="game-editor"][data-game="valheim"]`, chromedp.ByQuery),
+		// The panel takes focus in an effect, which runs after it paints.
+		pollUntil(`document.activeElement?.name === "game-name"`),
+		chromedp.Evaluate(`(() => {
+			const p = document.querySelector('[data-testid="game-editor"]');
+			return {
+				panels: document.querySelectorAll('[data-testid="game-editor"]').length,
+				name: p.querySelector('input[name="game-name"]')?.value === "Valheim",
+				install: !!p.querySelector('input[name="install-path"]')?.value.endsWith("/Valheim"),
+				modPath: !!p.querySelector('[data-testid="mod-path-editor"] input[name="mod-path"]')?.value.endsWith("/Valheim/Data/Mods"),
+				sources: p.querySelector('[data-testid="sources-map"] input[name="source-steamworkshop"]')?.checked === true,
+				loader: p.querySelector('[data-testid="loader-editor"] select[name="loader-kind"]')?.value === "bepinex",
+				saves: document.querySelectorAll('[data-testid="setup-games"] [data-action^="save-"]').length,
+				cancels: p.querySelectorAll('[data-action="cancel-edit-game"]').length,
+				focused: document.activeElement === p.querySelector('input[name="game-name"]'),
+			};
+		})()`, &panel),
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).getAttribute("aria-expanded") ?? ""`, pencilSel("edit-game", "valheim")), &expanded),
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).getAttribute("aria-label")`, pencilSel("edit-game", "valheim")), &name),
+		clickWhenSettled(pencilSel("edit-game", "valheim")),
+		waitGone(`.setup-table__editor`),
+	)
+	assert.Equal(t, 1, panel.Panels, "one panel")
+	assert.True(t, panel.Name, "with the name")
+	assert.True(t, panel.Install, "the install path")
+	assert.True(t, panel.ModPath, "the mod path")
+	assert.True(t, panel.Sources, "the sources")
+	assert.True(t, panel.Loader, "and the loader, each as the row has it")
+	assert.Equal(t, 1, panel.Saves, "one Save")
+	assert.Equal(t, 1, panel.Cancels, "one Cancel")
+	assert.True(t, panel.Focused, "opening the panel moves focus into its first field")
+	assert.Equal(t, "true", expanded)
+	assert.Equal(t, "Edit Valheim", name, "the name does not change when the editor opens")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
@@ -362,7 +365,7 @@ func TestE2E_SetupGamesTable_PencilsHoldInEveryFace(t *testing.T) {
 				assert.Equal(t, 1, c.Lines, "the %s cell is laid out on one line", c.Cell)
 			}
 		}
-		require.Len(t, pencils, 28)
+		require.Len(t, pencils, 7)
 		for _, p := range pencils {
 			assert.InDelta(t, p.W, p.H, 0.5, "%s: a pencil is square", p.Action)
 			assert.LessOrEqual(t, p.Right, p.TableRight+0.5, "%s: a pencil is inside the table", p.Action)

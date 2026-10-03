@@ -1591,19 +1591,21 @@ func TestE2E_SetupGamesEditSourcesMapsAnExistingGame(t *testing.T) {
 
 		chromedp.Navigate(f.SetupPath("games")),
 		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
-		clickWhenSettled(`[data-action="edit-sources"][data-game="g1"]`),
+		clickWhenSettled(`[data-action="edit-game"][data-game="g1"]`),
 		chromedp.WaitVisible(`[data-testid="sources-map"]`, chromedp.ByQuery),
 		clickWhenSettled(`input[name="source-my-mods"]`),
-		clickWhenSettled(`[data-action="save-sources"]`),
+		clickWhenSettled(`[data-action="save-game"]`),
 		// NOT "setup-games contains my-mods": the sources-map editor is a
 		// table row INSIDE that container and its checkbox is labelled
 		// my-mods, so that text is there before Save is even clicked (#524).
-		// The editor only unmounts once the PUT has answered, and the row's
-		// own sources cell lists my-mods only after the list is re-fetched.
-		waitGone(`[data-testid="sources-map"]`),
+		// The editor says "Saved." only once the PUT has answered, and the
+		// row's own sources cell lists my-mods only after the list is
+		// re-fetched.
+		chromedp.WaitVisible(`[data-testid="game-saved"]`, chromedp.ByQuery),
 		pollUntil(`(() => {
-			const cell = document.querySelector('[data-action="edit-sources"][data-game="g1"]')?.closest("td");
-			return !!cell && cell.querySelector("span.mono")?.textContent.includes("my-mods");
+			const row = document.querySelector('[data-action="edit-game"][data-game="g1"]')?.closest("tr");
+			const th = [...document.querySelectorAll('[data-testid="setup-games"] thead th')].findIndex((h) => h.textContent.trim() === "Sources");
+			return !!row && th >= 0 && row.cells[th].querySelector("span.mono")?.textContent.includes("my-mods");
 		})()`),
 	)
 

@@ -124,33 +124,42 @@ func TestAPIGameSources_PUTEditsTheLoader(t *testing.T) {
 	assert.Nil(t, cleared.Loader)
 }
 
-// One request, one edit: a body carrying both is refused rather than silently
-// ordered, because each is its own gated write and a partial failure would
-// otherwise be expressible with no way to report it.
-func TestAPIGameSources_PUTRefusesACombinedEdit(t *testing.T) {
+// #527: the loader is one more member of the same edit, so a body carrying
+// it beside the source map applies both - in one write.
+func TestAPIGameSources_PUTAppliesALoaderWithTheOtherFields(t *testing.T) {
 	s := newGamesServer(t)
 	addLoaderGame(t, s, "valheim", "")
 
 	rec := doAPI(s, http.MethodPut, "/api/v1/games/valheim",
-		`{"sources":{"nexusmods":"valheim"},"loader":{"kind":"bepinex"}}`)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, rec.Body.String(), "separate requests")
+		`{"name":"Valheim (modded)","sources":{"nexusmods":"valheim"},"loader":{"kind":"bepinex"}}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	game, err := s.svc.GetGame("valheim")
+	require.NoError(t, err)
+	assert.Equal(t, "Valheim (modded)", game.Name)
+	assert.Equal(t, map[string]string{"nexusmods": "valheim"}, game.SourceIDs)
+	require.NotNil(t, game.Loader)
+	assert.Equal(t, "bepinex", game.Loader.Kind)
 }
 
-// The adapter is the third edit this route can express (#353), and it is
-// separate from the loader on the same grounds - so a body carrying both is
-// refused too, and neither write happens.
-func TestAPIGameSources_PUTRefusesACombinedAdapterAndLoaderEdit(t *testing.T) {
+// #527: and a body whose loader is refused writes none of the others -
+// the 400 names the loader field, which is where the Setup editor marks it.
+func TestAPIGameSources_PUTARefusedLoaderWritesNothing(t *testing.T) {
 	s := newGamesServer(t)
 	addLoaderGame(t, s, "valheim", "")
 
 	rec := doAPI(s, http.MethodPut, "/api/v1/games/valheim",
-		`{"adapter":"generic-files","loader":{"kind":"bepinex"}}`)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, rec.Body.String(), "separate requests")
+		`{"name":"Renamed","adapter":"generic-files","loader":{"kind":"bepinex","runtime":"dotnet"}}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+	var env struct {
+		Details core.GameSpecError `json:"details"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	assert.Equal(t, "loader.runtime", env.Details.Field)
 
 	game, err := s.svc.GetGame("valheim")
 	require.NoError(t, err)
 	assert.Nil(t, game.Loader, "nothing is written when the request is refused")
 	assert.Empty(t, game.Adapter)
+	assert.NotEqual(t, "Renamed", game.Name)
 }

@@ -168,6 +168,30 @@ refusal names `install_path`, the value that is actually missing. The
 alternative is the CWD-relative behaviour this rule exists to end, applied
 silently.
 
+#### Changing `install_path`
+
+`lmm game edit <game> --install-path <dir>` (and `PUT /api/v1/games/{id}`'s
+`install_path`, and the web UI's game editor) changes it. The directory
+must exist, and `~/` is expanded. A `mod_path` inside the install path
+moves with it, keeping its place in the folder; one outside it (a Proton
+prefix, `Documents`) stays where it is. A relative `mod_path` given in the
+same edit is relative to the new install path.
+
+With nothing deployed — and no game file lmm replaced and backed up — the
+edit is a correction and is simply written. Otherwise lmm accepts it only
+as a move of the whole game folder: the old install path must be gone, and
+every deployed file (and every replaced file the backups belong to) must be
+at the same place under the new one. lmm then records the deployed files
+under the moved `mod_path`, and restores backups into the new folder. Any
+other change is refused with the purge each profile needs first. Profile
+override files are not tracked; after a move, the next deploy writes them
+into the new folder.
+
+`lmm game detect` (and `lmm init`, and the web UI's detect) holds a repair
+of a configured game it finds at a new path to the same rule: a move is
+re-rooted, and any other change is reported for that game - it is left as
+it was - while the rest of the selection is still added.
+
 #### Changing `mod_path` with files deployed
 
 lmm records each deployed file relative to the `mod_path` it was deployed

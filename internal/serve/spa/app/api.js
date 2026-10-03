@@ -355,13 +355,19 @@ export const addGame = (spec) => post("/api/v1/games", spec);
 export const updateGameSources = (gameID, sources) =>
   put(`/api/v1/games/${encodeURIComponent(gameID)}`, { sources });
 
-/** Moves a game's mod_path (issues 460 and 427): `lmm game edit --mod-path`.
- * A 400 names the field (details.field === "mod_path"); a 409 is
- * core.GameModPathInUseError, whose details carry the ordered steps that
- * clear it. The answer is the game's row, which carries mod_path_error when
- * the new directory does not exist yet - still a valid save. */
-export const updateGameModPath = (gameID, modPath) =>
-  put(`/api/v1/games/${encodeURIComponent(gameID)}`, { mod_path: modPath });
+/** Edits a configured game (issue 527): `lmm game edit` in one request. body
+ * carries only the fields that change - "name", "install_path" (issue 528),
+ * "mod_path", "sources" (the whole map, a replacement), and "loader" with
+ * "loader_set" (null removes the declaration) - and core checks every one
+ * against the game they leave before it writes any: a refusal writes
+ * nothing. A 400 names the field (details.field); a 409 is a move refused
+ * for files deployed (core.GameModPathInUseError, whose details carry the
+ * ordered steps that clear it, or core.GameInstallPathInUseError) or a
+ * source removal that would orphan installed mods. The answer is the
+ * game's row, which carries mod_path_error when the new directory does not
+ * exist yet - still a valid save. */
+export const updateGame = (gameID, body) =>
+  put(`/api/v1/games/${encodeURIComponent(gameID)}`, body);
 
 /** Reads ONE game's full document: core.GameDetail - the same row
  * `lmm game list` prints, plus the mod-loader report (issue 359).
@@ -371,20 +377,6 @@ export const updateGameModPath = (gameID, modPath) =>
  * deliberately does not write that string into Steam's own configuration. */
 export const getGameDetail = (gameID) =>
   get(`/api/v1/games/${encodeURIComponent(gameID)}`);
-
-/** Replaces a game's mod-loader declaration (issue 359), or REMOVES it when
- * spec is null.
- *
- * `loader_set` is what makes the removal expressible: an absent member means
- * "leave the loader alone", so the flag says the member was meant. Sources and
- * the loader are separate requests - each is its own write, and one request
- * doing both would make a half-applied edit possible with no way to report
- * it. */
-export const updateGameLoader = (gameID, spec) =>
-  put(`/api/v1/games/${encodeURIComponent(gameID)}`, {
-    loader: spec ?? undefined,
-    loader_set: true,
-  });
 
 /** Reads the Steam detect scan's pre-selection listing: core.GameDetectListing.
  * all=true (issue 206) widens it with every OTHER installed Steam game
