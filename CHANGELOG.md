@@ -1859,6 +1859,18 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A failed update's way out no longer disappears a few seconds after it
+  appears (#531).** An update batch's job counts as "succeeded" even when
+  every item in it failed, and the page hands a succeeded job's control back
+  four seconds after it ends - taking with it the failed item's "Open on"
+  link and "Update from file…" while the user was choosing the file.
+  A readout that still carries something to act on or read now waits for you
+  to dismiss it, exactly as a failed job's does: an update batch with a
+  failed item, a repair that left a mod still failing, and a profile
+  switch's recovery notice - and when you have left the page, the update
+  batch's toast now reads as a failure ("1 applied / 1 failed") and stays
+  too. A plain "Done" is still handed back on its own.
+
 - **A game's install path can be changed (#528).** It was fixed once the
   game was added - a path mistyped at `lmm game add`, or a Steam library
   that moved, meant hand-editing `games.yaml`. Now
