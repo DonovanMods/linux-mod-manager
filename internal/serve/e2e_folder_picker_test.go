@@ -60,6 +60,18 @@ func pickerPathIs(path string) chromedp.Action {
 	return pollUntil(fmt.Sprintf(`document.querySelector(%q)?.value === %q`, pickerPathSel, path))
 }
 
+// pickerRowIs waits for the list's highlighted row (aria-activedescendant) to
+// be the folder named name. A key press is only valid against the row the
+// previous one left highlighted, so each arrow waits for its predecessor's
+// effect rather than assuming the render has landed (#532).
+func pickerRowIs(name string) chromedp.Action {
+	return pollUntil(fmt.Sprintf(`(() => {
+		const list = document.querySelector(%q);
+		const row = list && document.getElementById(list.getAttribute("aria-activedescendant") ?? "");
+		return row?.dataset.folder === %q && list.getAttribute("aria-busy") === "false";
+	})()`, pickerListSel, name))
+}
+
 func pickerEntries(out *[]string) chromedp.Action {
 	return chromedp.Evaluate(fmt.Sprintf(`[...document.querySelectorAll(%q)].map((e) => e.dataset.folder)`, pickerSel+` [role="option"]`), out)
 }
@@ -183,19 +195,24 @@ func TestE2E_FolderPicker_KeyboardOnly(t *testing.T) {
 		chromedp.KeyEvent(kb.Enter),
 		pickerReady(),
 		pickerPathIs(root),
-		settleEffects(),
 		// alpha is highlighted; Down moves to beta; Enter opens it.
+		pickerRowIs("alpha"),
 		chromedp.KeyEvent(kb.ArrowDown),
+		pickerRowIs("beta"),
 		chromedp.KeyEvent(kb.Enter),
 		pickerPathIs(filepath.Join(root, "beta")),
+		pickerRowIs("deep"),
 		// Backspace goes up.
 		chromedp.KeyEvent(kb.Backspace),
 		pickerPathIs(root),
+		pickerRowIs("alpha"),
 		// Down, Down is clamped at the last entry; Enter opens beta again.
 		chromedp.KeyEvent(kb.ArrowDown),
+		pickerRowIs("beta"),
 		chromedp.KeyEvent(kb.ArrowDown),
 		chromedp.KeyEvent(kb.Enter),
 		pickerPathIs(filepath.Join(root, "beta")),
+		pickerRowIs("deep"),
 		// Tab out of the list: Cancel, then Choose.
 		chromedp.KeyEvent(kb.Tab),
 		chromedp.KeyEvent(kb.Tab),
@@ -216,7 +233,7 @@ func TestE2E_FolderPicker_KeyboardOnly(t *testing.T) {
 		chromedp.Focus(browseSel("install-path"), chromedp.ByQuery),
 		chromedp.KeyEvent(kb.Enter),
 		pickerReady(),
-		settleEffects(),
+		pickerRowIs("deep"),
 		chromedp.KeyEvent(kb.Enter), // opens a folder - still only browsing
 		chromedp.KeyEvent(kb.Escape),
 		waitGone(pickerSel),

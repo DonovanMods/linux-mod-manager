@@ -52,7 +52,44 @@ func openEditor(game string) chromedp.Action {
 	return chromedp.Tasks{
 		clickWhenSettled(pencilSel("edit-game", game)),
 		chromedp.WaitVisible(fmt.Sprintf(`[data-testid="game-editor"][data-game=%q]`, game), chromedp.ByQuery),
+		// The panel takes focus on mount; a test that types before it has
+		// would see the first key land and the rest go to wherever focus
+		// moved (#532). Nothing may type into the panel until it holds focus.
+		pollUntil(`!!document.activeElement?.closest('[data-testid="game-editor"]')`),
 	}
+}
+
+// TestE2E_GameEditor_FocusIsPlacedWhenThePanelMounts (#532): the editor's
+// focus lands in the same commit that mounts it, not after paint. A plain
+// effect runs after paint, so a user (or a test) that clicked into another
+// field and typed straight away had focus pulled back to Name after the first
+// keystroke - the rest of the text went nowhere.
+//
+// A MutationObserver callback is a microtask that runs once the render task
+// that inserted the panel has finished, which is before any after-paint
+// effect and after every layout effect - so it samples focus at exactly the
+// boundary that tells the two apart, deterministically.
+func TestE2E_GameEditor_FocusIsPlacedWhenThePanelMounts(t *testing.T) {
+	f := newE2EFixtureWithSetupGames(t)
+
+	var atMount string
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1280, 900),
+		chromedp.Navigate(f.SetupPath("games")),
+		setupGamesReady(),
+		chromedp.Evaluate(`(() => {
+			window.__focusAtMount = null;
+			new MutationObserver((_, obs) => {
+				if (!document.querySelector('[data-testid="game-editor"]')) return;
+				window.__focusAtMount = document.activeElement?.name ?? "";
+				obs.disconnect();
+			}).observe(document.body, { childList: true, subtree: true });
+		})()`, nil),
+		openEditor("valheim"),
+		chromedp.Evaluate(`window.__focusAtMount`, &atMount),
+	)
+	assert.Equal(t, "game-name", atMount, "the Name field holds focus by the time the panel is on screen")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
 // TestE2E_GameEditor_SavesSeveralFieldsInOneSave: the name, the install
