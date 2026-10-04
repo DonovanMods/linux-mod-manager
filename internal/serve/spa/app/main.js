@@ -38,6 +38,8 @@ import {
   NoAnswerError,
 } from "./api.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
+import { fetchJobResult, readoutHasNextStep } from "./jobresult.js";
+import { resultTallyLabel, resultTallyTone } from "./progress.js";
 import { resolveGamePath } from "./navigation.js";
 import { RELEVANCE, effectiveSort, knownSort } from "./searchsort.js";
 import {
@@ -1956,15 +1958,26 @@ function clearOrigin(origin) {
 // envelope's own message, and often the affordance that answers it - the
 // conflict round trip's Overwrite button lives inside this readout), so it
 // waits for the user. Same reason toasts only auto-dismiss on success.
+//
+// So is every "succeeded" job whose readout carries a next step all the same
+// (issue 531): an update batch's job is "succeeded" even when every item
+// failed, and its readout then holds the failed item's way out - "Open on
+// <source>", "Update from file…" - which a timer took away a few seconds
+// after the user had been told to use it, mid-way through choosing the file.
+// jobresult.js#readoutHasNextStep says which readouts those are.
 const succeededOriginReleaseMillis = 4000;
 
 /** releaseSucceededOrigin hands origin's control back once the job it is
- * showing has had its few seconds on screen. Guarded on the origin still
- * naming THAT job: a control the user has already started something else
- * from must not be cleared out from under the new job. */
-function releaseSucceededOrigin(origin, jobID) {
+ * showing has had its few seconds on screen - unless that readout is
+ * carrying something the user still has to act on or read, which waits for
+ * them to dismiss it. Guarded on the origin still naming THAT job: a control
+ * the user has already started something else from must not be cleared out
+ * from under the new job. */
+async function releaseSucceededOrigin(origin, summary) {
+  const read = await fetchJobResult(summary.id);
+  if (readoutHasNextStep(summary, read)) return;
   setTimeout(() => {
-    if (store.get().origins[origin] !== jobID) return;
+    if (store.get().origins[origin] !== summary.id) return;
     clearOrigin(origin);
   }, succeededOriginReleaseMillis);
 }
@@ -1973,11 +1986,13 @@ let toastSeq = 0;
 const toastDismissMillis = 8000;
 
 /** Pushes a toast. Successes clear themselves after a while; failures do
- * not - a failure nobody saw is the case toasts exist for. */
+ * not - a failure nobody saw is the case toasts exist for. A `sticky` toast
+ * does not either: a success that still carries something to read (issue
+ * 531). */
 function pushToast(toast) {
   const id = `t${++toastSeq}`;
   store.set({ toasts: [...store.get().toasts, { ...toast, id }] });
-  if (toast.tone !== "failure") {
+  if (toast.tone !== "failure" && !toast.sticky) {
     setTimeout(() => dismissToast(id), toastDismissMillis);
   }
 }
@@ -2056,7 +2071,7 @@ async function onJobDone(summary) {
 
   const origin = originOf(summary.id);
   if (origin && summary.state === "succeeded")
-    releaseSucceededOrigin(origin, summary.id);
+    releaseSucceededOrigin(origin, summary);
 
   // Either tense counts as "in view": the snapshot answers for a control
   // this function's own refresh took off screen, and the live check for a
@@ -2065,22 +2080,34 @@ async function onJobDone(summary) {
   if (origin && (mountedAtCompletion.has(origin) || isOriginMounted(origin)))
     return;
 
-  pushToast(
-    summary.state === "failed"
-      ? {
-          tone: "failure",
-          title: `${summary.kind} failed`,
-          detail: summary.error?.error ?? "",
-          jobID: summary.id,
-          ...toastAffordance(summary),
-        }
-      : {
-          tone: "success",
-          title: `${summary.kind} finished`,
-          jobID: summary.id,
-          ...toastAffordance(summary),
-        },
-  );
+  if (summary.state === "failed") {
+    pushToast({
+      tone: "failure",
+      title: `${summary.kind} failed`,
+      detail: summary.error?.error ?? "",
+      jobID: summary.id,
+      ...toastAffordance(summary),
+    });
+    return;
+  }
+
+  // A job that succeeded can still have failed items (issue 531), and then
+  // its toast is the failure's only trace once the page has moved on: it
+  // reads as one - the tally in its detail, and no timer taking it away.
+  const read = await fetchJobResult(summary.id);
+  const held = readoutHasNextStep(summary, read);
+  const tally = read?.tally;
+  pushToast({
+    tone:
+      held && tally && resultTallyTone(tally) !== "succeeded"
+        ? "failure"
+        : "success",
+    sticky: held,
+    title: `${summary.kind} finished`,
+    detail: held && tally ? resultTallyLabel(tally) : undefined,
+    jobID: summary.id,
+    ...toastAffordance(summary),
+  });
 }
 
 /**

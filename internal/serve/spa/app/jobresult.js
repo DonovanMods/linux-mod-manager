@@ -11,7 +11,7 @@
 // fetch-free, rendering only what it is handed.
 import { useEffect, useState } from "./render.js";
 import { jobStatus } from "./api.js";
-import { resultTally } from "./progress.js";
+import { resultTally, resultTallyTone } from "./progress.js";
 import { repairOutcome } from "./verify.js";
 import { batchDownloadFailuresFor } from "./failures.js";
 
@@ -113,32 +113,60 @@ function readResult(status) {
   return { tally: resultTally(result), warnings, purge, verify, downloads };
 }
 
+/**
+ * fetchJobResult is jobID's finished-job read (readResult's shape, or null
+ * for a job the registry no longer holds), through the same cache and
+ * in-flight map every hook above shares - so a caller outside a component
+ * (main.js deciding whether a readout may be released) costs no second
+ * request when a readout is also showing the job.
+ */
+export function fetchJobResult(jobID) {
+  if (tallyCache.has(jobID)) return Promise.resolve(tallyCache.get(jobID));
+  let read = pendingReads.get(jobID);
+  if (!read) {
+    read = jobStatus(jobID).then(
+      (status) => readResult(status),
+      () => {
+        // A job the registry has already evicted (jobs.go's retention
+        // limit) - honestly null, same as jobhistory.js's own "a gap in
+        // history is honest, a blank page over one missing job is not".
+        return null;
+      },
+    );
+    pendingReads.set(jobID, read);
+    read.then((computed) => {
+      tallyCache.set(jobID, computed);
+      pendingReads.delete(jobID);
+    });
+  }
+  return read;
+}
+
+/**
+ * readoutHasNextStep says whether a SUCCEEDED job's readout is carrying
+ * something the user may still need to act on or read: a batch whose items
+ * failed (the job's own state is "succeeded" all the same - progress.js
+ * #resultTally), the download way out of a failed update ("Open on
+ * <source>", "Update from file…"), a purge's or a repair's own outcome, a
+ * profile switch's recovery notice. Such a readout waits for the user, as a
+ * failed job's does (main.js#releaseSucceededOrigin); only a bare "Done" is
+ * handed back on a timer. `read` is fetchJobResult's answer; null (no
+ * result to look at) holds nothing, as before.
+ */
+export function readoutHasNextStep(summary, read) {
+  if (!read) return false;
+  if (read.tally && resultTallyTone(read.tally) !== "succeeded") return true;
+  if (read.downloads.length > 0 || read.purge || read.verify) return true;
+  return summary?.kind === "switch" && read.warnings.length > 0;
+}
+
 function useJobResultRead(jobID, jobState) {
   const [read, setRead] = useState(() => tallyCache.get(jobID) ?? null);
 
   useEffect(() => {
     if (!jobID || jobState === "running") return;
-    if (tallyCache.has(jobID)) {
-      setRead(tallyCache.get(jobID));
-      return;
-    }
     let cancelled = false;
-    let read = pendingReads.get(jobID);
-    if (!read) {
-      read = jobStatus(jobID).then(
-        (status) => readResult(status),
-        () => {
-          // A job the registry has already evicted (jobs.go's retention
-          // limit) - honestly null, same as jobhistory.js's own "a gap in
-          // history is honest, a blank page over one missing job is not".
-          return null;
-        },
-      );
-      pendingReads.set(jobID, read);
-      read.finally(() => pendingReads.delete(jobID));
-    }
-    read.then((computed) => {
-      tallyCache.set(jobID, computed);
+    fetchJobResult(jobID).then((computed) => {
       if (!cancelled) setRead(computed);
     });
     return () => {
