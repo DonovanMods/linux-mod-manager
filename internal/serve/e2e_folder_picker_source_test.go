@@ -202,8 +202,9 @@ func TestE2E_SourceEditor_InsertFolderPathKeyboardOnly(t *testing.T) {
 		chromedp.KeyEvent(kb.Enter),
 		pickerReady(),
 		pickerPathIs(root),
-		settleEffects(),
+		pickerRowIs("alpha"),
 		chromedp.KeyEvent(kb.ArrowDown), // alpha -> beta
+		pickerRowIs("beta"),
 		chromedp.KeyEvent(kb.Enter),
 		pickerPathIs(filepath.Join(root, "beta")),
 		chromedp.KeyEvent(kb.Tab), // Cancel

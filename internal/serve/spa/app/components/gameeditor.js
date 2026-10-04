@@ -8,7 +8,7 @@
 // names ONE field, and this panel marks that field - the panel never guesses
 // which input was at fault from a sentence.
 
-import { html, useEffect, useRef } from "../render.js";
+import { html, useLayoutEffect, useRef } from "../render.js";
 import { codeSpans } from "../errortext.js";
 import { SourcesMapEditor } from "./sourcesmap.js";
 import {
@@ -152,7 +152,15 @@ export function GameEditor({
   // Mounting IS "the panel opened" (setupgames.js mounts it only while it
   // is open), so this runs once per opening: a keyboard user lands in the
   // field they came for instead of on <body> (issue 460 review F4).
-  useEffect(() => {
+  //
+  // A LAYOUT effect, deliberately: Preact flushes a plain effect after paint
+  // (a rAF, or a ~100ms timeout when the page is not painting), which is
+  // after the panel is already on screen - so a user who clicked into another
+  // field and started typing in that window had focus pulled back to Name
+  // after the first keystroke and the rest of the text went nowhere (issue
+  // 532). A layout effect runs in the commit itself, before the panel can be
+  // interacted with.
+  useLayoutEffect(() => {
     (focus === "mod_path" ? modPathRef : nameRef).current?.focus();
   }, []);
 

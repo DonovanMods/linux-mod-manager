@@ -1859,6 +1859,14 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Typing into a game's install path right after opening its editor no
+  longer loses all but the first character (#532).** The editor panel moved
+  focus to its Name field from an after-paint effect, so a field clicked into
+  (or a test typing) in the first moments after the panel appeared had focus
+  pulled away after one keystroke and the rest of the text went nowhere. The
+  focus is now placed in the same commit that mounts the panel. This was also
+  the cause of `TestE2E_FolderPicker_KeyboardOnly` timing out under `-race`.
+
 - **A failed update's way out no longer disappears a few seconds after it
   appears (#531).** An update batch's job counts as "succeeded" even when
   every item in it failed, and the page hands a succeeded job's control back
