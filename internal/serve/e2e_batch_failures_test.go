@@ -183,6 +183,10 @@ func runOwnersBatch(t *testing.T, f e2eSearchFixture, width int64, out *batchFai
 		clickWhenSettled(`.modal [data-action="confirm"]`),
 		waitGone(`.modal`),
 		pollUntil(`document.querySelectorAll('.card--updates [data-testid="batch-failure"] [data-action="update-from-file"]').length === 2`),
+		// #536: useSourceName resolves display names asynchronously - the
+		// first render carries the raw source id - so wait until every
+		// entry names its source before reading what the entries say.
+		pollUntil(`[...document.querySelectorAll('.card--updates [data-testid="batch-failure"]')].every(e => e.textContent.includes('`+e2eSourceName+`'))`),
 		chromedp.Evaluate(batchFailureJS, out),
 	)
 }
