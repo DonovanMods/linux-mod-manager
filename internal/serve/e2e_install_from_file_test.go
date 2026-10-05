@@ -125,6 +125,7 @@ func TestE2E_InstallFromFile_FailedSearchInstallCompletesFromTheFile(t *testing.
 	var normalized string
 	f.runInBrowser(t,
 		failSearchInstall(f),
+		awaitSourceNamed(row+" .job-progress"),
 		chromedp.Evaluate(installFailureJS, &view),
 		linkIn(row+" .job-progress", &link),
 		clickWhenSettled(row+` .job-progress [data-action="install-from-file"]`),
@@ -177,6 +178,7 @@ func TestE2E_InstallFromFile_FromTheTray_MismatchIsInstallAnyway(t *testing.T) {
 		failSearchInstall(f),
 		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__failure [data-action="install-from-file"]`, chromedp.ByQuery),
+		awaitSourceNamed(`.tray__failure`),
 		textContent(`.tray__failure-message`, &trayHeadline),
 		clickWhenSettled(`.tray__failure [data-action="install-from-file"]`),
 		chromedp.SetUploadFiles(e2eFromFileInput, []string{archive}, chromedp.ByQuery),
@@ -186,7 +188,7 @@ func TestE2E_InstallFromFile_FromTheTray_MismatchIsInstallAnyway(t *testing.T) {
 		clickWhenSettled(`.modal [data-action="confirm"]`),
 		waitGone(`.modal`),
 	)
-	assert.Contains(t, trayHeadline, "won't let lmm download", "the tray leads with the explanation too")
+	assert.Contains(t, trayHeadline, e2eSourceName+" won't let lmm download", "the tray leads with the explanation too")
 	assert.Equal(t, "Install anyway", confirm)
 	assert.Contains(t, warning, "MapUtils-1.2.24-classic.zip", "the warning names the file the install tried")
 	require.Eventually(t, func() bool {
