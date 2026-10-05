@@ -1563,6 +1563,27 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #269/#538: the external keys, all populated - an update for
+			// a Workshop item, one tracked item Steam no longer lists, and
+			// the warning a partly unreadable Steam manifest leaves.
+			"update_check_report_external",
+			core.UpdateCheckReport{
+				GameID:   "space-engineers-2",
+				Profile:  "default",
+				Updates:  []domain.Update{{InstalledMod: jsonGoldenExternal, NewVersion: "8100000000000000001"}},
+				Skipped:  core.UpdateSkips{},
+				External: 1,
+				ExternalMissing: []core.ExternalModRef{
+					{SourceID: "steamworkshop", ModID: "3512001122", Name: "Unsubscribed Item"},
+				},
+				Warnings: []string{"/steam/steamapps/workshop/appworkshop_1133870.acf: unbalanced braces"},
+			},
+		},
+		{
+			"external_mod_ref",
+			core.ExternalModRef{SourceID: "steamworkshop", ModID: "3512001122", Name: "Unsubscribed Item"},
+		},
+		{
 			"update_skips",
 			core.UpdateSkips{Pinned: 3, Local: 2},
 		},

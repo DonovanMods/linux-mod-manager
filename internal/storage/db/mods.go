@@ -608,6 +608,38 @@ func (d *DB) SetModVersion(ctx context.Context, sourceID, modID, gameID, profile
 	return nil
 }
 
+// SetExternalRevision records an EXTERNAL mod's installed revision as its
+// installer reports it (#538): Steam updates a Workshop item without lmm,
+// so the version and updated_at stamped at adopt time go stale on every
+// Steam-side update. A plain UPDATE of those two columns only, and only on
+// an external row - like SetModVersion it never shifts previous_version
+// (lmm holds no earlier copy to roll back to) and never touches
+// installed_mod_files, so no stored checksum is lost (#514). A zero
+// updatedAt leaves the column as it is: the installer did not say when.
+func (d *DB) SetExternalRevision(ctx context.Context, sourceID, modID, gameID, profileName, version string, updatedAt time.Time) error {
+	var updated any
+	if !updatedAt.IsZero() {
+		updated = formatTime(updatedAt)
+	}
+	result, err := d.ExecContext(ctx, `
+		UPDATE installed_mods SET version = ?, updated_at = COALESCE(?, updated_at)
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ? AND external = 1
+	`, version, updated, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("setting external revision: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("setting external revision: checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrModNotFound
+	}
+
+	return nil
+}
+
 // UpdateModVersion updates a mod's version, preserving the previous version and file IDs for rollback.
 func (d *DB) UpdateModVersion(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
 	currentFileIDs, err := d.GetModFileIDs(ctx, sourceID, modID, gameID, profileName)

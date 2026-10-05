@@ -397,8 +397,8 @@ func (s *Server) parseOptionalIntParam(w http.ResponseWriter, r *http.Request, n
 // handleAPIUpdates answers GET /api/v1/updates with exactly the
 // core.UpdateCheckReport document a bulk `lmm update --json` (no mod ID)
 // emits (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/updates" ->
-// CheckGameUpdates), built the same way cmd/lmm/update.go's own
-// bulkCheckReport does. A partial CheckGameUpdates failure (e.g. one
+// CheckGameUpdates), assembled by the same core.CheckGameUpdateReport the
+// CLI uses. A partial CheckGameUpdates failure (e.g. one
 // source down) still answers 200 with the one document ErrorMessage names -
 // the CLI's own --json contract for this call keeps the partial results on
 // stdout rather than discarding them - never the generic error envelope,
@@ -410,6 +410,15 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	// #538: record the revision Steam has installed for every tracked
+	// Workshop item first, so the library and the mod page read the real
+	// one. Never waits behind a running job and never fails the request:
+	// the check below reads Steam's manifest itself, so its answer is right
+	// either way, and the next hydrate reconciles. Logged, not surfaced.
+	if _, err := s.svc.ReconcileExternalMods(ctx, sel.Game, sel.Profile); err != nil {
+		s.log.Debug("serve: reconciling external revisions", "game", sel.Game.ID, "profile", sel.Profile, "err", err)
+	}
+
 	installed, err := s.svc.GetInstalledMods(ctx, sel.Game.ID, sel.Profile)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
@@ -420,17 +429,7 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 	// Workshop source caches Valve's keyless answers for hours, so the web
 	// UI's explicit refresh action needs a way to say "ask again".
 	opts := core.UpdateCheckOptions{Refresh: r.URL.Query().Get("refresh") == "1"}
-	updates, checkErr := s.svc.CheckGameUpdates(ctx, sel.Game, sel.Profile, installed, nil, opts)
-	report := &core.UpdateCheckReport{
-		GameID:   sel.Game.ID,
-		Profile:  sel.Profile,
-		Updates:  updates,
-		Skipped:  core.CountUpdateSkips(installed),
-		External: core.CountExternalUpdates(updates),
-	}
-	if checkErr != nil {
-		report.ErrorMessage = checkErr.Error()
-	}
+	report, _ := s.svc.CheckGameUpdateReport(ctx, sel.Game, sel.Profile, installed, nil, opts)
 	s.writeJSON(w, http.StatusOK, report)
 }
 

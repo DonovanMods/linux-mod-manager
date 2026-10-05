@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -28,24 +29,6 @@ var (
 	updateDryRun  bool
 	updateForce   bool
 )
-
-// bulkCheckReport assembles the one document a bulk `lmm update --json`
-// emits, from the three things the check produced: the updates found
-// (nil when there are none - emitJSON encodes that as []), the skip counts
-// derived from what was installed, and the check's own failure, if any.
-func bulkCheckReport(gameID, profileName string, updates []domain.Update, installed []domain.InstalledMod, checkErr error) *core.UpdateCheckReport {
-	report := &core.UpdateCheckReport{
-		GameID:   gameID,
-		Profile:  profileName,
-		Updates:  updates,
-		Skipped:  core.CountUpdateSkips(installed),
-		External: core.CountExternalUpdates(updates),
-	}
-	if checkErr != nil {
-		report.ErrorMessage = checkErr.Error()
-	}
-	return report
-}
 
 // planUpdateResult builds the one-document result `lmm update <mod-id>`
 // emits for an outcome core never applied - pinned, up to date, locked, or a
@@ -219,6 +202,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if err != nil {
 		return fmt.Errorf("failed to get installed mods: %w", err)
 	}
+	if installed, err = reconcileExternalRevisions(ctx, service, game, profileName, installed); err != nil {
+		return err
+	}
 
 	if len(installed) == 0 {
 		switch {
@@ -340,7 +326,8 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// Check for updates (partial results returned even when some mods fail to
 	// fetch) plus, for DeployCompile games, merged-pak staleness (#196/#197) -
 	// CheckGameUpdates is the single seam the CLI checks through.
-	updates, checkErr := service.CheckGameUpdates(ctx, game, profileName, installed, sink, core.UpdateCheckOptions{Refresh: updateRefresh})
+	report, checkErr := service.CheckGameUpdateReport(ctx, game, profileName, installed, sink, core.UpdateCheckOptions{Refresh: updateRefresh})
+	updates := report.Updates
 	if checkErr != nil {
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
 			// The bulk path has no -s/--source of its own since #375, so
@@ -351,7 +338,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 		// Surface warning but continue to show partial updates - under
 		// --json the same message already reaches the document via
-		// bulkCheckReport's ErrorMessage field, so printing it here too
+		// the report's ErrorMessage field, so printing it here too
 		// would both leak onto stderr and duplicate it (Ruling 15).
 		if !jsonOutput {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", checkErr)
@@ -380,7 +367,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			// (pinned, locked, manual download), which an empty
 			// UpdateBatchResult would lose. The two are discriminable -
 			// only the batch result carries "applied".
-			if err := emitJSON(bulkCheckReport(game.ID, profileName, nil, installed, checkErr)); err != nil {
+			if err := emitJSON(report); err != nil {
 				return err
 			}
 			return finish()
@@ -388,9 +375,11 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		// "All mods are up to date" would be false if the only reason there is
 		// nothing to report is that every mod was skipped. An empty profile
 		// returned earlier, so len(installed) is non-zero here.
+		printExternalCheckWarnings(report)
 		skips := core.CountUpdateSkips(installed)
 		if skips.Total() == len(installed) {
 			printSkipped(skips)
+			printExternalMissing(report)
 			return finish()
 		}
 		// A failed check produces no updates too. Claiming currency here would
@@ -406,6 +395,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Println()
 			printSkipped(skips)
 		}
+		printExternalMissing(report)
 		return finish()
 	}
 
@@ -416,7 +406,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// UpdateBatchResult below instead. A --dry-run never applies, so it
 	// stays on the check document whatever else was passed.
 	if jsonOutput && (!updateAll || updateDryRun) {
-		if err := emitJSON(bulkCheckReport(game.ID, profileName, updates, installed, checkErr)); err != nil {
+		if err := emitJSON(report); err != nil {
 			return err
 		}
 		return finish()
@@ -452,6 +442,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	if !jsonOutput {
+		printExternalCheckWarnings(report)
 		if err := printUpdateTable(service, updates, autoUpdates); err != nil {
 			return err
 		}
@@ -461,6 +452,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Println()
 			printSkipped(skips)
 		}
+		printExternalMissing(report)
 		printUpdateChangelogs(service, updates)
 
 		// Dry run mode - just show what would happen
@@ -654,6 +646,73 @@ func printExternalUpdateSummary(updates []domain.Update) {
 	}
 	fmt.Printf("\n%d Steam Workshop item(s) have updates — Steam applies these itself the next time\n", n)
 	fmt.Println("you launch the game (or use Steam's \"Verify integrity of game files\").")
+}
+
+// reconcileExternalRevisions records the revision Steam has installed for
+// every tracked Workshop item before the run reads its rows (#538): Steam
+// updates those items itself, so the revision lmm stamped at adopt goes
+// stale. It returns installed re-read when anything was recorded, and
+// installed unchanged otherwise.
+//
+// A failure is a warning, never fatal - the update check reads Steam's
+// manifest itself, so its answer is right either way, and a mutation held
+// by another lmm process is the common cause. Under --json the warning is
+// not printed (Ruling 15); the next run reconciles.
+func reconcileExternalRevisions(ctx context.Context, service *core.Service, game *domain.Game, profileName string, installed []domain.InstalledMod) ([]domain.InstalledMod, error) {
+	if !slices.ContainsFunc(installed, func(m domain.InstalledMod) bool { return m.External }) {
+		return installed, nil
+	}
+	result, err := service.ReconcileExternalMods(ctx, game, profileName)
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Warning: could not record the revisions Steam has installed: %v\n", err)
+		}
+		return installed, nil
+	}
+	if verbose && !jsonOutput {
+		for _, w := range result.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+	if len(result.Reconciled) == 0 {
+		return installed, nil
+	}
+	if verbose && !jsonOutput {
+		fmt.Printf("Recorded %d Steam Workshop item revision(s) Steam installed since lmm last looked.\n", len(result.Reconciled))
+	}
+	fresh, err := service.GetInstalledMods(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get installed mods: %w", err)
+	}
+	return fresh, nil
+}
+
+// printExternalCheckWarnings prints why some Steam Workshop items were
+// compared against lmm's recorded revision rather than Steam's own (#538) -
+// on stderr, beside the check's other warnings.
+func printExternalCheckWarnings(report *core.UpdateCheckReport) {
+	for _, w := range report.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+}
+
+// printExternalMissing names the Steam Workshop items lmm tracks that Steam
+// no longer lists (#538): they were not checked, and are not updates.
+// Silent when there are none.
+func printExternalMissing(report *core.UpdateCheckReport) {
+	n := len(report.ExternalMissing)
+	if n == 0 {
+		return
+	}
+	names := make([]string, 0, n)
+	for _, m := range report.ExternalMissing {
+		names = append(names, cmp.Or(m.Name, m.ModID))
+	}
+	fmt.Printf("\n%d Steam Workshop item(s) tracked by lmm are no longer installed by Steam: %s\n", n, strings.Join(names, ", "))
+	fmt.Println("Resubscribe in the Steam client, or run 'lmm uninstall <id>' to stop tracking them.")
 }
 
 // printUpdateChangelogs prints the changelog block the bulk check shows -

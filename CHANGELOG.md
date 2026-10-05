@@ -1888,6 +1888,24 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Steam Workshop items Steam has already updated are no longer listed as
+  updates (#538).** lmm compared Steam's newest revision of a tracked
+  Workshop item against the revision it recorded when the item was adopted,
+  so after Steam updated the items `lmm update` (and the web UI's Updates
+  card) kept offering every one of them. The check now reads the revision
+  Steam has actually installed from Steam's own workshop manifest
+  (`appworkshop_<appid>.acf`), and `lmm update` and the web UI's updates view
+  also record that revision — version and date — so the library, `lmm mod
+show` and the web UI show what is really installed. Only those two fields
+  are written; checksums and everything else on the row are untouched, and
+  a profile entry follows unless it is locked. `lmm verify` reports a record
+  Steam has moved past as `external_stale`, which `lmm verify --fix`
+  corrects. A tracked item Steam's manifest no longer lists is never shown
+  as an update: `lmm update` names it on its own line, the `--json` report
+  carries it in a new `external_missing` list, and the web UI says so on
+  the Updates card. If Steam's manifest cannot be read, lmm falls back to
+  its recorded revision and says why (`warnings` in the `--json` report).
+
 - **The activity bell's unread badge stays cleared (#537).** Opening the bell
   cleared the badge for a failed job, but going to another page (a mod's full
   page, search, setup) or reloading brought it back for the same failure,

@@ -120,6 +120,9 @@ type VerifyFinding struct {
 	//	                      or, for a file the source won't serve, a fill
 	//	                      from the mod's own complete cache entry (#514)
 	//	needs_reingest        a non-local source: redownload re-ingests
+	//	external_stale        always, on a plain run: --fix records the
+	//	                      revision Steam's manifest names for the
+	//	                      item (#538) - a record write, no files
 	//	version_mismatch      a non-local source AND an UNLOCKED ref - a
 	//	                      locked ref's Version is the lock's target, and
 	//	                      --fix refuses to rewrite it (#97)
@@ -1038,16 +1041,40 @@ func (r *verifyRun) adapterPass(installedMods []domain.InstalledMod) {
 }
 
 // externalPresencePass is #269's verify tier for EXTERNAL mods: the only
-// thing lmm can honestly check about a Steam Workshop item is that the
-// directory Steam owns is still there and still has something in it.
+// thing lmm can honestly check about a Steam Workshop item's FILES is that
+// the directory Steam owns is still there and still has something in it.
 //
 // There is no checksum tier for these (lmm never downloaded the bytes, so
 // it has nothing recorded to compare against - which is why versionPass
-// skips them too), and there is no --fix: both repairs verify offers,
-// redownload and checksum backfill, presuppose an lmm-owned cache entry.
-// A missing directory is reported and left for the user to resolve in the
+// skips them too), and a missing directory has no --fix: both file repairs
+// verify offers, redownload and checksum backfill, presuppose an lmm-owned
+// cache entry. It is reported and left for the user to resolve in the
 // Steam client, which is the only place it CAN be resolved.
+//
+// What lmm CAN check is its own RECORD (#538): Steam updates an item
+// without lmm, so the revision stamped at adopt goes stale. A present item
+// whose record disagrees with Steam's manifest is an "external_stale" row,
+// and --fix records Steam's revision through reconcileExternalMods - the
+// same write ReconcileExternalMods makes, under the slot this --fix run
+// already holds.
 func (r *verifyRun) externalPresencePass(installedMods []domain.InstalledMod) error {
+	drift, err := r.svc.readExternalDrift(r.ctx, r.game, installedMods)
+	if err != nil {
+		return err
+	}
+	reconciled := map[string]ExternalRevisionChange{}
+	if r.opts.Fix && len(drift.revised) > 0 {
+		res, err := r.svc.reconcileExternalMods(r.ctx, r.game, r.profile, r.opts.ModFilter)
+		if res != nil {
+			for _, c := range res.Reconciled {
+				reconciled[domain.ModKey(c.SourceID, c.ModID)] = c
+			}
+		}
+		if err != nil {
+			return err // a cancellation: the only error it returns
+		}
+	}
+
 	for i := range installedMods {
 		mod := &installedMods[i]
 		if !mod.External {
@@ -1060,25 +1087,54 @@ func (r *verifyRun) externalPresencePass(installedMods []domain.InstalledMod) er
 			continue
 		}
 		r.result.External++
-		if externalContentPresent(mod.ExternalPath) {
-			// #429: named, not skipped - "tracked, present, and not lmm's
-			// to verify" is the whole report for this item, and silence
-			// read as "not checked at all". An "ok" row, so no surface
-			// counts it as a problem.
+		if !externalContentPresent(mod.ExternalPath) {
+			r.result.Issues++
 			r.finding(VerifyFinding{
-				ModID: mod.ID, ModName: mod.Name, Status: "ok", External: true,
-				Note: "tracked from Steam - present on disk; Steam owns its files, so lmm checks only that they are there",
+				ModID: mod.ID, ModName: mod.Name, Status: "external_missing", External: true,
+				Note:          "Steam no longer has this item on disk - it may have been unsubscribed",
+				FixableReason: "lmm does not own this item's files, so there is nothing for --fix to redownload - resubscribe in the Steam client, or uninstall it from lmm",
 			}, VerifyEvent{})
 			continue
 		}
-		r.result.Issues++
+		key := domain.ModKey(mod.SourceID, mod.ID)
+		if c, ok := reconciled[key]; ok {
+			r.finding(VerifyFinding{
+				ModID: mod.ID, ModName: mod.Name, Status: "fixed_external_stale", External: true,
+				Note: "recorded the revision Steam has installed" + revisionDateSuffix(c.UpdatedAt),
+			}, VerifyEvent{})
+			continue
+		}
+		if rev, ok := drift.revised[key]; ok {
+			r.result.Warnings++
+			r.finding(VerifyFinding{
+				ModID: mod.ID, ModName: mod.Name, Status: "external_stale", External: true,
+				Note:     "Steam has updated this item since lmm recorded it" + revisionDateSuffix(rev.updatedAt) + " - lmm's record still names the earlier revision",
+				Recorded: mod.Version, Effective: rev.version,
+				Fixable: !r.opts.Fix,
+			}, VerifyEvent{})
+			continue
+		}
+		// #429: named, not skipped - "tracked, present, and not lmm's
+		// to verify" is the whole report for this item, and silence
+		// read as "not checked at all". An "ok" row, so no surface
+		// counts it as a problem.
 		r.finding(VerifyFinding{
-			ModID: mod.ID, ModName: mod.Name, Status: "external_missing", External: true,
-			Note:          "Steam no longer has this item on disk - it may have been unsubscribed",
-			FixableReason: "lmm does not own this item's files, so there is nothing for --fix to redownload - resubscribe in the Steam client, or uninstall it from lmm",
+			ModID: mod.ID, ModName: mod.Name, Status: "ok", External: true,
+			Note: "tracked from Steam - present on disk; Steam owns its files, so lmm checks only that they are there",
 		}, VerifyEvent{})
 	}
 	return nil
+}
+
+// revisionDateSuffix renders an external revision's date for a verify note
+// - " (Steam's revision of 2026-10-05)" - or nothing when the installer gave
+// none. The content id itself is never printed: it means nothing to a
+// person (#458).
+func revisionDateSuffix(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return " (Steam's revision of " + t.UTC().Format("2006-01-02") + ")"
 }
 
 // modPathPass reports a mod_path that needs attention (#427): the rows that

@@ -37,8 +37,11 @@ func (s *Source) CheckUpdatesWithProgress(ctx context.Context, installed []domai
 // The comparison, per item:
 //
 //   - PRIMARY: the API's hcontent_file differs from the installed content
-//     id (InstalledMod.Version, stamped from the ACF at adopt time) - an
-//     exact content-identity mismatch, the strongest signal there is.
+//     id (InstalledMod.Version) - an exact content-identity mismatch, the
+//     strongest signal there is. For an EXTERNAL row core hands this
+//     check the revision Steam's ACF names right now, not the one stamped
+//     at adopt, which goes stale on every Steam-side update (#538); for a
+//     row lmm downloaded itself (Tier 3) it is lmm's own record.
 //   - SECONDARY: when the API reports no content id, its time_updated is
 //     later than the installed revision's. Timestamps can theoretically
 //     move without content changing, which is why it is the fallback.

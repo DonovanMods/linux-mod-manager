@@ -88,6 +88,9 @@ export function AttentionCards({
   actions,
 }) {
   const updateRows = updates?.updates ?? [];
+  // issue 538: tracked Steam Workshop items Steam no longer lists - not
+  // updates, but the updates card is where a person looks for them.
+  const missingRows = updates?.external_missing ?? [];
   const findings = (health?.result?.findings ?? []).filter(
     (f) => f.status !== "ok",
   );
@@ -102,6 +105,7 @@ export function AttentionCards({
 
   if (
     updateRows.length === 0 &&
+    missingRows.length === 0 &&
     findings.length === 0 &&
     conflictRows.length === 0 &&
     notInstalled === 0 &&
@@ -115,10 +119,11 @@ export function AttentionCards({
   return html`
     <section class="attention-cards">
       ${
-        (updateRows.length > 0 || errors.updates) &&
+        (updateRows.length > 0 || missingRows.length > 0 || errors.updates) &&
         html`<${UpdatesCard}
           state=${state}
           rows=${updateRows}
+          missing=${missingRows}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
           onRefresh=${actions.refreshUpdates}
@@ -160,7 +165,25 @@ export function AttentionCards({
   `;
 }
 
-function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
+/** externalMissingNote is the updates card's one line for issue 538's
+ * external_missing: the tracked Steam Workshop items Steam no longer lists,
+ * named, with the way out - the same facts `lmm update` prints. */
+function externalMissingNote(missing) {
+  const names = missing.map((m) => m.name || m.mod_id).join(", ");
+  return `${countOf(missing.length, "Steam Workshop item")} lmm tracks ${
+    missing.length === 1 ? "is" : "are"
+  } no longer installed by Steam: ${names}. Resubscribe in Steam, or uninstall to stop tracking.`;
+}
+
+function UpdatesCard({
+  state,
+  rows,
+  missing = [],
+  error,
+  onRetry,
+  onRefresh,
+  actions,
+}) {
   const [selected, setSelected] = useState(() => new Set());
 
   function toggle(key) {
@@ -224,6 +247,12 @@ function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
   return html`
     <div class="card card--updates">
       <h2 class="card__title">⬆ Updates (${rows.length})</h2>
+      ${
+        missing.length > 0 &&
+        html`<p class="card__meta" data-testid="updates-external-missing">
+          ${externalMissingNote(missing)}
+        </p>`
+      }
       ${
         error
           ? html`<${CardError}

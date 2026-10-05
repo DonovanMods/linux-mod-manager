@@ -38,7 +38,22 @@ import (
 // NewService - so the failure is an immediate, clear panic instead of a
 // hang until the test's 10-minute timeout.
 func (s *Service) beginOp(ctx context.Context) (release func(), err error) {
-	release, err = s.acquireOp(ctx)
+	return s.beginOpVia(ctx, s.acquireOp)
+}
+
+// tryBeginOp is beginOp for a mutation that is never worth waiting for: it
+// takes the slot only if it is free right now (tryAcquireOp), and otherwise
+// fails at once with ErrOperationInProgress - or OperationInProgressError
+// when another process holds the lock. Everything beginOp does once the
+// slot is held, it does here too. ReconcileExternalMods is its caller: the
+// record it corrects is one the update check already reads around.
+func (s *Service) tryBeginOp(ctx context.Context) (release func(), err error) {
+	return s.beginOpVia(ctx, s.tryAcquireOp)
+}
+
+// beginOpVia is beginOp's body over the given slot acquisition.
+func (s *Service) beginOpVia(ctx context.Context, acquire func(context.Context) (func(), error)) (release func(), err error) {
+	release, err = acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
