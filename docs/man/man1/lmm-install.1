@@ -54,15 +54,24 @@ Examples:
   lmm install "skyui" -g skyrim-se --sort downloads   # most downloaded first
   lmm install "mod name" -g skyrim-se -y       # Install the exact-name match, auto-confirm
   lmm install "mod name" -g skyrim-se --no-deps  # Skip dependencies
+  lmm install --id 12345 -s curseforge --from-file ~/Downloads/Mod-2.0.zip  # a file the source won't let lmm download
 
 
 .SH OPTIONS
+\fB--accept-mismatch\fP[=false]
+	with --from-file: install even when the archive is not the file the install would download
+
+.PP
 \fB--file\fP=""
 	file ID(s), comma-separated (skips file selection)
 
 .PP
 \fB-f\fP, \fB--force\fP[=false]
 	install without conflict prompts
+
+.PP
+\fB--from-file\fP=""
+	install the mod named by --id from an archive you downloaded (for a source that refuses API downloads); --file/--version name the file it should be
 
 .PP
 \fB-h\fP, \fB--help\fP[=false]

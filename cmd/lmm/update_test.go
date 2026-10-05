@@ -123,6 +123,9 @@ type fakeUpdateSource struct {
 	replacements map[string]map[string]string
 	authRequired bool
 	srv          *httptest.Server
+	// downloadURLErr, when set, is GetDownloadURL's answer for every file -
+	// a source.ManualDownloadError is a CurseForge author's opt-out (#535).
+	downloadURLErr error
 	// checkUpdatesCalls counts CheckUpdates invocations (#289 review,
 	// Important 1): applyBulkUpdate must build its plan from the update the
 	// batch listing already found (Service.PlanUpdateFrom), never by
@@ -176,6 +179,9 @@ func (s *fakeUpdateSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]
 	return s.files[mod.ID], nil
 }
 func (s *fakeUpdateSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	if s.downloadURLErr != nil {
+		return "", s.downloadURLErr
+	}
 	return s.srv.URL + "/" + fileID, nil
 }
 func (s *fakeUpdateSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {

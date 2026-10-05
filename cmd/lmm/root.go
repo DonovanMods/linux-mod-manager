@@ -465,9 +465,41 @@ func reportDownloadPage(err error) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "\n%s\n", downloadHint(dl.ModURL))
-	if dl.ManualDownload {
-		fmt.Fprintf(os.Stderr, "Then import it: lmm import <downloaded-file> --id %s\n", dl.ModID)
+	if !dl.ManualDownload {
+		return
 	}
+	// #535: the command that failed knows how to finish the job from the
+	// downloaded file (install --from-file, update --from-file); any other
+	// command falls back to the archive import.
+	var remedy *fromFileRemedy
+	if errors.As(err, &remedy) {
+		fmt.Fprintf(os.Stderr, "%s\n", remedy.line)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Then import it: lmm import <downloaded-file> --id %s\n", dl.ModID)
+}
+
+// fromFileRemedy carries, beside a failed manual download, the line naming
+// the command that finishes it from the hand-downloaded file (#535). It
+// wraps the failure transparently: Error, errors.Is/As and the --json
+// envelope's details are all the download failure's own.
+type fromFileRemedy struct {
+	err  error
+	line string
+}
+
+func (r *fromFileRemedy) Error() string { return r.err.Error() }
+func (r *fromFileRemedy) Unwrap() error { return r.err }
+
+// withFromFileRemedy attaches line(dl) to err when err is a download its
+// source refused to serve (DownloadError.ManualDownload), and returns any
+// other err as it came.
+func withFromFileRemedy(err error, line func(*core.DownloadError) string) error {
+	var dl *core.DownloadError
+	if err == nil || !errors.As(err, &dl) || !dl.ManualDownload {
+		return err
+	}
+	return &fromFileRemedy{err: err, line: line(dl)}
 }
 
 // reportExternalToolOutput prints the tail of an external tool's own output

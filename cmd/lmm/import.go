@@ -176,36 +176,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		// never reaches the prompt at all.
 	}
 
-	// progress prints every diagnostic and readout line at its exact point
-	// of occurrence. Result.Warnings/.Notes carry the same strings for a
-	// caller with no event stream, so they are never batch-printed below -
-	// doing so would double-print. HookWarnings are the one exception: they
-	// are not events at all, because the pre-lift engine collected them and
-	// printed them together at the very end.
-	progress := func(e core.Event) {
-		p, ok := lineOf(e)
-		if !ok {
-			return
-		}
-		switch p.Phase {
-		case core.ImportArchiveFetching, core.ImportArchiveDetected, core.ImportArchiveDeploying:
-			fmt.Printf("\n%s\n", p.Detail)
-		case core.ImportArchiveDetail:
-			fmt.Printf("  %s\n", p.Detail)
-		case core.ImportArchiveNote:
-			if verbose {
-				fmt.Printf("%s\n", p.Detail)
-			}
-		case core.ImportArchiveProfileNote:
-			if verbose {
-				fmt.Printf("  %s\n", p.Detail)
-			}
-		case core.ImportArchiveWarning, core.InstallBeforeAllForced, core.InstallBeforeEachForced:
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
-		}
-	}
-
-	sink := quietSink(progress)
+	sink := quietSink(importArchiveProgress)
 
 	// The metadata-fetch progress line announces work PlanImportArchive is
 	// about to do, so it prints HERE rather than arriving as an event from a
@@ -239,34 +210,12 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		return nil
 	}
 
-	// Ruling 1: the conflict decision is the frontend's, and since #314 it is
-	// answered from the PLAN - no speculative ingest, no re-run, no second
-	// readout (Ruling 18). --force skips the question entirely; core reads it
-	// as AcceptConflicts, so a forced import never gets here.
-	//
-	// Ruling 15/2: under --json the prompt is unanswerable, so the same
-	// *core.ConflictError core would have raised is returned and reportError
-	// renders it as the envelope with details.conflicts - the contract
-	// doInstall's identical guard gives `install --json` (unit P review,
-	// Important 1).
-	if len(plan.Conflicts) > 0 && !importForce {
-		if jsonOutput {
-			return &core.ConflictError{Conflicts: plan.Conflicts}
-		}
-		proceed, readErr := confirmInstallConflicts(ctx, service, game, profileName, plan.Conflicts)
-		if readErr != nil {
-			// A genuine stdin read failure, not an ordinary decline - see
-			// confirmInstallConflicts' doc comment.
-			return readErr
-		}
-		if !proceed {
-			// #382: the shared cancellation sentinel, so a declined
-			// import exits 2 like a declined purge - it used to be a bare
-			// error, reported as "Error: import cancelled" with exit 1.
-			return ErrCancelled
-		}
-		opts.AcceptConflicts = true
+	// The conflict question, answered from the plan (answerImportConflicts).
+	accept, err := answerImportConflicts(ctx, service, game, profileName, plan, importForce)
+	if err != nil {
+		return err
 	}
+	opts.AcceptConflicts = accept
 
 	result, err := service.ApplyImportArchive(ctx, game, profileName, plan, opts, sink)
 	if err != nil {
@@ -303,6 +252,71 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	}
 
 	return nil
+}
+
+// importArchiveProgress prints every diagnostic and readout line of an
+// archive import - `lmm import <archive>` and `lmm install --from-file`
+// (#535) - at its exact point of occurrence. Result.Warnings/.Notes carry
+// the same strings for a caller with no event stream, so they are never
+// batch-printed afterwards - doing so would double-print. HookWarnings are
+// the one exception: they are not events at all, because the pre-lift engine
+// collected them and printed them together at the very end.
+func importArchiveProgress(e core.Event) {
+	p, ok := lineOf(e)
+	if !ok {
+		return
+	}
+	switch p.Phase {
+	case core.ImportArchiveFetching, core.ImportArchiveDetected, core.ImportArchiveDeploying:
+		fmt.Printf("\n%s\n", p.Detail)
+	case core.ImportArchiveDetail:
+		fmt.Printf("  %s\n", p.Detail)
+	case core.ImportArchiveNote:
+		if verbose {
+			fmt.Printf("%s\n", p.Detail)
+		}
+	case core.ImportArchiveProfileNote:
+		if verbose {
+			fmt.Printf("  %s\n", p.Detail)
+		}
+	case core.ImportArchiveWarning, core.InstallBeforeAllForced, core.InstallBeforeEachForced:
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+	}
+}
+
+// answerImportConflicts answers an archive import's conflict question from
+// its plan, returning whether the conflicts were accepted.
+//
+// Ruling 1: the conflict decision is the frontend's, and since #314 it is
+// answered from the PLAN - no speculative ingest, no re-run, no second
+// readout (Ruling 18). force skips the question entirely; core reads it as
+// AcceptConflicts, so a forced import never gets here.
+//
+// Ruling 15/2: under --json the prompt is unanswerable, so the same
+// *core.ConflictError core would have raised is returned and reportError
+// renders it as the envelope with details.conflicts - the contract
+// doInstall's identical guard gives `install --json` (unit P review,
+// Important 1).
+func answerImportConflicts(ctx context.Context, service *core.Service, game *domain.Game, profileName string, plan *core.ImportArchivePlan, force bool) (bool, error) {
+	if len(plan.Conflicts) == 0 || force {
+		return false, nil
+	}
+	if jsonOutput {
+		return false, &core.ConflictError{Conflicts: plan.Conflicts}
+	}
+	proceed, readErr := confirmInstallConflicts(ctx, service, game, profileName, plan.Conflicts)
+	if readErr != nil {
+		// A genuine stdin read failure, not an ordinary decline - see
+		// confirmInstallConflicts' doc comment.
+		return false, readErr
+	}
+	if !proceed {
+		// #382: the shared cancellation sentinel, so a declined
+		// import exits 2 like a declined purge - it used to be a bare
+		// error, reported as "Error: import cancelled" with exit 1.
+		return false, ErrCancelled
+	}
+	return true, nil
 }
 
 // renderImportArchivePlan prints `lmm import <archive> --dry-run`'s preview,

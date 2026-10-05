@@ -782,7 +782,14 @@ func batchProgress(service *core.Service, updates []domain.Update) func(core.Eve
 // recompile/changelog facts come from the plan; this function decides
 // nothing about them itself - it only renders and, for the version-bump and
 // recompile branches, applies.
+//
+// A source that refuses the download leaves the --from-file command that
+// finishes the update behind it (#535).
 func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, profileName string) error {
+	return withFromFileRemedy(applySingleUpdateFromSource(ctx, service, game, mod, profileName), updateFromFileRemedy)
+}
+
+func applySingleUpdateFromSource(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, profileName string) error {
 	plan, err := service.PlanUpdate(ctx, game, profileName, mod.SourceID, mod.ID)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {

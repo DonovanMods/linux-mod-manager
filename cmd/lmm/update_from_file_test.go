@@ -7,6 +7,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -138,6 +139,30 @@ func TestReportError_JSON_ArchiveMismatchError(t *testing.T) {
 		"}\n", out)
 }
 
+// #535: the install's refusal of the same shape gains "install": true, and
+// its sentence names the file the install would download.
+func TestReportError_JSON_ArchiveMismatchError_Install(t *testing.T) {
+	withJSONOutput(t)
+	err := &core.ArchiveMismatchError{
+		ArchiveName: "mod1-1.9.zip",
+		Advertised:  core.ArchiveFileRef{ID: "new-1", FileName: "mod1-2.0.zip", Version: "2.0"},
+		Install:     true,
+	}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"mod1-1.9.zip is a file the source does not list, not the file lmm would install (mod1-2.0.zip) - it may be another flavor or loader's build; install from it anyway with --accept-mismatch\",\n"+
+		"  \"details\": {\n"+
+		"    \"archive_name\": \"mod1-1.9.zip\",\n"+
+		"    \"advertised\": {\n"+
+		"      \"id\": \"new-1\",\n"+
+		"      \"file_name\": \"mod1-2.0.zip\",\n"+
+		"      \"version\": \"2.0\"\n"+
+		"    },\n"+
+		"    \"install\": true\n"+
+		"  }\n"+
+		"}\n", out)
+}
+
 func TestReportError_JSON_ArchiveVersionRequiredError(t *testing.T) {
 	withJSONOutput(t)
 	err := &core.ArchiveVersionRequiredError{ArchiveName: "Auctionator-339-1-g23f0261.zip", SourceID: "curseforge", ModID: "8939586"}
@@ -151,4 +176,29 @@ func TestReportError_JSON_ArchiveVersionRequiredError(t *testing.T) {
 		"    \"version_required\": true\n"+
 		"  }\n"+
 		"}\n", out)
+}
+
+// #535: a single update whose source refused the download ends with the
+// update-from-file command, not the archive import.
+func TestApplySingleUpdate_ManualDownloadFailure_PrintsTheFromFileCommand(t *testing.T) {
+	svc, game, src := setupDoUpdateTest(t)
+	mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old")})
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1", SourceURL: "https://example.test/mods/mod1"},
+		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
+	src.downloadURLErr = &source.ManualDownloadError{Reason: "the author has turned off API downloads"}
+	oldGame := gameID
+	t.Cleanup(func() { gameID = oldGame })
+	gameID = ""
+
+	var err error
+	captureStdout(t, func() error {
+		err = applySingleUpdate(context.Background(), svc, game, mod, "default")
+		return nil
+	})
+	require.Error(t, err)
+
+	out, _ := captureStderrErr(t, func() error { reportError(err); return nil })
+	assert.Contains(t, out, "Download it manually from: https://example.test/mods/mod1")
+	assert.Contains(t, out, "lmm update mod1 -s test-src --from-file <downloaded-file>")
+	assert.NotContains(t, out, "lmm import")
 }
