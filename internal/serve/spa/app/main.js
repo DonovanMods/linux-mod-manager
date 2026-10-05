@@ -6,7 +6,7 @@
 import { render } from "./render.js";
 import { html } from "./render.js";
 import { App } from "./components/app.js";
-import { createStore } from "./store.js";
+import { createStore, writeActivityAck } from "./store.js";
 import { createSliceFence } from "./slicefence.js";
 import {
   parseLocation,
@@ -2231,6 +2231,14 @@ function originOf(jobID) {
  * documents' retry/re-run, and the mutation pipeline every mutation in this
  * application goes through (openPlan -> confirmPlan -> a job). */
 const actions = {
+  // acknowledgeActivity raises the activity bell's watermark (issue 537) -
+  // never lowers it, so a bell that opens on an older view cannot un-see
+  // what another already has - and persists it for the next page view.
+  acknowledgeActivity: (ms) => {
+    if (!(ms > store.get().activityAckedAt)) return;
+    store.set({ activityAckedAt: ms });
+    writeActivityAck(ms);
+  },
   reloadMods: () => reload("mods", "/api/v1/mods"),
   reloadUpdates: () => reload("updates", "/api/v1/updates"),
   // refreshUpdates is the EXPLICIT "check for updates" (issue 417), as

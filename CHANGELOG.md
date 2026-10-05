@@ -1888,6 +1888,16 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The activity bell's unread badge stays cleared (#537).** Opening the bell
+  cleared the badge for a failed job, but going to another page (a mod's full
+  page, search, setup) or reloading brought it back for the same failure,
+  because each page's bell kept its own memory of what you had seen. The web
+  UI now keeps one acknowledgement for the whole app, remembered in this
+  browser's local storage (in memory only if storage is unavailable), and
+  measured against the server's own finish time for the failed job rather than
+  your computer's clock. A failure that finishes after you looked still raises
+  the badge, and the running-job count is unchanged.
+
 - **A failed update batch names each failed mod, and its readout no longer
   sits over the card's controls (#533).** After "Update all" with some items
   failing, the readout listed identical "This source doesn't let lmm download

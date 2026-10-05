@@ -46,6 +46,19 @@ import { VerifyFixResult } from "./verifyfixresult.js";
 // newest are kept, which is the end a person reads first.
 const maxStreamedEvents = 200;
 
+/** newestFailureEnd is the latest ended_at, in epoch milliseconds, among the
+ * failed jobs - 0 when none has a readable one. Date.parse of a missing
+ * ended_at is NaN, which Math.max would poison; it is skipped instead. */
+function newestFailureEnd(jobs) {
+  let newest = 0;
+  for (const job of jobs) {
+    if (job.state !== "failed") continue;
+    const ended = Date.parse(job.ended_at);
+    if (ended > newest) newest = ended;
+  }
+  return newest;
+}
+
 /**
  * ActivityBell is the top bar's job surface: a badge that counts, and the
  * tray beneath it.
@@ -64,7 +77,9 @@ export function ActivityBell({
   actions,
 }) {
   const jobs = state.jobsIndex ?? [];
-  const [acknowledgedAt, setAcknowledgedAt] = useState(0);
+  // The watermark is app-level (store.js: activityAckedAt), shared by every
+  // bell that is ever mounted - see issue 537.
+  const acknowledgedAt = state.activityAckedAt ?? 0;
 
   const active = jobs.filter((job) => job.state === "running");
   const unseenFailures = jobs.filter(
@@ -83,7 +98,11 @@ export function ActivityBell({
       onClose();
       return;
     }
-    setAcknowledgedAt(Date.now());
+    // Acknowledge by the SERVER's finish time of the newest failure on
+    // show, not by the client's clock: a skewed browser clock would
+    // otherwise swallow (ahead) or resurrect (behind) failures.
+    const newest = newestFailureEnd(jobs);
+    if (newest > acknowledgedAt) actions?.acknowledgeActivity?.(newest);
     onOpen();
   }
 
