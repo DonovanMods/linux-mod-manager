@@ -3,6 +3,7 @@ package db_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
@@ -212,6 +213,71 @@ func TestSetModVersion_NotFound(t *testing.T) {
 
 	err = database.SetModVersion(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default", "1.0")
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
+}
+
+// TestSetExternalRevision pins #538's reconcile write: an EXTERNAL row's
+// version and updated_at move to what its installer's bookkeeping says, and
+// nothing else does - no previous_version shift (there is nothing lmm could
+// roll back to) and no installed_mod_files rewrite (#514's checksum wipe).
+func TestSetExternalRevision(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	ctx := context.Background()
+
+	adopted := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID: "3617086610", SourceID: "steamworkshop", Name: "Workshop Item",
+			Version: "1111111111111111111", GameID: "human-host", UpdatedAt: adopted,
+		},
+		ProfileName: "default", Enabled: true, Deployed: true,
+		External: true, ExternalPath: "/steam/workshop/content/1/3617086610",
+		FileIDs: []string{"f1"},
+	}
+	require.NoError(t, database.SaveInstalledMod(ctx, mod))
+	require.NoError(t, database.SaveFileChecksum(ctx, "steamworkshop", "3617086610", "human-host", "default", "f1", "deadbeef"))
+
+	revised := time.Date(2026, 10, 5, 15, 4, 0, 0, time.UTC)
+	require.NoError(t, database.SetExternalRevision(ctx, "steamworkshop", "3617086610", "human-host", "default", "2222222222222222222", revised))
+
+	got, err := database.GetInstalledMod(ctx, "steamworkshop", "3617086610", "human-host", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2222222222222222222", got.Version)
+	assert.True(t, revised.Equal(got.UpdatedAt), "updated_at must move to the installer's revision time, got %v", got.UpdatedAt)
+	assert.Empty(t, got.PreviousVersion, "a reconcile is a record correction, not an update with a rollback path")
+	assert.True(t, got.External)
+	assert.Equal(t, mod.ExternalPath, got.ExternalPath)
+
+	files, err := database.GetFilesWithChecksums(ctx, "human-host", "default")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "deadbeef", files[0].Checksum, "the reconcile must never rewrite installed_mod_files (#514)")
+
+	// A zero time keeps the column's own value rather than writing the year 1.
+	require.NoError(t, database.SetExternalRevision(ctx, "steamworkshop", "3617086610", "human-host", "default", "3333333333333333333", time.Time{}))
+	got, err = database.GetInstalledMod(ctx, "steamworkshop", "3617086610", "human-host", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "3333333333333333333", got.Version)
+	assert.True(t, revised.Equal(got.UpdatedAt), "a zero revision time must leave updated_at alone, got %v", got.UpdatedAt)
+}
+
+// TestSetExternalRevision_RefusesAManagedRow pins the WHERE external = 1
+// guard: a row lmm deployed itself owns its version through install and
+// update, never through an external installer's bookkeeping.
+func TestSetExternalRevision_RefusesAManagedRow(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	ctx := context.Background()
+
+	installTestMod(t, database)
+	err = database.SetExternalRevision(ctx, "nexusmods", "12345", "skyrim-se", "default", "9.9", time.Now())
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+
+	got, err := database.GetInstalledMod(ctx, "nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.NotEqual(t, "9.9", got.Version)
 }
 
 func TestSetModFileIDs(t *testing.T) {

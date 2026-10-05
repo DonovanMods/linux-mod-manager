@@ -219,6 +219,17 @@ type UpdateCheckReport struct {
 	// the game"), because "run lmm update" is the wrong advice for them.
 	// omitzero.
 	External int `json:"external,omitzero"`
+
+	// ExternalMissing names the EXTERNAL mods lmm tracks that their
+	// installer's bookkeeping, read in full, no longer lists (#538) - a
+	// Steam Workshop item unsubscribed or removed outside lmm. They were not
+	// checked, and are never reported as updates: resubscribing, or `lmm
+	// uninstall` to stop tracking, is the remedy. omitempty.
+	ExternalMissing []ExternalModRef `json:"external_missing,omitempty"`
+	// Warnings carries why some external mods were compared against lmm's
+	// recorded revision instead of their installer's (an unreadable or
+	// absent Steam manifest, #538). The check itself completed; omitempty.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
@@ -310,8 +321,51 @@ func (s *Service) lockState(ctx context.Context, gameID, profileName, sourceID, 
 // returned, with the first non-nil error surfaced (checkErr takes priority
 // as the richer, multi-source diagnostic when both fail). sink is passed
 // straight through to Updater.CheckUpdates.
+//
+// An EXTERNAL row is checked at the revision its installer reports, not the
+// one lmm recorded (#538): Steam updates a Workshop item without lmm, so the
+// record goes stale and comparing against it reported updates Steam had
+// already applied. The check reads Steam's manifest and hands the source a
+// COPY of each such row carrying the installed revision - nothing is
+// written; ReconcileExternalMods is the write. A row the manifest no longer
+// lists is not checked at all (CheckGameUpdateReport names it).
 func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, error) {
-	updates, checkErr := s.NewUpdater().CheckUpdates(ctx, game, installed, sink, opts)
+	updates, _, err := s.checkGameUpdates(ctx, game, profileName, installed, sink, opts)
+	return updates, err
+}
+
+// CheckGameUpdateReport is CheckGameUpdates assembled into the one document
+// both frontends emit for a bulk check (`lmm update --json`, GET
+// /api/v1/updates): the updates, the skip counts derived from installed,
+// the external count, the external mods Steam no longer lists, and - when
+// the check did not complete - why, in ErrorMessage. The report is never
+// nil; the error is the check's own, returned as well so a caller can
+// branch on it (an auth failure, the exit code).
+func (s *Service) CheckGameUpdateReport(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) (*UpdateCheckReport, error) {
+	updates, drift, checkErr := s.checkGameUpdates(ctx, game, profileName, installed, sink, opts)
+	report := &UpdateCheckReport{
+		GameID:          game.ID,
+		Profile:         profileName,
+		Updates:         updates,
+		Skipped:         CountUpdateSkips(installed),
+		External:        CountExternalUpdates(updates),
+		ExternalMissing: drift.missingRefs(),
+		Warnings:        drift.warnings,
+	}
+	if checkErr != nil {
+		report.ErrorMessage = checkErr.Error()
+	}
+	return report, checkErr
+}
+
+// checkGameUpdates is CheckGameUpdates' body, also returning the external
+// drift the check was run over so CheckGameUpdateReport can report it.
+func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, externalDrift, error) {
+	drift, err := s.readExternalDrift(ctx, game, installed)
+	if err != nil {
+		return nil, drift, err
+	}
+	updates, checkErr := s.NewUpdater().CheckUpdates(ctx, game, drift.overlay(installed), sink, opts)
 
 	staleUpd, staleErr := s.CheckMergedPakStaleness(ctx, game, profileName)
 	if staleErr != nil && checkErr == nil {
@@ -344,7 +398,7 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profi
 		// unlocked, which is a lie the caller acts on; the cancellation
 		// outranks checkErr, which under a cancelled ctx is derived from it.
 		if cerr := ctx.Err(); cerr != nil {
-			return updates, cerr
+			return updates, drift, cerr
 		}
 	}
 	for i := range updates {
@@ -355,5 +409,5 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profi
 		}
 	}
 
-	return updates, checkErr
+	return updates, drift, checkErr
 }

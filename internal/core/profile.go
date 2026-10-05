@@ -574,6 +574,40 @@ func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName str
 	return pm.save(profile)
 }
 
+// setUnlockedRefVersions moves the Version of every UNLOCKED ref whose
+// ModKey is in versions to the version given - the profile half of
+// ReconcileExternalMods (#538). One load and at most one save, whatever
+// the count; a ref listed more than once has every copy written, so the
+// document never ends up with copies that disagree. A locked ref is left
+// alone: its Version is the lock's target, which only SetModLock moves.
+// Nothing else on a ref - position, FileIDs, the disabled marker - is
+// touched, and an unchanged document is not rewritten.
+func (pm *ProfileManager) setUnlockedRefVersions(ctx context.Context, gameID, profileName string, versions map[string]string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
+	if err != nil {
+		return err
+	}
+
+	changed := false
+	for i := range profile.Mods {
+		ref := &profile.Mods[i]
+		version, ok := versions[domain.ModKey(ref.SourceID, ref.ModID)]
+		if !ok || ref.Locked || ref.Version == version {
+			continue
+		}
+		ref.Version = version
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return pm.save(profile)
+}
+
 // SetModLock marks the profile ref for sourceID/modID as locked (#97: the
 // mod refuses `lmm update` while this is set - see update.go's ApplyUpdate
 // gate). A non-empty version also moves the lock's target - ref.Version, the

@@ -184,7 +184,10 @@ status is one of "ok", "missing", "no_checksum",
 "file_count_mismatch", "skipped", "version_mismatch",
 "version_unverifiable", "stale_compile", "stale_deployment",
 "fixed_stale_deployment", "conversion_failed", "needs_reingest",
-"fixed_needs_reingest", "external_missing", "mod_path_missing" (the
+"fixed_needs_reingest", "external_missing", "external_stale" (Steam has
+updated a tracked Workshop item since lmm recorded its revision - recorded
+and effective carry the two content ids, and --fix records Steam's) and
+"fixed_external_stale", "mod_path_missing" (the
 game's mod_path is not a directory while it has mods to deploy, or is not
 the one lmm deployed files under - a warning whose note names the repair),
 "deployed_modified" (a copied or hard-linked file whose content changed
@@ -560,6 +563,17 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		if f.FixableReason != "" {
 			fmt.Printf("  %s\n", f.FixableReason)
 		}
+
+	case "external_stale":
+		// #538: a record problem, not a file one - the note says what
+		// Steam did, and --fix records it.
+		fmt.Printf("%s %s - %s\n", colorYellow("?"), f.ModName, f.Note)
+		if f.Fixable {
+			fmt.Println("  Run 'lmm verify --fix' (or 'lmm update') to record Steam's revision.")
+		}
+
+	case "fixed_external_stale":
+		fmt.Println(colorGreen(fmt.Sprintf("Fixed: %s - %s", f.ModName, f.Note)))
 
 	case "orphaned_record", "missing_cache":
 		// #469: a complete sentence in Note, and the way out in
