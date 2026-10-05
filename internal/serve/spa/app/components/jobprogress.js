@@ -36,7 +36,12 @@ import {
   explainerFor,
   loaderSetupFor,
 } from "../failures.js";
-import { DownloadPage, LoaderSetup } from "./errordetails.js";
+import {
+  DownloadHeadline,
+  DownloadPage,
+  LoaderSetup,
+  RawError,
+} from "./errordetails.js";
 import { BatchFailures } from "./batchfailures.js";
 import { PurgeResultDetails } from "./purgeresult.js";
 import { VerifyFixResult } from "./verifyfixresult.js";
@@ -49,19 +54,33 @@ import { VerifyFixResult } from "./verifyfixresult.js";
  * is what the toast rule reads: navigate away mid-deploy and the completion
  * finds you as a toast instead, because this effect's cleanup ran.
  */
-export function InlineJob({ origin, state, actions, children, keepControl }) {
+export function InlineJob({
+  origin,
+  state,
+  actions,
+  children,
+  keepControl,
+  readoutElsewhere,
+}) {
   useEffect(() => registerOrigin(origin), [origin]);
 
   const jobID = state.origins?.[origin];
   if (!jobID) return children;
 
   const summary = (state.jobsIndex ?? []).find((row) => row.id === jobID);
+  // readoutElsewhere (issue 535): the surface renders the FINISHED readout
+  // on a line of its own (FinishedJobReadout), so the control comes back
+  // here once the job is over. While it runs the control still morphs.
+  if (readoutElsewhere && summary && summary.state !== "running") {
+    return children;
+  }
   const frame = state.jobProgress?.[jobID];
 
   const readout = html`<${JobProgress}
     jobID=${jobID}
     summary=${summary}
     frame=${frame}
+    origin=${origin}
     actions=${actions}
     onDismiss=${() => actions.clearOrigin(origin)}
   />`;
@@ -75,6 +94,29 @@ export function InlineJob({ origin, state, actions, children, keepControl }) {
     return html`${children}${readout}`;
   }
   return readout;
+}
+
+/**
+ * FinishedJobReadout is origin's job readout once that job has finished, or
+ * nothing - the other half of InlineJob's readoutElsewhere (issue 535): a
+ * search result's failure is a paragraph and its way out, which squeezed
+ * into the row's action column overlapped the row (the owner's report), so
+ * the row puts it on a line of its own beneath.
+ */
+export function FinishedJobReadout({ origin, state, actions }) {
+  const jobID = state.origins?.[origin];
+  const summary = jobID
+    ? (state.jobsIndex ?? []).find((row) => row.id === jobID)
+    : null;
+  if (!summary || summary.state === "running") return null;
+  return html`<${JobProgress}
+    jobID=${jobID}
+    summary=${summary}
+    frame=${state.jobProgress?.[jobID]}
+    origin=${origin}
+    actions=${actions}
+    onDismiss=${() => actions.clearOrigin(origin)}
+  />`;
 }
 
 /**
@@ -92,7 +134,14 @@ export function InlineJob({ origin, state, actions, children, keepControl }) {
  * but nothing here should hard-require it) can still render every other
  * state.
  */
-export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
+export function JobProgress({
+  jobID,
+  summary,
+  frame,
+  origin,
+  actions,
+  onDismiss,
+}) {
   const state = summary?.state ?? "running";
   // Called unconditionally, before either branch below - C1 (unit 6 fix
   // wave)'s own rule applies here too: a hook called only on one side of a
@@ -147,6 +196,10 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   // the failure is shown, like the explainers above.
   const download = failed ? downloadFailureFor(summary?.error?.details) : null;
   const downloadShown = Boolean(download && (download.url || download.manual));
+  // Issue 535: a download its source refuses has a friendly explanation,
+  // and it leads - the headline in place of the engine's text, which moves
+  // into a collapsed "Details" under the way out.
+  const headed = Boolean(download?.manual);
   // I3, unit 6 fix wave: a batch job's own `state` is "succeeded" even when
   // every item inside it failed (progress.js#resultTally's own doc
   // comment) - the tone class follows the TALLY, not the bare state, for
@@ -172,11 +225,16 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
         title=${(tally?.skippedNotes ?? []).join("; ") || undefined}
       >
         ${
-          failed
-            ? `Failed: ${summary?.error?.error ?? "unknown error"}`
-            : tally
-              ? resultTallyLabel(tally)
-              : "Done"
+          headed
+            ? html`<${DownloadHeadline}
+                failure=${download}
+                actions=${actions}
+              />`
+            : failed
+              ? `Failed: ${summary?.error?.error ?? "unknown error"}`
+              : tally
+                ? resultTallyLabel(tally)
+                : "Done"
         }
       </span>
       ${
@@ -215,7 +273,18 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
       ${
         downloadShown &&
         html`<div class="job-progress__explainer">
-          <${DownloadPage} failure=${download} actions=${actions} />
+          <${DownloadPage}
+            failure=${download}
+            actions=${actions}
+            headed=${headed}
+            origin=${origin}
+          />
+        </div>`
+      }
+      ${
+        headed &&
+        html`<div class="job-progress__explainer">
+          <${RawError} text=${summary?.error?.error} />
         </div>`
       }
       ${

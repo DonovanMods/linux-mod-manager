@@ -25,6 +25,13 @@
 // this option has not answered is *core.ConflictError - the same typed
 // refusal install's job surfaces, so the SPA reuses that renderer.
 //
+// It is also the SPA's "Install from file…" (#535): beside a failed install
+// whose source refused the download, install_from_file plus the failure's
+// source_id, mod_id and expected_file_id make the import core's install from
+// a file - the archive matched against the file the install tried, and a
+// mismatch answered by accept_mismatch ("Install anyway"), as
+// update_from_archive's is.
+//
 // The staged archive is removed after a SUCCESSFUL apply and kept after a
 // failed one. A failed import is the case where the user most wants to fix
 // something (accept the conflicts, pass --force) and try again, and
@@ -65,14 +72,37 @@ type importArchivePlanRequest struct {
 	// archive under its own detected identity.
 	SourceID string `json:"source_id,omitzero"`
 	ModID    string `json:"mod_id,omitzero"`
+	// InstallFromFile is "Install from file…" (#535): install the mod
+	// SourceID/ModID name (both then required) from the archive, as `lmm
+	// install --from-file`. ExpectedFileID is the file the failed install
+	// tried (its error's file_id), and Version is --version - required only
+	// when the plan answers version_required.
+	InstallFromFile bool   `json:"install_from_file,omitzero"`
+	ExpectedFileID  string `json:"expected_file_id,omitzero"`
+	Version         string `json:"version,omitzero"`
 }
 
 // validate implements validatingOptions.
 func (r *importArchivePlanRequest) validate() error {
-	if r.UploadID == "" {
+	switch {
+	case r.UploadID == "":
 		return errors.New(`"upload_id" is required`)
+	case r.InstallFromFile && (r.SourceID == "" || r.ModID == ""):
+		return errors.New(`"install_from_file" needs "source_id" and "mod_id"`)
 	}
 	return nil
+}
+
+// options is the core options this request plans with - and, with the
+// apply's own answers added, applies with.
+func (r importArchivePlanRequest) options() core.ImportArchiveOptions {
+	return core.ImportArchiveOptions{
+		SourceID:        r.SourceID,
+		ModID:           r.ModID,
+		InstallFromFile: r.InstallFromFile,
+		ExpectedFileID:  r.ExpectedFileID,
+		Version:         r.Version,
+	}
 }
 
 // importArchiveApplyRequest is the "options" member POST /api/v1/jobs
@@ -90,6 +120,9 @@ type importArchiveApplyRequest struct {
 	// Force and SkipHooks mirror `lmm import --force/--no-hooks`.
 	Force     bool `json:"force,omitzero"`
 	SkipHooks bool `json:"skip_hooks,omitzero"`
+	// AcceptMismatch is "Install anyway" (#535): the archive is not the
+	// file the install would download, and the user installs it regardless.
+	AcceptMismatch bool `json:"accept_mismatch,omitzero"`
 }
 
 // pendingImportArchive is what the plan store holds between Plan and Apply:
@@ -99,7 +132,8 @@ type importArchiveApplyRequest struct {
 // the apply must be given again.
 //
 // The last one is not redundancy: ApplyImportArchive reads SourceID/ModID
-// from its own opts (it rebuilds ImportOptions from them), so a plan
+// (and, for an install from a file, the rest of the request) from its own
+// opts (it rebuilds ImportOptions from them), so a plan
 // computed with --source/--id and applied without them would ingest under a
 // different identity than the one the user was shown.
 type pendingImportArchive struct {
@@ -107,8 +141,7 @@ type pendingImportArchive struct {
 	Profile  string
 	Plan     *core.ImportArchivePlan
 	UploadID uploadID
-	SourceID string
-	ModID    string
+	Request  importArchivePlanRequest
 }
 
 // planImportArchiveKind implements planKind.Plan for "import_archive".
@@ -130,10 +163,7 @@ func planImportArchiveKind(ctx context.Context, s *Server, sel selection, opts a
 	// - and the directory it lives in - mid-read (#333 Minor #2).
 	s.uploads.MarkInUse(req.UploadID)
 
-	plan, err := s.svc.PlanImportArchive(ctx, sel.Game, sel.Profile, staged.Path, core.ImportArchiveOptions{
-		SourceID: req.SourceID,
-		ModID:    req.ModID,
-	})
+	plan, err := s.svc.PlanImportArchive(ctx, sel.Game, sel.Profile, staged.Path, req.options())
 	if err != nil {
 		s.uploads.ClearInUse(req.UploadID)
 		return nil, nil, err
@@ -143,8 +173,7 @@ func planImportArchiveKind(ctx context.Context, s *Server, sel selection, opts a
 		Profile:  sel.Profile,
 		Plan:     plan,
 		UploadID: req.UploadID,
-		SourceID: req.SourceID,
-		ModID:    req.ModID,
+		Request:  req,
 	}, nil
 }
 
@@ -166,13 +195,12 @@ func applyImportArchiveKind(ctx context.Context, s *Server, pending, opts any, s
 	// again, eligible for the next sweep like any other.
 	defer s.uploads.ClearInUse(p.UploadID)
 
-	result, err := s.svc.ApplyImportArchive(ctx, p.Game, p.Profile, p.Plan, core.ImportArchiveOptions{
-		SourceID:        p.SourceID,
-		ModID:           p.ModID,
-		AcceptConflicts: req.AcceptConflicts,
-		Force:           req.Force,
-		SkipHooks:       req.SkipHooks,
-	}, sink)
+	applyOpts := p.Request.options()
+	applyOpts.AcceptConflicts = req.AcceptConflicts
+	applyOpts.Force = req.Force
+	applyOpts.SkipHooks = req.SkipHooks
+	applyOpts.AcceptMismatch = req.AcceptMismatch
+	result, err := s.svc.ApplyImportArchive(ctx, p.Game, p.Profile, p.Plan, applyOpts, sink)
 	if err != nil {
 		// Keep the staged archive: a refused conflict, a hook failure or a
 		// stale plan are all things the user fixes and retries, and the

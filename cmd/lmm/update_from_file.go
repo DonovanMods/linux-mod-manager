@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -132,4 +133,19 @@ func fromFileSkipped(plan *core.UpdateFromArchivePlan) *core.UpdateApplyResult {
 		Status:      core.UpdateSkipped,
 		Reason:      "locked",
 	}
+}
+
+// updateFromFileRemedy is the line a failed update's manual download is
+// finished by (#535): `lmm update <id> --from-file`, with the source and
+// any -g/-p this run was given.
+func updateFromFileRemedy(dl *core.DownloadError) string {
+	parts := []string{"lmm update", dl.ModID, "-s", dl.SourceID}
+	if gameID != "" {
+		parts = append(parts, "-g", gameID)
+	}
+	if updateProfile != "" {
+		parts = append(parts, "-p", updateProfile)
+	}
+	parts = append(parts, "--from-file", "<downloaded-file>")
+	return "Then update from the file: " + strings.Join(parts, " ")
 }

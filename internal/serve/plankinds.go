@@ -180,6 +180,10 @@ func planErrorStatus(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, core.ErrArchiveIsInstalledVersion):
 		return http.StatusConflict
+	// #535: an install from a file of a mod already installed is answered
+	// by updating it from the file instead.
+	case errors.Is(err, core.ErrArchiveModInstalled):
+		return http.StatusConflict
 	case core.IsIndexUnavailable(err):
 		return http.StatusBadGateway
 	case errors.Is(err, errBadPlanRequest):

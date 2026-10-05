@@ -59,7 +59,9 @@ type UpdateFromArchiveOptions struct {
 }
 
 // ArchiveMatch classifies how an archive's name relates to the files the
-// mod's source lists - see UpdateFromArchivePlan.Match.
+// mod's source lists - see UpdateFromArchivePlan.Match, and
+// ImportArchivePlan.Match for an install from a file (#535), where the
+// "advertised" file is the one the install would download.
 type ArchiveMatch string
 
 // The ArchiveMatch values.
@@ -148,19 +150,28 @@ type UpdateFromArchivePlan struct {
 	snapshot       installedSnapshot  `json:"-"`
 }
 
-// ArchiveMismatchError is ApplyUpdateFromArchive's refusal of an archive
-// that is not the file the update check advertised, when AcceptMismatch did
-// not answer it. Nothing has changed when it is returned.
+// ArchiveMismatchError is the refusal of an archive that is not the file
+// lmm expected it to be, when AcceptMismatch did not answer it: for
+// ApplyUpdateFromArchive the file the update check advertised, and for an
+// install from a file (ApplyImportArchive with InstallFromFile, #535) the
+// file the install would download. Nothing has changed when it is returned.
 type ArchiveMismatchError struct {
 	ArchiveName string
-	Advertised  ArchiveFileRef
+	// Advertised is the file expected: the advertised update, or the file
+	// the install would download.
+	Advertised ArchiveFileRef
 	// Matched is the listed file the archive is, or nil for a name the
 	// source does not list.
 	Matched *ArchiveFileRef
+	// Install reports an install from a file rather than an update.
+	Install bool
 }
 
 // Error names both files and the way to proceed anyway.
 func (e *ArchiveMismatchError) Error() string {
+	if e.Install {
+		return e.Sentence() + "; install from it anyway with --accept-mismatch"
+	}
 	return e.Sentence() + "; update from it anyway with --accept-mismatch"
 }
 
@@ -171,19 +182,24 @@ func (e *ArchiveMismatchError) Sentence() string {
 	if e.Matched != nil {
 		is = fmt.Sprintf("the source's file %s", e.Matched.FileName)
 	}
-	return fmt.Sprintf("%s is %s, not the update the source advertised (%s) - it may be another flavor or loader's build",
-		e.ArchiveName, is, e.Advertised.FileName)
+	expected := "the update the source advertised"
+	if e.Install {
+		expected = "the file lmm would install"
+	}
+	return fmt.Sprintf("%s is %s, not %s (%s) - it may be another flavor or loader's build",
+		e.ArchiveName, is, expected, e.Advertised.FileName)
 }
 
 // Details implements the --json error envelope's extension point.
 func (e *ArchiveMismatchError) Details() any {
-	return archiveMismatchDetails{ArchiveName: e.ArchiveName, Advertised: e.Advertised, Matched: e.Matched}
+	return archiveMismatchDetails{ArchiveName: e.ArchiveName, Advertised: e.Advertised, Matched: e.Matched, Install: e.Install}
 }
 
 type archiveMismatchDetails struct {
 	ArchiveName string          `json:"archive_name"`
 	Advertised  ArchiveFileRef  `json:"advertised"`
 	Matched     *ArchiveFileRef `json:"matched,omitempty"`
+	Install     bool            `json:"install,omitzero"`
 }
 
 // ErrArchiveIsInstalledVersion is PlanUpdateFromArchive's refusal of an
@@ -271,7 +287,7 @@ func (s *Service) PlanUpdateFromArchive(ctx context.Context, game *domain.Game, 
 	// A mismatch is not repeated here: Match/Advertised/MatchedFile state
 	// it, and each frontend words it beside its own way to proceed.
 	if plan.Match != ArchiveMatchMismatch && len(plan.FileIDs) == 0 && mod.SourceID != domain.SourceLocal {
-		warn("%s is no file the source lists, so no file ID is recorded: future update checks compare versions only", plan.ArchiveName)
+		warn("%s", noFileIDWarning(plan.ArchiveName))
 	}
 
 	contents, err := s.planArchiveContents(ctx, game, archivePath, plan.ToVersion)
@@ -348,20 +364,44 @@ func (s *Service) identifyUpdateArchive(ctx context.Context, game *domain.Game, 
 			}
 		}
 	}
-	matched, normalized := matchArchiveName(files, plan.ArchiveName)
-	if matched != nil {
-		plan.MatchedFile, plan.MatchNormalized = fileRef(matched), normalized
-	}
+	m := classifyArchive(files, plan.ArchiveName, plan.Advertised)
+	plan.Match, plan.MatchedFile, plan.MatchNormalized = m.match, m.ref, m.normalized
+}
 
-	switch {
-	case plan.Advertised != nil && matched != nil && matched.ID == plan.Advertised.ID:
-		plan.Match = ArchiveMatchAdvertised
-		plan.MatchedFile.Version = plan.Advertised.Version
-	case plan.Advertised != nil:
-		plan.Match = ArchiveMatchMismatch
-	case matched != nil:
-		plan.Match = ArchiveMatchListed
+// archiveClassification is how an archive's name relates to a mod's listed
+// files and the one file expected of it - see classifyArchive.
+type archiveClassification struct {
+	match ArchiveMatch
+	// ref is the listed file the name matched, nil for none; file is the
+	// listing's own entry for it.
+	ref        *ArchiveFileRef
+	file       *domain.DownloadableFile
+	normalized bool
+}
+
+// classifyArchive matches archiveName against files (matchArchiveName) and
+// says how that relates to expected - the advertised update (#530) or the
+// file an install would download (#535), nil when nothing is expected:
+// expected itself is ArchiveMatchAdvertised (the matched file then carries
+// expected's version, which may be one the listing does not label), any
+// other name is ArchiveMatchMismatch, and with nothing expected a listed
+// file is ArchiveMatchListed and anything else ArchiveMatchNone.
+func classifyArchive(files []domain.DownloadableFile, archiveName string, expected *ArchiveFileRef) archiveClassification {
+	c := archiveClassification{match: ArchiveMatchNone}
+	matched, normalized := matchArchiveName(files, archiveName)
+	if matched != nil {
+		c.ref, c.file, c.normalized = fileRef(matched), matched, normalized
 	}
+	switch {
+	case expected != nil && matched != nil && matched.ID == expected.ID:
+		c.match = ArchiveMatchAdvertised
+		c.ref.Version = expected.Version
+	case expected != nil:
+		c.match = ArchiveMatchMismatch
+	case matched != nil:
+		c.match = ArchiveMatchListed
+	}
+	return c
 }
 
 // advertisedFile is the listed file upd advertises: the file its
@@ -401,37 +441,55 @@ func advertisedFile(files []domain.DownloadableFile, upd domain.Update) *domain.
 }
 
 // resolveUpdateArchiveVersion sets plan's ToVersion and FileIDs from its
-// Match (#530):
-//
-//   - advertised/listed: the matched file's version and ID (an advertised
-//     file without a label of its own carries the update's NewVersion);
-//     a listed file without a label takes the archive name's version.
-//   - mismatch: the matched file's version and ID when the name is a listed
-//     file, else as none - what Apply records if the user accepts it.
-//   - none: the archive name's version, no file ID.
-//
-// override (--version) replaces the version in every case, never the ID. A
-// version nothing names is *ArchiveVersionRequiredError.
+// Match (#530) - see resolveArchiveVersion.
 func resolveUpdateArchiveVersion(plan *UpdateFromArchivePlan, override string) error {
-	if f := plan.MatchedFile; f != nil && cache.VerifiableFileID(f.ID) {
-		plan.FileIDs = []string{f.ID}
-		plan.matchedFileID = f.ID
+	version, fileID, err := resolveArchiveVersion(plan.MatchedFile, plan.ArchiveName, override, plan.Mod.SourceID, plan.Mod.ID)
+	if err != nil {
+		return err
 	}
-	version := ""
-	if plan.MatchedFile != nil {
-		version = plan.MatchedFile.Version
+	if fileID != "" {
+		plan.FileIDs = []string{fileID}
+		plan.matchedFileID = fileID
+	}
+	plan.ToVersion = version
+	return nil
+}
+
+// resolveArchiveVersion is the version and file ID an archive records, from
+// the listed file its name matched (#530, and #535's install from a file):
+//
+//   - a matched file: its version and ID (an advertised or expected file
+//     without a label of its own carries the version it was offered as);
+//     a matched file without a label takes the archive name's version.
+//   - no matched file: the archive name's version, no file ID.
+//
+// A mismatch records the matched file's identity too - what Apply records if
+// the user accepts it. override (--version) replaces the version in every
+// case, never the ID. A version nothing names is
+// *ArchiveVersionRequiredError.
+func resolveArchiveVersion(matched *ArchiveFileRef, archiveName, override, sourceID, modID string) (version, fileID string, err error) {
+	if matched != nil && cache.VerifiableFileID(matched.ID) {
+		fileID = matched.ID
+	}
+	if matched != nil {
+		version = matched.Version
 	}
 	if version == "" {
-		version = domain.ExtractVersionFromName(strings.TrimSuffix(plan.ArchiveName, filepath.Ext(plan.ArchiveName)))
+		version = domain.ExtractVersionFromName(strings.TrimSuffix(archiveName, filepath.Ext(archiveName)))
 	}
 	if override != "" {
 		version = override
 	}
 	if version == "" {
-		return &ArchiveVersionRequiredError{ArchiveName: plan.ArchiveName, SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID}
+		return "", "", &ArchiveVersionRequiredError{ArchiveName: archiveName, SourceID: sourceID, ModID: modID}
 	}
-	plan.ToVersion = version
-	return nil
+	return version, fileID, nil
+}
+
+// noFileIDWarning is the plan warning for an archive that records no file
+// ID, shared by the update and the install from a file.
+func noFileIDWarning(archiveName string) string {
+	return archiveName + " is no file the source lists, so no file ID is recorded: future update checks compare versions only"
 }
 
 // fileRef is f as an ArchiveFileRef.

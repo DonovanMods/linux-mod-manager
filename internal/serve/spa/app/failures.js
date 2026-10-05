@@ -93,6 +93,8 @@ export function explainerFor(job) {
  * (weburl.js): this is the last stop before an href. `manual` says the
  * source will not hand the file to lmm at all, so the page is not just
  * somewhere to read about the mod but where the file has to come from.
+ * `fileID`/`fileName` name the file the download was for (issue 535) - the
+ * one "Install from file…" expects the downloaded archive to be.
  */
 export function downloadFailureFor(details) {
   if (!details || typeof details !== "object") return null;
@@ -109,6 +111,8 @@ export function downloadFailureFor(details) {
     modName: details.mod_name ?? "",
     url: safeWebUrl(details.mod_url),
     manual: Boolean(details.manual_download),
+    fileID: details.file_id ?? "",
+    fileName: details.file_name ?? "",
   };
 }
 

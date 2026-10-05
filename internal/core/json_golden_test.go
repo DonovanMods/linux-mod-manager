@@ -734,6 +734,18 @@ func TestJSONGoldens(t *testing.T) {
 			}).Details(),
 		},
 		{
+			// #535: a failed download names the file it was for, which the
+			// web UI's "Install from file…" expects the hand-downloaded
+			// archive to be.
+			"download_error_with_file",
+			(&core.DownloadError{
+				SourceID: "curseforge", ModID: "238222", ModName: "Just Enough Items",
+				ModURL: "https://www.curseforge.com/minecraft/mc-mods/jei", ManualDownload: true,
+				FileID: "5001", FileName: "jei-1.20.1-15.2.0.27.jar",
+				Err: errors.New("mod author has disabled third-party downloads"),
+			}).Details(),
+		},
+		{
 			// #513: and with no page to send the user to - the keys that
 			// have nothing to say are left out.
 			"download_error_no_page",
@@ -980,6 +992,36 @@ func TestJSONGoldens(t *testing.T) {
 				EntryPreExists: true,
 				Warnings:       []string{"could not resolve source file for archive: rate limited"},
 			},
+		},
+		{
+			// #535: an install from a file - the expected file, the file the
+			// archive's name matched (here another flavor's: a mismatch),
+			// and the dependencies it does not install, one the source
+			// could not resolve (no name).
+			"import_archive_plan_install_from_file",
+			core.ImportArchivePlan{
+				Archive:         "/downloads/Sample-Mod-Classic-1.2.3 (1).zip",
+				Mod:             jsonGoldenMod,
+				LinkedSource:    "curseforge",
+				Files:           []string{"SampleMod/SampleMod.lua"},
+				Conflicts:       []core.Conflict{},
+				Hooks:           []string{},
+				Match:           core.ArchiveMatchMismatch,
+				Expected:        &core.ArchiveFileRef{ID: "5001", FileName: "Sample-Mod-1.2.3.zip", Version: "1.2.3"},
+				MatchedFile:     &core.ArchiveFileRef{ID: "5002", FileName: "Sample-Mod-Classic-1.2.3.zip", Version: "1.2.3c"},
+				MatchNormalized: true,
+				UnmetDependencies: []core.UnmetDependency{
+					{SourceID: "curseforge", ModID: "77", Name: "Sample Library"},
+					{SourceID: "curseforge", ModID: "78"},
+				},
+				Warnings: []string{"Sample Mod depends on 2 mods that are not installed, and installing from a file does not install them: Sample Library, curseforge:78"},
+			},
+		},
+		{
+			// #535: one unmet dependency alone; name is omitempty - a
+			// dependency the source could not resolve has none.
+			"unmet_dependency",
+			core.UnmetDependency{SourceID: "curseforge", ModID: "78"},
 		},
 		{
 			// Every optional key populated at once, to pin each one's wire

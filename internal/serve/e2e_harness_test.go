@@ -1182,6 +1182,11 @@ type e2eSearchSource struct {
 	// urlErrs makes GetDownloadURL fail for a mod, by id - a source that
 	// will not serve its file (#513).
 	urlErrs map[string]error
+	// fileIDUpdates makes CheckUpdates compare FILE IDs, the way CurseForge's
+	// does (#504): an installed row recording a file named here (a key) has
+	// an update to the file it maps to, and a row recording no file ID has
+	// none (#535).
+	fileIDUpdates map[string]string
 }
 
 func newE2ESearchSource(t *testing.T, id string) *e2eSearchSource {
@@ -1286,6 +1291,9 @@ func (s *e2eSearchSource) GetDownloadURL(_ context.Context, mod *domain.Mod, fil
 }
 
 func (s *e2eSearchSource) CheckUpdates(_ context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	if s.fileIDUpdates != nil {
+		return s.fileIDCheck(installed), nil
+	}
 	if !s.updatable {
 		return nil, nil
 	}
@@ -1301,6 +1309,29 @@ func (s *e2eSearchSource) CheckUpdates(_ context.Context, installed []domain.Ins
 		return updates[i].InstalledMod.ID < updates[j].InstalledMod.ID
 	})
 	return updates, nil
+}
+
+// fileIDCheck is CheckUpdates under fileIDUpdates.
+func (s *e2eSearchSource) fileIDCheck(installed []domain.InstalledMod) []domain.Update {
+	var updates []domain.Update
+	for _, im := range installed {
+		entry, ok := s.mods[im.ID]
+		if !ok {
+			continue
+		}
+		for _, id := range im.FileIDs {
+			next, ok := s.fileIDUpdates[id]
+			if !ok {
+				continue
+			}
+			for _, f := range entry.files {
+				if f.ID == next {
+					updates = append(updates, domain.Update{InstalledMod: im, NewVersion: f.Version, FileIDReplacements: map[string]string{id: next}})
+				}
+			}
+		}
+	}
+	return updates
 }
 
 func (s *e2eSearchSource) downloadCount() int { return int(s.urlRequests.Load()) }

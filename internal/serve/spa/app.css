@@ -1595,9 +1595,14 @@ a.row-menu__item.mod-page-link {
   white-space: nowrap;
 }
 
-/* issue 513: a failed download's way out. */
+/* issue 513: a failed download's way out. Under a readout's own headline
+ * (issue 535) the explainer's margin already separates them. */
 .download-page {
   margin: var(--space-2) 0 0;
+}
+
+.job-progress__explainer > .download-page {
+  margin-top: 0;
 }
 
 /* issue 517: what a finished verify --fix job repaired, and what still fails.
@@ -1664,6 +1669,22 @@ a.row-menu__item.mod-page-link {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
+}
+
+/* issue 535: a failure that leads with what it means keeps the engine's own
+ * text one click away, collapsed under "Details". */
+.raw-error {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+}
+
+.raw-error__summary {
+  cursor: pointer;
+}
+
+.raw-error__text {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
 }
 
 /* issue 533: a finished update batch's failed items, one entry each - the
@@ -2272,6 +2293,14 @@ a.row-menu__item.mod-page-link {
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.85em;
+}
+
+/* issue 535: a finished install's readout takes a line of its own under its
+ * result (searchresults.js's FinishedJobReadout) - squeezed into the action
+ * column, a failure's paragraph and its way out overlapped the row. */
+.search-result > .job-progress {
+  grid-column: 1 / -1;
+  max-width: none;
 }
 
 /* A source that failed (issue 520): a notice across the whole row, named

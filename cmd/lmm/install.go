@@ -441,7 +441,8 @@ Examples:
   lmm install --id 12345 --file 67890 --game skyrim-se   # skip search and file prompt
   lmm install "skyui" -g skyrim-se --sort downloads   # most downloaded first
   lmm install "mod name" -g skyrim-se -y       # Install the exact-name match, auto-confirm
-  lmm install "mod name" -g skyrim-se --no-deps  # Skip dependencies`,
+  lmm install "mod name" -g skyrim-se --no-deps  # Skip dependencies
+  lmm install --id 12345 -s curseforge --from-file ~/Downloads/Mod-2.0.zip  # a file the source won't let lmm download`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runInstall,
 }
@@ -526,6 +527,9 @@ func looksOpaqueFileName(fileName string) bool {
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
+	if err := checkInstallFromFileFlags(args); err != nil {
+		return err
+	}
 	// Either query or --id is required
 	if len(args) == 0 && installModID == "" {
 		return fmt.Errorf("either a search query or --id is required")
@@ -535,7 +539,20 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doInstall renders `lmm install`: from an archive with --from-file (#535),
+// else from the source - and a source that refuses the download leaves the
+// --from-file command that finishes the install behind it.
 func doInstall(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
+	if installFromFile != "" {
+		return doInstallFromFile(ctx, service, game, args)
+	}
+	if err := checkInstallFromFileFlags(args); err != nil {
+		return err
+	}
+	return withFromFileRemedy(doInstallFromSource(ctx, service, game, args), installFromFileRemedy)
+}
+
+func doInstallFromSource(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	// --sort is checked first, before anything is read or fetched - the
 	// same refusal `lmm search` gives for a value outside the set.
 	sortBy, err := domain.ParseSearchSort(installSort)

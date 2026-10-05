@@ -77,6 +77,32 @@ type ImportArchiveOptions struct {
 	// ingested: a set that no longer matches the plan's is ErrStalePlan, and
 	// a non-empty one this flag has not answered is *ConflictError.
 	AcceptConflicts bool
+
+	// InstallFromFile makes the import `lmm install --id <id> -s <source>
+	// --from-file <archive>` (#535): the install of a mod whose source
+	// refused the download, from the archive the user fetched by hand.
+	// SourceID and ModID are then required (a mapped source), a mod already
+	// installed is refused (ErrArchiveModInstalled - it is updated from a
+	// file instead), and the archive is matched against the file the
+	// install would download, as #530 matches an update's: see
+	// ImportArchivePlan.Match. The four fields below apply only with it.
+	InstallFromFile bool
+	// ExpectedFileID is the file the install tried to download - a failed
+	// install's DownloadError.FileID, the CLI's --file. Empty, the expected
+	// file is the one the install would pick: the primary file (or the one
+	// at Version), by PlanInstall's own selection.
+	ExpectedFileID string
+	// Version is --version: the version the install picks the expected file
+	// at when ExpectedFileID is empty, and the version to record, overriding
+	// whatever the plan worked out (never the file ID). Required only when
+	// nothing else names one - see ArchiveVersionRequiredError.
+	Version string
+	// ShowArchived lets that selection pick an archived file
+	// (--show-archived), as PlanInstall's does.
+	ShowArchived bool
+	// AcceptMismatch answers the filename gate: install from an archive that
+	// is not the expected file (ArchiveMatchMismatch). Apply-time only.
+	AcceptMismatch bool
 }
 
 // ImportArchiveResult reports ImportArchive's outcome. As with every other
@@ -205,6 +231,28 @@ type ImportArchivePlan struct {
 	// discardImportedCacheEntry).
 	EntryPreExists bool `json:"entry_pre_exists"`
 
+	// Match is how the archive's name relates to the source's files, set
+	// for an install from a file only (ImportArchiveOptions.InstallFromFile,
+	// #535) - #530's classification, where "advertised" means the file the
+	// install would download (Expected): the name is it, and its version and
+	// file ID are adopted; "mismatch", it is another listed file or a name
+	// the source does not list, and Apply refuses it unless AcceptMismatch;
+	// "listed"/"none" when no file is expected (the listing failed, or the
+	// expected file is no longer listed).
+	Match ArchiveMatch `json:"match,omitempty"`
+	// Expected is the file the install would download, or nil.
+	Expected *ArchiveFileRef `json:"expected,omitempty"`
+	// MatchedFile is the listed file the archive's name matched, or nil;
+	// MatchNormalized reports that it matched only once a browser's
+	// duplicate-download suffix was ignored (UpdateFromArchivePlan's rule).
+	MatchedFile     *ArchiveFileRef `json:"matched_file,omitempty"`
+	MatchNormalized bool            `json:"match_normalized,omitzero"`
+	// UnmetDependencies names the dependencies of an install from a file
+	// that are not installed: installing from a file installs the one mod,
+	// so a frontend says what else to install, and by what. A dependency
+	// the source could not resolve has no Name.
+	UnmetDependencies []UnmetDependency `json:"unmet_dependencies,omitempty"`
+
 	// Warnings holds the enrichment diagnostics raised while COMPUTING this
 	// plan - an unmapped source, a failed metadata fetch, a failed
 	// source-file resolution - each with no prefix baked in (print them as
@@ -283,6 +331,12 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 		return nil, err
 	}
 
+	if opts.InstallFromFile {
+		if err := s.checkInstallFromFile(ctx, game, profileName, archivePath, opts); err != nil {
+			return nil, err
+		}
+	}
+
 	filename := filepath.Base(archivePath)
 	importOpts := ImportOptions{SourceID: opts.SourceID, ModID: opts.ModID, ProfileName: profileName}
 	ident := resolveImportIdentity(filename, importOpts)
@@ -327,7 +381,13 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	warn := func(format string, args ...any) {
 		plan.Warnings = append(plan.Warnings, fmt.Sprintf(format, args...))
 	}
-	plan.resolvedFile = s.enrichImportedMod(ctx, game, archivePath, &plan.Mod, opts, warn)
+	var srcMod *domain.Mod
+	srcMod, plan.resolvedFile = s.enrichImportedMod(ctx, game, archivePath, &plan.Mod, opts, warn)
+	if opts.InstallFromFile {
+		if err := s.identifyInstallArchive(ctx, game, profileName, plan, srcMod, opts, warn); err != nil {
+			return nil, err
+		}
+	}
 
 	// Conflicts come from the plan's own path list, not from a cache entry
 	// that does not exist yet - the Installer.GetConflicts twin that takes
@@ -574,6 +634,14 @@ func (s *Service) ApplyImportArchive(ctx context.Context, game *domain.Game, pro
 	}
 	if current != plan.fingerprint {
 		return &ImportArchiveResult{}, fmt.Errorf("%w: %s changed since the plan was computed", ErrStalePlan, plan.Archive)
+	}
+	// #535: an install from a file that is not the file the install would
+	// download is the user's decision (Ruling 1), refused before anything is
+	// written.
+	if plan.Match == ArchiveMatchMismatch && !opts.AcceptMismatch {
+		return &ImportArchiveResult{}, &ArchiveMismatchError{
+			ArchiveName: filepath.Base(plan.Archive), Advertised: *plan.Expected, Matched: plan.MatchedFile, Install: true,
+		}
 	}
 
 	result, err := s.applyImportArchive(ctx, game, profileName, plan, opts, sink)
@@ -957,7 +1025,10 @@ func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArc
 
 // enrichImportedMod folds the source's metadata into imported when the
 // caller pinned a real source and mod ID (--id/--source), and returns the
-// source file this archive corresponds to (#139), or nil. Every failure
+// mod the source described (nil when it was not asked or did not answer)
+// and the source file this archive corresponds to (#139), or nil. An
+// install from a file (#535) resolves its file and version itself
+// (identifyInstallArchive), so it gets the source's mod and nothing else. Every failure
 // here is a warning and never fatal: an unconfigured source, an offline
 // metadata fetch and a failed file listing each leave the import to proceed
 // under the archive's own detected identity.
@@ -967,21 +1038,21 @@ func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArc
 // Its "Fetching metadata from..." progress line is therefore NOT emitted
 // from here - a plan emits nothing - but rendered from the plan alongside
 // the readout (EmitImportArchiveReadout / importEnrichmentRuns).
-func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, archivePath string, imported *domain.Mod, opts ImportArchiveOptions, warn func(string, ...any)) *domain.DownloadableFile {
+func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, archivePath string, imported *domain.Mod, opts ImportArchiveOptions, warn func(string, ...any)) (*domain.Mod, *domain.DownloadableFile) {
 	if !importPinsRealSource(opts) {
-		return nil
+		return nil, nil
 	}
 
 	sourceGameID, ok := game.SourceIDs[opts.SourceID]
 	if !ok {
 		warn("source %s is not configured for this game; skipping metadata fetch", opts.SourceID)
-		return nil
+		return nil, nil
 	}
 
 	mod, err := s.GetMod(ctx, opts.SourceID, sourceGameID, opts.ModID)
 	if err != nil {
 		warn("could not fetch metadata: %v", err)
-		return nil
+		return nil, nil
 	}
 
 	// Apply metadata from source, keeping local file info.
@@ -990,6 +1061,9 @@ func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, arch
 	imported.Summary = mod.Summary
 	imported.SourceURL = mod.SourceURL
 	imported.PictureURL = mod.PictureURL
+	if opts.InstallFromFile {
+		return mod, nil
+	}
 	if mod.Version != "" && imported.Version == VersionUnknown {
 		imported.Version = mod.Version
 	}
@@ -1002,10 +1076,10 @@ func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, arch
 	file, ferr := s.resolveImportedFile(ctx, opts.SourceID, mod, filepath.Base(archivePath), imported.Version, true)
 	if ferr != nil {
 		warn("could not resolve source file for archive: %v", ferr)
-		return nil
+		return mod, nil
 	}
 	if file == nil {
-		return nil
+		return mod, nil
 	}
 	// The matched file's own version is authoritative - adopt it so the
 	// cache entry, DB row, and marker all agree with what future source-side
@@ -1013,7 +1087,7 @@ func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, arch
 	if file.Version != "" && file.Version != imported.Version {
 		imported.Version = file.Version
 	}
-	return file
+	return mod, file
 }
 
 // sameConflicts reports whether two conflict lists describe the same set,

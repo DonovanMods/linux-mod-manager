@@ -624,6 +624,10 @@ type fakeInstallSource struct {
 	// the observable form of "this command handed the
 	// source the context it was given" (T3 review F2).
 	notice *source.Notice
+
+	// downloadURLErr, when set, is GetDownloadURL's answer for every file -
+	// a source.ManualDownloadError is a CurseForge author's opt-out (#535).
+	downloadURLErr error
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
@@ -688,6 +692,9 @@ func (s *fakeInstallSource) GetDownloadURL(ctx context.Context, mod *domain.Mod,
 	s.receivedGameDownloadIDs = append(s.receivedGameDownloadIDs, mod.GameID)
 	if s.notice != nil {
 		source.Notify(ctx, *s.notice)
+	}
+	if s.downloadURLErr != nil {
+		return "", s.downloadURLErr
 	}
 	return s.srv.URL + "/" + fileID, nil
 }

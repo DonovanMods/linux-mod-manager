@@ -32,9 +32,9 @@ import {
   useJobResultVerify,
   useJobResultFailures,
 } from "../jobresult.js";
-import { ErrorDetails } from "./errordetails.js";
+import { DownloadHeadline, ErrorDetails, RawError } from "./errordetails.js";
 import { BatchFailures } from "./batchfailures.js";
-import { nextStepFor } from "../failures.js";
+import { downloadFailureFor, nextStepFor } from "../failures.js";
 import { PurgeResultDetails } from "./purgeresult.js";
 import { VerifyFixResult } from "./verifyfixresult.js";
 
@@ -327,12 +327,31 @@ export function OverwriteButton({ job, actions }) {
  */
 function FailureNextStep({ job, actions }) {
   const envelope = job.error ?? {};
+  // Issue 535: a download its source refuses leads with what that means,
+  // and the engine's own text moves into a collapsed "Details" - the inline
+  // readout's rule (jobprogress.js), here too.
+  const download = downloadFailureFor(envelope.details);
+  const headed = Boolean(download?.manual);
 
   return html`
     <div class="tray__failure">
-      <p class="tray__failure-message">${envelope.error ?? "failed"}</p>
+      <p class="tray__failure-message">
+        ${
+          headed
+            ? html`<${DownloadHeadline}
+                failure=${download}
+                actions=${actions}
+              />`
+            : (envelope.error ?? "failed")
+        }
+      </p>
       <${OverwriteButton} job=${job} actions=${actions} />
-      <${ErrorDetails} details=${envelope.details} actions=${actions} />
+      <${ErrorDetails}
+        details=${envelope.details}
+        actions=${actions}
+        headed=${headed}
+      />
+      ${headed && html`<${RawError} text=${envelope.error} />`}
     </div>
   `;
 }

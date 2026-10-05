@@ -39,6 +39,29 @@ func TestReportError_JSON_DownloadError(t *testing.T) {
 		"}\n", out)
 }
 
+// #535: the failure names the file it was for, beside the mod - what the
+// web UI's "Install from file…" expects the downloaded archive to be.
+func TestReportError_JSON_DownloadError_NamesTheFile(t *testing.T) {
+	withJSONOutput(t)
+
+	err := &core.DownloadError{
+		SourceID: "curseforge", ModID: "238222", ManualDownload: true,
+		FileID: "5001", FileName: "jei-1.20.1.jar", Err: errors.New("refused"),
+	}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"refused\",\n"+
+		"  \"details\": {\n"+
+		"    \"source_id\": \"curseforge\",\n"+
+		"    \"mod_id\": \"238222\",\n"+
+		"    \"manual_download\": true,\n"+
+		"    \"file_id\": \"5001\",\n"+
+		"    \"file_name\": \"jei-1.20.1.jar\"\n"+
+		"  }\n"+
+		"}\n", out)
+}
+
 // TestReportError_Human_DownloadError_NamesThePage: every download failure
 // with a usable page says where to get the file by hand.
 func TestReportError_Human_DownloadError_NamesThePage(t *testing.T) {
