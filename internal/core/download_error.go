@@ -36,6 +36,13 @@ type DownloadError struct {
 	// fetched by hand from ModURL, then imported.
 	ManualDownload bool
 
+	// FileID and FileName name the file the download was for (#535): the
+	// one a frontend's "Install from file..." expects the hand-downloaded
+	// archive to be (ImportArchiveOptions.ExpectedFileID). Empty when the
+	// failure is not tied to one file.
+	FileID   string
+	FileName string
+
 	// Err is the underlying failure.
 	Err error
 }
@@ -58,6 +65,8 @@ func (e *DownloadError) Details() any {
 		ModName:        e.ModName,
 		ModURL:         e.ModURL,
 		ManualDownload: e.ManualDownload,
+		FileID:         e.FileID,
+		FileName:       e.FileName,
 	}
 	var workshop *WorkshopFetchError
 	if errors.As(e.Err, &workshop) {
@@ -75,6 +84,8 @@ type downloadErrorDetails struct {
 	ModName        string `json:"mod_name,omitempty"`
 	ModURL         string `json:"mod_url,omitempty"`
 	ManualDownload bool   `json:"manual_download"`
+	FileID         string `json:"file_id,omitempty"`
+	FileName       string `json:"file_name,omitempty"`
 }
 
 type workshopDownloadErrorDetails struct {
@@ -83,9 +94,10 @@ type workshopDownloadErrorDetails struct {
 }
 
 // asDownloadError wraps err - what fetching file into the cache returned - as
-// a *DownloadError for mod. A cancellation is returned as it came: the user
-// stopping a download is not a failure with a page to go and read.
-func asDownloadError(err error, sourceID string, mod *domain.Mod) error {
+// a *DownloadError for mod and file (nil when unknown). A cancellation is
+// returned as it came: the user stopping a download is not a failure with a
+// page to go and read.
+func asDownloadError(err error, sourceID string, mod *domain.Mod, file *domain.DownloadableFile) error {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
@@ -102,7 +114,7 @@ func asDownloadError(err error, sourceID string, mod *domain.Mod) error {
 	if errors.As(err, &typed) && !errors.As(err, &workshop) {
 		return err
 	}
-	return &DownloadError{
+	dl := &DownloadError{
 		SourceID:       sourceID,
 		ModID:          mod.ID,
 		ModName:        mod.Name,
@@ -110,4 +122,8 @@ func asDownloadError(err error, sourceID string, mod *domain.Mod) error {
 		ManualDownload: errors.Is(err, source.ErrManualDownload),
 		Err:            err,
 	}
+	if file != nil {
+		dl.FileID, dl.FileName = file.ID, file.FileName
+	}
+	return dl
 }

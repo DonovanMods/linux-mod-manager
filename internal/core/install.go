@@ -1184,6 +1184,14 @@ func (s *Service) resolveInstallCandidatePool(ctx context.Context, sourceID stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mod files: %w", err)
 	}
+	return installCandidatePool(sourceID, files, showArchived, targetVersion)
+}
+
+// installCandidatePool narrows a mod's listed files to the ones an install
+// chooses among: every file at targetVersion when one is pinned, else the
+// FilterAndSortFiles(showArchived) list. Shared with an install from a file
+// (#535), which asks it which file the install would download.
+func installCandidatePool(sourceID string, files []domain.DownloadableFile, showArchived bool, targetVersion string) ([]domain.DownloadableFile, error) {
 	if targetVersion != "" {
 		return ResolveVersionFiles(sourceID, files, targetVersion)
 	}

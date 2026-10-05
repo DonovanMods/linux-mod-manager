@@ -1507,7 +1507,7 @@ func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain
 func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*DownloadModResult, error) {
 	result, err := s.fetchFileToCache(ctx, gameCache, sourceID, game, mod, file, sink)
 	if err != nil {
-		return nil, asDownloadError(err, sourceID, mod)
+		return nil, asDownloadError(err, sourceID, mod, file)
 	}
 	return result, nil
 }
