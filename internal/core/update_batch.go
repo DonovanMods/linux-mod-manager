@@ -93,6 +93,13 @@ type UpdateBatchFailure struct {
 	// Name is the mod's display name as the check reported it, empty only
 	// when the check itself had none.
 	Name string `json:"name,omitzero"`
+	// FromVersion/ToVersion are the change the batch was attempting: the
+	// version installed when the batch ran and the version the check
+	// advertised (#533). A readout heads each failed item with them
+	// ("Broken Mod, 1.2 -> 1.3"); either is omitted when the check
+	// carried none.
+	FromVersion string `json:"from_version,omitzero"`
+	ToVersion   string `json:"to_version,omitzero"`
 	// Error is the failure, rendered. It is the whole of what crosses the
 	// wire: a JSON document cannot carry a typed error, so a caller that
 	// needs to branch on the cause must be in-process and use Cause below.
@@ -338,7 +345,7 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 			Total:   total,
 		}
 		fail := func(err error) {
-			failure := UpdateBatchFailure{Mod: key, Name: mod.Name, Error: err.Error(), cause: err}
+			failure := UpdateBatchFailure{Mod: key, Name: mod.Name, FromVersion: mod.Version, ToVersion: upd.NewVersion, Error: err.Error(), cause: err}
 			var dl *DownloadError
 			if errors.As(err, &dl) {
 				failure.ModURL, failure.ManualDownload = dl.ModURL, dl.ManualDownload

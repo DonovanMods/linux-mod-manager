@@ -1910,14 +1910,18 @@ func TestJSONGoldens(t *testing.T) {
 					Status:      core.UpdateUpdated,
 				}},
 				Failed: []core.UpdateBatchFailure{{
-					Mod:   "curseforge:7",
-					Name:  "Broken Mod",
-					Error: "fetching mod: source unavailable",
+					Mod:         "curseforge:7",
+					Name:        "Broken Mod",
+					FromVersion: "1.2",
+					ToVersion:   "1.3",
+					Error:       "fetching mod: source unavailable",
 				}, {
 					// #513/#530: a download the source refused - the page to
 					// fetch it from, and that it must be fetched by hand.
 					Mod:            "curseforge:8",
 					Name:           "Manual Mod",
+					FromVersion:    "2.0",
+					ToVersion:      "2.1",
 					Error:          "downloading update: mod author has disabled third-party downloads",
 					ModURL:         "https://www.curseforge.com/minecraft/mc-mods/manual-mod",
 					ManualDownload: true,
@@ -1935,19 +1939,23 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			"update_batch_failure",
 			core.UpdateBatchFailure{
-				Mod:   "curseforge:7",
-				Name:  "Broken Mod",
-				Error: "fetching mod: source unavailable",
+				Mod:         "curseforge:7",
+				Name:        "Broken Mod",
+				FromVersion: "1.2",
+				ToVersion:   "1.3",
+				Error:       "fetching mod: source unavailable",
 			},
 		},
 		{
 			// #513: a failure that was a download carries the mod's page.
 			"update_batch_failure_download",
 			core.UpdateBatchFailure{
-				Mod:    "curseforge:7",
-				Name:   "Broken Mod",
-				Error:  "downloading update: mod author has disabled third-party downloads",
-				ModURL: "https://www.curseforge.com/minecraft/mc-mods/broken-mod",
+				Mod:         "curseforge:7",
+				Name:        "Broken Mod",
+				FromVersion: "1.2",
+				ToVersion:   "1.3",
+				Error:       "downloading update: mod author has disabled third-party downloads",
+				ModURL:      "https://www.curseforge.com/minecraft/mc-mods/broken-mod",
 			},
 		},
 		{

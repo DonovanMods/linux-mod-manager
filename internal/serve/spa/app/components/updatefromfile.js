@@ -53,7 +53,10 @@ export function UpdateFromFileInput({ actions }) {
  * UpdateFromFileButton opens the file dialog for `mod` ({source_id, id,
  * name}); the job it ends up starting reports under `origin`, so an
  * InlineJob around the button shows its progress. `menu` renders it as a
- * row-menu item instead of a button. A locked mod's control is disabled - an
+ * row-menu item instead of a button. The button's accessible name carries
+ * the mod ("Update from file…: Name", beginning with the visible text as
+ * WCAG 2.5.3 requires): two of them side by side in a batch readout (issue
+ * 533) are told apart by it, while the visible label stays short. A locked mod's control is disabled - an
  * update of it is refused - with the reason in `title` and, for a keyboard
  * user who cannot reach a disabled control's title, wherever the surface
  * already says the mod is locked.
@@ -71,6 +74,7 @@ export function UpdateFromFileButton({
     actions.updateFromFile(mod, origin);
   };
   const title = locked ? "Unlock this mod to update it" : undefined;
+  const label = mod?.name ? `${updateFromFileLabel}: ${mod.name}` : undefined;
   return menu
     ? html`<button
         type="button"
@@ -86,6 +90,7 @@ export function UpdateFromFileButton({
         type="button"
         class="button"
         data-action="update-from-file"
+        aria-label=${label}
         disabled=${locked}
         title=${title}
         onClick=${open}

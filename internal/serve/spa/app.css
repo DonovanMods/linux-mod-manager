@@ -1666,6 +1666,52 @@ a.row-menu__item.mod-page-link {
   gap: var(--space-2) var(--space-3);
 }
 
+/* issue 533: a finished update batch's failed items, one entry each - the
+ * item's name and the change that was attempted, then why, then its way out.
+ * In the job readout's flex row the list takes the full line under the tally
+ * (flex-basis); in the tray it is an ordinary block. */
+.batch-failures {
+  flex-basis: 100%;
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.batch-failure {
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.batch-failure__head {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1em;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.batch-failure__change {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.batch-failure__reason {
+  margin: var(--space-1) 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* issue 533: a finished readout inside a card's action row takes a line of
+ * its own below the buttons, whatever their count (the buttons keep order 0;
+ * a wrapping row breaks lines in order-modified sequence). It used to share
+ * the row with them, sized to its content, and sat over the card's footer. */
+.card__actions > .job-progress[data-state="succeeded"],
+.card__actions > .job-progress[data-state="failed"] {
+  flex: 1 0 100%;
+  order: 1;
+  max-width: none;
+}
+
 /* issue 530: the version a plan could not work out, asked for in the
  * confirm modal - the field and its button on one row, wrapping when the
  * modal is narrow. */

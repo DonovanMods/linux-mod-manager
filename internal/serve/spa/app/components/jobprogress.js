@@ -23,7 +23,7 @@ import {
   resultTallyTone,
 } from "../progress.js";
 import {
-  useJobResultDownloads,
+  useJobResultFailures,
   useJobResultPurge,
   useJobResultTally,
   useJobResultVerify,
@@ -37,6 +37,7 @@ import {
   loaderSetupFor,
 } from "../failures.js";
 import { DownloadPage, LoaderSetup } from "./errordetails.js";
+import { BatchFailures } from "./batchfailures.js";
 import { PurgeResultDetails } from "./purgeresult.js";
 import { VerifyFixResult } from "./verifyfixresult.js";
 
@@ -48,7 +49,7 @@ import { VerifyFixResult } from "./verifyfixresult.js";
  * is what the toast rule reads: navigate away mid-deploy and the completion
  * finds you as a toast instead, because this effect's cleanup ran.
  */
-export function InlineJob({ origin, state, actions, children }) {
+export function InlineJob({ origin, state, actions, children, keepControl }) {
   useEffect(() => registerOrigin(origin), [origin]);
 
   const jobID = state.origins?.[origin];
@@ -57,13 +58,23 @@ export function InlineJob({ origin, state, actions, children }) {
   const summary = (state.jobsIndex ?? []).find((row) => row.id === jobID);
   const frame = state.jobProgress?.[jobID];
 
-  return html`<${JobProgress}
+  const readout = html`<${JobProgress}
     jobID=${jobID}
     summary=${summary}
     frame=${frame}
     actions=${actions}
     onDismiss=${() => actions.clearOrigin(origin)}
   />`;
+  // keepControl (issue 533): a control that sits among siblings in a row
+  // keeps its place once its job has FINISHED, with the readout beside it
+  // (the row's own layout gives the readout a line of its own). Replacing
+  // "Update all" with a tall result left the card's footer short of the
+  // control the user would reach for next. While the job runs it is still
+  // the control that morphs, so it cannot be started twice.
+  if (keepControl && summary && summary.state !== "running") {
+    return html`${children}${readout}`;
+  }
+  return readout;
 }
 
 /**
@@ -90,9 +101,10 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   const resultWarnings = useJobResultWarnings(jobID, state);
   const purgeResult = useJobResultPurge(jobID, state);
   const repairResult = useJobResultVerify(jobID, state);
-  // Issue 530: a failed update item's download way out (its page, and
-  // "Update from file…" when the source refused the download).
-  const batchDownloads = useJobResultDownloads(jobID, state);
+  // Issues 530 and 533: every failed update item, named, with its download
+  // way out (its page, and "Update from file…" when the source refused the
+  // download).
+  const batchFailures = useJobResultFailures(jobID, state);
 
   if (state === "running") {
     const fraction = progressFraction(frame);
@@ -148,7 +160,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
     !failed && summary?.kind === "switch" ? resultWarnings : NO_NOTICES;
   return html`
     <div
-      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || batchDownloads.length > 0 || notices.length > 0 || purgeResult || repairResult ? "job-progress--explained" : ""}"
+      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || batchFailures.length > 0 || notices.length > 0 || purgeResult || repairResult ? "job-progress--explained" : ""}"
       data-job=${jobID}
       data-state=${state}
       role="status"
@@ -191,15 +203,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
       )}
       <${PurgeResultDetails} result=${purgeResult} />
       <${VerifyFixResult} outcome=${repairResult} />
-      ${batchDownloads.map(
-        (d) =>
-          html`<div
-            key=${`${d.sourceID}:${d.modID}`}
-            class="job-progress__explainer"
-          >
-            <${DownloadPage} failure=${d} actions=${actions} />
-          </div>`,
-      )}
+      <${BatchFailures} failures=${batchFailures} actions=${actions} />
       ${
         loader &&
         html`<div class="job-progress__explainer">

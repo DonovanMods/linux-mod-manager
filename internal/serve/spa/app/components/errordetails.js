@@ -19,6 +19,7 @@ import {
   loaderSetupFor,
   retryAtFor,
 } from "../failures.js";
+import { useSourceName } from "../sourcenames.js";
 import { ModPageLink } from "./modpagelink.js";
 import {
   UpdateFromFileButton,
@@ -89,10 +90,16 @@ export function ErrorDetails({ details, actions }) {
  * the message above already gave the reason.
  */
 export function DownloadPage({ failure, actions }) {
+  // Called before the early return: a hook never sits behind a condition.
+  const sourceName = useSourceName(failure.sourceID, failure.manual);
   if (!failure.url && !failure.manual) return null;
   const updatable =
     failure.manual &&
     actions?.isModInstalled?.(failure.sourceID, failure.modID);
+  // Issue 533: the sentence names the source that refused and the mod it
+  // refused for. Two failed items side by side used to read identically
+  // ("this file"), which left the reader matching entries to mods by guess.
+  const mod = failure.modName || "this mod";
   return html`
     <div
       class="download-page"
@@ -101,11 +108,11 @@ export function DownloadPage({ failure, actions }) {
     >
       ${
         failure.manual &&
-        html`<p class="download-page__hint">
+        html`<p class="download-page__hint batch-failure__reason">
           ${
             updatable
-              ? `This source doesn't let lmm download this file. Download it from the mod's page, then hand it to lmm with "${updateFromFileLabel}" below.`
-              : "This source doesn't let lmm download this file. Get it from the mod's page, then add it with Add mods → Import an archive."
+              ? `${sourceName} won't let lmm download the update for ${mod}. Download it from the mod's page, then hand it to lmm with "${updateFromFileLabel}" below.`
+              : `${sourceName} won't let lmm download ${mod}. Get it from the mod's page, then add it with Add mods → Import an archive.`
           }
         </p>`
       }
