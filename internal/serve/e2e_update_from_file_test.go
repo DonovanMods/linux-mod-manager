@@ -116,7 +116,10 @@ func TestE2E_UpdateFromFile_FailedManualUpdateOffersItAndCompletes(t *testing.T)
 		textContent(`.modal [data-testid="match-normalized"]`, &normalized),
 		clickWhenSettled(`.modal [data-action="confirm"]`),
 		waitGone(`.modal`),
-		chromedp.WaitVisible(`.slide-over .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		// Scoped to THIS job's kind (#534): the failed update's readout stays
+		// on screen (#531), and a batch with failed items is still
+		// "succeeded", so an unscoped wait matched it before this job ended.
+		chromedp.WaitVisible(`.slide-over .job-progress[data-kind="update_from_archive"][data-state="succeeded"]`, chromedp.ByQuery),
 	)
 	assertModPageLink(t, link, e2eManualUpPage, "Manual Up")
 	assert.Contains(t, hint, "Update from file…", "the hint names the control beside it")
