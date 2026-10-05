@@ -113,29 +113,36 @@ export function downloadFailureFor(details) {
 }
 
 /**
- * batchDownloadFailuresFor returns the failed downloads an update batch's
- * RESULT reports (core.UpdateBatchResult's `failed[]`, issue 530) in
- * downloadFailureFor's shape - one per failed item that carries its mod's
- * page or says the source refused the download. A failed update arrives as a
- * finished batch, not a failed job, so its typed error never reaches an
- * error envelope; these two facts are what the result keeps of it.
+ * batchFailuresFor returns every failed item an update batch's RESULT
+ * reports (core.UpdateBatchResult's `failed[]`, issues 530 and 533), each
+ * carrying what a readout needs to head and explain it: the mod's name, the
+ * change that was attempted (`from_version` -> `to_version`), the failure's
+ * own text, and - when the failure was a download - the mod's page and
+ * whether the source refuses to hand the file over at all (downloadFailureFor's
+ * `url`/`manual`).
+ *
+ * A failed update arrives as a finished batch, not a failed job, so its
+ * typed error never reaches an error envelope; the result keeps the text and
+ * those two facts of it. Every failed item is returned, not only the ones
+ * with a download way out: an item that failed for any other reason still
+ * has to say which mod it was.
  */
-export function batchDownloadFailuresFor(result) {
+export function batchFailuresFor(result) {
   if (!result || !Array.isArray(result.failed)) return [];
   const out = [];
   for (const item of result.failed) {
     if (!item || typeof item.mod !== "string") continue;
     const at = item.mod.indexOf(":");
     if (at <= 0) continue;
-    const url = safeWebUrl(item.mod_url);
-    const manual = Boolean(item.manual_download);
-    if (!url && !manual) continue;
     out.push({
       sourceID: item.mod.slice(0, at),
       modID: item.mod.slice(at + 1),
       modName: item.name ?? "",
-      url,
-      manual,
+      fromVersion: item.from_version ?? "",
+      toVersion: item.to_version ?? "",
+      error: item.error ?? "",
+      url: safeWebUrl(item.mod_url),
+      manual: Boolean(item.manual_download),
     });
   }
   return out;

@@ -160,6 +160,10 @@ func TestApplyUpdateBatch_PerItemFailureDoesNotAbortTheBatch(t *testing.T) {
 	assert.Equal(t, "gone:mod1", result.Failed[0].Mod)
 	assert.Equal(t, "Mod One", result.Failed[0].Name)
 	assert.NotEmpty(t, result.Failed[0].Error)
+	// #533: the failed item says which change it was attempting, so a
+	// readout can head the entry "Mod One, 1.0 → 2.0".
+	assert.Equal(t, "1.0", result.Failed[0].FromVersion)
+	assert.Equal(t, "2.0", result.Failed[0].ToVersion)
 	assert.Error(t, result.Failed[0].Cause(), "an in-process caller keeps the typed error")
 
 	require.Len(t, result.Applied, 1)

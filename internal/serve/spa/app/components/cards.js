@@ -337,6 +337,7 @@ function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
                   origin=${UPDATES_ALL_ORIGIN}
                   state=${state}
                   actions=${actions}
+                  keepControl
                 >
                   <button
                     type="button"
@@ -352,6 +353,7 @@ function UpdatesCard({ state, rows, error, onRetry, onRefresh, actions }) {
                   origin=${UPDATES_BATCH_ORIGIN}
                   state=${state}
                   actions=${actions}
+                  keepControl
                 >
                   <button
                     type="button"
@@ -525,6 +527,7 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                   origin=${HEALTH_REPAIR_ALL_ORIGIN}
                   state=${state}
                   actions=${actions}
+                  keepControl
                 >
                   <button
                     type="button"

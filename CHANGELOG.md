@@ -1859,6 +1859,24 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A failed update batch names each failed mod, and its readout no longer
+  sits over the card's controls (#533).** After "Update all" with some items
+  failing, the readout listed identical "This source doesn't let lmm download
+  this file" entries that never said which mod was which, and it took the
+  place of the Updates card's own "Update all". Every failed item now has a
+  header with its name and the change that was attempted ("TrainerSpells,
+  1.2 → 1.3"), and the explanation names the source and the mod ("CurseForge
+  won't let lmm download the update for TrainerSpells…"); an item that failed
+  for any other reason shows the engine's own text under the same header
+  instead of only counting in the tally. The buttons keep their short labels
+  but their accessible names carry the mod ("Update from file…: TrainerSpells",
+  "Open on CurseForge: TrainerSpells"), and each acts on its own mod. The
+  readout now takes a line of its own below the card's buttons - in the
+  Updates and Health cards alike - and "Update all" / "Repair all" stay in
+  place beside "Check again" instead of being replaced by it. `--json` / the
+  `failed[]` entries of an update batch's result gain additive `from_version`
+  and `to_version`.
+
 - **Typing into a game's install path right after opening its editor no
   longer loses all but the first character (#532).** The editor panel moved
   focus to its Name field from an after-paint effect, so a field clicked into

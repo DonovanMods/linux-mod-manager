@@ -13,7 +13,7 @@ import { useEffect, useState } from "./render.js";
 import { jobStatus } from "./api.js";
 import { resultTally, resultTallyTone } from "./progress.js";
 import { repairOutcome } from "./verify.js";
-import { batchDownloadFailuresFor } from "./failures.js";
+import { batchFailuresFor } from "./failures.js";
 
 // tallyCache is a page-lifetime Map from job id to its own (possibly null)
 // read of the result - {tally, warnings} - so the SAME finished job showing in two places at once (a row's
@@ -69,16 +69,17 @@ export function useJobResultVerify(jobID, jobState) {
   return useJobResultRead(jobID, jobState)?.verify ?? null;
 }
 
-// useJobResultDownloads returns a finished update batch's failed downloads
-// (failures.js#batchDownloadFailuresFor) - each one's page, and whether the
-// file has to be fetched by hand - or an empty list. Same shared read
-// (issue 530).
-export function useJobResultDownloads(jobID, jobState) {
-  return useJobResultRead(jobID, jobState)?.downloads ?? NO_DOWNLOADS;
+// useJobResultFailures returns a finished update batch's failed items
+// (failures.js#batchFailuresFor) - each one's name, attempted change and
+// reason, and its page and whether the file has to be fetched by hand when
+// the failure was a download - or an empty list. Same shared read (issues
+// 530 and 533).
+export function useJobResultFailures(jobID, jobState) {
+  return useJobResultRead(jobID, jobState)?.failures ?? NO_FAILURES;
 }
 
 const NO_WARNINGS = [];
-const NO_DOWNLOADS = [];
+const NO_FAILURES = [];
 
 /** readResult is what the cache holds for one finished job's status/result. */
 function readResult(status) {
@@ -106,11 +107,9 @@ function readResult(status) {
     outcome && (outcome.repaired.length > 0 || outcome.attention.length > 0)
       ? outcome
       : null;
-  const downloads =
-    status?.kind === "updates"
-      ? batchDownloadFailuresFor(result)
-      : NO_DOWNLOADS;
-  return { tally: resultTally(result), warnings, purge, verify, downloads };
+  const failures =
+    status?.kind === "updates" ? batchFailuresFor(result) : NO_FAILURES;
+  return { tally: resultTally(result), warnings, purge, verify, failures };
 }
 
 /**
@@ -146,8 +145,8 @@ export function fetchJobResult(jobID) {
  * readoutHasNextStep says whether a SUCCEEDED job's readout is carrying
  * something the user may still need to act on or read: a batch whose items
  * failed (the job's own state is "succeeded" all the same - progress.js
- * #resultTally), the download way out of a failed update ("Open on
- * <source>", "Update from file…"), a purge's or a repair's own outcome, a
+ * #resultTally), each failed update's entry and its download way out ("Open
+ * on <source>", "Update from file…"), a purge's or a repair's own outcome, a
  * profile switch's recovery notice. Such a readout waits for the user, as a
  * failed job's does (main.js#releaseSucceededOrigin); only a bare "Done" is
  * handed back on a timer. `read` is fetchJobResult's answer; null (no
@@ -156,7 +155,7 @@ export function fetchJobResult(jobID) {
 export function readoutHasNextStep(summary, read) {
   if (!read) return false;
   if (read.tally && resultTallyTone(read.tally) !== "succeeded") return true;
-  if (read.downloads.length > 0 || read.purge || read.verify) return true;
+  if (read.failures.length > 0 || read.purge || read.verify) return true;
   return summary?.kind === "switch" && read.warnings.length > 0;
 }
 
