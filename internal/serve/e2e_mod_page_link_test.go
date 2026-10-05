@@ -83,8 +83,39 @@ type e2eLink struct {
 	Label  string `json:"label"`
 }
 
-// linkIn reads the mod-page link inside scope, or leaves *out nil when there is none.
+// e2eRawSourceID is the id the fixtures' source goes by; useSourceName shows
+// it until the source list has loaded, and e2eSourceName after (#536).
+const e2eRawSourceID = "fake"
+
+// awaitSourceNamed waits until nothing inside scope still shows the raw source
+// id where the display name belongs: a link reading "Open on fake" or a
+// headline reading "fake won't let lmm download". A scope with neither passes
+// at once, so it is safe where no link is expected. Reading that text in one
+// shot races useSourceName's async load on a slow runner (#536).
+func awaitSourceNamed(scope string) chromedp.Action {
+	return pollUntil(`(() => {
+		const el = document.querySelector(` + jsString(scope) + `);
+		if (!el) return false;
+		const t = el.textContent;
+		return !t.includes(` + jsString("Open on "+e2eRawSourceID) + `) && !t.includes(` + jsString(e2eRawSourceID+" won't let lmm") + `);
+	})()`)
+}
+
+// linkIn reads the mod-page link inside scope, or leaves *out nil when there is
+// none. A link still naming the raw source id is waited out first (#536); no
+// link at all returns at once, so unsafe-URL tests can expect nothing.
 func linkIn(scope string, out **e2eLink) chromedp.Action {
+	return chromedp.Tasks{
+		pollUntil(`(() => {
+			const a = document.querySelector(` + jsString(scope+` a.mod-page-link`) + `);
+			return !a || a.textContent.trim() !== ` + jsString("Open on "+e2eRawSourceID) + `;
+		})()`),
+		linkRead(scope, out),
+	}
+}
+
+// linkRead is linkIn's single read.
+func linkRead(scope string, out **e2eLink) chromedp.Action {
 	return chromedp.Evaluate(`(() => {
 		const a = document.querySelector(`+jsString(scope+` a.mod-page-link`)+`);
 		if (!a) return null;
@@ -345,6 +376,7 @@ func TestE2E_ModPageLink_ManualDownloadSaysWhereTheFileComesFrom(t *testing.T) {
 		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
+		awaitSourceNamed(row+" .job-progress"),
 		textContent(row+` .job-progress__text`, &message),
 		pollUntil(`document.querySelector('.search-result[data-mod="fake/manual"] .download-page a.mod-page-link') !== null`),
 		textContent(row+` .download-page__hint`, &hint),

@@ -232,6 +232,7 @@ func TestE2E_BatchFailures_EachFailedItemNamesItselfAndItsButtonsActOnIt(t *test
 		var fromFile, link e2eAXNode
 		sel := fmt.Sprintf(`.card--updates [data-testid="batch-failure"][data-mod=%q] `, e.entry)
 		f.runInBrowser(t,
+			awaitSourceNamed(fmt.Sprintf(`.card--updates [data-testid="batch-failure"][data-mod=%q]`, e.entry)),
 			accessibleNodeOf(sel+`[data-action="update-from-file"]`, &fromFile),
 			accessibleNodeOf(sel+`a.mod-page-link`, &link),
 		)
