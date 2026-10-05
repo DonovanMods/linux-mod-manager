@@ -113,6 +113,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
       <div
         class="job-progress"
         data-job=${jobID}
+        data-kind=${summary?.kind}
         data-state=${jobStateLabel(summary, frame) || "running"}
         role="status"
       >
@@ -162,6 +163,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
     <div
       class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || batchFailures.length > 0 || notices.length > 0 || purgeResult || repairResult ? "job-progress--explained" : ""}"
       data-job=${jobID}
+      data-kind=${summary?.kind}
       data-state=${state}
       role="status"
     >
