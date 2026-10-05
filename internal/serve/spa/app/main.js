@@ -1035,43 +1035,74 @@ async function openPlan({
   }
 }
 
-// updateFromFileTarget is the mod the last "Update from file…" click named
-// ({mod, origin}), waiting for the one file input (updatefromfile.js) to
-// deliver a file. A dialog the user cancels delivers nothing, and the next
-// click replaces it.
-let updateFromFileTarget = null;
+// fromFileTarget is what the last "Update from file…" or "Install from
+// file…" click asked for ({kind, title, confirmLabel, origin, options}: the
+// plan to open over the archive, its upload_id still to come), waiting for
+// the one file input (updatefromfile.js) to deliver a file. A dialog the
+// user cancels delivers nothing, and the next click replaces it.
+let fromFileTarget = null;
+
+/** openFromFileDialog records target and opens the file dialog. */
+function openFromFileDialog(target) {
+  fromFileTarget = target;
+  document.getElementById(updateFromFileInputID)?.click();
+}
 
 /** updateFromFile opens the file dialog for "Update from file…" on mod
  * ({source_id, id, name}), whose job reports under origin (issue 530). */
 function updateFromFile(mod, origin) {
-  updateFromFileTarget = { mod, origin };
-  document.getElementById(updateFromFileInputID)?.click();
+  openFromFileDialog({
+    kind: "update_from_archive",
+    title: `Update ${mod.name ?? mod.id} from file`,
+    confirmLabel: "Update",
+    origin,
+    options: { source_id: mod.source_id, mod_id: mod.id },
+  });
+}
+
+/** installFromFile opens the file dialog for "Install from file…" on the
+ * failed install `failure` describes (failures.js#downloadFailureFor's
+ * shape: the mod, and the file the install tried), whose job reports under
+ * origin (issue 535). The archive is installed through the archive import
+ * with that identity (kind_import_archive.go's install_from_file). */
+function installFromFile(failure, origin) {
+  openFromFileDialog({
+    kind: "import_archive",
+    title: `Install ${failure.modName || failure.modID} from file`,
+    confirmLabel: "Install",
+    origin,
+    options: {
+      source_id: failure.sourceID,
+      mod_id: failure.modID,
+      install_from_file: true,
+      ...(failure.fileID ? { expected_file_id: failure.fileID } : {}),
+    },
+  });
 }
 
 /**
- * updateFromFileChosen uploads the file the dialog delivered, with its
- * progress shown in the confirm modal, then plans the update over the staged
- * upload - from there it is the ordinary plan/confirm/job pipeline.
+ * fromFileChosen uploads the file the dialog delivered, with its progress
+ * shown in the confirm modal, then plans the update or install over the
+ * staged upload - from there it is the ordinary plan/confirm/job pipeline.
  *
  * Closing the modal while the upload runs stops it: the modal's sequence
  * number moves on (closeModal), and the next progress tick aborts the
  * request; an upload that finished just after that is deleted again rather
  * than left staged for nothing.
  */
-async function updateFromFileChosen(file) {
-  const target = updateFromFileTarget;
-  updateFromFileTarget = null;
+async function fromFileChosen(file) {
+  const target = fromFileTarget;
+  fromFileTarget = null;
   if (!target) return;
-  const { mod, origin } = target;
-  const title = `Update ${mod.name ?? mod.id} from file`;
+  const { kind, title, confirmLabel, origin } = target;
   modalSeq += 1;
   const seq = modalSeq;
   const base = {
     type: "plan",
-    kind: "update_from_archive",
+    kind,
     origin,
     title,
-    confirmLabel: "Update",
+    confirmLabel,
     seq,
   };
   if (file.size > maxUploadBytes) {
@@ -1116,15 +1147,11 @@ async function updateFromFileChosen(file) {
     return;
   }
   await openPlan({
-    kind: "update_from_archive",
+    kind,
     origin,
     title,
-    confirmLabel: "Update",
-    options: {
-      upload_id: staged.upload_id,
-      source_id: mod.source_id,
-      mod_id: mod.id,
-    },
+    confirmLabel,
+    options: { ...target.options, upload_id: staged.upload_id },
   });
 }
 
@@ -1589,9 +1616,11 @@ async function confirmPlan() {
 
   store.set({ modal: { ...modal, status: "starting" } });
   // Issue 530: confirming a mismatched update-from-file plan IS the answer
-  // to its one question - confirmplan.js labels that click "Update anyway".
+  // to its one question - confirmplan.js labels that click "Update anyway";
+  // issue 535's install from a file (an import_archive plan) the same, as
+  // "Install anyway".
   const applyOptions =
-    modal.kind === "update_from_archive" && modal.plan?.match === "mismatch"
+    fromFileKinds.has(modal.kind) && modal.plan?.match === "mismatch"
       ? { ...(modal.applyOptions ?? {}), accept_mismatch: true }
       : modal.applyOptions;
   await startBinding(modal.origin, async () => {
@@ -1617,6 +1646,10 @@ async function confirmPlan() {
     }
   });
 }
+
+// fromFileKinds is every plan kind whose plan can say its archive is not the
+// file expected of it (match "mismatch") - answered by accept_mismatch.
+const fromFileKinds = new Set(["update_from_archive", "import_archive"]);
 
 // overwriteRetryKinds is every plan kind whose *core.ConflictError
 // failures.js's nextStepFor implies an Overwrite affordance for - see that
@@ -2233,10 +2266,12 @@ const actions = {
   closePlan: closeModal,
   confirmPlan,
   updateFromFile,
-  updateFromFileChosen,
+  installFromFile,
+  fromFileChosen,
   // isModInstalled answers from the library document on screen whether a
   // mod is installed in the current profile - what decides if a failed
-  // download can offer "Update from file…" (errordetails.js, issue 530).
+  // download offers "Update from file…" (issue 530) or "Install from file…"
+  // (issue 535) (errordetails.js).
   isModInstalled: (sourceID, modID) =>
     (store.get().mods?.mods ?? []).some(
       (m) => m.source_id === sourceID && m.id === modID,

@@ -325,14 +325,16 @@ func TestE2E_ModPageLink_FailedInstallJobShowsThePage(t *testing.T) {
 
 // TestE2E_ModPageLink_ManualDownloadSaysWhereTheFileComesFrom: a source that
 // refuses automated downloads (CurseForge's third-party opt-out) fails the
-// install with the typed manual_download flag, and the failure says to get the
-// file from the mod's page and import it.
+// install with the typed manual_download flag, and the failure leads with
+// what that means - the source's own text kept under "Details" (#535) - and
+// says to get the file from the mod's page and hand it to "Install from
+// file…".
 func TestE2E_ModPageLink_ManualDownloadSaysWhereTheFileComesFrom(t *testing.T) {
 	f := newE2EFixtureWithModPages(t)
 
 	row := searchResultRow("fake", "manual")
 	var link *e2eLink
-	var hint, message string
+	var hint, message, raw string
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
@@ -346,10 +348,13 @@ func TestE2E_ModPageLink_ManualDownloadSaysWhereTheFileComesFrom(t *testing.T) {
 		textContent(row+` .job-progress__text`, &message),
 		pollUntil(`document.querySelector('.search-result[data-mod="fake/manual"] .download-page a.mod-page-link') !== null`),
 		textContent(row+` .download-page__hint`, &hint),
+		textContent(row+` [data-testid="raw-error"] .raw-error__text`, &raw),
 		linkIn(row+" .download-page", &link),
 	)
-	assert.Contains(t, message, "download unavailable via API")
-	assert.Contains(t, message, "the author has turned off API downloads", "the source's own reason is kept")
-	assert.Contains(t, hint, "Import an archive")
+	assert.Equal(t, e2eSourceName+" won't let lmm download Manual Download.", message)
+	assert.Contains(t, raw, "download unavailable via API")
+	assert.Contains(t, raw, "the author has turned off API downloads", "the source's own reason is kept")
+	assert.Contains(t, hint, "manual.zip", "the hint names the file")
+	assert.Contains(t, hint, "Install from file…")
 	assertModPageLink(t, link, e2eManualPage, "Manual Download")
 }

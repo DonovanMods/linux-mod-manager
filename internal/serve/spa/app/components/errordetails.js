@@ -26,6 +26,11 @@ import {
   updateFromFileLabel,
   updateFromFileOrigin,
 } from "./updatefromfile.js";
+import {
+  InstallFromFileButton,
+  installFromFileLabel,
+  installFromFileOrigin,
+} from "./installfromfile.js";
 import { DocumentView } from "./documentview.js";
 
 /** loaderLabel spells a loader kind the way its own project does. An
@@ -37,9 +42,10 @@ function loaderLabel(kind) {
 /**
  * ErrorDetails renders an error envelope's `details`, or nothing when there
  * are none. `actions`, when given, lets a failed download offer "Update from
- * file…" (DownloadPage).
+ * file…" or "Install from file…" (DownloadPage); `headed` says the surface
+ * already led with that download's headline (DownloadHeadline).
  */
-export function ErrorDetails({ details, actions }) {
+export function ErrorDetails({ details, actions, headed }) {
   if (!details) return null;
 
   const loader = loaderSetupFor(details);
@@ -55,9 +61,17 @@ export function ErrorDetails({ details, actions }) {
   const download = downloadFailureFor(details);
   if (download) {
     return details.published_file_id
-      ? html`<${DownloadPage} failure=${download} actions=${actions} />
+      ? html`<${DownloadPage}
+            failure=${download}
+            actions=${actions}
+            headed=${headed}
+          />
           <${DocumentView} value=${details} />`
-      : html`<${DownloadPage} failure=${download} actions=${actions} />`;
+      : html`<${DownloadPage}
+          failure=${download}
+          actions=${actions}
+          headed=${headed}
+        />`;
   }
 
   const retry = retryAtFor(details);
@@ -79,27 +93,80 @@ export function ErrorDetails({ details, actions }) {
 }
 
 /**
+ * isUpdatable says whether a failed download is an UPDATE's - the mod is
+ * installed in the current profile - so its way out is "Update from file…"
+ * rather than "Install from file…".
+ */
+function isUpdatable(failure, actions) {
+  return Boolean(
+    failure.manual &&
+    actions?.isModInstalled?.(failure.sourceID, failure.modID),
+  );
+}
+
+/**
+ * downloadHeadline is what a download its source refuses means, in one
+ * sentence naming the source and the mod (issue 533: two failed items side
+ * by side used to read identically). It leads every readout of such a
+ * failure (issue 535); the engine's own text sits under it, collapsed
+ * (RawError).
+ */
+function downloadHeadline(failure, sourceName, updatable) {
+  const mod = failure.modName || "this mod";
+  return updatable
+    ? `${sourceName} won't let lmm download the update for ${mod}.`
+    : `${sourceName} won't let lmm download ${mod}.`;
+}
+
+/**
+ * DownloadHeadline renders downloadHeadline for a failure, for a surface
+ * whose first line it is (jobprogress.js, the tray) - the source's display
+ * name is a hook, so it is a component of its own.
+ */
+export function DownloadHeadline({ failure, actions }) {
+  const sourceName = useSourceName(failure.sourceID, failure.manual);
+  return downloadHeadline(failure, sourceName, isUpdatable(failure, actions));
+}
+
+/**
+ * RawError is a failure's own engine text, collapsed under a "Details"
+ * disclosure (issue 535): where a readout leads with what the failure means,
+ * the text it came from is one click away rather than first.
+ */
+export function RawError({ text }) {
+  if (!text) return null;
+  return html`<details class="raw-error" data-testid="raw-error">
+    <summary class="raw-error__summary">Details</summary>
+    <p class="raw-error__text">${text}</p>
+  </details>`;
+}
+
+/**
  * DownloadPage is a failed download's way out (issue 513): the mod's page on
  * its source, as an "Open on <source>" link. For a source that refuses
  * automated downloads it also says what to do with the file once it is
- * fetched by hand - and, for a mod that is already installed (a failed
- * update, issue 530), offers "Update from file…" right beside the link, so
- * the file goes back the way it came. A mod that is not installed yet is
- * pointed at the archive import instead: there is nothing to update. Renders
- * nothing when there is neither a usable page nor anything extra to say -
- * the message above already gave the reason.
+ * fetched by hand, and offers the control that takes it back right beside
+ * the link: "Update from file…" for a mod that is already installed (a
+ * failed update, issue 530), "Install from file…" for one that is not (a
+ * failed install, issue 535) - the failure already names the mod and the
+ * file, so nothing is retyped. `headed` drops the sentence's lead when the
+ * surface has already shown it (DownloadHeadline); `origin` is the job
+ * origin an "Install from file…" job reports under - the failed control's
+ * own, so the new job takes its place. Renders nothing when there is neither
+ * a usable page nor anything extra to say - the message above already gave
+ * the reason.
  */
-export function DownloadPage({ failure, actions }) {
+export function DownloadPage({ failure, actions, headed, origin }) {
   // Called before the early return: a hook never sits behind a condition.
   const sourceName = useSourceName(failure.sourceID, failure.manual);
   if (!failure.url && !failure.manual) return null;
-  const updatable =
-    failure.manual &&
-    actions?.isModInstalled?.(failure.sourceID, failure.modID);
-  // Issue 533: the sentence names the source that refused and the mod it
-  // refused for. Two failed items side by side used to read identically
-  // ("this file"), which left the reader matching entries to mods by guess.
-  const mod = failure.modName || "this mod";
+  const updatable = isUpdatable(failure, actions);
+  const installable =
+    failure.manual && !updatable && Boolean(actions?.installFromFile);
+  const what = failure.fileName
+    ? html`<span class="mono">${failure.fileName}</span>`
+    : "it";
+  const control = updatable ? updateFromFileLabel : installFromFileLabel;
   return html`
     <div
       class="download-page"
@@ -109,11 +176,8 @@ export function DownloadPage({ failure, actions }) {
       ${
         failure.manual &&
         html`<p class="download-page__hint batch-failure__reason">
-          ${
-            updatable
-              ? `${sourceName} won't let lmm download the update for ${mod}. Download it from the mod's page, then hand it to lmm with "${updateFromFileLabel}" below.`
-              : `${sourceName} won't let lmm download ${mod}. Get it from the mod's page, then add it with Add mods → Import an archive.`
-          }
+          ${!headed && `${downloadHeadline(failure, sourceName, updatable)} `}Download${" "}${what}${" "}from
+          the mod's page, then hand it to lmm with "${control}" below.
         </p>`
       }
       <div class="download-page__actions">
@@ -131,6 +195,14 @@ export function DownloadPage({ failure, actions }) {
               name: failure.modName,
             }}
             origin=${updateFromFileOrigin(failure.sourceID, failure.modID)}
+            actions=${actions}
+          />`
+        }
+        ${
+          installable &&
+          html`<${InstallFromFileButton}
+            failure=${failure}
+            origin=${origin ?? installFromFileOrigin(failure.sourceID, failure.modID)}
             actions=${actions}
           />`
         }

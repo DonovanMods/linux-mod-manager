@@ -16,7 +16,7 @@ import { absoluteTime, updatedPhrase } from "../relativetime.js";
 import { authorTitle, displayAuthor } from "../author.js";
 import { navigate } from "../router.js";
 import { codeSpans } from "../errortext.js";
-import { InlineJob } from "./jobprogress.js";
+import { FinishedJobReadout, InlineJob } from "./jobprogress.js";
 import { ModPageLink } from "./modpagelink.js";
 
 /** installOrigin is the stable per-mod control key an inline install job
@@ -67,6 +67,11 @@ function formatDownloads(n) {
  * search report (main.js#refreshSearchResults) marked a hit installed, the
  * whole control (including a job still showing its own "succeeded" chip)
  * was replaced out from under it before the user ever dismissed it.
+ *
+ * A FINISHED install's readout takes a line of its own under the row
+ * (issue 535): a failure there is a paragraph with its way out, and in the
+ * row's action column it overlapped the row. While the job runs, the
+ * Install control itself morphs into its progress as everywhere else.
  *
  * detailed (design doc §Search's search-PAGE bullet: "source badges, star/
  * download counts, summaries") adds the category badge, the download
@@ -129,7 +134,12 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
             sourceID=${hit.source_id}
             modName=${hit.name}
           />
-          <${InlineJob} origin=${origin} state=${state} actions=${actions}>
+          <${InlineJob}
+            origin=${origin}
+            state=${state}
+            actions=${actions}
+            readoutElsewhere
+          >
             ${
               hit.installed
                 ? html`<span class="badge badge--good">Installed</span>`
@@ -156,6 +166,11 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
         hit.summary &&
         html`<p class="search-result__summary">${hit.summary}</p>`
       }
+      <${FinishedJobReadout}
+        origin=${origin}
+        state=${state}
+        actions=${actions}
+      />
     </li>
   `;
 }

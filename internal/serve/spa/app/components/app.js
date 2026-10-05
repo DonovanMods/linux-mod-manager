@@ -22,7 +22,7 @@ import { ProfilesModal } from "./profilesmodal.js";
 import { UninstallBatchModal } from "./uninstallbatchmodal.js";
 import { ShortcutsModal } from "./shortcutsmodal.js";
 import { Toasts } from "./toasts.js";
-import { UpdateFromFileInput } from "./updatefromfile.js";
+import { FromFileInput } from "./updatefromfile.js";
 
 /** The application root: reads the route and dispatches to its screen. The
  * chooser owns its own minimal header (no game/profile context exists yet);
@@ -143,7 +143,7 @@ export function App({ state, onThemeChange, actions }) {
         actions=${actions}
       />`
     }
-    <${UpdateFromFileInput} actions=${actions} />
+    <${FromFileInput} actions=${actions} />
     <${Toasts}
       toasts=${state.toasts}
       route=${route}

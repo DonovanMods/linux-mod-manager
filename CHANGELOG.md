@@ -349,6 +349,35 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
 
 ### Added
 
+- **Install a mod from a file you downloaded (#535).** The install twin of
+  #530: a search install of a mod whose source refuses API downloads (a
+  CurseForge author's third-party opt-out) used to end at "Open on
+  CurseForge" and a pointer to **Add mods → Import an archive**, where the
+  source and mod ID had to be typed again. The failure now offers **Install
+  from file…** right beside the **Open on …** link to its page - in the search results,
+  the omnibar's fan-out, the search page, the slide-over and the activity
+  tray - and the failure itself supplies the source, mod ID, game and
+  profile, so nothing is retyped. On the command line, `lmm install --id
+<id> -s <source> --from-file <archive>` (with `--file`, `--version`,
+  `--accept-mismatch`, `--json`) does the same, and a failed manual-download
+  install now ends with that exact command, every ID - the file's included -
+  filled in (a failed single update ends with `lmm update <id> --from-file`
+  instead of the archive import). It is the archive import with the
+  install's identity: the archive's name is matched against the file the
+  install tried (a failure's error now carries that file's `file_id` and
+  `file_name`), or the file the install would pick, with #530's matcher -
+  a match records that file's version **and file ID**, so later file-ID
+  based update checks work; another file is refused unless accepted
+  (**Install anyway** / `--accept-mismatch`); with nothing to match, the
+  version comes from the name or `--version`. Hooks, conflicts, deploy and
+  the archive's checksum work as for any install. Dependencies are not
+  installed from a file: the plan names the missing ones (`unmet_dependencies`
+  in `--json`), and the CLI prints the `lmm install` command for each. A
+  mod already installed is refused with a pointer to `lmm update
+--from-file`. The failure readout itself now leads with what the refusal
+  means, with the engine's own text collapsed under **Details**, and a
+  search result's finished readout takes a line of its own under the row
+  rather than squeezing beside it.
 - **Update a mod from a file you downloaded (#530).** A source that will
   not serve a file through its API - a CurseForge author who disabled
   third-party downloads - used to leave an update with one way forward:

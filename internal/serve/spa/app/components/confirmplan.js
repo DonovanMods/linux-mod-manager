@@ -113,13 +113,15 @@ export function ConfirmPlanModal({ modal, state, actions }) {
   // Issue 530: an archive that is not the file the update check advertised
   // is a question this click answers - main.js#confirmPlan sends
   // accept_mismatch for exactly this plan - so the label says what the
-  // click decides.
+  // click decides. Issue 535's install from a file asks the same question.
   const effectiveConfirmLabel =
     kind === "switch" && plan?.flag_only
       ? "Mark as active"
       : kind === "update_from_archive" && plan?.match === "mismatch"
         ? "Update anyway"
-        : confirmLabel;
+        : kind === "import_archive" && plan?.match === "mismatch"
+          ? "Install anyway"
+          : confirmLabel;
 
   const footer =
     status === "error"
@@ -191,7 +193,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
  * UploadProgress is the planning state of a plan that first has a file to
  * send (issue 530's "Update from file…"): the archive's name and how much of
  * it has reached the server. Cancel closes the modal, which stops the
- * upload (main.js#updateFromFileChosen).
+ * upload (main.js#fromFileChosen).
  */
 function UploadProgress({ upload }) {
   const pct = upload.total
