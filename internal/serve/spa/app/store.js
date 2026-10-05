@@ -8,6 +8,40 @@
 // about which game they are looking at.
 
 /**
+ * ACTIVITY_ACK_KEY is where the activity bell's acknowledgement watermark is
+ * remembered, per browser (issue 537).
+ */
+export const ACTIVITY_ACK_KEY = "lmm.activity.acknowledgedAt";
+
+/**
+ * readActivityAck is the persisted watermark, or 0 ("never acknowledged")
+ * when there is none, it is not a number, or storage cannot be read at all
+ * (a private window, storage disabled) - an unreadable watermark just means
+ * nothing has been acknowledged yet, never an error.
+ */
+export function readActivityAck() {
+  try {
+    const stored = Number(localStorage.getItem(ACTIVITY_ACK_KEY));
+    return Number.isFinite(stored) && stored > 0 ? stored : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * writeActivityAck persists the watermark. Storage that cannot be written
+ * to is not an error: the in-memory state (activityAckedAt) still holds the
+ * value for this page view, which is all the degraded mode promises.
+ */
+export function writeActivityAck(ms) {
+  try {
+    localStorage.setItem(ACTIVITY_ACK_KEY, String(ms));
+  } catch {
+    // Nothing to persist to.
+  }
+}
+
+/**
  * The initial state. Every slice that holds a server document starts null
  * rather than empty, so "not fetched yet" and "fetched and empty" stay
  * distinguishable - the difference between a spinner and an empty state.
@@ -60,6 +94,14 @@ export function initialState() {
     // (activity.js) - the ONE place it is written, so a poll and a live
     // frame can never disagree about what the machine is doing.
     jobsIndex: null,
+    // activityAckedAt is the activity bell's acknowledgement watermark
+    // (issue 537): the newest failed job's SERVER finish time (ended_at, in
+    // epoch milliseconds) the user had seen when they last opened the tray.
+    // It lives here, not in a bell, because every route mounts its own bell
+    // - the top bar's and the away bar's - and a navigation or reload
+    // would otherwise resurrect every old failure as unread. Seeded from
+    // localStorage; main.js's acknowledgeActivity is the only writer.
+    activityAckedAt: readActivityAck(),
     // jobProgress is the latest jobProgressFrame per job id - what a
     // morphing control, a tray row and the library's live count all read to
     // say how far along a job is. Only the newest frame is kept: it is a
