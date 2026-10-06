@@ -91,6 +91,9 @@ export function AttentionCards({
   // issue 538: tracked Steam Workshop items Steam no longer lists - not
   // updates, but the updates card is where a person looks for them.
   const missingRows = updates?.external_missing ?? [];
+  // issue 539: installed mods their source's catalog no longer has - the
+  // same: not updates, and not a failed check.
+  const goneRows = updates?.catalog_missing ?? [];
   const findings = (health?.result?.findings ?? []).filter(
     (f) => f.status !== "ok",
   );
@@ -106,6 +109,7 @@ export function AttentionCards({
   if (
     updateRows.length === 0 &&
     missingRows.length === 0 &&
+    goneRows.length === 0 &&
     findings.length === 0 &&
     conflictRows.length === 0 &&
     notInstalled === 0 &&
@@ -119,11 +123,15 @@ export function AttentionCards({
   return html`
     <section class="attention-cards">
       ${
-        (updateRows.length > 0 || missingRows.length > 0 || errors.updates) &&
+        (updateRows.length > 0 ||
+          missingRows.length > 0 ||
+          goneRows.length > 0 ||
+          errors.updates) &&
         html`<${UpdatesCard}
           state=${state}
           rows=${updateRows}
           missing=${missingRows}
+          gone=${goneRows}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
           onRefresh=${actions.refreshUpdates}
@@ -175,10 +183,27 @@ function externalMissingNote(missing) {
   } no longer installed by Steam: ${names}. Resubscribe in Steam, or uninstall to stop tracking.`;
 }
 
+/** catalogMissingNote is the updates card's line for issue 539's
+ * catalog_missing: the installed mods their source's catalog no longer has,
+ * named, with the two ways out `lmm update` prints - re-link a mod that was
+ * republished under a new ID, or uninstall one that was removed. */
+function catalogMissingNote(gone) {
+  const names = gone
+    .map((m) => `${m.name || m.mod_id} (${m.source_id})`)
+    .join(", ");
+  const one = gone.length === 1;
+  return `${countOf(gone.length, "installed mod")} ${
+    one ? "is" : "are"
+  } no longer in ${one ? "its" : "their"} source's catalog: ${names}. If ${
+    one ? "it" : "one"
+  } moved to a new ID, use Re-link… on its mod page; otherwise uninstall it.`;
+}
+
 function UpdatesCard({
   state,
   rows,
   missing = [],
+  gone = [],
   error,
   onRetry,
   onRefresh,
@@ -251,6 +276,12 @@ function UpdatesCard({
         missing.length > 0 &&
         html`<p class="card__meta" data-testid="updates-external-missing">
           ${externalMissingNote(missing)}
+        </p>`
+      }
+      ${
+        gone.length > 0 &&
+        html`<p class="card__meta" data-testid="updates-catalog-missing">
+          ${catalogMissingNote(gone)}
         </p>`
       }
       ${

@@ -591,7 +591,8 @@ func TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError(t *testing.T) 
 // was - interleaved, immediately under the mod it belongs to, printed live
 // from the ImportModFailed event - while the same detail newly reaches the
 // wire as ProfileImportResult.Failures. The expected string below is the
-// PRE-#308 renderer's own output, captured before the change.
+// PRE-#308 renderer's own output, captured before the change - save the
+// error's own text, which #539 made name the source's catalog.
 func TestDoProfileImport_PerItemFailure_PlainOutputIsUnchanged(t *testing.T) {
 	svc, game, src := setupDoProfileImportTest(t)
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
@@ -626,7 +627,7 @@ func TestDoProfileImport_PerItemFailure_PlainOutputIsUnchanged(t *testing.T) {
 		"\n"+
 		"Downloading and installing mods...\n"+
 		"  Installing test-src:ghost...\n"+
-		"    Error: failed to fetch mod: mod not found\n"+
+		"    Error: failed to fetch mod: mod ghost is not in Fake Install Source's catalog (removed, or republished under a new ID)\n"+
 		"  Installing test-src:mod1...\n"+
 		"\n"+
 		"    ✓ Installed: Mod One\n"+

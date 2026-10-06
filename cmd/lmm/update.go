@@ -380,6 +380,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if skips.Total() == len(installed) {
 			printSkipped(skips)
 			printExternalMissing(report)
+			printCatalogMissing(service, report)
 			return finish()
 		}
 		// A failed check produces no updates too. Claiming currency here would
@@ -396,6 +397,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			printSkipped(skips)
 		}
 		printExternalMissing(report)
+		printCatalogMissing(service, report)
 		return finish()
 	}
 
@@ -453,6 +455,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			printSkipped(skips)
 		}
 		printExternalMissing(report)
+		printCatalogMissing(service, report)
 		printUpdateChangelogs(service, updates)
 
 		// Dry run mode - just show what would happen
@@ -713,6 +716,27 @@ func printExternalMissing(report *core.UpdateCheckReport) {
 	}
 	fmt.Printf("\n%d Steam Workshop item(s) tracked by lmm are no longer installed by Steam: %s\n", n, strings.Join(names, ", "))
 	fmt.Println("Resubscribe in the Steam client, or run 'lmm uninstall <id>' to stop tracking them.")
+}
+
+// printCatalogMissing names the installed mods their source's catalog no
+// longer has (#539), each with the two ways out: relink it if the mod was
+// republished under a new ID, or uninstall it. They were not updates and
+// did not fail the check. Silent when there are none.
+func printCatalogMissing(service *core.Service, report *core.UpdateCheckReport) {
+	n := len(report.CatalogMissing)
+	if n == 0 {
+		return
+	}
+	fmt.Printf("\n%d installed mod(s) are no longer in their source's catalog (removed, or republished under a new ID):\n", n)
+	for _, m := range report.CatalogMissing {
+		sourceName := m.SourceID
+		if src, err := service.GetSource(m.SourceID); err == nil {
+			sourceName = src.Name()
+		}
+		fmt.Printf("  %s (%s, %s)\n", cmp.Or(m.Name, m.ModID), m.ModID, sourceName)
+		fmt.Printf("    moved:   lmm mod edit %s -s %s --to-source-id <new-id>\n", m.ModID, m.SourceID)
+		fmt.Printf("    removed: lmm uninstall %s -s %s\n", m.ModID, m.SourceID)
+	}
 }
 
 // printUpdateChangelogs prints the changelog block the bulk check shows -

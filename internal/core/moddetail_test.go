@@ -278,7 +278,8 @@ func TestModDetail_UnknownModErrors(t *testing.T) {
 
 	_, err := svc.ModDetail(context.Background(), game, "default", "src", "nope")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mod not found")
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+	assert.Contains(t, err.Error(), "is not in Mock Source's catalog", "#539: named as a fact about the catalog")
 }
 
 // TestModDetail_DBErrorPropagates (#236): only a genuine "not installed"
@@ -401,7 +402,8 @@ func TestModDetail_ARegisteredSourcesFailureStillFails(t *testing.T) {
 
 	_, err := svc.ModDetail(context.Background(), game, "default", "src", "gone")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mod not found")
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+	assert.Contains(t, err.Error(), "is not in Mock Source's catalog", "#539: named as a fact about the catalog")
 }
 
 // workshopDetailSource is a mockSource the service treats as the Steam

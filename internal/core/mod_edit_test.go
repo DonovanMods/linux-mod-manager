@@ -462,7 +462,7 @@ func TestService_ApplyRelinkMod_EmitsProgressEvents(t *testing.T) {
 
 	result, err := svc.ApplyRelinkMod(context.Background(), game, plan, core.RelinkOptions{}, sink)
 	require.NoError(t, err)
-	require.Contains(t, result.Warnings, "could not fetch metadata: mod not found")
+	require.Contains(t, result.Warnings, "could not fetch metadata: mod 99 is not in Mock Source's catalog (removed, or republished under a new ID)")
 	assert.Contains(t, phases, core.RelinkFetching)
 	assert.Contains(t, phases, core.RelinkWarning)
 }

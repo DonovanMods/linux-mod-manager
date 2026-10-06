@@ -1888,6 +1888,22 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A mod that has left its source's catalog is reported as gone, not as a
+  failed update check (#539).** When a source no longer has an installed
+  mod — the Icarus (Project Daedalus) catalog recreated three mods under new
+  IDs on 2026-09-09 — every lookup of the old ID failed with the raw HTTP
+  404, and `lmm update` (and the web UI's Updates card) failed the whole
+  source's check, naming only the first such mod. Icarus now reads a 404 as
+  "not in the catalog", checks every other mod, and reports every failure
+  rather than the first. For any source that reports a mod it no longer
+  has (Icarus, CurseForge), `lmm update` names each one with the way out —
+  `lmm mod edit <id> -s <source> --to-source-id <new-id>` if it moved, or
+  `lmm uninstall <id> -s <source>` — the `--json` report carries them in a
+  new `catalog_missing` list, the web UI says so on the Updates card, and
+  "Update selected" no longer fails because of them. `lmm update <id>` for
+  such a mod, `lmm mod show`, and the full mod page's versions table say
+  `mod <id> is not in <source>'s catalog` instead of the source's raw error.
+
 - **Steam Workshop items Steam has already updated are no longer listed as
   updates (#538).** lmm compared Steam's newest revision of a tracked
   Workshop item against the revision it recorded when the item was adopted,

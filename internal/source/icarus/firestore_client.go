@@ -3,12 +3,15 @@ package icarus
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 const defaultFirestoreBaseURL = "https://firestore.googleapis.com/v1"
@@ -85,7 +88,11 @@ func (c *firestoreClient) listCollection(ctx context.Context, collection string)
 	return all, nil
 }
 
-// getDocument fetches a single document by ID.
+// getDocument fetches a single document by ID. A 404 is the catalog's own
+// answer that the document does not exist (#539: Project Daedalus recreated
+// mods under new IDs, leaving installed ones pointing at nothing), so it is
+// domain.ErrModNotFound - a fact a caller acts on - rather than an HTTP
+// failure carrying Firestore's NOT_FOUND body.
 func (c *firestoreClient) getDocument(ctx context.Context, collection, docID string) (*firestoreDoc, error) {
 	url := fmt.Sprintf("%s/%s/%s", c.documentsURL(), collection, docID)
 	var doc struct {
@@ -94,6 +101,10 @@ func (c *firestoreClient) getDocument(ctx context.Context, collection, docID str
 		UpdateTime string         `json:"updateTime"`
 	}
 	if err := c.getJSON(ctx, url, &doc); err != nil {
+		var status *httpStatusError
+		if errors.As(err, &status) && status.code == http.StatusNotFound {
+			return nil, fmt.Errorf("fetching %s/%s: not in the catalog (HTTP 404): %w", collection, docID, domain.ErrModNotFound)
+		}
 		return nil, fmt.Errorf("fetching %s/%s: %w", collection, docID, err)
 	}
 	return &firestoreDoc{ID: lastPathSegment(doc.Name), Fields: decodeFields(doc.Fields), UpdateTime: parseUpdateTime(doc.UpdateTime)}, nil
@@ -122,13 +133,25 @@ func (c *firestoreClient) getJSON(ctx context.Context, url string, out any) erro
 		const errBodySnippetCap = 512
 		snippetBytes, _ := io.ReadAll(io.LimitReader(resp.Body, errBodySnippetCap))
 		_, _ = io.Copy(io.Discard, resp.Body)
-		snippet := strings.TrimSpace(string(snippetBytes))
-		if snippet == "" {
-			return fmt.Errorf("icarus: GET %s: HTTP %d", url, resp.StatusCode)
-		}
-		return fmt.Errorf("icarus: GET %s: HTTP %d: %s", url, resp.StatusCode, snippet)
+		return &httpStatusError{url: url, code: resp.StatusCode, snippet: strings.TrimSpace(string(snippetBytes))}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// httpStatusError is getJSON's non-200 answer: the status as data, so a
+// caller can classify one (getDocument's 404), and the URL and a capped body
+// snippet in the message for everything else.
+type httpStatusError struct {
+	url     string
+	code    int
+	snippet string
+}
+
+func (e *httpStatusError) Error() string {
+	if e.snippet == "" {
+		return fmt.Sprintf("icarus: GET %s: HTTP %d", e.url, e.code)
+	}
+	return fmt.Sprintf("icarus: GET %s: HTTP %d: %s", e.url, e.code, e.snippet)
 }
 
 func lastPathSegment(resourceName string) string {

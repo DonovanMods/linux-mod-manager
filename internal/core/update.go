@@ -497,10 +497,16 @@ func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName
 		return nil, err
 	}
 
-	updates, err := s.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil, UpdateCheckOptions{})
+	res, err := s.checkGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil, UpdateCheckOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to check update: %w", err)
 	}
+	// #539: a mod its source's catalog no longer has is not "up to date" -
+	// there is nothing to compare it against.
+	if len(res.catalogMissing) > 0 {
+		return nil, s.notInCatalog(mod.SourceID, mod.ID, nil)
+	}
+	updates := res.updates
 	if len(updates) == 0 {
 		return s.planUpdateBase(ctx, game, profileName, mod)
 	}

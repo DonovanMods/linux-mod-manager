@@ -302,7 +302,9 @@ const modBatchSize = 50
 //   - an id the API simply OMITS from its response, which is how CurseForge
 //     answers for an unknown, delisted or unavailable mod: reported per id
 //     as domain.ErrModNotFound, so a caller can errors.Is it exactly as it
-//     could when this was a per-id fan-out over GetMod's own 404 mapping.
+//     could when this was a per-id fan-out over GetMod's own 404 mapping -
+//     and as a *source.ModNotFoundError naming the id (#539), so a caller
+//     can tell an omitted id from one whose chunk never got an answer.
 func (c *Client) GetMods(ctx context.Context, modIDs []int) ([]Mod, error) {
 	if len(modIDs) == 0 {
 		return nil, nil
@@ -328,7 +330,7 @@ func (c *Client) GetMods(ctx context.Context, modIDs []int) ([]Mod, error) {
 		}
 		for _, id := range chunk {
 			if !returned[id] {
-				errs = append(errs, fmt.Errorf("mod %d: %w", id, domain.ErrModNotFound))
+				errs = append(errs, &source.ModNotFoundError{ModID: strconv.Itoa(id), Err: fmt.Errorf("mod %d: %w", id, domain.ErrModNotFound)})
 			}
 		}
 		mods = append(mods, resp.Data...)
