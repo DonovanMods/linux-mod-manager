@@ -1,0 +1,16 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "updates": [],
+  "skipped": {
+    "pinned": 0,
+    "local": 0
+  },
+  "catalog_missing": [
+    {
+      "source_id": "test-src",
+      "mod_id": "dLs3nvmWj5uOPnXxezGe",
+      "name": "Bear Mount"
+    }
+  ]
+}

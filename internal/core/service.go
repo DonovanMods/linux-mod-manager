@@ -1418,7 +1418,9 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 
 	mod, err := src.GetMod(ctx, sourceGameID, modID)
 	if err != nil {
-		return mod, classifyIndexError(sourceID, sourceGameID, err)
+		// #539: a source's "no such mod" reads as a fact about its catalog
+		// (*ModNotInCatalogError), not as its raw transport error.
+		return mod, s.classifyNotInCatalog(sourceID, modID, classifyIndexError(sourceID, sourceGameID, err))
 	}
 	stampCachedAuthorName(src, mod)
 	return mod, nil

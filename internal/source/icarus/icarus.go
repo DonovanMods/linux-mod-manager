@@ -2,6 +2,7 @@ package icarus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -221,6 +222,11 @@ func (s *Icarus) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID str
 // catalog's current version string (semantic-ish, per modinfo.json's
 // "recommended" versioning note — not guaranteed strictly semver, so this
 // uses domain.IsNewerVersion the same way custom.API does).
+//
+// One mod's failure never hides another's (#539): every mod is checked,
+// and every failure is reported, joined. A mod the catalog no longer has
+// is reported as a *source.ModNotFoundError, which core takes out of the
+// error and reports as gone rather than as a failed check.
 func (s *Icarus) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	var updates []domain.Update
 	var errs []error
@@ -232,6 +238,13 @@ func (s *Icarus) CheckUpdates(ctx context.Context, installed []domain.InstalledM
 		}
 		current, err := s.GetMod(ctx, gameID, inst.ID)
 		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return updates, cerr
+			}
+			err = fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err)
+			if errors.Is(err, domain.ErrModNotFound) {
+				err = &source.ModNotFoundError{ModID: inst.ID, Err: err}
+			}
 			errs = append(errs, err)
 			continue
 		}
@@ -240,7 +253,7 @@ func (s *Icarus) CheckUpdates(ctx context.Context, installed []domain.InstalledM
 		}
 	}
 	if len(errs) > 0 {
-		return updates, fmt.Errorf("source %q: %d update check(s) failed: %v", s.ID(), len(errs), errs[0])
+		return updates, fmt.Errorf("source %q: %d update check(s) failed: %w", s.ID(), len(errs), errors.Join(errs...))
 	}
 	return updates, nil
 }

@@ -99,6 +99,11 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 	liveSource := err == nil
 	if err != nil {
 		if _, regErr := s.GetSource(sourceID); regErr == nil {
+			// #539: GetMod's own ModNotInCatalogError already says it.
+			var gone *ModNotInCatalogError
+			if errors.As(err, &gone) {
+				return nil, err
+			}
 			return nil, fmt.Errorf("mod not found: %w", err)
 		}
 		row, rowErr := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profile)

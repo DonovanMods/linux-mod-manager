@@ -465,6 +465,14 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 	for _, m := range fetched {
 		byID[strconv.Itoa(m.ID)] = m
 	}
+	// #539: only an id the API answered WITHOUT is gone from the catalog;
+	// one whose chunk's request failed is merely unanswered. fetchErr keeps
+	// only the failed requests - each omitted id is reported once, below.
+	omitted := make(map[string]bool)
+	notFound, fetchErr := source.SplitModNotFound(fetchErr)
+	for _, nf := range notFound {
+		omitted[nf.ModID] = true
+	}
 
 	for i, inst := range installed {
 		select {
@@ -487,7 +495,11 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 			// whole call could not resolve, so stapling it here once per
 			// absent mod turned one failed chunk of 50 into 50 copies of a
 			// 50-id string. The batch error is attached once, below.
-			skipped = append(skipped, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, domain.ErrModNotFound))
+			reason := fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, domain.ErrModNotFound)
+			if omitted[inst.ID] {
+				reason = &source.ModNotFoundError{ModID: inst.ID, Err: reason}
+			}
+			skipped = append(skipped, reason)
 			continue
 		}
 

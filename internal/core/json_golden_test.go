@@ -1584,6 +1584,24 @@ func TestJSONGoldens(t *testing.T) {
 			core.ExternalModRef{SourceID: "steamworkshop", ModID: "3512001122", Name: "Unsubscribed Item"},
 		},
 		{
+			// #539: installed mods their source's catalog no longer has -
+			// reported beside the updates the rest of the check found.
+			"update_check_report_catalog_missing",
+			core.UpdateCheckReport{
+				GameID:  "icarus",
+				Profile: "default",
+				Updates: []domain.Update{},
+				Skipped: core.UpdateSkips{},
+				CatalogMissing: []core.CatalogModRef{
+					{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Bear Mount"},
+				},
+			},
+		},
+		{
+			"catalog_mod_ref",
+			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Bear Mount"},
+		},
+		{
 			"update_skips",
 			core.UpdateSkips{Pinned: 3, Local: 2},
 		},
