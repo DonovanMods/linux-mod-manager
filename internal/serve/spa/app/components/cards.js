@@ -94,6 +94,9 @@ export function AttentionCards({
   // issue 539: installed mods their source's catalog no longer has - the
   // same: not updates, and not a failed check.
   const goneRows = updates?.catalog_missing ?? [];
+  // issue 542: updates the user skipped. Not on the card - a card of only
+  // skipped updates is not shown at all - but kept findable on a quiet line.
+  const skippedRows = updates?.skipped_updates ?? [];
   const findings = (health?.result?.findings ?? []).filter(
     (f) => f.status !== "ok",
   );
@@ -110,6 +113,7 @@ export function AttentionCards({
     updateRows.length === 0 &&
     missingRows.length === 0 &&
     goneRows.length === 0 &&
+    skippedRows.length === 0 &&
     findings.length === 0 &&
     conflictRows.length === 0 &&
     notInstalled === 0 &&
@@ -169,7 +173,70 @@ export function AttentionCards({
           actions=${actions}
         />`
       }
+      ${
+        skippedRows.length > 0 &&
+        html`<${SkippedUpdates} rows=${skippedRows} actions=${actions} />`
+      }
     </section>
+  `;
+}
+
+/** runSkip is the Skip/Unskip controls' shared call (issue 542): a single
+ * synchronous write, whose failure has no inline place to land once the row
+ * is gone, so it becomes a toast - the library menu's Lock/Unlock shape. */
+async function runSkip(actions, verb, mod, call) {
+  try {
+    await call();
+  } catch (err) {
+    actions.pushToast({
+      tone: "failure",
+      title: `Couldn't ${verb} the update for ${mod.name || mod.id}`,
+      detail: err?.message ?? String(err),
+    });
+  }
+}
+
+/** skippedLabel names what a skipped update holds back: its version, or a
+ * Workshop item's "newer revision" (version.js#displayUpdateTarget). */
+function skippedLabel(u) {
+  const target = displayUpdateTarget(u);
+  return target === "newer" ? "newer revision skipped" : `${target} skipped`;
+}
+
+/** SkippedUpdates is issue 542's quiet line: "N skipped updates", each
+ * named with the version it holds back and an Unskip. It is not a card -
+ * nothing here needs attention - so it spans the grid under them, collapsed
+ * until opened. */
+function SkippedUpdates({ rows, actions }) {
+  return html`
+    <details class="skipped-updates" data-testid="skipped-updates">
+      <summary class="skipped-updates__summary">
+        ${countOf(rows.length, "skipped update")}
+      </summary>
+      <ul class="skipped-updates__list">
+        ${rows.map((u) => {
+          const mod = u.installed_mod;
+          return html`
+            <li key=${modKey(mod)} class="skipped-updates__row">
+              <span class="skipped-updates__name">${mod.name}</span>
+              <span class="mono">${skippedLabel(u)}</span>
+              <button
+                type="button"
+                class="button button--small"
+                data-action="unskip-update"
+                aria-label=${`Unskip the update for ${mod.name}`}
+                onClick=${() =>
+                  runSkip(actions, "unskip", mod, () =>
+                    actions.unskipModUpdate(mod.source_id, mod.id),
+                  )}
+              >
+                Unskip
+              </button>
+            </li>
+          `;
+        })}
+      </ul>
+    </details>
   `;
 }
 
@@ -380,6 +447,25 @@ function UpdatesCard({
                           >${`will be skipped — ${EXTERNAL_UPDATE_NOTE}`}</span
                         >`
                       }
+                      <button
+                        type="button"
+                        class="button button--small"
+                        data-action="skip-update"
+                        aria-label=${`Skip this update for ${u.installed_mod.name}`}
+                        title="Hide this update until a newer version appears"
+                        onClick=${() =>
+                          // issue 542: the row's own new_version, so the
+                          // skip names exactly the update on screen.
+                          runSkip(actions, "skip", u.installed_mod, () =>
+                            actions.skipModUpdate(
+                              u.installed_mod.source_id,
+                              u.installed_mod.id,
+                              u.new_version,
+                            ),
+                          )}
+                      >
+                        Skip
+                      </button>
                     </li>
                   `;
                 })}

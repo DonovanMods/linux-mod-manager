@@ -82,6 +82,10 @@ type InstalledDetail struct {
 	// Steam Workshop item's version identity is a 19-digit content id).
 	// omitzero: absent for a row installed before lmm recorded the date.
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
+	// SkippedVersion is the update version the user skipped (#542) - the
+	// installed row's own field - so the full mod page can say so and offer
+	// Unskip. omitempty.
+	SkippedVersion string `json:"skipped_version,omitempty"`
 }
 
 // ModDetail fetches modID from sourceID and joins whatever local install
@@ -143,6 +147,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		External:       installed.External,
 		ExternalPath:   installed.ExternalPath,
 		UpdatedAt:      installed.UpdatedAt,
+		SkippedVersion: installed.SkippedVersion,
 	}
 	if game.DeployMode == domain.DeployCompile && s.ModHasPakMergeSource(game, installed) {
 		v := installed.ConvertPaks

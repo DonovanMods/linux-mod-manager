@@ -178,6 +178,27 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #542: a mod with one pending update skipped - the single key
+			// the skip adds, present only while a version is skipped.
+			"installed_mod_skipped_version",
+			domain.InstalledMod{
+				Mod: domain.Mod{
+					ID:       "42",
+					SourceID: "nexusmods",
+					Name:     "Sample Mod",
+					Version:  "1.2.3",
+					GameID:   "skyrim-se",
+				},
+				ProfileName:    "default",
+				UpdatePolicy:   domain.UpdateNotify,
+				InstalledAt:    fixedTime,
+				Enabled:        true,
+				Deployed:       true,
+				LinkMethod:     domain.LinkSymlink,
+				SkippedVersion: "1.3.0",
+			},
+		},
+		{
 			// The scan row #269's adopt flow is built from: what Steam's
 			// own appworkshop manifest says about one installed item.
 			"workshop_item",

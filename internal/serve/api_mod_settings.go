@@ -1,9 +1,10 @@
 // api_mod_settings.go answers the slide-over's and the full mod page's
 // EDITABLE lock, update-policy and pak-conversion controls (docs/plans/2026-08-31-serve-spa
-// -design.md §Slide-over: "lock + policy controls (editable)") over four
-// thin POST routes - Service.SetModLock/ClearModLock/SetModUpdatePolicy/
-// SetModConvertPaks verbatim, each already a single beginOp-gated call with nothing to
-// preview (mirroring EnableMod/DisableMod's own shape, mod_settings.go's own
+// -design.md §Slide-over: "lock + policy controls (editable)"), and the
+// Updates card's skip/unskip (#542), over thin POST routes -
+// Service.SetModLock/ClearModLock/SetModUpdatePolicy/SetModConvertPaks/
+// SkipModUpdate/UnskipModUpdate verbatim, each already a single
+// beginOp-gated call with nothing to preview (mirroring EnableMod/DisableMod's own shape, mod_settings.go's own
 // doc comment).
 //
 // These are deliberately NOT jobs, unlike kind_toggle.go's enable/disable.
@@ -26,6 +27,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
@@ -181,6 +183,66 @@ func (s *Server) handleAPIModConvert(w http.ResponseWriter, r *http.Request) {
 	result, err := s.svc.SetModConvertPaks(ctx, sourceID, modID, sel.Game.ID, sel.Profile, *req.Enabled)
 	if err != nil {
 		s.writeAPIError(w, s.modSettingErrorStatus(ctx, sourceID, modID, sel, err), err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+// modSkipUpdateRequest is POST /api/v1/mods/{source}/{id}/skip-update's
+// request body (#542). Version empty skips the version the source offers
+// now - SkipModUpdate's own convention; the SPA's Updates card sends the
+// row's own new_version, so the skip names exactly what the user saw.
+type modSkipUpdateRequest struct {
+	Version string `json:"version,omitzero"`
+}
+
+// handleAPIModSkipUpdate answers POST /api/v1/mods/{source}/{id}/skip-update
+// (#542) with the core.ModSettingResult `lmm mod skip-update --json` emits.
+// The mod is checked for first, so a mod not installed is a 404 before any
+// update check runs; a mod with no update to skip is a 409.
+func (s *Server) handleAPIModSkipUpdate(w http.ResponseWriter, r *http.Request) {
+	var req modSkipUpdateRequest
+	if err := decodeAPIBody(w, r, &req); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	sourceID, modID := r.PathValue("source"), r.PathValue("id")
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	ctx := r.Context()
+	if _, err := s.svc.GetInstalledMod(ctx, sourceID, modID, sel.Game.ID, sel.Profile); err != nil {
+		s.writeAPIError(w, s.modSettingErrorStatus(ctx, sourceID, modID, sel, err), err)
+		return
+	}
+	result, err := s.svc.SkipModUpdate(ctx, sel.Game, sourceID, modID, sel.Profile, req.Version)
+	if err != nil {
+		status := s.modSettingErrorStatus(ctx, sourceID, modID, sel, err)
+		if errors.Is(err, core.ErrNoUpdateToSkip) {
+			status = http.StatusConflict
+		}
+		s.writeAPIError(w, status, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+// handleAPIModUnskipUpdate answers
+// POST /api/v1/mods/{source}/{id}/unskip-update (#542). It takes no request
+// body - there is nothing to say beyond which mod.
+func (s *Server) handleAPIModUnskipUpdate(w http.ResponseWriter, r *http.Request) {
+	sourceID, modID := r.PathValue("source"), r.PathValue("id")
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	result, err := s.svc.UnskipModUpdate(r.Context(), sourceID, modID, sel.Game.ID, sel.Profile)
+	if err != nil {
+		s.writeAPIError(w, s.modSettingErrorStatus(r.Context(), sourceID, modID, sel, err), err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, result)

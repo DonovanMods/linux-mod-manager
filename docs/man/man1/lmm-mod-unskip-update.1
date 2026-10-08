@@ -2,28 +2,24 @@
 .TH "LMM" "1" "Sep 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
-lmm-mod - Manage mod settings
+lmm-mod-unskip-update - Offer a skipped update again
 
 
 .SH SYNOPSIS
-\fBlmm mod [flags]\fP
+\fBlmm mod unskip-update <mod-id> [flags]\fP
 
 
 .SH DESCRIPTION
-Commands for managing individual mod settings.
+Clear a mod's skipped update, so 'lmm update' offers it again.
+
+.PP
+Examples:
+  lmm mod unskip-update 12345 --game skyrim-se
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
-	help for mod
-
-.PP
-\fB-p\fP, \fB--profile\fP=""
-	profile (default: active profile)
-
-.PP
-\fB-s\fP, \fB--source\fP=""
-	mod source; "local" names an imported mod (default: the source the installed mod carries, else the game's sole configured source; prompts when several are configured)
+	help for unskip-update
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -55,12 +51,20 @@ Commands for managing individual mod settings.
 	disable all hooks
 
 .PP
+\fB-p\fP, \fB--profile\fP=""
+	profile (default: active profile)
+
+.PP
+\fB-s\fP, \fB--source\fP=""
+	mod source; "local" names an imported mod (default: the source the installed mod carries, else the game's sole configured source; prompts when several are configured)
+
+.PP
 \fB-v\fP, \fB--verbose\fP[=false]
 	verbose output
 
 
 .SH SEE ALSO
-\fBlmm(1)\fP, \fBlmm-mod-convert(1)\fP, \fBlmm-mod-disable(1)\fP, \fBlmm-mod-edit(1)\fP, \fBlmm-mod-enable(1)\fP, \fBlmm-mod-files(1)\fP, \fBlmm-mod-lock(1)\fP, \fBlmm-mod-set-update(1)\fP, \fBlmm-mod-show(1)\fP, \fBlmm-mod-skip-update(1)\fP, \fBlmm-mod-unlock(1)\fP, \fBlmm-mod-unskip-update(1)\fP
+\fBlmm-mod(1)\fP
 
 
 .SH HISTORY

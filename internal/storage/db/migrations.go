@@ -48,6 +48,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV17,
 		migrateV18,
 		d.migrateV19,
+		migrateV20,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -514,4 +515,25 @@ func (d *DB) migrateV19(ctx context.Context, q migrationExec) error {
 		}
 	}
 	return nil
+}
+
+// migrateV20 adds installed_mods.skipped_version (#542): the pending update
+// the user chose to skip without pinning the mod. NULL skips nothing. Like
+// update_policy and convert_paks it is a user setting, so SaveInstalledMod's
+// upsert never writes it; SetModSkippedVersion does, and ApplyModUpdate
+// clears it.
+//
+// The column is added only when it is missing, so a schema whose recorded
+// version was rolled back (the timestamp migration's own tests re-run every
+// migration from 19 on) re-applies this cleanly.
+func migrateV20(ctx context.Context, q migrationExec) error {
+	var have int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('installed_mods') WHERE name = 'skipped_version'`).Scan(&have); err != nil {
+		return fmt.Errorf("inspecting installed_mods: %w", err)
+	}
+	if have > 0 {
+		return nil
+	}
+	_, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN skipped_version TEXT`)
+	return err
 }

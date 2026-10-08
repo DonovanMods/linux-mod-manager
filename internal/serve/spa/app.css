@@ -1121,6 +1121,41 @@ input[type="search"]::-webkit-search-decoration {
   color: var(--text-secondary);
 }
 
+/* issue 542: the quiet "N skipped updates" line under the attention cards.
+ * Not a card - nothing in it needs attention - so it spans the whole grid
+ * row rather than taking a column, in secondary text, collapsed until
+ * opened. */
+.skipped-updates {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.skipped-updates__summary {
+  cursor: pointer;
+}
+
+.skipped-updates__list {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.skipped-updates__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.skipped-updates__name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
 /* A card whose own fetch failed - I3: never rendered as the all-clear
  * empty state. */
 .card__error {

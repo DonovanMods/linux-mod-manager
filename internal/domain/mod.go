@@ -251,6 +251,13 @@ type InstalledMod struct {
 	// meaningful when External; recorded at adopt time so no flow needs to
 	// re-scan Steam's libraries just to report where a mod lives.
 	ExternalPath string `json:"external_path,omitempty"`
+	// SkippedVersion is the pending update the user chose to skip (#542),
+	// without pinning the mod: an update check leaves out any offer that is
+	// not newer than it, so the skip lasts until the source publishes
+	// something newer. It is local UI state, kept on the installed row like
+	// UpdatePolicy and never written to a profile; an applied update clears
+	// it. Empty when nothing is skipped.
+	SkippedVersion string `json:"skipped_version,omitempty"`
 }
 
 // Update represents an available update for an installed mod

@@ -24,6 +24,8 @@ import {
   startJob,
   startToggle as startToggleJob,
   setModLock as apiSetModLock,
+  skipModUpdate as apiSkipModUpdate,
+  unskipModUpdate as apiUnskipModUpdate,
   clearModLock as apiClearModLock,
   setModUpdatePolicy as apiSetModUpdatePolicy,
   setModConvert as apiSetModConvert,
@@ -1873,6 +1875,43 @@ async function setModConvert(sourceID, modID, enabled) {
   await refreshAfterModSetting(sourceID, modID);
 }
 
+/** skipModUpdate/unskipModUpdate are issue 542's "skip this version" and its
+ * undo - the same single-step shape as the settings above. A skip moves a
+ * row between the updates report's "updates" and "skipped_updates", which
+ * only the server decides (core compares versions), so the report is
+ * re-read rather than patched here: the Updates card, the library's markers
+ * and "Update all" all read it. On the full mod page, its own hydrate re-reads
+ * the report along with the mod. */
+async function skipModUpdate(sourceID, modID, version) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await apiSkipModUpdate(sourceID, modID, version, context);
+  await refreshAfterUpdateSkip(sourceID, modID);
+}
+
+async function unskipModUpdate(sourceID, modID) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await apiUnskipModUpdate(sourceID, modID, context);
+  await refreshAfterUpdateSkip(sourceID, modID);
+}
+
+async function refreshAfterUpdateSkip(sourceID, modID) {
+  const route = store.get().route;
+  if (route.view === "mod") {
+    await refreshAfterModSetting(sourceID, modID);
+    return;
+  }
+  await Promise.all([
+    reload("updates", "/api/v1/updates"),
+    reload("mods", "/api/v1/mods"),
+  ]);
+}
+
 /** reloadModPageSlice re-fetches one of the full mod page's two
  * supplementary reads (detail/versions) in isolation - the I3 retry
  * affordance the four Mission Control reads already offer, applied to this
@@ -2298,6 +2337,8 @@ const actions = {
   clearModLock,
   setModUpdatePolicy,
   setModConvert,
+  skipModUpdate,
+  unskipModUpdate,
   clearOrigin,
   dismissToast,
   // pushToast is exposed directly (I1, unit 6 fix wave): the row menu's own

@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -165,9 +166,11 @@ type UpdateBatchResult struct {
 // selected rows.
 //
 // selection names installed mods by domain.ModKey ("<source-id>:<mod-id>").
-// A nil selection means "every update the check found"; a non-nil one
-// filters, and every selected key with no update behind it is reported in
-// the plan's NotFound rather than dropped.
+// A nil selection means "every update the check found" except those whose
+// version the user skipped (#542); a non-nil one filters - a skipped update
+// it names is planned, since naming it is an explicit request - and every
+// selected key with no update behind it is reported in the plan's NotFound
+// rather than dropped.
 //
 // Network reads (CheckGameUpdates, which delegates to each registered
 // source's CheckUpdates) are expected; no DB write, filesystem write, hook
@@ -185,9 +188,16 @@ func (s *Service) PlanUpdateBatch(ctx context.Context, game *domain.Game, profil
 	if err != nil {
 		return nil, err
 	}
-	updates, err := s.CheckGameUpdates(ctx, game, profileName, installed, nil, UpdateCheckOptions{})
+	res, err := s.checkGameUpdates(ctx, game, profileName, installed, nil, UpdateCheckOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to check updates: %w", err)
+	}
+	// #542: a key the caller names is an explicit request - the full mod
+	// page's "Update to vX" is a one-key selection - so a skipped update is
+	// in the pool for it; "every update" (nil) leaves skipped ones out.
+	updates := res.updates
+	if selection != nil {
+		updates = slices.Concat(res.updates, res.skipped)
 	}
 	return s.PlanUpdateBatchFrom(ctx, game, profileName, updates, selection)
 }
@@ -220,7 +230,14 @@ func (s *Service) PlanUpdateBatchFrom(ctx context.Context, game *domain.Game, pr
 	}
 
 	if selection == nil {
-		plan.Updates = append(plan.Updates, updates...)
+		// #542: "every update" never includes one whose version the user
+		// skipped, even when the caller hands over the whole check. A
+		// selection that names the mod is an explicit request, and keeps it.
+		for _, upd := range updates {
+			if !updateSkippedByUser(upd) {
+				plan.Updates = append(plan.Updates, upd)
+			}
+		}
 		return plan, nil
 	}
 
