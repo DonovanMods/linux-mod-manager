@@ -1,0 +1,28 @@
+{
+  "mod": {
+    "id": "a",
+    "source_id": "test-src",
+    "name": "Mod A",
+    "version": "1.0",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "g1",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "profile_name": "default",
+    "update_policy": "notify",
+    "installed_at": "<TIME>",
+    "enabled": true,
+    "deployed": true,
+    "link_method": "symlink",
+    "manual_download": false,
+    "convert_paks": true
+  },
+  "locked": false,
+  "update_policy": "notify"
+}

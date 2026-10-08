@@ -37,6 +37,10 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/unlock", s.wrap(s.handleAPIModUnlock))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/update-policy", s.wrap(s.handleAPIModUpdatePolicy))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/convert", s.wrap(s.handleAPIModConvert))
+	// #542: skip one pending update without pinning, and undo it - the
+	// same single-step settings shape as the four above.
+	s.mux.Handle("POST /api/v1/mods/{source}/{id}/skip-update", s.wrap(s.handleAPIModSkipUpdate))
+	s.mux.Handle("POST /api/v1/mods/{source}/{id}/unskip-update", s.wrap(s.handleAPIModUnskipUpdate))
 	// The profiles modal's write half (api_profiles.go). Each is a
 	// sanctioned single-step mutation answering with the same
 	// core.ProfileResult document its `lmm profile ...` twin emits; the

@@ -801,6 +801,11 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			policyDisplay = colorGreen(policyDisplay)
 		}
 		fmt.Printf("  Update policy: %s\n", policyDisplay)
+		if installedInfo.SkippedVersion != "" {
+			// #542
+			fmt.Printf("  Skipped update: %s — 'lmm mod unskip-update %s' to show it again\n",
+				skippedTarget(svc, domain.InstalledMod{Mod: domain.Mod{SourceID: mod.SourceID, DisplayVersion: installedInfo.DisplayVersion}, External: installedInfo.External}, installedInfo.SkippedVersion), modID)
+		}
 		if installedInfo.Locked {
 			// #269: an external mod's lock TARGET is the content id, so the
 			// line says only that it is locked (version_display.go). The

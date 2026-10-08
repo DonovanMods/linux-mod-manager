@@ -189,3 +189,26 @@ func TestModDetail_CarriesTheSkippedVersion(t *testing.T) {
 	require.NotNil(t, detail.Installed)
 	assert.Equal(t, "2.0", detail.Installed.SkippedVersion)
 }
+
+// The full mod page's "Update to vX" is a one-key batch selection: naming
+// the mod is an explicit request, so the skipped update is planned, applied,
+// and the skip cleared.
+func TestPlanUpdateBatch_ASelectionNamingASkippedUpdateStillUpdates(t *testing.T) {
+	svc, game, _ := newSkipTestService(t)
+	_, err := svc.SkipModUpdate(context.Background(), game, "src", "mod1", "default", "2.0")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanUpdateBatch(context.Background(), game, "default", []string{"src:mod1"})
+	require.NoError(t, err)
+	require.Len(t, plan.Updates, 1)
+	assert.Empty(t, plan.NotFound)
+
+	result, err := svc.ApplyUpdateBatch(context.Background(), game, plan, core.UpdateBatchOptions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Applied, 1)
+
+	row, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", row.Version)
+	assert.Empty(t, row.SkippedVersion)
+}

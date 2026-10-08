@@ -389,6 +389,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		// false success.
 		if checkErr != nil {
 			fmt.Println("Update check did not complete — see the warning above. No results to report.")
+		} else if report.Skipped.Updates > 0 {
+			// #542: every update found was skipped - not "up to date".
+			fmt.Println("No updates to apply.")
 		} else {
 			fmt.Println("All mods are up to date.")
 		}
@@ -396,6 +399,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Println()
 			printSkipped(skips)
 		}
+		printSkippedUpdates(service, report)
 		printExternalMissing(report)
 		printCatalogMissing(service, report)
 		return finish()
@@ -454,6 +458,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Println()
 			printSkipped(skips)
 		}
+		printSkippedUpdates(service, report)
 		printExternalMissing(report)
 		printCatalogMissing(service, report)
 		printUpdateChangelogs(service, updates)
