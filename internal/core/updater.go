@@ -215,10 +215,25 @@ func UpdateCheckable(mod domain.InstalledMod) bool {
 type UpdateSkips struct {
 	Pinned int `json:"pinned"`
 	Local  int `json:"local"`
+	// Updates counts the updates the check found but left out because the
+	// user skipped that version (#542) - UpdateCheckReport.SkippedUpdates'
+	// length. Those mods WERE checked, so Total does not include them; it is
+	// set by CheckGameUpdateReport, never by CountUpdateSkips, which sees
+	// only the installed rows. omitzero.
+	Updates int `json:"updates,omitzero"`
 }
 
 // Total is the number of mods that will not be checked at all.
 func (s UpdateSkips) Total() int { return s.Pinned + s.Local }
+
+// updateSkippedByUser reports whether upd offers a version the user chose to
+// skip (#542): the installed row's SkippedVersion is set and upd's
+// NewVersion is not newer than it. A recompile row is never skipped - it
+// offers no version, only a rebuild of what is installed.
+func updateSkippedByUser(upd domain.Update) bool {
+	skipped := upd.InstalledMod.SkippedVersion
+	return skipped != "" && !upd.RecompileNeeded && !domain.IsNewerVersion(skipped, upd.NewVersion)
+}
 
 // UpdateCheckReport is everything a bulk `lmm update` check renders: the
 // updates found, the mods that were never checked, and - when the check
@@ -237,6 +252,14 @@ type UpdateCheckReport struct {
 	Updates      []domain.Update `json:"updates"`
 	Skipped      UpdateSkips     `json:"skipped"`
 	ErrorMessage string          `json:"error,omitempty"`
+
+	// SkippedUpdates are the updates the check found but left out of
+	// Updates because the user skipped that version (#542, `lmm mod
+	// skip-update`): each entry's InstalledMod.SkippedVersion is the skip,
+	// NewVersion what the source offers. They are reported so a frontend
+	// can keep them findable ("N skipped updates", with an Unskip), and are
+	// never applied by a bulk update. omitempty.
+	SkippedUpdates []domain.Update `json:"skipped_updates,omitempty"`
 
 	// External is how many of Updates belong to EXTERNAL mods (#269) -
 	// Steam Workshop items lmm can report an update for but never apply.
@@ -367,6 +390,10 @@ func (s *Service) lockState(ctx context.Context, gameID, profileName, sourceID, 
 //
 // A mod its source's catalog no longer has (#539) is not an update and does
 // not fail the check (CheckGameUpdateReport names it).
+//
+// An update offering a version the user skipped (#542) is left out too
+// (CheckGameUpdateReport names it in SkippedUpdates); a version newer than
+// the skipped one is reported as normal.
 func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, error) {
 	res, err := s.checkGameUpdates(ctx, game, profileName, installed, sink, opts)
 	return res.updates, err
@@ -391,7 +418,9 @@ func (s *Service) CheckGameUpdateReport(ctx context.Context, game *domain.Game, 
 		ExternalMissing: res.drift.missingRefs(),
 		Warnings:        res.drift.warnings,
 		CatalogMissing:  res.catalogMissing,
+		SkippedUpdates:  res.skipped,
 	}
+	report.Skipped.Updates = len(res.skipped)
 	if checkErr != nil {
 		report.ErrorMessage = checkErr.Error()
 	}
@@ -406,6 +435,9 @@ type gameUpdateCheck struct {
 	drift externalDrift
 	// catalogMissing is the mods their source's catalog no longer has (#539).
 	catalogMissing []CatalogModRef
+	// skipped is the updates left out of updates because the user skipped
+	// the version they offer (#542).
+	skipped []domain.Update
 }
 
 // checkGameUpdates is CheckGameUpdates' body, also returning what
@@ -459,5 +491,34 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 		}
 	}
 
-	return gameUpdateCheck{updates: updates, drift: drift, catalogMissing: catalogMissing}, checkErr
+	offered, skipped := splitSkippedUpdates(installed, updates)
+	return gameUpdateCheck{updates: offered, drift: drift, catalogMissing: catalogMissing, skipped: skipped}, checkErr
+}
+
+// splitSkippedUpdates separates the updates offering a version the user
+// skipped (#542) from the rest, keeping the check's order in both. The skip
+// is read from installed, the rows the check was asked about, and stamped on
+// each update's InstalledMod - a source builds its own Update and need not
+// carry the field through.
+func splitSkippedUpdates(installed []domain.InstalledMod, updates []domain.Update) (offered, skipped []domain.Update) {
+	skips := make(map[string]string)
+	for _, mod := range installed {
+		if mod.SkippedVersion != "" {
+			skips[domain.ModKey(mod.SourceID, mod.ID)] = mod.SkippedVersion
+		}
+	}
+	if len(skips) == 0 {
+		return updates, nil
+	}
+	for _, upd := range updates {
+		if v, ok := skips[domain.ModKey(upd.InstalledMod.SourceID, upd.InstalledMod.ID)]; ok {
+			upd.InstalledMod.SkippedVersion = v
+		}
+		if updateSkippedByUser(upd) {
+			skipped = append(skipped, upd)
+		} else {
+			offered = append(offered, upd)
+		}
+	}
+	return offered, skipped
 }

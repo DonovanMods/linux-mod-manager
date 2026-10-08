@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -506,7 +507,9 @@ func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName
 	if len(res.catalogMissing) > 0 {
 		return nil, s.notInCatalog(mod.SourceID, mod.ID, nil)
 	}
-	updates := res.updates
+	// #542: an explicit single-mod update ignores a skip - the skip only
+	// hides the prompt - and applying it clears the skip.
+	updates := slices.Concat(res.updates, res.skipped)
 	if len(updates) == 0 {
 		return s.planUpdateBase(ctx, game, profileName, mod)
 	}

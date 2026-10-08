@@ -1598,6 +1598,24 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #542: an update the user skipped is reported apart from the
+			// updates offered, and counted in skipped.updates.
+			"update_check_report_skipped_updates",
+			core.UpdateCheckReport{
+				GameID:  "skyrim-se",
+				Profile: "default",
+				Updates: []domain.Update{},
+				Skipped: core.UpdateSkips{Updates: 1},
+				SkippedUpdates: []domain.Update{{
+					InstalledMod: domain.InstalledMod{
+						Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se"},
+						ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify, SkippedVersion: "1.3.0",
+					},
+					NewVersion: "1.3.0",
+				}},
+			},
+		},
+		{
 			"catalog_mod_ref",
 			core.CatalogModRef{SourceID: "icarus", ModID: "dLs3nvmWj5uOPnXxezGe", Name: "Bear Mount"},
 		},
@@ -2103,6 +2121,18 @@ func TestJSONGoldens(t *testing.T) {
 				LockedVersion: "1.2.3",
 				UpdatePolicy:  domain.UpdateAuto,
 				ConvertPaks:   boolPtr(true),
+			},
+		},
+		{
+			// #542: `lmm mod skip-update --json` / POST .../skip-update.
+			"mod_setting_result_skipped",
+			core.ModSettingResult{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se"},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify, SkippedVersion: "1.3.0",
+				},
+				UpdatePolicy:   domain.UpdateNotify,
+				SkippedVersion: "1.3.0",
 			},
 		},
 		{

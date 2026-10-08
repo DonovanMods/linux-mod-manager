@@ -198,7 +198,7 @@ func TestMigrateV19_RewritesEveryLegacyForm(t *testing.T) {
 
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 19, version)
+	assert.Equal(t, 20, version)
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

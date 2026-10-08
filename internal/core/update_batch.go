@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -218,6 +219,11 @@ func (s *Service) PlanUpdateBatchFrom(ctx context.Context, game *domain.Game, pr
 		Updates:  make([]domain.Update, 0, len(updates)),
 		snapshot: snapshot,
 	}
+
+	// #542: a batch never applies an update whose version the user skipped,
+	// even when the caller hands over the whole check; a selected skipped
+	// key is reported in NotFound like any key with nothing to apply.
+	updates = slices.DeleteFunc(slices.Clone(updates), updateSkippedByUser)
 
 	if selection == nil {
 		plan.Updates = append(plan.Updates, updates...)

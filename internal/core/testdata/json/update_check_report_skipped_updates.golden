@@ -1,0 +1,42 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "updates": [],
+  "skipped": {
+    "pinned": 0,
+    "local": 0,
+    "updates": 1
+  },
+  "skipped_updates": [
+    {
+      "installed_mod": {
+        "id": "42",
+        "source_id": "nexusmods",
+        "name": "Sample Mod",
+        "version": "1.2.3",
+        "author": "",
+        "summary": "",
+        "description": "",
+        "game_id": "skyrim-se",
+        "category": "",
+        "downloads": 0,
+        "picture_url": "",
+        "source_url": "",
+        "files": [],
+        "dependencies": [],
+        "profile_name": "default",
+        "update_policy": "notify",
+        "installed_at": "2026-08-27T12:00:00Z",
+        "enabled": false,
+        "deployed": false,
+        "link_method": "symlink",
+        "manual_download": false,
+        "convert_paks": false,
+        "skipped_version": "1.3.0"
+      },
+      "new_version": "1.3.0",
+      "recompile_needed": false,
+      "locked": false
+    }
+  ]
+}

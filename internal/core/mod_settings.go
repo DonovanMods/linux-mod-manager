@@ -1,5 +1,5 @@
 // Package core: this file holds the small per-mod settings flows - lock/
-// unlock/set-update-policy/set-convert-paks - each a single beginOp-gated
+// unlock/set-update-policy/set-convert-paks/skip-update/unskip-update - each a single beginOp-gated
 // mutation (no Plan/Apply pair: there is nothing to preview or go stale
 // beyond the mod itself, mirroring EnableMod/DisableMod's own shape) that
 // returns a ModSettingResult so cmd/lmm's renderers never need their own
@@ -8,6 +8,9 @@ package core
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -29,6 +32,9 @@ type ModSettingResult struct {
 	// all - distinct from a non-nil pointer to false, which means "applies,
 	// and is off" (mirrors InstalledDetail.ConvertPaks exactly).
 	ConvertPaks *bool `json:"convert_paks,omitempty"`
+	// SkippedVersion is the update version the user skipped (#542), the DB
+	// row's own Mod.SkippedVersion; empty when nothing is skipped.
+	SkippedVersion string `json:"skipped_version,omitempty"`
 }
 
 // modSettingResult builds sourceID/modID's ModSettingResult in
@@ -47,10 +53,11 @@ func (s *Service) modSettingResult(ctx context.Context, sourceID, modID, gameID,
 	}
 
 	result := &ModSettingResult{
-		Mod:           *mod,
-		Locked:        locked,
-		LockedVersion: lockedVersion,
-		UpdatePolicy:  mod.UpdatePolicy,
+		Mod:            *mod,
+		Locked:         locked,
+		LockedVersion:  lockedVersion,
+		UpdatePolicy:   mod.UpdatePolicy,
+		SkippedVersion: mod.SkippedVersion,
 	}
 
 	if game, gerr := s.GetGame(gameID); gerr == nil && game.DeployMode == domain.DeployCompile && s.ModHasPakMergeSource(game, mod) {
@@ -164,4 +171,72 @@ func (s *Service) SetModConvertPaks(ctx context.Context, sourceID, modID, gameID
 
 func (s *Service) setModConvertPaks(ctx context.Context, sourceID, modID, gameID, profileName string, convert bool) error {
 	return s.db.SetModConvertPaks(ctx, sourceID, modID, gameID, profileName, convert)
+}
+
+// ErrNoUpdateToSkip is SkipModUpdate's refusal when no version was named
+// and the mod's source offers no update to skip (#542).
+var ErrNoUpdateToSkip = errors.New("no update is available to skip")
+
+// SkipModUpdate skips one pending update of sourceID/modID in profileName
+// without pinning the mod (#542): the update check leaves out any offer that
+// is not newer than version, so the skip lasts until the source publishes
+// something newer. An empty version skips the version the source offers
+// now, found by a one-mod update check run before the mutation slot is
+// taken (it is a network read); with no update offered, that is
+// ErrNoUpdateToSkip.
+//
+// The skip only hides the prompt: an explicit single-mod update still
+// applies the skipped version, and clears the skip.
+func (s *Service) SkipModUpdate(ctx context.Context, game *domain.Game, sourceID, modID, profileName, version string) (*ModSettingResult, error) {
+	if version == "" {
+		offered, err := s.offeredUpdateVersion(ctx, game, sourceID, modID, profileName)
+		if err != nil {
+			return nil, err
+		}
+		version = offered
+	}
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := s.db.SetModSkippedVersion(ctx, sourceID, modID, game.ID, profileName, version); err != nil {
+		return nil, err
+	}
+	return s.modSettingResult(ctx, sourceID, modID, game.ID, profileName)
+}
+
+// offeredUpdateVersion is the version an update check offers sourceID/modID
+// right now, whether or not it is already skipped - a recompile, which
+// offers no version, does not count.
+func (s *Service) offeredUpdateVersion(ctx context.Context, game *domain.Game, sourceID, modID, profileName string) (string, error) {
+	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
+	if err != nil {
+		return "", err
+	}
+	res, err := s.checkGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil, UpdateCheckOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to check update: %w", err)
+	}
+	for _, upd := range slices.Concat(res.updates, res.skipped) {
+		if upd.InstalledMod.SourceID == sourceID && upd.InstalledMod.ID == modID && !upd.RecompileNeeded {
+			return upd.NewVersion, nil
+		}
+	}
+	return "", fmt.Errorf("%s: %w", mod.Name, ErrNoUpdateToSkip)
+}
+
+// UnskipModUpdate clears sourceID/modID's skipped update (#542), so the
+// update check offers it again. Clearing a skip that is not set is not an
+// error.
+func (s *Service) UnskipModUpdate(ctx context.Context, sourceID, modID, gameID, profileName string) (*ModSettingResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := s.db.SetModSkippedVersion(ctx, sourceID, modID, gameID, profileName, ""); err != nil {
+		return nil, err
+	}
+	return s.modSettingResult(ctx, sourceID, modID, gameID, profileName)
 }
