@@ -49,6 +49,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV18,
 		d.migrateV19,
 		migrateV20,
+		migrateV21,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -535,5 +536,28 @@ func migrateV20(ctx context.Context, q migrationExec) error {
 		return nil
 	}
 	_, err := q.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN skipped_version TEXT`)
+	return err
+}
+
+// migrateV21 adds manual_only_mods (#543): the mods a source will not serve
+// through its API (source.ErrManualDownload, or the source's own
+// classification - CurseForge's allowModDistribution), so they can only be
+// updated from a hand-downloaded file.
+//
+// A table of its own, not an installed_mods column: the fact is about the
+// source's mod, not one profile's row of it, and it has to exist before any
+// row does - an install the source refused saves nothing, and the from-file
+// install that follows must still know. Keyed by game as well, because a
+// NexusMods mod id is only unique within its game.
+func migrateV21(ctx context.Context, d migrationExec) error {
+	_, err := d.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS manual_only_mods (
+			game_id TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			mod_id TEXT NOT NULL,
+			recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (game_id, source_id, mod_id)
+		)
+	`)
 	return err
 }

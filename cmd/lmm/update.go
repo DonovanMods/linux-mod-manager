@@ -363,8 +363,8 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			// review - now named in README's --json table rather than left
 			// for a consumer to discover). With nothing to apply this never
 			// enters the batch, and the check report is the more useful
-			// answer: its skipped{} names the mods that were passed over
-			// (pinned, locked, manual download), which an empty
+			// answer: its skipped{} counts the mods that were never
+			// checked (pinned, local), which an empty
 			// UpdateBatchResult would lose. The two are discriminable -
 			// only the batch result carries "applied".
 			if err := emitJSON(report); err != nil {
@@ -431,17 +431,18 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// skippedCandidates counts the rows that were CANDIDATES for this run -
 	// auto-policy rows always, notify-policy rows only under --all - but
 	// which core's batch will decline to attempt (locked, #97; external,
-	// #269), so the header below counts what will really be attempted.
+	// #269; manual-only, #543), so the header below counts what will really
+	// be attempted.
 	skippedCandidates := 0
 	for _, update := range updates {
 		auto := update.InstalledMod.UpdatePolicy == domain.UpdateAuto
 		if !auto && !updateAll {
 			continue
 		}
-		if auto && !update.Locked {
+		if auto && !update.Locked && !update.InstalledMod.ManualOnly {
 			autoUpdates = append(autoUpdates, update)
 		}
-		if update.Locked || update.InstalledMod.External {
+		if update.Locked || update.InstalledMod.External || update.InstalledMod.ManualOnly {
 			skippedCandidates++
 		}
 		selection = append(selection, domain.ModKey(update.InstalledMod.SourceID, update.InstalledMod.ID))
@@ -548,7 +549,12 @@ func printBatchDownloadPages(failed []core.UpdateBatchFailure) {
 // own sentence rather than "unlock to update", which would be nonsense.
 func printBatchSkips(skipped []core.UpdateApplyResult) {
 	var locked, external []string
+	var manual []core.UpdateApplyResult
 	for _, sk := range skipped {
+		if sk.ManualOnly {
+			manual = append(manual, sk)
+			continue
+		}
 		if sk.Mod.Locked {
 			locked = append(locked, sk.Name)
 			continue
@@ -561,6 +567,26 @@ func printBatchSkips(skipped []core.UpdateApplyResult) {
 	if len(external) > 0 {
 		fmt.Printf("\n%d Steam Workshop item(s) not applied: %s — Steam applies these itself\n", len(external), strings.Join(external, ", "))
 		fmt.Println("the next time you launch the game.")
+	}
+	printManualOnlySkips(manual)
+}
+
+// printManualOnlySkips is #543's block: each mod the batch declined because
+// its source will not serve the file, with where to download it and the
+// command that finishes the update from the downloaded file - the two
+// remedies #530/#535 print beside a refused download, here for a download
+// that was never tried. Silent when there are none.
+func printManualOnlySkips(manual []core.UpdateApplyResult) {
+	if len(manual) == 0 {
+		return
+	}
+	fmt.Printf("\n%d mod(s) not applied — their source will not serve the file to lmm:\n", len(manual))
+	for _, sk := range manual {
+		fmt.Printf("  %s\n", sk.Name)
+		if sk.ModURL != "" {
+			fmt.Printf("    %s\n", downloadHint(sk.ModURL))
+		}
+		fmt.Printf("    %s\n", updateFromFileRemedy(&core.DownloadError{SourceID: sk.Mod.SourceID, ModID: sk.Mod.ModID}))
 	}
 }
 
@@ -592,6 +618,11 @@ func printUpdateTable(service *core.Service, updates, autoUpdates []domain.Updat
 			// keeps the row from reading like something `lmm update --all`
 			// will act on.
 			policyStr += " [steam]"
+		}
+		if update.InstalledMod.ManualOnly {
+			// #543: the source will not serve the file, so neither --all
+			// nor an auto policy downloads it - it is updated from a file.
+			policyStr += " [manual]"
 		}
 		if isLocked {
 			policyStr += " [locked@" + update.LockedVersion + "]"

@@ -83,10 +83,13 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	}
 
 	// Always show total count (no longer requires --verbose)
-	external, disabled, offState := 0, 0, 0
+	external, disabled, offState, manual := 0, 0, 0, 0
 	for _, m := range mods {
 		if m.External {
 			external++
+		}
+		if m.ManualOnly {
+			manual++
 		}
 		if !m.Enabled {
 			disabled++
@@ -106,6 +109,11 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		// so it says how many rather than leaving the reader to tally the
 		// STATE column.
 		fmt.Printf(", %d disabled", disabled)
+	}
+	if manual > 0 {
+		// #543: their source will not serve the file, so they are updated
+		// from one downloaded by hand.
+		fmt.Printf(", %d manual download only", manual)
 	}
 	fmt.Println()
 	if verbose && game.CachePath != "" {
@@ -138,6 +146,12 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	if external > 0 {
 		header += "\tEXTERNAL"
 		sep += "\t--------"
+	}
+	// #543: the same rule - present only when a mod's source will not
+	// serve its files.
+	if manual > 0 {
+		header += "\tMANUAL"
+		sep += "\t------"
 	}
 	if _, err := fmt.Fprintln(w, header); err != nil {
 		return fmt.Errorf("writing header: %w", err)
@@ -219,6 +233,13 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 			marker := "-"
 			if mod.External {
 				marker = "EXTERNAL"
+			}
+			row += "\t" + marker
+		}
+		if manual > 0 {
+			marker := "-"
+			if mod.ManualOnly {
+				marker = "MANUAL"
 			}
 			row += "\t" + marker
 		}

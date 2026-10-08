@@ -108,6 +108,20 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #543: a mod its source will not serve through the API - the
+			// one document shape that carries "manual_only".
+			"mod_manual_only",
+			domain.Mod{
+				ID:         "238222",
+				SourceID:   "curseforge",
+				Name:       "Opted Out",
+				Version:    "2.0",
+				GameID:     "432",
+				SourceURL:  "https://www.curseforge.com/minecraft/mc-mods/opted-out",
+				ManualOnly: true,
+			},
+		},
+		{
 			// Files (embedded via Mod) is deliberately left nil this time -
 			// Mod's own golden above nils Dependencies instead - so both of
 			// Mod's non-omitempty slice fields are pinned as "[]" somewhere

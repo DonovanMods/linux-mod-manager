@@ -20,7 +20,13 @@
 // own TTL, same as a Cancelled plan always has.
 
 import { html } from "../render.js";
-import { EXTERNAL_UPDATE_NOTE, lockedNote, modKey } from "../modrows.js";
+import {
+  EXTERNAL_UPDATE_NOTE,
+  MANUAL_UPDATE_NOTE,
+  isManualOnly,
+  lockedNote,
+  modKey,
+} from "../modrows.js";
 import { displayVersion, displayUpdateTarget } from "../version.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 
@@ -47,6 +53,14 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
   // server sent, and a renderer that only tells the truth about the inputs it
   // expects is how the deploy dry run went wrong in the first place.
   const externalCount = updates.filter((u) => u.installed_mod.external).length;
+  // issue 543: a MANUAL-ONLY row, which ApplyUpdateBatch declines with
+  // core.ReasonManualDownload. Like the external case no control here plans
+  // one on purpose, but a selection made before the source's refusal was
+  // recorded can still carry one, and the plan says so honestly. A locked
+  // row is counted under the lock instead, which core names first.
+  const manualCount = updates.filter(
+    (u) => !u.locked && !u.installed_mod.external && isManualOnly(u),
+  ).length;
 
   /** drop re-plans with every CURRENTLY planned row except `key`. A no-op
    * when it is the only row left - nothing meaningful for Confirm to apply
@@ -89,6 +103,15 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
         </h3>`
       }
       ${
+        manualCount > 0 &&
+        html`<h3
+          class="plan__heading plan__heading--warn"
+          data-testid="updates-batch-manual"
+        >
+          ${`${manualCount} of them will be skipped — their source will not serve the file to lmm.`}
+        </h3>`
+      }
+      ${
         updates.length > 0 &&
         html`
           <ul class="plan__paths" data-testid="updates-batch-rows">
@@ -104,12 +127,17 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
               // gives the LOCKED wording precedence when it is
               // (internal/core/update.go#planUpdateBase) - the two surfaces
               // must agree on which reason they name.
-              const skipped = u.locked || Boolean(u.installed_mod.external);
+              const skipped =
+                u.locked ||
+                Boolean(u.installed_mod.external) ||
+                isManualOnly(u);
               const detail = u.locked
                 ? `will be skipped — ${lockedNote(u)}`
                 : u.installed_mod.external
                   ? `will be skipped — ${EXTERNAL_UPDATE_NOTE}`
-                  : `${displayVersion(u.installed_mod)} → ${displayUpdateTarget(u)}`;
+                  : isManualOnly(u)
+                    ? `will be skipped — ${MANUAL_UPDATE_NOTE}`
+                    : `${displayVersion(u.installed_mod)} → ${displayUpdateTarget(u)}`;
               return html`
                 <li key=${key} class="plan__mod">
                   <label>

@@ -121,6 +121,9 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		s.resolveAuthorNames(ctx, sourceID, mod)
 	}
 	detail := &ModDetail{Mod: mod}
+	// #543: the source's own classification, or a refusal lmm recorded -
+	// installed or not, since a refused install is when the user looks.
+	mod.ManualOnly = mod.ManualOnly || s.manualOnlyRecorded(ctx, game.ID, sourceID, modID)
 	s.fillModDescription(ctx, sourceID, game, mod)
 	detail.DescriptionText = CleanChangelog(mod.Description)
 	detail.Changelog, detail.Notes = s.modChangelog(ctx, sourceID, game, modID, mod.Version)

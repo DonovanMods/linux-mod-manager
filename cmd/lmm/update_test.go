@@ -132,6 +132,11 @@ type fakeUpdateSource struct {
 	// re-invoking CheckGameUpdates - see
 	// TestDoUpdate_BulkApply_ChecksSourceExactlyOnce.
 	checkUpdatesCalls int
+	// manualOnly names the mods whose every download is refused the way a
+	// CurseForge author's opt-out is (#543); refusedCalls counts the
+	// requests for them, so a test can prove a batch never asked.
+	manualOnly   map[string]bool
+	refusedCalls int
 }
 
 func newFakeUpdateSource(id string) *fakeUpdateSource {
@@ -181,6 +186,10 @@ func (s *fakeUpdateSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]
 func (s *fakeUpdateSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	if s.downloadURLErr != nil {
 		return "", s.downloadURLErr
+	}
+	if s.manualOnly[mod.ID] {
+		s.refusedCalls++
+		return "", &source.ManualDownloadError{Reason: "the author has turned off API downloads"}
 	}
 	return s.srv.URL + "/" + fileID, nil
 }

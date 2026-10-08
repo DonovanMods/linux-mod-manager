@@ -143,6 +143,9 @@ type UpdateFromArchivePlan struct {
 
 	// matchedFileID is the file whose completion marker Apply stamps.
 	matchedFileID string `json:"-"`
+	// sourceManualOnly: the source classified the mod manual-only in the
+	// metadata identifyUpdateArchive fetched (#543), so Apply records it.
+	sourceManualOnly bool `json:"-"`
 	// entryPreExists: a cache entry already lived at ToVersion, so a failed
 	// apply leaves it alone (discardImportedCacheEntry's rule).
 	entryPreExists bool               `json:"-"`
@@ -348,6 +351,7 @@ func (s *Service) identifyUpdateArchive(ctx context.Context, game *domain.Game, 
 		warn("could not fetch %s's files from %s: %v", mod.Name, mod.SourceID, err)
 		return
 	}
+	plan.sourceManualOnly = srcMod.ManualOnly
 	files, err := s.GetModFiles(ctx, mod.SourceID, srcMod)
 	if err != nil {
 		warn("could not fetch %s's files from %s: %v", mod.Name, mod.SourceID, err)
@@ -693,8 +697,12 @@ func (s *Service) applyUpdateFromArchive(ctx context.Context, game *domain.Game,
 	}, UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks}, result, emit)
 	if err != nil {
 		s.discardUpdateArchiveEntry(game, plan, warn)
+		return result, err
 	}
-	return result, err
+	if plan.sourceManualOnly {
+		s.recordManualOnly(ctx, game.ID, mod.SourceID, mod.ID) // #543
+	}
+	return result, nil
 }
 
 // discardUpdateArchiveEntry removes the cache entry a failed

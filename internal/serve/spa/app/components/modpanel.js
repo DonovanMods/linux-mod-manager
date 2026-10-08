@@ -26,7 +26,11 @@ import { displayVersion } from "../version.js";
 import { authorTitle, displayAuthor } from "../author.js";
 import { InlineJob } from "./jobprogress.js";
 import { ModPageLink } from "./modpagelink.js";
-import { UpdateFromFileButton } from "./updatefromfile.js";
+import {
+  MANUAL_DOWNLOAD_NOTE,
+  ManualDownloadNote,
+  UpdateFromFileButton,
+} from "./updatefromfile.js";
 import { Arrow } from "./arrow.js";
 
 /** modUrl builds the ?mod= URL for row, on the given base path - the same
@@ -417,6 +421,7 @@ export function ModPanel({
         </p>
 
         ${row.external && html`<${ManagedBySteam} row=${row} />`}
+        ${row.isManual && html`<${ManualDownloadNote} />`}
         ${
           // issue 418: this mod's health, in every state rather than only
           // the bad one. The Findings section below renders when there ARE
@@ -456,6 +461,14 @@ export function ModPanel({
               <button
                 type="button"
                 class="button button--primary"
+                disabled=${row.isManual}
+                title=${
+                  // Issue 543: a MANUAL-ONLY mod's update is "Update from
+                  // file…" below - this one would only be skipped. Disabled,
+                  // not removed: the readout of the update that just learned
+                  // it (the failed download's way out) lives in this slot.
+                  row.isManual ? MANUAL_DOWNLOAD_NOTE : undefined
+                }
                 onClick=${() =>
                   actions.openPlan({
                     kind: "updates",

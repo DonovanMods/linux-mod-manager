@@ -520,6 +520,9 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 			NewVersion:   fileVersion(*latest),
 			Changelog:    "", // CurseForge changelog requires separate fetch
 		}
+		// #543: the batch answer already says whether the author allows
+		// third-party downloads, so the row says so without one being tried.
+		upd.InstalledMod.ManualOnly = upd.InstalledMod.ManualOnly || distributionDisallowed(data)
 		if ids := installedFileIDs(inst.FileIDs); len(ids) > 0 {
 			// Name the file the check advertised: ApplyUpdate installs the
 			// listed file with this id rather than re-deriving "the latest"
@@ -586,7 +589,16 @@ func modToDomain(data Mod, gameID string) domain.Mod {
 		Endorsements: int64Ptr(int64(data.ThumbsUpCount)),
 		PictureURL:   pictureURL,
 		UpdatedAt:    data.DateModified,
+		ManualOnly:   distributionDisallowed(data),
 	}
+}
+
+// distributionDisallowed reports a mod whose author turned off third-party
+// distribution (allowModDistribution: false): CurseForge refuses its
+// download URLs, so its files can only be fetched from the website (#543).
+// An absent field says nothing, and is not read as a refusal.
+func distributionDisallowed(data Mod) bool {
+	return data.AllowModDistribution != nil && !*data.AllowModDistribution
 }
 
 // versionRegex matches semantic version patterns like 1.2.3, v1.2.3, 1.2.3-beta, etc.

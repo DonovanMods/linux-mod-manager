@@ -107,3 +107,38 @@ export function UpdateFromFileButton({
 export function updateFromFileOrigin(sourceID, modID) {
   return `mod:${sourceID}/${modID}:update_from_file`;
 }
+
+/** MANUAL_DOWNLOAD_NOTE is what a manual-only mod (issue 543) means, said
+ * once for the slide-over and the full mod page. */
+export const MANUAL_DOWNLOAD_NOTE =
+  "This mod's source will not serve its files to lmm, so lmm never " +
+  "downloads its updates automatically. Download the file from the mod's " +
+  `page, then hand it to lmm with "${updateFromFileLabel}".`;
+
+/**
+ * ManualBadge is issue 543's marker for a mod whose source will not serve
+ * its files: the same short word on every surface, with the reason as its
+ * accessible name (a role-less span exposes none - the library's other
+ * badges follow the same rule).
+ */
+export function ManualBadge({ testid = "manual-badge" }) {
+  return html`<span
+    class="badge badge--warn"
+    data-testid=${testid}
+    role="img"
+    aria-label="Manual download: the source will not serve this mod's files to lmm"
+    title="Manual download: the source will not serve this mod's files to lmm"
+    >Manual</span
+  >`;
+}
+
+/**
+ * ManualDownloadNote is the slide-over's and the full mod page's block for a
+ * manual-only mod (issue 543): the badge and what it means. The page link
+ * and "Update from file…" are already on both surfaces, beside it.
+ */
+export function ManualDownloadNote() {
+  return html`<p class="slide-over__detail" data-testid="manual-download">
+    <${ManualBadge} />${" "}${MANUAL_DOWNLOAD_NOTE}
+  </p>`;
+}

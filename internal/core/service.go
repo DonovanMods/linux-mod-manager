@@ -1508,6 +1508,9 @@ func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain
 // *DownloadError carrying the mod's page (#513), with the failure's own text.
 func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*DownloadModResult, error) {
 	result, err := s.fetchFileToCache(ctx, gameCache, sourceID, game, mod, file, sink)
+	if game != nil {
+		s.noteDownloadOutcome(ctx, game.ID, sourceID, mod, err) // #543
+	}
 	if err != nil {
 		return nil, asDownloadError(err, sourceID, mod, file)
 	}
@@ -2417,6 +2420,8 @@ func (s *Service) GetInstalledMods(ctx context.Context, gameID, profileName stri
 	rows, err := s.db.GetInstalledMods(ctx, gameID, profileName)
 	s.stampInstalledDisplay(rows)  // #458
 	s.stampCachedAuthorNames(rows) // #420
+	// #543: a column of no row, so stamped like the two above.
+	s.stampManualOnly(ctx, gameID, rows)
 	return rows, err
 }
 
@@ -2983,6 +2988,8 @@ func (s *Service) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, 
 		rows := []domain.InstalledMod{*row}
 		s.stampCachedAuthorNames(rows) // #420
 		row.AuthorName = rows[0].AuthorName
+		s.stampManualOnly(ctx, gameID, rows) // #543
+		row.ManualOnly = rows[0].ManualOnly
 	}
 	return row, err
 }

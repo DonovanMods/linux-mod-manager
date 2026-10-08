@@ -12,9 +12,16 @@ import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import {
   EXTERNAL_UPDATE_NOTE,
   countOf,
+  isManualOnly,
   lockedNote,
   modKey,
 } from "../modrows.js";
+import { ModPageLink } from "./modpagelink.js";
+import {
+  ManualBadge,
+  UpdateFromFileButton,
+  updateFromFileOrigin,
+} from "./updatefromfile.js";
 import { displayVersion, displayUpdateTarget } from "../version.js";
 import { relativeTime } from "../relativetime.js";
 import { navigate, modPathEditPath } from "../router.js";
@@ -292,7 +299,12 @@ function UpdatesCard({
   // (issue 269 - ApplyUpdateBatch declines it outright and nothing in this UI
   // changes that), which is also what makes the two consistent: select-all
   // can only ever tick boxes that exist.
-  const applicable = rows.filter((u) => !u.installed_mod.external);
+  // issue 543: a MANUAL-ONLY row is excluded on the same terms - the batch
+  // declines it (core.ReasonManualDownload) - and offers its own way out on
+  // the row instead.
+  const applicable = rows.filter(
+    (u) => !u.installed_mod.external && !isManualOnly(u),
+  );
   const applicableKeys = applicable.map((u) => modKey(u.installed_mod));
   // `taken` is the selection as it stands against the rows on screen NOW,
   // and it is the only thing any count or plan below reads. `selected` holds
@@ -394,6 +406,8 @@ function UpdatesCard({
                   // reversible choice, so ticking it is a coherent thing to
                   // do once the lock is lifted.)
                   const external = Boolean(u.installed_mod.external);
+                  const manual = isManualOnly(u);
+                  const im = u.installed_mod;
                   // ONE string, not adjacent interpolations: htm collapses
                   // the whitespace between those, and at this indent Prettier
                   // is free to break the line in the middle of the arrow -
@@ -406,7 +420,7 @@ function UpdatesCard({
                   return html`
                     <li key=${key} class="card__row">
                       ${
-                        external
+                        external || manual
                           ? html`<span
                               class="card__row-spacer"
                               aria-hidden="true"
@@ -446,6 +460,31 @@ function UpdatesCard({
                           title=${`This update will be skipped: ${EXTERNAL_UPDATE_NOTE}`}
                           >${`will be skipped — ${EXTERNAL_UPDATE_NOTE}`}</span
                         >`
+                      }
+                      ${
+                        // issue 543: no batch downloads this one, so the row
+                        // carries the two things that do update it - the
+                        // mod's page to fetch the file from, and the control
+                        // that takes the file.
+                        manual &&
+                        html`<${ManualBadge} testid="update-manual" />
+                          <${ModPageLink}
+                            url=${im.source_url}
+                            sourceID=${im.source_id}
+                            modName=${im.name}
+                          />
+                          <${InlineJob}
+                            origin=${updateFromFileOrigin(im.source_id, im.id)}
+                            state=${state}
+                            actions=${actions}
+                          >
+                            <${UpdateFromFileButton}
+                              mod=${{ source_id: im.source_id, id: im.id, name: im.name }}
+                              origin=${updateFromFileOrigin(im.source_id, im.id)}
+                              actions=${actions}
+                              locked=${u.locked}
+                            />
+                          <//>`
                       }
                       <button
                         type="button"

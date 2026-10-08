@@ -198,40 +198,46 @@ func TestE2E_UpdateFromFile_RowMenuAsksForAVersionNothingNames(t *testing.T) {
 // mismatch plan's footer - each label centred on one line, in every layout
 // face, at 1280px.
 func TestE2E_UpdateFromFile_LabelsHoldInEveryFace(t *testing.T) {
-	f := newE2EFixtureWithManualUpdate(t)
 	archive := fromFileArchive(t, "ManualUp-Classic-2.0.zip", "classic bytes")
 
-	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
-		var panel, page, menu, download, modal map[string][]labelBox
-		f.runInBrowser(t,
-			chromedp.EmulateViewport(1280, 900),
-			chromedp.Navigate(f.SlideOverPath("fake", "manualup")),
-			chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-			chromedp.WaitVisible(`.slide-over__actions [data-action="update-from-file"]`, chromedp.ByQuery),
-			faceInEffect(face),
-			measureLabels(`{"slide-over": ".slide-over__actions"}`, &panel),
-			failManualUpdate(),
-			measureLabels(`{"download page": ".slide-over .job-progress [data-testid=\"download-page\"]"}`, &download),
-			clickWhenSettled(`.slide-over__actions [data-action="update-from-file"]`),
-			chromedp.SetUploadFiles(e2eFromFileInput, []string{archive}, chromedp.ByQuery),
-			chromedp.WaitVisible(`.modal[data-kind="update_from_archive"] .plan[data-match="mismatch"]`, chromedp.ByQuery),
-			measureLabels(`{"plan modal": ".modal"}`, &modal),
-			clickWhenSettled(`.modal [data-action="cancel"]`),
-			waitGone(`.modal`),
-			chromedp.Navigate(f.ModPagePath("fake", "manualup")),
-			chromedp.WaitVisible(`.mod-page__actions [data-action="update-from-file"]`, chromedp.ByQuery),
-			measureLabels(`{"mod page": ".mod-page__actions"}`, &page),
-			chromedp.Navigate(f.HomePath()),
-			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-			clickWhenSettled(`.library__table tr[data-mod="fake:manualup"] [data-action="row-menu"]`),
-			chromedp.WaitVisible(`.row-menu [data-action="update-from-file"]`, chromedp.ByQuery),
-			measureLabels(`{"row menu": ".row-menu"}`, &menu),
-		)
-		assertLabelsCentred(t, "slide-over", panel["slide-over"])
-		assertLabelsCentred(t, "download page", download["download page"])
-		assertLabelsCentred(t, "plan modal", modal["plan modal"])
-		assertLabelsCentred(t, "mod page", page["mod page"])
-		assertLabelsCentred(t, "row menu", menu["row menu"])
-	})
-	assertNoUncaughtErrors(t, f.BrowserErrors())
+	// The refusal is learned once (#543): after the first face's failed
+	// update the mod is recorded manual-only and its Update is disabled, so
+	// every face gets its own fixture, as the verify --fix readout's does.
+	for _, face := range e2eLayoutFaces {
+		t.Run(face.name, func(t *testing.T) {
+			f := newE2EFixtureWithManualUpdate(t)
+			useFace(t, f.Ctx, face)
+			var panel, page, menu, download, modal map[string][]labelBox
+			f.runInBrowser(t,
+				chromedp.EmulateViewport(1280, 900),
+				chromedp.Navigate(f.SlideOverPath("fake", "manualup")),
+				chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+				chromedp.WaitVisible(`.slide-over__actions [data-action="update-from-file"]`, chromedp.ByQuery),
+				faceInEffect(face),
+				measureLabels(`{"slide-over": ".slide-over__actions"}`, &panel),
+				failManualUpdate(),
+				measureLabels(`{"download page": ".slide-over .job-progress [data-testid=\"download-page\"]"}`, &download),
+				clickWhenSettled(`.slide-over__actions [data-action="update-from-file"]`),
+				chromedp.SetUploadFiles(e2eFromFileInput, []string{archive}, chromedp.ByQuery),
+				chromedp.WaitVisible(`.modal[data-kind="update_from_archive"] .plan[data-match="mismatch"]`, chromedp.ByQuery),
+				measureLabels(`{"plan modal": ".modal"}`, &modal),
+				clickWhenSettled(`.modal [data-action="cancel"]`),
+				waitGone(`.modal`),
+				chromedp.Navigate(f.ModPagePath("fake", "manualup")),
+				chromedp.WaitVisible(`.mod-page__actions [data-action="update-from-file"]`, chromedp.ByQuery),
+				measureLabels(`{"mod page": ".mod-page__actions"}`, &page),
+				chromedp.Navigate(f.HomePath()),
+				chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+				clickWhenSettled(`.library__table tr[data-mod="fake:manualup"] [data-action="row-menu"]`),
+				chromedp.WaitVisible(`.row-menu [data-action="update-from-file"]`, chromedp.ByQuery),
+				measureLabels(`{"row menu": ".row-menu"}`, &menu),
+			)
+			assertLabelsCentred(t, "slide-over", panel["slide-over"])
+			assertLabelsCentred(t, "download page", download["download page"])
+			assertLabelsCentred(t, "plan modal", modal["plan modal"])
+			assertLabelsCentred(t, "mod page", page["mod page"])
+			assertLabelsCentred(t, "row menu", menu["row menu"])
+			assertNoUncaughtErrors(t, f.BrowserErrors())
+		})
+	}
 }

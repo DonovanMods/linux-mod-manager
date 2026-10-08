@@ -864,6 +864,7 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 		return result, fmt.Errorf("failed to save mod: %w", err)
 	}
+	s.noteSourceClassification(ctx, game.ID, result.Mod) // #543
 	// #514: the row exists now, so its files get a checksum. The import has
 	// the archive in hand, so that is the archive's md5 - the value a
 	// download of the same file records. Left empty, the row read NO
@@ -1061,6 +1062,7 @@ func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, arch
 	imported.Summary = mod.Summary
 	imported.SourceURL = mod.SourceURL
 	imported.PictureURL = mod.PictureURL
+	imported.ManualOnly = mod.ManualOnly // #543: the source's own classification
 	if opts.InstallFromFile {
 		return mod, nil
 	}

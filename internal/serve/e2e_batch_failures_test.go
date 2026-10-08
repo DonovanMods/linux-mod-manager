@@ -270,19 +270,24 @@ func TestE2E_BatchFailures_EachFailedItemNamesItselfAndItsButtonsActOnIt(t *test
 // card, no control intersects it, and a click at each control's centre
 // reaches that control.
 func TestE2E_BatchFailures_LayoutHoldsInEveryFace(t *testing.T) {
-	f := newE2EFixtureWithTwoManualUpdates(t)
-
-	forEachFace(t, f.Ctx, func(t *testing.T, face e2eFace) {
+	// The refusals are learned once (#543): after the first batch both mods
+	// are recorded manual-only and no later batch attempts them, so every
+	// (face, width) gets its own fixture, as the verify --fix readout's does.
+	for _, face := range e2eLayoutFaces {
 		for _, width := range []int64{1280, 720} {
-			var view batchFailureView
-			runOwnersBatch(t, f, width, &view)
-			f.runInBrowser(t, faceInEffect(face))
+			t.Run(fmt.Sprintf("%s/%d", face.name, width), func(t *testing.T) {
+				f := newE2EFixtureWithTwoManualUpdates(t)
+				useFace(t, f.Ctx, face)
+				var view batchFailureView
+				runOwnersBatch(t, f, width, &view)
+				f.runInBrowser(t, faceInEffect(face))
 
-			require.Len(t, view.Entries, 2, "%dpx", width)
-			assertReadoutLayout(t, fmt.Sprintf("%dpx", width), view.Layout, "check-updates", "update-all", "update-selected")
+				require.Len(t, view.Entries, 2, "%dpx", width)
+				assertReadoutLayout(t, fmt.Sprintf("%dpx", width), view.Layout, "check-updates", "update-all", "update-selected")
+				assertNoUncaughtErrors(t, f.BrowserErrors())
+			})
 		}
-		assertNoUncaughtErrors(t, f.BrowserErrors())
-	})
+	}
 }
 
 // TestE2E_VerifyFixResult_NamesItsModsAndKeepsTheHealthCardUsable is #533 for
