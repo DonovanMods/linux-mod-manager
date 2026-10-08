@@ -75,6 +75,9 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 	"modrows.js": {
 		"version": {1, "lockedNote's fallback, reached only past its own `installed_mod?.external` early return - a locked EXTERNAL row says the bare word 'locked', because its lock target IS the content id."},
 	},
+	"components/cards.js": {
+		"new_version": {1, "The Updates card's Skip (#542) sends the row's own new_version to POST .../skip-update as the version to skip - a wire value, never rendered; the row's own detail line goes through displayUpdateTarget."},
+	},
 	"components/modpanel.js": {
 		"version": {3, "One is the CATALOG panel's meta line, whose catalogMod is a domain.Mod - a document with no External field at all, for a mod that is not installed (Workshop search is not Tier 1). The other two are ManagedBySteam's LABELLED 'Steam content id' line: the one place the design asks for the manifest."},
 	},

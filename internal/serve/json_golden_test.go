@@ -308,6 +308,11 @@ func TestServeJSONGoldens(t *testing.T) {
 			modLockRequest{Version: "1.2.0"},
 		},
 		{
+			// #542: the Updates card's Skip sends the row's own new_version.
+			"mod_skip_update_request",
+			modSkipUpdateRequest{Version: "2.0"},
+		},
+		{
 			"mod_update_policy_request",
 			modUpdatePolicyRequest{Policy: domain.UpdatePinned},
 		},

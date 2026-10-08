@@ -349,6 +349,31 @@ root; run `lmm game show human-host` for the fix``. The full explanation and bot
 
 ### Added
 
+- **Skip an available update without pinning the mod (#542).** The only
+  ways to quiet the Updates card used to be pinning the mod - which stops
+  every future check - or updating it. **Skip** on an Updates-card row, or
+  `lmm mod skip-update <id> [--version V]` (default: the version the source
+  offers now), now holds off that one update: the mod stays unpinned, and
+  the skip lasts until the source offers a newer version, which is reported
+  as normal. A skipped update is left out of the Updates card (which is not
+  shown at all when every pending update is skipped), the library's update
+  markers and counts, and every "update all" - the card's and the library's
+  **Update all**, `lmm update --all` and auto-policy mods. It stays findable:
+  a quiet "N skipped updates" line under the attention cards lists each with
+  **Unskip**, `lmm update` names them in its skip summary beside pinned and
+  local mods, and the full mod page and `lmm mod show` say which version is
+  skipped. An explicit single update - `lmm update <id>`, or the mod page's
+  **Update to vX** - still applies it and clears the skip;
+  `lmm mod unskip-update <id>` clears it by hand. The skip is local state on
+  the installed row (a new nullable `installed_mods.skipped_version`, schema
+  migration 20), not part of the profile, so it is not exported. `--json`:
+  `lmm update`'s check document gains `skipped_updates` (the updates left
+  out, each `installed_mod.skipped_version` set) and `skipped.updates` (their
+  count); `installed_mod`, `lmm mod show`'s `installed` and the mod settings
+  document gain `skipped_version`; all are omitted when nothing is skipped.
+  `lmm serve`: `POST /api/v1/mods/{source}/{id}/skip-update` (optional
+  `{"version"}`) and `.../unskip-update` answer the mod settings document.
+
 - **Install a mod from a file you downloaded (#535).** The install twin of
   #530: a search install of a mod whose source refuses API downloads (a
   CurseForge author's third-party opt-out) used to end at "Open on

@@ -187,6 +187,9 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   // half alone put Re-link… back on a locked mod in exactly the case the
   // rule is written for. The Versions section's two gates below take the
   // same value as props for the same reason.
+  // issue 542: the update version the user skipped, off the same
+  // library-first source as the lock - the listing embeds the installed row.
+  const skippedVersion = settingsSource?.skipped_version;
   const lockedActions = Boolean(settingsSource?.locked);
   const lockedVersion = settingsSource?.locked_version;
 
@@ -234,6 +237,15 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
       ${
         settingsRow &&
         html`<${ModSettingsControls} row=${settingsRow} actions=${actions} />`
+      }
+      ${
+        skippedVersion &&
+        html`<${SkippedUpdateNotice}
+          version=${skippedVersion}
+          sourceID=${sourceID}
+          modID=${modID}
+          actions=${actions}
+        />`
       }
 
       <div class="mod-page__section mod-page__actions">
@@ -655,9 +667,17 @@ function VersionsTable({
   // installed mod on any OTHER non-installed version - see this file's own
   // header comment). Joined from /api/v1/updates (main.js's hydrateModPage)
   // rather than carried on ModDetail, which has no such field.
-  const updateTarget = (modPage.updates?.updates ?? []).find(
-    (u) =>
-      u.installed_mod?.source_id === sourceID && u.installed_mod?.id === modID,
+  //
+  // issue 542: a SKIPPED update is still this mod's update target - the skip
+  // only hides it from the bulk surfaces, and "Update to vX" here is the
+  // explicit single update that still applies it (and clears the skip).
+  const isThisMod = (u) =>
+    u.installed_mod?.source_id === sourceID && u.installed_mod?.id === modID;
+  const skippedUpdate = (modPage.updates?.skipped_updates ?? []).find(
+    isThisMod,
+  );
+  const updateTarget = (
+    (modPage.updates?.updates ?? []).find(isThisMod) ?? skippedUpdate
   )?.new_version;
 
   return html`
@@ -692,7 +712,15 @@ function VersionsTable({
                 should say so. */ ""
               }
               <td>
-                ${isInstalled ? "installed" : isUpdateTarget ? "available" : "—"}
+                ${
+                  isInstalled
+                    ? "installed"
+                    : isUpdateTarget
+                      ? skippedUpdate
+                        ? "available (skipped)"
+                        : "available"
+                      : "—"
+                }
               </td>
               <td>
                 ${
@@ -727,6 +755,41 @@ function VersionsTable({
         })}
       </tbody>
     </table>
+  `;
+}
+
+/** SkippedUpdateNotice says this mod's update to `version` was skipped
+ * (issue 542) and offers Unskip, which puts it back on the Updates card and
+ * in the library's update counts. The versions table below still offers the
+ * update itself. */
+function SkippedUpdateNotice({ version, sourceID, modID, actions }) {
+  const [error, setError] = useState(null);
+  async function unskip() {
+    setError(null);
+    try {
+      await actions.unskipModUpdate(sourceID, modID);
+    } catch (err) {
+      setError(err?.message ?? String(err));
+    }
+  }
+  return html`
+    <div class="mod-page__section" data-testid="mod-skipped-update">
+      <p>
+        ${
+          `The update to ${version} is skipped: it is left out of Updates ` +
+          "and Update all until a newer version appears."
+        }
+      </p>
+      <button
+        type="button"
+        class="button"
+        data-action="unskip-update"
+        onClick=${unskip}
+      >
+        Unskip
+      </button>
+      ${error && html`<p class="app-error" role="alert">${error}</p>`}
+    </div>
   `;
 }
 

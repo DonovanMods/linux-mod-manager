@@ -237,6 +237,20 @@ export const setModUpdatePolicy = (sourceID, modID, policy, context) =>
 export const setModConvert = (sourceID, modID, enabled, context) =>
   post(scoped(`${modPath(sourceID, modID)}/convert`, context), { enabled });
 
+/** Skips sourceID/modID's pending update at version without pinning the mod
+ * (issue 542: `lmm mod skip-update`); an empty version skips whatever the
+ * source offers now. Returns core.ModSettingResult directly. */
+export const skipModUpdate = (sourceID, modID, version, context) =>
+  post(
+    scoped(`${modPath(sourceID, modID)}/skip-update`, context),
+    version ? { version } : {},
+  );
+
+/** Clears sourceID/modID's skipped update (issue 542), so the update check
+ * offers it again. Returns core.ModSettingResult directly. */
+export const unskipModUpdate = (sourceID, modID, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/unskip-update`, context), {});
+
 // profilePath builds one profile's /api/v1/profiles/{name} base path -
 // shared by every named-profile route below (api_profiles.go's own doc
 // comment: the profile is named in the PATH, never ?profile=).
