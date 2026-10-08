@@ -565,8 +565,8 @@ func TestManifestCheckUpdates(t *testing.T) {
 	installed := []domain.InstalledMod{
 		{Mod: domain.Mod{ID: "cool-mod", SourceID: "my-repo", Version: "1.0.0"}},
 		{Mod: domain.Mod{ID: "other-mod", SourceID: "my-repo", Version: "0.9.0"}},
-		{Mod: domain.Mod{ID: "removed", SourceID: "my-repo", Version: "1.0"}},
 	}
+	// A mod gone from the manifest is catalog_missing_test.go's subject (#541).
 
 	updates, err := m.CheckUpdates(context.Background(), installed)
 	require.NoError(t, err)

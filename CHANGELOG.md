@@ -1965,6 +1965,20 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   such a mod, `lmm mod show`, and the full mod page's versions table say
   `mod <id> is not in <source>'s catalog` instead of the source's raw error.
 
+- **Custom and Thunderstore sources report a mod that has left them as gone
+  (#541).** Following #539, a custom `api` source whose `get_mod` endpoint
+  answers 404 or 410 no longer fails the whole update check: the mod is
+  listed as gone (`catalog_missing`) and every other mod is still checked.
+  A `directory` or `manifest` source, and Thunderstore, used to skip an
+  installed mod their listing no longer held, so it read as "up to date";
+  they now report it as gone the same way. Only a listing that was actually
+  read says so — a directory that could not be scanned or a manifest that
+  could not be fetched is still a failed check, and a Thunderstore index
+  past its refresh window (served because the refresh failed) marks
+  nothing missing. `lmm mod show` and the web UI's versions table for such
+  a mod say `mod <id> is not in <source>'s catalog` instead of a bare
+  "mod not found".
+
 - **Steam Workshop items Steam has already updated are no longer listed as
   updates (#538).** lmm compared Steam's newest revision of a tracked
   Workshop item against the revision it recorded when the item was adopted,

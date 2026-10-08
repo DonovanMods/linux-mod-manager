@@ -260,7 +260,7 @@ func (a *API) getJSON(ctx context.Context, rawURL string) (any, error) {
 		return nil, fmt.Errorf("source %q: %w", a.id, domain.ErrAuthRequired)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("source %q: requesting %s: HTTP %d", a.id, redactedURL(rawURL), resp.StatusCode)
+		return nil, &apiStatusError{source: a.id, url: redactedURL(rawURL), code: resp.StatusCode}
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAPIResponseSize+1))
@@ -276,6 +276,27 @@ func (a *API) getJSON(ctx context.Context, rawURL string) (any, error) {
 		return nil, fmt.Errorf("source %q: parsing response from %s: %w", a.id, redactedURL(rawURL), err)
 	}
 	return doc, nil
+}
+
+// apiStatusError is getJSON's answer to any status but 200 and 401: the
+// status as data, so a caller can classify one (GetMod's 404/410), and the
+// already-redacted URL in the message for everything else.
+type apiStatusError struct {
+	source string
+	url    string
+	code   int
+}
+
+func (e *apiStatusError) Error() string {
+	return fmt.Sprintf("source %q: requesting %s: HTTP %d", e.source, e.url, e.code)
+}
+
+// isGoneStatus reports whether err is the API saying the resource does not
+// exist: 404 Not Found, or 410 Gone (withdrawn on purpose). Every other
+// failure says nothing about the mod.
+func isGoneStatus(err error) bool {
+	var status *apiStatusError
+	return errors.As(err, &status) && (status.code == http.StatusNotFound || status.code == http.StatusGone)
 }
 
 // redactedURL strips the query string from a URL for error messages.
@@ -357,6 +378,10 @@ func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.Sear
 // GetMod implements source.ModSource via the get_mod endpoint. gameID feeds
 // the {game_id} placeholder and is echoed onto the returned mod for
 // downstream attribution (the persisted row is normalized by the installer).
+//
+// A 404 or 410 from get_mod is the API's own answer that the mod does not
+// exist (#541), so it is domain.ErrModNotFound - a fact core reports as
+// "not in the catalog" - rather than a failed request.
 func (a *API) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
 	ep := a.endpoints.GetMod
 	if ep == nil {
@@ -366,6 +391,9 @@ func (a *API) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, er
 	vals := map[string]string{"mod_id": modID, "game_id": gameID}
 	doc, err := a.getJSON(ctx, a.baseURL+buildEndpointURL(ep.Path, vals))
 	if err != nil {
+		if isGoneStatus(err) {
+			return nil, fmt.Errorf("fetching mod %s: not in the catalog (%w): %w", modID, err, domain.ErrModNotFound)
+		}
 		return nil, fmt.Errorf("fetching mod %s: %w", modID, err)
 	}
 
@@ -445,7 +473,9 @@ func (a *API) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string
 // CheckUpdates implements source.ModSource generically via get_mod + version
 // comparison (design §4). Per-mod fetch failures are collected and returned
 // alongside partial results so a single flaky mod page doesn't hide the rest
-// — and doesn't get silently skipped either.
+// — and doesn't get silently skipped either. A mod get_mod says does not
+// exist is reported as a *source.ModNotFoundError (#541), which core lists
+// as gone from the catalog rather than as a failed check.
 func (a *API) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	if a.endpoints.GetMod == nil {
 		return nil, fmt.Errorf("source %q: update checks: %w", a.id, source.ErrNotSupported)
@@ -461,6 +491,9 @@ func (a *API) CheckUpdates(ctx context.Context, installed []domain.InstalledMod)
 		}
 		current, err := a.GetMod(ctx, inst.GameID, inst.ID)
 		if err != nil {
+			if errors.Is(err, domain.ErrModNotFound) {
+				err = &source.ModNotFoundError{ModID: inst.ID, Err: err}
+			}
 			errs = append(errs, err)
 			continue
 		}
