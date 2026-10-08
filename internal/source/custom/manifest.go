@@ -439,7 +439,8 @@ func (m *Manifest) GetDependencies(ctx context.Context, mod *domain.Mod) ([]doma
 // reported as a *source.ModNotFoundError (#541), joined into the returned
 // error, so core lists it as gone instead of the check reading as "up to
 // date". Only a manifest that was fetched and parsed says so: a failed fetch
-// is a failed check that marks nothing missing.
+// is a failed check that marks nothing missing, and so does one that lists
+// no mods at all.
 func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	doc, err := m.fetch(ctx)
 	if err != nil {
@@ -460,7 +461,12 @@ func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.Installe
 		}
 		current, ok := byID[inst.ID]
 		if !ok {
-			missing = append(missing, &source.ModNotFoundError{ModID: inst.ID, Err: m.notFound(inst.ID)})
+			// An empty manifest is far likelier a truncated or
+			// placeholder document than every mod withdrawn at once: it
+			// says nothing.
+			if len(doc.Mods) > 0 {
+				missing = append(missing, &source.ModNotFoundError{ModID: inst.ID, Err: m.notFound(inst.ID)})
+			}
 			continue
 		}
 		if domain.IsNewerVersion(inst.Version, current.Version) {

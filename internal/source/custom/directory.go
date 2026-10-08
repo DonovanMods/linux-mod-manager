@@ -299,7 +299,11 @@ func (d *Directory) CheckUpdates(ctx context.Context, installed []domain.Install
 		}
 		current, ok := byID[inst.ID]
 		if !ok {
-			missing = append(missing, &source.ModNotFoundError{ModID: inst.ID, Err: d.notFound(inst.ID)})
+			// An empty scan is far likelier an unmounted or emptied
+			// directory than every mod withdrawn at once: it says nothing.
+			if len(scanned) > 0 {
+				missing = append(missing, &source.ModNotFoundError{ModID: inst.ID, Err: d.notFound(inst.ID)})
+			}
 			continue
 		}
 		if domain.IsNewerVersion(inst.Version, current.Version) {

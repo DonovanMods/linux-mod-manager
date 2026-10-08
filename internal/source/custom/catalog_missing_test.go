@@ -228,3 +228,36 @@ func TestManifestFindMod_MissingModIsErrModNotFound(t *testing.T) {
 	_, err = m.GetModFiles(context.Background(), &domain.Mod{ID: "removed"})
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
+
+// --- an empty listing --------------------------------------------------
+//
+// A listing that was read but holds NOTHING is far more likely an unmounted
+// mount point, an emptied sync folder or a truncated manifest than every
+// installed mod having been withdrawn at once - so it says nothing about any
+// mod, the same as a listing that could not be read.
+
+func TestDirectoryCheckUpdates_AnEmptyDirectoryMarksNothingMissing(t *testing.T) {
+	root := t.TempDir() // exists, readable, empty
+	d, err := NewDirectory(SourceDefinition{ID: "my-mods", Name: "My Mods", Type: TypeDirectory, Directory: &DirectoryConfig{Path: root}})
+	require.NoError(t, err)
+
+	updates, err := d.CheckUpdates(context.Background(), []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "A", SourceID: "my-mods", Version: "1.0"}},
+		{Mod: domain.Mod{ID: "B", SourceID: "my-mods", Version: "1.0"}},
+	})
+	assert.Empty(t, updates)
+	assertNoneMissing(t, err)
+}
+
+func TestManifestCheckUpdates_AnEmptyManifestMarksNothingMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mods.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: 1\nmods: []\n"), 0o644))
+	m, err := NewManifest(manifestDef(path))
+	require.NoError(t, err)
+
+	updates, err := m.CheckUpdates(context.Background(), []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "cool-mod", SourceID: "my-repo", Version: "1.0.0"}},
+	})
+	assert.Empty(t, updates)
+	assertNoneMissing(t, err)
+}
