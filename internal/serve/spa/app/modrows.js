@@ -99,6 +99,24 @@ export function lockedNote(update) {
  * mark and no checkbox at all, and never reaches the batch. */
 export const EXTERNAL_UPDATE_NOTE = "Steam applies this itself";
 
+/** MANUAL_UPDATE_NOTE is the same phrase for a MANUAL-ONLY row (issue 543):
+ * one whose source will not serve the file through its API
+ * (domain.Mod.ManualOnly), which ApplyUpdateBatch declines with
+ * core.ReasonManualDownload. Like an external row it gets no checkbox - no
+ * batch will ever download it - but unlike one it has a way out on the row
+ * itself: the mod's page, and "Update from file…". */
+export const MANUAL_UPDATE_NOTE =
+  "download it yourself, then update from the file";
+
+/** isManualOnly reads issue 543's flag off an installed mod, or off a
+ * domain.Update - whose installed_mod also carries it when the source
+ * classified the mod so during the check itself. */
+export function isManualOnly(modOrUpdate) {
+  return Boolean(
+    modOrUpdate?.manual_only || modOrUpdate?.installed_mod?.manual_only,
+  );
+}
+
 /**
  * Builds one library row per installed mod (mods: core.ModList's own "mods"
  * array, already in the profile's load order): the ModListing fields
@@ -157,6 +175,10 @@ export function buildRows(mods, updates, findings, conflicts, verified) {
       // the flag verbatim from domain.InstalledMod so the badge, the hidden
       // actions and the deployable counts all read one fact.
       isExternal: Boolean(mod.external),
+      // issue 543: the source will not serve this mod's files, so no batch
+      // downloads its update - from the row, or from the update the check
+      // just reported.
+      isManual: isManualOnly(mod) || isManualOnly(update),
       hasHealthIssue: problems.has(mod.id),
       // issue 418: the three states a reader needs to tell apart, plus the
       // number behind the middle one. "unknown" is NOT a failure - it is the

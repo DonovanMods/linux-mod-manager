@@ -53,7 +53,11 @@ import { loadModJobHistory, candidateJobKey } from "../jobhistory.js";
 import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
 import { ModPageLink } from "./modpagelink.js";
-import { UpdateFromFileButton } from "./updatefromfile.js";
+import {
+  MANUAL_DOWNLOAD_NOTE,
+  ManualDownloadNote,
+  UpdateFromFileButton,
+} from "./updatefromfile.js";
 import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
 import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
@@ -191,6 +195,9 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   // library-first source as the lock - the listing embeds the installed row.
   const skippedVersion = settingsSource?.skipped_version;
   const lockedActions = Boolean(settingsSource?.locked);
+  const manual = Boolean(
+    installedMod.manual_only || modPage.detail?.mod?.manual_only,
+  );
   const lockedVersion = settingsSource?.locked_version;
 
   return html`
@@ -233,6 +240,12 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         html`<div class="mod-page__section">
           <${ManagedBySteam} row=${installedMod} />
         </div>`
+      }
+      ${
+        // issue 543: the installed row's record, or the source's own
+        // classification on the live detail.
+        manual &&
+        html`<div class="mod-page__section"><${ManualDownloadNote} /></div>`
       }
       ${
         settingsRow &&
@@ -459,6 +472,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
 
       <${FilesSection} filesReport=${modPage.filesReport} />
       <${VersionsSection}
+        manual=${manual}
         modPage=${modPage}
         installed=${installed}
         locked=${lockedActions}
@@ -554,6 +568,7 @@ function formatBytes(bytes) {
  * PlanRollback's own honest "no previous version available" error.
  */
 function VersionsSection({
+  manual,
   modPage,
   installed,
   locked,
@@ -574,6 +589,7 @@ function VersionsSection({
     <section class="mod-page__section">
       <h2 class="plan__heading">Versions</h2>
       <${VersionsTable}
+        manual=${manual}
         modPage=${modPage}
         installed=${installed}
         locked=${locked}
@@ -630,6 +646,7 @@ function VersionsSection({
 /** VersionsTable renders just the per-file version list - its own three
  * fetch states, separated from the always-present Rollback action above. */
 function VersionsTable({
+  manual,
   modPage,
   installed,
   locked,
@@ -733,8 +750,14 @@ function VersionsTable({
                         <button
                           type="button"
                           class="button button--small"
-                          disabled=${locked}
-                          title=${locked ? "Unlock this mod to change its version" : undefined}
+                          disabled=${locked || manual}
+                          title=${
+                            locked
+                              ? "Unlock this mod to change its version"
+                              : manual
+                                ? MANUAL_DOWNLOAD_NOTE
+                                : undefined
+                          }
                           onClick=${() =>
                             actions.openPlan({
                               kind: "updates",

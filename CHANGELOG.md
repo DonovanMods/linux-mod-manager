@@ -1913,6 +1913,30 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **Mods only a hand download can update are marked, and never downloaded
+  automatically (#543).** A mod whose source will not serve its files through
+  its API — a CurseForge author who turned off third-party downloads — is now
+  recorded as manual-only: from the source's own metadata where it has some
+  (CurseForge's `allowModDistribution`), or from the first download the
+  source refuses, which also covers an install that failed before any row
+  existed, so the `lmm install --from-file` / `lmm import <archive> --id`
+  that follows records it too. `lmm update --all`, auto-update and the web
+  UI's "Update all"/"Update selected" skip such a mod instead of failing on
+  it — no download is attempted — and the bulk run prints its page and the
+  `lmm update <id> --from-file <archive>` command that finishes it; the
+  update check still reports the newer version. `lmm update` tags the row
+  `[manual]`, `lmm list` gains a `MANUAL` column, and `lmm mod show` says how
+  to install or update it from a file. In the web UI it carries a "Manual"
+  badge on the Updates card, the library, the slide-over and the full mod
+  page; on the Updates card it has no checkbox and offers its page and
+  "Update from file…" on the row. A later download the source does serve
+  clears the mark. On the wire: `manual_only` on a mod (domain.Mod), and on
+  a skipped batch item `manual_only` plus `mod_url`, with the reason
+  `core.ReasonManualDownload`. `manual_download` on an installed mod keeps
+  its meaning — adopted in place by `lmm import`, which `lmm verify` reads —
+  so an adopted mod its source serves is not mislabelled. The fact lives in
+  a new `manual_only_mods` table (database migration 21).
+
 - **A mod that has left its source's catalog is reported as gone, not as a
   failed update check (#539).** When a source no longer has an installed
   mod — the Icarus (Project Daedalus) catalog recreated three mods under new

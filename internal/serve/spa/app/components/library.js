@@ -29,7 +29,7 @@ import { displayVersion } from "../version.js";
 import { authorTitle, displayAuthor } from "../author.js";
 import { AddModsMenu } from "./addmodsmenu.js";
 import { ModPageLink } from "./modpagelink.js";
-import { UpdateFromFileButton } from "./updatefromfile.js";
+import { ManualBadge, UpdateFromFileButton } from "./updatefromfile.js";
 import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import { InlineJob } from "./jobprogress.js";
 
@@ -378,8 +378,11 @@ export function Library({
   function updatableRows() {
     // issue 269: an EXTERNAL row is excluded even when it HAS an update -
     // ApplyUpdateBatch declines it (core.ReasonExternalNoUpdate) - for the
-    // same reason updatableSelectedRows drops one.
-    return (rows ?? []).filter((r) => r.hasUpdate && !r.isExternal);
+    // same reason updatableSelectedRows drops one - and so is a MANUAL-ONLY
+    // one (issue 543, core.ReasonManualDownload).
+    return (rows ?? []).filter(
+      (r) => r.hasUpdate && !r.isExternal && !r.isManual,
+    );
   }
 
   function updateAll() {
@@ -484,8 +487,11 @@ export function Library({
     // ApplyUpdateBatch declines it (core.ReasonExternalNoUpdate) and no
     // choice in this UI changes that, so counting it would enable a button,
     // state a batch size and open a confirm step for work that will never
-    // happen - the same defect the deploy dry run had.
-    return selectedRows().filter((r) => r.hasUpdate && !r.isExternal);
+    // happen - the same defect the deploy dry run had. Issue 543: the same
+    // for a MANUAL-ONLY row, whose way out is its own "Update from file…".
+    return selectedRows().filter(
+      (r) => r.hasUpdate && !r.isExternal && !r.isManual,
+    );
   }
 
   function batchUpdate() {
@@ -1117,6 +1123,12 @@ export function Library({
                               >Steam</span
                             >`
                           }
+                          ${
+                            // issue 543: the source will not serve this mod's
+                            // files - it is updated from a downloaded file.
+                            row.isManual &&
+                            html`<${ManualBadge} testid="row-manual" />`
+                          }
                           <span class="badge badge--policy"
                             >${row.update_policy}</span
                           >
@@ -1136,8 +1148,12 @@ export function Library({
                             // (the library's established pattern for a
                             // row-level job). It is refused while one is
                             // running so a second cannot be stacked on it.
+                            // Issue 543: not for a MANUAL-ONLY row, which
+                            // the batch would only skip - its update is the
+                            // ⋯ menu's "Update from file…".
                             row.hasUpdate &&
                             !row.isExternal &&
+                            !row.isManual &&
                             html`<button
                               type="button"
                               class="button button--small button--primary"
