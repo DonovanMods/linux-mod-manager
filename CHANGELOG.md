@@ -1913,6 +1913,15 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A release's GitHub body is its curated CHANGELOG section, not a
+  generated commit list.** GoReleaser's own changelog is disabled; the
+  release workflow cuts the pushed tag's `## [X.Y.Z]` section out of
+  `CHANGELOG.md` and passes it as `--release-notes`, failing the release
+  when the tag has no section or an empty one. The extraction reads the file
+  with `awk` alone: the original `tail | awk` pipeline died of SIGPIPE under
+  `pipefail` for any section that is not the file's last, which is every
+  release (cherry-picked from the unreleased `v2.1-release` branch).
+
 - **A Nexus Mods mod that was deleted or removed is reported as gone, not
   as a failed update check (#540).** The #539 fix covered Icarus and
   CurseForge; Nexus Mods still failed the whole check on the first such mod.

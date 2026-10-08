@@ -35,7 +35,10 @@ jobs:
             exit 1
           fi
           notes_path="${RUNNER_TEMP}/release-notes.md"
-          tail -n "+$((start_line + 1))" CHANGELOG.md | awk '/^## \[/{exit} {print}' > "$notes_path"
+          # awk reads the file itself: piping `tail` into an awk that exits
+          # at the next heading killed tail with SIGPIPE, failing the step
+          # under pipefail for any section that is not the file's last.
+          awk -v start="$start_line" 'NR <= start {next} /^## \[/ {exit} {print}' CHANGELOG.md > "$notes_path"
           if [ ! -s "$notes_path" ]; then
             echo "::error::CHANGELOG.md section for '$heading' is empty" >&2
             exit 1
