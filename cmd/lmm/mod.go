@@ -731,6 +731,11 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	if pageURL := mod.PageURL(); pageURL != "" {
 		fmt.Printf("URL: %s\n", pageURL)
 	}
+	if mod.ManualOnly {
+		// #543: what the user needs before trying an install or update.
+		fmt.Println("Download: manual only — the source will not serve this mod's files to lmm")
+		fmt.Printf("  %s\n", manualOnlyFromFileLine(mod, installedInfo != nil))
+	}
 	if mod.PictureURL != "" {
 		fmt.Printf("Image: %s\n", mod.PictureURL)
 	}
@@ -850,6 +855,24 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	}
 
 	return nil
+}
+
+// manualOnlyFromFileLine is `mod show`'s from-file command for a mod its
+// source will not serve (#543): an update for an installed one, an install
+// otherwise, with the -g/-p this run was given.
+func manualOnlyFromFileLine(mod *domain.Mod, installed bool) string {
+	verb, label := "lmm install --id", "Install from a file you download: "
+	if installed {
+		verb, label = "lmm update", "Update from a file you download: "
+	}
+	parts := []string{verb, mod.ID, "-s", mod.SourceID}
+	if gameID != "" {
+		parts = append(parts, "-g", gameID)
+	}
+	if modProfile != "" {
+		parts = append(parts, "-p", modProfile)
+	}
+	return label + strings.Join(append(parts, "--from-file", "<downloaded-file>"), " ")
 }
 
 func runModConvert(cmd *cobra.Command, args []string) error {
