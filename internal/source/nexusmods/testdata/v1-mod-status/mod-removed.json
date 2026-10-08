@@ -1,0 +1,26 @@
+{
+  "uid": 7318624272401,
+  "mod_id": 17,
+  "game_id": 1704,
+  "allow_rating": true,
+  "domain_name": "skyrimspecialedition",
+  "category_id": 95,
+  "version": "1.6",
+  "endorsement_count": 0,
+  "created_timestamp": 1477478434,
+  "created_time": "2016-10-26T10:40:34.000+00:00",
+  "updated_timestamp": 1477478434,
+  "updated_time": "2016-10-26T10:40:34.000+00:00",
+  "author": "Mebantiza Elianora",
+  "uploaded_by": "Mebantiza",
+  "uploaded_users_profile_url": "https://www.nexusmods.com/users/2782784",
+  "contains_adult_content": false,
+  "status": "removed",
+  "available": false,
+  "user": { "member_id": 2782784, "member_group_id": 27, "name": "Mebantiza" },
+  "endorsement": {
+    "endorse_status": "Undecided",
+    "timestamp": null,
+    "version": null
+  }
+}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -31,6 +32,11 @@ type Client struct {
 	rest       *httpclient.Client
 	apiKey     string
 	graphqlURL string
+
+	// knownGames is the game domains the games endpoint has confirmed, so a
+	// 404 from a mod endpoint is checked against its game once (#540).
+	knownGamesMu sync.Mutex
+	knownGames   map[string]bool
 }
 
 // NewClient creates a new NexusMods API client
@@ -42,11 +48,12 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 	return &Client{
 		httpClient: httpClient,
 		rest: httpclient.New(httpclient.Options{
-			HTTPClient: httpClient,
-			BaseURL:    defaultBaseURL,
-			APIKey:     apiKey,
-			AuthHeader: "apikey",
-			AuthLabel:  "NexusMods",
+			HTTPClient:  httpClient,
+			BaseURL:     defaultBaseURL,
+			APIKey:      apiKey,
+			AuthHeader:  "apikey",
+			AuthLabel:   "NexusMods",
+			ErrorMapper: mapStatusError,
 		}),
 		apiKey:     apiKey,
 		graphqlURL: defaultGraphQLURL,
@@ -113,13 +120,92 @@ func (c *Client) doRequest(ctx context.Context, method, path string, result inte
 	return c.rest.DoJSON(ctx, method, path, result)
 }
 
-// GetMod fetches a mod by ID
+// apiStatusError is a REST endpoint's non-2xx answer with the status kept
+// as data, so a caller can classify it (a mod endpoint's 404) rather than
+// match the message. The message is the shared client's own.
+type apiStatusError struct {
+	status int
+	body   string
+}
+
+func (e *apiStatusError) Error() string {
+	return fmt.Sprintf("API error (status %d): %s", e.status, e.body)
+}
+
+// mapStatusError is the REST client's ErrorMapper: every non-2xx answer but
+// 401 becomes an apiStatusError. 401 is left to the shared client, which
+// maps it to domain.ErrAuthRequired.
+func mapStatusError(status int, body []byte, _ string) error {
+	if status == http.StatusUnauthorized {
+		return nil
+	}
+	return &apiStatusError{status: status, body: string(body)}
+}
+
+// isStatus reports whether err is a REST answer with the given status.
+func isStatus(err error, status int) bool {
+	var se *apiStatusError
+	return errors.As(err, &se) && se.status == status
+}
+
+// modNotFound classifies a mod endpoint's error (#540). A 404 is NexusMods
+// saying it has no such mod - but an unknown game domain answers 404 too, so
+// the game is confirmed first: only then is the miss domain.ErrModNotFound.
+// An unknown game is reported as such, and a game lookup that fails leaves
+// the original error untyped, since a failed read must never mark a mod
+// missing. Any other error is returned unchanged.
+func (c *Client) modNotFound(ctx context.Context, gameDomain string, modID int, err error) error {
+	if !isStatus(err, http.StatusNotFound) {
+		return err
+	}
+	known, gerr := c.gameExists(ctx, gameDomain)
+	switch {
+	case gerr != nil:
+		return err
+	case !known:
+		return fmt.Errorf("%q is not a Nexus Mods game: %w", gameDomain, err)
+	}
+	return fmt.Errorf("mod %d is not on Nexus Mods (HTTP 404): %w", modID, domain.ErrModNotFound)
+}
+
+// gameExists asks the games endpoint whether gameDomain is a Nexus Mods
+// game: true on 200, false on 404, an error for anything else. A confirmed
+// game is remembered for the client's lifetime.
+func (c *Client) gameExists(ctx context.Context, gameDomain string) (bool, error) {
+	c.knownGamesMu.Lock()
+	known := c.knownGames[gameDomain]
+	c.knownGamesMu.Unlock()
+	if known {
+		return true, nil
+	}
+
+	var game struct{}
+	err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/v1/games/%s.json", gameDomain), &game)
+	switch {
+	case isStatus(err, http.StatusNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+
+	c.knownGamesMu.Lock()
+	if c.knownGames == nil {
+		c.knownGames = make(map[string]bool)
+	}
+	c.knownGames[gameDomain] = true
+	c.knownGamesMu.Unlock()
+	return true, nil
+}
+
+// GetMod fetches a mod by ID. A mod NexusMods has no record of is
+// domain.ErrModNotFound (#540); a removed one still answers 200, with its
+// Status saying so.
 func (c *Client) GetMod(ctx context.Context, gameDomain string, modID int) (*ModData, error) {
 	path := fmt.Sprintf("/v1/games/%s/mods/%d.json", gameDomain, modID)
 
 	var mod ModData
 	if err := c.doRequest(ctx, http.MethodGet, path, &mod); err != nil {
-		return nil, fmt.Errorf("getting mod: %w", err)
+		return nil, fmt.Errorf("getting mod: %w", c.modNotFound(ctx, gameDomain, modID, err))
 	}
 
 	return &mod, nil
@@ -393,13 +479,14 @@ func modsSortMember(sort domain.SearchSort) string {
 	return ""
 }
 
-// GetModFiles fetches files for a mod
+// GetModFiles fetches files for a mod. A mod NexusMods has no record of is
+// domain.ErrModNotFound, as for GetMod (#540).
 func (c *Client) GetModFiles(ctx context.Context, gameDomain string, modID int) (*ModFileList, error) {
 	path := fmt.Sprintf("/v1/games/%s/mods/%d/files.json", gameDomain, modID)
 
 	var files ModFileList
 	if err := c.doRequest(ctx, http.MethodGet, path, &files); err != nil {
-		return nil, fmt.Errorf("getting mod files: %w", err)
+		return nil, fmt.Errorf("getting mod files: %w", c.modNotFound(ctx, gameDomain, modID, err))
 	}
 
 	return &files, nil

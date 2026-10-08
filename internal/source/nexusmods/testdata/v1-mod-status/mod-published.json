@@ -1,0 +1,32 @@
+{
+  "name": "Alexi CirTein a Stormcloak officer - A follower using the Hroki model",
+  "summary": "Stand Alone Companion based on Hroki. Can heal herself, comes with proper heavy armor and 1h weapon perks, and two custom weapons just for her which resemble bound swords.",
+  "description": "Please Endorse if you enjoy this mod.\r<br />\r<br />Wanted a Hroki -ish companion that was a tank for my mage so I set out to create my very first mod ever. This is the result, hope you enjoy it as much as I do.\r<br />\r<br />Alexi Cir&#39;Tein was a high ranking Stormcloak officer, but was captured shortly before Ulfric and is being kept in the cells below Helgen Keep awaiting interrogation. Well known on the battlefield for her unique fighting style as well as her mystic blades which are storied to have been forged from the souls of dragons in the days of old, she would make a glad ally to whomever would free her.\r<br />\r<br />[size=3][b]Alexi is a caster-tank.[/b][/size]\r<br />[list][*]Uses frost defensive and ranged spells. Gains more as she levels.\r<br />[*]Properly trained in heavy armor and 1h weapon techniques.\r<br />[*]While she prefers to mix it up dual wield style, she will use her Ice Bolt and Icy Spear spells to tango with foes which remain out of reach. (She uses a bow until she has the mana to cast these.)\r<br />[/list]\r<br />[size=3][b]Alexi comes with a few unique items.[/b][/size]\r<br />[list][*]A circlet given to her by Ulfric showing her badge of command which works as heavy armor and can be upgraded. \r<br />[*]Two 1h swords similar in stats to steel weapons, using the bound sword visual, which can also be upgraded.\r<br />[*]A set of Stormcloak Officer Armor that is Heavy instead of Light. It is basically the same as Steel, and should upgrade in the same manor.\r<br />[*]With the Glass perk in Smithing you gain the ability to craft upgraded versions of her weapons which have similar stats to Daedric weapons. Both sets of weapons require unusual items for weapon crafting/upgrading.\r<br />[/list]--She also has two gifts useful to any aspiring mage, a tome of bound bow and a ring to assist in casting.\r<br />\r<br />[size=3][b]To Do List:[/b][/size]\r<br />[list][*]Figure out how to make a custom 1h sword using the bound weapon image that doesn&#39;t require the bound weapon enchantment to be visible.\r<br />[*]Add background story that can be learned through conversation.\r<br />[*]If bugs are found and reported, fix &#39;em&#33;\r<br />[/list]\r<br />\r<br />[size=3][b]Installation:[/b][/size]\r<br />Use NMM, shouldn&#39;t be any problems.\r<br />\r<br />\r<br />[b]My Other Mods:[/b]\r<br />[list]\r<br />[*] [url=http://www.nexusmods.com/skyrimspecialedition/mods/3/?][/url][url=http://www.nexusmods.com/skyrimspecialedition/mods/2/?][/url][url=http://www.nexusmods.com/skyrimspecialedition/mods/2/?]Ranged Lightning Caster[/url]\r<br />[*] [url=http://www.nexusmods.com/skyrimspecialedition/mods/3/?]Nocturnal Craftable Armor[/url]\r<br />[/list]\r<br />\r<br />[size=4][b]Update 2.8:[/b][/size]\r<br />[list][*]The Soul Blades count as conjured weapons, which means they&#39;ll soul tap on kill if you have the right perk. They should in fact work exactly like bound swords, except you can hold and upgrade them.\r<br />[*]Modified required materials to upgrade/craft her swords. Now uses those useless Soul Gem Fragments&#33;\r<br />--Note: There are several types, they require the most common. If you have some but cannot work on them, find more.[*]Lowered her offensive ability. She shouldn&#39;t be as over-powering anymore. Still working on bringing her into a reasonable state.\r<br />[/list]\r<br />[size=3][b]Update 2.7:[/b][/size]\r<br />[list][*]Created her own version of Stormcloak Officer armor. It has the same stats as Steel Fullplate and should upgrade the same.\r<br />[/list]\r<br />[size=3][b]Update 2.6:[/b][/size]\r<br />[list][*]Can now craft her swords once you unlock the glass smithing perk.\r<br />[*]Swords are now upgraded using soul gems.\r<br />[/list]\r<br />[size=3][b]Update 2.5:[/b][/size]\r<br />[list][*]Removed extra swords placed in the breezehome chest, her swords are now capable of being upgraded with ebony ingots.\r<br />[*]Added Commander&#39;s Band, a circlet that counts as heavy armor and can be upgraded.\r<br />[*]Added Tome: Bound Bow, Ring of Magicka\r<br />[/list]\r<br />Update 2.0:\r<br />-Moved Alexi to a cell under Helgen Keep, just past the Torturer chambers.\r<br />-She now has three ranks of swords she/you can use. She comes with the base set, two others are located in a chest within Breeze home(Still need to playtest the chest from a fresh game but should work).\r<br />\r<br />Update 1.5:\r<br />-Fixed a problem concerning a rogue clone of Alexi.\r<br />-Fixed the color mix-up for her skin.\r<br />-Changed swords somewhat.\r<br />\r<br />While NOT required to work, the above pictures are using the following mods:\r<br />-Blades variant: [url=http://skyrim.nexusmods.com/mods/13004]Remodeled Armor CBBEv3M[/url]\r<br />-Halo: [url=http://skyrim.nexusmods.com/mods/11005]Angelic Halos and Demonic Horns[/url]\r<br />-Wings: [url=http://skyrim.nexusmods.com/mods/15692]Alduims Wings[/url]\r<br />-Body: [url=http://skyrim.nexusmods.com/mods/2666]CBBE Female Body Mod[/url]\r<br />\r<br />Big thanks to both Mojodajojo for teaching me new things and RaiuKusanagi for playtesting. ",
+  "picture_url": "https://staticdelivery.nexusmods.com/mods/1704/images/1-2-1477615967.jpg",
+  "mod_downloads": 4648,
+  "mod_unique_downloads": 2904,
+  "uid": 7318624272385,
+  "mod_id": 1,
+  "game_id": 1704,
+  "allow_rating": true,
+  "domain_name": "skyrimspecialedition",
+  "category_id": 96,
+  "version": "2.8",
+  "endorsement_count": 345,
+  "created_timestamp": 1477480498,
+  "created_time": "2016-10-26T11:14:58.000+00:00",
+  "updated_timestamp": 1477477804,
+  "updated_time": "2016-10-26T10:30:04.000+00:00",
+  "author": "Aquifn",
+  "uploaded_by": "Aquifn",
+  "uploaded_users_profile_url": "https://www.nexusmods.com/users/162679",
+  "contains_adult_content": false,
+  "status": "published",
+  "available": true,
+  "user": { "member_id": 162679, "member_group_id": 27, "name": "Aquifn" },
+  "endorsement": {
+    "endorse_status": "Undecided",
+    "timestamp": null,
+    "version": null
+  }
+}
