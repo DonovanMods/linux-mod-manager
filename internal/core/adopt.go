@@ -362,6 +362,7 @@ func (s *Service) matchUntracked(ctx context.Context, game *domain.Game, r *Scan
 	r.Mod.Summary = matched.Summary
 	r.Mod.SourceURL = matched.SourceURL
 	r.Mod.PictureURL = matched.PictureURL
+	r.Mod.ManualOnly = matched.ManualOnly // #543: the source's own classification
 	r.Mod.GameID = matched.GameID
 	r.MatchedSource = matched.SourceID
 
@@ -706,6 +707,7 @@ func (s *Service) adoptScannedMod(ctx context.Context, game *domain.Game, r Scan
 	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 		return fmt.Errorf("saving to database: %w", err)
 	}
+	s.noteSourceClassification(ctx, game.ID, r.Mod) // #543
 	// #514: a copy-mode adoption cached the scanned file's own bytes, so its
 	// md5 is what a download of the resolved file records. Extract mode
 	// writes no cache entry, so there is nothing of lmm's to fingerprint and

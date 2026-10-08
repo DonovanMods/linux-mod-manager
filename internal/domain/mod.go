@@ -214,6 +214,18 @@ type Mod struct {
 	// Empty for every other mod, whose Version is its display. Core stamps
 	// it on the documents it returns; it is never stored.
 	DisplayVersion string `json:"display_version,omitempty"`
+	// ManualOnly reports that the source will not serve this mod's files
+	// through its API: they can only be downloaded by hand from its page
+	// and installed with "Update from file" (#543). A source sets it from
+	// its own classification when it has one (CurseForge's
+	// allowModDistribution: false); core sets it on an installed row once
+	// the source has refused a download of the mod (source.ErrManualDownload)
+	// or classified it so, and clears it when the source serves one. Not a
+	// column of the row - core stamps it from its own record of the fact,
+	// which outlives the row so an install the source refused carries it to
+	// the from-file install that follows. omitzero, so every document for a
+	// mod its source serves is byte-identical to what it was before.
+	ManualOnly bool `json:"manual_only,omitzero"`
 }
 
 // InstalledMod tracks a mod installed in a profile
@@ -228,7 +240,7 @@ type InstalledMod struct {
 	PreviousFileIDs []string     `json:"previous_file_ids,omitempty"` // File IDs before last update (for rollback)
 	LinkMethod      LinkMethod   `json:"link_method"`                 // How the mod was deployed (symlink, hardlink, copy)
 	FileIDs         []string     `json:"file_ids,omitempty"`          // Source-specific file IDs that were downloaded
-	ManualDownload  bool         `json:"manual_download"`             // True if mod requires manual download (CurseForge restricted, etc.)
+	ManualDownload  bool         `json:"manual_download"`             // Adopted in place by `lmm import` scan mode (verify reads it so); the "source will not serve the file" fact is Mod.ManualOnly (#543)
 	ConvertPaks     bool         `json:"convert_paks"`                // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
 
 	// External marks a mod lmm TRACKS but never deploys: another agent

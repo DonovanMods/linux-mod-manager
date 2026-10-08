@@ -397,6 +397,16 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemSkipped, Detail: skip.Reason})
 			continue
 		}
+		// #543: a mod its source will not serve through the API is never
+		// downloaded automatically - the update is reported, and installed
+		// from a hand-downloaded file. The row's own flag is read here, at
+		// apply time, so a refusal recorded after the check still counts.
+		if !itemPlan.RecompileNeeded && (itemPlan.Mod.ManualOnly || upd.InstalledMod.ManualOnly) {
+			skip := manualOnlySkip(itemPlan, upd)
+			result.Skipped = append(result.Skipped, skip)
+			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemSkipped, Detail: skip.Reason})
+			continue
+		}
 
 		var applied *UpdateApplyResult
 		if itemPlan.RecompileNeeded {

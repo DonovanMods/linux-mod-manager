@@ -289,6 +289,9 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	if plan.Relink {
 		newSourceID := plan.To.SourceID
 		newModID := plan.To.ModID
+		// #543: the old id's manual-only record is not the new one's; only
+		// the new source's own classification is recorded for it.
+		sourceManualOnly := false
 
 		if newSourceID != domain.SourceLocal {
 			cfGameID, ok := game.SourceIDs[newSourceID]
@@ -317,6 +320,7 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 				mod.SourceURL = fetched.SourceURL
 				mod.PictureURL = fetched.PictureURL
 				mod.ManualDownload = false // now linked, updates may work
+				sourceManualOnly = fetched.ManualOnly
 			}
 		}
 
@@ -331,6 +335,9 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 
 		if err := s.db.RelinkInstalledMod(ctx, oldSourceID, oldModID, &mod); err != nil {
 			return nil, fmt.Errorf("moving installed record: %w", err)
+		}
+		if sourceManualOnly {
+			s.recordManualOnly(ctx, game.ID, mod.SourceID, mod.ID)
 		}
 		if mod.Enabled {
 			s.supersedePendingProfileBackfill(ctx, mod.GameID, mod.ProfileName, mod.SourceID, mod.ID)

@@ -448,6 +448,7 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 		return gameUpdateCheck{drift: drift}, err
 	}
 	updates, catalogMissing, checkErr := s.NewUpdater().checkUpdates(ctx, game, drift.overlay(installed), sink, opts)
+	carryManualOnly(updates, installed) // #543
 
 	staleUpd, staleErr := s.CheckMergedPakStaleness(ctx, game, profileName)
 	if staleErr != nil && checkErr == nil {

@@ -2036,6 +2036,45 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #543: a batch item skipped because its source will not serve
+			// the file - never attempted, so not a failure; the page to
+			// fetch it from rides on the skip.
+			"update_batch_result_manual_only",
+			core.UpdateBatchResult{
+				GameID:  "minecraft",
+				Profile: "default",
+				Applied: []core.UpdateApplyResult{},
+				Skipped: []core.UpdateApplyResult{{
+					Mod:         domain.ModReference{SourceID: "curseforge", ModID: "238222", Version: "2.0"},
+					Name:        "Opted Out",
+					FromVersion: "2.0",
+					ToVersion:   "2.1",
+					Status:      core.UpdateSkipped,
+					Reason:      core.ReasonManualDownload,
+					ManualOnly:  true,
+					ModURL:      "https://www.curseforge.com/minecraft/mc-mods/opted-out",
+				}},
+			},
+		},
+		{
+			// #543: the check still reports a manual-only mod's update, and
+			// says it is manual-only on the row.
+			"update_check_report_manual_only",
+			core.UpdateCheckReport{
+				GameID:  "minecraft",
+				Profile: "default",
+				Updates: []domain.Update{{
+					InstalledMod: domain.InstalledMod{
+						Mod: domain.Mod{ID: "238222", SourceID: "curseforge", Name: "Opted Out", Version: "2.0", GameID: "minecraft",
+							SourceURL: "https://www.curseforge.com/minecraft/mc-mods/opted-out", ManualOnly: true},
+						ProfileName: "default", Enabled: true, Deployed: true, InstalledAt: fixedTime,
+					},
+					NewVersion: "2.1",
+				}},
+				Skipped: core.UpdateSkips{},
+			},
+		},
+		{
 			"update_batch_failure",
 			core.UpdateBatchFailure{
 				Mod:         "curseforge:7",

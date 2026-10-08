@@ -723,6 +723,13 @@ type UpdateApplyResult struct {
 	Reason      string              `json:"reason,omitempty"`
 	Warnings    []string            `json:"warnings,omitempty"`
 	Notes       []string            `json:"notes,omitempty"`
+	// ManualOnly marks a batch item skipped because its source will not
+	// serve the file through its API (#543): Reason is
+	// ReasonManualDownload, and ModURL is the page to fetch it from by hand
+	// when the mod has a plain http(s) one. Both omitzero, so every other
+	// result document is byte-identical to what it was before.
+	ManualOnly bool   `json:"manual_only,omitzero"`
+	ModURL     string `json:"mod_url,omitzero"`
 }
 
 // ErrModLocked reports an update apply refused because the profile ref is
