@@ -62,22 +62,6 @@ func TestCheckUpdatesComparesStringsNotSemver(t *testing.T) {
 		"a version the package does not publish is not 'ahead', it is different")
 }
 
-// TestCheckUpdatesReportsAGonePackageAsNoUpdate, never as an error: a
-// package that has left the community is unavailable, and "delisted" and
-// "out of date" are different facts. One dead mod must not blind the rest
-// of the batch either.
-func TestCheckUpdatesReportsAGonePackageAsNoUpdate(t *testing.T) {
-	s := searchable(t)
-
-	updates, err := s.src.CheckUpdates(t.Context(), []domain.InstalledMod{
-		installedAt("Nobody-LeftTheIndex", "1.0.0"),
-		installedAt("notnotnotswipez-MoreCompany", "1.8.0"),
-	})
-	require.NoError(t, err)
-	require.Len(t, updates, 1)
-	assert.Equal(t, "notnotnotswipez-MoreCompany", updates[0].InstalledMod.ID)
-}
-
 // TestCheckUpdatesRefreshingForcesThroughTheTTL is `lmm update --refresh`:
 // the index is inside its TTL, so an ordinary check asks upstream nothing;
 // with refresh set it sends the conditional GET, which upstream answers

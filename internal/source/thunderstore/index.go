@@ -106,8 +106,15 @@ func (s *Source) statusFor(community string, wm watermark) source.IndexStatus {
 		Packages:  wm.Packages,
 		FetchedAt: fetched,
 		Bytes:     s.store.footprint(community),
-		Stale:     s.now().Sub(fetched) >= indexTTL,
+		Stale:     s.stale(wm),
 	}
+}
+
+// stale reports whether the index wm describes is past its TTL - what
+// IndexStatus.Stale says, and what tells the update check an index that is
+// served but may no longer be the community's whole catalog (#541).
+func (s *Source) stale(wm watermark) bool {
+	return s.now().Sub(time.Unix(wm.FetchedAt, 0)) >= indexTTL
 }
 
 // ensureIndex is the whole refresh policy in one place:
