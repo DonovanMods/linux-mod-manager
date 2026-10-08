@@ -128,7 +128,22 @@ func (n *NexusMods) Search(ctx context.Context, query source.SearchQuery) (sourc
 	return source.SearchResult{Mods: mods, TotalCount: 0, Page: query.Page, PageSize: pageSize}, nil
 }
 
-// GetMod retrieves a specific mod
+// goneStatuses are the v1 mod statuses that mean the mod has left the
+// catalog (#540): removed (removed_by_staff is the v3 API's name for a
+// staff removal) or deleted into the wastebin. The API answers these with
+// 200 and the mod's content blanked, and its files endpoint refuses them.
+// A wastebinned mod can be restored, but catalog_missing is recomputed on
+// every check, so a restored mod simply drops off it. hidden, not_published,
+// publish_with_game and under_moderation are states an author or moderator
+// routinely reverses, so they are not gone.
+var goneStatuses = map[string]bool{
+	"removed":          true,
+	"removed_by_staff": true,
+	"wastebinned":      true,
+}
+
+// GetMod retrieves a specific mod. A mod NexusMods has no record of, or
+// reports removed or wastebinned, is domain.ErrModNotFound (#540).
 func (n *NexusMods) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
 	id, err := strconv.Atoi(modID)
 	if err != nil {
@@ -138,6 +153,9 @@ func (n *NexusMods) GetMod(ctx context.Context, gameID, modID string) (*domain.M
 	data, err := n.client.GetMod(ctx, gameID, id)
 	if err != nil {
 		return nil, err
+	}
+	if goneStatuses[data.Status] {
+		return nil, fmt.Errorf("mod %d is %s on Nexus Mods: %w", id, data.Status, domain.ErrModNotFound)
 	}
 
 	mod := modDataToDomain(*data, gameID)
@@ -320,7 +338,8 @@ func (n *NexusMods) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID 
 // installed file IDs against NexusMods (mod version and FileUpdates). Each file has its
 // own version; a mod is considered to have an update if the mod version is newer or if
 // any installed file ID has been superseded by a new file (NexusMods FileUpdates).
-// Returns partial updates plus a joined error when one or more mods fail to fetch.
+// Returns partial updates plus a joined error when one or more mods fail to fetch;
+// a mod no longer in the catalog is a *source.ModNotFoundError in that error.
 func (n *NexusMods) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	return n.CheckUpdatesWithProgress(ctx, installed, nil)
 }
@@ -345,7 +364,7 @@ func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []do
 
 		remoteMod, err := n.GetMod(ctx, inst.GameID, inst.ID)
 		if err != nil {
-			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err))
+			fetchErrs = append(fetchErrs, checkError(inst, err))
 			continue
 		}
 
@@ -357,7 +376,7 @@ func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []do
 
 		fileList, err := n.client.GetModFiles(ctx, inst.GameID, modID)
 		if err != nil {
-			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err))
+			fetchErrs = append(fetchErrs, checkError(inst, err))
 			continue
 		}
 
@@ -441,6 +460,18 @@ func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []do
 		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(fetchErrs), errors.Join(fetchErrs...))
 	}
 	return updates, nil
+}
+
+// checkError is one installed mod's failed lookup in an update check, naming
+// the mod. A mod gone from the catalog is a *source.ModNotFoundError (#540),
+// so core reports it in catalog_missing rather than failing the check; any
+// other failure stays a plain error.
+func checkError(inst domain.InstalledMod, err error) error {
+	err = fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err)
+	if errors.Is(err, domain.ErrModNotFound) {
+		return &source.ModNotFoundError{ModID: inst.ID, Err: err}
+	}
+	return err
 }
 
 // latestListedSuccessor follows the FileUpdates chain from fileID (A -> B -> C ...)

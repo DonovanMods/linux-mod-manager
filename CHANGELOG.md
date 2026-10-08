@@ -1913,6 +1913,18 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A Nexus Mods mod that was deleted or removed is reported as gone, not
+  as a failed update check (#540).** The #539 fix covered Icarus and
+  CurseForge; Nexus Mods still failed the whole check on the first such mod.
+  Nexus Mods now reports a mod as no longer in its catalog when the API
+  says it has no such mod (HTTP 404, once the game itself is confirmed, so a
+  mistyped game domain is not mistaken for every mod gone) or answers with
+  the status `removed` or `wastebinned`. A hidden, unpublished or
+  under-moderation mod is not gone, since it can come back, and still
+  reports as a failed check. `lmm update`, its `--json` `catalog_missing`
+  list, the web UI's Updates card, `lmm mod show` and the full mod page then
+  treat it as they do for the other sources.
+
 - **Mods only a hand download can update are marked, and never downloaded
   automatically (#543).** A mod whose source will not serve its files through
   its API — a CurseForge author who turned off third-party downloads — is now
