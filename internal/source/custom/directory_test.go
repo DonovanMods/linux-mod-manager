@@ -407,8 +407,8 @@ func TestDirectoryCheckUpdates(t *testing.T) {
 	installed := []domain.InstalledMod{
 		{Mod: domain.Mod{ID: "BiggerBackpack", SourceID: "my-mods", Name: "Bigger Backpack", Version: "1.0.0"}},
 		{Mod: domain.Mod{ID: "PlainMod-0.5", SourceID: "my-mods", Name: "PlainMod", Version: "0.5"}},
-		{Mod: domain.Mod{ID: "Removed", SourceID: "my-mods", Name: "Removed", Version: "1.0"}},
 	}
+	// A mod gone from the scan is catalog_missing_test.go's subject (#541).
 
 	updates, err := d.CheckUpdates(context.Background(), installed)
 	require.NoError(t, err)

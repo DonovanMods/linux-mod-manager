@@ -2,6 +2,7 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -273,7 +274,11 @@ func (d *Directory) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID 
 func (d *Directory) ServesLocalFiles() bool { return true }
 
 // CheckUpdates implements source.ModSource by comparing installed versions to
-// the current scan.
+// the current scan. An installed mod the scan does not hold has been removed
+// from the directory, and is reported as a *source.ModNotFoundError (#541),
+// joined into the returned error, so core lists it as gone instead of the
+// check reading as "up to date". Only a scan that succeeded says so: a
+// failed one is a failed check that marks nothing missing.
 func (d *Directory) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	scanned, err := d.scan()
 	if err != nil {
@@ -285,6 +290,7 @@ func (d *Directory) CheckUpdates(ctx context.Context, installed []domain.Install
 	}
 
 	var updates []domain.Update
+	var missing []error
 	for _, inst := range installed {
 		select {
 		case <-ctx.Done():
@@ -293,7 +299,8 @@ func (d *Directory) CheckUpdates(ctx context.Context, installed []domain.Install
 		}
 		current, ok := byID[inst.ID]
 		if !ok {
-			continue // mod removed from the directory; nothing to offer
+			missing = append(missing, &source.ModNotFoundError{ModID: inst.ID, Err: d.notFound(inst.ID)})
+			continue
 		}
 		if domain.IsNewerVersion(inst.Version, current.Version) {
 			updates = append(updates, domain.Update{
@@ -302,10 +309,11 @@ func (d *Directory) CheckUpdates(ctx context.Context, installed []domain.Install
 			})
 		}
 	}
-	return updates, nil
+	return updates, errors.Join(missing...)
 }
 
-// find scans and returns the mod with the given ID.
+// find scans and returns the mod with the given ID. A mod a successful scan
+// does not hold is domain.ErrModNotFound; a failed scan is its own error.
 func (d *Directory) find(modID string) (dirMod, error) {
 	scanned, err := d.scan()
 	if err != nil {
@@ -316,5 +324,11 @@ func (d *Directory) find(modID string) (dirMod, error) {
 			return dm, nil
 		}
 	}
-	return dirMod{}, fmt.Errorf("source %q: mod not found: %s", d.id, modID)
+	return dirMod{}, d.notFound(modID)
+}
+
+// notFound is the directory's answer for a mod a successful scan does not
+// hold.
+func (d *Directory) notFound(modID string) error {
+	return fmt.Errorf("source %q: mod %s: not in %s: %w", d.id, modID, d.path, domain.ErrModNotFound)
 }
