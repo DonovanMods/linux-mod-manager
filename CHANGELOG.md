@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-28
+
+lmm now has a [user guide](https://donovanmods.github.io/linux-mod-manager/)
+for new users, and release pages carry their notes again.
+
+<!-- release-notes-end -->
+
 ### Added
 
 - **A user guide for new users (#553).** A plain-language, task-by-task
@@ -6171,7 +6178,8 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.1...v2.0.0
 [1.30.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.0...v1.30.1
 [1.30.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.1...v1.30.0
