@@ -12,6 +12,10 @@ first-class frontends drive the same engine: a CLI built for scripting,
 automation and remote work over SSH, and `lmm serve`, a local web UI built for
 day-to-day use.
 
+**New to lmm?** The [user guide](https://donovanmods.github.io/linux-mod-manager/)
+walks you through installing it and modding your first game in plain terms.
+This README is the full reference.
+
 ## Features
 
 ### The model
@@ -218,7 +222,7 @@ sudo rpm -i lmm_<version>_linux_amd64.rpm
 sudo zypper install ./lmm_<version>_linux_amd64.rpm
 
 # Alpine
-sudo apk add --allow-untrusted lmm_<version>_linux_amd64.apk
+sudo apk add --allow-untrusted ./lmm_<version>_linux_amd64.apk
 ```
 
 These install `/usr/bin/lmm`, the man pages under `/usr/share/man/man1`
@@ -253,8 +257,7 @@ go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest
 ```
 
 The module path carries the `/v2` suffix, so `@latest` resolves to the newest
-2.x release. Until the v2.0.0 tag is published, name the branch instead:
-`...@v2`.
+2.x release.
 
 ### From Source
 
@@ -264,9 +267,8 @@ cd linux-mod-manager
 go build -o lmm ./cmd/lmm
 ```
 
-This checks out `main`, which still holds the v1.x line: the 2.0 work lives on
-the `v2` branch until the release merges it. Run `git checkout v2` before
-`go build` to build what this README describes.
+This checks out `main`, which holds the latest release. The 1.x line is tagged
+`v1`.
 
 ### Shell completions
 
@@ -2918,6 +2920,7 @@ The mod cache location can be customized via `cache_path` in `config.yaml`. Sett
 
 ## Documentation
 
+- **[User guide](https://donovanmods.github.io/linux-mod-manager/)** – A plain-language, task-by-task guide for new users, published from [`docs/guide/`](docs/guide/) at each release.
 - **[Configuration reference](docs/configuration.md)** – All options for `config.yaml` and `games.yaml` (including hooks, link method, sources).
 - **[Security](docs/security.md)** – How stored credentials are encrypted at rest, what that protects against (and what it does not), and how to recover from a lost or damaged key file.
 - **Man pages** – In [`docs/man/man1/`](docs/man/man1/), one page per command and subcommand, generated from the CLI's own `--help` text (`make man`; a drift test fails CI if the pages fall out of sync). View with `man -l docs/man/man1/lmm.1` or install to your man path.
