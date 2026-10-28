@@ -151,8 +151,13 @@ aurs:
 checksum:
   name_template: checksums.txt
 
+# Never `disable: true`: GoReleaser applies --release-notes inside its
+# changelog pipe, so disabling the pipe also drops the notes the release
+# workflow extracts from CHANGELOG.md, and the release body comes out
+# empty (#551). Given --release-notes, the pipe publishes that file and
+# generates nothing from git; `use` only matters for a run without it.
 changelog:
-  disable: true
+  use: git
 
 release:
   github:
