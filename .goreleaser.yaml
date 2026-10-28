@@ -161,3 +161,10 @@ release:
   draft: true
   prerelease: auto
   name_template: v{{ .Version }}
+  # The aurs section below writes dist/aur/lmm-bin.pkgbuild whether or not
+  # it pushes (skip_upload only gates the push), so every release can carry
+  # it: until lmm-bin is on the AUR (#549), this is how Arch users install
+  # the package - `makepkg -si` in a directory holding just this file.
+  extra_files:
+    - glob: ./dist/aur/lmm-bin.pkgbuild
+      name_template: PKGBUILD
