@@ -82,7 +82,11 @@ Coordinator final evidence recorded before this checklist was finalized:
 1. After the owner checks and final gates pass, prepare the release commit on
    `v2`: fold `[Unreleased]` into the single existing retracted
    `## [2.0.0] - 2026-08-30` section in `CHANGELOG.md`, re-date that section
-   to the actual cut date, and leave a fresh `[Unreleased]` heading. Reuse or
+   to the actual cut date, and leave a fresh `[Unreleased]` heading. Keep the
+   curated summary and its `<!-- release-notes-end -->` marker at the top of
+   the folded section: the release workflow publishes only what is above the
+   marker, and refuses a body over GitHub's 125,000-character limit (#547).
+   Reuse or
    update its existing `[2.0.0]` comparison reference; do not add a second
    v2.0.0 section or reference. Regenerate man pages (`make man`) and the third-party notices (`make notices`) if they changed. Keep
    `cmd/lmm/root.go` at `2.0.0` and the module path at `/v2`.

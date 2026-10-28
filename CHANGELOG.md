@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+lmm 2.0 rebuilds lmm around one engine with two frontends: the command line
+and a new local web UI, `lmm serve`. A profile is desired state, and
+`lmm profile apply` brings the game directory in line with it, downgrades
+included. This summary covers the release; the full list of changes, each
+with its issue number, follows in this file.
+
+### Highlights
+
+- **`lmm serve`, a local web UI that does everything the CLI does** (#326,
+  #333): installs, updates, deploys, profiles, verify and repair, game setup,
+  sign-in and custom sources, with live progress for every job. It listens
+  on `127.0.0.1:7420` and is built into the binary; nothing else to install.
+- **`lmm init`, a guided first run** (#351): detect your games, add them,
+  sign in to sources and adopt the mods you already have. The web UI's Setup
+  page does the same.
+- **New sources.** Thunderstore is built in, searched from a locally cached
+  copy of its community index (#360, #409, #410). Steam Workshop items you
+  are subscribed to can be tracked, searched, and downloaded so lmm manages
+  them (#269, #345, #346, #347).
+- **Game detection** offers every installed Steam game, not just the curated
+  ones (#206), and recognises 17 more games out of the box (#406).
+- **Game adapters** (#353, #411–#414): one `adapter:` key in `games.yaml`
+  says what a game does with mod content. Icarus and BepInEx are the first
+  two, and `docs/adapters.md` explains how to write another. BepInEx games
+  can declare their loader, `lmm verify` checks it, and plugin archives
+  deploy where BepInEx expects them (#358, #359, #416, #424).
+- **Snapshots**: `lmm snapshot create|list|restore|delete` (#350).
+- **Files you downloaded yourself.** Install or update a mod from a file you
+  downloaded by hand, for authors who disable API downloads. Those mods are
+  marked, and lmm never tries to download them itself (#530, #535, #543).
+- **Updates.** Skip one update without pinning the mod (#542). A mod its
+  source has removed is reported as gone instead of failing the check
+  (#539, #540, #541). `lmm update --all` applies as one batch (#324).
+- **Search** puts the exact match first, can sort and page, and shows when
+  each mod was last updated (#109, #433, #503, #509, #511).
+- **Preview first.** `deploy`, `uninstall`, `purge`, `import`, and
+  `profile apply`, `switch` and `sync` take `--dry-run` (#293).
+- **Scripting.** Every command takes `--json`, which never prompts: a
+  confirmation needs `-y`/`--yes` or `--force` instead. Errors share one
+  `{"error", "details"}` envelope, and `--log-level` writes diagnostics to
+  stderr (#281).
+- **API keys are encrypted at rest** (#79), with AES-256-GCM under a key
+  file at `$XDG_DATA_HOME/lmm/key`. Back that file up with `lmm.db`: the
+  database alone can no longer unlock its keys. `lmm auth status` and the
+  web UI identify a stored key by a fingerprint and never show it.
+- **Packages.** `.deb`, `.rpm` and `.apk` packages and tarballs for amd64
+  and arm64, with man pages, shell completions and third-party license
+  notices (#352, #522).
+
+### Upgrading from 1.x
+
+- **The terminal UI (`lmm tui`) is gone** (#273). Use the CLI or
+  `lmm serve`.
+- **`--json` output changes once, deliberately.** Every document has a new,
+  stable shape; the README's "JSON output" section lists them by command.
+- **The first run re-encrypts your stored keys** (#79). If it says it is
+  waiting, close any other lmm process (including `lmm serve`) and run the
+  command again.
+- **Declining a prompt exits 2 from every command** (#382), and prints
+  `Cancelled.` on stderr.
+- **`lmm mod edit --source`/`--source-id` are now `--to-source`/
+  `--to-source-id`** (#396). `--source` (`-s`) now picks between two mods
+  that share an id.
+- **NexusMods' `lmm search --category` takes a category name**, not a
+  number (#343).
+- **Config and data follow `XDG_CONFIG_HOME`/`XDG_DATA_HOME`** (#274,
+  #297). An existing `~/.config/lmm` and `~/.local/share/lmm` still work
+  when those are unset; if you set one to an absolute path, it wins, so move
+  your directory there first.
+- **A game has exactly one active profile, and `deploy` and
+  `profile apply` act only for it** (#445, #446, #462).
+- **Building from source needs Go 1.27**, and the module path is now
+  `github.com/DonovanMods/linux-mod-manager/v2`:
+  `go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest`.
+
+<!-- release-notes-end -->
+
 ### Security
 
 - **Auth tokens are encrypted at rest (#79).** `lmm auth login` used to
@@ -1913,6 +1990,14 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **A release's notes fit GitHub's limit (#547).** The release workflow
+  published a version's whole CHANGELOG section as the GitHub release body,
+  and 2.0.0's is over 300,000 characters; GitHub refuses a body over
+  125,000, and only after every package has been built. A section can now
+  open with a curated summary ended by `<!-- release-notes-end -->`: only
+  the summary is published, followed by a link to the complete CHANGELOG at
+  the tag. The workflow refuses an over-long body itself, and a test checks
+  that the pending `[Unreleased]` section fits.
 - **A release's GitHub body is its curated CHANGELOG section, not a
   generated commit list.** GoReleaser's own changelog is disabled; the
   release workflow cuts the pushed tag's `## [X.Y.Z]` section out of
