@@ -22,8 +22,9 @@ You can use lmm two ways, and they share everything:
   your browser with your games and mods, search and update checks. This is
   the easiest way to start.
 - **The command line.** Everything the web interface does is also an `lmm`
-  command, so you can manage your mods straight from the terminal, or over
-  SSH on another machine.
+  command, so you can manage your mods straight from the terminal, over SSH
+  on another machine, or from your own scripts and programs: add `--json` to
+  any command and it answers in a form a program can read.
 
 ## Start here
 
