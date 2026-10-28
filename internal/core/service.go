@@ -84,6 +84,12 @@ type ServiceConfig struct {
 	// test does, to prove over a real HTTP/2 server that a stalled
 	// download is reported as a failure, in well under a minute.
 	DownloadClient *http.Client
+
+	// Now is the clock that time-based policy reads - today the index
+	// prune's 30-day age rule (#548). Nil means time.Now. A test pins it so
+	// that a fixture with a fixed timestamp means the same thing on any
+	// date the suite runs.
+	Now func() time.Time
 }
 
 // DownloadModResult contains the outcome of downloading a mod file
@@ -134,7 +140,8 @@ type Service struct {
 	verifyMemo   map[string]verifyMemoEntry
 	downloader   *Downloader
 	extractor    *Extractor
-	log          *slog.Logger // Diagnostics logger; nil means discard (see logger()).
+	log          *slog.Logger     // Diagnostics logger; nil means discard (see logger()).
+	nowFunc      func() time.Time // ServiceConfig.Now; nil means time.Now (see now()).
 
 	configDir string
 	dataDir   string
@@ -264,6 +271,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		downloader: downloader,
 		extractor:  NewExtractor(),
 		log:        log,
+		nowFunc:    cfg.Now,
 		configDir:  cfg.ConfigDir,
 		dataDir:    cfg.DataDir,
 		cacheDir:   cfg.CacheDir,
@@ -319,6 +327,15 @@ func (s *Service) logger() *slog.Logger {
 		return discardLogger
 	}
 	return s.log
+}
+
+// now is ServiceConfig.Now, or the wall clock when none was given - which
+// includes a Service built as a bare &Service{} literal, the logger() case.
+func (s *Service) now() time.Time {
+	if s.nowFunc == nil {
+		return time.Now()
+	}
+	return s.nowFunc()
 }
 
 // RegisterAdapter adds a game adapter to the registry (#353). The
