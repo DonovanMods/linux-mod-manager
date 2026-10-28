@@ -18,10 +18,12 @@ the game's own files.
 
 You can use lmm two ways, and they share everything:
 
-- **In your browser.** Run `lmm serve` and a web page opens with your games,
-  your mods, update checks and search. This is the easiest way to start.
-- **In the terminal.** Every action is also a command, which is handy for
-  scripts or for managing a machine over SSH.
+- **A web interface.** Run `lmm serve` in a terminal, and lmm opens a page in
+  your browser with your games and mods, search and update checks. This is
+  the easiest way to start.
+- **The command line.** Everything the web interface does is also an `lmm`
+  command, so you can manage your mods straight from the terminal, or over
+  SSH on another machine.
 
 ## Start here
 

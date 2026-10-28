@@ -8,7 +8,7 @@ nav_order: 3
 This page takes you from a fresh install to a modded game. It uses the web
 interface. The terminal commands for each step are in the box at the end.
 
-## 1. Open lmm in your browser
+## 1. Start the web interface
 
 In a terminal, run:
 
