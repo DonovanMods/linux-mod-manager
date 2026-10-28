@@ -33,7 +33,7 @@ var ErrCancelled = errors.New("cancelled")
 var ErrReported = errors.New("already reported")
 
 var (
-	version = "2.0.0"
+	version = "2.0.1"
 
 	// buildDescribe is injected at build time via -ldflags -X (see the
 	// Makefile's `build` target) with `git describe --tags --dirty`.

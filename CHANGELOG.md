@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-28
+
+lmm now has a [user guide](https://donovanmods.github.io/linux-mod-manager/)
+for new users, and release pages carry their notes again.
+
+<!-- release-notes-end -->
+
+### Added
+
+- **A user guide for new users (#553).** A plain-language, task-by-task
+  guide at <https://donovanmods.github.io/linux-mod-manager/>: installing,
+  a first modded game, adding a game by hand, profiles, updates and locks,
+  mods you downloaded yourself, BepInEx, troubleshooting, and a FAQ. Its
+  source is `docs/guide/`, published to GitHub Pages from `main` by
+  `.github/workflows/pages.yml`, so the site always describes the latest
+  release. A test fails if the guide shows a command or flag the CLI does
+  not have.
+
+### Fixed
+
+- **A release's GitHub body is no longer empty (#551).** `.goreleaser.yaml`
+  set `changelog: disable: true`, which skips the GoReleaser pipe that
+  applies `--release-notes`, so the notes the release workflow extracts from
+  this file were dropped and v2.0.0's draft came out with an empty body.
+  That draft was fixed by hand. The setting is gone, and a test fails if it
+  comes back while the workflow relies on `--release-notes`.
+- **The README's install-from-source notes describe 2.0 as released (#553).**
+  They still said 2.0 lived on the `v2` branch and that `go install` needed
+  `@v2` until the tag was published.
+
 ## [2.0.0] - 2026-10-28
 
 lmm 2.0 adds a local web UI, `lmm serve`, alongside the CLI. Both run on
@@ -6148,7 +6178,8 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.1...v2.0.0
 [1.30.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.0...v1.30.1
 [1.30.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.1...v1.30.0
