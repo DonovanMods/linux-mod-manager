@@ -49,7 +49,7 @@ makepkg -si
 ## Alpine
 
 ```bash
-sudo apk add --allow-untrusted lmm_<version>_linux_amd64.apk
+sudo apk add --allow-untrusted ./lmm_<version>_linux_amd64.apk
 ```
 
 ## Any other distribution

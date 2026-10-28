@@ -222,7 +222,7 @@ sudo rpm -i lmm_<version>_linux_amd64.rpm
 sudo zypper install ./lmm_<version>_linux_amd64.rpm
 
 # Alpine
-sudo apk add --allow-untrusted lmm_<version>_linux_amd64.apk
+sudo apk add --allow-untrusted ./lmm_<version>_linux_amd64.apk
 ```
 
 These install `/usr/bin/lmm`, the man pages under `/usr/share/man/man1`
