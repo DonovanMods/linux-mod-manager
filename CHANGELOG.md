@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-28
+
 lmm 2.0 adds a local web UI, `lmm serve`, alongside the CLI. Both run on
 the same engine. A profile is now desired state: `lmm profile apply` brings
 the game in line with it.
@@ -31,6 +33,56 @@ the game in line with it.
 - Building from source needs Go 1.27 and the `/v2` module path.
 
 <!-- release-notes-end -->
+
+### v2 migration notes
+
+This release removes the interactive TUI (#273); its frontends are the CLI
+and the local web UI (`lmm serve`).
+
+**`--json` output changes once, deliberately, in this release.** Every
+document is now a type from `internal/core`, `internal/domain`, or
+`internal/app` rather than a CLI-only view struct, and the error envelope is
+`{"error": "...", "details": {...}}`; see the README's
+[JSON output](README.md#json-output) section for the full command →
+document table. **`--json` never prompts**: every confirmation now has a
+deciding flag (`-y`/`--yes`, `--force`), and a run that would otherwise
+prompt fails first with the error envelope instead of reading stdin. A mod
+with no source-supplied timestamp now omits `updated_at` entirely instead of
+carrying the zero-value `0001-01-01T00:00:00Z`, matching the
+not-applicable-is-absent convention `convert_paks`/`auth`/`cache_path`
+already use.
+
+A handful of plain-text and event behaviours changed alongside the JSON
+contract, each pinned by a re-recorded capture and detailed below: lock
+refusals now read one canonical wording per refusal kind (#294); a
+multi-source update check's `-v` progress counts globally instead of
+restarting per source (#283); a profile export round-trips hook overrides
+through import (#296); dry-run merged-artifact lines only print when the
+artifact would actually change (Ruling 8); cancellation mid-mutation always
+finishes a database write's paired profile write rather than splitting the
+two (Ruling 16); a declined import conflict on a reproducible identity
+does not restore the entry it overwrote (#310); `lmm game show-default`'s
+plain text moves from stderr to stdout, where every other command's plain
+text already lands (Ruling 17, #309); and an accepted `import <archive>`
+conflict no longer reprints the import readout or mints a second mod ID
+(Ruling 18).
+
+Building lmm now requires Go 1.27. Config and data directories now honor
+`XDG_CONFIG_HOME`/`XDG_DATA_HOME` by default, falling back to the legacy
+paths when they still exist (#274).
+
+The Go module path is now `github.com/DonovanMods/linux-mod-manager/v2`
+(Ruling 14, Option A — semantic import versioning). Install with
+`go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest`; the
+unsuffixed `go install github.com/DonovanMods/linux-mod-manager/cmd/lmm@latest`
+still resolves to v1.30.1, since Go's module rules do not treat a `v2.0.0+`
+tag as a valid version for a module path without the `/v2` suffix. The
+decision and its consequences are recorded in
+`docs/plans/archive/v2.0.0-release-checklist.md`.
+
+This preamble, the README's v2 architecture and JSON-contract sections, and
+`docs/plans/archive/v2.0.0-release-checklist.md` were themselves written as
+the phase's docs unit (#306).
 
 ### Security
 
@@ -84,293 +136,6 @@ the game in line with it.
   honestly in [docs/security.md](docs/security.md): this protects a
   database that is copied, synced or backed up, **not** a local attacker
   running as you.
-
-### Changed
-
-- **Setup → Games edits a game in one panel with one Save (#527).** A row
-  had a pencil for its mod path, its sources and its loader, plus the row's
-  own pencil that opened all three editors, each with its own Save - three
-  requests, any of which could succeed while another failed. The per-field
-  pencils are gone: the row's one pencil ("Edit Skyrim Special Edition")
-  opens a single panel with every field the game has - name, install path
-  (#528), mod path, sources and loader - and one **Save** and one
-  **Cancel** (**Close** once nothing is changed). Save sends the fields you
-  changed in one request, and lmm checks all of them before writing any:
-  a refusal writes nothing, and is shown under the field it is about (an
-  install path that does not exist, a mod path with files deployed under
-  it - with the ordered steps that clear it - a source still in use, a
-  loader value). After a save the panel stays open on the saved values,
-  so the loader status below it, with the Steam launch option to paste,
-  is re-read in place. Cancel discards the draft and puts focus back on
-  the pencil. Underneath, `PUT /api/v1/games/{id}` takes the whole edit
-  additively - a new `name` member, and `loader` may now share a body with
-  the other fields instead of being refused - and `core.GameEdit` carries
-  `Name`, `InstallPath` and the loader, so `Service.EditGame` is the one
-  all-or-nothing write (`UpdateGameLoader` is a thin wrapper over it). The
-  path columns take the room the pencils freed.
-
-- **Setup's tables edit with a pencil, not a repeated "Edit…" label (#525).**
-  Every Games row used to repeat "Edit mod path…", "Edit sources…", "Edit
-  loader…" and "Edit…", crowding the table and duplicating its column
-  headers. Each is now a pencil icon button beside the value it edits, with
-  a tooltip ("Edit mod path") on hover and on keyboard focus; Escape
-  dismisses it. The accessible name still says which row: "Edit mod path
-  for Skyrim Special Edition", and the row's own pencil is "Edit Skyrim
-  Special Edition". An open editor is announced with `aria-expanded` rather
-  than a changed label. A custom source's Edit in Setup → Sources is a pencil
-  the same way ("Edit source My Mods"); "Set default", Download and Delete
-  stay words, since they are actions rather than edits. The tooltip is one
-  shared, token-coloured element placed from the measured trigger, so it is
-  never clipped by a table or the page's right edge.
-
-- **The web UI draws every control from one system (#518).** Buttons,
-  selects and text inputs share one size scale (`--control-height` and
-  `--control-height-sm`, with matching padding, radius and type size), so
-  controls in one row line up: the top bar and the library toolbar are all
-  default size, and the Filter/Sort selects match the buttons beside them.
-  Buttons come in four variants (secondary, primary, quiet, danger) plus
-  link, tab and tile shapes, and pickers, menus and the activity tray use one
-  menu-item style. Small buttons are kept for dense contexts (rows, cards'
-  item rows, menus), never beside default-size controls. Every label is
-  centred in its button and never wraps. The game/profile pickers, "Add
-  mods" and the activity bell are quiet buttons instead of unstyled text;
-  the theme toggle, a text-only control with no ▾, is a bordered secondary
-  button, since a borderless one read as a label. The search box shows one
-  clear button instead of two, and its placeholder is short enough to show
-  whole at 1280px. Attention cards are at least wide enough for the widest
-  footer on one line, so at 1280px they sit two across and the Updates
-  card's actions fit one row. Setup's Games table sizes its columns to their
-  content, with the paths ellipsised and "Edit…" in its own trailing
-  column, so no cell breaks a name or a button label. Ratchets fail the
-  build if a `<button>` is styled outside the system, a rule outside the
-  control block reshapes one, or a quiet button has no glyph or ▾ of its
-  own. Browser tests hold the top bar and library toolbar to one control
-  height in both themes, and labels to centred, single-line text.
-
-- **CI test pushes include the v2 branch (#492).** The test workflow now runs
-  for pushes to `main`, `develop`, and `v2`, while preserving pull-request
-  validation.
-
-- **`lmm game show` and the web loader panel say what a BepInEx game still
-  lacks (#443).** Their loader warnings now name the missing step: BepInEx
-  is not installed (with the build this game needs - the Linux archive or
-  the Windows pack - and that lmm does not download it), it is installed
-  but not declared (with the `lmm game edit <game> --loader bepinex` that
-  declares it), or it has never run (so the launch option shown above is
-  the likely cause). These were an adapter "guidance" capability that
-  nothing displayed; that capability is gone from the adapter contract
-  (`docs/adapters.md`).
-- **A Steam Workshop item lmm downloaded itself shows its revision date
-  everywhere (#458).** Every document core returns for a mod now carries
-  `display_version` when its version is a Workshop content id — the
-  revision date, or `-` when lmm has none — whether lmm tracks the item or
-  downloaded it. The web UI, the profile import and switch plan lines,
-  `lmm verify`'s missing row, the locked-mod refusal and `lmm import`'s scan
-  summary read it, so none of them prints the 19-digit id any more.
-
-- **The BepInEx/adapter contradiction warning printed at startup is one
-  line (#456).** A game that declares the BepInEx loader while its adapter
-  is another one was reported on stderr by **every** `lmm` command in a
-  ~900-character paragraph. That line now names the game, the contradiction
-  and where to read more — ``warning: game "human-host" declares the
-BepInEx loader, but lmm ignores it because its mod_path is not the game
-root; run `lmm game show human-host` for the fix``. The full explanation and both
-  remedies stay in `lmm game show`, `lmm verify`, the web loader panel and
-  the output of the `lmm game edit` that creates the contradiction. The
-  "set its mod_path in games.yaml" step is now the command
-  `lmm game edit <id> --mod-path <path>` (with `--adapter bepinex` in the
-  same command where the adapter changes too), and the purge before it is
-  `lmm purge --game <id> --profile <name>` for each profile with files
-  deployed, because a purge of the active profile alone left the move
-  refused.
-
-- **An empty per-source game identifier is refused rather than guessed
-  (#408, #409).** `sources: {<source>: ""}` in `games.yaml` used to fall back
-  to lmm's own game id. That is a guess, and for a source that keeps a local
-  search index it is an expensive one: a game called `valheim` mapped to
-  `thunderstore: ""` downloaded and searched the real Valheim community
-  nobody had named. `lmm game add`, `lmm game edit`, `lmm game detect`,
-  `lmm init`, `POST /api/v1/games` and `PUT /api/v1/games/{id}` now all
-  refuse an empty identifier for any source that needs one — including when
-  the map was **prefilled** from a known-games entry rather than typed — and
-  a search, or an index read, against a game already in that state says
-  which command fixes it. Sources whose mapped value addresses nothing — a
-  directory source, `icarus` — are unaffected, and keep writing and reading
-  an empty mapping exactly as before.
-
-- **Breaking: `lmm mod edit`'s re-link flags are renamed to
-  `--to-source`/`--to-source-id`, and `-s` works again (#396).** `lmm mod`'s
-  persistent `-s/--source` means "which source this mod is in"; `mod edit`
-  declared a local `--source` meaning "re-link it to this source", which
-  replaced the group's flag outright — so `lmm mod edit alpha -s repo`
-  failed with `unknown shorthand flag: 's'`, and there was no way at all to
-  say which of two same-id mods to edit. The re-link target is renamed
-  (there is no `--source` alias: keeping one would re-create the
-  shadowing), and `mod edit` now uses `-s` to pick among same-id mods,
-  refusing with the candidate sources named when it is ambiguous instead of
-  silently editing whichever it found first.
-
-  `--source-id` fails loudly (`unknown flag`), but an old
-  `lmm mod edit <mod> --source <target>` cannot: it resolves to the
-  group's `-s/--source` and is read as a filter. When that filter matches
-  nothing, the error now names `--to-source` so the rename is visible
-  rather than reading as "no such mod".
-
-- **`lmm import` scan mode scores its source matches instead of taking the
-  first hit (#27).** An untracked archive used to be adopted as whatever the
-  first search-capable source returned first, so searching `skyui` could
-  attach the archive to _SkyUI Flashlite_ — a different mod, with a
-  different version history and a different update target, and nothing on
-  screen to say so. Candidates from **every** configured source are now
-  scored against the scanned name (and its parsed version, when the filename
-  carries one), the best one wins, and anything that does not clear the
-  confidence bar leaves the entry **untracked** — imported as local, which
-  is recoverable, rather than mis-attributed, which is not. Ties break
-  deterministically (version agreement, then source ID, then mod ID), and an
-  exact name match ends the lookup without searching the remaining sources.
-  `core.AdoptMatch` gains two additive fields, `score` and `score_class`
-  (`exact`/`strong`/`probable`), and the scan readout annotates any match
-  short of an exact name with its band — in the CLI and in `lmm serve`'s
-  adopt plan alike. Three differences are refused outright however close the
-  rest of the name is: a differing sequel number (_Sim Settlements 2_ is
-  never _Sim Settlements 3_), any difference at all in a pair whose longer
-  name is under twelve letters (_Vortex_ is never _Vertex_, and _SkyUI_ is
-  never _SkyUI SE_), and whole extra words (_RaceMenu_ is not _RaceMenu
-  Special Edition_). A subtitle set off by punctuation is the exception, so
-  the common catalogue shape still adopts: _Ordinator_ matches _Ordinator -
-  Perks of Skyrim_, always as a `[probable match]` so the elided subtitle is
-  visible before you confirm — unless two catalogue rows hang subtitles off
-  the SAME name (_Alternate Start - Live Another Life_ and
-  _Alternate Start - Realm of Lorkhan_), in which case the tie is refused
-  and the entry stays untracked rather than being attached to whichever mod
-  sorts first.
-
-- **An absolute `XDG_CONFIG_HOME`/`XDG_DATA_HOME` now always wins over the
-  legacy directory (#297).** lmm used to prefer an existing
-  `~/.config/lmm` / `~/.local/share/lmm` when the XDG location did not
-  exist yet — including when the user had set the variable explicitly, so
-  a script (or a test harness that set `XDG_DATA_HOME` but left `HOME`
-  alone) silently read and wrote the real install instead of the sandbox
-  it asked for. Setting an XDG variable to an absolute path is now an
-  explicit instruction and decides the location whether or not that
-  directory exists. The legacy fallback still applies when the variable is
-  unset or relative (the XDG spec requires relative values be ignored),
-  which is the case an install predating XDG support is actually in.
-  `--config`/`--data` are unchanged and still beat both. Move the
-  directory (or pass `--data`/`--config`) to keep existing data after
-  setting an XDG variable. Resolving an absolute XDG value no longer consults `$HOME` at all, so a container or service account that sets `XDG_DATA_HOME` and leaves `HOME` unset starts (it used to fail on a legacy path it was never going to read).
-
-- **`lmm search --limit N` fills against a source that reports its page
-  cap (#361).** #109's paging loop stops a source that could not honour the
-  page size it was asked for, because its next offset would skip the rows
-  the clamp left behind. That left the headline symptom in place: the CLI
-  asks for a page the size of `--limit`, CurseForge clamps 100 to 50 and
-  says so, and the search came back with the one page. Core now adopts the
-  size a source REPORTS on its first round as that source's own page size
-  for the rest of the search — by asking for exactly the size the source
-  says it will use, `page × requested` and `page × effective` become the
-  same number, so the next page starts where the last one ended whichever
-  of the two the source multiplies by internally. Guarded: only on a
-  source's first round, only a size smaller than the one requested, and
-  only when the rows returned match the size claimed. A source that clamps
-  without saying so (NexusMods reports neither a clamp nor a total) still
-  answers short and is still asked exactly once.
-
-- **CurseForge update checks are one request per 50 mods, not one per mod
-  (#28).** `Client.GetMods` fanned out a `GET /v1/mods/{id}` per id; it now
-  posts the whole set to CurseForge's batch `POST /v1/mods` endpoint in
-  chunks of 50 (`modBatchSize`, documented at its declaration), and the
-  update-check path goes through it — a 200-mod profile costs 4 round trips
-  instead of 200. `GetMod` is unchanged for single lookups. Partial failures
-  stay partial: a chunk whose request fails does not stop the other chunks,
-  and an id CurseForge omits from its answer (an unknown, delisted or
-  unavailable mod) is named in the error while every mod that did come back
-  is still checked — each skipped mod named once, with its own reason, and
-  the batch error attached once rather than once per mod. The per-mod
-  progress ticks `lmm update` renders are unchanged in count, order and
-  arguments; they now fire as each mod's result is compared rather than
-  before its own request.
-
-- **`lmm search --limit N` pages its sources instead of returning one page
-  each (#109).** The aggregate search asked every source for exactly one
-  page and merged whatever came back, so a source whose page cap sits below
-  its share of the limit decided the answer: `--limit 50` returned 30 with
-  hundreds of matches left. Core now advances each source's OWN page
-  cursor, round by round, until the merged hit count reaches the limit,
-  every source is exhausted, or a documented max-pages guard trips
-  (`maxSearchPagesPerSource`, 10 rounds). A source is paged only at a page
-  size it has shown it can honour: an API that caps the page (CurseForge at
-  50, NexusMods around 30) computes its next offset from the size that was
-  REQUESTED, so paging it at the requested size would fetch rows 100–149
-  while rows 50–99 were never returned — a strided sample with holes, which
-  after ranking is indistinguishable from a complete answer. A source that
-  reports the smaller size it actually served is therefore paged at THAT
-  size instead (#361), which fills the limit with contiguous rows;
-  a source that clamps silently is asked once, so `--limit 100` may still
-  come back with fewer than 100 results, and `has_more` says
-  so, but every result really is among the first ones its source had. A
-  source that reports no total and hands over its whole catalogue in one
-  short page cannot be told apart from one that was clamped, so `has_more`
-  stays deliberately optimistic there — the safe direction, since the next
-  page is merely empty. A source that fails on ANY page — its first as much
-  as a later one — is reported the same way (a warning, with the hits its
-  earlier pages returned kept) and no longer counts as exhausted, so a plain
-  single-round search can now answer `has_more: true` where it used to claim
-  the sources were exhausted. CurseForge now clamps and reports its
-  own effective page size so its offsets stay contiguous. `lmm serve`
-  inherits all of it through `/api/v1/search?limit=`; the search page's own
-  `?page=`/`?page_size=` pagination (no `?limit=`) is deliberately
-  untouched, so its cursor is never advanced behind its back.
-
-- **`lmm update --all` applies as one batch (#324).** The command used to
-  run two separate per-mod loops (auto-policy updates, then `--all`'s
-  remaining ones); it now builds one selection and applies it through
-  core's batch pair. Two visible consequences: the two section headers
-  ("Applying N auto-update(s)…" / "Applying N remaining update(s)…") are one
-  "Applying N update(s)…", the per-mod ✓/✗ lines being unchanged; and
-  **`lmm update --all --json` now applies**, emitting
-  `core.UpdateBatchResult`, where it previously emitted the check document
-  and silently ignored the flag. A `--json` run WITHOUT `--all`, and any
-  `--dry-run`, are unchanged: still the check document, still applying
-  nothing. One consequence worth naming: the batch holds the service's
-  single mutation slot for its **entire** duration rather than releasing it
-  between items, so a toggle or deploy started from `lmm serve`'s web UI
-  while a long batch is running now waits for the whole batch instead of
-  slipping in between two of its items — the price of the one freshness
-  window the batch checks against (see `ApplyUpdateBatch`'s doc comment).
-
-- **`lmm search --category` against NexusMods takes a category NAME
-  (#343).** It used to take a numeric category id, and NexusMods' current
-  `ModsFilter` defines no id-keyed category filter at all — only
-  `categoryName` — so the flag now means the category as NexusMods spells
-  it (`--category Armour`). **CurseForge still takes its numeric id**; the
-  flag's help, the man page and the README name both. The fix that made a
-  category-filtered NexusMods search work again at all is under Fixed
-  (#337, #343).
-
-- **`lmm auth logout --json` prints a document, not prose (#335).** It emits
-  the re-read `app.AuthStatusReport` — the same document
-  `lmm auth status --json` prints and `lmm serve`'s
-  `DELETE /api/v1/auth/{source}` already answered — restoring the
-  one-document-on-stdout invariant every other `--json` command holds to.
-  Plain-text output is unchanged.
-
-- **The README says what lmm actually is, and is not (#405).** The
-  repositioned README (#349) contradicted itself and the code in three
-  places, all corrected: it sent Bethesda users elsewhere while using
-  `skyrim-se` as its running example (the examples now use Baldur's Gate 3
-  throughout, and the Skyrim guidance names the two things that are really
-  missing — a FOMOD option-tree installer and LOOT integration — rather
-  than implying lmm cannot deploy those games); it claimed "no LOOT-style
-  plugin / load-order management" when load ordering has shipped since v1
-  (`lmm profile reorder`, merge and deploy precedence, the web UI's reorder
-  modal), so the non-goal is now stated as **automated** plugin sorting —
-  masterlists and a generated `plugins.txt`; and it described `lmm serve`
-  as "a thin frontend … not a second product", which read as a disclaimer
-  for what is a full second frontend — the CLI for scripting, automation
-  and SSH, the web UI for daily use, one engine underneath. BepInEx
-  (#357) also moves off the non-goals list and onto the roadmap as in
-  progress for 2.0.
 
 ### Added
 
@@ -1937,6 +1702,687 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
   deep, and a description over 256 KB is shown as plain text with a note
   saying so, so a hostile description cannot stall or break the page.
   `lmm mod show` is unchanged.
+
+- `--log-level` (off|error|warn|info|debug) writes diagnostics to stderr; default off. (#281)
+- `lmm deploy --dry-run` prints what a deploy would do — the mods it would touch in load order,
+  the files each would link (and any stale ones it would remove), what a `--purge` pass would
+  remove first, the merged-artifact readout on a compile game, and the hooks that would run —
+  without changing anything. `--verbose` adds the per-file detail. (#293)
+- `lmm uninstall --dry-run` prints what an uninstall would do — which mod the ID resolves to
+  (with its source, so a bare ID's first-match rule is visible), how many files would leave the
+  game directory, what happens to the cache, and the hooks that would run — without changing
+  anything. `--verbose` lists the files. On a compile-mode game it also states what would happen
+  to the profile's merged artifact — resynced, or removed once the last merge source goes — and
+  says nothing at all when the uninstall would leave the artifact exactly as it is. (#293, #304)
+- `lmm purge --dry-run` prints what a purge would do — the mods it would undeploy, what happens
+  to their records, and the hooks that would run — without changing anything and without
+  prompting. On a compile-mode game with a merged artifact deployed it also states that the
+  artifact would be removed too; with nothing merged yet there is nothing to remove and the line
+  is absent. (#293, #304)
+- `lmm profile switch` and `lmm profile sync` gain `-y`/`--yes` to skip their confirmation
+  prompt; `lmm profile import` gains `-y`/`--yes` to answer its "Download and install mods?"
+  prompt without a stdin read. `lmm game detect` gains `--all` (select every not-yet-configured
+  detected game — the same set the interactive "all" answer selects) and `--select <indices>`
+  (the same 1-based indices the prompt accepts, including an already-configured game's index for
+  a repair); the two are mutually exclusive and both skip the prompt entirely. As a side effect of
+  the same prompt-reading change, `lmm game detect` on a closed/EOF stdin (no `--all`/`--select`)
+  now reads that as an empty answer and prints `No games added.` exiting `0`, instead of
+  `Error: reading input: EOF` exiting `1`; every other prompting command's EOF behaviour is
+  unchanged. (#303)
+- **`--json` on every mutating command.** `install`, `import` (archive and scan), `deploy`,
+  `uninstall`, `purge`, `profile apply/switch/sync/import/create/delete/reorder`,
+  `mod enable/disable/lock/unlock/set-update/convert/edit` and
+  `game detect/set-default/clear-default` now emit their core result document; with `--dry-run`
+  they emit the plan document instead of its rendering. Progress and per-mod status lines are
+  suppressed under `--json`, so stdout holds exactly one document and stderr stays empty apart
+  from `--log-level` diagnostics. Two new core documents back this: `core.ProfileResult`
+  (`{profile}`) for the profile-management commands and `core.SettingsResult` (`{default_game}`)
+  for `game set-default`/`clear-default`. `--json` never prompts: a confirmation with no deciding
+  flag fails before mutating anything with the error envelope, and an `install --json` or
+  `import <archive> --json` blocked by file conflicts reports them as `details.conflicts` (pass
+  `--force` to accept). `lmm mod files` honours `--json` too, emitting `core.ModFilesReport`.
+  `install`'s `files_deployed` (and plain-text `Files deployed: N`) now counts the cache entry's
+  files once instead of accumulating a per-archive count, which previously over-counted mods
+  installed from two or more extracted archives (e.g. 3 → 2). (#303)
+- `lmm profile apply`, `lmm profile switch` and `lmm profile sync` gain `--dry-run`: they print
+  the same plan preview the live run shows, under a `<Verb> plan for profile "<name>" (dry run)`
+  header, and change nothing — including the profile-creating and default-switching writes a
+  no-changes run would otherwise still perform. (#303)
+- **`--json` on the five remaining commands.** `profile list`, `auth status`, `profile export`,
+  `source validate` and `game show-default` now honour `--json` too, closing the last gap left by
+  #303: `lmm profile list` emits `core.ProfileListing`; `lmm auth status` emits
+  `app.AuthStatusReport`; `lmm profile export` emits `domain.ExportedProfile` (the plain path keeps
+  writing the YAML document, unchanged); `lmm source validate` emits `app.SourceValidationReport`,
+  with an invalid definition (or a failed `--probe`) still exiting non-zero under an error envelope
+  whose `details` carries the report; `lmm game show-default` emits `core.DefaultGame` (see Ruling
+  17, above, for its plain-text stream move). (#309)
+
+### Changed
+
+- **Setup → Games edits a game in one panel with one Save (#527).** A row
+  had a pencil for its mod path, its sources and its loader, plus the row's
+  own pencil that opened all three editors, each with its own Save - three
+  requests, any of which could succeed while another failed. The per-field
+  pencils are gone: the row's one pencil ("Edit Skyrim Special Edition")
+  opens a single panel with every field the game has - name, install path
+  (#528), mod path, sources and loader - and one **Save** and one
+  **Cancel** (**Close** once nothing is changed). Save sends the fields you
+  changed in one request, and lmm checks all of them before writing any:
+  a refusal writes nothing, and is shown under the field it is about (an
+  install path that does not exist, a mod path with files deployed under
+  it - with the ordered steps that clear it - a source still in use, a
+  loader value). After a save the panel stays open on the saved values,
+  so the loader status below it, with the Steam launch option to paste,
+  is re-read in place. Cancel discards the draft and puts focus back on
+  the pencil. Underneath, `PUT /api/v1/games/{id}` takes the whole edit
+  additively - a new `name` member, and `loader` may now share a body with
+  the other fields instead of being refused - and `core.GameEdit` carries
+  `Name`, `InstallPath` and the loader, so `Service.EditGame` is the one
+  all-or-nothing write (`UpdateGameLoader` is a thin wrapper over it). The
+  path columns take the room the pencils freed.
+
+- **Setup's tables edit with a pencil, not a repeated "Edit…" label (#525).**
+  Every Games row used to repeat "Edit mod path…", "Edit sources…", "Edit
+  loader…" and "Edit…", crowding the table and duplicating its column
+  headers. Each is now a pencil icon button beside the value it edits, with
+  a tooltip ("Edit mod path") on hover and on keyboard focus; Escape
+  dismisses it. The accessible name still says which row: "Edit mod path
+  for Skyrim Special Edition", and the row's own pencil is "Edit Skyrim
+  Special Edition". An open editor is announced with `aria-expanded` rather
+  than a changed label. A custom source's Edit in Setup → Sources is a pencil
+  the same way ("Edit source My Mods"); "Set default", Download and Delete
+  stay words, since they are actions rather than edits. The tooltip is one
+  shared, token-coloured element placed from the measured trigger, so it is
+  never clipped by a table or the page's right edge.
+
+- **The web UI draws every control from one system (#518).** Buttons,
+  selects and text inputs share one size scale (`--control-height` and
+  `--control-height-sm`, with matching padding, radius and type size), so
+  controls in one row line up: the top bar and the library toolbar are all
+  default size, and the Filter/Sort selects match the buttons beside them.
+  Buttons come in four variants (secondary, primary, quiet, danger) plus
+  link, tab and tile shapes, and pickers, menus and the activity tray use one
+  menu-item style. Small buttons are kept for dense contexts (rows, cards'
+  item rows, menus), never beside default-size controls. Every label is
+  centred in its button and never wraps. The game/profile pickers, "Add
+  mods" and the activity bell are quiet buttons instead of unstyled text;
+  the theme toggle, a text-only control with no ▾, is a bordered secondary
+  button, since a borderless one read as a label. The search box shows one
+  clear button instead of two, and its placeholder is short enough to show
+  whole at 1280px. Attention cards are at least wide enough for the widest
+  footer on one line, so at 1280px they sit two across and the Updates
+  card's actions fit one row. Setup's Games table sizes its columns to their
+  content, with the paths ellipsised and "Edit…" in its own trailing
+  column, so no cell breaks a name or a button label. Ratchets fail the
+  build if a `<button>` is styled outside the system, a rule outside the
+  control block reshapes one, or a quiet button has no glyph or ▾ of its
+  own. Browser tests hold the top bar and library toolbar to one control
+  height in both themes, and labels to centred, single-line text.
+
+- **CI test pushes include the v2 branch (#492).** The test workflow now runs
+  for pushes to `main`, `develop`, and `v2`, while preserving pull-request
+  validation.
+
+- **`lmm game show` and the web loader panel say what a BepInEx game still
+  lacks (#443).** Their loader warnings now name the missing step: BepInEx
+  is not installed (with the build this game needs - the Linux archive or
+  the Windows pack - and that lmm does not download it), it is installed
+  but not declared (with the `lmm game edit <game> --loader bepinex` that
+  declares it), or it has never run (so the launch option shown above is
+  the likely cause). These were an adapter "guidance" capability that
+  nothing displayed; that capability is gone from the adapter contract
+  (`docs/adapters.md`).
+- **A Steam Workshop item lmm downloaded itself shows its revision date
+  everywhere (#458).** Every document core returns for a mod now carries
+  `display_version` when its version is a Workshop content id — the
+  revision date, or `-` when lmm has none — whether lmm tracks the item or
+  downloaded it. The web UI, the profile import and switch plan lines,
+  `lmm verify`'s missing row, the locked-mod refusal and `lmm import`'s scan
+  summary read it, so none of them prints the 19-digit id any more.
+
+- **The BepInEx/adapter contradiction warning printed at startup is one
+  line (#456).** A game that declares the BepInEx loader while its adapter
+  is another one was reported on stderr by **every** `lmm` command in a
+  ~900-character paragraph. That line now names the game, the contradiction
+  and where to read more — ``warning: game "human-host" declares the
+BepInEx loader, but lmm ignores it because its mod_path is not the game
+root; run `lmm game show human-host` for the fix``. The full explanation and both
+  remedies stay in `lmm game show`, `lmm verify`, the web loader panel and
+  the output of the `lmm game edit` that creates the contradiction. The
+  "set its mod_path in games.yaml" step is now the command
+  `lmm game edit <id> --mod-path <path>` (with `--adapter bepinex` in the
+  same command where the adapter changes too), and the purge before it is
+  `lmm purge --game <id> --profile <name>` for each profile with files
+  deployed, because a purge of the active profile alone left the move
+  refused.
+
+- **An empty per-source game identifier is refused rather than guessed
+  (#408, #409).** `sources: {<source>: ""}` in `games.yaml` used to fall back
+  to lmm's own game id. That is a guess, and for a source that keeps a local
+  search index it is an expensive one: a game called `valheim` mapped to
+  `thunderstore: ""` downloaded and searched the real Valheim community
+  nobody had named. `lmm game add`, `lmm game edit`, `lmm game detect`,
+  `lmm init`, `POST /api/v1/games` and `PUT /api/v1/games/{id}` now all
+  refuse an empty identifier for any source that needs one — including when
+  the map was **prefilled** from a known-games entry rather than typed — and
+  a search, or an index read, against a game already in that state says
+  which command fixes it. Sources whose mapped value addresses nothing — a
+  directory source, `icarus` — are unaffected, and keep writing and reading
+  an empty mapping exactly as before.
+
+- **Breaking: `lmm mod edit`'s re-link flags are renamed to
+  `--to-source`/`--to-source-id`, and `-s` works again (#396).** `lmm mod`'s
+  persistent `-s/--source` means "which source this mod is in"; `mod edit`
+  declared a local `--source` meaning "re-link it to this source", which
+  replaced the group's flag outright — so `lmm mod edit alpha -s repo`
+  failed with `unknown shorthand flag: 's'`, and there was no way at all to
+  say which of two same-id mods to edit. The re-link target is renamed
+  (there is no `--source` alias: keeping one would re-create the
+  shadowing), and `mod edit` now uses `-s` to pick among same-id mods,
+  refusing with the candidate sources named when it is ambiguous instead of
+  silently editing whichever it found first.
+
+  `--source-id` fails loudly (`unknown flag`), but an old
+  `lmm mod edit <mod> --source <target>` cannot: it resolves to the
+  group's `-s/--source` and is read as a filter. When that filter matches
+  nothing, the error now names `--to-source` so the rename is visible
+  rather than reading as "no such mod".
+
+- **`lmm import` scan mode scores its source matches instead of taking the
+  first hit (#27).** An untracked archive used to be adopted as whatever the
+  first search-capable source returned first, so searching `skyui` could
+  attach the archive to _SkyUI Flashlite_ — a different mod, with a
+  different version history and a different update target, and nothing on
+  screen to say so. Candidates from **every** configured source are now
+  scored against the scanned name (and its parsed version, when the filename
+  carries one), the best one wins, and anything that does not clear the
+  confidence bar leaves the entry **untracked** — imported as local, which
+  is recoverable, rather than mis-attributed, which is not. Ties break
+  deterministically (version agreement, then source ID, then mod ID), and an
+  exact name match ends the lookup without searching the remaining sources.
+  `core.AdoptMatch` gains two additive fields, `score` and `score_class`
+  (`exact`/`strong`/`probable`), and the scan readout annotates any match
+  short of an exact name with its band — in the CLI and in `lmm serve`'s
+  adopt plan alike. Three differences are refused outright however close the
+  rest of the name is: a differing sequel number (_Sim Settlements 2_ is
+  never _Sim Settlements 3_), any difference at all in a pair whose longer
+  name is under twelve letters (_Vortex_ is never _Vertex_, and _SkyUI_ is
+  never _SkyUI SE_), and whole extra words (_RaceMenu_ is not _RaceMenu
+  Special Edition_). A subtitle set off by punctuation is the exception, so
+  the common catalogue shape still adopts: _Ordinator_ matches _Ordinator -
+  Perks of Skyrim_, always as a `[probable match]` so the elided subtitle is
+  visible before you confirm — unless two catalogue rows hang subtitles off
+  the SAME name (_Alternate Start - Live Another Life_ and
+  _Alternate Start - Realm of Lorkhan_), in which case the tie is refused
+  and the entry stays untracked rather than being attached to whichever mod
+  sorts first.
+
+- **An absolute `XDG_CONFIG_HOME`/`XDG_DATA_HOME` now always wins over the
+  legacy directory (#297).** lmm used to prefer an existing
+  `~/.config/lmm` / `~/.local/share/lmm` when the XDG location did not
+  exist yet — including when the user had set the variable explicitly, so
+  a script (or a test harness that set `XDG_DATA_HOME` but left `HOME`
+  alone) silently read and wrote the real install instead of the sandbox
+  it asked for. Setting an XDG variable to an absolute path is now an
+  explicit instruction and decides the location whether or not that
+  directory exists. The legacy fallback still applies when the variable is
+  unset or relative (the XDG spec requires relative values be ignored),
+  which is the case an install predating XDG support is actually in.
+  `--config`/`--data` are unchanged and still beat both. Move the
+  directory (or pass `--data`/`--config`) to keep existing data after
+  setting an XDG variable. Resolving an absolute XDG value no longer consults `$HOME` at all, so a container or service account that sets `XDG_DATA_HOME` and leaves `HOME` unset starts (it used to fail on a legacy path it was never going to read).
+
+- **`lmm search --limit N` fills against a source that reports its page
+  cap (#361).** #109's paging loop stops a source that could not honour the
+  page size it was asked for, because its next offset would skip the rows
+  the clamp left behind. That left the headline symptom in place: the CLI
+  asks for a page the size of `--limit`, CurseForge clamps 100 to 50 and
+  says so, and the search came back with the one page. Core now adopts the
+  size a source REPORTS on its first round as that source's own page size
+  for the rest of the search — by asking for exactly the size the source
+  says it will use, `page × requested` and `page × effective` become the
+  same number, so the next page starts where the last one ended whichever
+  of the two the source multiplies by internally. Guarded: only on a
+  source's first round, only a size smaller than the one requested, and
+  only when the rows returned match the size claimed. A source that clamps
+  without saying so (NexusMods reports neither a clamp nor a total) still
+  answers short and is still asked exactly once.
+
+- **CurseForge update checks are one request per 50 mods, not one per mod
+  (#28).** `Client.GetMods` fanned out a `GET /v1/mods/{id}` per id; it now
+  posts the whole set to CurseForge's batch `POST /v1/mods` endpoint in
+  chunks of 50 (`modBatchSize`, documented at its declaration), and the
+  update-check path goes through it — a 200-mod profile costs 4 round trips
+  instead of 200. `GetMod` is unchanged for single lookups. Partial failures
+  stay partial: a chunk whose request fails does not stop the other chunks,
+  and an id CurseForge omits from its answer (an unknown, delisted or
+  unavailable mod) is named in the error while every mod that did come back
+  is still checked — each skipped mod named once, with its own reason, and
+  the batch error attached once rather than once per mod. The per-mod
+  progress ticks `lmm update` renders are unchanged in count, order and
+  arguments; they now fire as each mod's result is compared rather than
+  before its own request.
+
+- **`lmm search --limit N` pages its sources instead of returning one page
+  each (#109).** The aggregate search asked every source for exactly one
+  page and merged whatever came back, so a source whose page cap sits below
+  its share of the limit decided the answer: `--limit 50` returned 30 with
+  hundreds of matches left. Core now advances each source's OWN page
+  cursor, round by round, until the merged hit count reaches the limit,
+  every source is exhausted, or a documented max-pages guard trips
+  (`maxSearchPagesPerSource`, 10 rounds). A source is paged only at a page
+  size it has shown it can honour: an API that caps the page (CurseForge at
+  50, NexusMods around 30) computes its next offset from the size that was
+  REQUESTED, so paging it at the requested size would fetch rows 100–149
+  while rows 50–99 were never returned — a strided sample with holes, which
+  after ranking is indistinguishable from a complete answer. A source that
+  reports the smaller size it actually served is therefore paged at THAT
+  size instead (#361), which fills the limit with contiguous rows;
+  a source that clamps silently is asked once, so `--limit 100` may still
+  come back with fewer than 100 results, and `has_more` says
+  so, but every result really is among the first ones its source had. A
+  source that reports no total and hands over its whole catalogue in one
+  short page cannot be told apart from one that was clamped, so `has_more`
+  stays deliberately optimistic there — the safe direction, since the next
+  page is merely empty. A source that fails on ANY page — its first as much
+  as a later one — is reported the same way (a warning, with the hits its
+  earlier pages returned kept) and no longer counts as exhausted, so a plain
+  single-round search can now answer `has_more: true` where it used to claim
+  the sources were exhausted. CurseForge now clamps and reports its
+  own effective page size so its offsets stay contiguous. `lmm serve`
+  inherits all of it through `/api/v1/search?limit=`; the search page's own
+  `?page=`/`?page_size=` pagination (no `?limit=`) is deliberately
+  untouched, so its cursor is never advanced behind its back.
+
+- **`lmm update --all` applies as one batch (#324).** The command used to
+  run two separate per-mod loops (auto-policy updates, then `--all`'s
+  remaining ones); it now builds one selection and applies it through
+  core's batch pair. Two visible consequences: the two section headers
+  ("Applying N auto-update(s)…" / "Applying N remaining update(s)…") are one
+  "Applying N update(s)…", the per-mod ✓/✗ lines being unchanged; and
+  **`lmm update --all --json` now applies**, emitting
+  `core.UpdateBatchResult`, where it previously emitted the check document
+  and silently ignored the flag. A `--json` run WITHOUT `--all`, and any
+  `--dry-run`, are unchanged: still the check document, still applying
+  nothing. One consequence worth naming: the batch holds the service's
+  single mutation slot for its **entire** duration rather than releasing it
+  between items, so a toggle or deploy started from `lmm serve`'s web UI
+  while a long batch is running now waits for the whole batch instead of
+  slipping in between two of its items — the price of the one freshness
+  window the batch checks against (see `ApplyUpdateBatch`'s doc comment).
+
+- **`lmm search --category` against NexusMods takes a category NAME
+  (#343).** It used to take a numeric category id, and NexusMods' current
+  `ModsFilter` defines no id-keyed category filter at all — only
+  `categoryName` — so the flag now means the category as NexusMods spells
+  it (`--category Armour`). **CurseForge still takes its numeric id**; the
+  flag's help, the man page and the README name both. The fix that made a
+  category-filtered NexusMods search work again at all is under Fixed
+  (#337, #343).
+
+- **`lmm auth logout --json` prints a document, not prose (#335).** It emits
+  the re-read `app.AuthStatusReport` — the same document
+  `lmm auth status --json` prints and `lmm serve`'s
+  `DELETE /api/v1/auth/{source}` already answered — restoring the
+  one-document-on-stdout invariant every other `--json` command holds to.
+  Plain-text output is unchanged.
+
+- **The README says what lmm actually is, and is not (#405).** The
+  repositioned README (#349) contradicted itself and the code in three
+  places, all corrected: it sent Bethesda users elsewhere while using
+  `skyrim-se` as its running example (the examples now use Baldur's Gate 3
+  throughout, and the Skyrim guidance names the two things that are really
+  missing — a FOMOD option-tree installer and LOOT integration — rather
+  than implying lmm cannot deploy those games); it claimed "no LOOT-style
+  plugin / load-order management" when load ordering has shipped since v1
+  (`lmm profile reorder`, merge and deploy precedence, the web UI's reorder
+  modal), so the non-goal is now stated as **automated** plugin sorting —
+  masterlists and a generated `plugins.txt`; and it described `lmm serve`
+  as "a thin frontend … not a second product", which read as a disclaimer
+  for what is a full second frontend — the CLI for scripting, automation
+  and SSH, the web UI for daily use, one engine underneath. BepInEx
+  (#357) also moves off the non-goals list and onto the roadmap as in
+  progress for 2.0.
+
+- **The Go module path is now `github.com/DonovanMods/linux-mod-manager/v2`**
+  (semantic import versioning, Ruling 14 Option A). Install with
+  `go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest`;
+  every intra-module import path gains the `/v2` segment. The unsuffixed
+  path stays pinned to the v1.x line, so existing `@latest` installs keep
+  resolving to v1.30.1.
+- Building lmm now requires Go 1.27.
+- Default config and data directories honor `XDG_CONFIG_HOME` / `XDG_DATA_HOME` (defaults `~/.config/lmm` and `~/.local/share/lmm`). When an XDG variable is set but its lmm directory does not exist and the legacy one does, the legacy directory is used so existing installs keep working. `--config`/`--data` and `cache_path` still override. Bootstrap (paths, directory hardening, source registration) now lives in `internal/app` so every frontend resolves identically. (#270)
+- `lmm --config X --data Y` no longer requires `$HOME` to be set. (#277)
+- Every I/O method on the core service takes a `context.Context`; long-running loops (downloads, deploys, verify) stop at the next iteration after cancellation, and best-effort recovery paths never inherit the caller's cancellation. (#278)
+- Every `--json` document is now a core/domain type marshalled with
+  `encoding/json/v2` (deterministic key order, 2-space indent, exactly one
+  document on stdout with one trailing newline). The nine commands that
+  supported `--json` no longer project their own view structs — those are
+  deleted — so the CLI's wire shape is the same contract `internal/{core,domain,app}`'s
+  recorded goldens pin, and `lmm serve` will render the same documents. **This
+  is a breaking change for scripts written against the 1.x JSON**; it happens
+  once, in the v2.0.0 window. The error envelope is now
+  `{"error": "...", "details": {...}}`, with `details` present only for typed
+  errors that carry data. See the README's "JSON output" section. (#302)
+
+Per command:
+
+- `lmm list` → `core.ModList`. Each `mods[]` row is the whole
+  `domain.InstalledMod` plus `locked`/`locked_version`/`convert_paks`:
+  `source` → `source_id`, and author, summary, description, game_id,
+  category, downloads, picture_url, source_url, files, dependencies,
+  updated_at, profile_name, installed_at and manual_download are now present.
+- `lmm list --profiles` → `core.ProfileNames` (unchanged shape: `{game_id,
+profiles}`).
+- `lmm status` → `core.StatusReport`; `lmm status -g <id>` →
+  `core.GameStatus`. Each game row is the whole `domain.Game` (source_ids,
+  link_method_explicit, hooks, deploy_mode, convert_paks_explicit), and
+  `is_default`, `installed_mod_count`, `enabled_mod_count` and
+  `conversion_failures` are always present rather than omitted when zero.
+  `convert_paks` is present only for `deploy_mode: compile` games, absent
+  otherwise — the same tri-state convention `list --json` already used for
+  mods. `lmm status -g <id> --json`'s `cache_path` also changes meaning: it
+  used to be the _resolved_ cache root and is now the _configured per-game
+  override_ (absent when unset); the resolved value moved to the new
+  `resolved_cache_path`, which is always present.
+- `lmm search` → `core.SearchReport`. Each hit is the whole `domain.Mod`
+  plus `installed` (`source` → `source_id`); `warnings` is now
+  `[{source_id, error}]` instead of pre-formatted strings and is always
+  present; `total_results` (the untruncated count behind a `--limit`-capped
+  `mods[]`) and `attempted_count` (how many sources could actually search)
+  are new.
+- `lmm verify` → `core.VerifyReport`. Findings and counts move under
+  `result`: `files` → `result.findings`, plus `result.checked` and
+  `result.has_files`. Finding keys are omitted when unset, and a finding may
+  now carry `recorded`/`effective`/`version`.
+- `lmm conflicts` → `core.ConflictReport`. `owner`, each `also_in` entry and
+  `winner` → `load_order_winner` are now `{key, name}` objects, where `key`
+  is `"<source_id>:<mod_id>"`, instead of bare display names.
+- `lmm mod show` → `core.ModDetail`. The source metadata moves under `mod`:
+  `{mod: {...}, installed?: {...}}`. The `installed` block is unchanged.
+- `lmm source list` → `[]app.SourceInfo`. Now indented like every other
+  document (it was the last compact one). `auth` is the enum
+  `none|required|authenticated` (was `n/a|no|yes`) and `capabilities` is a
+  string array (was a comma-joined string). An error row (a source that
+  failed to construct) now omits the `auth` key entirely, rather than
+  carrying it as `""`.
+- `lmm game list` → `[]core.GameListEntry`. Each row is the whole
+  `domain.Game` plus `default`: `sources` → `source_ids`, and link_method,
+  link_method_explicit, cache_path, hooks and convert_paks_explicit are new.
+  `convert_paks` is present only for `deploy_mode: compile` games, absent
+  otherwise — the same tri-state `list --json` already used for mods.
+- `lmm update` (bulk) → `core.UpdateCheckReport`. Each `updates[]` entry is a
+  `domain.Update`: the installed mod under `installed_mod` (carrying
+  `update_policy`) plus `new_version`, replacing the flat
+  mod_id/name/current_version/available_version/update_policy row.
+  `reason: "stale_compile"` → `recompile_reason`, carrying core's own wording.
+- `lmm update <mod-id>` → `core.UpdateApplyResult`; `lmm update rollback` →
+  `core.RollbackResult`. `mod_id` → `mod`, the profile reference
+  `{source_id, mod_id, version, locked}`, so a document names its source;
+  rollback's `name` → `mod_name`; `to_version` is always present; `warnings`
+  and `notes` appear when the operation produced any.
+- `core.DeployResult.Skipped`, `core.PurgeResult.Skipped` and
+  `core.ProfileApplyResult.Failed` are arrays of objects
+  (`{source_id, mod_id, name, version, reason}`) instead of pre-formatted
+  `"<name>: <reason>"` strings — JSON carries data, never rendered text. The
+  plain-text output is unchanged. (#303)
+- `core.RollbackResult` gains `Mod` (a `domain.ModReference`), matching
+  `UpdateApplyResult` — without it the rollback document had no way to say
+  which mod, from which source, it was reporting on. (#302)
+- A `false` boolean or `0` tagged `omitempty` is now emitted rather than
+  omitted (`encoding/json/v2` omits only empty JSON values — `""`, `null`,
+  `{}`, `[]`); `lmm update --json`'s unlocked `updates[]` entries therefore
+  carry `"locked": false` explicitly.
+- `encoding/json/v2` no longer HTML-escapes the angle-bracket and ampersand
+  characters the way `encoding/json` did; string fields that can carry
+  markup (`mod show`'s `description`, `update <mod-id>`'s `changelog`) may
+  now contain those characters literally instead of as escape sequences.
+  Semantically identical after decoding, but pasting lmm's JSON directly
+  into an HTML/script context is no longer incidentally safe.
+- `lmm profile import` now asks "Download and install mods?" **before** it saves the profile,
+  not after: the prompt (and, on a decline, its "Skipped." line) precede the
+  `✓ Imported profile: <name>` line. A save that fails (importing over an existing profile without `--force`) therefore
+  prints the prompt first, and a prompt read failure now leaves the profile unsaved. (#303)
+- `lmm install` and `lmm import` still ask before overwriting another mod's deployed files, and
+  the question still comes after the download/extract step that makes the conflict detectable —
+  but it now comes **before** the `install.before_all`/`install.before_each` hooks instead of
+  after them, so declining costs no hook run at all. Answering "y" re-runs the operation with the
+  cache already warm: `install` re-prints only "Extracting to cache…" (never a second
+  "Downloading …"/"Checksum: …" block). An accepted
+  conflict re-run does not re-download cached files (a same-version reinstall or a local
+  directory source still refreshes its files); hooks run once. A forced hook warning (`--force`
+  with a failing `install.before_all`) now prints after the download lines rather than before
+  them. `--force` still skips the conflict check entirely. **`lmm import <archive>` does not
+  re-run at all** — Ruling 18 below supersedes this entry's import clauses: the conflict question
+  is answered from the plan, before anything is cached, so a declined import writes nothing (and
+  therefore never overwrites a pre-existing entry at a reproducible identity, the residue tracked
+  as #310), and an accepted one neither re-prints its readout nor re-renames its cache entry.
+  (#303)
+- Under `--json` the CLI never reads stdin (spec §4 / Ruling 2): any command that would otherwise
+  prompt for confirmation now fails first with `confirmation required: ...` in the
+  `{"error":...}` envelope, naming the flag (`-y`/`--yes`, `--force`, `-s`/`--source`) or
+  positional argument that decides it non-interactively instead — never a blocking read. `lmm
+game add` and `lmm auth login` have no non-interactive form yet (a flag-driven one is a
+  follow-up issue) and reject `--json` outright with `this command is interactive-only and does
+not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all`/`--select`)
+  both already have one. (#303)
+- Every lock refusal now reads the same way, with one wording per refusal _kind_. `lmm update
+<mod>` (an available update, and a compile game's needed recompile), `lmm update --rollback
+<mod>` and `lmm mod edit`'s re-link refusal each used to word the refusal themselves; all four
+  now print the canonical text the core lock gates return. Those four gates refuse whatever
+  version you name, so their remedy is "`<mod>` is locked at v`<version>` in profile
+  `<profile>` - unlock with 'lmm mod unlock …' first" — moving the lock would not have helped.
+  `lmm update --all`'s combined locked-skip summary reports the same `ApplyUpdate` gate for
+  multiple mods at once, so it names no single mod's version and isn't this canonical sentence —
+  but it dropped the same no-op "move the lock" clause, down to "`N` locked mod(s) not applied:
+  `<mod>`[, `<mod>`...] - unlock to update."
+  The gates that _would_ proceed at the locked version (installing, and `lmm mod edit
+--version`) keep the two-remedy "move the lock with 'lmm mod lock …' or unlock with 'lmm mod
+  unlock …'" wording. Where that "move the lock" remedy survives, its version argument is the
+  literal placeholder `<version>`, not the concrete target version the retired "Move the lock:
+  lmm mod lock -s … -p … `<mod>` 2.0" line filled in — so it is edit-then-run rather than
+  paste-and-run. For the three `lmm update` branches this replaces two lines with two: a
+  context line stating what is available ("Update available: 1.0 → 2.0", "Rollback available:
+  2.0 → 1.0", "Recompile needed for `<mod>` (base pak updated).") followed by the refusal,
+  whose own inline remedy (carrying `-s`/`-p`) supersedes the separate "Move the lock: … |
+  Unlock: …" line. Those three print the refusal sentence exactly as quoted above; `lmm mod
+edit` prints it as an error, so there it is prefixed with `Error: mod is locked:` the way
+  every failing command's message is. The same sentence is also the `refusal` field
+  (`json:"refusal,omitempty"`) on `core.UpdatePlan`/`RollbackPlan`/`RelinkPlan`, though no command
+  emits those documents directly today — `lmm update --dry-run --json` on a locked mod emits its
+  own hand-built result document instead, which carries no `refusal` key. (#294)
+- `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a refused or
+  failed post-install/`toUpdate` profile write behind `--verbose` — today, a LOCKED profile ref
+  (the record in the database moves while the profile ref does not) but also any profile
+  load/save failure (e.g. the profile going missing mid-run). The warning now prints
+  unconditionally to stderr as `Warning: could not update …`, and is carried on the command's
+  `--json` document in `warnings` (stderr stays empty under `--json`). If the run then fails
+  fatally, so that there is no result document to carry them, the `--json` error envelope
+  carries them instead as `details.warnings`. It was previously a `--verbose`-only stdout note,
+  so a default-verbosity run reported success with a silent database-vs-profile divergence.
+  (#294)
+- `lmm update --verbose`'s per-mod progress line (`n/total: <mod>`) now counts across every
+  source's batch instead of restarting at 1 for each source. Checking mods from two sources used
+  to print `1/3 … 3/3` then `1/2 … 2/2`; it now prints one unbroken `1/5 … 5/5`. Each source's own
+  batch position (`Index`/`Total`) is unchanged internally — `UpdateCheckEvent` gains
+  `GlobalIndex`/`GlobalTotal` alongside them — so only the printed numbers move; `--json` is
+  unaffected (progress events are suppressed under `--json` regardless). (#283)
+- Internal: `core.Service` documents and enforces a concurrency contract — query methods run
+  concurrently with each other and with at most one in-flight mutation; mutations are serialized
+  service-wide through a one-slot semaphore acquired with the caller's context, so a waiter is
+  itself cancellable. The games map is guarded by an RWMutex and `SaveGame` replaces `AddGame`.
+  (#279)
+- Internal: the four ad-hoc progress mechanisms (`DeployProgress`, `DownloadProgress`, the
+  `VerifyEvent` callback and the context-smuggled update-check callback) are replaced by one
+  typed event stream (`EventSink`) with a fixed `{"type","data"}` wire envelope pinned by
+  goldens. No user-visible change: CLI output is byte-identical. (#280)
+- Internal: `internal/domain` and `internal/core`'s Plan/Result types now carry snake_case `json`
+  tags, and the int enums (`LinkMethod`, `DeployMode`, `UpdatePolicy`, `VerifyTier`,
+  `VerifyEventKind`, `DeployModClass`) marshal as their text names. Each type's wire shape is
+  pinned by a golden (`internal/{domain,core}/testdata/json/*.golden`) so a shape change is a
+  visible diff. No user-visible change: the CLI's `--json` still emits its own view structs and is
+  byte-identical. (#282)
+- Internal: dead `Installer.InstallBatch`/`UninstallBatch` and their result types removed;
+  `ScanResult` drops its never-populated error pair; `--log-level` is now validated at flag-parse
+  time (before `PersistentPreRunE`), so an invalid value is rejected on every path, including
+  `--help`/`--version`/`completion`, not just paths that opened a `Service` (#284, #285)
+- Internal: `core` resolves hook configuration itself — `DeployOptions`, `UninstallOptions`,
+  `PurgeOptions`, `InstallOptions`, `UpdateOptions` and `RollbackOptions` no longer carry
+  `Hooks`/`HookRunner`/`HookContext`; every flow resolves the merged game/profile hooks and a
+  `HookRunner` from config before its first mutation. No user-visible change: CLI output is
+  byte-identical. (#286)
+- Internal: the file-selection policy (filter/sort by category, primary-file pick, and
+  version-authoritative file resolution) existed three times - once each in `cmd/lmm/install.go`,
+  `cmd/lmm/profile.go`/`deploy.go`, and `internal/core/flows.go` - hand-kept byte-identical. It now
+  lives once, in `internal/core/selection.go`, exported as `core.FilterAndSortFiles` and
+  `core.SelectFilesForVersion` (the primary-file pick is package-internal - see #288); the
+  `cmd/lmm` copies are deleted. No user-visible change: CLI output and error text are
+  byte-identical. (#287)
+- Internal: `lmm install <query>`'s multi-select path no longer has an install engine of its own.
+  `batchInstallMods` - 300 lines in `cmd/lmm/install.go` that hand-rolled hooks, lock gating,
+  download, deploy, persistence and the merged-pak sync, bypassing `ApplyInstall` entirely - is
+  replaced by `core.PlanInstallMany` plus a batch branch of `core.ApplyInstall`, sharing the
+  per-mod engine the dependency path already used. `InstallPlan` gains `Batch`
+  (`[]*InstallPlanEntry`), and every `ApplyInstall` now re-derives the installed-mod set its plan
+  was computed against and refuses a stale one (`core.ErrStalePlan`). The install flow moved out
+  of `flows.go` into `internal/core/install.go`. No user-visible change: CLI output and end state
+  are byte-identical, pinned by `cmd/lmm/testdata/install_batch_golden/`. Behaviour note: because
+  every mod's metadata is now fetched at plan time, `install.before_all`/`install.before_each` run
+  after all of a batch's source reads rather than interleaved with them, matching the dependency
+  path's existing behaviour. (#288)
+- Internal: update and rollback are Plan/Apply — PlanUpdate/PlanUpdateFrom and PlanRollback compute
+  lock, pin, recompile, and cache-existence gating in core; CheckGameUpdates entries carry lock
+  state (loaded once per call, not once per mod); cmd no longer reads profiles for lock checks
+  (#289)
+- Internal: `lmm profile reorder`'s "source:modid"/bare mod-ID resolution moves into
+  `core.Service.ResolveReorder`, exporting `ErrModNotInProfile`/`ErrAmbiguousModID`; `cmd/lmm`'s
+  `doProfileReorder` no longer builds the mod lookup itself, and its no-args listing path reads the
+  profile through `core.ProfileManager.Get` instead of `storage/config` directly. No user-visible
+  change: CLI output and error text are byte-identical. (#290)
+- Internal: `lmm profile apply` is Plan/Apply — the ~360-line converge engine in `cmd/lmm`
+  (three-way diff, source resolution, download, deploy/replace, persistence and the merged-pak
+  sync) moves into `core.PlanProfileApply`/`core.ApplyProfileApply` with a typed plan whose
+  install entries are resolved against their source at plan time, an `ErrStalePlan` freshness
+  guard, and progress reported through the event stream. `cmd/lmm` keeps only the prompt and the
+  printed lines. No user-visible change: CLI output is byte-identical. (#290)
+- Internal: `lmm profile sync` is Plan/Apply — the DB-to-profile diff engine in `cmd/lmm` (the
+  add/remove/update bucket classification, the display-name lookups, and the `pm.AddMod`/
+  `RemoveMod`/`UpsertMod`/merged-pak-sync application) moves into `core.PlanProfileSync`/
+  `core.ApplyProfileSync`, with a missing profile.yaml recorded on the plan (`Missing`) rather than
+  created at plan time, and an `ErrStalePlan` freshness guard. `cmd/lmm` keeps only the prompt and
+  the printed lines. No user-visible change: CLI output is byte-identical. (#290)
+- Internal: `lmm import`'s scan mode is Plan/Apply — the untracked-mod scan, the
+  source-matching loop (`tryMatchSources`), the metadata backfill and the adoption engine
+  (`importExistingMod`, plus a verbatim duplicate of core's own `copyFileStreaming`) move out of
+  `cmd/lmm/import.go` into `core.ScanLocal`/`core.PlanAdopt`/`core.ApplyAdoptBackfill`/
+  `core.ApplyAdopt`, with an `ErrStalePlan` freshness guard and progress reported through the
+  event stream. The backfill is its own small apply because the pre-lift engine saved it, and
+  reported its count, before the confirmation prompt and kept it on a decline. `cmd/lmm` keeps
+  only the prompt and the printed lines; `Importer.ScanModPath`/`FindDuplicateMod` are now
+  package-internal. No user-visible change: CLI output is byte-identical. (#291)
+- Internal: `lmm import`'s archive mode is `core.ImportArchive` — the enrichment/cache-rename tail,
+  the `#139` file resolution and completion marker, the `#197` retained-file fold, conflict gating,
+  the `install.*` hook quartet, the deploy, the DB row, the profile ref and the merged-pak sync move
+  out of `cmd/lmm/import.go` into `internal/core/import_archive.go`, with progress reported through
+  the event stream. It is one mutation rather than a Plan/Apply pair because its only decision point
+  (the overwrite prompt) needs a cache entry that does not exist until the archive is written, so the
+  conflict confirmation stays a callback for Phase 2. `cmd/lmm/hooks.go` is deleted — its last
+  callers were this tail's. No user-visible change: CLI output is byte-identical. (#291)
+- Internal: `DetectedGame` moves to `internal/domain` (Steam keeps it as a type alias), with Steam
+  library scanning exposed through `internal/app.DetectGames` so `internal/core` never imports a
+  concrete source. `lmm game detect`'s conversion from a detected game (`gameFromDetected`) and its
+  games.yaml + default-profile persistence move out of `cmd/lmm/game.go` into
+  `core.GameFromDetected`/`core.ApplyGameDetect`, sharing a new
+  `ProfileManager.CreateOrResetDefault` with `lmm game add`'s default-profile creation. No
+  user-visible change: CLI output is byte-identical. (#292)
+- Internal: `cmd/lmm`'s remaining direct `storage/config`/`source/custom` reads move behind
+  `core`/`app` queries — `core.Service`/`core.ServiceConfig` gain `DefaultGame`/`SetDefaultGame`/
+  `ClearDefaultGame`, `core.ProfileManager` gains `ListNames` (preserving `list --profiles`'
+  tolerance of an unparseable profile that `List` would silently skip), and `SourceDefinition`
+  (with its `Type*`/`*Config` types) moves from `internal/source/custom` to `internal/source`
+  behind new `app.LoadSourceDefinitions`/`LoadSourceDefinitionFile`/`ConstructSource`/
+  `ProbeSource` queries. `cmd/lmm`'s `boundaryAllowList` is now empty. No user-visible change: CLI
+  output is byte-identical. (#292)
+- Internal: the deploy flow gains a Plan/Apply pair — `core.PlanDeploy` returns a `DeployPlan`
+  (per-mod link/remove file sets, the purge set, the hook list and the DeployCompile `MergePlan`)
+  and `core.ApplyDeploy` carries it out, refusing a plan whose installed-mod set has moved
+  (`ErrStalePlan`). `DeployProfile` stays as the Plan+Apply convenience, the flow moves out of
+  `flows.go` into `internal/core/deploy.go`, and `ConvergeDeployedFiles` is unexported (verify's
+  `--fix` pass was its only caller). No user-visible change to existing invocations: CLI output is
+  byte-identical. (#293)
+- Internal: the uninstall and purge flows gain Plan/Apply pairs — `core.PlanUninstall` resolves
+  the mod (including the bare-ID first-match rule the CLI used to apply inline) and returns an
+  `UninstallPlan`; `core.PlanPurge` returns the installed set the confirmation prompt counts and
+  `ApplyPurge` purges that same object; both refuse a stale plan (`ErrStalePlan`).
+  `UninstallMod`/`PurgeProfile` stay as the Plan+Apply conveniences, and the flows move out of
+  `flows.go` into `internal/core/uninstall.go` and `internal/core/purge.go`. No user-visible change
+  to existing invocations: CLI output is byte-identical. (#293)
+- Internal: `SwitchPlan`/`ImportPlan` carry the stale-plan snapshot; `UpdateModVersion`/
+  `ApplyModUpdate` unexported (Phase 2 close, #272)
+- Internal: `core` no longer imports any concrete source package. The `file://` download gate
+  (only a directory source may serve a local-file URL) now asserts a new `source.LocalFileServer`
+  capability interface instead of the concrete `*custom.Directory` type; core's import-boundary
+  test covers every `internal/source/*` package. No behavior change: the same sources are allowed,
+  and a refusal reads the same error text. (#300)
+- Internal: `Service.GetDownloadURL`, `DownloadModToCache`, `SetModFileIDs`, and `SetModVersion` —
+  exported methods with zero callers anywhere in the codebase, including tests — deleted. (#301)
+- Internal: core results carry structured data instead of pre-formatted display strings, so a JSON
+  frontend can render them without re-parsing English. `InstallResult.Installed/Skipped/Failed`
+  become `[]InstalledRef` (source ID, mod ID, name, version, reason), `InstallPlan.DependencyWarnings`
+  becomes `[]DependencyWarning`, `UpdateApplyResult.Applied` splits into
+  `Mod`/`Name`/`FromVersion`/`ToVersion`/`Changelog` plus a `Status` enum (`UpdateStatus`:
+  `updated`, `up_to_date`, `skipped`, `recompiled`, `recompile_available`, `available`,
+  `rolled_back`) and a raw `Reason`, and `RollbackResult` adopts the same `Status`/`Reason` pair.
+  CLI output is byte-identical. (#301)
+- Internal: the read-only commands gain core query types — `internal/core/queries.go` adds
+  `ModList`/`ModListing` (`ListMods`), `StatusReport`/`GameSummary` (`Status`),
+  `GameStatus`/`ProfileSummary` (`GameStatus`), `SearchReport`/`SearchHit` (`Search`),
+  `GameListEntry` (`ListGameEntries`) and `VerifyReport` (`VerifyReport`), and
+  `internal/app` adds `SourceInfo`/`SourceInfos` (the source-definition half of `lmm source
+list` is only visible to app). Each carries snake_case json tags and a recorded golden. The
+  joins `lmm list`, `lmm status`, `lmm search`, `lmm game list`, `lmm source list` and `lmm
+verify` used to assemble inside the CLI now live in core, and their plain-text renderers read
+  the query types; CLI output — text and JSON — is unchanged. (#301)
+- Internal: the last three frontend callbacks leave `core` (spec §4 "no callbacks into the
+  frontend from Apply"). `InstallOptions.ConfirmConflicts` and
+  `ImportArchiveOptions.ConfirmConflicts` are replaced by `AcceptConflicts bool` (implied by
+  `Force`): an unaccepted file conflict is now the typed `*core.ConflictError` (wrapping
+  `domain.ErrFileConflict`, carrying `[]core.Conflict`), returned before any deploy, DB write or
+  profile write, and the frontend prompts and re-runs Apply. `ProfileImportOptions.ConfirmInstall`
+  becomes `Install bool`, decided from `ImportPlan.NeedsRedownload`/`Missing`. New
+  `internal/core/errors.go` also adds `ErrConfirmationRequired` and `ErrInteractiveOnly`. (#303)
+- Internal: `lmm mod edit`, `lmm mod files`, and `lmm mod lock`/`unlock`/`set-update`/`convert`
+  get core flows instead of driving `ProfileManager`/DB writes directly from `cmd/lmm`.
+  `core.PlanRelinkMod`/`ApplyRelinkMod` back `mod edit` (a metadata-only edit or a re-link to a
+  different source/mod ID); `core.ModFiles` backs `mod files`; `core.Service.SetModLock`/
+  `ClearModLock`/`SetModUpdatePolicy`/`SetModConvertPaks` all return a `*core.ModSettingResult`
+  (the mod's full post-write lock/policy/pak-conversion snapshot). No user-visible change: CLI
+  output is byte-identical. (#303)
+- Internal: `internal/core/flows.go` and `flows_test.go` are gone, completing the series of moves CHANGELOG
+  entries for Units H, I, J, and M already recorded. The remaining flows move into subject-named
+  files: `EnableMod`/`DisableMod` (`mod_toggle.go`), `DeployPhase` and its
+  `String`/`MarshalText`/`UnmarshalText` (`phases.go`), `PlanProfileSwitch`/`ApplyProfileSwitch`
+  (`switch.go`), `PlanImport`/`ApplyImport` (`profile_import.go`), plus `runHook` (`hooks.go`),
+  `sameFileIDSet` (`selection.go`), and `orderByProfile` (`deploy.go`). The seven
+  `flows_*_test.go` files are renamed to match: `deploy_compile_readout_test.go`,
+  `deploy_selfheal_test.go`, `install_directory_test.go`, `install_test.go`, `rollback_test.go`,
+  `update_test.go`, `variant_exclusivity_test.go`. No user-visible change: CLI output is
+  byte-identical. (#305)
+- Internal: `core.Service`'s fixture-only exports resolved (Ruling 10): `DownloadMod`, `GetInstaller`, and
+  `PurgeMergedPak` are unexported — production never called the exported forms, only test
+  fixtures did — with `cmd/lmm` tests re-seeded through the real `PlanInstall`/`ApplyInstall`,
+  `PlanDeploy`/`ApplyDeploy`, and `PurgeProfile` flows instead. `SaveInstalledMod`, `GetGameCache`,
+  `SyncMergedPak`, `SaveFileChecksum`, `AvailableModVersions`, `IsSourceAuthenticated`, `ScanLocal`,
+  `Logger`, `SetModLinkMethod`, `SetModDeployed`, and `DeleteInstalledMod` stay exported as
+  documented test-seed APIs or frontend-facing queries, each with a doc comment stating why. No
+  behavior change. (#305)
+- Internal: Every exported identifier in `internal/core`, `internal/domain`, and `internal/app` now carries
+  a doc comment, enforced by a `go/ast` test in each package
+  (`TestExportedIdentifiersHaveDocComments`) rather than tracked as a one-time count.
+  `cmd/lmm`'s import-boundary test drops its allow-list mechanism (empty since Task 1) in favor of
+  asserting the hard rule directly; a new `TestDetailsTypesAreCovered` (Unit P review finding M7)
+  requires every type implementing the `--json` error envelope's `Details() any` extension point
+  to have a named test pinning its wire shape. No behavior change. (#305)
 
 ### Fixed
 
@@ -4203,463 +4649,6 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
   minute and then report that the server had not answered; it now settles
   as soon as the library itself has been re-read.
 
-### Documentation
-
-- Added the current v2.0.0 release-readiness checklist (#495): [checklist](docs/plans/2026-09-22-v2-release-checklist.md) records stabilization evidence, pending owner checks, and tag/publish steps
-
-## [2.0.0] - 2026-08-30
-
-### v2 migration notes
-
-This release removes the interactive TUI (#273); the CLI is the only
-shipped frontend on the v2 line, with a local web UI (`lmm serve`) planned
-for later.
-
-**`--json` output changes once, deliberately, in this release.** Every
-document is now a type from `internal/core`, `internal/domain`, or
-`internal/app` rather than a CLI-only view struct, and the error envelope is
-`{"error": "...", "details": {...}}`; see the README's
-[JSON output](README.md#json-output) section for the full command →
-document table. **`--json` never prompts**: every confirmation now has a
-deciding flag (`-y`/`--yes`, `--force`), and a run that would otherwise
-prompt fails first with the error envelope instead of reading stdin. A mod
-with no source-supplied timestamp now omits `updated_at` entirely instead of
-carrying the zero-value `0001-01-01T00:00:00Z`, matching the
-not-applicable-is-absent convention `convert_paks`/`auth`/`cache_path`
-already use.
-
-A handful of plain-text and event behaviours changed alongside the JSON
-contract, each pinned by a re-recorded capture and detailed below: lock
-refusals now read one canonical wording per refusal kind (#294); a
-multi-source update check's `-v` progress counts globally instead of
-restarting per source (#283); a profile export round-trips hook overrides
-through import (#296); dry-run merged-artifact lines only print when the
-artifact would actually change (Ruling 8); cancellation mid-mutation always
-finishes a database write's paired profile write rather than splitting the
-two (Ruling 16); a declined import conflict on a reproducible identity
-does not restore the entry it overwrote (#310); `lmm game show-default`'s
-plain text moves from stderr to stdout, where every other command's plain
-text already lands (Ruling 17, #309); and an accepted `import <archive>`
-conflict no longer reprints the import readout or mints a second mod ID
-(Ruling 18).
-
-Building lmm now requires Go 1.27. Config and data directories now honor
-`XDG_CONFIG_HOME`/`XDG_DATA_HOME` by default, falling back to the legacy
-paths when they still exist (#274).
-
-The Go module path is now `github.com/DonovanMods/linux-mod-manager/v2`
-(Ruling 14, Option A — semantic import versioning). Install with
-`go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest`; the
-unsuffixed `go install github.com/DonovanMods/linux-mod-manager/cmd/lmm@latest`
-still resolves to v1.30.1, since Go's module rules do not treat a `v2.0.0+`
-tag as a valid version for a module path without the `/v2` suffix. The
-decision and its consequences are recorded in
-`docs/plans/archive/v2.0.0-release-checklist.md`.
-
-This preamble, the README's v2 architecture and JSON-contract sections, and
-`docs/plans/archive/v2.0.0-release-checklist.md` were themselves written as
-the phase's docs unit (#306).
-
-### Added
-
-- `--log-level` (off|error|warn|info|debug) writes diagnostics to stderr; default off. (#281)
-- `lmm deploy --dry-run` prints what a deploy would do — the mods it would touch in load order,
-  the files each would link (and any stale ones it would remove), what a `--purge` pass would
-  remove first, the merged-artifact readout on a compile game, and the hooks that would run —
-  without changing anything. `--verbose` adds the per-file detail. (#293)
-- `lmm uninstall --dry-run` prints what an uninstall would do — which mod the ID resolves to
-  (with its source, so a bare ID's first-match rule is visible), how many files would leave the
-  game directory, what happens to the cache, and the hooks that would run — without changing
-  anything. `--verbose` lists the files. On a compile-mode game it also states what would happen
-  to the profile's merged artifact — resynced, or removed once the last merge source goes — and
-  says nothing at all when the uninstall would leave the artifact exactly as it is. (#293, #304)
-- `lmm purge --dry-run` prints what a purge would do — the mods it would undeploy, what happens
-  to their records, and the hooks that would run — without changing anything and without
-  prompting. On a compile-mode game with a merged artifact deployed it also states that the
-  artifact would be removed too; with nothing merged yet there is nothing to remove and the line
-  is absent. (#293, #304)
-- `lmm profile switch` and `lmm profile sync` gain `-y`/`--yes` to skip their confirmation
-  prompt; `lmm profile import` gains `-y`/`--yes` to answer its "Download and install mods?"
-  prompt without a stdin read. `lmm game detect` gains `--all` (select every not-yet-configured
-  detected game — the same set the interactive "all" answer selects) and `--select <indices>`
-  (the same 1-based indices the prompt accepts, including an already-configured game's index for
-  a repair); the two are mutually exclusive and both skip the prompt entirely. As a side effect of
-  the same prompt-reading change, `lmm game detect` on a closed/EOF stdin (no `--all`/`--select`)
-  now reads that as an empty answer and prints `No games added.` exiting `0`, instead of
-  `Error: reading input: EOF` exiting `1`; every other prompting command's EOF behaviour is
-  unchanged. (#303)
-- **`--json` on every mutating command.** `install`, `import` (archive and scan), `deploy`,
-  `uninstall`, `purge`, `profile apply/switch/sync/import/create/delete/reorder`,
-  `mod enable/disable/lock/unlock/set-update/convert/edit` and
-  `game detect/set-default/clear-default` now emit their core result document; with `--dry-run`
-  they emit the plan document instead of its rendering. Progress and per-mod status lines are
-  suppressed under `--json`, so stdout holds exactly one document and stderr stays empty apart
-  from `--log-level` diagnostics. Two new core documents back this: `core.ProfileResult`
-  (`{profile}`) for the profile-management commands and `core.SettingsResult` (`{default_game}`)
-  for `game set-default`/`clear-default`. `--json` never prompts: a confirmation with no deciding
-  flag fails before mutating anything with the error envelope, and an `install --json` or
-  `import <archive> --json` blocked by file conflicts reports them as `details.conflicts` (pass
-  `--force` to accept). `lmm mod files` honours `--json` too, emitting `core.ModFilesReport`.
-  `install`'s `files_deployed` (and plain-text `Files deployed: N`) now counts the cache entry's
-  files once instead of accumulating a per-archive count, which previously over-counted mods
-  installed from two or more extracted archives (e.g. 3 → 2). (#303)
-- `lmm profile apply`, `lmm profile switch` and `lmm profile sync` gain `--dry-run`: they print
-  the same plan preview the live run shows, under a `<Verb> plan for profile "<name>" (dry run)`
-  header, and change nothing — including the profile-creating and default-switching writes a
-  no-changes run would otherwise still perform. (#303)
-- **`--json` on the five remaining commands.** `profile list`, `auth status`, `profile export`,
-  `source validate` and `game show-default` now honour `--json` too, closing the last gap left by
-  #303: `lmm profile list` emits `core.ProfileListing`; `lmm auth status` emits
-  `app.AuthStatusReport`; `lmm profile export` emits `domain.ExportedProfile` (the plain path keeps
-  writing the YAML document, unchanged); `lmm source validate` emits `app.SourceValidationReport`,
-  with an invalid definition (or a failed `--probe`) still exiting non-zero under an error envelope
-  whose `details` carries the report; `lmm game show-default` emits `core.DefaultGame` (see Ruling
-  17, above, for its plain-text stream move). (#309)
-
-### Changed
-
-- **The Go module path is now `github.com/DonovanMods/linux-mod-manager/v2`**
-  (semantic import versioning, Ruling 14 Option A). Install with
-  `go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest`;
-  every intra-module import path gains the `/v2` segment. The unsuffixed
-  path stays pinned to the v1.x line, so existing `@latest` installs keep
-  resolving to v1.30.1.
-- Building lmm now requires Go 1.27.
-- Default config and data directories honor `XDG_CONFIG_HOME` / `XDG_DATA_HOME` (defaults `~/.config/lmm` and `~/.local/share/lmm`). When an XDG variable is set but its lmm directory does not exist and the legacy one does, the legacy directory is used so existing installs keep working. `--config`/`--data` and `cache_path` still override. Bootstrap (paths, directory hardening, source registration) now lives in `internal/app` so every frontend resolves identically. (#270)
-- `lmm --config X --data Y` no longer requires `$HOME` to be set. (#277)
-- Every I/O method on the core service takes a `context.Context`; long-running loops (downloads, deploys, verify) stop at the next iteration after cancellation, and best-effort recovery paths never inherit the caller's cancellation. (#278)
-- Every `--json` document is now a core/domain type marshalled with
-  `encoding/json/v2` (deterministic key order, 2-space indent, exactly one
-  document on stdout with one trailing newline). The nine commands that
-  supported `--json` no longer project their own view structs — those are
-  deleted — so the CLI's wire shape is the same contract `internal/{core,domain,app}`'s
-  recorded goldens pin, and `lmm serve` will render the same documents. **This
-  is a breaking change for scripts written against the 1.x JSON**; it happens
-  once, in the v2.0.0 window. The error envelope is now
-  `{"error": "...", "details": {...}}`, with `details` present only for typed
-  errors that carry data. See the README's "JSON output" section. (#302)
-
-Per command:
-
-- `lmm list` → `core.ModList`. Each `mods[]` row is the whole
-  `domain.InstalledMod` plus `locked`/`locked_version`/`convert_paks`:
-  `source` → `source_id`, and author, summary, description, game_id,
-  category, downloads, picture_url, source_url, files, dependencies,
-  updated_at, profile_name, installed_at and manual_download are now present.
-- `lmm list --profiles` → `core.ProfileNames` (unchanged shape: `{game_id,
-profiles}`).
-- `lmm status` → `core.StatusReport`; `lmm status -g <id>` →
-  `core.GameStatus`. Each game row is the whole `domain.Game` (source_ids,
-  link_method_explicit, hooks, deploy_mode, convert_paks_explicit), and
-  `is_default`, `installed_mod_count`, `enabled_mod_count` and
-  `conversion_failures` are always present rather than omitted when zero.
-  `convert_paks` is present only for `deploy_mode: compile` games, absent
-  otherwise — the same tri-state convention `list --json` already used for
-  mods. `lmm status -g <id> --json`'s `cache_path` also changes meaning: it
-  used to be the _resolved_ cache root and is now the _configured per-game
-  override_ (absent when unset); the resolved value moved to the new
-  `resolved_cache_path`, which is always present.
-- `lmm search` → `core.SearchReport`. Each hit is the whole `domain.Mod`
-  plus `installed` (`source` → `source_id`); `warnings` is now
-  `[{source_id, error}]` instead of pre-formatted strings and is always
-  present; `total_results` (the untruncated count behind a `--limit`-capped
-  `mods[]`) and `attempted_count` (how many sources could actually search)
-  are new.
-- `lmm verify` → `core.VerifyReport`. Findings and counts move under
-  `result`: `files` → `result.findings`, plus `result.checked` and
-  `result.has_files`. Finding keys are omitted when unset, and a finding may
-  now carry `recorded`/`effective`/`version`.
-- `lmm conflicts` → `core.ConflictReport`. `owner`, each `also_in` entry and
-  `winner` → `load_order_winner` are now `{key, name}` objects, where `key`
-  is `"<source_id>:<mod_id>"`, instead of bare display names.
-- `lmm mod show` → `core.ModDetail`. The source metadata moves under `mod`:
-  `{mod: {...}, installed?: {...}}`. The `installed` block is unchanged.
-- `lmm source list` → `[]app.SourceInfo`. Now indented like every other
-  document (it was the last compact one). `auth` is the enum
-  `none|required|authenticated` (was `n/a|no|yes`) and `capabilities` is a
-  string array (was a comma-joined string). An error row (a source that
-  failed to construct) now omits the `auth` key entirely, rather than
-  carrying it as `""`.
-- `lmm game list` → `[]core.GameListEntry`. Each row is the whole
-  `domain.Game` plus `default`: `sources` → `source_ids`, and link_method,
-  link_method_explicit, cache_path, hooks and convert_paks_explicit are new.
-  `convert_paks` is present only for `deploy_mode: compile` games, absent
-  otherwise — the same tri-state `list --json` already used for mods.
-- `lmm update` (bulk) → `core.UpdateCheckReport`. Each `updates[]` entry is a
-  `domain.Update`: the installed mod under `installed_mod` (carrying
-  `update_policy`) plus `new_version`, replacing the flat
-  mod_id/name/current_version/available_version/update_policy row.
-  `reason: "stale_compile"` → `recompile_reason`, carrying core's own wording.
-- `lmm update <mod-id>` → `core.UpdateApplyResult`; `lmm update rollback` →
-  `core.RollbackResult`. `mod_id` → `mod`, the profile reference
-  `{source_id, mod_id, version, locked}`, so a document names its source;
-  rollback's `name` → `mod_name`; `to_version` is always present; `warnings`
-  and `notes` appear when the operation produced any.
-- `core.DeployResult.Skipped`, `core.PurgeResult.Skipped` and
-  `core.ProfileApplyResult.Failed` are arrays of objects
-  (`{source_id, mod_id, name, version, reason}`) instead of pre-formatted
-  `"<name>: <reason>"` strings — JSON carries data, never rendered text. The
-  plain-text output is unchanged. (#303)
-- `core.RollbackResult` gains `Mod` (a `domain.ModReference`), matching
-  `UpdateApplyResult` — without it the rollback document had no way to say
-  which mod, from which source, it was reporting on. (#302)
-- A `false` boolean or `0` tagged `omitempty` is now emitted rather than
-  omitted (`encoding/json/v2` omits only empty JSON values — `""`, `null`,
-  `{}`, `[]`); `lmm update --json`'s unlocked `updates[]` entries therefore
-  carry `"locked": false` explicitly.
-- `encoding/json/v2` no longer HTML-escapes the angle-bracket and ampersand
-  characters the way `encoding/json` did; string fields that can carry
-  markup (`mod show`'s `description`, `update <mod-id>`'s `changelog`) may
-  now contain those characters literally instead of as escape sequences.
-  Semantically identical after decoding, but pasting lmm's JSON directly
-  into an HTML/script context is no longer incidentally safe.
-- `lmm profile import` now asks "Download and install mods?" **before** it saves the profile,
-  not after: the prompt (and, on a decline, its "Skipped." line) precede the
-  `✓ Imported profile: <name>` line. A save that fails (importing over an existing profile without `--force`) therefore
-  prints the prompt first, and a prompt read failure now leaves the profile unsaved. (#303)
-- `lmm install` and `lmm import` still ask before overwriting another mod's deployed files, and
-  the question still comes after the download/extract step that makes the conflict detectable —
-  but it now comes **before** the `install.before_all`/`install.before_each` hooks instead of
-  after them, so declining costs no hook run at all. Answering "y" re-runs the operation with the
-  cache already warm: `install` re-prints only "Extracting to cache…" (never a second
-  "Downloading …"/"Checksum: …" block). An accepted
-  conflict re-run does not re-download cached files (a same-version reinstall or a local
-  directory source still refreshes its files); hooks run once. A forced hook warning (`--force`
-  with a failing `install.before_all`) now prints after the download lines rather than before
-  them. `--force` still skips the conflict check entirely. **`lmm import <archive>` does not
-  re-run at all** — Ruling 18 below supersedes this entry's import clauses: the conflict question
-  is answered from the plan, before anything is cached, so a declined import writes nothing (and
-  therefore never overwrites a pre-existing entry at a reproducible identity, the residue tracked
-  as #310), and an accepted one neither re-prints its readout nor re-renames its cache entry.
-  (#303)
-- Under `--json` the CLI never reads stdin (spec §4 / Ruling 2): any command that would otherwise
-  prompt for confirmation now fails first with `confirmation required: ...` in the
-  `{"error":...}` envelope, naming the flag (`-y`/`--yes`, `--force`, `-s`/`--source`) or
-  positional argument that decides it non-interactively instead — never a blocking read. `lmm
-game add` and `lmm auth login` have no non-interactive form yet (a flag-driven one is a
-  follow-up issue) and reject `--json` outright with `this command is interactive-only and does
-not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all`/`--select`)
-  both already have one. (#303)
-- Every lock refusal now reads the same way, with one wording per refusal _kind_. `lmm update
-<mod>` (an available update, and a compile game's needed recompile), `lmm update --rollback
-<mod>` and `lmm mod edit`'s re-link refusal each used to word the refusal themselves; all four
-  now print the canonical text the core lock gates return. Those four gates refuse whatever
-  version you name, so their remedy is "`<mod>` is locked at v`<version>` in profile
-  `<profile>` - unlock with 'lmm mod unlock …' first" — moving the lock would not have helped.
-  `lmm update --all`'s combined locked-skip summary reports the same `ApplyUpdate` gate for
-  multiple mods at once, so it names no single mod's version and isn't this canonical sentence —
-  but it dropped the same no-op "move the lock" clause, down to "`N` locked mod(s) not applied:
-  `<mod>`[, `<mod>`...] - unlock to update."
-  The gates that _would_ proceed at the locked version (installing, and `lmm mod edit
---version`) keep the two-remedy "move the lock with 'lmm mod lock …' or unlock with 'lmm mod
-  unlock …'" wording. Where that "move the lock" remedy survives, its version argument is the
-  literal placeholder `<version>`, not the concrete target version the retired "Move the lock:
-  lmm mod lock -s … -p … `<mod>` 2.0" line filled in — so it is edit-then-run rather than
-  paste-and-run. For the three `lmm update` branches this replaces two lines with two: a
-  context line stating what is available ("Update available: 1.0 → 2.0", "Rollback available:
-  2.0 → 1.0", "Recompile needed for `<mod>` (base pak updated).") followed by the refusal,
-  whose own inline remedy (carrying `-s`/`-p`) supersedes the separate "Move the lock: … |
-  Unlock: …" line. Those three print the refusal sentence exactly as quoted above; `lmm mod
-edit` prints it as an error, so there it is prefixed with `Error: mod is locked:` the way
-  every failing command's message is. The same sentence is also the `refusal` field
-  (`json:"refusal,omitempty"`) on `core.UpdatePlan`/`RollbackPlan`/`RelinkPlan`, though no command
-  emits those documents directly today — `lmm update --dry-run --json` on a locked mod emits its
-  own hand-built result document instead, which carries no `refusal` key. (#294)
-- `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a refused or
-  failed post-install/`toUpdate` profile write behind `--verbose` — today, a LOCKED profile ref
-  (the record in the database moves while the profile ref does not) but also any profile
-  load/save failure (e.g. the profile going missing mid-run). The warning now prints
-  unconditionally to stderr as `Warning: could not update …`, and is carried on the command's
-  `--json` document in `warnings` (stderr stays empty under `--json`). If the run then fails
-  fatally, so that there is no result document to carry them, the `--json` error envelope
-  carries them instead as `details.warnings`. It was previously a `--verbose`-only stdout note,
-  so a default-verbosity run reported success with a silent database-vs-profile divergence.
-  (#294)
-- `lmm update --verbose`'s per-mod progress line (`n/total: <mod>`) now counts across every
-  source's batch instead of restarting at 1 for each source. Checking mods from two sources used
-  to print `1/3 … 3/3` then `1/2 … 2/2`; it now prints one unbroken `1/5 … 5/5`. Each source's own
-  batch position (`Index`/`Total`) is unchanged internally — `UpdateCheckEvent` gains
-  `GlobalIndex`/`GlobalTotal` alongside them — so only the printed numbers move; `--json` is
-  unaffected (progress events are suppressed under `--json` regardless). (#283)
-- Internal: `core.Service` documents and enforces a concurrency contract — query methods run
-  concurrently with each other and with at most one in-flight mutation; mutations are serialized
-  service-wide through a one-slot semaphore acquired with the caller's context, so a waiter is
-  itself cancellable. The games map is guarded by an RWMutex and `SaveGame` replaces `AddGame`.
-  (#279)
-- Internal: the four ad-hoc progress mechanisms (`DeployProgress`, `DownloadProgress`, the
-  `VerifyEvent` callback and the context-smuggled update-check callback) are replaced by one
-  typed event stream (`EventSink`) with a fixed `{"type","data"}` wire envelope pinned by
-  goldens. No user-visible change: CLI output is byte-identical. (#280)
-- Internal: `internal/domain` and `internal/core`'s Plan/Result types now carry snake_case `json`
-  tags, and the int enums (`LinkMethod`, `DeployMode`, `UpdatePolicy`, `VerifyTier`,
-  `VerifyEventKind`, `DeployModClass`) marshal as their text names. Each type's wire shape is
-  pinned by a golden (`internal/{domain,core}/testdata/json/*.golden`) so a shape change is a
-  visible diff. No user-visible change: the CLI's `--json` still emits its own view structs and is
-  byte-identical. (#282)
-- Internal: dead `Installer.InstallBatch`/`UninstallBatch` and their result types removed;
-  `ScanResult` drops its never-populated error pair; `--log-level` is now validated at flag-parse
-  time (before `PersistentPreRunE`), so an invalid value is rejected on every path, including
-  `--help`/`--version`/`completion`, not just paths that opened a `Service` (#284, #285)
-- Internal: `core` resolves hook configuration itself — `DeployOptions`, `UninstallOptions`,
-  `PurgeOptions`, `InstallOptions`, `UpdateOptions` and `RollbackOptions` no longer carry
-  `Hooks`/`HookRunner`/`HookContext`; every flow resolves the merged game/profile hooks and a
-  `HookRunner` from config before its first mutation. No user-visible change: CLI output is
-  byte-identical. (#286)
-- Internal: the file-selection policy (filter/sort by category, primary-file pick, and
-  version-authoritative file resolution) existed three times - once each in `cmd/lmm/install.go`,
-  `cmd/lmm/profile.go`/`deploy.go`, and `internal/core/flows.go` - hand-kept byte-identical. It now
-  lives once, in `internal/core/selection.go`, exported as `core.FilterAndSortFiles` and
-  `core.SelectFilesForVersion` (the primary-file pick is package-internal - see #288); the
-  `cmd/lmm` copies are deleted. No user-visible change: CLI output and error text are
-  byte-identical. (#287)
-- Internal: `lmm install <query>`'s multi-select path no longer has an install engine of its own.
-  `batchInstallMods` - 300 lines in `cmd/lmm/install.go` that hand-rolled hooks, lock gating,
-  download, deploy, persistence and the merged-pak sync, bypassing `ApplyInstall` entirely - is
-  replaced by `core.PlanInstallMany` plus a batch branch of `core.ApplyInstall`, sharing the
-  per-mod engine the dependency path already used. `InstallPlan` gains `Batch`
-  (`[]*InstallPlanEntry`), and every `ApplyInstall` now re-derives the installed-mod set its plan
-  was computed against and refuses a stale one (`core.ErrStalePlan`). The install flow moved out
-  of `flows.go` into `internal/core/install.go`. No user-visible change: CLI output and end state
-  are byte-identical, pinned by `cmd/lmm/testdata/install_batch_golden/`. Behaviour note: because
-  every mod's metadata is now fetched at plan time, `install.before_all`/`install.before_each` run
-  after all of a batch's source reads rather than interleaved with them, matching the dependency
-  path's existing behaviour. (#288)
-- Internal: update and rollback are Plan/Apply — PlanUpdate/PlanUpdateFrom and PlanRollback compute
-  lock, pin, recompile, and cache-existence gating in core; CheckGameUpdates entries carry lock
-  state (loaded once per call, not once per mod); cmd no longer reads profiles for lock checks
-  (#289)
-- Internal: `lmm profile reorder`'s "source:modid"/bare mod-ID resolution moves into
-  `core.Service.ResolveReorder`, exporting `ErrModNotInProfile`/`ErrAmbiguousModID`; `cmd/lmm`'s
-  `doProfileReorder` no longer builds the mod lookup itself, and its no-args listing path reads the
-  profile through `core.ProfileManager.Get` instead of `storage/config` directly. No user-visible
-  change: CLI output and error text are byte-identical. (#290)
-- Internal: `lmm profile apply` is Plan/Apply — the ~360-line converge engine in `cmd/lmm`
-  (three-way diff, source resolution, download, deploy/replace, persistence and the merged-pak
-  sync) moves into `core.PlanProfileApply`/`core.ApplyProfileApply` with a typed plan whose
-  install entries are resolved against their source at plan time, an `ErrStalePlan` freshness
-  guard, and progress reported through the event stream. `cmd/lmm` keeps only the prompt and the
-  printed lines. No user-visible change: CLI output is byte-identical. (#290)
-- Internal: `lmm profile sync` is Plan/Apply — the DB-to-profile diff engine in `cmd/lmm` (the
-  add/remove/update bucket classification, the display-name lookups, and the `pm.AddMod`/
-  `RemoveMod`/`UpsertMod`/merged-pak-sync application) moves into `core.PlanProfileSync`/
-  `core.ApplyProfileSync`, with a missing profile.yaml recorded on the plan (`Missing`) rather than
-  created at plan time, and an `ErrStalePlan` freshness guard. `cmd/lmm` keeps only the prompt and
-  the printed lines. No user-visible change: CLI output is byte-identical. (#290)
-- Internal: `lmm import`'s scan mode is Plan/Apply — the untracked-mod scan, the
-  source-matching loop (`tryMatchSources`), the metadata backfill and the adoption engine
-  (`importExistingMod`, plus a verbatim duplicate of core's own `copyFileStreaming`) move out of
-  `cmd/lmm/import.go` into `core.ScanLocal`/`core.PlanAdopt`/`core.ApplyAdoptBackfill`/
-  `core.ApplyAdopt`, with an `ErrStalePlan` freshness guard and progress reported through the
-  event stream. The backfill is its own small apply because the pre-lift engine saved it, and
-  reported its count, before the confirmation prompt and kept it on a decline. `cmd/lmm` keeps
-  only the prompt and the printed lines; `Importer.ScanModPath`/`FindDuplicateMod` are now
-  package-internal. No user-visible change: CLI output is byte-identical. (#291)
-- Internal: `lmm import`'s archive mode is `core.ImportArchive` — the enrichment/cache-rename tail,
-  the `#139` file resolution and completion marker, the `#197` retained-file fold, conflict gating,
-  the `install.*` hook quartet, the deploy, the DB row, the profile ref and the merged-pak sync move
-  out of `cmd/lmm/import.go` into `internal/core/import_archive.go`, with progress reported through
-  the event stream. It is one mutation rather than a Plan/Apply pair because its only decision point
-  (the overwrite prompt) needs a cache entry that does not exist until the archive is written, so the
-  conflict confirmation stays a callback for Phase 2. `cmd/lmm/hooks.go` is deleted — its last
-  callers were this tail's. No user-visible change: CLI output is byte-identical. (#291)
-- Internal: `DetectedGame` moves to `internal/domain` (Steam keeps it as a type alias), with Steam
-  library scanning exposed through `internal/app.DetectGames` so `internal/core` never imports a
-  concrete source. `lmm game detect`'s conversion from a detected game (`gameFromDetected`) and its
-  games.yaml + default-profile persistence move out of `cmd/lmm/game.go` into
-  `core.GameFromDetected`/`core.ApplyGameDetect`, sharing a new
-  `ProfileManager.CreateOrResetDefault` with `lmm game add`'s default-profile creation. No
-  user-visible change: CLI output is byte-identical. (#292)
-- Internal: `cmd/lmm`'s remaining direct `storage/config`/`source/custom` reads move behind
-  `core`/`app` queries — `core.Service`/`core.ServiceConfig` gain `DefaultGame`/`SetDefaultGame`/
-  `ClearDefaultGame`, `core.ProfileManager` gains `ListNames` (preserving `list --profiles`'
-  tolerance of an unparseable profile that `List` would silently skip), and `SourceDefinition`
-  (with its `Type*`/`*Config` types) moves from `internal/source/custom` to `internal/source`
-  behind new `app.LoadSourceDefinitions`/`LoadSourceDefinitionFile`/`ConstructSource`/
-  `ProbeSource` queries. `cmd/lmm`'s `boundaryAllowList` is now empty. No user-visible change: CLI
-  output is byte-identical. (#292)
-- Internal: the deploy flow gains a Plan/Apply pair — `core.PlanDeploy` returns a `DeployPlan`
-  (per-mod link/remove file sets, the purge set, the hook list and the DeployCompile `MergePlan`)
-  and `core.ApplyDeploy` carries it out, refusing a plan whose installed-mod set has moved
-  (`ErrStalePlan`). `DeployProfile` stays as the Plan+Apply convenience, the flow moves out of
-  `flows.go` into `internal/core/deploy.go`, and `ConvergeDeployedFiles` is unexported (verify's
-  `--fix` pass was its only caller). No user-visible change to existing invocations: CLI output is
-  byte-identical. (#293)
-- Internal: the uninstall and purge flows gain Plan/Apply pairs — `core.PlanUninstall` resolves
-  the mod (including the bare-ID first-match rule the CLI used to apply inline) and returns an
-  `UninstallPlan`; `core.PlanPurge` returns the installed set the confirmation prompt counts and
-  `ApplyPurge` purges that same object; both refuse a stale plan (`ErrStalePlan`).
-  `UninstallMod`/`PurgeProfile` stay as the Plan+Apply conveniences, and the flows move out of
-  `flows.go` into `internal/core/uninstall.go` and `internal/core/purge.go`. No user-visible change
-  to existing invocations: CLI output is byte-identical. (#293)
-- Internal: `SwitchPlan`/`ImportPlan` carry the stale-plan snapshot; `UpdateModVersion`/
-  `ApplyModUpdate` unexported (Phase 2 close, #272)
-- Internal: `core` no longer imports any concrete source package. The `file://` download gate
-  (only a directory source may serve a local-file URL) now asserts a new `source.LocalFileServer`
-  capability interface instead of the concrete `*custom.Directory` type; core's import-boundary
-  test covers every `internal/source/*` package. No behavior change: the same sources are allowed,
-  and a refusal reads the same error text. (#300)
-- Internal: `Service.GetDownloadURL`, `DownloadModToCache`, `SetModFileIDs`, and `SetModVersion` —
-  exported methods with zero callers anywhere in the codebase, including tests — deleted. (#301)
-- Internal: core results carry structured data instead of pre-formatted display strings, so a JSON
-  frontend can render them without re-parsing English. `InstallResult.Installed/Skipped/Failed`
-  become `[]InstalledRef` (source ID, mod ID, name, version, reason), `InstallPlan.DependencyWarnings`
-  becomes `[]DependencyWarning`, `UpdateApplyResult.Applied` splits into
-  `Mod`/`Name`/`FromVersion`/`ToVersion`/`Changelog` plus a `Status` enum (`UpdateStatus`:
-  `updated`, `up_to_date`, `skipped`, `recompiled`, `recompile_available`, `available`,
-  `rolled_back`) and a raw `Reason`, and `RollbackResult` adopts the same `Status`/`Reason` pair.
-  CLI output is byte-identical. (#301)
-- Internal: the read-only commands gain core query types — `internal/core/queries.go` adds
-  `ModList`/`ModListing` (`ListMods`), `StatusReport`/`GameSummary` (`Status`),
-  `GameStatus`/`ProfileSummary` (`GameStatus`), `SearchReport`/`SearchHit` (`Search`),
-  `GameListEntry` (`ListGameEntries`) and `VerifyReport` (`VerifyReport`), and
-  `internal/app` adds `SourceInfo`/`SourceInfos` (the source-definition half of `lmm source
-list` is only visible to app). Each carries snake_case json tags and a recorded golden. The
-  joins `lmm list`, `lmm status`, `lmm search`, `lmm game list`, `lmm source list` and `lmm
-verify` used to assemble inside the CLI now live in core, and their plain-text renderers read
-  the query types; CLI output — text and JSON — is unchanged. (#301)
-- Internal: the last three frontend callbacks leave `core` (spec §4 "no callbacks into the
-  frontend from Apply"). `InstallOptions.ConfirmConflicts` and
-  `ImportArchiveOptions.ConfirmConflicts` are replaced by `AcceptConflicts bool` (implied by
-  `Force`): an unaccepted file conflict is now the typed `*core.ConflictError` (wrapping
-  `domain.ErrFileConflict`, carrying `[]core.Conflict`), returned before any deploy, DB write or
-  profile write, and the frontend prompts and re-runs Apply. `ProfileImportOptions.ConfirmInstall`
-  becomes `Install bool`, decided from `ImportPlan.NeedsRedownload`/`Missing`. New
-  `internal/core/errors.go` also adds `ErrConfirmationRequired` and `ErrInteractiveOnly`. (#303)
-- Internal: `lmm mod edit`, `lmm mod files`, and `lmm mod lock`/`unlock`/`set-update`/`convert`
-  get core flows instead of driving `ProfileManager`/DB writes directly from `cmd/lmm`.
-  `core.PlanRelinkMod`/`ApplyRelinkMod` back `mod edit` (a metadata-only edit or a re-link to a
-  different source/mod ID); `core.ModFiles` backs `mod files`; `core.Service.SetModLock`/
-  `ClearModLock`/`SetModUpdatePolicy`/`SetModConvertPaks` all return a `*core.ModSettingResult`
-  (the mod's full post-write lock/policy/pak-conversion snapshot). No user-visible change: CLI
-  output is byte-identical. (#303)
-- Internal: `internal/core/flows.go` and `flows_test.go` are gone, completing the series of moves CHANGELOG
-  entries for Units H, I, J, and M already recorded. The remaining flows move into subject-named
-  files: `EnableMod`/`DisableMod` (`mod_toggle.go`), `DeployPhase` and its
-  `String`/`MarshalText`/`UnmarshalText` (`phases.go`), `PlanProfileSwitch`/`ApplyProfileSwitch`
-  (`switch.go`), `PlanImport`/`ApplyImport` (`profile_import.go`), plus `runHook` (`hooks.go`),
-  `sameFileIDSet` (`selection.go`), and `orderByProfile` (`deploy.go`). The seven
-  `flows_*_test.go` files are renamed to match: `deploy_compile_readout_test.go`,
-  `deploy_selfheal_test.go`, `install_directory_test.go`, `install_test.go`, `rollback_test.go`,
-  `update_test.go`, `variant_exclusivity_test.go`. No user-visible change: CLI output is
-  byte-identical. (#305)
-- Internal: `core.Service`'s fixture-only exports resolved (Ruling 10): `DownloadMod`, `GetInstaller`, and
-  `PurgeMergedPak` are unexported — production never called the exported forms, only test
-  fixtures did — with `cmd/lmm` tests re-seeded through the real `PlanInstall`/`ApplyInstall`,
-  `PlanDeploy`/`ApplyDeploy`, and `PurgeProfile` flows instead. `SaveInstalledMod`, `GetGameCache`,
-  `SyncMergedPak`, `SaveFileChecksum`, `AvailableModVersions`, `IsSourceAuthenticated`, `ScanLocal`,
-  `Logger`, `SetModLinkMethod`, `SetModDeployed`, and `DeleteInstalledMod` stay exported as
-  documented test-seed APIs or frontend-facing queries, each with a doc comment stating why. No
-  behavior change. (#305)
-- Internal: Every exported identifier in `internal/core`, `internal/domain`, and `internal/app` now carries
-  a doc comment, enforced by a `go/ast` test in each package
-  (`TestExportedIdentifiersHaveDocComments`) rather than tracked as a one-time count.
-  `cmd/lmm`'s import-boundary test drops its allow-list mechanism (empty since Task 1) in favor of
-  asserting the hard rule directly; a new `TestDetailsTypesAreCovered` (Unit P review finding M7)
-  requires every type implementing the `--json` error envelope's `Details() any` extension point
-  to have a named test pinning its wire shape. No behavior change. (#305)
-
-### Fixed
-
 - SQLite pragmas (foreign_keys, WAL, busy_timeout) now apply to every pooled connection via the DSN; `:memory:` databases use a single connection. (#271)
 - An invalid `--log-level` value's error message no longer carries the misattributed
   `initializing service:` prefix (rejecting the flag never actually opened a service). It now
@@ -4760,6 +4749,10 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
 ### Removed
 
 - The interactive terminal UI (`lmm tui`) and the `internal/tui` package. v2's interfaces are the CLI and, in a later release, a local web UI (`lmm serve`). Design: `docs/plans/2026-08-27-v2-core-refactor-design.md`.
+
+### Documentation
+
+- Added the current v2.0.0 release-readiness checklist (#495): [checklist](docs/plans/2026-09-22-v2-release-checklist.md) records stabilization evidence, pending owner checks, and tag/publish steps
 
 ## [1.30.1] - 2026-08-08
 

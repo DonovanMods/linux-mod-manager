@@ -47,26 +47,32 @@ Coordinator final evidence recorded before this checklist was finalized:
 
 ## Owner checks before tagging
 
-- [ ] Review the complete `[Unreleased]` section in `CHANGELOG.md` for the
-  v2.0.0 release notes; agree on the release date and final text.
-- [ ] Confirm the generated man pages are current (`make man` and the
+- [x] Review the complete `[Unreleased]` section in `CHANGELOG.md` for the
+  v2.0.0 release notes; agree on the release date and final text. Done
+  2026-10-28: a 24-line curated summary above `<!-- release-notes-end -->`
+  is the release body (#547); the cut date is 2026-10-28.
+- [x] Confirm the generated man pages are current (`make man` and the
   `cmd/lmm` man-page drift test); full normal tests passed, but no separate
   release-time regeneration is recorded here.
-- [ ] Run the real release packaging workflow or an equivalent GoReleaser
-  build. Inspect Linux amd64/arm64 `.tar.gz`, `.deb`, `.rpm`, and `.apk`
+- [x] Run the real release packaging workflow or an equivalent GoReleaser
+  build. Done 2026-10-28 with `goreleaser release --snapshot` (v2.19.0) on
+  `fd31d309`: all eight packages built; the deb, rpm, apk and Arch
+  `PKGBUILD` (`makepkg -si`) installed and ran in clean Debian, Ubuntu,
+  Fedora, Alpine and Arch containers, and the arm64 binary ran under QEMU. Inspect Linux amd64/arm64 `.tar.gz`, `.deb`, `.rpm`, and `.apk`
   assets, generated shell completions and packaged man pages; install and
   smoke-test the applicable packages on supported Linux systems. These checks
   have not been run locally because GoReleaser is absent.
-- [ ] Confirm `THIRD_PARTY_NOTICES` is current (`make notices` leaves no diff;
+- [x] Confirm `THIRD_PARTY_NOTICES` is current (`make notices` leaves no diff;
   the `internal/notices` drift test passes) and that it lands in every
   package (#522): in each `.tar.gz` at the archive root, at
   `/usr/share/doc/lmm/THIRD_PARTY_NOTICES` in the `.deb`, `.rpm` and `.apk`,
   and at `/usr/share/licenses/lmm-bin/THIRD_PARTY_NOTICES` in the AUR
   package, whose `license=` must list every SPDX id the file names.
-- [ ] Decide whether the `AUR_KEY` secret is configured and whether this cut
-  should publish to AUR. The current config skips AUR upload when the secret
-  is empty.
-- [ ] Hand-test both frontends on a clean supported Linux setup: CLI startup,
+- [x] Decide whether the `AUR_KEY` secret is configured and whether this cut
+  should publish to AUR. Decided 2026-10-28: no. AUR registration is closed
+  (#549); every release attaches the `lmm-bin` `PKGBUILD` instead, and the
+  AUR push is skipped because the secret is empty.
+- [x] Hand-test both frontends on a clean supported Linux setup: CLI startup,
   help/version and representative profile workflow; web UI launch, primary
   navigation, a representative mutation, and keyboard/focus behavior. These
   owner checks remain undone; automated Go tests are not a substitute.
@@ -80,7 +86,7 @@ Coordinator final evidence recorded before this checklist was finalized:
 ## Tag and publication sequence
 
 1. After the owner checks and final gates pass, prepare the release commit on
-   `v2`: fold `[Unreleased]` into the single existing retracted
+   `release/v2.0.0` (cut from `v2`, see step 5): fold `[Unreleased]` into the single existing retracted
    `## [2.0.0] - 2026-08-30` section in `CHANGELOG.md`, re-date that section
    to the actual cut date, and leave a fresh `[Unreleased]` heading. Keep the
    curated summary and its `<!-- release-notes-end -->` marker at the top of
@@ -88,18 +94,28 @@ Coordinator final evidence recorded before this checklist was finalized:
    marker, and refuses a body over GitHub's 125,000-character limit (#547).
    Reuse or
    update its existing `[2.0.0]` comparison reference; do not add a second
-   v2.0.0 section or reference. Regenerate man pages (`make man`) and the third-party notices (`make notices`) if they changed. Keep
+   v2.0.0 section or reference. Bump `genManDate` in `cmd/lmm/genman.go` to
+   the cut date (`TestGenManDateIsNotOlderThanTheNewestRelease` fails
+   otherwise), then regenerate man pages (`make man`) and the third-party
+   notices (`make notices`). Keep
    `cmd/lmm/root.go` at `2.0.0` and the module path at `/v2`.
 2. Review the release diff, run `make test`, `make vet`, `make man`, and `make notices`, then
-   commit the release preparation on `v2`.
-3. Create `v2.0.0` on the approved release commit and push the branch and tag
-   to the project's release remote. The release workflow runs only for `v*`
+   commit the release preparation on `release/v2.0.0`.
+3. Create `v2.0.0` on the release PR's merge commit into `main` (step 5) and
+   push the tag to the project's release remote. The release workflow runs only for `v*`
    tags; inspect its generated assets and draft release.
 4. Publish the GitHub release manually only after reviewing the draft, assets,
    checksums, notes, and any required AUR outcome. `.goreleaser.yaml` currently
    has `draft: true`; this checklist does not change that setting.
-5. Keep `main` and `develop` untouched. Promotion from `v2` requires a separate
-   decision and workflow.
+5. `v2` becomes `main` (decided 2026-10-28). Before the release PR, tag the
+   old `main` tip `v1` (`6152d06d`, the same commit as `v1.30.1`) so the
+   1.x line stays easy to reference. The release-prep commit goes on
+   `release/v2.0.0`, cut from `v2`, and is PR'd into `main` as
+   `release: v2.0.0`, then merged with a merge commit. GitHub's "Protect
+   Main" ruleset requires the PR and allows no bypass. Tag `v2.0.0` on that
+   merge commit and fast-forward `develop` to `main`. GitHub is the primary
+   remote; the homelab Forgejo pull-mirrors it hourly and takes no pushes. `main` and `develop` are both
+   ancestors of `v2`, so no history is rewritten.
 
 No tag, publish, release-config change, or owner hand-test is part of issue
 [#495](https://github.com/DonovanMods/linux-mod-manager/issues/495).

@@ -8,7 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Branch model (git-flow-lite):** `main` holds released, tagged states only. `develop` is the integration branch — story branches (`feat/…`, `fix/…`) fork from `develop` and PR back into `develop` with an explicit `--base develop` (`main` is still the default branch, so a forgotten flag targets protected `main` and gets caught). Both branches are protected: PRs required, Copilot review, no force-push/deletion; the develop ruleset has a repository-admin bypass reserved for post-release fast-forward syncs, trivial hotfix back-merges, and (last resort) history repair. Full release and hotfix flows are documented in [docs/plans/2026-07-30-develop-branch-workflow-design.md](docs/plans/2026-07-30-develop-branch-workflow-design.md).
 
-**v2 line (since 2026-08-27):** the core refactor lands on the long-lived `v2` branch, cut from `develop` at 9729783. Story branches fork from `v2` and merge back locally with `git merge --no-ff` (one revertable merge commit per unit); issues close at that merge with a comment naming the commit. PRs are optional on `v2` until the public-release milestone — open one (`--base v2`) only when an independent Copilot review is wanted. `develop`/`main` remain the v1.30.x line; never merge them wholesale into `v2` — cherry-pick wanted fixes. Worktrees: `orca-ide worktree create --base-branch v2 --issue <n>`. Ruleset "Protect v2" blocks deletion and force-push only.
+**v2 line (2026-08-27 to v2.0.0, ended):** the core refactor was built on a long-lived `v2` branch, cut from `develop` at 9729783, with story branches merged back locally by `git merge --no-ff`. v2.0.0 merged `v2` into `main`, so `main` and `develop` carry v2 now and work PRs into `develop` again, as above. The `v1` tag marks the last 1.x state (v1.30.1). The `v2` branch is kept for history; ruleset "Protect v2" blocks its deletion.
+
+**Remotes:** GitHub is the primary (`origin`): rulesets, Copilot review, CI and releases all live there. The homelab Forgejo at git.nerdwerx.io is a read-only pull mirror of GitHub that syncs hourly. Never push to it.
 
 **Issues close on merge into `develop`, not at release.** The tracker answers "what's left to build," so an issue whose work is merged is done — holding it open until the release tag would surface finished work on every "check for relevant open issues first" pass. Release traceability lives in `CHANGELOG.md` instead: entries carry their issue number and move from `[Unreleased]` into a dated `vX.Y.Z` section at release, which makes it a complete issue→release index. Don't duplicate that in issue state or milestones.
 
@@ -16,7 +18,7 @@ Because `main` is the default branch, a PR's `Fixes #N` will **not** auto-close 
 
 ## Before Development
 
-**ALWAYS orchestrate subagents through Orca's `orchestration` skill** — invoke it by name; it ships with the `orca` binary. Orca is the dispatch mechanism and `superpowers:subagent-driven-development` is the review policy layered on top, so they compose rather than compete. Create worktrees with `orca-ide worktree create --base-branch v2 --issue <n>` (during the v2 line; `develop` otherwise): Orca has no adopt/import, so a worktree made with plain `git worktree add` can never be dispatched into.
+**ALWAYS orchestrate subagents through Orca's `orchestration` skill** — invoke it by name; it ships with the `orca` binary. Orca is the dispatch mechanism and `superpowers:subagent-driven-development` is the review policy layered on top, so they compose rather than compete. Create worktrees with `orca-ide worktree create --base-branch develop --issue <n>`: Orca has no adopt/import, so a worktree made with plain `git worktree add` can never be dispatched into.
 
 ## Project Overview
 
