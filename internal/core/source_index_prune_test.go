@@ -715,3 +715,47 @@ func reopenPruneService(t *testing.T, configDir string, src *inventorySource) *c
 	svc.RegisterSource(newMockSource("other"))
 	return svc
 }
+
+// TestPruneSourceIndexes_MeasuresAgeByTheServiceClock (#548): an index's age
+// is measured against ServiceConfig.Now, not the wall clock, so a fixed
+// fetch time means the same thing on any date the suite runs.
+func TestPruneSourceIndexes_MeasuresAgeByTheServiceClock(t *testing.T) {
+	fetched := time.Date(2026, 9, 16, 9, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		age     time.Duration
+		removed bool // a dry run plans the removal
+	}{
+		{"fresh", core.IndexPruneMaxAge - day, false},
+		{"stale", core.IndexPruneMaxAge + day, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := fetched.Add(tc.age)
+			svc, err := core.NewService(core.ServiceConfig{
+				ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+				Now: func() time.Time { return now },
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, svc.Close()) })
+			src := &inventorySource{
+				validatingIndexedSource: &validatingIndexedSource{indexedSource: newIndexedSource("ts")},
+				cached: map[string]source.CachedIndex{
+					"used": {GameID: "used", Present: true, Packages: 1, Bytes: 1, FetchedAt: fetched, Removable: true},
+				},
+			}
+			svc.RegisterSource(src)
+			require.NoError(t, svc.SaveGame(t.Context(), &domain.Game{
+				ID: "alpha", Name: "alpha", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+				SourceIDs: map[string]string{"ts": "used"},
+			}))
+
+			report, err := svc.PruneSourceIndexes(t.Context(), core.IndexPruneOptions{DryRun: true})
+			require.NoError(t, err)
+			want := core.IndexPruneKeep
+			if tc.removed {
+				want = core.IndexPruneRemove
+			}
+			assert.Equal(t, want, entryFor(t, report.Entries, "used").Action)
+		})
+	}
+}

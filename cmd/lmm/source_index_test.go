@@ -30,6 +30,11 @@ var updateSourceIndexGoldens = flag.Bool("update-source-index", false,
 // sourceIndexFetchedAt is the fixed moment every fake index was fetched.
 var sourceIndexFetchedAt = time.Date(2026, 9, 16, 9, 0, 0, 0, time.UTC)
 
+// sourceIndexNow is the service clock: a day after that fetch, so every
+// index is fresh by the prune's age rule on whatever date the suite runs
+// (#548).
+func sourceIndexNow() time.Time { return sourceIndexFetchedAt.Add(24 * time.Hour) }
+
 // inventoryIndexSource is coldIndexSource with directories on "disk".
 type inventoryIndexSource struct {
 	*coldIndexSource
@@ -80,7 +85,7 @@ func newSourceIndexService(t *testing.T) (*core.Service, *domain.Game, *inventor
 			"content-warning": {GameID: "content-warning", Present: true, Packages: 900, Bytes: 4096000, FetchedAt: sourceIndexFetchedAt, Removable: true},
 		},
 	}
-	svc, game := newColdIndexService(t, src)
+	svc, game := newColdIndexServiceWith(t, src, core.ServiceConfig{Now: sourceIndexNow})
 	return svc, game, src
 }
 

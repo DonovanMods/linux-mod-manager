@@ -1990,6 +1990,13 @@ thunderstore`, with the package's `full_name` as its id. A Thunderstore
 
 ### Fixed
 
+- **The `lmm source index prune` tests no longer start failing a month
+  after they were written (#548).** Their fixture dated every cached index
+  2026-09-16, but the prune's 30-day age rule read the wall clock, so from
+  mid-October the index a game uses counted as stale and was pruned too.
+  `core.ServiceConfig` gains `Now`, the clock time-based policy reads (nil
+  means `time.Now`); the tests pin it, and a core test checks both sides of
+  the 30-day line on the service clock.
 - **A release's notes fit GitHub's limit (#547).** The release workflow
   published a version's whole CHANGELOG section as the GitHub release body,
   and 2.0.0's is over 300,000 characters; GitHub refuses a body over

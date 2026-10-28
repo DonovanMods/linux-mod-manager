@@ -93,9 +93,15 @@ func (s *coldIndexSource) RefreshIndex(_ context.Context, sourceGameID string, f
 // newColdIndexService wires a real Service and game around src.
 func newColdIndexService(t *testing.T, src source.ModSource) (*core.Service, *domain.Game) {
 	t.Helper()
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
-	})
+	return newColdIndexServiceWith(t, src, core.ServiceConfig{})
+}
+
+// newColdIndexServiceWith is newColdIndexService over cfg, whose temp
+// directories it fills in - for a test that also pins the clock.
+func newColdIndexServiceWith(t *testing.T, src source.ModSource, cfg core.ServiceConfig) (*core.Service, *domain.Game) {
+	t.Helper()
+	cfg.ConfigDir, cfg.DataDir, cfg.CacheDir = t.TempDir(), t.TempDir(), t.TempDir()
+	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.RegisterSource(src)

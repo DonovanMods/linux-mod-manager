@@ -253,7 +253,7 @@ func (s *Service) PruneSourceIndexes(ctx context.Context, opts IndexPruneOptions
 	}
 
 	report := &IndexPruneReport{DryRun: opts.DryRun, All: opts.All, Entries: []IndexPruneEntry{}, Warnings: []string{}}
-	now := time.Now()
+	now := s.now()
 	for _, src := range inventories {
 		if err := ctx.Err(); err != nil {
 			return report, err
