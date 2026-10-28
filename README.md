@@ -184,16 +184,22 @@ choose one for your game.
 
 ## Installation
 
-### Arch Linux (AUR)
+### Arch Linux
+
+Every release on the
+[Releases page](https://github.com/DonovanMods/linux-mod-manager/releases)
+carries a `PKGBUILD` for `lmm-bin`. Build and install it with `makepkg`:
 
 ```bash
-yay -S lmm-bin        # or: paru -S lmm-bin
+mkdir lmm-bin && cd lmm-bin
+curl -LO https://github.com/DonovanMods/linux-mod-manager/releases/latest/download/PKGBUILD
+makepkg -si
 ```
 
-[`lmm-bin`](https://aur.archlinux.org/packages/lmm-bin) installs the released
-binary, the man pages, and shell completions for bash, zsh and fish. It
-`provides`/`conflicts` `lmm`, so it will not fight a source build of the same
-name.
+It installs the released binary, the man pages, and shell completions for
+bash, zsh and fish, and `provides`/`conflicts` `lmm`, so it will not fight a
+source build of the same name. `makepkg` checks the downloaded archive against
+the checksum in the `PKGBUILD`. The package is not on the AUR yet ([#549](https://github.com/DonovanMods/linux-mod-manager/issues/549)).
 
 ### Debian, Ubuntu, Fedora, openSUSE, Alpine
 
@@ -264,7 +270,7 @@ the `v2` branch until the release merges it. Run `git checkout v2` before
 
 ### Shell completions
 
-The distro packages and the AUR package install completions for you. If you
+The distro packages and the Arch `PKGBUILD` install completions for you. If you
 installed from a tarball, `go install`, or source, generate them yourself —
 `lmm completion --help` covers every shell, including PowerShell:
 
@@ -2949,7 +2955,7 @@ release is cut.
 - [x] `lmm serve` — the second frontend: a full local web UI over the same core, with `/api/v1` and SSE
 - [x] `lmm init` — a guided first run ([#351](https://github.com/DonovanMods/linux-mod-manager/issues/351))
 - [x] Encrypted credential storage ([#79](https://github.com/DonovanMods/linux-mod-manager/issues/79))
-- [x] Packaging: AUR, `.deb`, `.rpm`, `.apk` ([#352](https://github.com/DonovanMods/linux-mod-manager/issues/352))
+- [x] Packaging: Arch `PKGBUILD`, `.deb`, `.rpm`, `.apk` ([#352](https://github.com/DonovanMods/linux-mod-manager/issues/352)); AUR publishing waits on [#549](https://github.com/DonovanMods/linux-mod-manager/issues/549)
 
 ### In progress for 2.0
 
