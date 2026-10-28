@@ -54,7 +54,8 @@ func runReleaseNotes(t *testing.T, tag string, changelog []byte) (string, error)
 	output := filepath.Join(dir, "github_output")
 	cmd := exec.Command(bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", releaseNotesScript(t))
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GITHUB_REF_NAME="+tag, "RUNNER_TEMP="+dir, "GITHUB_OUTPUT="+output)
+	cmd.Env = append(os.Environ(), "GITHUB_REF_NAME="+tag, "RUNNER_TEMP="+dir, "GITHUB_OUTPUT="+output,
+		"GITHUB_SERVER_URL=https://github.com", "GITHUB_REPOSITORY=DonovanMods/linux-mod-manager")
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		return "", &releaseNotesError{err: runErr, output: string(out)}
@@ -117,4 +118,63 @@ func TestReleaseNotes_FailsForATagWithNoSection(t *testing.T) {
 	_, err := runReleaseNotes(t, "v9.9.9", []byte("# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- one\n"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "No '## [9.9.9]' heading")
+}
+
+// TestReleaseNotes_PublishesOnlyTheSummaryAboveTheMarker: a section that
+// opens with a curated summary ends it with the marker, and only the summary
+// is published, followed by a link to the complete CHANGELOG.md at the tag.
+// The detailed entries below the marker stay in CHANGELOG.md (#547).
+func TestReleaseNotes_PublishesOnlyTheSummaryAboveTheMarker(t *testing.T) {
+	changelog := "# Changelog\n\n## [2.0.0] - 2026-10-28\n\nThe summary.\n\n" +
+		"<!-- release-notes-end -->\n\n### Added\n\n- a detailed entry\n\n## [1.0.0] - 2026-01-01\n\n- one\n"
+
+	notes, err := runReleaseNotes(t, "v2.0.0", []byte(changelog))
+	require.NoError(t, err)
+	assert.Contains(t, notes, "The summary.")
+	assert.NotContains(t, notes, "release-notes-end")
+	assert.NotContains(t, notes, "a detailed entry")
+	assert.Contains(t, notes, "https://github.com/DonovanMods/linux-mod-manager/blob/v2.0.0/CHANGELOG.md")
+}
+
+// TestReleaseNotes_FailsForAnEmptySummary: a marker with nothing above it
+// publishes no notes at all, not just the CHANGELOG link (#547).
+func TestReleaseNotes_FailsForAnEmptySummary(t *testing.T) {
+	changelog := "# Changelog\n\n## [2.0.0] - 2026-10-28\n\n<!-- release-notes-end -->\n\n- detail\n"
+
+	_, err := runReleaseNotes(t, "v2.0.0", []byte(changelog))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is empty")
+}
+
+// TestReleaseNotes_FailsWhenTheBodyExceedsGitHubsLimit: GitHub refuses a
+// release body over 125,000 characters, after every package has been built.
+// The step refuses it first, naming the size (#547).
+func TestReleaseNotes_FailsWhenTheBodyExceedsGitHubsLimit(t *testing.T) {
+	changelog := "# Changelog\n\n## [2.0.0] - 2026-10-28\n\n" +
+		strings.Repeat("- an entry long enough to add up quickly\n", 4000) + "\n## [1.0.0] - 2026-01-01\n\n- one\n"
+
+	_, err := runReleaseNotes(t, "v2.0.0", []byte(changelog))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "125000")
+}
+
+// TestReleaseNotes_TheUnreleasedSectionFitsARelease runs the step against
+// the pending [Unreleased] section, which the release-prep commit renames to
+// the new version's heading. It catches an over-long release body when the
+// changelog is edited, not when the tag is pushed. It skips between
+// releases, while [Unreleased] holds no entries yet.
+func TestReleaseNotes_TheUnreleasedSectionFitsARelease(t *testing.T) {
+	changelog, err := os.ReadFile(repoChangelog)
+	require.NoError(t, err)
+	pending := regexp.MustCompile(`(?s)## \[Unreleased\]\n(.*?)\n## \[`).FindSubmatch(changelog)
+	require.Len(t, pending, 2, "CHANGELOG.md has no [Unreleased] section above a release")
+	if strings.TrimSpace(string(pending[1])) == "" {
+		t.Skip("[Unreleased] is empty")
+	}
+
+	// The step looks up "## [<tag without its v>]", so this tag selects the
+	// [Unreleased] heading.
+	notes, err := runReleaseNotes(t, "vUnreleased", changelog)
+	require.NoError(t, err)
+	assert.NotContains(t, notes, "\n## [")
 }

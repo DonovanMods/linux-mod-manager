@@ -35,12 +35,35 @@ jobs:
             exit 1
           fi
           notes_path="${RUNNER_TEMP}/release-notes.md"
+          # A section that opens with a curated summary ends it with the
+          # marker below: only the summary is published, and the detailed
+          # entries under it stay in CHANGELOG.md, linked at the tag (#547).
+          marker='<!-- release-notes-end -->'
+          summarised="${RUNNER_TEMP}/release-notes.summarised"
+          rm -f "$summarised"
           # awk reads the file itself: piping `tail` into an awk that exits
           # at the next heading killed tail with SIGPIPE, failing the step
           # under pipefail for any section that is not the file's last.
-          awk -v start="$start_line" 'NR <= start {next} /^## \[/ {exit} {print}' CHANGELOG.md > "$notes_path"
-          if [ ! -s "$notes_path" ]; then
+          awk -v start="$start_line" -v marker="$marker" -v flag="$summarised" '
+            NR <= start {next}
+            /^## \[/ {exit}
+            $0 == marker {printf "" > flag; exit}
+            {print}
+          ' CHANGELOG.md > "$notes_path"
+          if [ -z "$(tr -d '[:space:]' < "$notes_path")" ]; then
             echo "::error::CHANGELOG.md section for '$heading' is empty" >&2
+            exit 1
+          fi
+          if [ -e "$summarised" ]; then
+            printf '\nThe complete list of changes is in [CHANGELOG.md](%s/%s/blob/%s/CHANGELOG.md).\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" >> "$notes_path"
+          fi
+          # GitHub refuses a release body over 125,000 characters, but only
+          # after every package is built. Bytes are never fewer than
+          # characters, so this limit is conservative.
+          size="$(wc -c < "$notes_path")"
+          if [ "$size" -gt 125000 ]; then
+            echo "::error::Release notes for '$heading' are $size bytes; GitHub's release body limit is 125000 characters. End a curated summary with '$marker'." >&2
             exit 1
           fi
           echo "path=$notes_path" >> "$GITHUB_OUTPUT"
