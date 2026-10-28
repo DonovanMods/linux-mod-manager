@@ -238,7 +238,7 @@ Core types in `internal/domain/` have no external dependencies:
 
 **This project uses [Semantic Versioning](https://semver.org/).** Versions are bumped **at release time, not per story PR**:
 
-- **Story PRs into `develop`**: no version bump. Add CHANGELOG entries under `[Unreleased]`. The `version` variable in `cmd/lmm/root.go` stays at the last released version between releases.
+- **Story PRs into `develop`**: no version bump. Add CHANGELOG entries under `[Unreleased]`. When a change alters something the user guide in `docs/guide/` describes (a command, a flag, a web UI control or flow), update the guide in the same PR; `cmd/lmm/guide_test.go` catches a command or flag that no longer exists, but not a changed behaviour. The `version` variable in `cmd/lmm/root.go` stays at the last released version between releases.
 - **Releases (develop → main)**: cut `release/vX.Y.Z` from `develop` with a single prep commit — bump `version` in `cmd/lmm/root.go`, bump `genManDate` in `cmd/lmm/genman.go` to the release date, move `[Unreleased]` to a dated `vX.Y.Z` section, add the comparison link, and run `make man` and `make notices` (the genman drift test enforces the man regeneration, `TestGenManDateIsNotOlderThanTheNewestRelease` the date bump, and `internal/notices`' drift test the regenerated `THIRD_PARTY_NOTICES` when a dependency changed). PR it into `main` titled `release: vX.Y.Z`, merge with a merge commit, tag `vX.Y.Z` on the merge commit, then fast-forward develop (`git push origin main:develop`) and delete the release branch.
 - **Hotfixes**: branch from `main`, PR back into `main` with its own PATCH bump + `genManDate` bump + CHANGELOG section + `make man` + `make notices`, tag on the merge commit, then merge `main` back into `develop`.
 
