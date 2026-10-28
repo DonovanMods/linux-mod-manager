@@ -1,0 +1,37 @@
+{
+  "mod": {
+    "id": "99",
+    "source_id": "curseforge",
+    "name": "Sample Mod",
+    "version": "1.2.3",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "skyrim-se",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "2026-08-27T12:00:00Z",
+    "profile_name": "default",
+    "update_policy": "notify",
+    "installed_at": "2026-08-27T12:00:00Z",
+    "enabled": false,
+    "deployed": false,
+    "link_method": "symlink",
+    "manual_download": false,
+    "convert_paks": false
+  },
+  "changes": [
+    "source -> curseforge (was nexusmods)"
+  ],
+  "no_changes": false,
+  "notes": [
+    "Warning: could not update profile: mod is locked"
+  ],
+  "warnings": [
+    "could not sync merged pak: base pak missing"
+  ]
+}

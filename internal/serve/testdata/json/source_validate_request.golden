@@ -1,0 +1,5 @@
+{
+  "yaml": "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: ~/mods\n",
+  "probe": true,
+  "probe_id": "12345"
+}

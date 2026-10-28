@@ -1,0 +1,12 @@
+{
+  "response": {
+    "result": 1,
+    "resultcount": 1,
+    "collectiondetails": [
+      {
+        "publishedfileid": "9999999999",
+        "result": 9
+      }
+    ]
+  }
+}

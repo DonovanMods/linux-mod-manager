@@ -2,14 +2,14 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/spf13/cobra"
 )
@@ -166,7 +166,7 @@ Examples:
 }
 
 func init() {
-	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured)")
+	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "", `mod source; "local" names an imported mod (default: the source the installed mod carries, else the game's sole configured source; prompts when several are configured)`)
 	modCmd.PersistentFlags().StringVarP(&modProfile, "profile", "p", "", "profile (default: active profile)")
 
 	modSetUpdateCmd.Flags().BoolVar(&modSetAuto, "auto", false, "enable auto-update")
@@ -190,7 +190,7 @@ func runModSetUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doModSetUpdate(service, game, args[0])
+		return doModSetUpdate(ctx, service, game, args[0])
 	})
 }
 
@@ -214,21 +214,14 @@ func validateModSetUpdatePolicyFlags() error {
 	return nil
 }
 
-func doModSetUpdate(service *core.Service, game *domain.Game, modID string) error {
-	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
+func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, modProfile)
-	if err != nil {
-		return err
-	}
-
-	// Get the mod to verify it exists and get its name
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
-	if err != nil {
+	// Verify the mod exists before touching its policy
+	if _, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName); err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
@@ -248,13 +241,23 @@ func doModSetUpdate(service *core.Service, game *domain.Game, modID string) erro
 	}
 
 	// Update the policy
-	if err := service.SetModUpdatePolicy(modSource, modID, game.ID, profileName, policy); err != nil {
+	result, err := service.SetModUpdatePolicy(ctx, modSource, modID, game.ID, profileName, policy)
+	if err != nil {
 		return fmt.Errorf("failed to update policy: %w", err)
 	}
 
-	fmt.Printf("%s %s update policy: %s", colorGreen("✓"), mod.Name, policyStr)
-	if modSetPin {
-		fmt.Printf(" (v%s)", mod.Version)
+	// Ruling 15: the ModSettingResult document, in place of the console
+	// readout - policyStr below is just result.Mod.UpdatePolicy in words.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	fmt.Printf("%s %s update policy: %s", colorGreen("✓"), result.Mod.Name, policyStr)
+	// #269: a pin's target is the installed version, which for a Workshop
+	// item is the 19-digit content id - so an external mod is reported as
+	// pinned and nothing more (version_display.go).
+	if pinTarget := displayLockTarget(workshopVersioned(service, &result.Mod.Mod, result.Mod.External), result.Mod.Version); modSetPin && pinTarget != "" {
+		fmt.Printf(" (%s)", pinTarget)
 	}
 	fmt.Println()
 
@@ -280,18 +283,12 @@ func runModLock(cmd *cobra.Command, args []string) error {
 // available versions, ErrNotSupported for a dynamic version-less source) are
 // surfaced verbatim.
 func doModLock(ctx context.Context, service *core.Service, game *domain.Game, modID, version string) error {
-	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, modProfile)
-	if err != nil {
-		return err
-	}
-
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -301,9 +298,16 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 	// SetModLock's own "any string goes" persistence makes that a silent
 	// footgun rather than a clean rejection - so this is checked before any
 	// upstream call.
-	caps, err := service.SourceCapabilities(modSource)
-	if err != nil {
-		return err
+	//
+	// An imported mod (#447) has no source at all - nothing is registered
+	// as `local` - so it has no versions to resolve either, and gets the
+	// same refusal rather than a registry lookup's "source not found".
+	var caps source.Capabilities
+	if modSource != domain.SourceLocal {
+		caps, err = service.SourceCapabilities(modSource)
+		if err != nil {
+			return err
+		}
 	}
 	if !caps.Versions {
 		// #142 round 5: set-update is profile-scoped too (SetModUpdatePolicy
@@ -332,7 +336,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 			return err
 		}
 	} else {
-		profile, err := pm.Get(game.ID, profileName)
+		profile, err := pm.Get(ctx, game.ID, profileName)
 		if err != nil {
 			return fmt.Errorf("loading profile: %w", err)
 		}
@@ -345,16 +349,35 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		}
 	}
 
-	if err := pm.SetModLock(game.ID, profileName, modSource, modID, version); err != nil {
+	result, err := service.SetModLock(ctx, modSource, modID, game.ID, profileName, version)
+	if err != nil {
 		return err
 	}
 
-	fmt.Printf("%s %s locked at v%s\n", colorGreen("✓"), mod.Name, target)
-	// Locking is a metadata write, not a deploy (design decision): when the
-	// target differs from what is actually installed, the game directory
-	// won't match the lock until convergence, so say so.
-	if target != mod.Version {
-		fmt.Printf("Installed version is v%s — run 'lmm profile apply' (or 'lmm deploy') to converge.\n", mod.Version)
+	// Ruling 15: the ModSettingResult document. result.LockedVersion is
+	// target, so the convergence hint below is derivable from it.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	// #269: the same rule `mod show`'s Lock line reads. Unreachable for a
+	// Workshop item today - the capability gate above refuses it, since the
+	// source reports Versions:false - and spelled once here anyway so a
+	// source that later CAN resolve versions cannot reintroduce the shape.
+	if lockTarget := displayLockTarget(workshopVersioned(service, &result.Mod.Mod, result.Mod.External), target); lockTarget != "" {
+		fmt.Printf("%s %s locked at %s\n", colorGreen("✓"), result.Mod.Name, lockTarget)
+		// Locking is a metadata write, not a deploy (design decision): when
+		// the target differs from what is actually installed, the game
+		// directory won't match the lock until convergence, so say so.
+		if target != result.Mod.Version {
+			installed := labelledVersion(result.Mod.Version)
+			if installed == "" {
+				installed = "not recorded" // #459: an imported mod with no version
+			}
+			fmt.Printf("Installed version is %s — run 'lmm profile apply' (or 'lmm deploy') to converge.\n", installed)
+		}
+	} else {
+		fmt.Printf("%s %s locked\n", colorGreen("✓"), result.Mod.Name)
 	}
 
 	return nil
@@ -362,7 +385,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 
 func runModUnlock(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doModUnlock(service, game, args[0])
+		return doModUnlock(ctx, service, game, args[0])
 	})
 }
 
@@ -370,30 +393,73 @@ func runModUnlock(cmd *cobra.Command, args []string) error {
 // core.ProfileManager.ClearModLock already guarantees this; unlocking is
 // policy-neutral (#97 decision), so the update policy reported here is
 // whatever it already was.
-func doModUnlock(service *core.Service, game *domain.Game, modID string) error {
-	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
+func doModUnlock(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, modProfile)
-	if err != nil {
-		return err
-	}
-
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
-	if err != nil {
+	if _, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName); err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
-	pm := service.NewProfileManager()
-	if err := pm.ClearModLock(game.ID, profileName, modSource, modID); err != nil {
+	result, err := service.ClearModLock(ctx, modSource, modID, game.ID, profileName)
+	if err != nil {
 		return err
 	}
 
-	fmt.Printf("%s %s unlocked (update policy: %s)\n", colorGreen("✓"), mod.Name, policyToString(mod.UpdatePolicy))
+	// Ruling 15: the ModSettingResult document.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	fmt.Printf("%s %s unlocked (update policy: %s)\n", colorGreen("✓"), result.Mod.Name, policyToString(result.Mod.UpdatePolicy))
 	return nil
+}
+
+// resolveModTarget is how EVERY `lmm mod` subcommand resolves the mod it
+// acts on (#447): the profile (-p, else the active one), then the source,
+// which it stores in modSource for the subcommand's readouts and remedies.
+//
+//   - -s/--source names a source the game maps, or domain.SourceLocal: an
+//     `lmm import`ed mod is recorded under `local`, which no game maps, and
+//     `lmm uninstall` has always accepted it for that reason.
+//   - Without -s, the source is the one the installed mod carries - the
+//     bare-id rule `lmm uninstall` and `lmm mod edit` follow
+//     (core.ResolveInstalledByID) - and an id installed under two sources is
+//     refused with the flag that chooses (#373). An id installed under none
+//     falls back to the game's own source (resolveSource, which prompts
+//     when several are mapped): `lmm mod show` browses mods that are not
+//     installed, and every other subcommand then reports "mod not found"
+//     as it always has.
+func resolveModTarget(ctx context.Context, svc *core.Service, game *domain.Game, modID string) (profileName string, err error) {
+	profileName, err = resolveProfile(ctx, svc, game.ID, modProfile)
+	if err != nil {
+		return "", err
+	}
+	if modSource == domain.SourceLocal {
+		return profileName, nil
+	}
+	if modSource != "" {
+		modSource, err = resolveSource(svc, game, modSource, false)
+		return profileName, err
+	}
+
+	installed, err := svc.GetInstalledMods(ctx, game.ID, profileName)
+	if err != nil {
+		return "", fmt.Errorf("getting installed mods: %w", err)
+	}
+	mod, err := core.ResolveInstalledByID(installed, modID, profileName, "-s/--source")
+	var ambiguous *core.AmbiguousModError
+	switch {
+	case err == nil:
+		modSource = mod.SourceID
+		return profileName, nil
+	case errors.As(err, &ambiguous):
+		return "", err
+	}
+	modSource, err = resolveSource(svc, game, "", false)
+	return profileName, err
 }
 
 func runModEnable(cmd *cobra.Command, args []string) error {
@@ -403,20 +469,13 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 }
 
 func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
-	// Resolve source: use flag if set, otherwise first configured source
-	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
-	if err != nil {
-		return err
-	}
-
-	profileName, err := resolveProfile(service, game.ID, modProfile)
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
 
 	// Get the mod to verify it exists and get its name for display
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -440,6 +499,12 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 	printModNotes(result.Notes)
 	printModWarnings(result.Warnings)
 
+	// Ruling 15: the EnableResult document - Changed and the diagnostics
+	// the two printers above would have rendered are all in it.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
 	if !result.Changed {
 		fmt.Printf("%s is already enabled.\n", mod.Name)
 		return nil
@@ -456,20 +521,13 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 }
 
 func doModDisable(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
-	// Resolve source: use flag if set, otherwise first configured source
-	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
-	if err != nil {
-		return err
-	}
-
-	profileName, err := resolveProfile(service, game.ID, modProfile)
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
 
 	// Get the mod to verify it exists and get its name for display
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -478,7 +536,7 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 	if err != nil {
 		// DisableMod's error-path convention returns any diagnostics
 		// accumulated before the fatal error alongside it (see DisableMod's
-		// doc comment in flows.go, and mirrors UninstallMod's own convention
+		// doc comment in mod_toggle.go, and mirrors UninstallMod's own convention
 		// - see uninstall.go's printUninstallDiagnostics); print them now,
 		// or they'd otherwise be lost even though they already happened
 		// (e.g. an undeploy-failure Note recorded, then a later
@@ -493,11 +551,21 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 	printModNotes(result.Notes)
 	printModWarnings(result.Warnings)
 
+	// Ruling 15: the DisableResult document (see doModEnable's twin).
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
 	if !result.Changed {
 		fmt.Printf("%s is already disabled.\n", mod.Name)
 		return nil
 	}
 
+	if result.RecordedOnly {
+		fmt.Printf("%s Disabled: %s in profile %s\n", colorGreen("✓"), mod.Name, profileName)
+		printRecordedOnlyRemoval(profileName, result.ActiveProfile, result.Removed, result.Kept)
+		return nil
+	}
 	fmt.Printf("%s Disabled: %s (files removed from game, kept in cache)\n", colorGreen("✓"), mod.Name)
 	return nil
 }
@@ -511,9 +579,12 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 // error path (doModEnable/doModDisable above) must check that pointer for
 // nil before passing its .Notes field, since it panics on a nil receiver
 // otherwise (EnableMod/DisableMod both return a nil result on some error
-// paths - see their own doc comments in flows.go).
+// paths - see their own doc comments in mod_toggle.go).
 func printModNotes(notes []string) {
-	if !verbose {
+	// Ruling 15: nothing but the document under --json - the Result carries
+	// Notes itself. Guarded here, not at each call site, because the error
+	// paths call this too.
+	if !verbose || jsonOutput {
 		return
 	}
 	for _, n := range notes {
@@ -526,6 +597,9 @@ func printModNotes(notes []string) {
 // these must reach the user regardless of --verbose. Today the only
 // producer is a merged-pak sync failure; nil-safe like printModNotes.
 func printModWarnings(warnings []string) {
+	if jsonOutput {
+		return
+	}
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
@@ -533,38 +607,33 @@ func printModWarnings(warnings []string) {
 
 func runModFiles(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
-		return doModFiles(svc, game, args[0])
+		return doModFiles(ctx, svc, game, args[0])
 	})
 }
 
-func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
-	profileName, err := resolveProfile(svc, game.ID, modProfile)
+func doModFiles(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
+	profileName, err := resolveModTarget(ctx, svc, game, modID)
 	if err != nil {
 		return err
 	}
 
-	modSource, err = resolveSource(svc, game, modSource, false)
+	report, err := svc.ModFiles(ctx, game, profileName, modSource, modID)
 	if err != nil {
 		return err
 	}
 
-	// Get mod info for display
-	mod, err := svc.GetInstalledMod(modSource, modID, game.ID, profileName)
-	if err != nil {
-		return fmt.Errorf("mod not found: %s", modID)
+	// Ruling 15: the report IS the document - every line below renders one
+	// of its fields, and --json is a persistent root flag, so rendering the
+	// listing under it would leave the flag silently doing nothing (unit P
+	// review, Minor 4).
+	if jsonOutput {
+		return emitJSON(report)
 	}
 
-	// Get deployed files from database
-	files, err := svc.GetDeployedFilesForMod(game.ID, profileName, modSource, modID)
-	if err != nil {
-		return fmt.Errorf("getting deployed files: %w", err)
-	}
+	fmt.Printf("Files deployed by %s (%s):\n\n", report.Mod.Name, modID)
 
-	fmt.Printf("Files deployed by %s (%s):\n\n", mod.Name, modID)
-
-	if len(files) == 0 {
-		gameCache := svc.GetGameCache(game)
-		if game.DeployMode == domain.DeployCompile && core.HasRetainedCompileSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
+	if len(report.Files) == 0 {
+		if report.MergedPakOnly {
 			fmt.Println("  No files of its own - this mod participates in the profile's merged pak.")
 			fmt.Printf("  (See zzz_LMM_Merged_P.pak; run `lmm verify` to check the merged pak is up to date)\n")
 			return nil
@@ -574,10 +643,10 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 		return nil
 	}
 
-	for _, f := range files {
-		fmt.Printf("  %s\n", f)
+	for _, f := range report.Files {
+		fmt.Printf("  %s\n", f.Path)
 	}
-	fmt.Printf("\nTotal: %d file(s)\n", len(files))
+	fmt.Printf("\nTotal: %d file(s)\n", len(report.Files))
 
 	return nil
 }
@@ -588,27 +657,7 @@ func runModShow(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// modShowInstalled carries #97/#92's Installed section - closing #92's last
-// unshipped row (mod show was policy-blind) - for both the JSON and
-// human-readable code paths below, computed exactly once. Update policy
-// (SQLite, per-install) and Lock (profile YAML ref, per-profile) are
-// orthogonal (#97 design decision) and surfaced side by side.
-type modShowInstalled struct {
-	Version       string `json:"version"`
-	Profile       string `json:"profile"`
-	UpdatePolicy  string `json:"update_policy"`
-	Locked        bool   `json:"locked"`
-	LockedVersion string `json:"locked_version,omitempty"`
-	ConvertPaks   *bool  `json:"convert_paks,omitempty"` // #221: pak-to-exmod conversion; present only for merge-compile games
-}
-
 func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
-	var err error
-	modSource, err = resolveSource(svc, game, modSource, false)
-	if err != nil {
-		return err
-	}
-
 	// #92/#86: mod show works for any mod on the source, installed or not,
 	// so a resolveProfile failure is a real problem (mirrors every other mod
 	// subcommand's error handling), but "not installed" is the ordinary
@@ -616,7 +665,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	// than erroring. Profile resolves BEFORE the detail call now that the
 	// composition lives in core (#86) - accepted deviation: when BOTH the
 	// profile and the mod ID are invalid, the profile error surfaces first.
-	profileName, err := resolveProfile(svc, game.ID, modProfile)
+	profileName, err := resolveModTarget(ctx, svc, game, modID)
 	if err != nil {
 		return err
 	}
@@ -627,63 +676,65 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	}
 	mod := detail.Mod
 
-	var installedInfo *modShowInstalled
-	if detail.Installed != nil {
-		installedInfo = &modShowInstalled{
-			Version:       detail.Installed.Version,
-			Profile:       detail.Installed.Profile,
-			UpdatePolicy:  policyToString(detail.Installed.UpdatePolicy),
-			Locked:        detail.Installed.Locked,
-			LockedVersion: detail.Installed.LockedVersion,
-			ConvertPaks:   detail.Installed.ConvertPaks,
-		}
+	// #87/#318: Notes carries best-effort degradations (e.g. a failed
+	// changelog fetch) - printModNotes' own --verbose gate applies here too,
+	// same as every other Notes-bearing command.
+	printModNotes(detail.Notes)
+
+	// #86: the raw source description survives onto the wire (--json is a
+	// machine contract); only the human rendering below cleans it.
+	if jsonOutput {
+		return emitJSON(detail)
 	}
 
-	if jsonOutput {
-		type modShowJSON struct {
-			ID           string            `json:"id"`
-			Name         string            `json:"name"`
-			Version      string            `json:"version"`
-			Author       string            `json:"author"`
-			Summary      string            `json:"summary"`
-			Description  string            `json:"description"`
-			SourceURL    string            `json:"source_url,omitempty"`
-			PictureURL   string            `json:"picture_url,omitempty"`
-			Category     string            `json:"category"`
-			Endorsements *int64            `json:"endorsements,omitempty"`
-			Installed    *modShowInstalled `json:"installed,omitempty"`
-		}
-		out := modShowJSON{
-			ID:           mod.ID,
-			Name:         mod.Name,
-			Version:      mod.Version,
-			Author:       mod.Author,
-			Summary:      mod.Summary,
-			Description:  mod.Description,
-			SourceURL:    mod.SourceURL,
-			PictureURL:   mod.PictureURL,
-			Category:     mod.Category,
-			Endorsements: mod.Endorsements,
-			Installed:    installedInfo,
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(out)
-	}
+	installedInfo := detail.Installed
 
 	// Human-readable output
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
 	fmt.Printf("%s\n", colorHeader(mod.Name))
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
-	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, colorCyan(mod.Version), mod.Author)
+	// #269: an external item's catalog Version is Steam's 19-digit content
+	// id. The header shows the revision date; the labelled "Steam content
+	// id" line in the Managed-by-Steam block below is where the manifest
+	// belongs, and it is the ONLY place it appears.
+	headerVersion := core.VersionText(mod)
+	switch {
+	case installedInfo != nil && workshopVersioned(svc, &domain.Mod{SourceID: mod.SourceID, DisplayVersion: installedInfo.DisplayVersion}, installedInfo.External):
+		headerVersion = displayRevision(installedInfo.UpdatedAt)
+	case (mod.DisplayVersion != "" || sourceIsWorkshop(svc, mod.SourceID)) && !mod.UpdatedAt.IsZero():
+		// Not adopted: there is no installed row to carry External, and no
+		// "Installed:" line below either - so without this branch the header
+		// is the only version text on screen and it is the forbidden one.
+		headerVersion = displayRevision(mod.UpdatedAt)
+	}
+	// #420: a resolved persona name leads, with the id it names beside it.
+	// #459: a field with no value is left out rather than printed with
+	// nothing after its label - an imported archive with no version and no
+	// author reads "ID: <id>" alone.
+	header := "ID: " + mod.ID
+	if headerVersion != "" {
+		header += "  Version: " + colorCyan(headerVersion)
+	}
+	if author := core.AuthorText(mod); author != "" {
+		if mod.AuthorName != "" && mod.Author != "" {
+			author += " (" + mod.Author + ")"
+		}
+		header += "  Author: " + author
+	}
+	fmt.Println(header)
 	if mod.Category != "" {
 		fmt.Printf("Category: %s\n", mod.Category)
 	}
 	if mod.Endorsements != nil {
 		fmt.Printf("Endorsements: %d\n", *mod.Endorsements)
 	}
-	if mod.SourceURL != "" {
-		fmt.Printf("URL: %s\n", mod.SourceURL)
+	if pageURL := mod.PageURL(); pageURL != "" {
+		fmt.Printf("URL: %s\n", pageURL)
+	}
+	if mod.ManualOnly {
+		// #543: what the user needs before trying an install or update.
+		fmt.Println("Download: manual only — the source will not serve this mod's files to lmm")
+		fmt.Printf("  %s\n", manualOnlyFromFileLine(mod, installedInfo != nil))
 	}
 	if mod.PictureURL != "" {
 		fmt.Printf("Image: %s\n", mod.PictureURL)
@@ -699,10 +750,9 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	if mod.Description != "" {
 		fmt.Println("Description:")
 		// #86: descriptions are source HTML. Clean them with the same shared
-		// cleaner the update flow and the TUI already use, so all three render
-		// identically. CleanChangelog trims for us, so no TrimSpace here.
-		// The cap stays: this is a one-shot terminal dump, unlike the TUI's
-		// details view, which scrolls the full text instead.
+		// cleaner the update flow already uses, so both render identically.
+		// CleanChangelog trims for us, so no TrimSpace here.
+		// The cap stays: this is a one-shot terminal dump, not a scrollable view.
 		desc := core.CleanChangelog(mod.Description)
 		const maxDesc = 2000
 		if len(desc) > maxDesc {
@@ -711,10 +761,41 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		fmt.Println(desc)
 	}
 
+	// #87: Changelog is best-effort (a source without the capability, or a
+	// failed live call, both leave it empty) - only render the section when
+	// there's something to show.
+	if detail.Changelog != "" {
+		fmt.Println("Changelog:")
+		cl := core.CleanChangelog(detail.Changelog)
+		const maxChangelog = 2000
+		if len(cl) > maxChangelog {
+			cl = cl[:maxChangelog] + "\n... (truncated; view on site for full changelog)"
+		}
+		fmt.Println(cl)
+	}
+
 	if installedInfo != nil {
 		fmt.Println()
-		fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(installedInfo.Version), installedInfo.Profile)
-		policyDisplay := installedInfo.UpdatePolicy
+		// #428: an item lmm downloaded from the Workshop itself is not
+		// external, and its Version is the same content id.
+		installedContentID := workshopVersioned(svc, &domain.Mod{SourceID: mod.SourceID, DisplayVersion: installedInfo.DisplayVersion}, installedInfo.External)
+		if installedContentID {
+			// #269: for an external mod the installed line is a DATE - the
+			// Version field holds Steam's 19-digit content id, which is the
+			// item's version identity and not a version anybody can read.
+			// The content id is still shown, labelled as itself, below.
+			// Same displayRevision the header above reads, so the two lines
+			// cannot word the same instant differently.
+			fmt.Printf("Installed: %s (profile: %s)\n", colorCyan(displayRevision(installedInfo.UpdatedAt)), installedInfo.Profile)
+		} else {
+			// #459: a mod with no version says it is installed, and no more.
+			if v := core.VersionText(&domain.Mod{Version: installedInfo.Version}); v != "" {
+				fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(v), installedInfo.Profile)
+			} else {
+				fmt.Printf("Installed (profile: %s)\n", installedInfo.Profile)
+			}
+		}
+		policyDisplay := policyToString(installedInfo.UpdatePolicy)
 		switch policyDisplay {
 		case "pinned":
 			policyDisplay = colorYellow(policyDisplay)
@@ -725,14 +806,27 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			policyDisplay = colorGreen(policyDisplay)
 		}
 		fmt.Printf("  Update policy: %s\n", policyDisplay)
+		if installedInfo.SkippedVersion != "" {
+			// #542
+			fmt.Printf("  Skipped update: %s — 'lmm mod unskip-update %s' to show it again\n",
+				skippedTarget(svc, domain.InstalledMod{Mod: domain.Mod{SourceID: mod.SourceID, DisplayVersion: installedInfo.DisplayVersion}, External: installedInfo.External}, installedInfo.SkippedVersion), modID)
+		}
 		if installedInfo.Locked {
-			lockLine := "locked at v" + installedInfo.LockedVersion
-			// Locking is a metadata write, not a deploy (same #97 design
-			// decision doModLock's own convergence hint follows): only say
-			// so when the lock's target actually differs from what's
-			// installed.
-			if installedInfo.LockedVersion != installedInfo.Version {
-				lockLine += " — run 'lmm profile apply' to converge"
+			// #269: an external mod's lock TARGET is the content id, so the
+			// line says only that it is locked (version_display.go). The
+			// converge hint goes with it: it compares two content ids, and
+			// the run it recommends is one `profile apply` deliberately
+			// skips for this mod.
+			lockLine := "locked"
+			if target := displayLockTarget(installedContentID, installedInfo.LockedVersion); target != "" {
+				lockLine += " at " + target
+				// Locking is a metadata write, not a deploy (same #97 design
+				// decision doModLock's own convergence hint follows): only say
+				// so when the lock's target actually differs from what's
+				// installed.
+				if installedInfo.LockedVersion != installedInfo.Version {
+					lockLine += " — run 'lmm profile apply' to converge"
+				}
 			}
 			fmt.Printf("  Lock: %s\n", colorYellow(lockLine))
 		} else {
@@ -745,9 +839,40 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			}
 			fmt.Printf("  Pak conversion: %s\n", convertState)
 		}
+		if installedInfo.External {
+			// #269: last, after the settings that DO apply, so the block
+			// reads as the qualification on everything above it.
+			fmt.Println()
+			fmt.Println("Managed by: Steam Workshop")
+			fmt.Printf("  Location: %s\n", installedInfo.ExternalPath)
+			if installedInfo.Version != "" {
+				fmt.Printf("  Steam content id: %s\n", installedInfo.Version)
+			}
+			fmt.Println("  lmm tracks this item and checks it for updates; Steam owns its")
+			fmt.Println("  files and applies its updates. Deploy, enable/disable, update and")
+			fmt.Println("  rollback are not available for it.")
+		}
 	}
 
 	return nil
+}
+
+// manualOnlyFromFileLine is `mod show`'s from-file command for a mod its
+// source will not serve (#543): an update for an installed one, an install
+// otherwise, with the -g/-p this run was given.
+func manualOnlyFromFileLine(mod *domain.Mod, installed bool) string {
+	verb, label := "lmm install --id", "Install from a file you download: "
+	if installed {
+		verb, label = "lmm update", "Update from a file you download: "
+	}
+	parts := []string{verb, mod.ID, "-s", mod.SourceID}
+	if gameID != "" {
+		parts = append(parts, "-g", gameID)
+	}
+	if modProfile != "" {
+		parts = append(parts, "-p", modProfile)
+	}
+	return label + strings.Join(append(parts, "--from-file", "<downloaded-file>"), " ")
 }
 
 func runModConvert(cmd *cobra.Command, args []string) error {
@@ -761,23 +886,17 @@ func runModConvert(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("second argument must be on|off, got %q", args[1])
 	}
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doModConvert(service, game, args[0], convert)
+		return doModConvert(ctx, service, game, args[0], convert)
 	})
 }
 
-func doModConvert(service *core.Service, game *domain.Game, modID string, convert bool) error {
-	var err error
-	modSource, err = resolveSource(service, game, modSource, false)
+func doModConvert(ctx context.Context, service *core.Service, game *domain.Game, modID string, convert bool) error {
+	profileName, err := resolveModTarget(ctx, service, game, modID)
 	if err != nil {
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, modProfile)
-	if err != nil {
-		return err
-	}
-
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		if errors.Is(err, domain.ErrModNotFound) {
 			return fmt.Errorf("mod not found: %s", modID)
@@ -791,15 +910,23 @@ func doModConvert(service *core.Service, game *domain.Game, modID string, conver
 		return fmt.Errorf("mod %s has no pak merge source: pak conversion does not apply", modID)
 	}
 
-	if err := service.SetModConvertPaks(modSource, modID, game.ID, profileName, convert); err != nil {
+	result, err := service.SetModConvertPaks(ctx, modSource, modID, game.ID, profileName, convert)
+	if err != nil {
 		return fmt.Errorf("setting pak conversion for %s: %w", mod.Name, err)
+	}
+
+	// Ruling 15: the ModSettingResult document - result.ConvertPaks is the
+	// on/off state, and the notes below are advice derived from the game's
+	// own config, not from the result.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	state := "on"
 	if !convert {
 		state = "off"
 	}
-	fmt.Printf("%s %s pak conversion: %s\n", colorGreen("✓"), mod.Name, state)
+	fmt.Printf("%s %s pak conversion: %s\n", colorGreen("✓"), result.Mod.Name, state)
 	switch {
 	case game.DeployMode != domain.DeployCompile:
 		fmt.Println("  note: this game is not merge-compile (deploy_mode: compile); the flag has no effect until it is")

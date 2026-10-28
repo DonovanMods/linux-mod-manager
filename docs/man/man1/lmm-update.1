@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.30.1" "User Commands"
+.TH "LMM" "1" "Oct 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
 lmm-update - Check for or apply mod updates
@@ -23,6 +23,21 @@ game with more than one configured source it also avoids an interactive
 source prompt for the bulk check.
 
 .PP
+--from-file <archive> updates the mod from an archive you downloaded by
+hand - for a source that refuses API downloads (e.g. a CurseForge mod
+whose author disabled third-party downloads). The source, mod ID, game
+and profile come from the installed mod. When the update check advertises
+a file, the archive's name is compared with it (case-insensitively,
+ignoring a browser's " (1)" duplicate suffix): on a match its version and
+file ID are recorded, so later update checks stay correct; another file -
+a different flavor or loader's build - is refused unless you pass
+--accept-mismatch. Without an advertised file, a file the source lists
+under the archive's name supplies them, else the version comes from the
+archive's name or --version. The lock and update policy are kept, the
+previous version is preserved for 'lmm update rollback', and hooks run as
+for any update.
+
+.PP
 If the update check itself fails partway through (e.g. a source outage),
 whatever was learned before the failure is still printed and the command
 exits non-zero rather than silently claiming success.
@@ -38,17 +53,27 @@ recompile against the current base pak.
   - Bulk check (no mod ID): {game_id, profile, updates: [...], skipped:
     {pinned, local}, error?}. error is present when the check itself
     failed partway through; updates/skipped still reflect whatever was
-    learned first. A locked mod's updates[] entry carries "locked": true
-    (omitted when unlocked): the update is reported but will not be
-    applied until the lock moves or clears. A recompile-needed entry
-    carries "recompile_needed": true and "reason": "stale_compile"
-    (available_version equals current_version - the mod hasn't changed).
-  - Single mod (a mod ID given) or 'update rollback': {mod_id, name,
-    from_version, to_version, changelog, status, reason}. status is one
+    learned first. Each updates[] entry carries the whole installed mod
+    under "installed_mod" plus "new_version"; "locked": true means the
+    update is reported but will not be applied until the lock moves or
+    clears, and "recompile_needed": true with a "recompile_reason" marks
+    a base-pak staleness row (new_version equals the installed version -
+    the mod itself hasn't changed).
+  - Single mod (a mod ID given): {mod, name, from_version, to_version,
+    changelog, status, reason, warnings, notes}, where "mod" is the
+    profile reference {source_id, mod_id, version, locked}. status is one
     of "updated", "up_to_date", "skipped", "available" (--dry-run),
-    "rolled_back", "recompiled", or "recompile_available" (--dry-run,
-    same-version base-pak recompile); reason is set only when status is
-    "skipped" ("pinned", "local", or "locked").
+    "recompiled", or "recompile_available" (--dry-run, same-version
+    base-pak recompile); reason is set only when status is "skipped"
+    ("pinned", "local", or "locked").
+  - With --from-file and --dry-run, the update-from-file plan: {archive,
+    archive_name, mod, from_version, to_version, file_ids, match,
+    matched_file?, match_normalized?, advertised?, locked, refusal?,
+    files, hooks, warnings}. match is "advertised", "mismatch", "listed"
+    or "none". Without --dry-run, the single-mod document above.
+  - 'update rollback' emits the rollback document: {mod, mod_name,
+    from_version, to_version, status, reason, warnings, notes}, with
+    status "rolled_back" or "skipped".
 
 .PP
 Examples:
@@ -57,9 +82,14 @@ Examples:
   lmm update 12345 --game skyrim-se --source nexusmods  # Disambiguate by source
   lmm update --game skyrim-se --all              # Apply all available updates
   lmm update --game skyrim-se --dry-run          # Show what would update
+  lmm update 12345 --game wow --from-file ~/Downloads/Mod-2.0.zip  # Update from a downloaded archive
 
 
 .SH OPTIONS
+\fB--accept-mismatch\fP[=false]
+	with --from-file: update even when the archive is not the file the update check advertised
+
+.PP
 \fB--all\fP[=false]
 	apply all available updates
 
@@ -72,6 +102,10 @@ Examples:
 	continue even if hooks fail
 
 .PP
+\fB--from-file\fP=""
+	update the mod from an archive you downloaded (for a source that refuses API downloads)
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for update
 
@@ -80,17 +114,25 @@ Examples:
 	profile to check (default: active profile)
 
 .PP
+\fB--refresh\fP[=false]
+	bypass cached source metadata and locally cached source indexes (Steam Workshop caches for hours; the Thunderstore index for six)
+
+.PP
 \fB-s\fP, \fB--source\fP=""
-	mod source (default: the sole configured source; prompts when several are configured)
+	mod source for a single-mod update (default: the sole configured source; prompts when several are configured). A bulk check never needs it
+
+.PP
+\fB--version\fP=""
+	with --from-file: the version to record (default: the matched source file's, else the archive name's)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
 \fB--config\fP=""
-	config directory (default: ~/.config/lmm)
+	config directory (default: $XDG_CONFIG_HOME/lmm or ~/.config/lmm)
 
 .PP
 \fB--data\fP=""
-	data directory (default: ~/.local/share/lmm)
+	data directory (default: $XDG_DATA_HOME/lmm or ~/.local/share/lmm)
 
 .PP
 \fB-g\fP, \fB--game\fP=""
@@ -98,7 +140,11 @@ Examples:
 
 .PP
 \fB--json\fP[=false]
-	output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)
+	output JSON instead of text; mutating commands print their result, --dry-run prints the plan; never prompts
+
+.PP
+\fB--log-level\fP="off"
+	diagnostic log level written to stderr (off, error, warn, info, debug)
 
 .PP
 \fB--no-color\fP[=false]
@@ -118,4 +164,4 @@ Examples:
 
 
 .SH HISTORY
-27-Jul-2026 Auto generated by spf13/cobra
+28-Oct-2026 Auto generated by spf13/cobra

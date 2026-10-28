@@ -1,0 +1,9 @@
+{
+  "profile": "default",
+  "mods": [],
+  "uninstall": false,
+  "hooks": [],
+  "external": [
+    "Workshop Item"
+  ]
+}

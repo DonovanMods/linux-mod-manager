@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +43,7 @@ func TestList_DisplaysProfileLoadOrder_NotInstallOrder(t *testing.T) {
 	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 	seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
 
-	require.NoError(t, svc.NewProfileManager().ReorderMods(game.ID, "default", []domain.ModReference{
+	require.NoError(t, svc.NewProfileManager().ReorderMods(context.Background(), game.ID, "default", []domain.ModReference{
 		{SourceID: "src", ModID: "b", Version: "1.0"},
 		{SourceID: "src", ModID: "a", Version: "1.0"},
 	}))
@@ -60,7 +62,7 @@ func TestList_DisplaysProfileLoadOrder_NotInstallOrder(t *testing.T) {
 
 	t.Run("json", func(t *testing.T) {
 		raw := listVerbose(t, svc, game, true)
-		var out listJSONOutput
+		var out core.ModList
 		require.NoError(t, json.Unmarshal([]byte(raw), &out))
 		require.Len(t, out.Mods, 2)
 		assert.Equal(t, "b", out.Mods[0].ID)
@@ -73,10 +75,9 @@ func TestList_DisplaysProfileLoadOrder_NotInstallOrder(t *testing.T) {
 // deliberately OMITS a mod absent from the profile's load order - correct
 // for deploy, since an untracked mod must never silently deploy, but wrong
 // for a listing, where every installed mod must still be visible. list.go
-// uses core.OrderByProfile instead (the same seam the TUI's mod list
-// already uses - internal/tui/service_core.go's Overview), which never
-// omits: a load-order-absent mod is placed first (lowest priority - it has
-// no claim to "final say"), never dropped.
+// uses core.OrderByProfile instead, which never omits: a load-order-absent
+// mod is placed first (lowest priority - it has no claim to "final say"),
+// never dropped.
 func TestList_ModMissingFromLoadOrder_StillShown(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	seedDeployableMod(t, svc, game, "a", "Tracked Mod", "a.esp")
@@ -84,7 +85,7 @@ func TestList_ModMissingFromLoadOrder_StillShown(t *testing.T) {
 	// Install "b" without ever adding it to the profile's load order -
 	// simulates the edge case a normal add/remove flow shouldn't produce,
 	// but which must not make the mod vanish from `lmm list`.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "b", SourceID: "src", Name: "Untracked Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,

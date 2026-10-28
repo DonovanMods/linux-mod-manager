@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -21,7 +21,7 @@ func TestDoModSetUpdate_SuccessCheckmark_ColorPath(t *testing.T) {
 	resetColorFlags(t)
 	withColorCapableStdout(t, true)
 	out := captureStdout(t, func() error {
-		return doModSetUpdate(svc, game, "a")
+		return doModSetUpdate(context.Background(), svc, game, "a")
 	})
 
 	assert.Contains(t, out, colorGreen("✓")+" Mod A update policy: auto")

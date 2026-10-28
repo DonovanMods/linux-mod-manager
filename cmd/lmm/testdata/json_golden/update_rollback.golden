@@ -1,0 +1,15 @@
+{
+  "mod": {
+    "source_id": "test-src",
+    "mod_id": "mod1",
+    "version": "1.0",
+    "file_ids": [
+      "old-1"
+    ],
+    "locked": false
+  },
+  "mod_name": "Mod One",
+  "from_version": "2.0",
+  "to_version": "1.0",
+  "status": "rolled_back"
+}

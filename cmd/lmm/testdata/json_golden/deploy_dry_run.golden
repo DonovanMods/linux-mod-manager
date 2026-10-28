@@ -1,0 +1,22 @@
+{
+  "profile": "default",
+  "mods": [
+    {
+      "ref": {
+        "source_id": "src",
+        "mod_id": "a",
+        "version": "1.0",
+        "locked": false
+      },
+      "name": "Mod A",
+      "class": "individual",
+      "link": [
+        "a.esp"
+      ],
+      "remove": []
+    }
+  ],
+  "purge": [],
+  "hooks": [],
+  "no_changes": false
+}

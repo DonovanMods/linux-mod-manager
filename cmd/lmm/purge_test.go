@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -148,29 +148,36 @@ func setupDoPurgeTest(t *testing.T) (*core.Service, *domain.Game) {
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
-	oldProfile, oldUninstall, oldYes, oldForce, oldNoColor, oldNoHooks :=
-		purgeProfile, purgeUninstall, purgeYes, purgeForce, noColor, noHooks
+	oldProfile, oldUninstall, oldYes, oldForce, oldDryRun, oldNoColor, oldNoHooks :=
+		purgeProfile, purgeUninstall, purgeYes, purgeForce, purgeDryRun, noColor, noHooks
 	purgeProfile = ""
 	purgeUninstall = false
 	purgeYes = true
 	purgeForce = false
+	purgeDryRun = false
 	noColor = true
 	noHooks = false
 	t.Cleanup(func() {
-		purgeProfile, purgeUninstall, purgeYes, purgeForce, noColor, noHooks =
-			oldProfile, oldUninstall, oldYes, oldForce, oldNoColor, oldNoHooks
+		purgeProfile, purgeUninstall, purgeYes, purgeForce, purgeDryRun, noColor, noHooks =
+			oldProfile, oldUninstall, oldYes, oldForce, oldDryRun, oldNoColor, oldNoHooks
 	})
 
 	return svc, game
 }
 
 // seedPurgeableMod seeds modID/name as installed AND deploys its file into
-// the game dir - the state `lmm purge` operates on.
+// the game dir - the state `lmm purge` operates on. The installed_mods row's
+// Deployed flag is reset to false afterwards: the historical fixture (a bare
+// Installer.Install, which never touched that column) left it at
+// SaveInstalledMod's zero value despite the file being genuinely on disk,
+// and TestJSONGolden_Purge/dry_run_plan pins that exact "deployed": false in
+// the recorded plan document, so deployInstalledMod's own Deployed:true
+// write (Ruling 10) is reverted here rather than re-recording the golden.
 func seedPurgeableMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, fileName string) {
 	t.Helper()
 	seedDeployableMod(t, svc, game, modID, name, fileName)
-	require.NoError(t, svc.GetInstaller(game).Install(context.Background(),
-		game, &domain.Mod{ID: modID, SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: modID, SourceID: "src", Version: "1.0", GameID: game.ID}, "default")
+	require.NoError(t, svc.SetModDeployed(context.Background(), "src", modID, game.ID, "default", false))
 }
 
 func TestDoPurge_HappyPath_ByteExactOutput(t *testing.T) {
@@ -192,9 +199,34 @@ func TestDoPurge_HappyPath_ByteExactOutput(t *testing.T) {
 		_, err := os.Lstat(filepath.Join(game.ModPath, f))
 		assert.True(t, os.IsNotExist(err), "%s must be undeployed", f)
 	}
-	mod, err := svc.GetInstalledMod("src", "a", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "a", "g1", "default")
 	require.NoError(t, err, "records must be preserved without --uninstall")
 	assert.False(t, mod.Deployed)
+}
+
+// TestDoPurge_JSONOutputReturnsConfirmationRequired pins the non-interactive
+// rule (v2 Phase 3 Ruling 2) at doPurge's "Continue?" prompt: under --json
+// with no -y, the purge must fail with core.ErrConfirmationRequired before
+// ever reading stdin, and nothing gets undeployed.
+func TestDoPurge_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game := setupDoPurgeTest(t)
+	purgeYes = false
+	withJSONOutput(t)
+	seedPurgeableMod(t, svc, game, "a", "Mod A", "a.esp")
+
+	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doPurge(context.Background(), svc, game)
+		})
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Empty(t, stdout, "a refused prompt emits no result document")
+	assert.Empty(t, stderr)
+	_, err = os.Lstat(filepath.Join(game.ModPath, "a.esp"))
+	assert.NoError(t, err, "must not undeploy anything")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "a", "g1", "default")
+	assert.NoError(t, dbErr, "the record must still exist, untouched")
 }
 
 func TestDoPurge_BeforeEachSkip_PrintsSkippedLineAndFailedCount(t *testing.T) {
@@ -234,9 +266,9 @@ func TestDoPurge_Uninstall_OmitsPreservedTrailer_RemovesRecords(t *testing.T) {
 	assert.Contains(t, out, "\nPurged: 1 mod(s)\n")
 	assert.NotContains(t, out, "Mod records preserved")
 
-	_, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	_, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "--uninstall must delete the DB record")
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "--uninstall must remove the profile YAML entry")
 }
@@ -298,12 +330,13 @@ func TestDoPurge_AfterHookWarnings_StderrAfterModLines(t *testing.T) {
 
 func TestDoPurge_Verbose_UndeployDiagnosticPrintsInline(t *testing.T) {
 	svc, game := setupDoPurgeTest(t)
-	seedPurgeableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	seedPurgeableMod(t, svc, game, "1", "Test Mod", "blocked/plugin.esp")
 
-	// Corrupt the deployed symlink into a plain file so Uninstall fails.
-	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
+	// Obstruct the deployed path's parent to force a real undeploy error.
+	deployedPath := filepath.Join(game.ModPath, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0o644))
 
 	oldVerbose := verbose
 	verbose = true

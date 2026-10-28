@@ -1,0 +1,73 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "snapshot": "known-good",
+  "created_at": "<TIME>",
+  "to_purge": [
+    {
+      "id": "keeper",
+      "source_id": "src",
+      "name": "Keeper",
+      "version": "1.0",
+      "author": "",
+      "summary": "",
+      "description": "",
+      "game_id": "g1",
+      "category": "",
+      "downloads": 0,
+      "picture_url": "",
+      "source_url": "",
+      "files": [],
+      "dependencies": [],
+      "profile_name": "default",
+      "update_policy": "notify",
+      "installed_at": "<TIME>",
+      "enabled": true,
+      "deployed": true,
+      "link_method": "copy",
+      "manual_download": false,
+      "convert_paks": true
+    },
+    {
+      "id": "wrecker",
+      "source_id": "src",
+      "name": "Wrecker",
+      "version": "1.0",
+      "author": "",
+      "summary": "",
+      "description": "",
+      "game_id": "g1",
+      "category": "",
+      "downloads": 0,
+      "picture_url": "",
+      "source_url": "",
+      "files": [],
+      "dependencies": [],
+      "profile_name": "default",
+      "update_policy": "notify",
+      "installed_at": "<TIME>",
+      "enabled": true,
+      "deployed": true,
+      "link_method": "copy",
+      "manual_download": false,
+      "convert_paks": true
+    }
+  ],
+  "originals": [
+    {
+      "root": "mod_path",
+      "relative_path": "Data/shipped.esp",
+      "status": "restorable"
+    }
+  ],
+  "mods": [
+    {
+      "source_id": "src",
+      "mod_id": "keeper",
+      "name": "Keeper",
+      "version": "1.0",
+      "cached": true
+    }
+  ],
+  "profile_changed": true
+}

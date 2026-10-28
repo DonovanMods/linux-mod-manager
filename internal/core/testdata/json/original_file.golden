@@ -1,0 +1,12 @@
+{
+  "root": "mod_path",
+  "relative_path": "Data/shipped.esp",
+  "sha256": "3f786850e387550fdab836ed7e6dc881de23001b1b4bd0e0e2a4a9d1d8d1a1f1",
+  "size": 4096,
+  "mode": 493,
+  "captured_at": "2026-08-27T12:00:00Z",
+  "op": "deploy",
+  "source_id": "nexusmods",
+  "mod_id": "42",
+  "profile": "default"
+}

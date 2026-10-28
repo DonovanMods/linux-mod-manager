@@ -11,8 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -20,23 +21,51 @@ import (
 // guarantee Close on return (with a stderr warning on close failure), and forward
 // cmd.Context() to fn so SIGINT and explicit cancellation propagate downstream.
 func withService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.Service) error) error {
-	svc, err := initService()
+	return withServiceOpts(cmd, app.Options{}, fn)
+}
+
+// withServiceOpts is withService with bootstrap options (e.g. a custom warning
+// writer); ConfigDir and DataDir still come from the global flags.
+//
+// The context fn receives prints what a source or a download is waiting on
+// to stderr (withSourceNotices, #436), for every command.
+func withServiceOpts(cmd *cobra.Command, opts app.Options, fn func(ctx context.Context, svc *core.Service) error) error {
+	svc, err := initServiceWith(cmd.Context(), opts)
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
 	defer closeService(svc)
 
-	return fn(cmd.Context(), svc)
+	return fn(withSourceNotices(cmd.Context()), svc)
 }
 
 // withGameService extends withService with the requireGame check and resolves
 // the *domain.Game for the global -g flag, so callers receive a fully-populated
 // game and never need to repeat the GetGame boilerplate.
 func withGameService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.Service, game *domain.Game) error) error {
+	return withGameServiceOpts(cmd, false, fn)
+}
+
+// withGameReportService is withGameService for a command that reports the
+// game's own adapter warning (design decision 11) itself, as verify's
+// loader_adapter_ignored row does: the load-time copy is left out for that
+// game, so the command says it once (#413 re-review M2).
+func withGameReportService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.Service, game *domain.Game) error) error {
+	return withGameServiceOpts(cmd, true, fn)
+}
+
+// withGameServiceOpts is withGameService and withGameReportService's shared
+// body. The game id is only known once requireGame has run, which is why
+// the omission is a flag here rather than an app.Options the caller builds.
+func withGameServiceOpts(cmd *cobra.Command, reportsAdapterWarning bool, fn func(ctx context.Context, svc *core.Service, game *domain.Game) error) error {
 	if err := requireGame(cmd); err != nil {
 		return err
 	}
-	return withService(cmd, func(ctx context.Context, svc *core.Service) error {
+	var opts app.Options
+	if reportsAdapterWarning {
+		opts.OmitAdapterWarnings = []string{gameID}
+	}
+	return withServiceOpts(cmd, opts, func(ctx context.Context, svc *core.Service) error {
 		game, err := svc.GetGame(gameID)
 		if err != nil {
 			// Wrap rather than reformat so callers can errors.Is(err, domain.ErrGameNotFound).
@@ -45,6 +74,31 @@ func withGameService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.
 		}
 		return fn(ctx, svc, game)
 	})
+}
+
+// withGameWriteService is withService for a command that writes gameID's
+// configuration (`lmm game edit`): the load-time adapter warning is left out
+// for that game, and once fn has succeeded the game's warning is re-checked
+// against what was written and printed if it still applies. So the edit that
+// fixes a contradiction does not print it before succeeding, and the edit
+// that creates one says so at that moment (#413 re-review M2).
+func withGameWriteService(cmd *cobra.Command, gameID string, fn func(ctx context.Context, svc *core.Service) error) error {
+	return withServiceOpts(cmd, app.Options{OmitAdapterWarnings: []string{gameID}}, func(ctx context.Context, svc *core.Service) error {
+		if err := fn(ctx, svc); err != nil {
+			return err
+		}
+		warnGameAdapterConfig(svc, gameID)
+		return nil
+	})
+}
+
+// warnGameAdapterConfig prints gameID's design-decision-11 warning on stderr,
+// in the load-time warning's own format, when its configuration contradicts
+// itself. Stderr, so a --json run's stdout stays one document.
+func warnGameAdapterConfig(svc *core.Service, gameID string) {
+	if w := svc.AdapterConfigWarning(gameID); w != "" {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
 }
 
 func closeService(svc *core.Service) {
@@ -70,13 +124,109 @@ func readPromptLine() (string, error) {
 // readPromptLineFrom is the testable seam for readPromptLine. The split
 // exists so unit tests can drive the helper with a strings.Reader instead
 // of os.Stdin.
+//
+// It is also the CLI's one choke point for the non-interactive rule (v2
+// Phase 3 Ruling 2): under --json, r is never touched - every caller either
+// checks its own deciding flag before reaching here (so this path is never
+// hit at all) or has none, in which case core.ErrConfirmationRequired is the
+// answer. Returning before the read means a poison reader fed to this
+// function under --json is provably never read, not merely returned an
+// error quickly.
 func readPromptLineFrom(r io.Reader) (string, error) {
+	if jsonOutput {
+		return "", core.ErrConfirmationRequired
+	}
 	line, err := bufio.NewReader(r).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", fmt.Errorf("reading input: %w", err)
 	}
 	return strings.TrimSpace(strings.ToLower(line)), nil
 }
+
+// The remedy each interactive prompt names: the flag or argument that would
+// have answered it without a human. Each is used TWICE - once by the --json
+// envelope (confirmationRequiredVia) and once by the EOF rendering that has
+// to say the same thing (promptReadError, #385) - so they are constants
+// rather than a literal typed out at each site, and the two renderings
+// cannot drift apart (P1b review F9). cmd/lmm/prompt_remedy_test.go refuses
+// a literal at either call site.
+const (
+	// remedySelectSource answers resolveSource's source picker.
+	remedySelectSource = "pass -s/--source to select a mod source"
+	// remedyPickInstallMod answers `lmm install`'s search-result picker.
+	remedyPickInstallMod = "pass -y/--yes to install the result named exactly like the query, or --id to install a specific mod directly"
+	// remedyNameAuthSource answers `lmm auth login`/`logout`'s source
+	// picker, which has no flag of its own - the source is positional.
+	remedyNameAuthSource = "pass the source ID as a positional argument (e.g. lmm auth logout <source>)"
+)
+
+// confirmationRequiredVia reports a refused prompt whose remedy is how - the
+// specific flag or argument that would have answered THIS prompt without
+// one. Most prompts share the sentinel's own generic --yes/--force text
+// (their deciding flag already gates the call to readPromptLine, so the
+// plain sentinel is accurate); the few prompts with no such flag - a source
+// or game selection - use this instead so the --json envelope names the
+// actual way out.
+//
+// #375: it says only that. Wrapping the sentinel with %w concatenated the
+// two, producing "pass --yes (or --force where documented) in
+// non-interactive mode: pass -s/--source to select a mod source" - naming
+// three flags for a prompt whose command has one of them. errors.Is still
+// matches core.ErrConfirmationRequired, which is what callers branch on.
+func confirmationRequiredVia(how string) error {
+	return &confirmationViaError{how: how}
+}
+
+// interactiveOnlyVia returns core.ErrInteractiveOnly naming how - the flag
+// or argument that would have supplied this particular value without a
+// prompt. The counterpart to confirmationRequiredVia for a value (a name, a
+// path, an identifier) rather than a decision.
+func interactiveOnlyVia(how string) error {
+	return fmt.Errorf("%w: %s", core.ErrInteractiveOnly, how)
+}
+
+// promptReadErrorAs is promptReadError for a prompt whose non-interactive
+// path refuses with a specific error VALUE rather than a remedy sentence:
+// at EOF - stdin closed by a pipe, a redirect or Ctrl-D, so no answer is
+// ever coming - it returns that same error (#385, P1b review F10). Call
+// sites build the refusal once and hand it to both branches, so the two
+// renderings are one expression rather than two texts that happen to agree.
+// Any other read failure is a genuine stdin fault and keeps its
+// "reading input:" wrapper.
+func promptReadErrorAs(err, refusal error) error {
+	if errors.Is(err, io.EOF) {
+		return refusal
+	}
+	return fmt.Errorf("reading input: %w", err)
+}
+
+// promptReadError words a failed prompt read for a caller whose --json path
+// already names a remedy via confirmationRequiredVia.
+//
+// At EOF - stdin closed by a pipe, a redirect or Ctrl-D - no answer is ever
+// coming, and the plain-mode run used to report "reading input: EOF": an
+// implementation detail, with no way forward, handed to exactly the
+// scripted/cron caller the exit-code table exists for (#385). It now gets
+// the same remedy the --json envelope carries, so the two renderings say
+// the same thing. Any OTHER read failure is a genuine stdin fault and keeps
+// its "reading input:" wrapper.
+func promptReadError(err error, how string) error {
+	if errors.Is(err, io.EOF) {
+		return confirmationRequiredVia(how)
+	}
+	return fmt.Errorf("reading input: %w", err)
+}
+
+// confirmationViaError is confirmationRequiredVia's error: it IS
+// core.ErrConfirmationRequired for errors.Is, without inheriting its
+// sentence.
+type confirmationViaError struct{ how string }
+
+func (e *confirmationViaError) Error() string {
+	return "confirmation required: " + e.how
+}
+
+func (e *confirmationViaError) Unwrap() error { return core.ErrConfirmationRequired }
 
 // resolveSource determines which source to use for a game.
 // If sourceFlag is provided, validates it's configured for the game.
@@ -139,7 +289,14 @@ func resolverFromService(svc *core.Service) func(string) string {
 // promptForGameSource prompts the user to select from multiple configured
 // sources, rendering each as "Name (id)" via resolve. A nil resolve (or one
 // that returns "" for a given ID) falls back to the bare ID.
+//
+// Non-interactive rule (Ruling 2): under --json this never prints or reads
+// anything - every resolveSource caller already exposes -s/--source, so the
+// envelope names that flag as the way to decide the prompt non-interactively.
 func promptForGameSource(gameName string, sources []string, resolve func(string) string) (string, error) {
+	if jsonOutput {
+		return "", confirmationRequiredVia(remedySelectSource)
+	}
 	if resolve == nil {
 		resolve = func(id string) string { return "" }
 	}
@@ -157,8 +314,8 @@ func promptForGameSource(gameName string, sources []string, resolve func(string)
 
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("reading input: %w", err)
+	if err != nil && strings.TrimSpace(input) == "" {
+		return "", promptReadError(err, remedySelectSource)
 	}
 
 	choice, err := strconv.Atoi(strings.TrimSpace(input))

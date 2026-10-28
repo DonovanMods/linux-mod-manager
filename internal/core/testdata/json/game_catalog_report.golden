@@ -1,0 +1,12 @@
+{
+  "source_id": "curseforge",
+  "query": "mine",
+  "matches": [
+    {
+      "identifier": "432",
+      "name": "Minecraft",
+      "slug": "minecraft",
+      "game_id": "minecraft"
+    }
+  ]
+}

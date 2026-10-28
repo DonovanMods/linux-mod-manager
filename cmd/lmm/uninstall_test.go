@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,8 +104,8 @@ func TestUninstallCmd_GameNotFound(t *testing.T) {
 }
 
 // setupDoUninstallTest builds a *core.Service plus a mod that will fail to
-// undeploy (a regular file sits at the deploy destination, so the symlink
-// linker's Undeploy fails deterministically with "not a symlink" - an absent
+// undeploy (a regular file blocks traversal through the deployed path's
+// parent, so the symlink linker's Undeploy fails with ENOTDIR - an absent
 // cache entry no longer works as the failure fixture, since #260 made that a
 // documented no-op) and resets the uninstall command's package-level flag
 // globals to sane defaults for calling doUninstall directly. Callers set
@@ -125,28 +125,44 @@ func setupDoUninstallTest(t *testing.T) (*core.Service, *domain.Game) {
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	require.NoError(t, svc.GetGameCache(game).Store("g1", "src", "1", "1.0", "plugin.esp", []byte("data")))
-	// The undeploy obstruction: a foreign regular file where the symlink
-	// linker expects its own link.
-	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "plugin.esp"), []byte("not a symlink"), 0644))
+	require.NoError(t, svc.GetGameCache(game).Store("g1", "src", "1", "1.0", "blocked/plugin.esp", []byte("data")))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create("g1", "default")
+	_, err = pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod("g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+	// Deploy first to give the linker a recorded path, then obstruct its
+	// parent without placing user content at that path.
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	deployedPath := filepath.Join(gameDir, "blocked", "plugin.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
+	// The row as the goldens recorded it: installed, not marked deployed.
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
 
-	oldSource, oldProfile, oldKeep, oldForce := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce
+	oldSource, oldProfile, oldKeep, oldForce, oldDryRun :=
+		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, uninstallDryRun
 	uninstallSource = ""
 	uninstallProfile = ""
 	uninstallKeep = false
 	uninstallForce = false
+	uninstallDryRun = false
 	t.Cleanup(func() {
-		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce = oldSource, oldProfile, oldKeep, oldForce
+		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, uninstallDryRun =
+			oldSource, oldProfile, oldKeep, oldForce, oldDryRun
 	})
 
 	return svc, game
@@ -216,7 +232,7 @@ func TestDoUninstall_Verbose_PrintsAllThreeHistoricalNotesByteIdentically(t *tes
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -316,16 +332,16 @@ func TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr(t *testing.T) {
 		Hooks: domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failScript}},
 	}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create("g1", "default")
+	_, err = pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod("g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
 
 	oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks
 	uninstallSource = ""
@@ -347,11 +363,11 @@ func TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr(t *testing.T) {
 	dbPath := filepath.Join(dataDir, "lmm.db")
 	locker, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
-	defer locker.Close()
+	defer func() { require.NoError(t, locker.Close(), "closing database locker") }()
 	locker.SetMaxOpenConns(1)
 	conn, err := locker.Conn(context.Background())
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { require.NoError(t, conn.Close(), "closing database connection") }()
 	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 	defer conn.ExecContext(context.Background(), "ROLLBACK") //nolint:errcheck // best-effort cleanup
@@ -362,4 +378,136 @@ func TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr(t *testing.T) {
 	require.Error(t, cmdErr, "DeleteInstalledMod must fail while another writer holds the file lock")
 	assert.Contains(t, cmdErr.Error(), "failed to remove mod record")
 	assert.Contains(t, stderr, "Warning: uninstall.before_each hook failed (forced): ", "the accumulated Warning must still reach stderr despite the command failing")
+}
+
+// TestDoUninstall_BeforeAllHookFails_AbortsWithoutForce characterizes the
+// pre-lift doUninstall's hook-refusal semantics (Task 2, #286): without
+// --force, a failing uninstall.before_all hook aborts the whole uninstall
+// before the mod is undeployed, cache-cleaned, or removed from the DB/
+// profile - the non-forced counterpart to
+// TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr's forced
+// case, added because nothing else in this file pinned the refusal path
+// before hook resolution moves into core.
+func TestDoUninstall_BeforeAllHookFails_AbortsWithoutForce(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	failScript := filepath.Join(scriptsDir, "before_all.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\nexit 1\n"), 0755))
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		Hooks: domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}},
+	}
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(context.Background(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+
+	oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks
+	uninstallSource = ""
+	uninstallProfile = ""
+	uninstallKeep = false
+	uninstallForce = false
+	verbose = false
+	noHooks = false
+	t.Cleanup(func() {
+		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks = oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks
+	})
+
+	cmdErr := doUninstall(context.Background(), svc, game, "1")
+	require.Error(t, cmdErr)
+	assert.Contains(t, cmdErr.Error(), "uninstall.before_all hook failed")
+
+	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	assert.NoError(t, dbErr, "a fatal before_all hook must leave the mod record untouched")
+}
+
+// TestDoUninstall_NoHooks_SkipsConfiguredHook characterizes --no-hooks for
+// doUninstall (Task 2, #286): a configured uninstall.before_all hook that
+// would otherwise abort the uninstall (it exits 1) never runs at all when
+// noHooks is set, so the uninstall proceeds and succeeds.
+func TestDoUninstall_NoHooks_SkipsConfiguredHook(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	failScript := filepath.Join(scriptsDir, "before_all.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\nexit 1\n"), 0755))
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		Hooks: domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}},
+	}
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(context.Background(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+
+	oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks
+	uninstallSource = ""
+	uninstallProfile = ""
+	uninstallKeep = false
+	uninstallForce = false
+	verbose = false
+	noHooks = true
+	t.Cleanup(func() {
+		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks = oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks
+	})
+
+	require.NoError(t, doUninstall(context.Background(), svc, game, "1"), "--no-hooks must skip the hook entirely, letting the uninstall succeed")
+
+	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	assert.Error(t, dbErr, "the mod record must be gone once the uninstall succeeds")
+}
+
+// TestPrintStrandedUninstallHint pins #488's terminal remedy for the files a
+// one-mod removal intentionally leaves under a former mod_path. It is shared
+// by active and recorded-only uninstalls because both receive the same core
+// result field.
+func TestPrintStrandedUninstallHint(t *testing.T) {
+	stranded := []core.PurgeStrandedPath{
+		{Path: "Data/a.esp", ModPath: "/old/mods"},
+		{Path: "Data/b.esp", ModPath: "/old/mods"},
+	}
+	out := captureStdout(t, func() error {
+		printStrandedUninstallHint("selected-game", "alt", stranded, false)
+		return nil
+	})
+	assert.Equal(t, "  2 file(s) deployed under an earlier mod_path are left for `lmm purge -p alt --game selected-game`\n", out)
+
+	dryRun := captureStdout(t, func() error {
+		printStrandedUninstallHint("selected-game", "alt", stranded[:1], true)
+		return nil
+	})
+	assert.Equal(t, "  1 file(s) deployed under an earlier mod_path would be left for `lmm purge -p alt --game selected-game`\n", dryRun)
 }

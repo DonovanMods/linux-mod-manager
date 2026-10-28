@@ -1,4 +1,4 @@
-package core_test
+package core
 
 import (
 	"os"
@@ -6,8 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,7 +29,7 @@ func TestApplyProfileOverrides_RejectsPathTraversal(t *testing.T) {
 			profile := &domain.Profile{
 				Overrides: map[string][]byte{tt.relPath: []byte("content")},
 			}
-			err := core.ApplyProfileOverrides(game, profile)
+			err := applyProfileOverrides(game, profile, nil)
 			require.Error(t, err)
 			// Path traversal returns "escapes"; absolute/invalid returns "invalid override path"
 			assert.True(t, strings.Contains(err.Error(), "escapes") || strings.Contains(err.Error(), "invalid override path"), "error: %s", err.Error())
@@ -47,7 +46,7 @@ func TestApplyProfileOverrides_Success(t *testing.T) {
 			"subdir/file.txt": []byte("hello"),
 		},
 	}
-	err := core.ApplyProfileOverrides(game, profile)
+	err := applyProfileOverrides(game, profile, nil)
 	require.NoError(t, err)
 
 	content, err := os.ReadFile(filepath.Join(baseDir, "Data", "skyrim.ini"))

@@ -1,6 +1,6 @@
 # Configuration Reference
 
-lmm uses YAML configuration files under `~/.config/lmm/` (or the directory set with `--config`).
+lmm uses YAML configuration files under `$XDG_CONFIG_HOME/lmm/` — `~/.config/lmm/` by default — or the directory set with `--config`.
 
 `link_method` and `deploy_mode` fields (in `config.yaml`, `games.yaml`, and profile files) are validated at load time: leaving one unset keeps its documented default, but a value that doesn't exactly match one of the listed options — a typo like `deploy_mode: compil` — is a load-time error naming the field, the offending value, and the valid options, not a silent fallback.
 
@@ -8,13 +8,115 @@ lmm uses YAML configuration files under `~/.config/lmm/` (or the directory set w
 
 Global application settings. Optional; defaults apply if the file is missing.
 
-| Option                | Type   | Default   | Description                                                       |
-| --------------------- | ------ | --------- | ----------------------------------------------------------------- |
-| `default_link_method` | string | `symlink` | How to deploy mods: `symlink`, `hardlink`, or `copy`              |
-| `default_game`        | string | (empty)   | Game ID to use when `--game` is not specified                     |
-| `keybindings`         | string | `vim`     | Reserved for future TUI: `vim` or `standard`                      |
-| `cache_path`          | string | (empty)   | Override default mod cache directory (`~/.local/share/lmm/cache`) |
-| `hook_timeout`        | int    | 60        | Timeout in seconds for hook scripts                               |
+| Option                | Type   | Default   | Description                                                                                          |
+| --------------------- | ------ | --------- | ---------------------------------------------------------------------------------------------------- |
+| `default_link_method` | string | `symlink` | How to deploy mods: `symlink`, `hardlink`, or `copy`                                                 |
+| `default_game`        | string | (empty)   | Game ID to use when `--game` is not specified                                                        |
+| `keybindings`         | string | (unset)   | Ignored. Kept so existing config files that set it still parse (it was reserved for the removed TUI); lmm never writes it |
+| `cache_path`          | string | (empty)   | Override default mod cache directory (`<data dir>/cache`)                                            |
+| `hook_timeout`        | int    | 60        | Timeout in seconds for hook scripts                                                                  |
+| `auto_snapshot`       | bool   | `false`   | Record a snapshot before every deploy, profile switch and update (see below)                         |
+| `auto_snapshot_keep`  | int    | `10`      | How many AUTOMATIC snapshots to keep per game; `0` means unlimited (see below)                       |
+
+### `auto_snapshot`
+
+With `auto_snapshot: true`, lmm records a snapshot named
+`auto-<op>-<timestamp>` before each deploy, profile switch and update — the
+three operations that change what is in the game directory.
+
+It is **off by default**. Creating a snapshot hashes the whole deployed
+tree, which on a large install is real work to do on every deploy, and a
+user who wants the safety net can say so once. An automatic snapshot that
+FAILS is reported as a warning and the operation continues: a backup that
+blocks the thing it is protecting is worse than no backup.
+
+Automatic snapshots are listed by `lmm snapshot list` like any other, marked
+`(auto)`, and are deleted the same way.
+
+### `auto_snapshot_keep`
+
+Automatic snapshots are **pruned**: each time lmm records one, the oldest
+automatic snapshots beyond `auto_snapshot_keep` (default `10`) are deleted.
+Set it to `0` for unlimited.
+
+Only automatic snapshots are ever pruned — one you named with
+`lmm snapshot create --name` is yours until you delete it — and the
+originals store is never touched by a prune: it lives outside the
+snapshot-name namespace entirely (`_originals/`), and it holds the only
+copy of what it holds.
+
+### What a snapshot does and does not contain
+
+A snapshot never contains mod bytes. It records the profile (load order and
+locks), the installed versions and per-mod settings, the deployed files with
+their checksums, and the originals in force — a few kilobytes. The mod files
+themselves are in the mod cache (`<data>/cache/...`).
+
+So a restore needs, for each mod it puts back: the cached files for the
+**recorded version** if they are still there, and otherwise a download of
+that exact version from the mod's source. A version the source can no longer
+serve — deleted, hidden, or superseded with the old file removed — is
+reported as a refusal in the preview, before anything is touched. Clearing
+the cache does not invalidate a snapshot, but it does make restoring it need
+the network, and a source that has dropped a version can no longer supply
+it at all.
+
+The one thing a snapshot restore does NOT need from anywhere is the stock
+game content lmm replaced: those bytes are in the originals store, which is
+the only copy of them and is never pruned or deleted by lmm.
+
+### A copied file you changed is yours
+
+Under the `copy` and `hardlink` link methods a deployed file is a regular
+file, so lmm records a checksum (with its size and timestamps) of what it
+deployed. Every removal compares before it deletes: a purge, an uninstall,
+`lmm mod disable`, a rollback or update, a profile switch or apply, and
+`lmm verify --fix`. A file whose content no longer matches is left where it
+is and reported ("… was left in place: its content changed after lmm
+deployed it, so lmm treats it as yours"); a purge also stops tracking it.
+A deploy does not write over it either — it says so, and a deploy after
+you delete the file puts the mod's version back. `lmm verify` reports such
+a file as `deployed_modified`, which `--fix` leaves alone.
+
+A file lmm cannot read to compare is kept the same way, and its record is
+kept exactly as it was. A file deployed before checksums were recorded
+(schema v18) is compared with the mod's cached copy instead: the same
+content is lmm's and goes; different content is yours and stays when no
+other profile, mod or game records the path. When one does, or when the
+cached copy is gone too, the file is removed as it always was, and the flow
+reports it once as "removed unverified (deployed before checksums were
+recorded)"; the next deploy records its checksum.
+
+On a filesystem without a real change time — vfat, exFAT, NTFS, FUSE
+mounts such as a Steam Deck SD card — a size and timestamp match proves
+nothing, so lmm always compares the content there. It does the same for a
+file changed within a moment of its deploy.
+
+Under `hardlink`, a file edited in place is the mod's cached copy too, so
+deleting it and deploying again would bring your edit straight back:
+`lmm verify` and the deploy say so, and `lmm install --force` for the mod
+extracts its own version afresh.
+
+The same care applies to content lmm did not deploy at all: a deploy
+preserves it in the originals store before replacing it (and says so when
+it is a file a purge left as yours: `lmm purge` puts it back). When the
+store already holds an earlier original of that path, when the copy fails,
+or when the path is a link or directory lmm did not make, the deploy leaves
+it where it is and says so — lmm never writes through a link it did not
+make — and `lmm verify` reports the path as `deployed_blocked`.
+
+An older lmm (before schema v18) that opens this database still works, but
+it does not know the new columns: a file it redeploys keeps the checksum
+this version recorded, so this version then keeps lmm's own newer file as
+yours and reports it. Delete the file and deploy again to settle it.
+
+Removing the mod that replaced a file puts that file back on its own — an
+uninstall, a purge, an update that drops a file the previous version
+shipped, a rolled-back install, or the deploy-time convergence — and the
+stored copy is dropped only once the original is back in place. `lmm
+snapshot restore` remains the whole-state path, and the one that can put
+back everything at once.
+
 
 ## games.yaml
 
@@ -26,12 +128,99 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 | -------------- | ------ | -------- | --------------------------------------------------------------------- |
 | `name`         | string | yes      | Display name                                                          |
 | `install_path` | string | yes      | Game installation directory (supports `~`)                            |
-| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)                      |
+| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`; see below)           |
 | `sources`      | map    | yes      | Source ID to game ID mapping (see below)                              |
 | `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy`            |
 | `cache_path`   | string | no       | Per-game cache directory override                                     |
 | `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                   |
 | `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile` |
+| `adapter`      | string | no       | Game adapter: `generic-files` (default), `icarus` or `bepinex` — below |
+
+Changing a game's `cache_path` requires purging each profile with deployed
+files first: `lmm purge --game <id> --profile <name>`. Do this with the old
+path still configured so lmm recognizes its own symlinks. After changing the
+path, copy the cached mods into the new cache layout or download them again,
+then run `lmm deploy --game <id>` for the active profile. Do not remove the old
+cache until the new deployment works. If `games.yaml` was edited manually
+before the purge, restore the previous `cache_path`, reopen lmm (or restart
+`lmm serve`), and purge before trying the change again. A deployed link's
+`readlink` target can help identify the previous cache directory; user files
+in the game directory should be left in place.
+
+#### `mod_path` and relative values
+
+`mod_path` may be **absolute, or relative to `install_path` — everywhere**.
+A relative value — `mod_path: Data` — is resolved against that game's
+`install_path`, never against the directory you happen to run `lmm` from,
+so the entry means the same thing from every shell. `~` is expanded first,
+so `~/mods` is an absolute path, not a relative one.
+
+The same rule applies on every path that *writes* a game, not just to a
+hand-written file: `lmm game add`, `lmm game add --from-detected`,
+`lmm game detect`, `POST /api/v1/games` and the web UI's add-game form all
+accept `Data` and store the resolved absolute path, so the file lmm writes
+reads back identically from any working directory.
+
+A relative `mod_path` needs an `install_path` to resolve against, so an
+entry that carries one without the other is refused — when `games.yaml` is
+read, naming the game and the field, and at the prompt/form/API, where the
+refusal names `install_path`, the value that is actually missing. The
+alternative is the CWD-relative behaviour this rule exists to end, applied
+silently.
+
+#### Changing `install_path`
+
+`lmm game edit <game> --install-path <dir>` (and `PUT /api/v1/games/{id}`'s
+`install_path`, and the web UI's game editor) changes it. The directory
+must exist, and `~/` is expanded. A `mod_path` inside the install path
+moves with it, keeping its place in the folder; one outside it (a Proton
+prefix, `Documents`) stays where it is. A relative `mod_path` given in the
+same edit is relative to the new install path.
+
+With nothing deployed — and no game file lmm replaced and backed up — the
+edit is a correction and is simply written. Otherwise lmm accepts it only
+as a move of the whole game folder: the old install path must be gone, and
+every deployed file (and every replaced file the backups belong to) must be
+at the same place under the new one. lmm then records the deployed files
+under the moved `mod_path`, and restores backups into the new folder. Any
+other change is refused with the purge each profile needs first. Profile
+override files are not tracked; after a move, the next deploy writes them
+into the new folder.
+
+`lmm game detect` (and `lmm init`, and the web UI's detect) holds a repair
+of a configured game it finds at a new path to the same rule: a move is
+re-rooted, and any other change is reported for that game - it is left as
+it was - while the rest of the selection is still added.
+
+#### Changing `mod_path` with files deployed
+
+lmm records each deployed file relative to the `mod_path` it was deployed
+under, and — since schema v18 — records that `mod_path` too. So
+`lmm game edit --mod-path` (and `lmm game detect`'s repair, and
+`PUT /api/v1/games/{id}`) refuse to move it while files are deployed,
+naming the purges that clear them; moving it back to where the files are is
+always allowed.
+
+A hand edit of `games.yaml` made while files are deployed is detected on
+the next run: `lmm game show`, `lmm game list`, `lmm status`,
+`GET /api/v1/status` and `lmm verify` (as a `mod_path_missing` row) all say
+where the files are and what `mod_path` is now, and every deploy refuses
+until it is resolved — a deploy there would take the files' records over
+and leave the files behind for good. Either set `mod_path` back
+(`lmm game edit <game> --mod-path <old path>`), or run
+`lmm purge --game <game> --profile <profile>` for each profile named, which
+removes the files from where they were deployed, then `lmm deploy`.
+Files deployed before v18 carry no recorded `mod_path` and are taken to be
+under the current one, as before. If nothing is left installed to purge,
+`lmm purge` still lists and removes the files deployed under the old
+`mod_path`.
+
+If you moved the game together with its files (a Steam library move), the
+files are no longer under the old `mod_path`, so setting it back is not
+possible: the purge finds nothing there, drops the records, and the next
+deploy treats the moved copies as content lmm did not deploy — it
+preserves them before replacing them, and a later purge puts them back.
+Delete the moved copies of the mod's files first if you do not want that.
 
 ### Hooks (games.yaml)
 
@@ -52,6 +241,128 @@ hooks:
 ```
 
 Scripts receive environment variables: `LMM_GAME_ID`, `LMM_GAME_PATH`, `LMM_MOD_PATH`, `LMM_MOD_ID`, `LMM_MOD_NAME`, `LMM_MOD_VERSION`, `LMM_HOOK`. Use `--no-hooks` to disable all hooks at runtime; `--force` to continue when a hook fails.
+
+### Adapter (games.yaml)
+
+The `adapter` option selects the **game adapter**: the in-tree code that
+knows what a particular game does with mod content — how an archive's files
+are laid out, which of them are configuration rather than mod content,
+whether the game's mods have to be compiled into one artifact, and what
+`lmm verify` can honestly check about it.
+
+- **`generic-files`** (default, and what an omitted key means): the
+  identity. An archive lands exactly where it was extracted, every file is
+  deployed by the linker, and nothing extra is checked. This is what every
+  game lmm managed before adapters existed, and leaving the key out keeps
+  that behaviour byte-for-byte.
+- **`icarus`**: Icarus's compile path. It merges every enabled mod's
+  `.EXMODZ` table diffs (and, with `convert_paks`, its prebuilt `.pak`
+  artifacts) against the installed game's own `data.pak` into ONE merged
+  artifact, so two mods patching the same table both take effect instead of
+  one silently winning. It is what `deploy_mode: compile` has always done;
+  naming the adapter is the durable way to ask for it.
+
+  > `icarus` names both a mod SOURCE (`sources:`) and this adapter
+  > (`adapter:`). They are different keys and different jobs — the source
+  > is where a mod's bytes come from (Project Daedalus), the adapter is
+  > what the game does with them — and a game can use either without the
+  > other. Since lmm 2.0 an Icarus `.pak` downloaded from NexusMods
+  > compiles exactly like one from Project Daedalus, because the adapter
+  > decides, not the source.
+
+- **`bepinex`**: Unity games modded through
+  [BepInEx](https://github.com/BepInEx/BepInEx). It normalises plugin
+  archives into the game-root layout the loader reads, treats
+  `BepInEx/config/**` as configuration the user owns after its first deploy
+  (copied once, never overwritten, never removed by an uninstall), refuses
+  an archive that is the BepInEx pack itself rather than a mod for it, and
+  gives `lmm verify` its loader tier. See the README's
+  [BepInEx section](../README.md#bepinex-unity-games) for the whole
+  workflow.
+
+  You rarely have to write this one: a game whose `mod_path` is its
+  `install_path` resolves to it on its own when it declares `loader: kind:
+  bepinex` or merely HAS BepInEx installed in its directory. A game with
+  any other `mod_path` keeps `generic-files` (BepInEx's layout is relative
+  to the game root), and `adapter: bepinex` with such a `mod_path` is
+  refused.
+
+  Set `adapter: generic-files` explicitly, with no `loader:` block, when
+  you want a BepInEx game's archives treated as plain files. That is a
+  legitimate choice, and the explicit key is the acknowledgement: lmm
+  flags it nowhere persistently, and says only, on the import plan or
+  download of an archive the BepInEx rules would have laid out, that it is
+  deploying that archive exactly as packaged (a Thunderstore package's
+  `manifest.json` lands in the game directory and its `BepInEx/config`
+  files are linked from the shared mod cache).
+
+  What lmm DOES flag persistently — when it loads the file, in `lmm game
+  show` and the web loader panel, as a `loader_adapter_ignored` warning in
+  `lmm verify`, and right after the edit that causes it — is a
+  contradiction: a `loader:` block the adapter ignores (an explicit other
+  adapter, or `deploy_mode: compile`, which selects `icarus`), or an
+  installed BepInEx that a derived adapter ignores (`deploy_mode:
+  compile`, or a `mod_path` off the game root). Each warning names the
+  fixes for its own configuration, and each fix silences it. See
+  [adapters.md](adapters.md#loader) for the whole rule.
+
+The adapters that follow are added in the same tree, so `lmm game list`
+always names what this build actually has:
+
+```bash
+lmm game list                           # the ADAPTER column names the adapter each game USES
+lmm game add --adapter <name> ...
+lmm game edit <game> --adapter <name>   # "" clears the key; the game falls back to its derived adapter
+```
+
+`lmm game list` and `lmm game show` name the adapter a game actually
+resolves to, including one lmm derived (`icarus` for `deploy_mode:
+compile`, `bepinex` for a game-root game with BepInEx), so a game with no
+`adapter:` key does not read as `generic-files` when it is not. In `--json`
+(and `GET /api/v1/games`) `adapter` stays exactly what `games.yaml` says,
+and `effective_adapter` is the one in use — omitted when that is
+`generic-files`, so an absent `effective_adapter` means `generic-files`.
+The one exception is a game lmm refuses to run any flow on, which uses no
+adapter: it has no `effective_adapter` and an `adapter_error` naming the
+refusal, and the CLI shows its adapter as `<name> (refused)`.
+
+An adapter name this build does not ship is refused, naming the ones it
+does, rather than silently downgraded to the default: `game add` and `game
+edit` refuse it as you type it, and a name already in `games.yaml` is
+refused when lmm resolves that game. Only the NAME's syntax is checked when
+`games.yaml` loads, so an unknown-but-well-formed name still lets every
+other game work.
+
+Writing an adapter for a game that needs one is a package under
+`internal/adapter/` plus one registration line, with nothing in lmm's core
+to change: see [adapters.md](adapters.md).
+
+#### `adapter` and `deploy_mode: compile`
+
+The two keys are orthogonal for `deploy_mode`'s two ordinary values:
+`extract` and `copy` describe how a *downloaded file* is handled, and any
+adapter composes with either.
+
+`compile` is different — whether a game's mods merge into one artifact is a
+property of the *game*, which is what an adapter is for. So:
+
+- A game with `deploy_mode: compile` and no `adapter:` key keeps working
+  with no change on your part; lmm derives `adapter: icarus` for it, in
+  memory only.
+- An explicit `adapter:` always wins over that derivation.
+- An EXPLICIT `adapter:` that cannot compile, together with `deploy_mode:
+  compile`, is refused when lmm resolves the game, naming both keys. The
+  derivation above is never refused this way - it only ever picks an
+  adapter that can compile.
+- Nothing is rewritten when lmm saves `games.yaml`: a file you did not edit
+  is written back as it was read.
+
+> **Deprecated:** `deploy_mode: compile` is retained for 2.0 so that every
+> existing configuration keeps working untouched. The adapter is the
+> durable way to say it, and `compile` will be removed in a future MAJOR
+> release — at which point `adapter:` is the only spelling. New
+> configurations should set the adapter and leave `deploy_mode` at its
+> default.
 
 ### Deploy Mode (games.yaml)
 
@@ -78,17 +389,73 @@ games:
 
 ## Profile files
 
-Profiles are stored under `~/.config/lmm/games/<game-id>/profiles/<name>.yaml`.
+Profiles are stored under `<config>/games/<game-id>/profiles/<name>.yaml`.
+
+**A profile is its file.** lmm knows a profile by its file name and its game by the directory the file is in, whatever the file's own `name:` and `game_id:` say, and it writes every change back to that same file. So a profile you copy by hand (`cp default.yaml vanilla.yaml`) is its own profile straight away; `lmm profile list` warns until you change the copy's `name:` to match.
+
+**lmm edits your profile files in place.** A change - installing a mod, locking it, switching profiles - replaces only the text of what changed, so comments, key order, flow style, blank lines, indentation, line endings and `~/` hook paths stay as you wrote them, and a change that alters nothing leaves the file untouched. Every write replaces the file atomically (a temporary file renamed over it), so a crash or a full disk never leaves half a profile; a symlinked profile's target is what changes, and a read-only profile is refused. Before writing, lmm checks the edited file reads back as exactly the intended profile. A layout it cannot edit that way - a `mods` list written as one `[...]` flow sequence, an alias, a block scalar where a value changes, or a file whose lines do not all end the same way (LF, CRLF or CR) - is rewritten whole instead, in lmm's own layout, and the file as you wrote it is kept beside it as `<name>.yaml.bak` - or `<name>.yaml.bak.1`, `.bak.2`, and so on, since lmm never replaces an existing backup or writes through a `.bak` that is a link - and lmm prints where it kept it. A writable profile in a directory lmm cannot create files in is saved in place instead, with a warning that the save was not atomic; one that would need a backup there is refused.
 
 | Option        | Type   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`        | string | Profile name                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `game_id`     | string | Game this profile belongs to                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `mods`        | list   | Mod references (source_id, mod_id, version, file_ids) in load order                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `mods`        | list   | Mod references (source_id, mod_id, version, file_ids, locked, disabled) in load order — see the per-mod keys below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `link_method` | string | Optional override (symlink, hardlink, copy). Wins over the game-level `link_method` (`games.yaml`) and the global `default_link_method` (`config.yaml`) for every deploy into this profile; only an explicit CLI `--method` flag beats it ([#81](https://github.com/DonovanMods/linux-mod-manager/issues/81)). **Upgrade note:** profiles saved before v1.14.1 may carry an unintended `link_method: symlink` line (a save bug wrote it into every profile); it now takes effect and will override a per-game `hardlink`/`copy` setup. If `lmm status <game>` shows an unexpected `(per-profile)` method, delete that line from the profile file. |
-| `is_default`  | bool   | Whether this is the default profile for the game                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `is_default`  | bool   | Whether this is the game's active profile — the one `lmm profile switch` last made active, whose mods are in the game directory. lmm keeps exactly one profile per game marked, and marks a game's first profile when it creates it; `lmm profile list` warns when a hand edit leaves none or several, or leaves a profile file lmm cannot read, and until that is fixed lmm refuses to deploy or purge that game's files rather than guess which profile is active (`lmm profile switch <name>` then only marks `<name>`, and names the two commands that make the game directory `<name>`'s: `lmm profile apply <name>`, then `lmm purge -p` for each other profile, which removes only what that profile recorded). A game with a single profile file counts it as active, marked or not                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `hooks`       | object | Optional profile-level hook overrides (same structure as game hooks)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `overrides`   | map    | Optional config overrides: path (relative to game install) → file content (INI tweaks, etc.). Applied on switch/deploy.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+
+### Per-mod keys
+
+Each entry under `mods` is a mod reference:
+
+| Key         | Type   | Meaning                                                                                                                                                                                                                                              |
+| ----------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source_id` | string | Which source the mod comes from (`nexusmods`, `curseforge`, a custom source id, …)                                                                                                                                                                   |
+| `mod_id`    | string | The source's own identifier for the mod                                                                                                                                                                                                              |
+| `version`   | string | Optional. The installed-version record, and the target a converge run (`lmm profile apply`, `lmm profile switch`) brings the installation to — downgrades included. Also the lock's target while `locked` is set.                                     |
+| `file_ids`  | list   | Optional. The source's file ids that were installed                                                                                                                                                                                                  |
+| `locked`    | bool   | Optional. `lmm update` refuses this mod while set. Written by `lmm mod lock` / `lmm mod unlock`; omitted when false.                                                                                                                                  |
+| `disabled`  | bool   | Optional. The mod stays in the profile — keeping its load-order position and its pinned version — but is switched off: no deploy, and no converge run re-enables it. Written by `lmm mod disable`; cleared by `lmm mod enable`, by an explicit `lmm install` of the same mod, and by installing a mod that depends on it (which says so first); omitted when false. |
+
+`disabled` is the profile's own record of the off state, not just the database's. **A missing `disabled` key means enabled**, so profile files written by earlier versions of lmm are read exactly as before (see [Upgrading: mods disabled before the marker existed](#upgrading-mods-disabled-before-the-marker-existed) for the one-time step that records some of them). It survives `lmm profile export`/`import`, `lmm profile sync`, `lmm profile switch`, `lmm profile apply` and a rebuilt database; a mod newly added to a profile still defaults to enabled. Setting it by hand is supported, and the next converge run acts on it: `lmm profile apply`, or a switch to the profile, undeploys the mod and clears its enabled flag.
+
+A mod listed twice in one profile (lmm never writes that, but a hand edit can) is read by its **first** entry, by every command. `lmm mod enable`, `lmm mod disable` and the upgrade step below write every entry, and `lmm profile sync` never removes any entry of a mod that is still installed under that profile.
+
+`lmm deploy` is not a converge run, and it never takes files down. It does not deploy a mod the profile marks disabled, and neither does the web UI's Deploy button. If that mod's files are still in the game directory, deploy leaves them there and names the mod, pointing at `lmm profile apply` to remove it (`lmm deploy --dry-run` and the web UI's Deploy confirmation say the same). `lmm deploy --mod <mod-id>` refuses such a mod by name. `lmm deploy --all`, which exists to deploy switched-off mods, still deploys it, but only until the next `lmm profile apply` or `lmm profile switch` takes it down again.
+
+Three things clear the marker, and each is a request for that mod:
+
+- `lmm mod enable`. It clears the marker even when the database already said the mod was enabled, so a document and a database that disagree can always be brought back into line. The one exception is a game whose adapter lmm refuses (see [Adapter](#adapter-gamesyaml)): enabling deploys, so there it is refused like every deploy and leaves the marker, the database and the game directory exactly as they were. `lmm mod disable` still works on such a game and still writes the marker.
+- `lmm install` of the same mod. Asking for a mod by name is a request to have it, so the install does not leave behind a mod the next converge run would switch straight back off.
+- Installing a mod that **depends** on it. You did not name the dependency, so lmm says so before asking to proceed and again afterwards: the dependency is switched back on in that profile, because the mod you asked for cannot work without it.
+
+Enabling a mod whose files were never downloaded (an imported profile on a fresh machine) needs that download, because lmm never fetches a disabled mod. `lmm list` names such mods under its table ("Listed but not downloaded, switched off") with the exact command that installs each one — `lmm install -g <game> -p <profile> -s <source> --id <mod> --version <version>` — so the CLI installs the same ref, at the same version, into the same profile that the web UI's **Install…** does (`--json` carries the refs as `disabled_not_installed`). The web UI shows them in the library and on the Profile card, each with its own **Install…** that downloads the mod and switches it on.
+
+#### Upgrading: mods disabled before the marker existed
+
+Before the marker existed, a mod you switched off was recorded only in lmm's database, and the profile file said nothing about it. The first `lmm` command after the upgrade records such mods in their profile files, once. Any command does it, a read-only one included, and so does `lmm serve` when it starts. It prints each mod it recorded (game, profile, mod and file) to stderr, followed by the `lmm mod enable <mod-id> --game <game> --source <source> --profile <profile>` command that undoes each one.
+
+A command never waits for this step. If another lmm is in the middle of a change when a command starts, the command skips the step and runs as usual. The next command that changes something does the step first, before its own work, and so does the next command that starts while no change is running. `lmm profile apply`, `lmm profile sync` and `lmm profile switch` (and their web UI actions) decide from the markers this step writes, so they do the step before they plan, waiting briefly for the other lmm if they must. That includes trying again a file the step could not edit earlier, once the file has changed. A plan of theirs made before the step recorded a mod in its profile (a confirmation still on screen, or a plan open in the web UI) is refused as out of date, with a message saying the profile's disabled markers changed, and has to be made again.
+
+It records only what it can be sure of: a mod that is switched off **and** not deployed (what `lmm mod disable` has written since v1.28.0), under the game's active profile, meaning the one profile file that says `is_default: true`. It deliberately leaves everything else unrecorded, because the database cannot tell those mods apart from ones you want on:
+
+- **Profiles other than the active one are never recorded.** Every `lmm profile switch` marks the mods of the profile it leaves as switched off in the database. So in any other profile, a switched-off mod is as likely to be one you want on there. Running `lmm purge` (or `lmm deploy --purge`, or a `lmm verify --fix` re-link that fails) before a switch leaves exactly the state a real disable does.
+- **A mod still recorded as deployed is not recorded, even in the active profile.** The switch bug fixed alongside this (#430) leaves that state for a mod that is live and listed, and so does an enable that failed during a switch. A disable made before v1.28.0 looks the same, so it stays unrecorded too.
+- **With no profile marked `is_default: true`, or with more than one, nothing is recorded.** There is no active profile to trust.
+
+A mod that is not recorded behaves exactly as it did before the upgrade. The next switch into its profile, or `lmm profile apply`, switches it back on. `lmm profile sync` keeps its entry, and on the active profile warns that the database and the profile file disagree. Run `lmm mod disable` for it once and the marker is written for good.
+
+The upgrade step edits only the entries it records. Comments, key order, flow style, indentation, line endings (LF, CRLF or CR) and `~/` paths stay as you wrote them. It writes to the file the profile was read from, and through a symlink it writes to the link's target. An entry laid out in a way the step cannot change in place (for example, a comment inside a `{...}` entry's braces) is recorded the way any lmm save handles such a layout: the file is rewritten whole, the file as you wrote it is kept beside it (see above), and the warning names both. If it cannot write a file at all, a warning names that file, every other profile is still recorded, and lmm tries that file again once it changes - once lmm itself has changed it counts, so switching away from that profile is enough. That happens when:
+
+- the file is read-only, or its directory is;
+- the step itself fails on that file.
+
+A mod listed twice in the file is recorded on every entry.
+
+A mod whose database row names a game or profile that no file can have is named in a warning and left unrecorded. When there is nothing to record, no file is touched. None of this ever stops lmm from starting, or stops a command from running.
+
+It runs once per installation. It does not record a mod switched off afterwards by an older lmm still running (for example, a `lmm serve` left up across the upgrade) or after a downgrade and re-upgrade, and it does not restore a marker lost when an older copy of a profile file is put back. A single `lmm mod disable` records any of them.
 
 ### Portable export format
 
@@ -97,19 +464,19 @@ Profiles are stored under `~/.config/lmm/games/<game-id>/profiles/<name>.yaml`.
 Exported YAML includes:
 
 - **name**, **game_id** – Profile identifier and game.
-- **mods** – List of mod references in load order; each has `source_id`, `mod_id`, optional `version`, optional `file_ids`.
+- **mods** – List of mod references in load order; each has `source_id`, `mod_id`, optional `version`, optional `file_ids`, optional `locked`, optional `disabled` (see Per-mod keys above). An export made before `disabled` existed is byte-identical to one made now, and imports unchanged.
 - **link_method** – Optional: symlink, hardlink, or copy. Preserved through export/import and honored at deploy time as the profile-level override (profile > game > global; see the Profile files table above).
 - **overrides** – Optional map of relative paths (under game install) to file contents (e.g. INI tweaks). Applied when switching to the profile or deploying.
 
-Import preserves load order, link method, and overrides; missing mods can be installed when you switch to or apply the profile.
+Import preserves load order, link method, overrides, lock markers and disabled markers; missing mods can be installed when you switch to or apply the profile. A mod the document marks `disabled` is imported as part of the profile but is not downloaded or deployed.
 
 ## steam-games.yaml (optional)
 
 Used by `lmm game detect` to know which Steam games are moddable. The app ships with a built-in list; you can add or override entries by creating:
 
-**`~/.config/lmm/steam-games.yaml`**
+**`<config>/steam-games.yaml`**
 
-Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative to game install, empty for game root), optional `nexus_id` (omit for a game with no NexusMods presence), and two more optional fields, `deploy_mode` and `sources`, that pass straight through to the generated `games.yaml` entry's own `deploy_mode`/`sources` (omit both for the default `{nexusmods: <nexus_id>}` sources map and `extract` deploy mode every entry got before these existed). Example:
+Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative to game install, empty for game root), optional `nexus_id` (omit for a game with no NexusMods presence), and three more optional fields — `deploy_mode`, `sources` and `loader` — that pass straight through to the generated `games.yaml` entry's own `deploy_mode`/`sources`/`loader` (omit all three for the default `{nexusmods: <nexus_id>}` sources map, `extract` deploy mode and no loader every entry got before these existed). Example:
 
 ```yaml
 "489830":
@@ -129,26 +496,144 @@ Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative 
   deploy_mode: compile
   sources:
     mysource: my-compile-game
+"892970":
+  slug: valheim
+  name: Valheim
+  nexus_id: valheim
+  mod_path: ""
+  loader:
+    kind: bepinex
 ```
 
 Entries here are merged with the built-in list (overrides win). No rebuild needed to support more games.
 
+### Fields
+
+| Field         | Required | Meaning                                                                                                                                                        |
+| ------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(the key)_   | yes      | The Steam App ID, **quoted** so it stays a string. It is on the store page URL (`store.steampowered.com/app/<id>/`).                                            |
+| `slug`        | yes      | The lmm game id the entry creates. Lowercase alphanumerics in dash-separated runs, and unique across the whole list.                                            |
+| `name`        | yes      | Display name. Use the plain-text store title (drop `®`/`™`).                                                                                                   |
+| `mod_path`    | yes      | The mod folder, **relative to the game's install directory** — `""` means the install root. Detection joins it to the install path it found.                    |
+| `nexus_id`    | no       | The game's NexusMods domain: the path segment in `nexusmods.com/<domain>`. Omit it for a game with no NexusMods page.                                           |
+| `deploy_mode` | no       | `extract` (the default), `copy` or `compile`.                                                                                                                    |
+| `sources`     | no       | A full source id → per-source game id map, for a game whose sources are not just NexusMods. Omitting it means `{nexusmods: <nexus_id>}`; **giving it replaces that derivation**, so an entry with both must list `nexusmods:` inside the map. |
+| `loader`      | no       | `{kind: …}`, and optionally `version`, for a game whose mods need a mod loader — today `kind: bepinex`. Omitting it means the game needs none.                   |
+
+An entry must name at least one source — `nexus_id`, a `sources` map, or
+both. One that names neither produces a game lmm can add and then cannot
+install anything for.
+
+A `sources` map is the game's **complete** source set: it replaces the
+`{nexusmods: <nexus_id>}` derivation rather than adding to it. An entry
+that has a `nexus_id` **and** a `sources` map must therefore spell
+`nexusmods:` out inside the map with the same value, or the game silently
+loses NexusMods — which is why the shipped Valheim and For The King entries
+list both `nexusmods:` and `thunderstore:`. (Leaving it out is a legitimate
+way to say "this game has a NexusMods page and lmm should not use it", so
+the rule is stated rather than guessed at.)
+
+#### The `loader` block
+
+A game whose mods are loader plugins needs that recorded, or the very first
+plugin install is refused (see the `loader:` block in
+[games.yaml](#gamesyaml) and `lmm game show`). Declaring it here means
+`lmm game detect`, `lmm game add --from-detected` and `POST /api/v1/games`
+all write it for you:
+
+```yaml
+loader:
+  kind: bepinex
+```
+
+Two rules:
+
+- **`kind` is required whenever the block is present.** A `loader:` with no
+  kind declares nothing while looking like it should, so it fails the load
+  naming the entry. An _unrecognised_ kind is accepted — it simply fires
+  none of lmm's own rules — so a list can name a loader this version has
+  never heard of.
+- **Only `kind` and `version` belong here.** `games.yaml`'s own block also
+  carries `runtime` and `bootstrap`, but those are facts about _one copy_ of
+  the game — whether it is the native Linux build or a Proton one — which a
+  list shipped inside the binary cannot know; `lmm game show` reads them off
+  the install directory. For the same reason the built-in list declares no
+  `version`: it would be compared against the pack the user actually
+  installed.
+
+Declaring a loader does not install one. That stays yours to do, and
+`lmm verify` is what tells you whether it worked.
+
+A loader game's `mod_path` is almost always `""` (the install root): BepInEx
+lays its own `BepInEx/` tree down there, and lmm normalises a plugin archive
+to match.
+
+### Contributing an entry to the built-in list
+
+The shipped list is `internal/source/steam/data/steam-games.yaml`. It is
+curated from public documentation, one game at a time, and the bar is that
+the facts are **verifiable**, not that the game is popular:
+
+1. **Find the app id** on the game's Steam store page URL.
+2. **Find the mod folder the community documents**, and check it is inside
+   the game's install directory. A game whose mods live in your home
+   directory — `%APPDATA%`, `~/Documents`, a Proton prefix — cannot be
+   curated, because `mod_path` is install-relative. Leave it detect-only
+   rather than inventing a path.
+3. **Find the source ids.** The NexusMods domain is in the URL of the
+   game's Nexus page. `steamworkshop` takes the Steam app id as its game
+   id. Only source ids lmm registers are accepted.
+4. **Say whether the game needs a mod loader.** If its mods are BepInEx
+   plugins — the community's install instructions will say so — add
+   `loader: {kind: bepinex}` and set `mod_path: ""`. Declare one only when
+   the game's own documentation does: a wrong declaration makes lmm refuse
+   an otherwise fine mod for it.
+5. **Write the entry with a comment above it** carrying the URL each fact
+   came from — the game's Nexus page, its modding wiki, the mod loader's
+   own install instructions. Every existing entry has one; it is what makes
+   a wrong path fixable by the next person instead of re-researched.
+6. **Add a row to the story test** in
+   `internal/source/steam/curated_games_test.go`, which pins the entry
+   field by field — and, for a loader entry, to
+   `TestKnownGames_OnlyTheBepInExEntriesDeclareALoader`'s set, which pins
+   the whole list in both directions.
+
+`TestKnownGamesListIsWellFormed` (in `internal/app`) then checks the whole
+list on every build: quoted numeric app id, well-formed unique slug,
+relative `mod_path`, a `deploy_mode` the domain parses, and every source id
+one that lmm actually registers.
+
+A game with no real modding ecosystem — or one whose mods do not live under
+the install directory — stays **detect-only**: `lmm game detect
+--include-unknown` still lists it with its app id, and `lmm game add` can
+still configure it by hand. That is the honest answer, and it is preferred
+over a guessed path.
+
 ## File locations
 
-| Path                                            | Description                                                             |
-| ----------------------------------------------- | ----------------------------------------------------------------------- |
-| `~/.config/lmm/config.yaml`                     | Global config                                                           |
-| `~/.config/lmm/games.yaml`                      | Game definitions                                                        |
-| `~/.config/lmm/steam-games.yaml`                | Optional: Steam games for `game detect` (add/override)                  |
-| `~/.config/lmm/sources/*.yaml`                  | Custom source definitions (see [Custom Sources](#custom-sources) below) |
-| `~/.config/lmm/games/<game-id>/profiles/*.yaml` | Per-game profiles                                                       |
-| `~/.local/share/lmm/lmm.db`                     | SQLite database (metadata, tokens)                                      |
-| `~/.local/share/lmm/cache/`                     | Mod file cache (or `cache_path` override)                               |
-| `~/.local/share/lmm/downloads/`                 | Staging area for in-flight downloads and archive extraction             |
+`<config>` is `$XDG_CONFIG_HOME/lmm` (default `~/.config/lmm`); `<data>` is `$XDG_DATA_HOME/lmm` (default `~/.local/share/lmm`).
+
+**Precedence** (#297): `--config`/`--data` win outright; then an `XDG_CONFIG_HOME`/`XDG_DATA_HOME` set to an **absolute** path, whether or not that directory exists yet; then — only when the variable is unset or set to a relative path, which the XDG spec requires be ignored — the legacy `~/.config/lmm` / `~/.local/share/lmm`. Setting an XDG variable is treated as an explicit instruction, so lmm never writes into the legacy directory behind your back; move your data (or point `--data`/`--config` at it) when you adopt the XDG location.
+
+| Path                                       | Description                                                             |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| `<config>/config.yaml`                     | Global config                                                           |
+| `<config>/games.yaml`                      | Game definitions                                                        |
+| `<config>/steam-games.yaml`                | Optional: Steam games for `game detect` (add/override)                  |
+| `<config>/sources/*.yaml`                  | Custom source definitions (see [Custom Sources](#custom-sources) below) |
+| `<config>/games/<game-id>/profiles/*.yaml` | Per-game profiles                                                       |
+| `<data>/lmm.db`                            | SQLite database (metadata, tokens)                                      |
+| `<data>/.oplock`                           | Advisory mutation lock (#317) — see below                               |
+| `<data>/cache/`                            | Mod file cache (or `cache_path` override)                               |
+| `<data>/downloads/`                        | Staging area for in-flight downloads and archive extraction             |
+| `<data>/key`                               | Token-encryption key (`0600`, created on first `auth login`)            |
+| `<data>/snapshots/<game-id>/<name>.json`   | One snapshot's record (`lmm snapshot`)                                  |
+| `<data>/snapshots/<game-id>/_originals/manifest.json` | Manifest of the files lmm has replaced for that game          |
+| `<data>/snapshots/<game-id>/_originals/files/` | The replaced files themselves, split by root (`mod_path`/`install_path`) |
 
 ## Custom Sources
 
-In addition to the built-in sources below (NexusMods, CurseForge), lmm can load user-defined sources from `~/.config/lmm/sources/*.yaml` — `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list), and `api` (a declarative REST API). This file only lists the built-in sources' `games.yaml` conventions; the custom-source YAML format, field reference, and authentication are documented in the README's **[Custom Sources](../README.md#custom-sources)** section.
+In addition to the built-in sources below (NexusMods, CurseForge), lmm can load user-defined sources from `<config>/sources/*.yaml` — `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list), and `api` (a declarative REST API). This file only lists the built-in sources' `games.yaml` conventions; the custom-source YAML format, field reference, and authentication are documented in the README's **[Custom Sources](../README.md#custom-sources)** section.
 
 ## Mod Sources
 
@@ -205,3 +690,61 @@ Minecraft has multiple mod sources configured. Select one:
   [2] NexusMods
 Enter choice (1-2):
 ```
+
+## The mutation lock
+
+Every lmm **mutation** — a CLI command or a `lmm serve` job — takes an advisory
+`flock` on `<data>/.oplock` while it runs, so two lmm processes pointed at the same
+data directory cannot interleave their work (#317). **Every** mutation, not only the
+ones that touch the game directory: storing or removing an API key, adding or editing
+a game, profile changes and saving a source definition all take it too, so
+`lmm auth login` typed during a long `serve` deploy is refused rather than queued.
+A second mutation waits up to two seconds and then refuses, naming the holder:
+
+```text
+another lmm operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)
+```
+
+Under `--json` the same refusal carries `pid` and `started_at` in the error
+envelope's `details`. **Reads never take the lock**, so listing, status and every
+`GET /api/v1` route keep working while a mutation is in flight.
+
+The lock lives in the open file descriptor, not in the file's contents, so the
+kernel drops it the moment the process exits — a killed or crashed lmm never leaves
+a stale lock to clear by hand, and the file itself can be deleted safely when no lmm
+is running. Two installations (different `--data` directories) have separate lock
+files and never contend.
+
+**Two different waits, and how to tell them apart.** The refusal above is about a
+*mutation* and comes from a command that had already started. A message at STARTUP —
+`lmm: waiting for another lmm process to finish with the database (re-encrypting
+stored credentials, up to 30s)…` — is a different thing: it is the one-time
+credential re-encryption (#79) waiting for the database itself, before any mutation
+lock is involved. The first says "another lmm is doing something right now"; the
+second says "another lmm still has the database open while this one upgrades it".
+
+## The verify memo
+
+`lmm verify` always looks at the disk for real. The web UI's Health card, which
+re-hydrates on every route change, job completion and profile switch, does not: core
+keeps the last verify answer per game, profile and tier, and re-uses it while a cheap
+fingerprint of what a run inspects is unchanged (#336). That fingerprint is the
+profile's mods and their locks, the installed rows, the recorded file checksums a run
+compares against, and a **stat-only** walk of the deployed tree — each file's path,
+size and modification time.
+
+A re-used answer keeps the `checked_at` of the run that produced it and carries
+`cached: true`, which the card renders as "Unchanged since …". Every lmm mutation
+drops the memo, and the card's **Re-verify** (`GET /api/v1/health?force=1`) forces a
+real run. The recorded checksums are in the fingerprint for the cross-process case:
+`lmm verify --fix` run from a terminal backfills them without touching the deployed
+tree, so a running `lmm serve` has nothing else to notice, and its Health card would
+otherwise keep reporting a warning that was repaired minutes ago.
+
+**The limit**, stated plainly: size and modification time are not content. A deployed
+file rewritten to the same length with its timestamp preserved — a restore from
+backup, a tool that copies mtimes — fingerprints identically, and the memoised answer
+stands until something else changes or a run is forced. The memo also cannot see
+anything the full tier reads over the network, nor changes inside the cache
+directory. Run `lmm verify` (or press Re-verify) whenever you want a guaranteed fresh
+answer; neither ever uses the memo.

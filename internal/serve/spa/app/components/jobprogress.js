@@ -1,0 +1,317 @@
+// jobprogress.js - "the control you clicked morphs into its progress"
+// (docs/plans/2026-08-31-serve-spa-design.md §Jobs).
+//
+// The morph is what makes a job feel like it belongs to the thing that
+// started it rather than to a progress dialog somewhere else. It works
+// through an ORIGIN - a stable string naming the control ("deploy", and
+// later "install:fake/123", "mod:fake/123:uninstall") - which the store
+// maps to the job id that control started. Any control can morph by
+// wrapping itself in InlineJob; nothing else is required of it.
+//
+// A finished job stays on its control rather than vanishing: the design's
+// "completion/failure resurface inline" is the same rule read from the
+// other end - if you were watching it, you find out here, and only if you
+// were NOT watching does it become a toast (activity.js's origin registry).
+
+import { html, useEffect } from "../render.js";
+import { registerOrigin } from "../activity.js";
+import {
+  progressText,
+  progressFraction,
+  jobStateLabel,
+  resultTallyLabel,
+  resultTallyTone,
+} from "../progress.js";
+import {
+  useJobResultFailures,
+  useJobResultPurge,
+  useJobResultTally,
+  useJobResultVerify,
+  useJobResultWarnings,
+} from "../jobresult.js";
+import { codeSpans } from "../errortext.js";
+import { OverwriteButton } from "./tray.js";
+import {
+  downloadFailureFor,
+  explainerFor,
+  loaderSetupFor,
+} from "../failures.js";
+import {
+  DownloadHeadline,
+  DownloadPage,
+  LoaderSetup,
+  RawError,
+} from "./errordetails.js";
+import { BatchFailures } from "./batchfailures.js";
+import { PurgeResultDetails } from "./purgeresult.js";
+import { VerifyFixResult } from "./verifyfixresult.js";
+
+/**
+ * InlineJob renders children when origin has no job, and that job's live
+ * state when it does.
+ *
+ * It also registers origin as on-screen for as long as it is mounted, which
+ * is what the toast rule reads: navigate away mid-deploy and the completion
+ * finds you as a toast instead, because this effect's cleanup ran.
+ */
+export function InlineJob({
+  origin,
+  state,
+  actions,
+  children,
+  keepControl,
+  readoutElsewhere,
+}) {
+  useEffect(() => registerOrigin(origin), [origin]);
+
+  const jobID = state.origins?.[origin];
+  if (!jobID) return children;
+
+  const summary = (state.jobsIndex ?? []).find((row) => row.id === jobID);
+  // readoutElsewhere (issue 535): the surface renders the FINISHED readout
+  // on a line of its own (FinishedJobReadout), so the control comes back
+  // here once the job is over. While it runs the control still morphs.
+  if (readoutElsewhere && summary && summary.state !== "running") {
+    return children;
+  }
+  const frame = state.jobProgress?.[jobID];
+
+  const readout = html`<${JobProgress}
+    jobID=${jobID}
+    summary=${summary}
+    frame=${frame}
+    origin=${origin}
+    actions=${actions}
+    onDismiss=${() => actions.clearOrigin(origin)}
+  />`;
+  // keepControl (issue 533): a control that sits among siblings in a row
+  // keeps its place once its job has FINISHED, with the readout beside it
+  // (the row's own layout gives the readout a line of its own). Replacing
+  // "Update all" with a tall result left the card's footer short of the
+  // control the user would reach for next. While the job runs it is still
+  // the control that morphs, so it cannot be started twice.
+  if (keepControl && summary && summary.state !== "running") {
+    return html`${children}${readout}`;
+  }
+  return readout;
+}
+
+/**
+ * FinishedJobReadout is origin's job readout once that job has finished, or
+ * nothing - the other half of InlineJob's readoutElsewhere (issue 535): a
+ * search result's failure is a paragraph and its way out, which squeezed
+ * into the row's action column overlapped the row (the owner's report), so
+ * the row puts it on a line of its own beneath.
+ */
+export function FinishedJobReadout({ origin, state, actions }) {
+  const jobID = state.origins?.[origin];
+  const summary = jobID
+    ? (state.jobsIndex ?? []).find((row) => row.id === jobID)
+    : null;
+  if (!summary || summary.state === "running") return null;
+  return html`<${JobProgress}
+    jobID=${jobID}
+    summary=${summary}
+    frame=${state.jobProgress?.[jobID]}
+    origin=${origin}
+    actions=${actions}
+    onDismiss=${() => actions.clearOrigin(origin)}
+  />`;
+}
+
+/**
+ * JobProgress is one job's inline readout: a bar while it runs, its outcome
+ * once it ends.
+ *
+ * A job whose summary has not arrived yet (the job start returned, the
+ * stream's job_started frame has not) renders as starting rather than as
+ * nothing - the click must never look like it did nothing.
+ *
+ * A failed job renders tray.js's own OverwriteButton beside its "Failed:
+ * ..." text (I4, unit 5 fix wave: the action lives where the failure is
+ * shown, not only in a tray a route may not even have) - actions is
+ * optional so a caller with nothing to retry through (there is none today,
+ * but nothing here should hard-require it) can still render every other
+ * state.
+ */
+export function JobProgress({
+  jobID,
+  summary,
+  frame,
+  origin,
+  actions,
+  onDismiss,
+}) {
+  const state = summary?.state ?? "running";
+  // Called unconditionally, before either branch below - C1 (unit 6 fix
+  // wave)'s own rule applies here too: a hook called only on one side of a
+  // conditional is exactly the pattern that let a stale value survive.
+  const tally = useJobResultTally(jobID, state);
+  const resultWarnings = useJobResultWarnings(jobID, state);
+  const purgeResult = useJobResultPurge(jobID, state);
+  const repairResult = useJobResultVerify(jobID, state);
+  // Issues 530 and 533: every failed update item, named, with its download
+  // way out (its page, and "Update from file…" when the source refused the
+  // download).
+  const batchFailures = useJobResultFailures(jobID, state);
+
+  if (state === "running") {
+    const fraction = progressFraction(frame);
+    const label = progressText(frame) || startingLabel(summary);
+    return html`
+      <div
+        class="job-progress"
+        data-job=${jobID}
+        data-kind=${summary?.kind}
+        data-state=${jobStateLabel(summary, frame) || "running"}
+        role="status"
+      >
+        <div
+          class="job-progress__bar ${fraction === null ? "job-progress__bar--indeterminate" : ""}"
+        >
+          <div
+            class="job-progress__fill"
+            style=${fraction === null ? "" : `width: ${Math.round(fraction * 100)}%`}
+          ></div>
+        </div>
+        <span class="job-progress__text">${label}</span>
+      </div>
+    `;
+  }
+
+  const failed = state === "failed";
+  // issue 269 Tier 3: a Workshop download failure carries a reason the user can
+  // act on (subscribe in Steam and use `lmm import --workshop`, install
+  // steamcmd, ...). It renders here rather than only in the tray for the
+  // same reason the Overwrite button does - the explanation belongs where
+  // the failure is shown, which for an install is the mod panel or the
+  // search result the user clicked. Dismissing it puts the Install action
+  // straight back: nothing about this failure hides the button.
+  const explainer = failed ? explainerFor(summary) : null;
+  // Issue 423: a loader refusal's setup steps render where the failure is
+  // shown, for the same reason - "Failed: needs BepInEx" alone leaves the
+  // user with the one sentence that says nothing about what to do.
+  const loader = failed ? loaderSetupFor(summary?.error?.details) : null;
+  // Issue 513: a failed download carries the mod's page; it renders where
+  // the failure is shown, like the explainers above.
+  const download = failed ? downloadFailureFor(summary?.error?.details) : null;
+  const downloadShown = Boolean(download && (download.url || download.manual));
+  // Issue 535: a download its source refuses has a friendly explanation,
+  // and it leads - the headline in place of the engine's text, which moves
+  // into a collapsed "Details" under the way out.
+  const headed = Boolean(download?.manual);
+  // I3, unit 6 fix wave: a batch job's own `state` is "succeeded" even when
+  // every item inside it failed (progress.js#resultTally's own doc
+  // comment) - the tone class follows the TALLY, not the bare state, for
+  // exactly the cases that disagree with it.
+  const tone = !failed && tally ? resultTallyTone(tally) : state;
+  // Issue 463: a profile switch that could only mark its target active
+  // (flag_only) succeeds with a recovery notice - the commands that make
+  // the game directory that profile's. A bare "Done" would hide the one
+  // thing the user still has to do, so a switch's result warnings render
+  // where it finished.
+  const notices =
+    !failed && summary?.kind === "switch" ? resultWarnings : NO_NOTICES;
+  return html`
+    <div
+      class="job-progress job-progress--${tone} ${explainer || loader || downloadShown || batchFailures.length > 0 || notices.length > 0 || purgeResult || repairResult ? "job-progress--explained" : ""}"
+      data-job=${jobID}
+      data-kind=${summary?.kind}
+      data-state=${state}
+      role="status"
+    >
+      <span
+        class="job-progress__text"
+        title=${(tally?.skippedNotes ?? []).join("; ") || undefined}
+      >
+        ${
+          headed
+            ? html`<${DownloadHeadline}
+                failure=${download}
+                actions=${actions}
+              />`
+            : failed
+              ? `Failed: ${summary?.error?.error ?? "unknown error"}`
+              : tally
+                ? resultTallyLabel(tally)
+                : "Done"
+        }
+      </span>
+      ${
+        failed &&
+        summary &&
+        actions &&
+        html`<${OverwriteButton} job=${summary} actions=${actions} />`
+      }
+      <button
+        type="button"
+        class="button button--quiet button--icon job-progress__dismiss"
+        aria-label="Dismiss"
+        onClick=${onDismiss}
+      >
+        ✕
+      </button>
+      ${notices.map(
+        (n, i) =>
+          html`<p
+            key=${i}
+            class="job-progress__explainer"
+            data-testid="job-result-warning"
+          >
+            ${codeSpans(n)}
+          </p>`,
+      )}
+      <${PurgeResultDetails} result=${purgeResult} />
+      <${VerifyFixResult} outcome=${repairResult} />
+      <${BatchFailures} failures=${batchFailures} actions=${actions} />
+      ${
+        loader &&
+        html`<div class="job-progress__explainer">
+          <${LoaderSetup} loader=${loader} />
+        </div>`
+      }
+      ${
+        downloadShown &&
+        html`<div class="job-progress__explainer">
+          <${DownloadPage}
+            failure=${download}
+            actions=${actions}
+            headed=${headed}
+            origin=${origin}
+          />
+        </div>`
+      }
+      ${
+        headed &&
+        html`<div class="job-progress__explainer">
+          <${RawError} text=${summary?.error?.error} />
+        </div>`
+      }
+      ${
+        explainer &&
+        html`<p
+          class="job-progress__explainer"
+          data-explainer=${explainer.tool || "reason"}
+        >
+          ${explainer.reason}
+          ${
+            explainer.outputTail &&
+            html`<span class="job-progress__tool-output mono"
+              >${explainer.outputTail}</span
+            >`
+          }
+        </p>`
+      }
+    </div>
+  `;
+}
+
+const NO_NOTICES = [];
+
+/** startingLabel is what a running job with nothing to report yet says.
+ * "Queued" rather than "Working" when the job has emitted no event at all,
+ * which is the closest an unqueued registry can honestly get (progress.js's
+ * jobStateLabel). */
+function startingLabel(summary) {
+  return jobStateLabel(summary) === "queued" ? "Queued…" : "Working…";
+}

@@ -1,0 +1,20 @@
+{
+  "profile": "default",
+  "mods": [],
+  "uninstall": false,
+  "hooks": [],
+  "kept": [
+    {
+      "path": "Data/edited.esp",
+      "reason": "user_file",
+      "note": "its content changed after lmm deployed it",
+      "mod_path": "/games/skyrim-se/OldData"
+    }
+  ],
+  "stranded": [
+    {
+      "path": "Data/plugin.esp",
+      "mod_path": "/games/skyrim-se/OldData"
+    }
+  ]
+}

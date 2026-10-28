@@ -1,0 +1,10 @@
+{
+  "removed": [
+    {
+      "path": "Data/textures/old.dds",
+      "reason": "no longer provided by nexusmods/42",
+      "source_id": "nexusmods",
+      "mod_id": "42"
+    }
+  ]
+}

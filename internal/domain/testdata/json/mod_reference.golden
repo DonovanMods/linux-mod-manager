@@ -1,0 +1,10 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "12345",
+  "version": "2.0.0",
+  "file_ids": [
+    "file-1",
+    "file-2"
+  ],
+  "locked": true
+}

@@ -1,0 +1,9 @@
+{
+  "purge": true,
+  "all": true,
+  "mod_id": "m1",
+  "source_id": "fake",
+  "link_method": "hardlink",
+  "force": true,
+  "skip_hooks": true
+}

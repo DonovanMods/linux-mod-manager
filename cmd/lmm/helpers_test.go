@@ -3,18 +3,36 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/curseforge"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/nexusmods"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// deployInstalledMod deploys sourceID/mod's already-cached content into
+// game's mod directory through the real PlanDeploy/ApplyDeploy flow,
+// replacing the old `installer := svc.GetInstaller(game); installer.Install(...)`
+// fixture pattern - getInstaller is unexported (Phase 3 Ruling 10) with no
+// export_test.go shim visible to this package, and ApplyDeploy is the
+// production deploy path anyway, so this seeds the exact same
+// Deployed/LinkMethod state a real deploy would.
+func deployInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, mod *domain.Mod, profileName string) {
+	t.Helper()
+	opts := core.DeployOptions{ModID: mod.ID, SourceID: mod.SourceID}
+	plan, err := svc.PlanDeploy(context.Background(), game, profileName, opts)
+	require.NoError(t, err)
+	_, err = svc.ApplyDeploy(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err)
+}
 
 // TestPromptForGameSource_RendersNameViaResolver pins the "Name (id)" format
 // (matching auth's promptForSource/doAuthStatus) driven by an injected
@@ -176,6 +194,88 @@ func TestResolveSource_MultiSource_NilServiceFallsBackToBareID(t *testing.T) {
 	assert.Contains(t, out, "[2] beta\n", "Name==ID renders bare, not beta (beta)")
 }
 
+// poisonReader is an io.Reader whose Read fails the test if it is ever
+// called - the non-interactive rule's tests use it to prove a --json run
+// returns core.ErrConfirmationRequired without touching the reader at all,
+// not merely "returns an error quickly".
+type poisonReader struct{ t *testing.T }
+
+func (p poisonReader) Read([]byte) (int, error) {
+	p.t.Helper()
+	p.t.Fatal("Read must not be called under --json")
+	return 0, nil
+}
+
+// assertStdinNeverRead runs fn with os.Stdin swapped to a pipe whose write
+// end is left open and unwritten - a genuine Read() call would block
+// forever - and fails the test if fn does not return within a short
+// deadline, proving fn never attempted to read stdin. For prompt sites with
+// no injectable reader seam (os.Stdin hard-coded), this is the equivalent of
+// poisonReader.
+func assertStdinNeverRead(t *testing.T, fn func() error) error {
+	t.Helper()
+	old := os.Stdin
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdin = r
+
+	done := make(chan error, 1)
+	// finished is closed independently of done (which the happy path below
+	// already drains) so Cleanup can always wait for the goroutine to
+	// actually exit without racing to consume done's one buffered slot
+	// itself.
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		done <- fn()
+	}()
+
+	t.Cleanup(func() {
+		os.Stdin = old
+		_ = w.Close()
+		_ = r.Close()
+		// Wait for the goroutine to actually finish before this test's
+		// teardown completes - on the happy path it already has by now;
+		// on a future regression (a real blocking Read()), closing the
+		// pipe above unblocks it, and this bounds how long we wait rather
+		// than letting it leak into the next test still running and
+		// touching shared package-level state (jsonOutput and friends)
+		// concurrently - a race only under -race and only once a
+		// regression makes the timeout below fire.
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+		}
+	})
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked reading stdin under --json")
+		return nil
+	}
+}
+
+func TestReadPromptLineFrom_JSONOutputReturnsConfirmationRequiredWithoutReading(t *testing.T) {
+	withJSONOutput(t)
+
+	_, err := readPromptLineFrom(poisonReader{t})
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+}
+
+func TestPromptForGameSource_JSONOutputReturnsConfirmationRequiredNamingSource(t *testing.T) {
+	withJSONOutput(t)
+
+	err := assertStdinNeverRead(t, func() error {
+		_, err := promptForGameSource("My Game", []string{"acme", "beta"}, nil)
+		return err
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Contains(t, err.Error(), "--source")
+}
+
 func TestReadPromptLineFrom_TrimsAndLowercases(t *testing.T) {
 	cases := []struct {
 		name string
@@ -242,6 +342,7 @@ func TestWithService_PropagatesFnError(t *testing.T) {
 	dataDir = t.TempDir()
 
 	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
 	sentinel := errors.New("boom")
 
 	err := withService(cmd, func(ctx context.Context, svc *core.Service) error {
@@ -292,9 +393,9 @@ func TestWithGameService_ResolvesGame(t *testing.T) {
 	gameID = "testgame"
 
 	// Seed the game via a one-off service so withGameService can resolve it.
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:      "testgame",
 		Name:    "Test Game",
 		ModPath: t.TempDir(),
@@ -302,6 +403,7 @@ func TestWithGameService_ResolvesGame(t *testing.T) {
 	require.NoError(t, svc.Close())
 
 	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
 	var seen *domain.Game
 
 	err = withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
@@ -312,4 +414,24 @@ func TestWithGameService_ResolvesGame(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, seen)
 	assert.Equal(t, "testgame", seen.ID)
+}
+
+// TestPromptForGameSource_EOFNamesTheSameRemedyAsJSON is #385: piping lmm
+// without --json ("lmm mod lock alpha < /dev/null") reported
+// "Error: reading input: EOF" - an implementation detail with no way
+// forward - while the --json path for the very same prompt already named
+// -s/--source. One shared error, two renderings.
+func TestPromptForGameSource_EOFNamesTheSameRemedyAsJSON(t *testing.T) {
+	var promptErr error
+	captureStdout(t, func() error {
+		withStdin(t, "", func() {
+			_, promptErr = promptForGameSource("My Game", []string{"acme", "beta"}, nil)
+		})
+		return nil
+	})
+
+	require.Error(t, promptErr)
+	assert.NotContains(t, promptErr.Error(), "EOF")
+	require.ErrorIs(t, promptErr, core.ErrConfirmationRequired)
+	assert.Contains(t, promptErr.Error(), "--source")
 }

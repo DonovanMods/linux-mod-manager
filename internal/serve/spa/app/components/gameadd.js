@@ -1,0 +1,1123 @@
+// gameadd.js - the two ways a game comes to exist (issue 333, design doc
+// §Scope: "first-run flow in the game chooser, game add/detect UI"):
+// GameDetectSection ("Detect games") and GameAddForm ("Add a game
+// manually"). Both are used TWICE - by the first-run flow at "/"
+// (gamechooser.js, when GET /api/v1/games answers empty) and by the Setup
+// page's Games section (setupgames.js, for a game added later) - which is
+// exactly why they live in their own file rather than either caller's.
+//
+// Neither goes through the confirm-plan framework: POST /api/v1/games and
+// POST /api/v1/games/detect are sanctioned single-step writes with nothing
+// to preview beforehand (the same class enable/disable and the profile CRUD
+// routes are) - there is no Plan for "add a game", only a form and a write.
+//
+// issue 206 widened both: GameDetectSection now scans with GET
+// /api/v1/games/detect?all=1, so a Steam game lmm has no curated entry for
+// is SHOWN rather than hidden - with an "Add with details…" action in
+// place of the checkbox (it has no index to select with,
+// GameDetectEntry.Index's own rule). GameAddForm gained a `detected` prop
+// and its own "Pick an installed game…" control - either path prefills the
+// form from a GameDetectEntry FOR DISPLAY (name, install path, a guessed
+// mod path, the derived game id), then submits with `from_steam_app_id`
+// plus only the fields the user actually edited: the form derives no slug,
+// mod path or source map of its own (unit9a-task-report.md's wire note).
+import { html, useEffect, useState } from "../render.js";
+import {
+  ApiError,
+  addGame,
+  applyGameDetect,
+  detectGames,
+  gameCatalog,
+  listSources,
+  updateGameSources,
+} from "../api.js";
+import { navigate, setupPath } from "../router.js";
+import { FolderField } from "./folderpicker.js";
+import { SourcesMapEditor } from "./sourcesmap.js";
+import { GameLoaderEditor, loaderDraft, loaderSpec } from "./gameloader.js";
+
+/**
+ * GameDetectSection scans for Steam installs and offers to add the ones not
+ * already configured. It scans WIDE (issue 206: `?all=1`) so an installed game
+ * with no curated known-games entry is shown, not silently dropped - it
+ * just has no checkbox, since a detect selection can only name a known row
+ * (GameDetectEntry.Index is 0 for one). Already-configured rows are not
+ * listed (issue 421) - the Games table's row pencil (Edit) is where a configured game
+ * changes - apart from one whose mod path needs repair, which is listed
+ * with its control disabled: `lmm game detect --select` can still repair
+ * one from the CLI, but a checklist offering to silently overwrite an
+ * existing game's default profile is not this surface's job.
+ *
+ * `actions` is optional and used for one thing: the apply's own warnings,
+ * raised as toasts (see addSelected). A caller that passes none simply
+ * shows them nowhere, which is what every caller did before they existed.
+ */
+export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
+  const [listing, setListing] = useState(null); // {games, warnings} | "error"
+  const [error, setError] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const [applyError, setApplyError] = useState(null);
+
+  async function scan() {
+    setListing(null);
+    setError(null);
+    setSelected(new Set());
+    try {
+      setListing(await detectGames(true));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  useEffect(() => {
+    scan();
+  }, []);
+
+  function toggle(index) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  async function addSelected() {
+    setBusy(true);
+    setApplyError(null);
+    // The apply's OWN warnings - today a repair that kept a field the
+    // curated entry disagrees with (core.repairedGame). Until then this
+    // array only ever repeated the scan's, which the listing above already
+    // shows, so dropping it was harmless; the CLI has printed them to
+    // stderr all along.
+    //
+    // The wire merges the apply's re-scan warnings in FRONT of the apply's
+    // own (api_games.go: "the scan's warnings lead the result's, the same
+    // order the CLI merges them in"), and the ones this page is showing are
+    // that same scan's - so what is new here is the set difference. The CLI
+    // gets the split structurally, by holding the apply's aside before it
+    // merges; over HTTP there is one array, so this is the same cut.
+    const alreadyShown = new Set(listing?.warnings ?? []);
+    try {
+      const result = await applyGameDetect([...selected].map(String));
+      setSelected(new Set());
+      await scan();
+      // A toast rather than a line in this section, because by the time it
+      // exists this section does not: both callers' onAdded tear it down -
+      // setupgames.js hides the detect panel, gamechooser.js navigates to
+      // the new game's Mission Control. A toast is mounted at the
+      // application root for exactly that reason ("the point of a toast is
+      // that it finds you where you went", toasts.js).
+      for (const warning of (result.warnings ?? []).filter(
+        (w) => !alreadyShown.has(w),
+      )) {
+        actions?.pushToast({
+          tone: "success",
+          title: "Game added",
+          detail: warning,
+        });
+      }
+      onAdded?.(result);
+    } catch (err) {
+      setApplyError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // issue 421: a configured game is changed with the pencil on its row
+  // in the Games table, not offered here again - except one that needs repair, which
+  // stays listed (disabled) so the scan can say so (issue 460).
+  const scanned = listing?.games ?? [];
+  const games = offeredGames(scanned);
+  const hiddenConfigured = scanned.length - games.length;
+  const hasUnknown = games.some((g) => !g.known);
+  const hasWorkshop = games.some((g) => !g.known && g.workshop_items > 0);
+  const needsRepair = games.some(
+    (g) => g.already_configured && g.mod_path_error,
+  );
+
+  return html`
+    <div class="setup-detect" data-testid="setup-detect">
+      <h3 class="plan__heading">Detect games</h3>
+      ${
+        error &&
+        html`
+          <div class="empty-state empty-state--error">
+            <p>Couldn't scan for Steam installs: ${error}</p>
+            <button type="button" class="button" onClick=${scan}>Retry</button>
+          </div>
+        `
+      }
+      ${
+        listing === null && !error && html`<p class="app-booting">Scanning…</p>`
+      }
+      ${
+        listing &&
+        scanned.length === 0 &&
+        html`<p class="empty-state__hint">
+          No moddable Steam games were found on this machine.
+        </p>`
+      }
+      ${
+        listing &&
+        hiddenConfigured > 0 &&
+        html`<p
+          class="empty-state__hint"
+          data-testid="detect-configured-hidden"
+        >
+          ${configuredHiddenLabel(hiddenConfigured)}
+        </p>`
+      }
+      ${
+        listing &&
+        (listing.warnings ?? []).length > 0 &&
+        html`<p class="plan__note plan__note--warn">
+          ${listing.warnings.join(" · ")}
+        </p>`
+      }
+      ${
+        hasUnknown &&
+        html`<p class="empty-state__hint">
+          A game with no checkbox isn't in lmm's curated list yet - use "Add
+          with details…" to configure its source and mod path.
+        </p>`
+      }
+      ${
+        needsRepair &&
+        html`<p class="empty-state__hint" data-testid="detect-needs-repair">
+          A game marked "needs repair" is configured already, and its mod path
+          needs you: fix it with "Set mod path…" in the Games table above.
+          Adding it again would reset its profile, so it cannot be selected
+          here.
+        </p>`
+      }
+      ${
+        hasWorkshop &&
+        html`<p class="empty-state__hint">
+          A game listed with Steam Workshop items is here because Steam has
+          already downloaded them: lmm can track those items where they sit, not
+          deploy them to a mod folder. "Add with details…" needs nothing more
+          from you - the source is already mapped.
+        </p>`
+      }
+      ${
+        listing &&
+        games.length > 0 &&
+        html`
+          <ul class="setup-detect__list">
+            ${games.map(
+              (g) => html`
+                <li key=${g.steam_app_id} class="setup-detect__row">
+                  ${
+                    g.known
+                      ? html`
+                          <label class="setup-detect__name">
+                            <input
+                              type="checkbox"
+                              checked=${selected.has(g.index)}
+                              disabled=${g.already_configured}
+                              onChange=${() => toggle(g.index)}
+                            />
+                            ${g.name}
+                            <span class="badge badge--policy">Known</span>
+                            ${configuredBadge(g)}
+                          </label>
+                        `
+                      : html`
+                          <span class="setup-detect__name">
+                            ${g.name} ${configuredBadge(g)}
+                          </span>
+                        `
+                  }
+                  <span class="mono setup-detect__path" title=${g.install_path}
+                    >${g.install_path}</span
+                  >
+                  ${
+                    g.workshop_items > 0 &&
+                    html`<span class="setup-detect__workshop"
+                      >${workshopCountLabel(g.workshop_items)}</span
+                    >`
+                  }
+                  ${
+                    !g.known &&
+                    html`
+                      <button
+                        type="button"
+                        class="button button--small setup-detect__action"
+                        data-action="add-with-details"
+                        disabled=${g.already_configured}
+                        onClick=${() => onAddWithDetails?.(g)}
+                      >
+                        Add with details…
+                      </button>
+                    `
+                  }
+                </li>
+              `,
+            )}
+          </ul>
+          <button
+            type="button"
+            class="button button--primary"
+            data-action="add-detected"
+            disabled=${busy || selected.size === 0}
+            onClick=${addSelected}
+          >
+            ${busy ? "Adding…" : `Add selected (${selected.size})`}
+          </button>
+          ${applyError && html`<p class="modal__error">${applyError}</p>`}
+        `
+      }
+    </div>
+  `;
+}
+
+/**
+ * configuredBadge marks a detected row whose game is already configured
+ * (issue 460): "needs repair" when that game's mod_path needs attention
+ * (GameDetectEntry.mod_path_error, whose sentence is the badge's title),
+ * "already configured" otherwise. Either way the row stays unselectable -
+ * adding it again resets its profile, which repairs nothing.
+ */
+function configuredBadge(g) {
+  if (!g.already_configured) return null;
+  if (g.mod_path_error) {
+    return html`<span
+      class="badge badge--warn"
+      data-testid="needs-repair"
+      title=${g.mod_path_error}
+      >needs repair</span
+    >`;
+  }
+  return html`<span class="badge">already configured</span>`;
+}
+
+/**
+ * offeredGames is the part of a detect listing an add flow offers (issue
+ * 421): every game not configured yet, plus a configured one whose mod path
+ * needs repair - listed, never selectable, so the scan can flag it.
+ */
+function offeredGames(games) {
+  return games.filter((g) => !g.already_configured || g.mod_path_error);
+}
+
+/** configuredHiddenLabel says why a scan lists fewer games than it found. */
+function configuredHiddenLabel(count) {
+  const noun = count === 1 ? "game is" : "games are";
+  return `${count} already-configured ${noun} not listed - change ${count === 1 ? "it" : "them"} with the pencil on ${count === 1 ? "its" : "their"} row in the Games table.`;
+}
+
+/**
+ * workshopCountLabel is the detect row's "Steam Workshop: N items" line
+ * (issue 368), built as ONE string rather than adjacent interpolations: htm
+ * collapses the whitespace between those, which would run the number into
+ * the words either side of it (the trap cards.js#conflictLabel documents).
+ * It is the same sentence `lmm game detect` prints beside the same row.
+ */
+function workshopCountLabel(count) {
+  return `Steam Workshop: ${count} item${count === 1 ? "" : "s"}`;
+}
+
+// emptySpec is GameAddForm's own local state shape - the gameAddRequest
+// members plus the UI-only "mode" (catalog search vs. a manual identifier)
+// and the picked catalog match, if any.
+/** authRequiredMessage is the catalog-401 message (Important 1): a live
+ * link to the Authentication section when this form has a game/profile to
+ * build one from (rendered inside the Setup page), plain text naming the
+ * section when it does not (first-run, before any game exists). */
+function authRequiredMessage(sourceName, game, profile) {
+  if (!game || !profile) {
+    return `Authenticate ${sourceName} first - see the Authentication section.`;
+  }
+  const href = setupPath(game, profile, "auth");
+  return html`Authenticate ${sourceName} first - see the${" "}
+    <a
+      href=${href}
+      onClick=${(e) => {
+        e.preventDefault();
+        navigate(href);
+      }}
+      >Authentication section</a
+    >.`;
+}
+
+// KNOWN_FIELD_ERRORS is every GameSpecError.Field errorFor() below actually
+// renders an input for. "game_id" (core.GameSpec.ID, the local games.yaml
+// key) used to have no input at all - set only from a catalog match's own
+// game_id - so a rejection naming it fell back to the form-wide banner
+// (Minor 2). N-6, epic re-review, gave it a manual Advanced input, so it
+// joins this set the same as every other named field. "from_steam_app_id"
+// and "sources" (issue 206) deliberately stay OUT of this set - neither has a
+// dedicated input (the app id names no field at all; a curated candidate's
+// own source map isn't user-editable here) - so both fall to the form
+// banner the same way an unmapped field always has; from_steam_app_id gets
+// its own message and a Rescan control in submit()'s catch, below.
+const KNOWN_FIELD_ERRORS = new Set([
+  "source_id",
+  "identifier",
+  "name",
+  "install_path",
+  "mod_path",
+  "game_id",
+  // issue 359: core names the offending SELECT, not the whole block, so the
+  // loader errors land on their own controls like every other field.
+  "loader.kind",
+  "loader.runtime",
+  "loader.bootstrap",
+]);
+
+// identifierHints names the per-source example/placeholder the "Identifier
+// with that source" field otherwise gave no clue about at all (first-run
+// readiness item 4): a first-run user who cannot use detect had to guess
+// what an "identifier" even looks like. Keyed by the two built-in source
+// ids - source.TypeLabelOf reports both as the same "built-in" type
+// (app.SourceInfo carries no per-built-in distinction), so the id itself
+// is the only signal the SPA has to tell them apart.
+const identifierHints = {
+  nexusmods: {
+    placeholder: "skyrimspecialedition",
+    hint: "The URL slug from this game's NexusMods page.",
+  },
+  curseforge: {
+    placeholder: "432",
+    hint: 'The numeric game id - use "Search this source\'s catalog" above to find it.',
+  },
+};
+
+function emptySpec() {
+  return {
+    sourceID: "",
+    // extraSources is the C-4 multi-select: sources BESIDES the primary one
+    // this game should also map. POST /api/v1/games takes exactly one
+    // source+identifier pair (it is what makes the game addressable at
+    // all), so extras are applied by a PUT immediately afterwards - the
+    // same replacement-shaped call the Games table's own editor makes.
+    extraSources: {},
+    query: "",
+    matches: null, // null = not searched yet; [] = searched, nothing found
+    noCatalog: false,
+    identifier: "",
+    name: "",
+    installPath: "",
+    modPath: "",
+    gameID: undefined,
+    // issue 359: the mod-loader declaration, empty for the overwhelming
+    // majority of games. loaderSpec() turns it into the request member, or
+    // into nothing at all when no kind is chosen.
+    loader: loaderDraft(null),
+  };
+}
+
+// exactCatalogMatch mirrors core.ExactGameCatalogMatch client-side: the ONE
+// case a catalog search auto-selects a result (issue 206's suggestion path) -
+// exactly one match whose name equals `name`, compared case-insensitively
+// after trimming. null for zero matches, no exact match, or two entries
+// sharing the name - never "the only match" (a one-match search for
+// "Hades" can still return "Hades II").
+function exactCatalogMatch(matches, name) {
+  const target = (name ?? "").trim().toLowerCase();
+  if (!target || !matches) return null;
+  const found = matches.filter(
+    (m) => (m.name ?? "").trim().toLowerCase() === target,
+  );
+  return found.length === 1 ? found[0] : null;
+}
+
+/**
+ * hasSources reports whether a GameDetectEntry carries a source map of its
+ * own - a curated entry's, or the `steamworkshop: <appid>` detection
+ * prefills for a game with Workshop items already downloaded (issue 269).
+ */
+function hasSources(row) {
+  return Object.keys(row?.sources ?? {}).length > 0;
+}
+
+// curatedSourceSummary renders a curated known-games source map for
+// display: "nexusmods: skyrimspecialedition", id-sorted so two renders of
+// the same map read the same. An empty map (a curated entry with neither
+// sources nor a nexus_id) says so rather than rendering nothing, since
+// "sources come from the known-games list ()" would be a lie.
+function curatedSourceSummary(sources) {
+  const ids = Object.keys(sources ?? {}).sort();
+  if (ids.length === 0) return "none - this entry names no source";
+  return ids.map((id) => `${id}: ${sources[id]}`).join(", ");
+}
+
+/**
+ * GameAddForm collects a GameSpec by hand: a source, then either a catalog
+ * pick or a manual identifier (core.ErrNoGameCatalog's own 400 has no
+ * `details.field` - unlike a bad query - which is the structural signal
+ * used to fall back to the identifier field, never the message text), then
+ * the display name and paths. A field-named 400 (core.GameSpecError) marks
+ * the matching input rather than a generic banner.
+ *
+ * `detected` (issue 206) is an optional GameDetectEntry - one of GET
+ * /api/v1/games/detect?all=1's rows - either handed in by a caller (an
+ * uncurated row's "Add with details…") or picked from this form's own
+ * "Pick an installed game…" control. It prefills the form FOR DISPLAY
+ * only: install path becomes read-only (the browser never supplies one for
+ * a detected game - unit9a-task-report.md's own wire rule), the mod path
+ * field's placeholder shows the `<install>/mods` guess, and the Advanced
+ * game-id field's placeholder shows the detected slug. Submitting sends
+ * `from_steam_app_id` plus the source pair, and mod_path/game_id/name only
+ * when they differ from what was prefilled - core derives the rest
+ * (GameSpecFromDetected), exactly as `lmm game add --from-detected` does.
+ * Choosing a source while a detected row is active auto-runs the catalog
+ * search by the row's own name (mirroring the CLI's autoPickName) and
+ * pre-selects a single exact-name match without submitting anything.
+ * Clearing calls `onClearDetected` so the caller drops its own reference to
+ * the row too - otherwise re-clicking the same "Add with details…" hands
+ * back an identical object and the effect above never re-fires (issue 206).
+ *
+ * game/profile are optional: they are set when this form renders inside an
+ * already-established Setup page (setupgames.js), and let a 401 from the
+ * catalog search (Important 1) link straight to the Authentication
+ * section. First-run (gamechooser.js) has no game yet - there is nothing
+ * to build that link from - so the same 401 there falls back to naming the
+ * section in plain text.
+ */
+export function GameAddForm({
+  onAdded,
+  game,
+  profile,
+  refreshKey,
+  detected,
+  onClearDetected,
+}) {
+  const [sources, setSources] = useState(null);
+  const [spec, setSpec] = useState(emptySpec);
+  const [detectedRow, setDetectedRow] = useState(null);
+  const [staleDetected, setStaleDetected] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerListing, setPickerListing] = useState(null);
+  const [pickerError, setPickerError] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [fieldError, setFieldError] = useState(null); // {field, reason}
+  const [formError, setFormError] = useState(null);
+
+  // refreshKey (C-4) is the caller's way of saying "the source registry
+  // changed": first run renders the custom-source editor beside this form,
+  // and a source defined there has to appear in this picker without a
+  // reload. Every other caller omits it and this runs exactly once.
+  useEffect(() => {
+    listSources()
+      .then((rows) => setSources(rows.filter((r) => r.type !== "error")))
+      .catch(() => setSources([]));
+  }, [refreshKey]);
+
+  // A `detected` prop applies once per row it is handed - a fresh object
+  // from a fresh "Add with details…" click, since this form's own picker
+  // (below) applies a row directly without going through the prop at all.
+  // The effect keys on `detected` by object IDENTITY, so clearDetected()
+  // below must also clear the parent's copy (onClearDetected) - otherwise
+  // re-clicking the same row hands back the same reference, the effect
+  // does not re-run, and the click silently does nothing (issue 206 fix wave).
+  useEffect(() => {
+    if (detected) applyDetected(detected);
+    // eslint-disable-next-line
+  }, [detected]);
+
+  function patch(fields) {
+    setSpec((prev) => ({ ...prev, ...fields }));
+  }
+
+  function applyDetected(row) {
+    setDetectedRow(row);
+    setSpec({ ...emptySpec(), name: row.name, query: row.name });
+    setPickerOpen(false);
+    setStaleDetected(false);
+    setFormError(null);
+    setFieldError(null);
+  }
+
+  // issue 341: a detected row that already carries a source map needs
+  // nothing more - POST /api/v1/games with its from_steam_app_id alone
+  // succeeds, exactly as `lmm game add --from-detected <id>` does, because
+  // GameSpecFromDetected fills the name, paths, id and that SOURCE MAP.
+  // Requiring a source pair on this path made the user do work the CLI does
+  // not, and whatever they picked was then layered ON TOP of the prefilled
+  // map - a mapping they never asked for. So the source fields become an
+  // optional override here, and Submit needs nothing else.
+  //
+  // issue 368 widened "already carries one" from curated-only to any row
+  // with a source map: an UNCURATED game whose Steam Workshop items got it
+  // `steamworkshop: <appid>` is in the detect list now, and it is exactly
+  // as complete as a curated row - asking such a user to pick a source
+  // would be asking them to overrule a mapping detection got right.
+  const prefilledRow =
+    detectedRow && (detectedRow.known || hasSources(detectedRow))
+      ? detectedRow
+      : null;
+  // What that map actually is, so the form can show it rather than
+  // asserting it exists: the row's own sources, else the nexus_id mapping
+  // core derives from a curated entry (GameSpecFromDetected's own rule).
+  const prefilledSources =
+    prefilledRow &&
+    (hasSources(prefilledRow)
+      ? prefilledRow.sources
+      : prefilledRow.nexus_id
+        ? { nexusmods: prefilledRow.nexus_id }
+        : {});
+
+  function clearDetected() {
+    setDetectedRow(null);
+    setSpec(emptySpec());
+    setStaleDetected(false);
+    setFormError(null);
+    onClearDetected?.();
+  }
+
+  async function openPicker() {
+    setPickerOpen(true);
+    setPickerError(null);
+    setPickerListing(null);
+    try {
+      setPickerListing(await detectGames(true));
+    } catch (err) {
+      setPickerError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  // rescan answers a stale `from_steam_app_id` (the candidate this form
+  // held no longer matches a live scan - detectedGameCandidate's own web
+  // twin): drop the stale row and re-open the picker against a fresh scan,
+  // rather than leaving the user stuck re-submitting the same dead app id.
+  async function rescan() {
+    clearDetected();
+    await openPicker();
+  }
+
+  function pickMatch(m) {
+    patch({
+      identifier: m.identifier,
+      name: spec.name || m.name,
+      // A detected candidate's own derived slug already outranks a catalog
+      // match's game id (GameSpecFromDetected fills spec.ID before any
+      // catalog step runs, in both the CLI and here) - so in detected mode
+      // this leaves gameID untouched rather than overwriting it, matching
+      // applyGameCatalogMatch's real precedence (cmd/lmm/game_add.go).
+      gameID: detectedRow ? spec.gameID : m.game_id,
+    });
+  }
+
+  async function runSearch(sourceID, query, { autoPickName } = {}) {
+    if (!sourceID || !query.trim()) return;
+    const sourceName =
+      (sources ?? []).find((s) => s.id === sourceID)?.name ?? sourceID;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const report = await gameCatalog(sourceID, query.trim());
+      patch({ matches: report.matches, noCatalog: false });
+      if (autoPickName) {
+        const m = exactCatalogMatch(report.matches, autoPickName);
+        if (m) pickMatch(m);
+      }
+    } catch (err) {
+      // Status is read BEFORE `details.field` (Important 1): a 401 - the
+      // source refused for want of a credential (domain.ErrAuthRequired) -
+      // has no Details() of its own, so it would otherwise fall into the
+      // "no searchable catalog" branch below and tell the user the wrong
+      // thing entirely.
+      if (err instanceof ApiError && err.status === 401) {
+        patch({ matches: null, noCatalog: false });
+        setSearchError(authRequiredMessage(sourceName, game, profile));
+        return;
+      }
+      if (err instanceof ApiError && err.details?.field) {
+        setSearchError(err.details.reason || err.message);
+      } else {
+        // No `details.field` on a 400 from this endpoint means the source
+        // itself has no searchable catalog (core.ErrNoGameCatalog) -
+        // structural, not a message match (game_add.go's own rule).
+        patch({ matches: null, noCatalog: true });
+      }
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function search(e) {
+    e.preventDefault();
+    await runSearch(spec.sourceID, spec.query);
+  }
+
+  // A detected row's source choice auto-runs the catalog search by the
+  // row's own name (issue 206, mirroring the CLI's autoPickName) - the user
+  // still has to pick the source, but not re-type what lmm already scanned.
+  useEffect(() => {
+    if (!detectedRow || !spec.sourceID) return;
+    runSearch(spec.sourceID, detectedRow.name, {
+      autoPickName: detectedRow.name,
+    });
+    // eslint-disable-next-line
+  }, [detectedRow, spec.sourceID]);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setFieldError(null);
+    setFormError(null);
+    setStaleDetected(false);
+    try {
+      let entry;
+      if (detectedRow) {
+        // issue 206: the app id is the whole prefill - core re-scans and fills
+        // name/install path/mod path/game id/source map itself
+        // (GameSpecFromDetected). Only fields the user actually changed
+        // from what was prefilled ride along as overrides.
+        const body = { from_steam_app_id: detectedRow.steam_app_id };
+        // An empty source pair is omitted rather than sent blank: on a
+        // curated row it is genuinely absent (issue 341), and core reads a
+        // named source_id with no identifier as an error, not as "none".
+        if (spec.sourceID) {
+          body.source_id = spec.sourceID;
+          body.identifier = spec.identifier;
+        }
+        if (spec.name && spec.name !== detectedRow.name) body.name = spec.name;
+        if (spec.gameID) body.game_id = spec.gameID;
+        if (spec.modPath) body.mod_path = spec.modPath;
+        const declared = loaderSpec(spec.loader);
+        if (declared) body.loader = declared;
+        entry = await addGame(body);
+      } else {
+        entry = await addGame({
+          source_id: spec.sourceID,
+          identifier: spec.identifier,
+          name: spec.name,
+          game_id: spec.gameID || undefined,
+          install_path: spec.installPath,
+          mod_path: spec.modPath || undefined,
+          loader: loaderSpec(spec.loader) || undefined,
+        });
+      }
+      // The extras ride a second call, and the game is REAL by the time it
+      // runs - so a failure here is reported without pretending the add
+      // itself failed, and the row the caller is handed is the one that
+      // actually exists.
+      const extras = Object.keys(spec.extraSources).filter(
+        (id) => id !== spec.sourceID,
+      );
+      if (extras.length > 0) {
+        const map = { [spec.sourceID]: spec.identifier };
+        for (const id of extras) map[id] = spec.extraSources[id];
+        try {
+          entry = await updateGameSources(entry.id, map);
+        } catch (err) {
+          setFormError(
+            `${spec.name} was added, but its extra sources were not mapped: ` +
+              (err instanceof ApiError ? err.message : String(err)),
+          );
+        }
+      }
+      setSpec(emptySpec());
+      setDetectedRow(null);
+      onAdded?.(entry);
+    } catch (err) {
+      // A stale from_steam_app_id (Task A's own doc: "no installed Steam
+      // game has that app id") gets its own message and a Rescan control -
+      // there is no input to mark, and the fix is a fresh scan, not a
+      // retyped value.
+      if (
+        err instanceof ApiError &&
+        err.details?.field === "from_steam_app_id"
+      ) {
+        setStaleDetected(true);
+        setFormError(err.details.reason || err.message);
+        return;
+      }
+      // A field this form has no input for (e.g. "game_id", when a
+      // catalog-derived id fails GameSpecError's path-safety check, or
+      // "sources", when a curated candidate's own map names an
+      // unregistered source) must still tell the user SOMETHING rather
+      // than silently un-busying the button (Minor 2): fall back to the
+      // form-wide banner whenever no input matches the named field.
+      if (
+        err instanceof ApiError &&
+        err.details?.field &&
+        KNOWN_FIELD_ERRORS.has(err.details.field)
+      ) {
+        setFieldError(err.details);
+      } else {
+        setFormError(err instanceof ApiError ? err.message : String(err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const errorFor = (field) =>
+    fieldError?.field === field ? fieldError.reason : null;
+  const pickerGames = offeredGames(pickerListing?.games ?? []);
+  const pickerHidden = (pickerListing?.games ?? []).length - pickerGames.length;
+  const installPathReady = detectedRow || spec.installPath;
+  const modPathPlaceholder = detectedRow
+    ? `${detectedRow.install_path}/mods`
+    : spec.installPath
+      ? `${spec.installPath}/mods`
+      : "";
+  // ONE string, not adjacent interpolations: htm collapses the whitespace
+  // between them (no_htm_whitespace_test.go). It also states issue 363's
+  // rule - a relative value is resolved against the install path here
+  // exactly as it is in a hand-written games.yaml, so there is no longer a
+  // field error for typing "Data".
+  const modPathHint = `(${detectedRow ? "guessed" : "default"}: install path + "/mods"; a relative path is taken as relative to the install path)`;
+
+  return html`
+    <form class="setup-add" data-testid="setup-add-game" onSubmit=${submit}>
+      <h3 class="plan__heading">Add a game manually</h3>
+
+      <button
+        type="button"
+        class="button setup-add__pick"
+        data-action="pick-installed"
+        onClick=${() => (pickerOpen ? setPickerOpen(false) : openPicker())}
+      >
+        ${pickerOpen ? "Hide installed games" : "Pick an installed game…"}
+      </button>
+
+      ${
+        pickerOpen &&
+        html`
+          <div class="setup-add__picker" data-testid="setup-add-picker">
+            ${pickerError && html`<p class="modal__error">${pickerError}</p>`}
+            ${
+              pickerListing === null &&
+              !pickerError &&
+              html`<p class="app-booting">Scanning…</p>`
+            }
+            ${
+              pickerListing &&
+              (pickerListing.games ?? []).length === 0 &&
+              html`<p class="empty-state__hint">
+                No installed Steam games were found.
+              </p>`
+            }
+            ${
+              pickerHidden > 0 &&
+              html`<p
+                class="empty-state__hint"
+                data-testid="picker-configured-hidden"
+              >
+                ${configuredHiddenLabel(pickerHidden)}
+              </p>`
+            }
+            ${
+              pickerGames.length > 0 &&
+              html`
+                <ul class="setup-detect__list">
+                  ${pickerGames.map(
+                    (g) => html`
+                      <li key=${g.steam_app_id} class="setup-detect__row">
+                        <span class="setup-detect__name">
+                          <button
+                            type="button"
+                            class="button button--small button--prose"
+                            data-action="pick-installed-row"
+                            disabled=${g.already_configured}
+                            onClick=${() => applyDetected(g)}
+                          >
+                            ${g.name}
+                          </button>
+                          ${g.known && html`<span class="badge badge--policy">Known</span>`}
+                          ${configuredBadge(g)}
+                        </span>
+                        <span
+                          class="mono setup-detect__path"
+                          title=${g.install_path}
+                          >${g.install_path}</span
+                        >
+                      </li>
+                    `,
+                  )}
+                </ul>
+              `
+            }
+          </div>
+        `
+      }
+      ${
+        detectedRow &&
+        html`
+          <div class="plan__note" data-testid="setup-add-detected">
+            Prefilled from <strong>${detectedRow.name}</strong> (Steam app${" "}
+            ${detectedRow.steam_app_id}).${" "}
+            <button
+              type="button"
+              class="button button--small"
+              data-action="clear-detected"
+              onClick=${clearDetected}
+            >
+              Clear
+            </button>
+            ${
+              prefilledRow &&
+              html`<span data-testid="setup-add-prefilled-sources">
+                ${" "}Sources come from${" "}
+                ${
+                  prefilledRow.known
+                    ? "the known-games list"
+                    : "this game's Steam Workshop items"
+                }${" "}
+                (${curatedSourceSummary(prefilledSources)}) - choosing one below
+                is an optional override.
+              </span>`
+            }
+          </div>
+        `
+      }
+
+      <label class="plan__control">
+        Source
+        <select
+          name="add-source"
+          value=${spec.sourceID}
+          onChange=${(e) =>
+            patch({
+              sourceID: e.currentTarget.value,
+              matches: null,
+              noCatalog: false,
+              identifier: "",
+            })}
+        >
+          <option value="">Choose a source…</option>
+          ${(sources ?? []).map(
+            (s) => html`<option key=${s.id} value=${s.id}>${s.name}</option>`,
+          )}
+        </select>
+      </label>
+      ${errorFor("source_id") && html`<p class="modal__error">${errorFor("source_id")}</p>`}
+      ${
+        spec.sourceID &&
+        html`
+          <div class="setup-add__catalog">
+            <label class="plan__control">
+              Search this source's catalog
+              <input
+                type="text"
+                name="add-query"
+                value=${spec.query}
+                onInput=${(e) => patch({ query: e.currentTarget.value })}
+              />
+            </label>
+            <button
+              type="button"
+              class="button"
+              data-action="catalog-search"
+              disabled=${searching || !spec.query.trim()}
+              onClick=${search}
+            >
+              ${searching ? "Searching…" : "Search"}
+            </button>
+            ${searchError && html`<p class="modal__error">${searchError}</p>`}
+            ${
+              spec.noCatalog &&
+              html`<p class="plan__note">
+                This source has no searchable catalog - enter the identifier
+                directly below.
+              </p>`
+            }
+            ${
+              spec.matches &&
+              (spec.matches.length === 0
+                ? html`<p class="empty-state__hint">
+                    No game in the catalog matches that name.
+                  </p>`
+                : html`
+                    <ul class="setup-add__matches">
+                      ${spec.matches.map(
+                        (m) => html`
+                          <li key=${m.identifier}>
+                            <button
+                              type="button"
+                              class="button button--small ${spec.identifier === m.identifier ? "button--primary" : ""}"
+                              onClick=${() => pickMatch(m)}
+                            >
+                              ${m.name}
+                            </button>
+                          </li>
+                        `,
+                      )}
+                    </ul>
+                  `)
+            }
+          </div>
+        `
+      }
+
+      <label class="plan__control">
+        Identifier with that source
+        <input
+          type="text"
+          name="add-identifier"
+          placeholder=${identifierHints[spec.sourceID]?.placeholder}
+          value=${spec.identifier}
+          onInput=${(e) => patch({ identifier: e.currentTarget.value, gameID: undefined })}
+        />
+      </label>
+      ${
+        identifierHints[spec.sourceID] &&
+        html`<p class="empty-state__hint setup-add__identifier-hint">
+          ${identifierHints[spec.sourceID].hint}
+        </p>`
+      }
+      ${errorFor("identifier") && html`<p class="modal__error">${errorFor("identifier")}</p>`}
+
+      <details
+        class="setup-add__advanced"
+        data-testid="setup-add-advanced"
+        open=${Boolean(errorFor("game_id"))}
+      >
+        <summary>Advanced</summary>
+        <label class="plan__control">
+          Game id
+          <input
+            type="text"
+            name="add-game-id"
+            placeholder=${detectedRow ? detectedRow.slug : "derived automatically if left blank"}
+            value=${spec.gameID ?? ""}
+            onInput=${(e) =>
+              patch({ gameID: e.currentTarget.value || undefined })}
+          />
+        </label>
+        <p class="empty-state__hint">
+          The local games.yaml key (--game-id). Set automatically by a catalog
+          match above; override it here to choose it by hand.
+        </p>
+        ${errorFor("game_id") && html`<p class="modal__error">${errorFor("game_id")}</p>`}
+      </details>
+
+      ${
+        (sources ?? []).length > 1 &&
+        html`
+          <details class="setup-add__extra-sources">
+            <summary>Also map other sources (optional)</summary>
+            <p class="empty-state__hint">
+              A game can draw mods from more than one source. The identifier may
+              be empty - that is how a directory source is normally configured.
+            </p>
+            <${SourcesMapEditor}
+              sources=${(sources ?? []).filter((s) => s.id !== spec.sourceID)}
+              value=${spec.extraSources}
+              disabled=${busy}
+              onChange=${(map) => patch({ extraSources: map })}
+            />
+          </details>
+        `
+      }
+
+      <label class="plan__control">
+        Display name
+        <input
+          type="text"
+          name="add-name"
+          value=${spec.name}
+          onInput=${(e) => patch({ name: e.currentTarget.value })}
+        />
+      </label>
+      ${errorFor("name") && html`<p class="modal__error">${errorFor("name")}</p>`}
+      ${
+        detectedRow
+          ? html`
+              <div class="plan__control">
+                <span>Install path</span>
+                <p class="mono" data-testid="add-install-path-readonly">
+                  ${detectedRow.install_path}
+                </p>
+              </div>
+            `
+          : html`
+              <div class="plan__control">
+                <label for="add-install-path">Install path</label>
+                <${FolderField}
+                  value=${spec.installPath}
+                  label="install path"
+                  onChoose=${(path) => patch({ installPath: path })}
+                >
+                  <input
+                    type="text"
+                    id="add-install-path"
+                    name="add-install-path"
+                    value=${spec.installPath}
+                    onInput=${(e) => patch({ installPath: e.currentTarget.value })}
+                  />
+                <//>
+              </div>
+              ${errorFor("install_path") && html`<p class="modal__error">${errorFor("install_path")}</p>`}
+            `
+      }
+
+      <div class="plan__control">
+        <label for="add-mod-path">Mod path</label>
+        <span class="empty-state__hint">${modPathHint}</span>
+        <${FolderField}
+          value=${spec.modPath}
+          fallback=${detectedRow ? detectedRow.install_path : spec.installPath}
+          label="mod path"
+          onChoose=${(path) => patch({ modPath: path })}
+        >
+          <input
+            type="text"
+            id="add-mod-path"
+            name="add-mod-path"
+            value=${spec.modPath}
+            placeholder=${modPathPlaceholder}
+            onInput=${(e) => patch({ modPath: e.currentTarget.value })}
+          />
+        <//>
+      </div>
+      ${errorFor("mod_path") && html`<p class="modal__error">${errorFor("mod_path")}</p>`}
+
+      <${GameLoaderEditor}
+        value=${spec.loader}
+        disabled=${busy}
+        onChange=${(loader) => patch({ loader })}
+      />
+      ${["loader.kind", "loader.runtime", "loader.bootstrap"].map(
+        (f) =>
+          errorFor(f) &&
+          html`<p class="modal__error" key=${f}>${errorFor(f)}</p>`,
+      )}
+      ${
+        formError &&
+        html`<p class="modal__error">
+          ${formError}
+          ${
+            staleDetected &&
+            html`${" "}<button
+                type="button"
+                class="button button--small"
+                data-action="rescan-detected"
+                onClick=${rescan}
+              >
+                Rescan
+              </button>`
+          }
+        </p>`
+      }
+
+      <button
+        type="submit"
+        class="button button--primary setup-add__submit"
+        data-action="add-game"
+        disabled=${
+          busy ||
+          !spec.name ||
+          !installPathReady ||
+          (!prefilledRow && (!spec.sourceID || !spec.identifier)) ||
+          // Both halves of a prefilled row's OPTIONAL override: either
+          // field alone is an incomplete pair, and the submit path drops
+          // the pair unless both are set - so an identifier typed with no
+          // source would be discarded without a word (review N4).
+          (prefilledRow && Boolean(spec.sourceID) !== Boolean(spec.identifier))
+        }
+      >
+        ${busy ? "Adding…" : "Add game"}
+      </button>
+    </form>
+  `;
+}

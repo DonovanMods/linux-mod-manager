@@ -3,14 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
+	"slices"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/spf13/cobra"
 )
@@ -22,6 +20,8 @@ var (
 	importForce     bool
 	importDryRun    bool
 	importSkipMatch bool
+	importWorkshop  bool
+	importRefresh   bool
 )
 
 var importCmd = &cobra.Command{
@@ -29,14 +29,27 @@ var importCmd = &cobra.Command{
 	Short: "Import mods from local files or scan mod_path",
 	Long: `Import mods from local files or scan for untracked mods.
 
-Two distinct modes, chosen by whether an archive path is given:
+Three modes: scan (no arguments), archive (an archive path), and
+--workshop.
+
+--workshop brings the Steam Workshop items you are already subscribed to
+under lmm's tracking. lmm reads Steam's own bookkeeping, records each
+item and checks it for updates - it never moves, copies or deletes a
+Workshop item's files: Steam owns them where they sit and the game loads
+them from there. Deploying, enabling, disabling, updating and rolling
+back are all refused for such a mod, and uninstalling one removes lmm's
+tracking only. It is mutually exclusive with an archive argument and with
+--skip-match (there is nothing to match: items are identified by their
+Steam published-file id, exactly).
+
+The other two modes, chosen by whether an archive path is given:
 
 Scan mode (no arguments): scans the game's mod_path for files not yet
 tracked by lmm, tries to match each one by name against the game's
 configured sources (skip with --skip-match), and imports whatever is
 left after confirmation. Useful for mods that were installed manually -
-e.g. mods whose author has disabled API downloads. --dry-run and
---skip-match only apply to this mode. Every mod imported this way is
+e.g. mods whose author has disabled API downloads. --skip-match only
+applies to this mode. Every mod imported this way is
 marked as requiring manual download (since lmm did not fetch it itself);
 re-link it to a source with 'lmm mod edit --source' to clear that once
 it can be checked for updates normally.
@@ -45,13 +58,28 @@ Archive mode (an archive path given): imports that one specific mod file,
 deploying it and adding it to the profile. Pass --id (with --source, or
 it resolves automatically when the game has exactly one configured
 source, or prompts interactively when it has several) to fetch and
-attach source metadata as part of the import.
+attach source metadata as part of the import. --dry-run previews it -
+the archive is listed, never extracted, so nothing is written.
+
+Scan mode scores every candidate the sources return against the scanned
+name (and version, when the filename carries one) and adopts the best
+one, annotating anything short of an exact name match with its
+confidence. A name that nothing matches confidently enough stays local
+rather than being adopted as a similarly-named mod: a differing sequel
+number ("Sim Settlements 2" is never "Sim Settlements 3"), a
+single-letter difference in a short name, and a candidate carrying whole
+extra words ("SkyUI" is never "SkyUI Flashlite") are all refused. A
+catalogue name whose subtitle is set off by punctuation - "Ordinator -
+Perks of Skyrim", "HDT-SMP (Skinned Mesh Physics)" - still matches the
+short name the archive is called, as a probable match.
 
 Either way, a mod that ends up unmatched to any remote source is
 imported as local - it deploys and installs normally, but 'lmm update'
 has nothing to check it against and will never notify about it.
 
 Examples:
+  lmm import --workshop --game space-engineers-2   # Track subscribed Workshop items
+  lmm import --workshop --dry-run --game space-engineers-2
   lmm import --game hytale                    # Scan mod_path for untracked mods
   lmm import --game hytale --dry-run          # Preview what would be imported
   lmm import --game hytale --skip-match       # Scan without source lookup
@@ -69,6 +97,8 @@ func init() {
 	importCmd.Flags().BoolVarP(&importForce, "force", "f", false, "import without conflict prompts")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview what would be imported without making changes")
 	importCmd.Flags().BoolVar(&importSkipMatch, "skip-match", false, "skip source lookup for untracked mods")
+	importCmd.Flags().BoolVar(&importWorkshop, "workshop", false, "track the Steam Workshop items you are subscribed to (lmm never moves their files)")
+	importCmd.Flags().BoolVar(&importRefresh, "refresh", false, "bypass cached source metadata (--workshop)")
 
 	rootCmd.AddCommand(importCmd)
 }
@@ -79,15 +109,34 @@ func runImport(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doImport renders `lmm import <archive>`: it validates the argument,
+// resolves --source when only --id was given (that resolution can prompt,
+// so it stays here), plans the import, renders the plan's readout, answers
+// the conflict question from it, and applies it - printing every line from
+// the event stream and the returned result. The engine itself lives in
+// internal/core/import_archive.go.
 func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, game *domain.Game, args []string) error {
-	profileName, err := resolveProfile(service, game.ID, importProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, importProfile)
 	if err != nil {
 		return err
 	}
 
+	// #269: --workshop is a third mode, mutually exclusive with the other
+	// two. Refused rather than silently preferred, so a command that means
+	// two different things never quietly picks one.
+	if importWorkshop {
+		if len(args) > 0 {
+			return fmt.Errorf("--workshop imports what Steam already downloaded; it cannot take an archive path")
+		}
+		if importSkipMatch {
+			return fmt.Errorf("--skip-match does not apply to --workshop: Workshop items are matched by their Steam published-file id, exactly")
+		}
+		return runImportWorkshop(ctx, service, game, profileName)
+	}
+
 	// No args = scan mode
 	if len(args) == 0 {
-		return runImportScan(cmd, game, service, profileName)
+		return runImportScan(ctx, game, service, profileName)
 	}
 
 	// Single arg = import specific archive
@@ -109,320 +158,92 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		}
 	}
 
-	// Create importer
-	importer := service.NewImporter(game)
-
-	// Set up import options
-	opts := core.ImportOptions{
-		SourceID:    importSource,
-		ModID:       importModID,
-		ProfileName: profileName,
+	// This announcement precedes the core call, as it always has: a
+	// nonexistent/unreadable archive fails inside ImportArchive, and the
+	// pre-lift engine had already printed the line by then. Not under
+	// --json: the document is the run's whole output (Ruling 15).
+	if !jsonOutput {
+		fmt.Printf("Importing: %s\n", archivePath)
 	}
 
-	fmt.Printf("Importing: %s\n", archivePath)
-
-	// Import the archive
-	result, err := importer.Import(ctx, archivePath, game, opts)
-	if err != nil {
-		return fmt.Errorf("import failed: %w", err)
+	opts := core.ImportArchiveOptions{
+		SourceID:  importSource,
+		ModID:     importModID,
+		Force:     importForce,
+		SkipHooks: noHooks,
+		// AcceptConflicts is deliberately left false: the conflict prompt
+		// below answers it. --force implies it in core, so a forced import
+		// never reaches the prompt at all.
 	}
 
-	// Save pre-enrichment values for cache rename
-	preEnrichVersion := result.Mod.Version
-	preEnrichID := result.Mod.ID
+	sink := quietSink(importArchiveProgress)
 
-	// Enrich with source metadata when --id was provided
-	var resolvedFile *domain.DownloadableFile
-	if importModID != "" && importSource != "" && importSource != domain.SourceLocal {
-		sourceGameID, ok := game.SourceIDs[importSource]
-		if !ok {
-			fmt.Fprintf(os.Stderr, "Warning: source %s is not configured for this game; skipping metadata fetch\n", importSource)
-		} else {
-			fmt.Printf("\nFetching metadata from %s...\n", importSource)
-			mod, err := service.GetMod(ctx, importSource, sourceGameID, importModID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not fetch metadata: %v\n", err)
-			} else {
-				// Apply metadata from source, keeping local file info
-				result.Mod.Name = mod.Name
-				result.Mod.Author = mod.Author
-				result.Mod.Summary = mod.Summary
-				result.Mod.SourceURL = mod.SourceURL
-				result.Mod.PictureURL = mod.PictureURL
-				if mod.Version != "" && result.Mod.Version == "unknown" {
-					result.Mod.Version = mod.Version
-				}
-
-				// #139: resolve which of the source's files this archive is
-				// (exact filename first, else the sole file at the imported
-				// version - the user asserted the mod identity via --id), so
-				// the cache entry can be marker-stamped and the row records
-				// real FileIDs. Non-fatal: an offline/failed listing keeps
-				// today's marker-less import.
-				file, ferr := service.ResolveImportedFile(ctx, importSource, mod, filepath.Base(archivePath), result.Mod.Version, true)
-				if ferr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: could not resolve source file for archive: %v\n", ferr)
-				} else if file != nil {
-					resolvedFile = file
-					// The matched file's own version is authoritative - adopt
-					// it so the cache entry, DB row, and marker all agree with
-					// what future source-side resolutions will report.
-					if file.Version != "" && file.Version != result.Mod.Version {
-						result.Mod.Version = file.Version
-					}
-				}
-			}
-		}
+	// The metadata-fetch progress line announces work PlanImportArchive is
+	// about to do, so it prints HERE rather than arriving as an event from a
+	// plan (plans emit nothing). core owns the condition so the two cannot
+	// disagree about when the fetch happens.
+	if sink != nil && core.ImportEnrichmentRuns(game, opts) {
+		sink(core.StepEvent{
+			Scope: core.Scope{Op: core.OpImport}, Phase: core.ImportArchiveFetching,
+			Detail: "Fetching metadata from " + opts.SourceID + "...",
+		})
 	}
 
-	// If enrichment changed the version or ID, rename the cache entry
-	gameCache := service.GetGameCache(game)
-	needsCacheRename := preEnrichVersion != result.Mod.Version || preEnrichID != result.Mod.ID
-	if needsCacheRename {
-		oldPath := gameCache.ModPath(game.ID, result.Mod.SourceID, preEnrichID, preEnrichVersion)
-		newPath := gameCache.ModPath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
-		if err := os.MkdirAll(filepath.Dir(newPath), 0755); err == nil {
-			if err := os.Rename(oldPath, newPath); err != nil && verbose {
-				fmt.Printf("Warning: could not rename cache entry: %v\n", err)
-			}
-		}
-	}
-
-	// #139: stamp the resolved file's completion marker onto the (final,
-	// post-rename) cache entry. Non-fatal, and the FileIDs are recorded on
-	// the row/ref below even if stamping fails - the row's file identity is
-	// resolved either way; a missing marker only costs the one redundant
-	// redownload today's imports always pay.
-	importedFileIDs := []string{}
-	if resolvedFile != nil {
-		importedFileIDs = []string{resolvedFile.ID}
-		if err := service.MarkImportedFileComplete(game, result.Mod, resolvedFile.ID); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not mark cache entry complete: %v\n", err)
-		}
-	}
-	// #197 C1 fix: a DeployCompile ".exmodz" import retains its source under
-	// RetainedFileID (the archive's own filename - Import's only stable
-	// identity), which is NEVER resolvedFile.ID (a real source file ID, or
-	// nothing at all without --id). Without folding it into FileIDs too,
-	// enabledMergeSources can never find this mod's retained source - it
-	// silently never participates in any merge, forever, and is invisible
-	// to update/verify since it's excluded from both sides of the
-	// staleness fingerprint as well.
-	if result.RetainedFileID != "" {
-		found := false
-		for _, id := range importedFileIDs {
-			if id == result.RetainedFileID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			importedFileIDs = append(importedFileIDs, result.RetainedFileID)
-		}
-	}
-
-	// Show detection results
-	fmt.Printf("\nMod: %s\n", result.Mod.Name)
-	fmt.Printf("  Source: %s\n", result.LinkedSource)
-	fmt.Printf("  ID: %s\n", result.Mod.ID)
-	if result.Mod.Version != "unknown" {
-		fmt.Printf("  Version: %s\n", result.Mod.Version)
-	}
-	if result.Mod.Author != "" {
-		fmt.Printf("  Author: %s\n", result.Mod.Author)
-	}
-	if result.Mod.SourceURL != "" {
-		fmt.Printf("  URL: %s\n", result.Mod.SourceURL)
-	}
-	if result.AutoDetected {
-		fmt.Println("  (auto-detected from filename)")
-	}
-	fmt.Printf("  Files: %d\n", result.FilesExtracted)
-
-	// Set up installer for conflict checking and deployment. The installer is
-	// built from the already-resolved method so both stay consistent (and the
-	// profile file is only read once).
-	linkMethod, err := service.GetEffectiveLinkMethod(game, profileName)
+	plan, err := service.PlanImportArchive(ctx, game, profileName, archivePath, opts)
 	if err != nil {
 		return err
 	}
-	installer := service.NewInstallerWithLinker(game, service.GetLinker(linkMethod))
 
-	// Check for conflicts (unless --force)
-	if !importForce {
-		conflicts, err := installer.GetConflicts(ctx, game, result.Mod, profileName)
-		if err != nil {
-			if verbose {
-				fmt.Printf("Warning: could not check conflicts: %v\n", err)
-			}
-		} else if len(conflicts) > 0 {
-			fmt.Printf("\n⚠ File conflicts detected:\n")
+	// Ruling 18 (#314): the readout - the plan's enrichment warnings and its
+	// Mod/Source/ID/Version/Author/URL/Files block - is rendered ONCE, from
+	// the plan, so it names the identity the apply will persist. Under
+	// --json quietSink has already made this a no-op; the plan or the result
+	// document carries the same facts.
+	core.EmitImportArchiveReadout(plan, sink)
 
-			// Group conflicts by mod
-			modConflicts := make(map[string][]string) // "sourceID:modID" -> []paths
-			for _, c := range conflicts {
-				key := c.CurrentSourceID + ":" + c.CurrentModID
-				modConflicts[key] = append(modConflicts[key], c.RelativePath)
-			}
-
-			for key, paths := range modConflicts {
-				parts := strings.SplitN(key, ":", 2)
-				sourceID, modID := parts[0], parts[1]
-
-				// Try to get mod name
-				conflictMod, _ := service.GetInstalledMod(sourceID, modID, game.ID, profileName)
-				modName := modID
-				if conflictMod != nil {
-					modName = conflictMod.Name
-				}
-
-				fmt.Printf("  From %s (%s):\n", modName, modID)
-				maxShow := 5
-				for i, p := range paths {
-					if i >= maxShow {
-						fmt.Printf("    ... and %d more\n", len(paths)-maxShow)
-						break
-					}
-					fmt.Printf("    - %s\n", p)
-				}
-			}
-
-			fmt.Printf("\n%d file(s) will be overwritten. Continue? [y/N]: ", len(conflicts))
-			input, err := readPromptLine()
-			if err != nil {
-				return err
-			}
-			if input != "y" && input != "yes" {
-				return fmt.Errorf("import cancelled")
-			}
+	if importDryRun {
+		// Ruling 15: --dry-run --json is the Plan document.
+		if jsonOutput {
+			return emitJSON(plan)
 		}
+		renderImportArchivePlan(plan, game, profileName)
+		return nil
 	}
 
-	// Set up hooks
-	hookRunner := getHookRunner(service)
-	resolvedHooks := getResolvedHooks(service, game, profileName)
-	hookCtx := makeHookContext(game)
-	var hookErrors []error
+	// The conflict question, answered from the plan (answerImportConflicts).
+	accept, err := answerImportConflicts(ctx, service, game, profileName, plan, importForce)
+	if err != nil {
+		return err
+	}
+	opts.AcceptConflicts = accept
 
-	// Run install.before_all hook (for single mod import)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeAll != "" {
-		hookCtx.HookName = "install.before_all"
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeAll, hookCtx); err != nil {
-			if !importForce {
-				return fmt.Errorf("install.before_all hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
-		}
+	result, err := service.ApplyImportArchive(ctx, game, profileName, plan, opts, sink)
+	if err != nil {
+		return err
 	}
 
-	// Run install.before_each hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
-		hookCtx.HookName = "install.before_each"
-		hookCtx.ModID = result.Mod.ID
-		hookCtx.ModName = result.Mod.Name
-		hookCtx.ModVersion = result.Mod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
-			if !importForce {
-				return fmt.Errorf("install.before_each hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: install.before_each hook failed (forced): %v\n", err)
-		}
+	// Ruling 15: the ImportArchiveResult document, which carries
+	// HookWarnings, the deployed-file count and the linked source itself -
+	// everything the readout below renders.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
-	// Deploy to game directory
-	fmt.Println("\nDeploying to game directory...")
-
-	if err := installer.Install(ctx, game, result.Mod, profileName); err != nil {
-		return fmt.Errorf("deployment failed: %w", err)
+	// The accumulated, non-fatal after_each/after_all failures, printed
+	// together here - the position the pre-lift tail's own batch print
+	// occupied. Nothing in ImportArchive can fail once they are populated.
+	for _, w := range result.HookWarnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
-
-	// Save to database
-	installedMod := &domain.InstalledMod{
-		Mod:          *result.Mod,
-		ProfileName:  profileName,
-		UpdatePolicy: domain.UpdateNotify,
-		Enabled:      true,
-		Deployed:     true,
-		LinkMethod:   linkMethod,
-		FileIDs:      importedFileIDs, // empty unless resolved against the source (#139)
-	}
-
-	if err := service.SaveInstalledMod(installedMod); err != nil {
-		return fmt.Errorf("failed to save mod: %w", err)
-	}
-
-	// Add mod to profile
-	pm := getProfileManager(service)
-
-	// Ensure profile exists, create if needed
-	if _, err := pm.Get(game.ID, profileName); err != nil {
-		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(game.ID, profileName); err != nil {
-				if verbose {
-					fmt.Printf("  Warning: could not create profile: %v\n", err)
-				}
-			}
-		}
-	}
-
-	// Add or update mod in profile
-	modRef := domain.ModReference{
-		SourceID: result.Mod.SourceID,
-		ModID:    result.Mod.ID,
-		Version:  result.Mod.Version,
-		FileIDs:  importedFileIDs,
-	}
-	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-		if verbose {
-			fmt.Printf("  Warning: could not update profile: %v\n", err)
-		}
-	}
-
-	// #197 I3/C1 fix: a DeployCompile ".exmodz" import deploys zero files of
-	// its own (validate+retain only) - without this, the imported mod's
-	// content never reaches the game directory until some OTHER flow
-	// happens to sync the merged pak.
-	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
-	} else {
-		for _, w := range syncWarnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
-		}
-	}
-
-	// Run install.after_each hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
-		hookCtx.HookName = "install.after_each"
-		hookCtx.ModID = result.Mod.ID
-		hookCtx.ModName = result.Mod.Name
-		hookCtx.ModVersion = result.Mod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed: %w", err))
-		}
-	}
-
-	// Run install.after_all hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterAll != "" {
-		hookCtx.HookName = "install.after_all"
-		hookCtx.ModID = ""
-		hookCtx.ModName = ""
-		hookCtx.ModVersion = ""
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
-		}
-	}
-
-	// Print hook warnings
-	printHookWarnings(hookErrors)
 
 	fmt.Printf("\n✓ Imported: %s\n", result.Mod.Name)
 	// #197 postsmoke UX fix: see doInstall's identical fix (cmd/lmm/install.go)
 	// - a DeployCompile ".exmodz" mod deploys zero files of its own by
 	// design (validate+retain only).
-	if game.DeployMode == domain.DeployCompile && result.FilesExtracted == 0 {
+	if game.DeployMode == domain.DeployCompile && result.Deployed == 0 {
 		fmt.Println("  Installed (merged pak updated)")
 	} else {
-		fmt.Printf("  Files deployed: %d\n", result.FilesExtracted)
+		fmt.Printf("  Files deployed: %d\n", result.Deployed)
 	}
 	fmt.Printf("  Added to profile: %s\n", profileName)
 
@@ -432,400 +253,501 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 
 	return nil
 }
-func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service, profileName string) error {
-	ctx := cmd.Context()
 
-	// Warn about extract mode limitations
-	if game.DeployMode != domain.DeployCopy {
-		fmt.Println("Note: Scan import for extract-mode games tracks mods in-place without caching.")
-		fmt.Println("      Uninstall will only remove the database entry, not the files.")
-		fmt.Println()
+// importArchiveProgress prints every diagnostic and readout line of an
+// archive import - `lmm import <archive>` and `lmm install --from-file`
+// (#535) - at its exact point of occurrence. Result.Warnings/.Notes carry
+// the same strings for a caller with no event stream, so they are never
+// batch-printed afterwards - doing so would double-print. HookWarnings are
+// the one exception: they are not events at all, because the pre-lift engine
+// collected them and printed them together at the very end.
+func importArchiveProgress(e core.Event) {
+	p, ok := lineOf(e)
+	if !ok {
+		return
+	}
+	switch p.Phase {
+	case core.ImportArchiveFetching, core.ImportArchiveDetected, core.ImportArchiveDeploying:
+		fmt.Printf("\n%s\n", p.Detail)
+	case core.ImportArchiveDetail:
+		fmt.Printf("  %s\n", p.Detail)
+	case core.ImportArchiveNote:
+		if verbose {
+			fmt.Printf("%s\n", p.Detail)
+		}
+	case core.ImportArchiveProfileNote:
+		if verbose {
+			fmt.Printf("  %s\n", p.Detail)
+		}
+	case core.ImportArchiveWarning, core.InstallBeforeAllForced, core.InstallBeforeEachForced:
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+	}
+}
+
+// answerImportConflicts answers an archive import's conflict question from
+// its plan, returning whether the conflicts were accepted.
+//
+// Ruling 1: the conflict decision is the frontend's, and since #314 it is
+// answered from the PLAN - no speculative ingest, no re-run, no second
+// readout (Ruling 18). force skips the question entirely; core reads it as
+// AcceptConflicts, so a forced import never gets here.
+//
+// Ruling 15/2: under --json the prompt is unanswerable, so the same
+// *core.ConflictError core would have raised is returned and reportError
+// renders it as the envelope with details.conflicts - the contract
+// doInstall's identical guard gives `install --json` (unit P review,
+// Important 1).
+func answerImportConflicts(ctx context.Context, service *core.Service, game *domain.Game, profileName string, plan *core.ImportArchivePlan, force bool) (bool, error) {
+	if len(plan.Conflicts) == 0 || force {
+		return false, nil
+	}
+	if jsonOutput {
+		return false, &core.ConflictError{Conflicts: plan.Conflicts}
+	}
+	proceed, readErr := confirmInstallConflicts(ctx, service, game, profileName, plan.Conflicts)
+	if readErr != nil {
+		// A genuine stdin read failure, not an ordinary decline - see
+		// confirmInstallConflicts' doc comment.
+		return false, readErr
+	}
+	if !proceed {
+		// #382: the shared cancellation sentinel, so a declined
+		// import exits 2 like a declined purge - it used to be a bare
+		// error, reported as "Error: import cancelled" with exit 1.
+		return false, ErrCancelled
+	}
+	return true, nil
+}
+
+// renderImportArchivePlan prints `lmm import <archive> --dry-run`'s preview,
+// straight after the readout core.EmitImportArchiveReadout already produced
+// (so the mod's identity, version and file count are on screen above it).
+//
+// The vocabulary mirrors the live summary this replaces line for line -
+// "Would import:" for "✓ Imported:", the same merged-pak wording for a
+// DeployCompile mod that deploys zero files of its own - and follows the
+// Phase 2 dry-run convention the rest of the command tree uses: a "Would ..."
+// summary, --verbose expanding the lists, a hooks line, and scan mode's own
+// closing "(dry run - no changes made)".
+//
+// A dry run does not prompt: there is nothing to confirm when nothing will
+// change. The conflicts it would have prompted about are stated instead.
+//
+// Exit code: like every other --dry-run, a preview that renders successfully
+// returns nil; an archive that cannot be planned at all is a
+// PlanImportArchive error and fails normally.
+func renderImportArchivePlan(plan *core.ImportArchivePlan, game *domain.Game, profileName string) {
+	fmt.Printf("\nWould import: %s\n", plan.Mod.Name)
+	// #197 postsmoke UX fix, mirrored from the live summary: a DeployCompile
+	// ".exmodz" mod deploys zero files of its own by design.
+	if game.DeployMode == domain.DeployCompile && len(plan.Files) == 0 {
+		fmt.Println("  Would install (merged pak updated)")
+	} else {
+		fmt.Printf("  Would deploy %d file(s)\n", len(plan.Files))
+		if verbose {
+			for _, f := range plan.Files {
+				fmt.Printf("    - %s\n", f)
+			}
+		}
+	}
+	fmt.Printf("  Would add to profile: %s\n", profileName)
+
+	if len(plan.Conflicts) > 0 {
+		fmt.Printf("  Would overwrite %d file(s) owned by other mods\n", len(plan.Conflicts))
+		if verbose {
+			for _, c := range plan.Conflicts {
+				fmt.Printf("    - %s (%s)\n", c.RelativePath, domain.ModKey(c.CurrentSourceID, c.CurrentModID))
+			}
+		}
 	}
 
-	// Get installed mods for this game/profile
-	installedMods, err := service.GetInstalledMods(game.ID, profileName)
+	// mergedArtifactEffectForImport never returns MergedArtifactRemove - an
+	// import never takes the artifact away - so this only ever resyncs.
+	if plan.MergedArtifact != nil {
+		fmt.Println("  The profile's merged artifact would be resynced afterwards")
+	}
+
+	if len(plan.Hooks) > 0 {
+		fmt.Printf("\nHooks that would run: %s\n", strings.Join(plan.Hooks, ", "))
+	}
+
+	if plan.LinkedSource == domain.SourceLocal {
+		fmt.Println("\nNote: Local mods won't receive update notifications.")
+	}
+
+	fmt.Println("\n(dry run - no changes made)")
+}
+
+// runImportScan renders `lmm import`'s scan mode: it plans the adopt in
+// core, prints the scan and its match outcomes, applies the metadata
+// backfill (which the pre-lift engine performed - and reported - before the
+// confirmation prompt, and kept on a decline), confirms, and applies the
+// adoption. Every printed line comes from the plan, the results, or the
+// event stream; the engine itself lives in internal/core/adopt.go.
+//
+// ctx is the one withServiceOpts hands the command, which prints what a
+// source lookup is waiting on (T3 review F2) - never cmd.Context().
+func runImportScan(ctx context.Context, game *domain.Game, service *core.Service, profileName string) error {
+
+	// The caveat and the "Scanning..." notice print BEFORE any core call, as
+	// they always have for the scan failure this preserves exactly: a game
+	// with a missing or unconfigured mod_path fails inside PlanAdopt, and the
+	// pre-lift engine had already printed both lines by then.
+	//
+	// ONE recorded delta (Task 18 review, important 1; decisions log
+	// 2026-08-28): core.ScanLocal reads the installed-mod set BEFORE it
+	// scans, where the pre-lift engine read it before printing "Scanning".
+	// So a DB read failure - and only that - now surfaces one line later
+	// than it used to. Restoring exact parity would cost a redundant read
+	// here and push engine sequencing back into cmd.
+	//
+	// core.LocalScan.ExtractModeWarning carries the same caveat rule for a
+	// frontend that renders a finished plan instead of a live stream; it is
+	// deliberately not read here, since it exists only after the scan has
+	// already succeeded.
+	// Not under --json: the document is the run's whole output (Ruling 15),
+	// and core.LocalScan.ExtractModeWarning carries the same caveat for a
+	// caller rendering the plan instead.
+	if !jsonOutput {
+		if game.DeployMode != domain.DeployCopy {
+			fmt.Println("Note: Scan import for extract- and compile-mode games tracks mods in-place without caching.")
+			fmt.Println("      Uninstall will only remove the database entry, not the files.")
+			fmt.Println()
+		}
+		fmt.Printf("Scanning %s for untracked mods...\n", game.ModPath)
+	}
+
+	plan, err := service.PlanAdopt(ctx, game, profileName, core.AdoptOptions{
+		SkipMatch: importSkipMatch,
+		DryRun:    importDryRun,
+	})
 	if err != nil {
-		return fmt.Errorf("getting installed mods: %w", err)
+		return err
 	}
 
-	// Create importer and scan
-	importer := service.NewImporter(game)
-	opts := core.ScanOptions{
-		ProfileName: profileName,
-		DryRun:      importDryRun,
+	if !jsonOutput {
+		fmt.Printf("Found %d files, %d untracked\n\n", len(plan.Scan.Tracked)+len(plan.Scan.Untracked), len(plan.Scan.Untracked))
 	}
 
-	fmt.Printf("Scanning %s for untracked mods...\n", game.ModPath)
-
-	results, err := importer.ScanModPath(ctx, game, installedMods, opts)
-	if err != nil {
-		return fmt.Errorf("scanning mod_path: %w", err)
-	}
-
-	// Count untracked
-	var untracked []core.ScanResult
-	for _, r := range results {
-		if !r.AlreadyTracked {
-			untracked = append(untracked, r)
+	// progress renders both applies' events at their point of occurrence.
+	// AdoptSyncWarning is the only stderr line (and the reason
+	// AdoptResult.Warnings is deliberately not printed as well - core carries
+	// the same strings there for callers with no event stream).
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
 		}
-	}
-
-	fmt.Printf("Found %d files, %d untracked\n\n", len(results), len(untracked))
-
-	// Backfill metadata for already-tracked mods missing metadata
-	if !importSkipMatch {
-		// Count mods needing backfill
-		var needsBackfill int
-		for _, im := range installedMods {
-			if im.SourceID != domain.SourceLocal && im.SourceID != "" {
-				if im.Author == "" || im.SourceURL == "" {
-					needsBackfill++
-				}
-			}
-		}
-		var backfilled int
-		if needsBackfill > 0 {
-			fmt.Printf("Backfilling metadata for %d mod(s)...\n", needsBackfill)
-		}
-		for _, im := range installedMods {
-			if im.SourceID == domain.SourceLocal || im.SourceID == "" {
-				continue
-			}
-			// Skip if already has metadata
-			if im.Author != "" && im.SourceURL != "" {
-				continue
-			}
-			// Fetch fresh metadata from source
-			sourceGameID, ok := game.SourceIDs[im.SourceID]
-			if !ok {
-				continue
-			}
-			mod, err := service.GetMod(ctx, im.SourceID, sourceGameID, im.ID)
-			if err != nil {
-				if verbose {
-					fmt.Printf("  %s: metadata fetch failed: %v\n", im.Name, err)
-				}
-				continue
-			}
-			// Update fields that are missing
-			updated := im
-			if im.Author == "" && mod.Author != "" {
-				updated.Author = mod.Author
-			}
-			if im.Summary == "" && mod.Summary != "" {
-				updated.Summary = mod.Summary
-			}
-			if im.SourceURL == "" && mod.SourceURL != "" {
-				updated.SourceURL = mod.SourceURL
-			}
-			if err := service.SaveInstalledMod(&updated); err != nil {
-				if verbose {
-					fmt.Printf("  %s: metadata save failed: %v\n", im.Name, err)
-				}
-				continue
-			}
-			backfilled++
+		switch p.Phase {
+		case core.AdoptBackfillNote, core.AdoptBackfilled:
 			if verbose {
-				fmt.Printf("  ✓ %s: metadata updated (author: %s)\n", im.Name, mod.Author)
+				fmt.Printf("  %s\n", p.Detail)
 			}
+		case core.AdoptDuplicateSkipped, core.AdoptAdopted, core.AdoptFailed:
+			fmt.Printf("  %s\n", p.Detail)
+		case core.AdoptNote:
+			if verbose {
+				fmt.Printf("    %s\n", p.Detail)
+			}
+		case core.AdoptSyncWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		}
-		if backfilled > 0 {
-			fmt.Printf("Updated metadata for %d existing mod(s)\n\n", backfilled)
-		} else if needsBackfill > 0 {
+	}
+
+	// Backfill metadata for already-tracked mods missing metadata. The plan
+	// carries no candidates at all under --skip-match, so this whole block
+	// stays silent there, as it always has.
+	if !jsonOutput && len(plan.Scan.Backfill) > 0 {
+		fmt.Printf("Backfilling metadata for %d mod(s)...\n", len(plan.Scan.Backfill))
+	}
+	backfill, err := service.ApplyAdoptBackfill(ctx, game, plan, quietSink(progress))
+	if err != nil {
+		return err
+	}
+	if !jsonOutput {
+		if backfill.Backfilled > 0 {
+			fmt.Printf("Updated metadata for %d existing mod(s)\n\n", backfill.Backfilled)
+		} else if len(plan.Scan.Backfill) > 0 {
 			fmt.Println("No metadata updates needed")
 		}
 	}
 
-	if len(untracked) == 0 {
+	if len(plan.Scan.Untracked) == 0 {
+		// Nothing to adopt still owes a --json caller a document: the Plan
+		// under --dry-run, otherwise the AdoptResult an empty adopt
+		// produces (Ruling 15).
+		if jsonOutput {
+			if importDryRun {
+				return emitJSON(plan)
+			}
+			return emitJSON(&core.AdoptResult{})
+		}
 		fmt.Println("All mods are already tracked!")
 		return nil
 	}
 
-	// Try to match untracked mods against the game's configured sources
-	if !importSkipMatch {
+	if !jsonOutput && !plan.SkipMatch {
 		fmt.Println("Looking up mods on configured sources...")
-		for i := range untracked {
-			if untracked[i].Mod == nil {
+		// A lookup that could not be made at all is said, not only under
+		// --verbose (T3 review F2): otherwise the mods simply read "local",
+		// with nothing telling the user lmm never got to ask. The reason
+		// is printed once per distinct failure, not once per mod.
+		var lookupFailures []string
+		for _, m := range plan.Matches {
+			if m.Untracked.Mod == nil {
 				continue
 			}
-
-			matched, err := tryMatchSources(ctx, service, game, untracked[i].Mod.Name)
-			if err != nil {
+			switch {
+			case m.Error != "":
+				fmt.Printf("  ! %s -> local (lookup failed)\n", m.Untracked.FileName)
 				if verbose {
-					fmt.Printf("  %s: lookup failed: %v\n", untracked[i].FileName, err)
+					fmt.Printf("  %s: lookup failed: %s\n", m.Untracked.FileName, m.Error)
+				} else if !slices.Contains(lookupFailures, m.Error) {
+					lookupFailures = append(lookupFailures, m.Error)
 				}
-				continue
-			}
-			if matched != nil {
-				untracked[i].Mod.ID = matched.ID
-				untracked[i].Mod.SourceID = matched.SourceID
-				untracked[i].Mod.Name = matched.Name
-				untracked[i].Mod.Author = matched.Author
-				untracked[i].Mod.Summary = matched.Summary
-				untracked[i].Mod.SourceURL = matched.SourceURL
-				untracked[i].Mod.PictureURL = matched.PictureURL
-				untracked[i].Mod.GameID = matched.GameID
-				untracked[i].MatchedSource = matched.SourceID
-				fmt.Printf("  ✓ %s -> %s (%s #%s)\n", untracked[i].FileName, matched.Name, matched.SourceID, matched.ID)
-
-				// #139: resolve which of the matched source's files this is.
-				// Exact FileName match only - a name-search match is not
-				// strong enough evidence for a version-based guess. Non-fatal:
-				// failure keeps the marker-less import.
-				file, ferr := service.ResolveImportedFile(ctx, matched.SourceID, matched, untracked[i].FileName, untracked[i].Mod.Version, false)
-				if ferr != nil {
-					if verbose {
-						fmt.Printf("  %s: could not resolve source file: %v\n", untracked[i].FileName, ferr)
-					}
-				} else if file != nil {
-					untracked[i].ResolvedFile = file
+			case m.Mod != nil:
+				// #27: matching scores candidates now, so a match that is
+				// not an exact name says so before the user confirms an
+				// adopt. An exact one stays unannotated - the common case
+				// should not grow noise.
+				confidence := ""
+				if m.ScoreClass != "" && m.ScoreClass != core.AdoptMatchExact {
+					confidence = fmt.Sprintf(" [%s match]", m.ScoreClass)
 				}
-			} else {
-				fmt.Printf("  ○ %s -> local (no match)\n", untracked[i].FileName)
+				fmt.Printf("  ✓ %s -> %s (%s #%s)%s\n", m.Untracked.FileName, m.Mod.Name, m.Mod.SourceID, m.Mod.ID, confidence)
+				// #139: a source-file resolution failure is non-fatal - the
+				// adoption just stays marker-less.
+				if m.FileError != "" && verbose {
+					fmt.Printf("  %s: could not resolve source file: %s\n", m.Untracked.FileName, m.FileError)
+				}
+			default:
+				fmt.Printf("  ○ %s -> local (no match)\n", m.Untracked.FileName)
 			}
+		}
+		for _, reason := range lookupFailures {
+			fmt.Printf("  Lookup failed: %s\n", reason)
 		}
 		fmt.Println()
 	}
 
 	// Show summary and confirm
-	fmt.Printf("Ready to import %d mod(s):\n", len(untracked))
-	for _, r := range untracked {
-		if r.Mod != nil {
-			sourceTag := "local"
-			if r.MatchedSource != "" && r.MatchedSource != domain.SourceLocal {
-				sourceTag = fmt.Sprintf("%s #%s", r.MatchedSource, r.Mod.ID)
+	if !jsonOutput {
+		fmt.Printf("Ready to import %d mod(s):\n", len(plan.Scan.Untracked))
+		for _, r := range plan.Scan.Untracked {
+			if r.Mod != nil {
+				sourceTag := "local"
+				if r.MatchedSource != "" && r.MatchedSource != domain.SourceLocal {
+					sourceTag = fmt.Sprintf("%s #%s", r.MatchedSource, r.Mod.ID)
+				}
+				// ", v1.0" when there is a version, nothing at all when
+				// there isn't: a scanned archive lmm could not read a
+				// version out of used to render as "(local, v)" (#398).
+				switch {
+				case r.Mod.DisplayVersion == core.NoRevisionDate:
+				case r.Mod.DisplayVersion != "":
+					// #458: a Workshop item's version is its revision.
+					sourceTag += ", " + displayRevision(r.Mod.UpdatedAt)
+				default:
+					if v := displayVersionSuffix(r.Mod.Version); v != "" {
+						sourceTag += "," + v
+					}
+				}
+				fmt.Printf("  - %s (%s)\n", r.Mod.Name, sourceTag)
+			} else {
+				fmt.Printf("  - %s (unknown)\n", r.FileName)
 			}
-			fmt.Printf("  - %s (%s, v%s)\n", r.Mod.Name, sourceTag, r.Mod.Version)
-		} else {
-			fmt.Printf("  - %s (unknown)\n", r.FileName)
 		}
 	}
 
 	if importDryRun {
+		// Ruling 15: --dry-run --json is the Plan document. Emitted here,
+		// not straight after PlanAdopt, so the backfill apply a plain dry
+		// run performs still runs on this path too.
+		if jsonOutput {
+			return emitJSON(plan)
+		}
 		fmt.Println("\n(dry run - no changes made)")
 		return nil
 	}
 
 	// Confirm unless --force
 	if !importForce {
-		fmt.Printf("\nImport these mods? [y/N]: ")
+		if !jsonOutput {
+			fmt.Printf("\nImport these mods? [y/N]: ")
+		}
 		input, err := readPromptLine()
 		if err != nil {
 			return err
 		}
 		if input != "y" && input != "yes" {
-			return fmt.Errorf("import cancelled")
+			// #382: the shared cancellation sentinel, so a declined
+			// import exits 2 like a declined purge - it used to be a bare
+			// error, reported as "Error: import cancelled" with exit 1.
+			return ErrCancelled
 		}
 	}
 
-	// Import each untracked mod
-	linkMethod, err := service.GetEffectiveLinkMethod(game, profileName)
+	result, err := service.ApplyAdopt(ctx, game, plan, quietSink(progress))
 	if err != nil {
 		return err
 	}
 
-	// Get current installed mods for duplicate checking
-	currentMods, _ := service.GetInstalledMods(game.ID, profileName)
-
-	var imported, failed, skipped int
-	for _, r := range untracked {
-		if r.Mod == nil {
-			continue
-		}
-
-		// Check for duplicates before importing
-		importer := service.NewImporter(game)
-		if dup := importer.FindDuplicateMod(r.Mod.Name, currentMods); dup != nil {
-			fmt.Printf("  ⊘ %s: skipped (duplicate of \"%s\")\n", r.FileName, dup.Name)
-			skipped++
-			continue
-		}
-
-		// For deploy_mode: copy, the mod is already in place
-		// We just need to create a cache entry and register it
-		err := importExistingMod(ctx, service, game, r, profileName, linkMethod)
-		if err != nil {
-			fmt.Printf("  ✗ %s: %v\n", r.FileName, err)
-			failed++
-			continue
-		}
-		fmt.Printf("  ✓ %s\n", r.Mod.Name)
-		imported++
-
-		// Add to currentMods so we catch duplicates within this batch
-		currentMods = append(currentMods, domain.InstalledMod{Mod: *r.Mod})
+	// Ruling 15: the AdoptResult document - the three counters below plus
+	// the warnings the event stream carried.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
-	fmt.Printf("\nImported: %d, Skipped: %d, Failed: %d\n", imported, skipped, failed)
+	fmt.Printf("\nImported: %d, Skipped: %d, Failed: %d\n", result.Adopted, result.Skipped, result.Failed)
 	return nil
 }
 
-// tryMatchSources searches every source configured for game that declares
-// search capability, in SourcesForGame's ID-sorted order (design §4.2:
-// "curseforge" before "nexusmods" alphabetically, so typical two-built-in
-// setups keep today's outcome), and returns the first source whose search
-// turns up a result - the same "first non-empty result wins" acceptance
-// rule tryMatchCurseForge used, unchanged (tighter scoring tracked in #27).
-// Generalizes the old CurseForge-only lookup so any configured,
-// search-capable source can supply scan-import matches. A per-source search
-// failure does not abort the scan - remaining sources are still tried.
-//
-// Error semantics (PR #124 review round 1): a single source failing does
-// not make the overall round a failure - any source that responds at all,
-// even with zero results, proves a real search happened and "no match" is
-// the honest outcome (nil, nil), not a stale error from an unrelated
-// source that happened to fail first. An error is returned to the caller
-// (for its verbose "lookup failed" notice) only when EVERY searchable
-// source failed - lastErr then reports the most recent one. No
-// search-capable sources configured is likewise a clean no-match, not an
-// error (the loop never runs, so anySucceeded stays false but so does
-// lastErr).
-func tryMatchSources(ctx context.Context, service *core.Service, game *domain.Game, modName string) (*domain.Mod, error) {
-	sources, err := service.SourcesForGame(game.ID)
+// runImportWorkshop renders `lmm import --workshop` (#269): the Steam
+// Workshop items the Steam client has already downloaded for this game are
+// recorded as EXTERNAL mods - tracked, reported and update-checked, never
+// deployed. The engine is core.PlanWorkshopAdopt/ApplyWorkshopAdopt; this
+// only parses, prompts and prints.
+func runImportWorkshop(ctx context.Context, service *core.Service, game *domain.Game, profileName string) error {
+	if !jsonOutput {
+		fmt.Println("Note: lmm tracks Steam Workshop items where Steam put them.")
+		fmt.Println("      It never moves, copies or deletes their files, and cannot")
+		fmt.Println("      deploy, enable or update them - Steam does that itself.")
+		fmt.Println()
+		fmt.Println("Reading Steam's workshop manifests...")
+	}
+
+	plan, err := service.PlanWorkshopAdopt(ctx, game, profileName,
+		core.WorkshopAdoptOptions{Refresh: importRefresh})
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var lastErr error
-	anySucceeded := false
-	for _, src := range sources {
-		if !source.CapabilitiesOf(src).Search {
-			continue
-		}
-
-		searchResult, err := service.SearchMods(ctx, src.ID(), game.ID, modName, "", nil, 0, 0)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		anySucceeded = true
-		if len(searchResult.Mods) > 0 {
-			// Return the first (best) match. Tighter scoring tracked in #27.
-			return &searchResult.Mods[0], nil
-		}
-	}
-
-	if anySucceeded {
-		return nil, nil
-	}
-	return nil, lastErr
-}
-
-// importExistingMod registers an already-deployed mod in lmm
-func importExistingMod(ctx context.Context, service *core.Service, game *domain.Game, r core.ScanResult, profileName string, linkMethod domain.LinkMethod) error {
-	// #139: an exact-filename source match carries the file's own version -
-	// adopt it before the cache write so the entry, DB row, and marker all
-	// agree with what future source-side resolutions will report.
-	if r.ResolvedFile != nil && r.ResolvedFile.Version != "" {
-		r.Mod.Version = r.ResolvedFile.Version
-	}
-
-	// For deploy_mode: copy, create cache entry by copying the file
-	if game.DeployMode == domain.DeployCopy {
-		gameCache := service.GetGameCache(game)
-		cachePath := gameCache.ModPath(game.ID, r.Mod.SourceID, r.Mod.ID, r.Mod.Version)
-
-		// Create cache directory
-		if err := os.MkdirAll(cachePath, 0755); err != nil {
-			return fmt.Errorf("creating cache: %w", err)
-		}
-
-		// Copy the file to cache using streaming to avoid memory spikes
-		destPath := filepath.Join(cachePath, r.FileName)
-		if err := copyFileStreaming(r.FilePath, destPath); err != nil {
-			return fmt.Errorf("copying to cache: %w", err)
-		}
-
-		// #139: stamp the resolved file's completion marker onto the entry
-		// just written. Non-fatal - a missing marker only costs the one
-		// redundant redownload marker-less imports always paid.
-		if r.ResolvedFile != nil {
-			if err := service.MarkImportedFileComplete(game, r.Mod, r.ResolvedFile.ID); err != nil && verbose {
-				fmt.Printf("    Warning: could not mark cache entry complete: %v\n", err)
-			}
-		}
-	}
-
-	// FileIDs are recorded whenever the source file was resolved - even in
-	// extract mode, where no cache entry is written: the row's file identity
-	// is real either way (#139).
-	fileIDs := []string{}
-	if r.ResolvedFile != nil {
-		fileIDs = []string{r.ResolvedFile.ID}
-	}
-
-	// Save to database
-	installedMod := &domain.InstalledMod{
-		Mod:            *r.Mod,
-		ProfileName:    profileName,
-		UpdatePolicy:   domain.UpdateNotify,
-		Enabled:        true,
-		Deployed:       true,
-		LinkMethod:     linkMethod,
-		ManualDownload: true, // Scanned mods require manual download
-		FileIDs:        fileIDs,
-	}
-
-	if err := service.SaveInstalledMod(installedMod); err != nil {
-		return fmt.Errorf("saving to database: %w", err)
-	}
-
-	// Add to profile
-	pm := getProfileManager(service)
-	modRef := domain.ModReference{
-		SourceID: r.Mod.SourceID,
-		ModID:    r.Mod.ID,
-		Version:  r.Mod.Version,
-		FileIDs:  fileIDs,
-	}
-	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-		// Non-fatal
-		if verbose {
-			fmt.Printf("    Warning: could not update profile: %v\n", err)
-		}
-	}
-
-	// #197 I3 fix: mirrors doImport's archive-mode tail - a scanned mod is a
-	// mod-set change for whatever profile it's registered into.
-	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
-		if verbose {
-			fmt.Printf("    Warning: could not sync merged pak: %v\n", syncErr)
-		}
-	} else {
-		for _, w := range syncWarnings {
+	if !jsonOutput {
+		fmt.Printf("Found %d subscribed item(s) in %d Steam librar(y/ies); %d already tracked, %d new\n\n",
+			len(plan.Scan.Items), len(plan.Scan.Libraries), plan.Scan.Tracked, plan.Scan.Untracked)
+		for _, w := range plan.Scan.Warnings {
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
 	}
 
+	if plan.NoChanges {
+		// Ruling 15: a --json caller still gets a document - the Plan under
+		// --dry-run, otherwise the empty result the adopt would produce.
+		if jsonOutput {
+			if importDryRun {
+				return emitJSON(plan)
+			}
+			return emitJSON(&core.WorkshopAdoptResult{})
+		}
+		fmt.Println("Every subscribed item is already tracked.")
+		return nil
+	}
+
+	if !jsonOutput {
+		fmt.Printf("Ready to track %d item(s):\n", len(plan.Entries))
+		for _, e := range plan.Entries {
+			fmt.Printf("  - %s\n", workshopEntryLine(e))
+		}
+	}
+
+	if importDryRun {
+		if jsonOutput {
+			return emitJSON(plan)
+		}
+		fmt.Println("\n(dry run - no changes made)")
+		return nil
+	}
+
+	if !importForce {
+		if jsonOutput {
+			return core.ErrConfirmationRequired
+		}
+		fmt.Printf("\nTrack these items? [y/N]: ")
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if input != "y" && input != "yes" {
+			// #382: the shared cancellation sentinel, so a declined
+			// import exits 2 like a declined purge - it used to be a bare
+			// error, reported as "Error: import cancelled" with exit 1.
+			return ErrCancelled
+		}
+	}
+
+	// #393: core reports an item Steam could not describe as a caveat
+	// (WorkshopUnavailable) and then adopts it anyway, which printed two
+	// adjacent lines per item reading "failed", then "succeeded". The caveat
+	// is held and folded into whichever line ends that item - it qualifies
+	// the outcome, it is not an outcome of its own. Safe to keep as a single
+	// value: applyWorkshopAdopt emits it inside the item's own iteration,
+	// immediately before that item's terminal event.
+	var caveat string
+	withCaveat := func(line string) string {
+		if caveat == "" {
+			return line
+		}
+		out := fmt.Sprintf("%s (%s)", line, caveat)
+		caveat = ""
+		return out
+	}
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		switch p.Phase {
+		case core.WorkshopAdopted:
+			fmt.Printf("  ✓ %s\n", withCaveat(p.ModName))
+		case core.WorkshopUnavailable:
+			caveat = p.Detail
+		case core.WorkshopSkipped:
+			fmt.Printf("  ⊘ %s: %s\n", withCaveat(p.ModName), p.Detail)
+		case core.WorkshopScanned:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		}
+	}
+
+	result, err := service.ApplyWorkshopAdopt(ctx, game, plan, quietSink(progress))
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(result)
+	}
+	fmt.Printf("\nTracked: %d", result.Adopted)
+	if result.Skipped > 0 {
+		fmt.Printf(", skipped: %d", result.Skipped)
+	}
+	if result.Failed > 0 {
+		fmt.Printf(", failed: %d", result.Failed)
+	}
+	fmt.Println()
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
 	return nil
 }
 
-// copyFileStreaming copies a file using streaming to avoid loading it all into memory
-func copyFileStreaming(src, dst string) error {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("opening source: %w", err)
+// workshopEntryLine renders one plan entry for the confirmation list: the
+// item's name and the date of the revision on disk. The ACF's manifest is
+// the item's version IDENTITY, but no human-facing surface prints a
+// 19-digit content id as a version (the design's approval note), so the
+// date is what the list shows.
+func workshopEntryLine(e core.WorkshopAdoptEntry) string {
+	name := "Workshop item " + e.FileID
+	if e.Mod != nil && e.Mod.Name != "" {
+		name = e.Mod.Name
 	}
-	defer srcFile.Close()
-
-	srcInfo, err := srcFile.Stat()
-	if err != nil {
-		return fmt.Errorf("stat source: %w", err)
+	line := fmt.Sprintf("%s (#%s", name, e.FileID)
+	if d := workshopRevisionDate(e.TimeUpdated); d != "" {
+		line += ", updated " + d
 	}
-
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return fmt.Errorf("creating destination directory: %w", err)
+	line += ")"
+	if e.Unavailable {
+		line += " - " + e.Note
 	}
-
-	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
-	if err != nil {
-		return fmt.Errorf("creating destination: %w", err)
-	}
-	defer dstFile.Close()
-
-	if _, err := io.Copy(dstFile, srcFile); err != nil {
-		return fmt.Errorf("copying: %w", err)
-	}
-
-	return dstFile.Sync()
+	return line
 }

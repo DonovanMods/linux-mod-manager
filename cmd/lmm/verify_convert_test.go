@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -24,20 +24,20 @@ import (
 // pakConversionOutcomeSource at the CLI-seam level: any source whose ModRef
 // is in failRefs is skipped from the merged output and reported via the
 // returned failed slice, with a "... - deploying raw" warning, matching
-// internal/source/icarus/merge.go's real pak-dispatch failure path.
+// internal/adapter/icarus/merge.go's real pak-dispatch failure path.
 type pakOutcomeCompilerSource struct {
 	*compilerInstallSource
 	failRefs map[string]string
 }
 
-func (s *pakOutcomeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *pakOutcomeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	s.compileCalls++
 	var out []byte
 	var warnings []string
-	var failed []source.MergeFailure
+	var failed []adapter.MergeFailure
 	for _, src := range sources {
 		if reason, bad := s.failRefs[src.ModRef]; bad {
-			failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: reason})
+			failed = append(failed, adapter.MergeFailure{ModRef: src.ModRef, Reason: reason})
 			warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %s - deploying raw", src.ModRef, reason))
 			continue
 		}
@@ -50,7 +50,7 @@ func (s *pakOutcomeCompilerSource) MergeCompile(ctx context.Context, basePakPath
 	return warnings, failed, os.WriteFile(outputPath, out, 0o644)
 }
 
-var _ source.MergeCompiler = (*pakOutcomeCompilerSource)(nil)
+var _ adapter.MergeCompiler = (*pakOutcomeCompilerSource)(nil)
 
 // seedEnabledPakModCLI installs an ENABLED pak-kind mod carrying both a
 // retained pak (cache.RetainedSourceName) and a deployable pak copy recorded
@@ -67,7 +67,7 @@ func seedEnabledPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, so
 	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, member, pakContent))
 	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{member}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -75,7 +75,7 @@ func seedEnabledPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, so
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
 }
 
 // seedLegacyPakModCLI installs an ENABLED pak-kind mod in the PRE-#221 shape:
@@ -87,7 +87,7 @@ func seedLegacyPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, sou
 	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, fileID, pakContent))
 	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{fileID}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -95,7 +95,7 @@ func seedLegacyPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, sou
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
 }
 
 // TestVerifyReportsConversionFailed proves `lmm verify` surfaces a #221
@@ -115,7 +115,7 @@ func TestVerifyReportsConversionFailed(t *testing.T) {
 		compilerInstallSource: compiler,
 		failRefs:              map[string]string{"fake-compiler:" + modID: "table X not present in current base"},
 	}
-	svc.RegisterSource(outcome)
+	registerCompileSource(svc, outcome)
 
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -127,24 +127,25 @@ func TestVerifyReportsConversionFailed(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
+	result := resultDoc.Result
 
-	var found *verifyFileJSON
-	for i := range result.Files {
-		if result.Files[i].Status == "conversion_failed" {
-			found = &result.Files[i]
+	var found *core.VerifyFinding
+	for i := range result.Findings {
+		if result.Findings[i].Status == "conversion_failed" {
+			found = &result.Findings[i]
 		}
 	}
-	require.NotNil(t, found, "expected a conversion_failed row: %+v", result.Files)
+	require.NotNil(t, found, "expected a conversion_failed row: %+v", result.Findings)
 	assert.Equal(t, modID, found.ModID)
 	assert.Equal(t, "table X not present in current base", found.Note)
 	assert.GreaterOrEqual(t, result.Warnings, 1)
 
 	jsonOutput = false
-	textOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	textOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	assert.Contains(t, textOut, "CONVERSION FAILED")
 	assert.Contains(t, textOut, "deploying raw")
 }
@@ -166,7 +167,7 @@ func TestVerifyReportsConversionFailed_UninstalledMod(t *testing.T) {
 		compilerInstallSource: compiler,
 		failRefs:              map[string]string{"fake-compiler:" + modID: "table X not present in current base"},
 	}
-	svc.RegisterSource(outcome)
+	registerCompileSource(svc, outcome)
 
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -175,7 +176,7 @@ func TestVerifyReportsConversionFailed_UninstalledMod(t *testing.T) {
 	// pak's stored fingerprint (and the conversion-failure entry on it) is
 	// profile-scoped and untouched, exactly the state a fingerprint entry
 	// for a since-removed mod is in.
-	require.NoError(t, svc.DeleteInstalledMod("fake-compiler", modID, game.ID, "default"))
+	require.NoError(t, svc.DeleteInstalledMod(context.Background(), "fake-compiler", modID, game.ID, "default"))
 
 	verifyProfile = "default"
 	jsonOutput = true
@@ -184,23 +185,24 @@ func TestVerifyReportsConversionFailed_UninstalledMod(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
+	result := resultDoc.Result
 
-	var found *verifyFileJSON
-	for i := range result.Files {
-		if result.Files[i].Status == "conversion_failed" {
-			found = &result.Files[i]
+	var found *core.VerifyFinding
+	for i := range result.Findings {
+		if result.Findings[i].Status == "conversion_failed" {
+			found = &result.Findings[i]
 		}
 	}
-	require.NotNil(t, found, "expected a conversion_failed row: %+v", result.Files)
+	require.NotNil(t, found, "expected a conversion_failed row: %+v", result.Findings)
 	assert.Equal(t, modID, found.ModID)
 	assert.Equal(t, modID, found.ModName, "ModName must fall back to the raw ModID when the mod is no longer installed")
 
 	jsonOutput = false
-	textOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	textOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	assert.Contains(t, textOut, modID+" - CONVERSION FAILED", "text output must show the fallback name, not a blank")
 }
 
@@ -228,24 +230,25 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
+	result := resultDoc.Result
 
-	var found *verifyFileJSON
-	for i := range result.Files {
-		if result.Files[i].ModID == modID {
-			found = &result.Files[i]
+	var found *core.VerifyFinding
+	for i := range result.Findings {
+		if result.Findings[i].ModID == modID {
+			found = &result.Findings[i]
 		}
 	}
-	require.NotNil(t, found, "expected a row for the legacy pak mod: %+v", result.Files)
+	require.NotNil(t, found, "expected a row for the legacy pak mod: %+v", result.Findings)
 	assert.Equal(t, "needs_reingest", found.Status)
 	assert.Contains(t, found.Note, "verify --fix")
 	firstRunWarnings := result.Warnings
 
 	verifyFix = true
 	t.Cleanup(func() { verifyFix = false })
-	fixOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	fixOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
 	// The --fix run's OWN JSON output must reflect the successful re-ingest
 	// immediately, in the SAME run - every other --fix success path in this
@@ -253,15 +256,16 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 	// rewrites status/note and backs the row out of the warnings count
 	// instead of leaving it reading as still-outstanding; needs_reingest
 	// must follow the same convention.
-	var fixResult verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(fixOut), &fixResult))
-	var fixedRow *verifyFileJSON
-	for i := range fixResult.Files {
-		if fixResult.Files[i].ModID == modID {
-			fixedRow = &fixResult.Files[i]
+	var fixResultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(fixOut), &fixResultDoc))
+	fixResult := fixResultDoc.Result
+	var fixedRow *core.VerifyFinding
+	for i := range fixResult.Findings {
+		if fixResult.Findings[i].ModID == modID {
+			fixedRow = &fixResult.Findings[i]
 		}
 	}
-	require.NotNil(t, fixedRow, "expected a row for the legacy pak mod in the --fix run: %+v", fixResult.Files)
+	require.NotNil(t, fixedRow, "expected a row for the legacy pak mod in the --fix run: %+v", fixResult.Findings)
 	assert.Equal(t, "fixed_needs_reingest", fixedRow.Status, "a successful same-run re-ingest must rewrite the row to a fixed-state status")
 	assert.NotContains(t, fixedRow.Note, "run 'lmm verify --fix'", "the note must reflect success, not still tell the user to run the fix that just ran")
 	assert.Equal(t, firstRunWarnings-1, fixResult.Warnings, "a successfully re-ingested row must be backed out of the warnings count, like every other --fix success path")
@@ -282,18 +286,19 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 	// staying at the raw-deploy member Task 9's ingest alone would leave -
 	// the direct, convergence-independent proof of the fix is that the
 	// entry itself no longer needs re-ingesting.
-	fixedMod, err := svc.GetInstalledMod("fake-compiler", modID, game.ID, "default")
+	fixedMod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", modID, game.ID, "default")
 	require.NoError(t, err)
-	need, nerr := svc.PakNeedsReingest(game, fixedMod, fileID)
+	need, nerr := svc.PakNeedsReingest(context.Background(), game, fixedMod, fileID)
 	require.NoError(t, nerr)
 	assert.False(t, need, "the entry must no longer need reingest after --fix re-ingests it")
 
 	jsonOutput = true
 	verifyFix = false
-	secondOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
-	var secondResult verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(secondOut), &secondResult))
-	for _, f := range secondResult.Files {
+	secondOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
+	var secondResultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(secondOut), &secondResultDoc))
+	secondResult := secondResultDoc.Result
+	for _, f := range secondResult.Findings {
 		if f.ModID == modID {
 			assert.NotEqual(t, "needs_reingest", f.Status, "a re-ingested entry must not be flagged needs_reingest again")
 		}
@@ -311,7 +316,8 @@ func TestVerifyNeedsReingest_ModOptedOut_NotFlagged(t *testing.T) {
 
 	const modID, version, fileID = "opted-out-pak-mod", "1.0", "OptedOut.pak"
 	seedLegacyPakModCLI(t, svc, game, "fake-compiler", modID, version, fileID, []byte("legacy-pak-bytes"))
-	require.NoError(t, svc.SetModConvertPaks("fake-compiler", modID, game.ID, "default", false))
+	_, settingErr16 := svc.SetModConvertPaks(context.Background(), "fake-compiler", modID, game.ID, "default", false)
+	require.NoError(t, settingErr16)
 
 	verifyProfile = "default"
 	jsonOutput = true
@@ -319,11 +325,12 @@ func TestVerifyNeedsReingest_ModOptedOut_NotFlagged(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(out), &result))
-	for _, f := range result.Files {
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
+	result := resultDoc.Result
+	for _, f := range result.Findings {
 		if f.ModID == modID {
 			assert.NotEqual(t, "needs_reingest", f.Status,
 				"a mod opted out of pak conversion (ConvertPaks=false) must not be flagged for reingest")
@@ -365,7 +372,7 @@ func TestVerifyNeedsReingest_CheckErrorSurfacedUnderVerbose(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	quietOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	quietOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	verbose = false
 	// Non-verbose: the check failure must not be reported as a fabricated
 	// pass/fail status at all (no needs_reingest row, since the check itself
@@ -373,7 +380,7 @@ func TestVerifyNeedsReingest_CheckErrorSurfacedUnderVerbose(t *testing.T) {
 	assert.NotContains(t, quietOut, "NEEDS REINGEST")
 
 	verbose = true
-	verboseOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	verboseOut := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 	assert.Contains(t, verboseOut, "could not check pak-reingest status", "a genuine check failure must be surfaced under --verbose, not silently dropped")
 	assert.Contains(t, verboseOut, modID)
 }
@@ -400,7 +407,7 @@ func TestVerifyFileCountCarveOutMembersAware(t *testing.T) {
 	// survived. gameCache.ListFiles will therefore report 0 actual files.
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{modID + ".pak"}))
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: "Broken Pak Mod", Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -408,7 +415,7 @@ func TestVerifyFileCountCarveOutMembersAware(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
 
 	verifyProfile = "default"
 	jsonOutput = true
@@ -416,16 +423,17 @@ func TestVerifyFileCountCarveOutMembersAware(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
+	result := resultDoc.Result
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == modID && f.Status == "file_count_mismatch" {
 			found = true
 		}
 	}
-	assert.True(t, found, "a retained pak entry whose manifest records members must NOT be suppressed by the retain-only carve-out: %+v", result.Files)
+	assert.True(t, found, "a retained pak entry whose manifest records members must NOT be suppressed by the retain-only carve-out: %+v", result.Findings)
 }

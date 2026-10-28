@@ -1,0 +1,598 @@
+// api.js - the one place this application talks to /api/v1.
+//
+// Two rules it exists to keep in a single place:
+//
+//  1. CSRF. The token arrives in the shell's meta tag and goes back as
+//     X-CSRF-Token on every state-changing request - the same header the
+//     middleware has always accepted (middleware.go).
+//  2. Failures are the CLI's {"error","details"} envelope. Every non-2xx
+//     answer under /api/v1 is that envelope, so it is decoded here once and
+//     thrown as an ApiError carrying both halves, rather than each caller
+//     inventing its own reading of a failure.
+
+import { RELEVANCE } from "./searchsort.js";
+
+const csrfToken =
+  document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") ||
+  "";
+
+/** A non-2xx answer, carrying the envelope's message and its details. */
+export class ApiError extends Error {
+  constructor(status, message, details) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.details = details;
+  }
+}
+
+/** A request the server did not answer before its deadline. Whatever it
+ * asked for may or may not have happened: the request may never have been
+ * sent, or the server may have acted on it and never said so. */
+export class NoAnswerError extends Error {
+  constructor(method, path, deadlineMillis) {
+    super(
+      `${method} ${path}: no answer within ${Math.round(deadlineMillis / 1000)} seconds`,
+    );
+    this.name = "NoAnswerError";
+    this.deadlineMillis = deadlineMillis;
+  }
+}
+
+/**
+ * jobStartDeadlineMillis bounds how long a job start may go unanswered
+ * before the page stops waiting for it (issue 432).
+ *
+ * A browser puts no deadline on a request of its own, so a start the server
+ * took and never answered - a hung handler, a proxy holding the connection -
+ * left whatever was waiting on it waiting for as long as the connection
+ * stayed open.
+ *
+ * Sixty seconds, because the deadline runs from the moment the request is
+ * made, not from the moment it reaches the server. A healthy lmm serve
+ * answers a start on admission, without waiting for the job
+ * (kind_toggle.go), so a start is milliseconds of server work even on a busy
+ * machine. But lmm serve speaks HTTP/1.1, which gives this page six
+ * connections to it; the activity stream holds one for good, and a hydrate
+ * sends seven reads at once - among them the update check, whose calls out
+ * to a mod source may each run thirty seconds before that source's own
+ * timeout ends them (the custom and Steam Workshop sources). A start queued
+ * behind those can wait tens of seconds with nothing wrong. Twice the
+ * longest of those budgets is long enough that reaching it means the server
+ * is not answering, and short enough that a row does not claim a change for
+ * minutes.
+ */
+export const jobStartDeadlineMillis = 60_000;
+
+async function request(method, path, body, { deadlineMillis } = {}) {
+  const init = { method, headers: {} };
+  if (method !== "GET") {
+    init.headers["X-CSRF-Token"] = csrfToken;
+  }
+  if (body !== undefined) {
+    init.headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(body);
+  }
+  // The deadline covers the answer's body as well as its headers: an
+  // AbortSignal passed to fetch also aborts the read below. A response that
+  // arrives after it is discarded by the browser, never handed back here.
+  if (deadlineMillis) init.signal = AbortSignal.timeout(deadlineMillis);
+
+  let response;
+  let text;
+  try {
+    response = await fetch(path, init);
+    text = await response.text();
+  } catch (err) {
+    if (err?.name === "TimeoutError")
+      throw new NoAnswerError(method, path, deadlineMillis);
+    throw err;
+  }
+  const payload = text ? JSON.parse(text) : null;
+
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      payload?.error || `${method} ${path} failed (${response.status})`,
+      payload?.details,
+    );
+  }
+  return payload;
+}
+
+/** Appends the game/profile pair every scoped endpoint resolves from. */
+export function scoped(path, { game, profile } = {}) {
+  if (!game) return path;
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set("game", game);
+  if (profile) url.searchParams.set("profile", profile);
+  return url.pathname + url.search;
+}
+
+export const get = (path) => request("GET", path);
+export const post = (path, body) => request("POST", path, body);
+export const del = (path) => request("DELETE", path);
+
+/** put issues a PUT with a JSON body - the Setup surface's source editor is
+ * this module's only PUT (api_sources.go's PUT /api/v1/sources/{id}). */
+export const put = (path, body) => request("PUT", path, body);
+
+/**
+ * Computes a mutation's plan and returns {plan_id, kind, plan}. The plan
+ * DOCUMENT is the frozen core type the CLI's --dry-run --json emits; the
+ * handle is single-use and expires, which is why nothing caches it.
+ */
+export const plan = (kind, options, context) =>
+  post(scoped(`/api/v1/plans/${kind}`, context), options ?? {});
+
+/** Redeems a plan handle, starting its Apply as a job. Returns the start
+ * document, whose `id` is the job (it also carries the deprecated `job_id`
+ * spelling of the same value - issue 400). */
+export const startJob = (planID, options) =>
+  post("/api/v1/jobs", { plan_id: planID, ...(options ? { options } : {}) });
+
+/** Reads one job's status document. Two consumers: issue 330's per-mod
+ * job history (jobhistory.js) - the tray's own jobsIndex is deliberately
+ * Result-less (activity.go), so a caller that needs to know what a FINISHED
+ * job's own result document said has to read this - and the activity
+ * stream's reconnect (activity.js), which asks about a job its fresh
+ * snapshot no longer carries. */
+export const jobStatus = (id) => get(`/api/v1/jobs/${encodeURIComponent(id)}`);
+
+/** modPath builds one mod's /api/v1/mods/{source}/{id} base path - shared
+ * by every per-mod read/write endpoint below. */
+function modPath(sourceID, modID) {
+  return `/api/v1/mods/${encodeURIComponent(sourceID)}/${encodeURIComponent(modID)}`;
+}
+
+/** Reads one mod's core.ModDetail document (name, description, changelog). */
+export const getModDetail = (sourceID, modID, context) =>
+  get(scoped(modPath(sourceID, modID), context));
+
+/** Reads one installed mod's core.ModFilesReport document. */
+export const getModFiles = (sourceID, modID, context) =>
+  get(scoped(`${modPath(sourceID, modID)}/files`, context));
+
+/** Reads one mod's versions document ({versions, supported}). */
+export const getModVersions = (sourceID, modID, context) =>
+  get(scoped(`${modPath(sourceID, modID)}/versions`, context));
+
+/**
+ * Runs a search against the game's configured sources: GET /api/v1/search,
+ * returning core.SearchReport verbatim. opts.page/pageSize are issue 331's
+ * pagination params (the omnibar's fan-out never sets either - a live
+ * filter has no "next page"; the dedicated search page does). opts.category/
+ * source are the search page's own filters, forwarded server-side (Important
+ * 1b, unit 5 fix wave) rather than sliced client-side over one page's own
+ * Mods - a category/source change re-queries page 0 with the new filter, so
+ * the count it renders answers the CATALOG, not one page. opts.sort is
+ * issue 503's server-side ordering (searchsort.js): relevance (or none) sends
+ * nothing, because absent IS relevance on the wire.
+ */
+export function search(query, opts, context) {
+  const url = new URL(
+    scoped("/api/v1/search", context),
+    window.location.origin,
+  );
+  url.searchParams.set("q", query);
+  if (opts?.page != null) url.searchParams.set("page", String(opts.page));
+  if (opts?.pageSize != null)
+    url.searchParams.set("page_size", String(opts.pageSize));
+  if (opts?.limit != null) url.searchParams.set("limit", String(opts.limit));
+  if (opts?.category) url.searchParams.set("category", opts.category);
+  if (opts?.source) url.searchParams.set("source", opts.source);
+  if (opts?.sort && opts.sort !== RELEVANCE)
+    url.searchParams.set("sort", opts.sort);
+  // ?tag= is REPEATABLE and narrows on every one it is given (AND), which
+  // is why it appends rather than sets. An empty list appends nothing -
+  // absent means "no filter", never a "" tag.
+  for (const tag of opts?.tags ?? []) url.searchParams.append("tag", tag);
+  return get(url.pathname + url.search);
+}
+
+/** Starts an enable/disable job directly - the one sanctioned plan-free
+ * mutation path (kind_toggle.go); no plan step, so there is nothing to
+ * confirm before it runs. Returns the same start document startJob does, or
+ * throws NoAnswerError once jobStartDeadlineMillis has passed without one:
+ * a toggle's acknowledgment waits on this answer (toggleack.js), and must
+ * not wait forever. */
+export const startToggle = (action, sourceID, modID, context) =>
+  request(
+    "POST",
+    scoped(`${modPath(sourceID, modID)}/${action}`, context),
+    undefined,
+    { deadlineMillis: jobStartDeadlineMillis },
+  );
+
+/** Sets sourceID/modID's lock, at version (empty locks at whatever is
+ * currently installed). Returns core.ModSettingResult directly - this is a
+ * thin, synchronous mutation, not a job (api_mod_settings.go's own doc
+ * comment: nothing meaningful to show in flight for a single DB write). */
+export const setModLock = (sourceID, modID, version, context) =>
+  post(
+    scoped(`${modPath(sourceID, modID)}/lock`, context),
+    version ? { version } : {},
+  );
+
+/** Clears sourceID/modID's lock. Returns core.ModSettingResult directly. */
+export const clearModLock = (sourceID, modID, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/unlock`, context), {});
+
+/** Sets sourceID/modID's update policy ("notify"/"auto"/"pinned"). Returns
+ * core.ModSettingResult directly. */
+export const setModUpdatePolicy = (sourceID, modID, policy, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/update-policy`, context), {
+    policy,
+  });
+
+/**
+ * Turns sourceID/modID's pak conversion on or off (C-3: `lmm mod convert`).
+ * Returns core.ModSettingResult directly - a single-step write beside
+ * lock/unlock/update-policy, not a job.
+ *
+ * `enabled` is REQUIRED on the wire: an absent, null or {} body is a 400,
+ * deliberately, because every one of those shapes used to answer 200 and
+ * silently turn conversion OFF.
+ */
+export const setModConvert = (sourceID, modID, enabled, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/convert`, context), { enabled });
+
+/** Skips sourceID/modID's pending update at version without pinning the mod
+ * (issue 542: `lmm mod skip-update`); an empty version skips whatever the
+ * source offers now. Returns core.ModSettingResult directly. */
+export const skipModUpdate = (sourceID, modID, version, context) =>
+  post(
+    scoped(`${modPath(sourceID, modID)}/skip-update`, context),
+    version ? { version } : {},
+  );
+
+/** Clears sourceID/modID's skipped update (issue 542), so the update check
+ * offers it again. Returns core.ModSettingResult directly. */
+export const unskipModUpdate = (sourceID, modID, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/unskip-update`, context), {});
+
+// profilePath builds one profile's /api/v1/profiles/{name} base path -
+// shared by every named-profile route below (api_profiles.go's own doc
+// comment: the profile is named in the PATH, never ?profile=).
+function profilePath(name) {
+  return `/api/v1/profiles/${encodeURIComponent(name)}`;
+}
+
+/** Reads the game's core.ProfileListing document (the profiles modal's own
+ * list - name, mod count, default marker) - only the game half of context
+ * resolves (api_profiles.go). */
+export const listProfiles = (context) =>
+  get(scoped("/api/v1/profiles", context));
+
+/** Creates a profile. Returns core.ProfileResult; 409 if the name is taken. */
+export const createProfile = (name, context) =>
+  post(scoped("/api/v1/profiles", context), { name });
+
+/** Deletes a profile. Returns core.ProfileResult (the profile as it stood
+ * immediately before the delete). */
+export const deleteProfile = (name, context) =>
+  del(scoped(profilePath(name), context));
+
+/** Renames a profile. Returns core.ProfileResult under the new name; 409 if
+ * newName is taken. */
+export const renameProfile = (name, newName, context) =>
+  post(scoped(`${profilePath(name)}/rename`, context), { name: newName });
+
+/** Marks a profile as the game's default. Returns core.ProfileResult,
+ * re-read after the write - callers should refetch listProfiles too, since
+ * SetDefault clears the flag on every OTHER profile server-side. */
+export const setDefaultProfile = (name, context) =>
+  post(scoped(`${profilePath(name)}/set-default`, context), {});
+
+/** Reads the game's core.SnapshotListing document (issue 350) - the Snapshots
+ * card's list, newest first. Game-scoped but NOT profile-scoped: snapshots
+ * belong to a game, and hiding the ones taken under another profile would
+ * hide exactly the one a user switched away from. */
+export const listSnapshots = (context) =>
+  get(scoped("/api/v1/snapshots", context));
+
+/** Records a snapshot of the current arrangement. Returns
+ * core.SnapshotResult; 409 if the name is taken (a snapshot is never
+ * silently overwritten), 400 if the name is not usable as a file name.
+ * An empty name gets core's own shared default, which is what lets the
+ * card's "Snapshot now" button carry no text input at all. */
+export const createSnapshot = (name, context) =>
+  post(scoped("/api/v1/snapshots", context), name ? { name } : {});
+
+/** Deletes a snapshot's record. Returns core.SnapshotDeleteResult. The
+ * stored ORIGINALS survive - they are shared by every snapshot of the game
+ * and are the only copy of the files lmm replaced (api_snapshots.go). */
+export const deleteSnapshot = (name, context) =>
+  del(scoped(`/api/v1/snapshots/${encodeURIComponent(name)}`, context));
+
+/** The profile export download's URL - a plain GET the browser downloads
+ * via <a download>, never fetched through this module: the server sets
+ * Content-Disposition itself (api_profiles.go), so there is no blob to
+ * build and no filename to invent. */
+export const profileExportURL = (name, context) =>
+  scoped(`${profilePath(name)}/export`, context);
+
+/** Commits a new load order. Returns core.ProfileResult, re-read after the
+ * write, so profile.mods IS the persisted order. ids are lowest-priority
+ * first (api_profiles.go); a partial order is fine - what is left unnamed
+ * keeps its existing relative order after everything named. */
+export const reorderProfile = (name, ids, context) =>
+  post(scoped(`${profilePath(name)}/reorder`, context), { ids });
+
+/** Previews a proposed load order without committing it: GET
+ * /api/v1/conflicts?order=... - the same core.ConflictReport shape the
+ * unordered read returns, so the reorder modal renders it with the exact
+ * same component. order omitted/empty previews the profile's SAVED order
+ * (today's plain conflicts read). */
+export function conflictsForOrder(order, context) {
+  const url = new URL(
+    scoped("/api/v1/conflicts", context),
+    window.location.origin,
+  );
+  if (order && order.length > 0) url.searchParams.set("order", order.join(","));
+  return get(url.pathname + url.search);
+}
+
+// -- Setup surface (issue 333): games, auth, custom sources, uploads. None
+// of these routes is game-scoped (task-A's own wire note - "they are how a
+// game comes to exist"), so none takes `scoped()`/context.
+
+/** Reads every configured game: []core.GameListEntry, the game chooser's
+ * first-run signal (an empty array) and the Setup page's Games table. */
+export const listGames = () => get("/api/v1/games");
+
+/** Searches sourceID's game catalog for query: core.GameCatalogReport.
+ * core.ErrNoGameCatalog surfaces as a 400 the add form reads to swap its
+ * search box for a plain identifier field (api_games.go). */
+export const gameCatalog = (sourceID, query) => {
+  const url = new URL("/api/v1/games/catalog", window.location.origin);
+  url.searchParams.set("source", sourceID);
+  url.searchParams.set("q", query);
+  return get(url.pathname + url.search);
+};
+
+/** Lists the subfolders of an absolute path on the machine lmm serve runs on
+ * (issue 529's folder chooser): core.DirectoryListing. `nearest` answers for
+ * the closest existing folder when path is empty, relative or missing (the
+ * chooser's opening move); without it a bad path is a refusal whose details
+ * carry {path, reason}. */
+export const listDirectories = (
+  path,
+  { hidden = false, nearest = false } = {},
+) => {
+  const url = new URL("/api/v1/fs/dirs", window.location.origin);
+  url.searchParams.set("path", path ?? "");
+  if (hidden) url.searchParams.set("hidden", "1");
+  if (nearest) url.searchParams.set("nearest", "1");
+  return get(url.pathname + url.search);
+};
+
+/** Creates a game from a gameAddRequest-shaped spec: core.GameListEntry, the
+ * same row listGames() returns - splice it straight in rather than
+ * re-reading. */
+export const addGame = (spec) => post("/api/v1/games", spec);
+
+/**
+ * Replaces gameID's whole source map (C-4: `lmm game edit`). Returns the
+ * same core.GameListEntry row listGames() carries.
+ *
+ * REPLACEMENT, not a patch: an omitted source id is REMOVED, so a caller
+ * always sends the whole map. An empty map is refused (a game mapping no
+ * source can neither search nor install), and a removal that would orphan
+ * an installed mod is a 409 naming the mods - both come back as the usual
+ * envelope for the caller to render in place.
+ */
+export const updateGameSources = (gameID, sources) =>
+  put(`/api/v1/games/${encodeURIComponent(gameID)}`, { sources });
+
+/** Edits a configured game (issue 527): `lmm game edit` in one request. body
+ * carries only the fields that change - "name", "install_path" (issue 528),
+ * "mod_path", "sources" (the whole map, a replacement), and "loader" with
+ * "loader_set" (null removes the declaration) - and core checks every one
+ * against the game they leave before it writes any: a refusal writes
+ * nothing. A 400 names the field (details.field); a 409 is a move refused
+ * for files deployed (core.GameModPathInUseError, whose details carry the
+ * ordered steps that clear it, or core.GameInstallPathInUseError) or a
+ * source removal that would orphan installed mods. The answer is the
+ * game's row, which carries mod_path_error when the new directory does not
+ * exist yet - still a valid save. */
+export const updateGame = (gameID, body) =>
+  put(`/api/v1/games/${encodeURIComponent(gameID)}`, body);
+
+/** Reads ONE game's full document: core.GameDetail - the same row
+ * `lmm game list` prints, plus the mod-loader report (issue 359).
+ *
+ * The report is where the Steam launch option comes from. lmm works out which
+ * bootstrap a game needs and hands the exact string over as DATA, because it
+ * deliberately does not write that string into Steam's own configuration. */
+export const getGameDetail = (gameID) =>
+  get(`/api/v1/games/${encodeURIComponent(gameID)}`);
+
+/** Reads the Steam detect scan's pre-selection listing: core.GameDetectListing.
+ * all=true (issue 206) widens it with every OTHER installed Steam game
+ * (?all=1) - no `known` member at all (never a literal false), no index,
+ * an empty mod_path - so a caller can offer "add with details" instead of
+ * hiding what it found. The Setup
+ * page's "Detect games" and the first-run flow both scan wide now; only
+ * the widened rows change (the SPA still branches on each row's own
+ * `known`), so nothing that read the narrower shape breaks. */
+export const detectGames = (all = false) =>
+  get(all ? "/api/v1/games/detect?all=1" : "/api/v1/games/detect");
+
+/** Applies a detect selection (1-based indices or slugs): core.GameDetectResult.
+ * A bare selector that is BOTH an index and another row's slug is refused
+ * rather than guessed at; "#2" names the index and "slug:2" the slug. */
+export const applyGameDetect = (select) =>
+  post("/api/v1/games/detect", { select });
+
+/** Reads every auth-capable source's state plus any orphaned token:
+ * app.AuthStatusReport (`lmm auth status --json`'s document). */
+export const getAuthStatus = () => get("/api/v1/auth");
+
+/** Stores sourceID's API key, live-validated where the source has a
+ * validator, and answers with the re-read app.AuthStatusReport. The key
+ * itself never comes back: a stored key is encrypted at rest (#79) and the
+ * report carries only its key_fingerprint, while key_masked appears solely
+ * for a key read from the environment. A key file the server cannot use is
+ * not a per-row condition - that answers 500 with the message naming the
+ * file and its remedy, not a report. */
+export const authLogin = (sourceID, apiKey) =>
+  post(`/api/v1/auth/${encodeURIComponent(sourceID)}`, { api_key: apiKey });
+
+/** Removes sourceID's stored credential (or an orphaned token with no
+ * source), answering with the re-read app.AuthStatusReport. */
+export const authLogout = (sourceID) =>
+  del(`/api/v1/auth/${encodeURIComponent(sourceID)}`);
+
+/** Reads the full source registry, including load/construction errors:
+ * []app.SourceInfo (`lmm source list --json`'s document, unscoped). */
+export const listSources = () => get("/api/v1/sources");
+
+/** Reads one custom source's raw YAML definition as text (never JSON - the
+ * editor wants the file's own bytes, comments and key order included). A
+ * built-in source has no definition and 404s. */
+export const getSourceDefinition = async (id) => {
+  const response = await fetch(
+    `/api/v1/sources/${encodeURIComponent(id)}/definition`,
+  );
+  const text = await response.text();
+  if (!response.ok) {
+    let payload = null;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      // A non-JSON body (a plain 404) - the status text is all there is.
+    }
+    throw new ApiError(
+      response.status,
+      payload?.error || `couldn't load the definition (${response.status})`,
+      payload?.details,
+    );
+  }
+  return text;
+};
+
+/** The definition download's own URL - a plain GET the browser downloads
+ * via <a download>, the same convention profileExportURL follows. */
+export const sourceDefinitionURL = (id) =>
+  `/api/v1/sources/${encodeURIComponent(id)}/definition`;
+
+/** Validates a draft definition (and optionally probes it live):
+ * app.SourceValidationReport. A validation or probe failure is an ApiError
+ * whose `details` IS the report - callers render it the same way either
+ * side of that split. */
+export const validateSource = (yaml, { probe, probeID } = {}) =>
+  post("/api/v1/sources/validate", {
+    yaml,
+    ...(probe ? { probe: true } : {}),
+    ...(probeID ? { probe_id: probeID } : {}),
+  });
+
+/** Saves id's definition (the yaml's own "id" must equal it) and swaps the
+ * constructed source into the running registry with no restart. Answers
+ * with the re-read []app.SourceInfo. */
+export const saveSource = (id, yaml) =>
+  put(`/api/v1/sources/${encodeURIComponent(id)}`, { yaml });
+
+/** Deletes id's definition. 409 (core.SourceInUseError) when a game still
+ * maps it. Answers with the re-read []app.SourceInfo. */
+export const deleteSource = (id) =>
+  del(`/api/v1/sources/${encodeURIComponent(id)}`);
+
+/** sourceIndexPath is one game's index route for a source that searches a
+ * local copy of its catalogue (api_source_index.go, issue 410). The game is
+ * the lmm game id; the index it names is that game's own mapping. */
+function sourceIndexPath(sourceID, gameID) {
+  return `/api/v1/sources/${encodeURIComponent(sourceID)}/index?game=${encodeURIComponent(gameID)}`;
+}
+
+/** Reads one game's index for sourceID: core.IndexStatus. A source that
+ * keeps no index is a 404. */
+export const getSourceIndex = (sourceID, gameID) =>
+  get(sourceIndexPath(sourceID, gameID));
+
+/** Brings one game's index up to date - force rebuilds even a current one
+ * (`lmm source index --refresh`). Answers core.IndexReport; an index that
+ * could not be had at all is a 502 whose details say which and why. */
+export const refreshSourceIndex = (sourceID, gameID, force) =>
+  post(sourceIndexPath(sourceID, gameID), force ? { refresh: true } : {});
+
+/** Lists every local source index on disk, and every mapped one not built
+ * yet, with the games that use each: core.SourceIndexListing (`lmm source
+ * index --all`). */
+export const listSourceIndexes = () => get("/api/v1/indexes");
+
+/** Prunes local source indexes (`lmm source index prune`), answering
+ * core.IndexPruneReport. dryRun previews; only - a preview's removal keys -
+ * binds a confirmed run to exactly what the preview listed. */
+export const pruneSourceIndexes = ({ all, dryRun, only } = {}) =>
+  post("/api/v1/indexes/prune", {
+    ...(all ? { all: true } : {}),
+    ...(dryRun ? { dry_run: true } : {}),
+    ...(only ? { only } : {}),
+  });
+
+// maxUploadBytes mirrors the server's own cap (uploads.go's maxUploadBytes)
+// so an oversized file is refused before a multi-gigabyte upload even
+// starts, rather than after streaming it all the way to a 413.
+export const maxUploadBytes = 2 * 1024 * 1024 * 1024;
+
+/**
+ * Uploads an archive via XHR (fetch has no upload-progress events, which is
+ * the one thing this form needs to show for a multi-hundred-megabyte file).
+ * onProgress(loaded, total) fires as the browser reports it; total is 0
+ * when the browser can't compute it (rare for a same-origin POST with a
+ * known Content-Length, kept anyway for honesty).
+ *
+ * Resolves with the uploadResponse document ({upload_id, filename, size});
+ * rejects with an ApiError built from the response the same way request()
+ * builds one, so a caller renders either failure identically.
+ */
+export function uploadArchive(file, { onProgress, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/v1/uploads");
+    xhr.setRequestHeader("X-CSRF-Token", csrfToken);
+
+    if (signal) {
+      if (signal.aborted) {
+        reject(new DOMException("aborted", "AbortError"));
+        return;
+      }
+      signal.addEventListener("abort", () => xhr.abort(), { once: true });
+    }
+
+    xhr.upload.onprogress = (e) => {
+      onProgress?.(e.loaded, e.lengthComputable ? e.total : 0);
+    };
+    xhr.onabort = () => reject(new DOMException("aborted", "AbortError"));
+    xhr.onerror = () => reject(new ApiError(0, "the upload failed", null));
+    xhr.onload = () => {
+      let payload = null;
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        // Fall through to the envelope-less rejection below.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload);
+        return;
+      }
+      reject(
+        new ApiError(
+          xhr.status,
+          payload?.error || `upload failed (${xhr.status})`,
+          payload?.details,
+        ),
+      );
+    };
+
+    const form = new FormData();
+    form.append("file", file, file.name);
+    xhr.send(form);
+  });
+}
+
+/** Cancels a staged upload nobody imported: 204, no document. */
+export const deleteUpload = (uploadID) =>
+  del(`/api/v1/uploads/${encodeURIComponent(uploadID)}`);

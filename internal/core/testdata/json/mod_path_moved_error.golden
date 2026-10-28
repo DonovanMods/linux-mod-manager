@@ -1,0 +1,16 @@
+{
+  "game_id": "skyrim-se",
+  "mod_path": "/games/skyrim-se/Mods",
+  "reason": "is not where lmm deployed its files",
+  "deployed_files": 3,
+  "deployed_under": [
+    {
+      "mod_path": "/games/skyrim-se/Data",
+      "files": 3,
+      "profiles": [
+        "default",
+        "survival"
+      ]
+    }
+  ]
+}

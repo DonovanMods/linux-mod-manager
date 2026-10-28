@@ -1,0 +1,18 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "result": {
+    "findings": [
+      {
+        "mod_id": "42",
+        "mod_name": "Sample Mod",
+        "file_id": "file-1",
+        "status": "ok"
+      }
+    ],
+    "issues": 0,
+    "warnings": 1,
+    "checked": 1,
+    "has_files": true
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "notes": [
+    "Warning: failed to undeploy some files: undeploying blocked/plugin.esp: checking file: lstat <GAME-DIR>/blocked/plugin.esp: not a directory"
+  ]
+}

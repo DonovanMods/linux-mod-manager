@@ -1,0 +1,783 @@
+// Package core: this file holds core's typed errors - the ones a frontend
+// branches on rather than merely prints. Spec §4 ("no callbacks into the
+// frontend from Apply", v2 Phase 3 Ruling 1): anything an Apply can only
+// discover mid-flight is reported as a typed error the caller inspects and
+// answers by re-running Apply with the matching Options field, never by a
+// callback core reaches back through.
+package core
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
+)
+
+// ConflictError is returned by ApplyInstall (STRICT path) and ImportArchive
+// when deploying the mod would overwrite files another installed mod owns
+// and the caller has not accepted that up front
+// (InstallOptions/ImportArchiveOptions.AcceptConflicts, which Force implies).
+//
+// It is returned BEFORE any deploy, DB write or profile write, so a caller
+// that declines is left in the same state a declined prompt always left:
+// the mod is in the cache (a cache fill is not a mutation of managed state -
+// Ruling 1) and nothing else has changed. A caller that accepts re-runs the
+// same Apply with AcceptConflicts set.
+//
+// Conflicts is the freshly-computed, non-empty list core would have
+// overwritten - the data a frontend needs to render its own prompt.
+type ConflictError struct {
+	Conflicts []Conflict
+
+	// CleanupWarnings names anything the refusal could not undo. Today
+	// that is ImportArchive's own promise: the refusal removes the cache
+	// entry it created, and a removal that FAILS used to disappear into a
+	// Debug log, leaving an orphaned entry with no user-visible signal
+	// (#310). Empty on every ordinary refusal - including every install
+	// refusal, which has nothing to undo - so an `omitempty` member on the
+	// envelope, not a field a frontend has to render.
+	CleanupWarnings []string
+}
+
+// Error reports domain.ErrFileConflict's text plus how many files the
+// install would overwrite.
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("%v: %d file(s) would be overwritten", domain.ErrFileConflict, len(e.Conflicts))
+}
+
+// Unwrap makes errors.Is(err, domain.ErrFileConflict) true, so a caller that
+// only cares that a conflict happened needs no type assertion.
+func (e *ConflictError) Unwrap() error { return domain.ErrFileConflict }
+
+// Details returns the payload the CLI's --json error envelope attaches under
+// "details" (Ruling 3: {"error": "...", "details": {"conflicts": [...]}}).
+// The returned type is unexported deliberately - it is a wire shape for the
+// envelope, not a core contract type of its own.
+func (e *ConflictError) Details() any {
+	return conflictErrorDetails{Conflicts: e.Conflicts, CleanupWarnings: e.CleanupWarnings}
+}
+
+type conflictErrorDetails struct {
+	Conflicts []Conflict `json:"conflicts"`
+	// Additive and omitted when empty (#310), so an ordinary refusal's
+	// envelope is byte-identical to the one it emitted before.
+	CleanupWarnings []string `json:"cleanup_warnings,omitempty"`
+}
+
+// IndexUnavailableError reports that a source which answers from a LOCAL
+// index has none it can use and could not build one (#410, design §4.3):
+// the fetch failed, what is cached is unreadable, or the host is refusing
+// to be asked. It is the frontend-facing form of source.ErrIndexUnavailable
+// - `lmm serve` answers it 502, because the failure is upstream of lmm -
+// and Details() carries what the web UI shows beside the sentence.
+//
+// Error() is the cause's own sentence, unchanged; the struct only adds the
+// facts a frontend would otherwise have to parse back out of it.
+type IndexUnavailableError struct {
+	// Source is the source id ("thunderstore").
+	Source string `json:"source"`
+	// Game is the SOURCE's identifier for the game - the community slug -
+	// which is what names the index.
+	Game string `json:"game"`
+	// Reason is the underlying failure, without the "index is unavailable"
+	// framing around it.
+	Reason string `json:"reason"`
+	// RetryAt is when lmm will next ask the host, when it is refusing to
+	// ask before then (a tripped circuit breaker, or a throttle that asked
+	// for a longer wait than lmm sits through). Omitted otherwise.
+	RetryAt time.Time `json:"retry_at,omitzero"`
+
+	Err error `json:"-"`
+}
+
+// Error is the underlying failure's own message.
+func (e *IndexUnavailableError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the cause, which classifies as source.ErrIndexUnavailable.
+func (e *IndexUnavailableError) Unwrap() error { return e.Err }
+
+// Details implements the --json error envelope's extension point.
+func (e *IndexUnavailableError) Details() any { return e }
+
+// IsIndexUnavailable reports whether err means a source's local index could
+// not be had at all - the classifier a frontend that cannot import the
+// source packages branches on.
+func IsIndexUnavailable(err error) bool { return errors.Is(err, source.ErrIndexUnavailable) }
+
+// GameIdentifierError reports that a game's identifier for a source - the
+// value under games.yaml's `sources:` - is missing, empty or malformed for
+// a source that needs one (#410, design §4.3's ErrCommunityNotConfigured,
+// generalised: T2 made the sentinel cross-source). It is the user's
+// configuration being wrong, so `lmm serve` answers it 400, and Details()
+// names the game and the source so the web UI can open the sources editor
+// on the right row.
+type GameIdentifierError struct {
+	GameID string `json:"game_id"`
+	Source string `json:"source"`
+	// Value is what games.yaml says - empty when the mapping is blank or
+	// absent.
+	Value string `json:"value"`
+
+	Err error `json:"-"`
+}
+
+// Error is the refusal's own sentence, which names the command that fixes
+// it.
+func (e *GameIdentifierError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the cause, which classifies as
+// source.ErrGameIdentifierInvalid.
+func (e *GameIdentifierError) Unwrap() error { return e.Err }
+
+// Details implements the --json error envelope's extension point.
+func (e *GameIdentifierError) Details() any { return e }
+
+// IsGameIdentifierInvalid reports whether err means a game's identifier for
+// a source is missing or malformed - bad input rather than a failure.
+func IsGameIdentifierInvalid(err error) bool {
+	return errors.Is(err, source.ErrGameIdentifierInvalid)
+}
+
+// classifyIndexError types a source failure that left the caller with no
+// index, naming the source and its game identifier. Any other error, and one
+// already typed, passes through untouched.
+func classifyIndexError(sourceID, sourceGameID string, err error) error {
+	if err == nil || !errors.Is(err, source.ErrIndexUnavailable) {
+		return err
+	}
+	var typed *IndexUnavailableError
+	if errors.As(err, &typed) {
+		return err
+	}
+	typed = &IndexUnavailableError{Source: sourceID, Game: sourceGameID, Reason: indexFailureReason(err), Err: err}
+	var later *source.RetryLaterError
+	if errors.As(err, &later) {
+		typed.Reason = later.Reason
+		// Whole seconds, rounded UP: a client told "retry at" must never be
+		// told a moment before the one lmm will actually allow.
+		typed.RetryAt = later.Until.UTC().Add(time.Second - 1).Truncate(time.Second)
+	}
+	return typed
+}
+
+// indexFailureReason digs the underlying cause out of an index failure: the
+// first error joined BESIDE the sentinel (a source's "could not be built:
+// %w: %w"), or the whole message when there is no such join.
+func indexFailureReason(err error) string {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		joined, ok := e.(interface{ Unwrap() []error })
+		if !ok {
+			continue
+		}
+		for _, part := range joined.Unwrap() {
+			if part != source.ErrIndexUnavailable {
+				return part.Error()
+			}
+		}
+	}
+	return err.Error()
+}
+
+// ProfileWarningsError carries the diagnostics `ApplyProfileSwitch`/
+// `ApplyProfileApply`/`ApplyProfileSync` accumulated before a fatal error,
+// for a frontend's error envelope's "details" field
+// ({"error": "...", "details": {"warnings": [...]}}). Plain text prints
+// them directly, but an envelope (--json, or a future API response) only
+// carries data for a typed error - so without this wrapper the #294
+// warnings would reach neither the plain-text stream nor the envelope on
+// this path, leaving the DB-vs-profile divergence #294 exists to expose
+// silent again.
+//
+// Only construct this when there is at least one warning, so a fatal run
+// with nothing to report still produces the bare {"error": ...} envelope.
+// Follows the ConflictError / GameDetectPartialError convention: Unwrap
+// exposes Err for errors.Is/As, Details() any is the unnamed interface a
+// frontend's envelope writer picks up automatically.
+type ProfileWarningsError struct {
+	Err      error
+	Warnings []string
+}
+
+// Error returns the wrapped fatal failure's own message, so plain text and
+// the envelope's "error" field are unchanged by the wrapping.
+func (e *ProfileWarningsError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the wrapped fatal error for errors.Is/errors.As.
+func (e *ProfileWarningsError) Unwrap() error { return e.Err }
+
+// Details returns the accumulated warnings for a frontend's error
+// envelope's "details" field.
+func (e *ProfileWarningsError) Details() any {
+	return profileWarningsDetails{Warnings: e.Warnings}
+}
+
+// profileWarningsDetails is ProfileWarningsError's wire shape: a named type
+// rather than a map so the "warnings" key is part of the JSON contract and
+// matches the same key on the ProfileApplyResult/ProfileSyncResult/
+// SwitchResult documents a SUCCESSFUL run emits.
+type profileWarningsDetails struct {
+	Warnings []string `json:"warnings"`
+}
+
+// ProfileApplyIncompleteError is ApplyProfileApply's error when the apply
+// ran to the end but could not install or deploy every mod (#470): Result
+// is the whole outcome - what was applied, and each failure with its reason
+// - and Error names each failed mod, so no frontend reports the apply as
+// done. Follows the GameDetectPartialError convention: Details() any is the
+// unnamed interface a frontend's envelope writer picks up automatically.
+type ProfileApplyIncompleteError struct {
+	Profile string
+	Result  *ProfileApplyResult
+}
+
+// Error names the profile and every failed mod with its reason.
+func (e *ProfileApplyIncompleteError) Error() string {
+	return fmt.Sprintf("profile %q was not fully applied - %d mod(s) failed: %s",
+		e.Profile, len(e.Result.Failed), failedModsText(e.Result.Failed))
+}
+
+// Details returns the whole ProfileApplyResult for a frontend's error
+// envelope's "details" field.
+func (e *ProfileApplyIncompleteError) Details() any { return e.Result }
+
+// ProfileSwitchIncompleteError is ApplyProfileSwitch's error when the
+// switch ran to the end - Profile is now the active profile - but could not
+// install or deploy every mod (#470's twin, #445 second gate): Result is the
+// whole outcome, and Error names each failed mod, so no frontend reports
+// the switch as done. Details() any is the whole result, as
+// ProfileApplyIncompleteError's is.
+type ProfileSwitchIncompleteError struct {
+	Profile string
+	Result  *SwitchResult
+}
+
+// Error names the profile and every failed mod with its reason.
+func (e *ProfileSwitchIncompleteError) Error() string {
+	return fmt.Sprintf("profile %q is now active, but %d mod(s) failed: %s",
+		e.Profile, len(e.Result.Failed), failedModsText(e.Result.Failed))
+}
+
+// Details returns the whole SwitchResult for a frontend's error envelope's
+// "details" field.
+func (e *ProfileSwitchIncompleteError) Details() any { return e.Result }
+
+// ProfileImportIncompleteError is ApplyImport's error when the imported
+// profile was saved but one or more requested mods could not be installed
+// (#485). Result is the complete outcome, including every item that did
+// install and the structured failures, so frontends can show the partial
+// work without claiming the import succeeded.
+type ProfileImportIncompleteError struct {
+	Profile string
+	Result  *ProfileImportResult
+}
+
+// Error names the imported profile and every failed mod with its reason.
+func (e *ProfileImportIncompleteError) Error() string {
+	return fmt.Sprintf("profile %q was not fully imported - %d mod(s) failed: %s",
+		e.Profile, e.Result.Failed, failedImportModsText(e.Result.Failures))
+}
+
+// Details returns the whole ProfileImportResult for a frontend's error
+// envelope's "details" field.
+func (e *ProfileImportIncompleteError) Details() any { return e.Result }
+
+// failedModsText names each failed mod with its reason.
+func failedModsText(failed []InstalledRef) string {
+	failures := make([]string, len(failed))
+	for i, f := range failed {
+		name := f.SourceID + ":" + f.ModID
+		if f.Name != "" {
+			name = fmt.Sprintf("%s (%s)", f.Name, name)
+		}
+		failures[i] = name + ": " + f.Reason
+	}
+	return strings.Join(failures, "; ")
+}
+
+// failedImportModsText names every ProfileImportResult failure. Import's
+// ItemFailure is deliberately distinct from an InstalledRef: an import can
+// fail before it has an installed row at all.
+func failedImportModsText(failures []ItemFailure) string {
+	failed := make([]string, len(failures))
+	for i, failure := range failures {
+		name := failure.SourceID + ":" + failure.ModID
+		if failure.Name != "" {
+			name = fmt.Sprintf("%s (%s)", failure.Name, name)
+		}
+		failed[i] = name + ": " + failure.Reason
+	}
+	return strings.Join(failed, "; ")
+}
+
+// GameDetectPartialError reports a `game detect` run that failed partway
+// through ApplyGameDetect: Result still names exactly the games that were
+// fully persisted (games.yaml write + default profile) before Err stopped
+// it, so a frontend's error envelope can say what was saved instead of only
+// that the run failed - mirroring the plain-text path's own partial-success
+// contract (the CLI's "Added:" loop prints every game Result.Profiles names,
+// even on failure). Follows the ConflictError / ProfileWarningsError
+// convention: Unwrap exposes Err for errors.Is/As, Details() any is the
+// unnamed interface a frontend's envelope writer picks up automatically.
+type GameDetectPartialError struct {
+	Err    error
+	Result *GameDetectResult
+}
+
+// Error returns the wrapped ApplyGameDetect failure's own message.
+func (e *GameDetectPartialError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the wrapped ApplyGameDetect error for errors.Is/errors.As.
+func (e *GameDetectPartialError) Unwrap() error { return e.Err }
+
+// Details returns the partial GameDetectResult - what was saved before the
+// failure - for a frontend's error envelope's "details" field.
+func (e *GameDetectPartialError) Details() any { return e.Result }
+
+// AdapterRefusedError is AdapterFor's refusal (#455): GameID's configuration
+// resolves to Adapter, and no flow may run it - an adapter this build does
+// not ship, a `deploy_mode: compile` game's adapter that cannot compile, or
+// bepinex off the game root. Err is the sentence every flow has always
+// printed, remedy included, and Error returns it unchanged.
+//
+// It is typed because a read that cannot answer without a layout - conflict
+// detection - has nothing to report but the refusal, and a frontend should
+// render that as the known, handled state it is (GET /api/v1/conflicts
+// answers 409 with it) rather than as a failure.
+type AdapterRefusedError struct {
+	GameID  string
+	Adapter string
+	Err     error
+}
+
+// Error implements error.
+func (e *AdapterRefusedError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the underlying refusal.
+func (e *AdapterRefusedError) Unwrap() error { return e.Err }
+
+// Details returns the game and the adapter it names for the --json error
+// envelope's "details" field (Ruling 3); the sentence is the envelope's
+// "error".
+func (e *AdapterRefusedError) Details() any {
+	return struct {
+		GameID  string `json:"game_id"`
+		Adapter string `json:"adapter"`
+	}{GameID: e.GameID, Adapter: e.Adapter}
+}
+
+// ErrProfileExists is returned by ProfileManager.Create and ProfileManager.
+// Rename when the target profile name is already taken - either a profile
+// file already answers to it, or (Rename only) DB rows still name it after
+// a Delete that only ever removed the file (ProfileManager.Delete's own doc
+// comment; see refuseOccupiedName). It is detected INSIDE the gated
+// CreateProfile/RenameProfile seams, before either writes anything, so a
+// frontend's 409 never depends on an untyped error's wording (#332 M6).
+var ErrProfileExists = errors.New("profile already exists")
+
+// ErrProfileNotActive is returned when a deploy - or a purge --uninstall -
+// is asked to act for a profile that is not the game's active one (#445). A
+// game has one directory, holding the active profile's deployment:
+// deploying another profile there mixes two profiles' mods. (A plain purge
+// of such a profile is allowed, as the recorded-only cleanup
+// PurgePlan.RecordedOnly describes.) The error names the active profile and
+// `lmm profile switch`, the way to make another profile live.
+var ErrProfileNotActive = errors.New("profile is not active")
+
+// ErrActiveProfileUnknown is returned when a flow that deploys into a game
+// directory, removes from it, or switches which profile it holds cannot
+// tell which of the game's profiles is active (#445 review F2): a profile
+// file cannot be read, several say `is_default: true`, or none does while
+// several exist. Any answer would be a guess - GetDefault's first-profile
+// fallback is one - and a guess turned a recorded-only purge into a full
+// one, so every such decision fails closed instead. The error names the
+// cause and `lmm profile list`.
+var ErrActiveProfileUnknown = errors.New("cannot tell which profile is active")
+
+// ErrProfileActive is returned when deleting the game's active profile
+// (#446): its mods are the ones in the game directory, and deleting its
+// file would leave them there with no profile claiming them and the game
+// with no active profile. The error names `lmm profile switch`.
+var ErrProfileActive = errors.New("profile is active")
+
+// ErrConfirmationRequired is returned by a frontend-facing entry point that
+// would have to prompt but cannot - the CLI's --json mode, which never reads
+// stdin (Ruling 2). The decision must come from a flag instead.
+var ErrConfirmationRequired = errors.New("confirmation required: pass --yes (or --force where documented) in non-interactive mode")
+
+// ErrInteractiveOnly marks a value a frontend could only obtain by
+// prompting, in a mode that forbids reading stdin (the CLI's --json,
+// Ruling 2).
+//
+// Before #307 it meant something coarser - `game add` and `auth login` had
+// no flag-driven form at all and rejected --json outright, before doing
+// anything. Both now take flags for every prompt they had, so the refusal
+// narrowed from "this command" to "this value": it is returned only when a
+// specific value was supplied by neither a flag nor an interactive prompt,
+// wrapped with the flag that would have answered it.
+var ErrInteractiveOnly = errors.New("this value can only be supplied interactively; pass the matching flag instead")
+
+// TokenKeyError reports that lmm could not use the key its stored
+// credentials are encrypted under (#79) - the frontend-facing translation
+// of *db.KeyError, so no frontend has to name the storage layer to branch
+// on it.
+//
+// Reason is db.KeyErrorReason's wire name:
+//
+//   - "missing"       - the key file is gone but encrypted rows remain.
+//     The credentials are unrecoverable; the remedy is to log in again.
+//   - "permissions"   - the file is readable beyond its owner; chmod 600.
+//   - "malformed"     - the file is not a 32-byte key.
+//   - "unreadable"    - it could not be read or created at all.
+//   - "undecryptable" - the KEY was fine but one row did not authenticate
+//     under it. Sources names exactly that row, so a frontend reports one
+//     broken credential rather than a global outage.
+//
+// It follows the same convention as this file's other typed errors: Unwrap
+// exposes the cause for errors.Is/As, and Details() any puts the whole
+// thing in the --json error envelope's "details" (Ruling 3).
+type TokenKeyError struct {
+	KeyPath string   `json:"key_path"`
+	Reason  string   `json:"reason"`
+	Sources []string `json:"sources,omitempty"`
+	Err     error    `json:"-"`
+}
+
+// Error returns the storage layer's own message, which already names the
+// file and the fix.
+//
+// Err is set by asTokenKeyError on every production path, but the type is
+// exported and a hand-built value must not panic here (review, Minor 7);
+// one without a cause falls back to what its own fields say.
+func (e *TokenKeyError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("the token-encryption key %s could not be used (%s)", e.KeyPath, e.Reason)
+	}
+	return e.Err.Error()
+}
+
+// Unwrap exposes the underlying *db.KeyError.
+func (e *TokenKeyError) Unwrap() error { return e.Err }
+
+// Details implements the --json error envelope's extension point.
+func (e *TokenKeyError) Details() any { return e }
+
+// asTokenKeyError translates a *db.KeyError anywhere in err's chain into
+// the frontend-facing TokenKeyError, and passes everything else (including
+// nil) through untouched. Applied at every Service method that touches a
+// credential, so the translation cannot be forgotten at one of them.
+func asTokenKeyError(err error) error {
+	var keyErr *db.KeyError
+	if !errors.As(err, &keyErr) {
+		return err
+	}
+	out := &TokenKeyError{KeyPath: keyErr.Path, Reason: string(keyErr.Reason), Err: err}
+	if keyErr.SourceID != "" {
+		out.Sources = []string{keyErr.SourceID}
+	}
+	return out
+}
+
+// AmbiguousModError reports that a bare mod ID matched more than one
+// installed mod (#373). Mod IDs are unique only WITHIN a source, so the same
+// ID can name a different mod in each source a game maps; a command that
+// silently took the first match would rename - or, for uninstall, delete the
+// files and cache entry of - a mod the user never named.
+//
+// Flag is the option that resolves it, worded as the command spells it
+// (`-s/--source` for `uninstall`, `update` and `mod edit`), and Caveat is an
+// optional trailing
+// note a command adds about its own candidates (e.g. that a local mod cannot
+// be update-checked). Sources is sorted, so the message is the same
+// regardless of install order.
+//
+// It follows this file's convention: Details() any puts the whole thing in
+// the --json error envelope's "details" (Ruling 3), so a scripting caller
+// gets the candidate list as data rather than by parsing the sentence.
+type AmbiguousModError struct {
+	ModID   string   `json:"mod_id"`
+	Profile string   `json:"profile"`
+	Sources []string `json:"sources"`
+	Flag    string   `json:"flag"`
+	Caveat  string   `json:"caveat,omitempty"`
+}
+
+// Error names every candidate source and the flag that chooses between them.
+func (e *AmbiguousModError) Error() string {
+	caveat := ""
+	if e.Caveat != "" {
+		caveat = " " + e.Caveat
+	}
+	return fmt.Sprintf("mod %s is in profile %s under multiple sources (%s); retry with %s to choose%s",
+		e.ModID, e.Profile, strings.Join(e.Sources, ", "), e.Flag, caveat)
+}
+
+// Details implements the --json error envelope's extension point.
+func (e *AmbiguousModError) Details() any { return e }
+
+// ResolveInstalledByID finds the single installed mod carrying modID among
+// rows, refusing rather than guessing when more than one does (#373).
+//
+// flag names the option that disambiguates, since each command spells it
+// differently. A caller that already knows the source must look the row up
+// directly instead - this is the bare-ID path.
+func ResolveInstalledByID(rows []domain.InstalledMod, modID, profileName, flag string) (*domain.InstalledMod, error) {
+	var candidates []*domain.InstalledMod
+	for i := range rows {
+		if rows[i].ID == modID {
+			candidates = append(candidates, &rows[i])
+		}
+	}
+	switch len(candidates) {
+	case 0:
+		return nil, fmt.Errorf("mod %s not found in profile %s", modID, profileName)
+	case 1:
+		return candidates[0], nil
+	default:
+		sources := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			sources = append(sources, c.SourceID)
+		}
+		sort.Strings(sources) // deterministic regardless of install order
+		return nil, &AmbiguousModError{ModID: modID, Profile: profileName, Sources: sources, Flag: flag}
+	}
+}
+
+// SourceAuthError names the source whose update check failed for want of
+// credentials, so a caller can print a remedy naming THAT source
+// (P1a review F3).
+//
+// A bulk `lmm update` walks every source a profile's mods come from and has
+// no single source of its own - #375 removed the -s/--source prompt from
+// that path precisely because it never used the answer. Its auth handler
+// went on printing that unset flag, producing "run 'lmm auth login ' to
+// authenticate": an uncopyable command, on exactly the unattended path #375
+// set out to unblock. The check knows which source refused, so it says so.
+//
+// It wraps rather than replaces: errors.Is(err, domain.ErrAuthRequired)
+// still answers true, and Error() is worded identically to the plain
+// "source %s: %v" wrap every other source failure gets, so nothing that
+// merely prints the error changes. No Details(): it is a diagnostic a
+// frontend reads a field off, not a document the --json envelope carries.
+type SourceAuthError struct {
+	// SourceID is the source that needs authenticating.
+	SourceID string
+	// Err is the underlying failure, which wraps domain.ErrAuthRequired.
+	Err error
+}
+
+// Error reads exactly as the generic per-source wrap it replaces.
+func (e *SourceAuthError) Error() string { return fmt.Sprintf("source %s: %v", e.SourceID, e.Err) }
+
+// Unwrap keeps errors.Is(err, domain.ErrAuthRequired) true through the wrap.
+func (e *SourceAuthError) Unwrap() error { return e.Err }
+
+// AuthRequiredSource reports the source id of the first SourceAuthError in
+// err's tree, or "" when there is none - the read half of SourceAuthError,
+// for a caller holding the joined multi-source error CheckUpdates returns.
+func AuthRequiredSource(err error) string {
+	var authErr *SourceAuthError
+	if errors.As(err, &authErr) {
+		return authErr.SourceID
+	}
+	return ""
+}
+
+// ErrNotAMod is the sentinel an adapter's ingest refusal carries: this
+// archive is the loader, the framework or the base game rather than a mod
+// for it (adapter.ErrNotAMod, re-exported so a frontend can errors.Is it
+// without importing internal/adapter, whose allow-lists do not include one).
+//
+// It replaced core's own ErrBepInExFrameworkPack in U3 (#413) when the
+// BepInEx rules moved behind the seam. The refusal is unchanged - a payload
+// under BepInEx/core/ is the loader, which lmm configures per game and which
+// must survive a profile switch, so installing it as a mod would put the
+// preloader under lmm's deployed-files bookkeeping where the next uninstall
+// tears it out from under every plugin - but the NAME is now the general
+// one, because the rule is general and the next adapter's base-game archive
+// is refused through it too. The adapter wraps it with the message naming
+// the remedy.
+var ErrNotAMod = adapter.ErrNotAMod
+
+// LoaderRequiredError refuses a mod that needs a mod loader the game does
+// not have - neither declared nor installed where lmm can see it (#359,
+// #424).
+//
+// It is a PLAN-time precondition, not a dependency: the DependencyResolver
+// orders mods within a profile, and the loader is not in the profile - it
+// lives in the game root, it is a property of the game INSTALLATION, and it
+// must survive a profile switch (docs/plans/2026-09-09-bepinex-spike.md §2).
+// Without this refusal lmm would deploy a plugin assembly into a game with
+// nothing to load it and report success; the mod would simply do nothing,
+// which is the hardest kind of failure to diagnose.
+//
+// The requirement is inferred from the archive's SHAPE - an archive that
+// names the directory `BepInEx` is a BepInEx mod, which the bepinex
+// adapter's archive claim decides (adapter_claim.go) - which is why it fires
+// only where lmm is certain. A Thunderstore source infers it from the
+// package's own dependency strings ("BepInEx-BepInExPack-5.4.2100") as well
+// (loader_source_requirement.go, #409).
+//
+// It follows this file's convention: Details() any puts the whole thing in
+// the --json error envelope's "details" (Ruling 3), so `lmm serve`'s failed
+// job and `lmm install --json` render the SAME setup steps the terminal
+// prints, from data rather than from a sentence.
+type LoaderRequiredError struct {
+	// GameID is the game whose configuration is missing the declaration.
+	GameID string `json:"game_id"`
+	// Kind is the loader the mod needs - today always
+	// domain.LoaderKindBepInEx.
+	Kind string `json:"kind"`
+	// Version is the loader version the requirement names, when whatever
+	// reported it knew one: a Thunderstore package pins its BepInExPack
+	// dependency ("5.4.2100"), while an archive's SHAPE says nothing about
+	// a version. Omitted when unknown. It is here because the first setup
+	// step tells the user to go and choose a BepInEx build themselves, and
+	// which version the mod actually asked for is the one fact those
+	// sentences cannot derive.
+	Version string `json:"version,omitempty"`
+	// ModName is the mod that needs it, as the flow named it. Empty when the
+	// refusal is about an archive whose identity is not resolved yet.
+	ModName string `json:"mod_name,omitempty"`
+	// Layout names the EVIDENCE the requirement was inferred from, so a user
+	// can see WHY lmm decided this is a BepInEx mod: the archive shape in
+	// the normaliser's own words ("game-root-relative", "wrapped in a single
+	// directory"), or - when the source said so itself (#409) - the
+	// dependency it declared ("the package depends on
+	// BepInEx-BepInExPack-5.4.2100").
+	Layout string `json:"layout,omitempty"`
+	// Setup is the ordered steps that resolve it, as complete sentences a
+	// frontend renders verbatim. Data rather than prose because both
+	// frontends show it and neither should be writing its own copy.
+	Setup []string `json:"setup"`
+}
+
+// Error states the requirement and names the command that records it, so
+// even a caller that only prints the error is told what to do.
+func (e *LoaderRequiredError) Error() string {
+	name := e.ModName
+	if name == "" {
+		name = "this mod"
+	}
+	return fmt.Sprintf("%s needs the %s mod loader, which game %q does not declare: install it into the game directory, then run `lmm game edit %s --loader %s`",
+		name, loaderDisplayName(e.Kind), e.GameID, e.GameID, e.Kind)
+}
+
+// Details implements the --json error envelope's extension point.
+func (e *LoaderRequiredError) Details() any { return e }
+
+// loaderDisplayName spells a loader kind the way its own project does, so a
+// message says "BepInEx" rather than the lower-case config value. An
+// unrecognised kind is echoed unchanged - kind is an open string.
+func loaderDisplayName(kind string) string {
+	if kind == domain.LoaderKindBepInEx {
+		return "BepInEx"
+	}
+	return kind
+}
+
+// newLoaderRequirement builds the refusal for game, naming the mod, the
+// loader kind, the version when whatever reported the requirement knew one
+// (only a SOURCE can, #409), and the evidence it was inferred from. The
+// setup steps are written once, here, so the CLI, the web UI and `--json`
+// cannot drift about them.
+//
+// ONE constructor for both halves, deliberately. #359 infers the
+// requirement from an archive's shape and #409's Thunderstore source reads
+// it off a package's own dependency string, but the user is in the same
+// position either way and must be told the same three things - so the
+// sentences live here and nowhere else.
+func newLoaderRequirement(game *domain.Game, modName, kind, version, evidence string) *LoaderRequiredError {
+	install := "Install BepInEx into the game directory yourself: a native Linux build needs the BepInEx_linux_x64 archive from BepInEx's own GitHub releases, while a Proton/Wine game needs the Windows pack (winhttp.dll plus doorstop_config.ini). lmm does not choose or download it - the wrong build leaves a game that silently loads nothing."
+	if version != "" {
+		install += fmt.Sprintf(" This mod asks for %s %s.", loaderDisplayName(kind), version)
+	}
+	return &LoaderRequiredError{
+		GameID: game.ID, Kind: kind, Version: version, ModName: modName, Layout: evidence,
+		Setup: []string{
+			install,
+			fmt.Sprintf("Record it: `lmm game edit %s --loader %s --loader-version <version> --loader-runtime mono|il2cpp --loader-bootstrap native|proton`.", game.ID, kind),
+			fmt.Sprintf("Then `lmm game show %s` prints the exact Steam launch option to paste, and `lmm verify --game %s` checks that the loader actually ran.", game.ID, game.ID),
+		},
+	}
+}
+
+// UpdateTargetUnavailableError refuses an update whose file is gone from the
+// source's listing when nothing identifies the file that replaces it (#505).
+//
+// The fallback it replaces picked a stand-in by version label, and a label is
+// not unique across a mod's file classifications: CurseForge publishes one
+// label for its Forge, Fabric, NeoForge and Quilt builds and for each game
+// flavor, so the fallback could install another loader's file than the one
+// the update check advertised. Two shapes are refused:
+//
+//   - Advertised: the update check named the file (a FileIDReplacements
+//     target) and that id is not listed. The source named one file and only
+//     that file is the update, so no label match stands in for it, however
+//     many there are.
+//   - Not advertised: an installed file is gone with nothing naming its
+//     successor (#95's fallback) and several files listed under the target
+//     version could replace it - same Category, where the files carry one.
+//     Exactly one such file still installs, as before.
+//
+// It follows this file's convention: Details() any puts the whole thing in
+// the --json error envelope's "details" (Ruling 3), so `lmm update --json`
+// and a failed `lmm serve` update job hand a script the candidate files as
+// data rather than inside the sentence.
+type UpdateTargetUnavailableError struct {
+	// SourceID, ModID, ModName and Profile identify the mod being updated.
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	ModName  string `json:"mod_name"`
+	Profile  string `json:"profile"`
+	// TargetVersion is the version the update moves to.
+	TargetVersion string `json:"target_version"`
+	// MissingFileIDs are the file ids the update needs that the source no
+	// longer lists.
+	MissingFileIDs []string `json:"missing_file_ids"`
+	// Advertised reports that the update check named MissingFileIDs itself
+	// (FileIDReplacements), rather than their being the installed files.
+	Advertised bool `json:"advertised"`
+	// Candidates are the files the source lists under TargetVersion, in
+	// listing order: what the user can choose from with `lmm install --file`.
+	// Empty when none is listed.
+	Candidates []UpdateTargetCandidate `json:"candidates"`
+}
+
+// UpdateTargetCandidate is one file UpdateTargetUnavailableError offers the
+// user in place of the one that is gone.
+type UpdateTargetCandidate struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	Category string `json:"category,omitempty"`
+}
+
+// Error names the missing file, every candidate, and the explicit install
+// that picks one, so a caller that only prints it can still act on it.
+func (e *UpdateTargetUnavailableError) Error() string {
+	install := fmt.Sprintf("'lmm install --source %s --id %s --profile %s --file <file-id>'", e.SourceID, e.ModID, e.Profile)
+	missing := strings.Join(e.MissingFileIDs, ", ")
+	listed := make([]string, len(e.Candidates))
+	for i, c := range e.Candidates {
+		listed[i] = fmt.Sprintf("%s %q", c.ID, c.Name)
+	}
+	if e.Advertised {
+		files := fmt.Sprintf("no file is listed under %s", e.TargetVersion)
+		if len(listed) > 0 {
+			files = fmt.Sprintf("files listed under %s: %s", e.TargetVersion, strings.Join(listed, ", "))
+		}
+		return fmt.Sprintf("cannot update %s to %s: the file the update check named (file ID %s) is no longer offered by the source, and lmm will not guess a replacement from the version label. Re-run 'lmm update' so the check names a file that exists, or install the file you want explicitly with %s; %s",
+			e.ModName, e.TargetVersion, missing, install, files)
+	}
+	return fmt.Sprintf("cannot update %s to %s: the installed file (file ID %s) is no longer offered by the source, and %d files listed under %s could replace it; lmm will not pick one by list order. Install the file you want explicitly with %s: %s",
+		e.ModName, e.TargetVersion, missing, len(e.Candidates), e.TargetVersion, install, strings.Join(listed, ", "))
+}
+
+// Details implements the --json error envelope's extension point.
+func (e *UpdateTargetUnavailableError) Details() any { return e }

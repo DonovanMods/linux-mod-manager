@@ -1,0 +1,10 @@
+{
+  "id": "file-2",
+  "name": "Main File",
+  "file_name": "sample-mod-1.2.4.zip",
+  "version": "1.2.4",
+  "size": 1024,
+  "is_primary": true,
+  "category": "MAIN",
+  "uploaded_at": "2026-09-01T08:30:00Z"
+}

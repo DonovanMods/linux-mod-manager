@@ -1,0 +1,31 @@
+{
+  "mod": {
+    "id": "42",
+    "source_id": "nexusmods",
+    "name": "Sample Mod",
+    "version": "1.2.3",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "skyrim-se",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "2026-08-27T12:00:00Z",
+    "profile_name": "default",
+    "update_policy": "auto",
+    "installed_at": "2026-08-27T12:00:00Z",
+    "enabled": false,
+    "deployed": false,
+    "link_method": "symlink",
+    "manual_download": false,
+    "convert_paks": false
+  },
+  "locked": true,
+  "locked_version": "1.2.3",
+  "update_policy": "auto",
+  "convert_paks": true
+}

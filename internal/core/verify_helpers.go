@@ -3,8 +3,8 @@ package core
 import (
 	"os"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // HasRetainedCompileSource reports whether any of fileIDs has a retained compile
@@ -53,7 +53,7 @@ func HasRetainedCompileSource(gameCache *cache.Cache, gameID, sourceID, modID, v
 
 // unwrapJoined splits an errors.Join-produced error into its individual
 // parts (Go's join error implements Unwrap() []error) so each per-item
-// convergence failure (ConvergeDeployedFiles' joined error) can be reported
+// convergence failure (convergeDeployedFiles' joined error) can be reported
 // as its own warning row instead of one opaque multi-item blob. A plain,
 // non-joined error is returned as a single-element slice.
 //

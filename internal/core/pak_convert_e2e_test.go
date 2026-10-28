@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,22 +27,22 @@ func findOutcome(outcomes []core.MergedFingerprintEntry, modID string) (core.Mer
 }
 
 // recordingMergeCompilerSource wraps fakeCompilerSource (service_icarus_
-// compile_test.go), additionally recording the exact []source.MergeSource
+// compile_test.go), additionally recording the exact []adapter.MergeSource
 // slice passed to the most recent MergeCompile call. TestPakConvertEndToEnd
 // needs to assert not just THAT a merge happened but WHICH sources, in what
 // order, and with what Kind actually reached the compiler - fakeCompilerSource
 // itself only counts calls.
 type recordingMergeCompilerSource struct {
 	*fakeCompilerSource
-	lastSources []source.MergeSource
+	lastSources []adapter.MergeSource
 }
 
-func (s *recordingMergeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
-	s.lastSources = append([]source.MergeSource(nil), sources...)
+func (s *recordingMergeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
+	s.lastSources = append([]adapter.MergeSource(nil), sources...)
 	return s.fakeCompilerSource.MergeCompile(ctx, basePakPath, sources, outputPath)
 }
 
-var _ source.MergeCompiler = (*recordingMergeCompilerSource)(nil)
+var _ adapter.MergeCompiler = (*recordingMergeCompilerSource)(nil)
 
 // TestPakConvertEndToEnd is the #221 lifecycle sweep: a profile carrying
 // both an exmodz mod and a convert-eligible pak mod goes through convert ->
@@ -53,7 +53,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	game.ConvertPaks = true
 
 	rec := &recordingMergeCompilerSource{fakeCompilerSource: &fakeCompilerSource{}}
-	svc.RegisterSource(rec)
+	registerCompileSource(svc, rec)
 
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "exmod", "1.0", "exmodz-file", []byte("exmod-bytes"))
 	seedEnabledPakMod(t, svc, game, "fake-compiler", "pakmod", "1.0", "pak", []byte("pak-bytes"))
@@ -61,7 +61,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	// Deploy pakmod's raw pak BEFORE the first sync, mirroring the real
 	// ingest-then-first-sync window (TestPakInstallThenSyncNeverDoubleApplies)
 	// - so "raw link gone" below is a genuine transition, not "never existed".
-	installer, err := svc.GetInstallerForProfile(game, "default")
+	installer, err := svc.GetInstallerForProfileForTest(context.Background(), game, "default")
 	require.NoError(t, err)
 	pakMod := &domain.Mod{ID: "pakmod", SourceID: "fake-compiler", GameID: game.ID, Version: "1.0"}
 	require.NoError(t, installer.Install(context.Background(), game, pakMod, "default"))
@@ -94,7 +94,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak deployed")
 
-	outcomes, ok := svc.MergedPakOutcomes(game, "default")
+	outcomes, ok := svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	exmodOutcome, found := findOutcome(outcomes, "exmod")
 	require.True(t, found)
@@ -104,7 +104,8 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.True(t, pakOutcome.Converted)
 
 	// --- Step 2: toggle pakmod's conversion off ---
-	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "pakmod", game.ID, "default", false))
+	_, settingErr24 := svc.SetModConvertPaks(context.Background(), "fake-compiler", "pakmod", game.ID, "default", false)
+	require.NoError(t, settingErr24)
 	rec.lastSources = nil
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -121,13 +122,14 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak still exists (exmodz-only merge must still produce one)")
 
-	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	outcomes, ok = svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	_, found = findOutcome(outcomes, "pakmod")
 	require.False(t, found, "opted-out: pakmod must not appear in the merge fingerprint (membership changed)")
 
 	// --- Step 3: toggle back on ---
-	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "pakmod", game.ID, "default", true))
+	_, settingErr25 := svc.SetModConvertPaks(context.Background(), "fake-compiler", "pakmod", game.ID, "default", true)
+	require.NoError(t, settingErr25)
 	rec.lastSources = nil
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -143,14 +145,14 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak still deployed")
 
-	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	outcomes, ok = svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	pakOutcome, found = findOutcome(outcomes, "pakmod")
 	require.True(t, found, "re-opted-in: pakmod must appear in the merge fingerprint again")
 	require.True(t, pakOutcome.Converted)
 
 	// --- Step 4: disable pakmod entirely ---
-	require.NoError(t, svc.SetModEnabled("fake-compiler", "pakmod", game.ID, "default", false))
+	require.NoError(t, svc.SetModEnabledForTest(context.Background(), "fake-compiler", "pakmod", game.ID, "default", false))
 	rec.lastSources = nil
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -158,7 +160,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.Len(t, rec.lastSources, 1, "a disabled mod must contribute nothing to the merge")
 	require.Equal(t, "fake-compiler:exmod", rec.lastSources[0].ModRef)
 
-	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	outcomes, ok = svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	_, found = findOutcome(outcomes, "pakmod")
 	require.False(t, found, "a disabled mod must not appear in the merge fingerprint")
@@ -192,7 +194,7 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 
 	rec := &recordingMergeCompilerSource{fakeCompilerSource: &fakeCompilerSource{}}
-	svc.RegisterSource(rec)
+	registerCompileSource(svc, rec)
 
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "exmod", "1.0", "exmodz-file", []byte("exmod-bytes"))
 
@@ -204,7 +206,7 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	require.Len(t, rec.lastSources, 1)
 	require.Equal(t, "exmodz", rec.lastSources[0].Kind, "MergeCompile must receive Kind set even for a pure-exmodz profile (#221 regression net)")
 
-	outcomes, ok := svc.MergedPakOutcomes(game, "default")
+	outcomes, ok := svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	require.Len(t, outcomes, 1)
 	require.Equal(t, "exmodz", outcomes[0].Kind)
@@ -252,7 +254,7 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	// (verify's conversion_failed rows, status's conversion-failure counts)
 	// must NOT treat that legacy shape as a conversion failure - it predates
 	// pak conversion entirely (this profile has zero pak mods).
-	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	outcomes, ok = svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	require.Len(t, outcomes, 1)
 	require.True(t, outcomes[0].Converted, "a pre-#221 legacy marker (Kind:\"\", Converted:false) must never report as a conversion failure")

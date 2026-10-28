@@ -1,0 +1,11 @@
+{
+  "app_id": "1133870",
+  "published_file_id": "42",
+  "reason": "the publisher disallows anonymous downloads",
+  "tool": "steamcmd",
+  "source_id": "steamworkshop",
+  "mod_id": "42",
+  "mod_name": "Some Item",
+  "mod_url": "https://steamcommunity.com/sharedfiles/filedetails/?id=42",
+  "manual_download": false
+}

@@ -1,0 +1,7 @@
+## stdout
+Uninstalling mod a from Game (profile: default)...
+## stderr
+## error
+mod a is in profile default under multiple sources (other, src); retry with -s/--source to choose
+## tree
+a.esp

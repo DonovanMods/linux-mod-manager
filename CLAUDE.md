@@ -8,24 +8,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Branch model (git-flow-lite):** `main` holds released, tagged states only. `develop` is the integration branch — story branches (`feat/…`, `fix/…`) fork from `develop` and PR back into `develop` with an explicit `--base develop` (`main` is still the default branch, so a forgotten flag targets protected `main` and gets caught). Both branches are protected: PRs required, Copilot review, no force-push/deletion; the develop ruleset has a repository-admin bypass reserved for post-release fast-forward syncs, trivial hotfix back-merges, and (last resort) history repair. Full release and hotfix flows are documented in [docs/plans/2026-07-30-develop-branch-workflow-design.md](docs/plans/2026-07-30-develop-branch-workflow-design.md).
 
+**v2 line (2026-08-27 to v2.0.0, ended):** the core refactor was built on a long-lived `v2` branch, cut from `develop` at 9729783, with story branches merged back locally by `git merge --no-ff`. v2.0.0 merged `v2` into `main`, so `main` and `develop` carry v2 now and work PRs into `develop` again, as above. The `v1` tag marks the last 1.x state (v1.30.1). The `v2` branch is kept for history; ruleset "Protect v2" blocks its deletion.
+
+**Remotes:** GitHub is the primary (`origin`): rulesets, Copilot review, CI and releases all live there. The homelab Forgejo at git.nerdwerx.io is a read-only pull mirror of GitHub that syncs hourly. Never push to it.
+
 **Issues close on merge into `develop`, not at release.** The tracker answers "what's left to build," so an issue whose work is merged is done — holding it open until the release tag would surface finished work on every "check for relevant open issues first" pass. Release traceability lives in `CHANGELOG.md` instead: entries carry their issue number and move from `[Unreleased]` into a dated `vX.Y.Z` section at release, which makes it a complete issue→release index. Don't duplicate that in issue state or milestones.
 
 Because `main` is the default branch, a PR's `Fixes #N` will **not** auto-close on a merge into `develop` — **close the issue manually**, with a comment naming the merge commit and noting it is merged but not yet released (e.g. "Fixed in #229, merged to `develop` as 2a791cb. Ships with the next release batch."). Revisit this policy if the project starts taking bug reports from other people: for an external reporter, "closed" reads as "I can go download it," and closing at the `develop` merge sends them hunting through a release that doesn't have the fix.
 
 ## Before Development
 
-**ALWAYS run `/dev-init` at the start of every new session.** This skill reads the required directive files and ensures consistent development practices.
-
-Read these global guidance files before starting any development work:
-
-- `~/.claude/DEV.md` - Project-agnostic development practices (test-first, fail-fast, error handling)
-- `~/.claude/GO.md` - Go-specific conventions (error wrapping, context threading, table-driven tests)
-
 **ALWAYS orchestrate subagents through Orca's `orchestration` skill** — invoke it by name; it ships with the `orca` binary. Orca is the dispatch mechanism and `superpowers:subagent-driven-development` is the review policy layered on top, so they compose rather than compete. Create worktrees with `orca-ide worktree create --base-branch develop --issue <n>`: Orca has no adopt/import, so a worktree made with plain `git worktree add` can never be dispatched into.
 
 ## Project Overview
 
-**lmm** (Linux Mod Manager) is a terminal-based mod manager for Linux that provides both TUI and CLI interfaces for searching, installing, updating, and managing game mods from various sources. NexusMods and CurseForge ship as built-in sources, and user-defined custom sources (directory, manifest, api) extend that further without writing code — see the README's Custom Sources section.
+**lmm** (Linux Mod Manager) is a native, terminal-first Linux mod manager focused on reproducible profiles, multiple mod sources, and scriptable game-mod deployment — with a full local web UI (`lmm serve`) over the same engine — two first-class frontends, not a CLI plus a viewer. A profile is desired state: `lmm profile apply` converges the installation to it, downgrades included, and locks are enforced at converge time. NexusMods, CurseForge, Steam Workshop and Icarus ship as built-in sources, and user-defined custom sources (directory, manifest, api) extend that further without writing code — see the README's Custom Sources section. FOMOD, automated LOOT-style plugin sorting (masterlists, `plugins.txt`) and Nexus Collections are explicit non-goals for 2.0 (#354, #355) — load ordering itself ships (`lmm profile reorder`, merge/deploy precedence, the web reorder modal); BepInEx Tiers 1-3 (#357) and a formal game-adapter seam (#353, design in docs/plans/2026-09-10-game-adapter-design.md) are both in scope for 2.0.
 
 ## Build Commands
 
@@ -33,10 +30,13 @@ Read these global guidance files before starting any development work:
 # Build the binary
 go build -o lmm ./cmd/lmm
 
-# Run all tests
-go test ./... -v
+# Run all tests (make, not a bare `go test`: the suite needs the Makefile's
+# TEST_TIMEOUT - Go's 10-minute per-binary default is shorter than cmd/lmm,
+# internal/core and internal/serve each take under -race)
+make test
+make test-race
 
-# Run tests for a specific package
+# Run tests for a specific package (pass -timeout for a slow one)
 go test ./internal/storage/db/... -v
 
 # Format code
@@ -48,6 +48,9 @@ go vet ./...
 # Lint with trunk
 trunk check
 trunk fmt
+
+# Regenerate THIRD_PARTY_NOTICES (after any go.mod or vendored-SPA change; shipped in every package, #522)
+make notices
 ```
 
 ## Architecture
@@ -55,8 +58,9 @@ trunk fmt
 Layered monolith with interface-based extensibility:
 
 ```text
-cmd/lmm/main.go           # Entry point, CLI (Cobra)
+cmd/lmm/main.go           # Entry point, CLI (Cobra); imports exactly app/core/domain/source (hard rule, no allow-list)
 internal/
+├── app/                  # Composition root: app.Open resolves paths (XDG), prepares dirs, opens core, registers sources
 ├── domain/               # Core types (Mod, Profile, Game) - NO external deps
 ├── source/               # ModSource interface + implementations
 │   ├── source.go         # Interface definition
@@ -64,24 +68,118 @@ internal/
 │   ├── nexusmods/        # NexusMods GraphQL client
 │   ├── curseforge/       # CurseForge API client
 │   ├── custom/           # User-defined sources (directory, manifest, api)
+│   ├── steamworkshop/    # Steam Workshop (#269): Tier 1 tracks the Steam client's own items, Tier 3 downloads them (legacy file_url, or an anonymous steamcmd shell-out in steamcmd.go)
 │   ├── steam/            # Steam library scanning (for 'lmm game detect')
 │   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirects)
 ├── storage/
 │   ├── db/               # SQLite (mod metadata, auth tokens)
 │   ├── config/           # YAML parsing (games, profiles)
 │   └── cache/            # Central mod file cache
+├── notices/              # THIRD_PARTY_NOTICES generator + drift test (`make notices`, go run ./tools/notices; stdlib only, dev-time, #522)
+├── safeyaml/             # The one YAML decode every reader uses: a decoder panic is an error, never a crash (#452)
 ├── linker/               # Deploy strategies (symlink, hardlink, copy)
-├── core/                 # Business logic orchestration
-│   ├── service.go        # Main service facade
-│   ├── installer.go      # Install/uninstall operations
-│   ├── updater.go        # Update checking & application
-│   └── profile.go        # Profile switching logic
-└── tui/                  # Bubble Tea application
-    ├── app.go            # Main model, routing
-    └── views/            # Individual screens
+├── core/                 # Business logic orchestration (flat package, 55 files); frontends never reach past it
+    ├── service.go         # Service facade: construction, ServiceConfig, the query/mutation concurrency contract
+    ├── ops.go             # beginOp: the Service's single mutation-serialization slot
+    ├── plan.go            # ErrStalePlan + installedSnapshot: the freshness precondition every Apply re-checks
+    ├── errors.go          # Typed errors a frontend branches on: ConflictError, ErrConfirmationRequired, ErrInteractiveOnly
+    ├── fetch.go           # The source.Fetcher half of a download - staging, containment, WorkshopFetchError (#269 Tier 3)
+    ├── events.go          # EventSink wire envelope + the Op/EventType/FlowPhase vocabulary
+    ├── queries.go         # Read-only query types: ModList, StatusReport, SearchReport, GameListEntry, VerifyReport
+    ├── moddetail.go       # ModDetail: mod metadata + local install state for `lmm mod show` (#86)
+    ├── settings.go        # SettingsResult: `lmm game set-default`/`clear-default`'s --json document
+    ├── phases.go          # DeployPhase vocabulary shared by deploy/switch/apply progress events
+    ├── hooks.go           # HookContext/HookResult + hook script execution (runHook)
+    ├── hooks_resolve.go   # Resolves a flow's merged game/profile hook config into a HookRunner
+    ├── selection.go       # File-selection policy: filter/sort by category, primary-file pick, sameFileIDSet
+    ├── resolve.go         # ResolveVersionFiles: version -> file matching against a source's file list
+    ├── conflicts.go       # File-conflict detection: ConflictModRef/ConflictReport for `lmm conflicts`
+    ├── converge.go        # convergeDeployedFiles: remove-only reconciliation of deployed state (#168/#212)
+    ├── deployable.go      # deployableFiles: the deploy-direction file resolver (#210)
+    ├── overrides.go       # applyProfileOverrides: profile config-override files written to the game dir
+    ├── merged_pak.go      # DeployCompile merged-artifact sync (singleton synthetic mod per game/profile, #197)
+    ├── downloader.go      # HTTP downloads with retry/backoff + checksum verification
+    ├── extractor.go       # Archive extraction (.zip native, .7z/.rar via system tools)
+    ├── dependencies.go    # DependencyResolver: mod dependency ordering + cycle detection
+    ├── filename_parser.go # NexusMods-style filename parsing (name/mod ID/version)
+    ├── changelog.go       # CleanChangelog: strips HTML markup from changelog text for terminal display
+    ├── staging.go         # Staging directory resolution for in-flight downloads/extraction
+    ├── installer.go       # Installer: low-level cache/link/DB engine behind install & update flows
+    ├── importer.go        # Importer: low-level cache/extract engine behind the archive-import flow
+    ├── updater.go         # Updater: source-registry update-check primitives (CheckUpdates)
+    │
+    ├── install.go         # install flow: PlanInstall/ApplyInstall (`lmm install`)
+    ├── deploy.go          # deploy flow: DeployOptions/PlanDeploy/ApplyDeploy/DeployProfile (`lmm deploy`)
+    ├── uninstall.go       # uninstall flow: PlanUninstall/UninstallMod (`lmm uninstall`)
+    ├── purge.go           # purge flow: the shared purgeSpec/purgeMods loop + PurgeProfile (`lmm purge`)
+    ├── update.go          # update flow: PlanUpdate/ApplyUpdate (`lmm update`)
+    ├── rollback.go        # rollback flow: PlanRollback/ApplyRollback (`lmm update rollback`)
+    ├── update_from_archive.go # update-from-file flow: PlanUpdateFromArchive/ApplyUpdateFromArchive (`lmm update --from-file`, #530)
+    ├── switch.go          # profile-switch flow: PlanProfileSwitch/ApplyProfileSwitch (`lmm profile switch`)
+    ├── profile_apply.go   # profile-apply flow: PlanProfileApply/ApplyProfileApply (`lmm profile apply`)
+    ├── profile_sync.go    # profile-sync flow: PlanProfileSync/ApplyProfileSync (`lmm profile sync`)
+    ├── profile_import.go  # profile-import flow: ImportPlan/PlanImport/ApplyImport (`lmm profile import`)
+    ├── profile_reorder.go # profile-reorder flow: ReorderProfileMods/ResolveReorder (`lmm profile reorder`)
+    ├── profile.go         # ProfileManager: ctx-threaded profile CRUD (Ruling 11) + ProfileResult
+    ├── adopt.go           # adopt flow: ScanLocal/PlanAdopt/ApplyAdopt (`lmm import` scan mode)
+    ├── import_archive.go  # archive-import flow: PlanImportArchive/ApplyImportArchive (`lmm import <archive>`)
+    ├── archive_listing.go # archive listing + the member normalisation the plan and the ingest share
+    ├── game_detect.go     # game-detect flow: GameFromDetected/GameSpecFromDetected/ApplyGameDetect (`lmm game detect`, `game add --from-detected`, #206)
+    ├── game_edit.go       # UpdateGameSources: the source<->game mapping (`lmm game edit`, PUT /api/v1/games/{id}, #326)
+    ├── mod_toggle.go      # mod enable/disable flow: EnableMod/DisableMod
+    ├── mod_edit.go        # mod-edit flow: PlanRelinkMod/ApplyRelinkMod (`lmm mod edit`)
+    ├── mod_settings.go    # mod lock/unlock/set-update/convert flows -> ModSettingResult
+    ├── mod_files.go       # `lmm mod files`: ModFileEntry/ModFilesReport
+    ├── verify.go          # verify engine: VerifyTier/VerifyResult (`lmm verify`)
+    ├── verify_helpers.go  # verify engine internals: retained-source / mismatch detection
+    ├── source_index.go    # the local-index surface (#360/#410): SourceIndexStatus/RefreshSourceIndex, IndexStatus/IndexReport
+    ├── source_index_prune.go # ListSourceIndexes/PruneSourceIndexes (`lmm source index --all`/`prune`): the fail-closed prune policy
+    ├── source_notices.go  # WithSourceNotices: a source's throttle/suspension/cold-build notices as events (#436)
+    └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
+└── serve/                # `lmm serve` local web UI: an SPA over /api/v1; imports only app/core/domain (boundary_test.go)
+    ├── server.go          # Package doc; New/Listen/Serve/Close, graceful shutdown, CSRF guard
+    ├── middleware.go      # Host allow-list (DNS-rebinding guard), Origin/CSRF checks, security headers, request logging
+    ├── routes.go          # Registers the SPA routes (spa.go) and every /api/v1 route on the mux
+    ├── spa.go             # The SPA shell (a template: it carries the CSRF token), its embedded asset trees, the CSP hash, the legacy 301s
+    ├── spa/               # index.html shell (+ skip link, the one inline theme script) + app.css (Launcher tokens dark+light, motion tokens, prefers-reduced-motion) + app/*.js (ES modules: render/router/store/api/sse/theme/main, activity+progress+failures+jobhistory+jobresult for the job layer, modrows/navigation/verify/conflicts/shortcuts/relativetime/motion/focustrap/dismiss/slicefence/version/indexnotice, + components/: app, missioncontrol, topbar, awaybar, arrow, cards, library, gamechooser, modpanel, fullmodpage, searchpage, omnibarresults, searchresults, tray, modal, confirmplan, errordetails, planrenderers, planoptions, plan_{deploy,install,uninstall,rollback,updates,verify_fix,profile_import,import_archive,update_from_archive,adopt,switch,profile_apply,purge,profile_sync,mod_relink}, updatefromfile, reordermodal, profilesmodal, shortcutsmodal, uninstallbatchmodal, setup{,adopt,auth,games,import,sources}, sourceindexes, sourcesmap, gameadd, documentview, jobprogress, toasts)
+    ├── vendor/            # preact.module.js, hooks.module.js, htm.module.js - pinned, doc-commented, NEVER fetched by any build
+    ├── selection.go       # ?game/?profile resolution shared by every scoped /api/v1 endpoint and the 301s
+    ├── api.go             # GET /api/v1/{status,mods,updates,profiles,health,conflicts,search,mods/{source}/{id}}
+    ├── api_jobs.go        # POST /api/v1/plans/{kind}, POST /api/v1/jobs, GET .../jobs/{id}[/events]
+    ├── activity.go        # the tray's surface: jobSummary/jobsIndex/jobProgressFrame + the registry's activity bus & frame vocabulary
+    ├── api_activity.go    # GET /api/v1/jobs (index), GET /api/v1/events (one multiplexed lifecycle stream)
+    ├── plans.go           # Server-side plan store: single-use Take, ~10-min TTL sweep
+    ├── jobs.go            # Job registry: goroutine-per-Apply on the server's own ctx, event ring buffer, SSE fanout
+    ├── sse.go             # SSE framing: one JSON frame per core event, ~15s heartbeats, terminal "done" frame
+    ├── plankinds.go       # Closed table of mutation "kind" strings the job API accepts
+    ├── kind_toggle.go     # enable/disable - the one sanctioned non-Plan job path, incl. their two POST /api/v1 routes
+    ├── kind_install.go    # install: version/file selection, conflict Overwrite round-trip (#225)
+    ├── kind_uninstall.go  # uninstall: keep-cache/skip-hooks/force options (#226)
+    ├── kind_updates.go    # per-item update batch plan (#74)
+    ├── kind_switch.go     # `lmm profile switch` as a job (SPA: the profile picker's "Switch and deploy…")
+    ├── kind_profile_apply.go # `lmm profile apply` as a job (SPA: Mission Control's profile card)
+    ├── kind_profile_sync.go # `lmm profile sync` as a job (#326)
+    ├── kind_purge.go      # `lmm purge` as a job (#326)
+    ├── kind_mod_relink.go # `lmm mod edit` as a job - core's PlanRelinkMod/ApplyRelinkMod (#326)
+    ├── kind_profile_import.go # `lmm profile import` as a job (SPA: the profiles modal)
+    ├── kind_rollback.go   # `lmm update rollback` as a job (SPA: the full mod page's versions table)
+    ├── kind_import_archive.go # `lmm import <archive>` as a job, over an upload (#333)
+    ├── kind_update_from_archive.go # `lmm update --from-file` as a job, over an upload (#530)
+    ├── kind_adopt.go      # `lmm import` scan mode as a job (#333)
+    ├── kind_deploy.go     # deploy with live SSE phases (#257)
+    ├── kind_verify_fix.go # `lmm verify --fix` as a job
+    ├── api_profiles.go    # profile CRUD/reorder/export - the sanctioned single-step writes
+    ├── api_games.go       # game add/detect/set-default (#307/#333) + PUT /api/v1/games/{id} sources (#326)
+    ├── api_auth.go        # per-source credential store + the live re-key (restart_required)
+    ├── api_sources.go     # the custom-source editor: list/definition/validate/save/delete
+    ├── api_source_index.go # the local-index routes (#410): GET/POST /api/v1/sources/{id}/index, GET /api/v1/indexes, POST /api/v1/indexes/prune
+    ├── api_mod_settings.go # mod lock/unlock/update-policy/convert - single DB writes, no job
+    ├── api_mod_files.go   # GET /api/v1/mods/{source}/{id}/{files,versions}
+    ├── uploads.go         # streamed archive uploads into the real staging dir (2 GiB cap, 30-min TTL)
+    └── api_uploads.go     # POST /api/v1/uploads, DELETE /api/v1/uploads/{id}
 ```
 
-**Data Flow**: CLI/TUI → Core Service → Source Registry + Storage → Linker → Game Directory
+**Data Flow**: CLI → app.Open → Core Service → Source Registry + Storage → Linker → Game Directory; `lmm serve` → app.Open → Core Service → same Source Registry + Storage → Linker (a second frontend over the identical core)
 
 **Key Interfaces**:
 
@@ -90,33 +188,38 @@ internal/
 
 ## Key Dependencies
 
-- `github.com/charmbracelet/bubbletea` - TUI framework (Elm architecture)
-- `github.com/charmbracelet/bubbles` - TUI components
 - `github.com/spf13/cobra` - CLI framework
 - `github.com/hasura/go-graphql-client` - GraphQL client for NexusMods API
 - `modernc.org/sqlite` - Pure Go SQLite (no CGO)
-- `gopkg.in/yaml.v3` - YAML parsing
+- `go.yaml.in/yaml/v3` - YAML parsing (the maintained continuation of `gopkg.in/yaml.v3`); every read goes through `internal/safeyaml`, which turns a decoder panic into an error (#452)
 - `github.com/stretchr/testify` - Test assertions
 
 ## File Locations
 
-- **SQLite database**: `~/.local/share/lmm/lmm.db`
-- **Mod cache**: `~/.local/share/lmm/cache/<game-id>/<source-id>-<mod-id>/<version>/` (default; a per-game `cache_path` drops the `<game-id>` segment)
-- **Download staging**: `~/.local/share/lmm/downloads/`
-- **Config**: `~/.config/lmm/config.yaml`
-- **Games config**: `~/.config/lmm/games.yaml`
-- **Custom sources**: `~/.config/lmm/sources/*.yaml`
-- **Profiles**: `~/.config/lmm/games/<game-id>/profiles/<profile>.yaml`
+- **SQLite database**: `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)
+- **Mod cache**: `$XDG_DATA_HOME/lmm/cache/<game-id>/<source-id>-<mod-id>/<version>/` (default `~/.local/share/lmm`; a per-game `cache_path` drops the `<game-id>` segment)
+- **Download staging**: `$XDG_DATA_HOME/lmm/downloads/` (default `~/.local/share/lmm`)
+- **Config**: `$XDG_CONFIG_HOME/lmm/config.yaml` (default `~/.config/lmm`)
+- **Games config**: `$XDG_CONFIG_HOME/lmm/games.yaml` (default `~/.config/lmm`)
+- **Custom sources**: `$XDG_CONFIG_HOME/lmm/sources/*.yaml` (default `~/.config/lmm`)
+- **Profiles**: `$XDG_CONFIG_HOME/lmm/games/<game-id>/profiles/<profile>.yaml` (default `~/.config/lmm`)
 
 ## Testing Strategy
 
-| Layer   | Approach                             |
-| ------- | ------------------------------------ |
-| Domain  | Pure unit tests, no mocks            |
-| Source  | Mock HTTP client, recorded responses |
-| Storage | In-memory SQLite, temp directories   |
-| Core    | Mock sources/storage, test logic     |
-| Linker  | Temp directories for file operations |
+| Layer                | Approach                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Domain               | Pure unit tests, no mocks                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Source               | Mock HTTP client, recorded responses                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Storage              | In-memory SQLite, temp directories                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Core                 | Mock sources/storage, test logic                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Linker               | Temp directories for file operations                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| JSON contract        | Every `--json`-emitting type has a golden under `internal/{core,domain,app}/testdata/json/` (`internal/{core,domain,app}/json_golden_test.go`) plus a CLI-facing golden under `cmd/lmm/testdata/json_golden/` (`cmd/lmm/json_golden_test.go`); each rewrites from live output behind its own `-update-*` flag (`-update-json-goldens`, `-update-app-json-goldens`, `-update-json-cli`, and per-command flags like `-update-deploy-dry-run`) rather than a shared one, so a re-record touches only the goldens you meant to change. `internal/serve`'s own wire-only types (job status, plan/job-start request-response, the error envelope) get the same treatment under `internal/serve/testdata/json/` (`internal/serve/json_golden_test.go`, `-update-serve-json-goldens`), plus a go/ast coverage ratchet (`json_contract_coverage_test.go`'s `TestJSONWireContractCoverage`) that fails the build if a serve type gains `json` tags without gaining a golden; `/api/v1`'s own documents are the frozen core types verbatim, so the core goldens above ARE that half of the contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Boundary             | `cmd/lmm/boundary_test.go`'s `TestImportBoundary` enforces the hard rule directly (via a live `go list` of `cmd/lmm`'s actual imports) — `cmd/lmm` may import only `internal/{app,core,domain,source,serve}` — with no allow-list escape hatch; a new dependency either belongs in that list or the logic it needs moves into `internal/core`. `TestCheckBoundary` in the same file is a plain unit test of the `checkBoundary` helper the ratchet is built on, not the ratchet itself — it exercises the helper's logic against hand-built import lists and does not read the real package's imports, so it stays green even with a real violation present. `internal/serve/boundary_test.go` mirrors `TestImportBoundary` one layer down: `internal/serve` may import only `internal/{app,core,domain}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Doc comments         | A `go/ast` ratchet (`internal/{core,domain,app,serve}/doc_comment_test.go`, sharing `internal/testutil.UndocumentedExports`) fails the build if any exported identifier in a package's non-test files has no doc comment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `Details()` coverage | `cmd/lmm/details_coverage_test.go`'s `TestDetailsTypesAreCovered` walks `internal/core`, `cmd/lmm`, and `internal/serve` for every type implementing the `--json` error envelope's `Details() any` extension point and requires a named test pinning its wire shape — an implementer with no entry (or a stale one) fails the build; `internal/serve` currently defines none of its own (it only consumes core's via the shared envelope writer) but stays in scope for the day it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Cancellation         | `internal/core/cancellation_ruling16_test.go` and `..._internal_test.go` assert that cancelling mid-mutation always finishes a DB write's paired profile write rather than splitting the two (Ruling 16); `internal/serve/jobs.go`'s `jobRegistry.Start` extends this structurally, not per-flow — its `run` callback is never handed a request-scoped context at all, only the registry's own `rootCtx` (derived once, at server construction, from the server's root context) — so a closed browser tab cannot reach a running Apply to cancel it; `TestJobRegistry_ShutdownCancelsJobsOnceTheGraceExpires` and `TestServer_ServeCancelsJobsOnceTheGraceExpires` cover the one context a job DOES respond to: the server's own shutdown, after `jobCancelGrace`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Serve (a11y/visual)  | Two ratchets over `spa/app.css` itself: `no_hardcoded_color_test.go` (no literal colour outside the three token blocks) and `contrast_test.go`'s `TestThemeTokenContrast` (every token pair to WCAG 2.1 AA - 4.5:1 text, 3:1 for the SC 1.4.11 indicators) + `TestDarkTokenSetsAgree` (the `prefers-color-scheme` and `[data-theme="dark"]` blocks must define identical values). `control_system_test.go` holds every `<button>` to the control system (class `button` or `menu-item`) and refuses any rule outside app.css's control block that reshapes one (height/padding/border/radius/font-size), and any `button--quiet` that is neither `button--icon` nor a `picker__trigger`; `e2e_controls_test.go` holds the top bar and library toolbar to one control height in both themes, and `e2e_control_centring_test.go` holds labels to vertically centred, single-line text at 1280px (plus one-row card footers and a whole omnibar placeholder). Keyboard traversal, the modal/slide-over focus trap, Escape-returns-focus and the reduced-motion behaviour are E2E, because they are claims about what a BROWSER computes                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Serve (HTTP)         | `httptest` against a `Service` seeded with the existing fake-source fixtures, sandboxed HOME/XDG as everywhere else; `/api/v1` is asserted semantically (status, decoded JSON, CSRF refusals) — never byte-golden. Every mutation flow is exercised end to end through the entry point the SPA drives (`POST /api/v1/plans/{kind}` then `POST /api/v1/jobs`) with its assertions on the END STATE — the DB row, the profile, the deployed tree, the cache — in `api_flow_*_internal_test.go`; SSE framing/replay/heartbeat use a fake-clock seam; the job registry's ring buffer and eviction are `-race`-sensitive and run under it. Ratchets: `no_unsafe_html_test.go`'s `TestNoUnsafeTemplateCasts` (no `template.HTML`/`template.JS` casts anywhere in the package), `no_unsafe_dom_test.go`'s `TestNoUnsafeDOMWrites` (no `dangerouslySetInnerHTML`/`.innerHTML`/`document.write`/`eval` anywhere under `spa/`) and `TestSPAModulesLoadVendorByPinnedPath` (no network imports), and `spa_internal_test.go`'s `TestSPAModuleGraphResolvesOverHTTP` — there is no bundler by design, so nothing else would catch a bad import path before a browser did. **Browser E2E**: `e2e_test.go` + `e2e_harness_test.go` drive a real headless Chrome/Chromium with `chromedp` (a TEST-ONLY dependency — `go list -deps ./cmd/lmm` names none of it), skipping when no browser is on PATH (the 7z pattern). It is the only thing that EXECUTES the SPA, so it is the only thing that can see a CSP refusal, a token set that resolves to nothing, or a module that 404s |
 
 Use `:memory:` for SQLite tests and `t.TempDir()` for filesystem tests.
 
@@ -136,8 +239,8 @@ Core types in `internal/domain/` have no external dependencies:
 **This project uses [Semantic Versioning](https://semver.org/).** Versions are bumped **at release time, not per story PR**:
 
 - **Story PRs into `develop`**: no version bump. Add CHANGELOG entries under `[Unreleased]`. The `version` variable in `cmd/lmm/root.go` stays at the last released version between releases.
-- **Releases (develop → main)**: cut `release/vX.Y.Z` from `develop` with a single prep commit — bump `version` in `cmd/lmm/root.go`, move `[Unreleased]` to a dated `vX.Y.Z` section, add the comparison link, and run `make man` (the genman test enforces this). PR it into `main` titled `release: vX.Y.Z`, merge with a merge commit, tag `vX.Y.Z` on the merge commit, then fast-forward develop (`git push origin main:develop`) and delete the release branch.
-- **Hotfixes**: branch from `main`, PR back into `main` with its own PATCH bump + CHANGELOG section + `make man`, tag on the merge commit, then merge `main` back into `develop`.
+- **Releases (develop → main)**: cut `release/vX.Y.Z` from `develop` with a single prep commit — bump `version` in `cmd/lmm/root.go`, bump `genManDate` in `cmd/lmm/genman.go` to the release date, move `[Unreleased]` to a dated `vX.Y.Z` section, add the comparison link, and run `make man` and `make notices` (the genman drift test enforces the man regeneration, `TestGenManDateIsNotOlderThanTheNewestRelease` the date bump, and `internal/notices`' drift test the regenerated `THIRD_PARTY_NOTICES` when a dependency changed). PR it into `main` titled `release: vX.Y.Z`, merge with a merge commit, tag `vX.Y.Z` on the merge commit, then fast-forward develop (`git push origin main:develop`) and delete the release branch.
+- **Hotfixes**: branch from `main`, PR back into `main` with its own PATCH bump + `genManDate` bump + CHANGELOG section + `make man` + `make notices`, tag on the merge commit, then merge `main` back into `develop`.
 
 **Version increment rules** (judged by the whole release batch):
 
@@ -151,4 +254,4 @@ When in doubt, bump MINOR for a batch containing any new functionality, PATCH fo
 
 In-flight plan documents live in `docs/plans/`; completed plans are kept for historical reference in [docs/plans/archive/](docs/plans/archive/) (the original v1.0 implementation plan is [2026-01-22-lmm-implementation.md](docs/plans/archive/2026-01-22-lmm-implementation.md)). Follow TDD: write failing test → implement → verify pass.
 
-Both the CLI and TUI interfaces should be equally considered first-class interfaces. As such, functional modifications should be reflected in both (new commands, change in core functionality, etc.) when appropriate.
+**Frontends are thin adapters over `internal/core`.** The CLI and `lmm serve` (`internal/serve`, shipping in v2.0.0 — the first public v2 release; the 2026-08-30 v2.0.0 tag was retracted on 2026-09-09) are the two frontends on the v2 line, both over the identical `core.Service`. `lmm serve` is a vendored-Preact SPA over `/api/v1` — no Node, no npm, no bundler, ever: `go build` is the whole build and every asset is `go:embed`-ed (`docs/plans/2026-08-31-serve-spa-design.md`). New behaviour goes into core as a method with tests; a frontend only parses input (flags, or an HTTP request), calls core, and renders — every mutation is a Plan/Apply pair, or (for a handful of single-step flows with nothing to preview, e.g. `EnableMod`/`DisableMod`, the mod lock/unlock/set-update/convert settings) a single beginOp-gated call — and Apply never calls back into the frontend (no confirmation callbacks; a mid-flight decision is a typed error the caller answers by re-running Apply with the matching Options field, per v2 Phase 3 Ruling 1). The full rationale and the phase plan are in `docs/plans/2026-08-27-v2-core-refactor-design.md`; `lmm serve`'s backend design (the API, jobs and SSE) is in `docs/plans/2026-08-30-serve-design.md`, and the SPA that replaced its server-rendered page layer is in `docs/plans/2026-08-31-serve-spa-design.md`. `cmd/lmm` imports exactly `internal/app`, `internal/core`, `internal/domain`, `internal/source`, and `internal/serve` — enforced as a hard rule by `cmd/lmm/boundary_test.go` (no allow-list escape hatch); `internal/serve` itself imports only `internal/app`, `internal/core`, and `internal/domain`, enforced the same way by its own `internal/serve/boundary_test.go`.

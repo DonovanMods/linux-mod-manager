@@ -1,14 +1,14 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/spf13/cobra"
 )
@@ -18,6 +18,7 @@ var (
 	purgeUninstall bool
 	purgeYes       bool
 	purgeForce     bool
+	purgeDryRun    bool
 )
 
 var purgeCmd = &cobra.Command{
@@ -32,19 +33,42 @@ want to start fresh.
 Mod records are preserved in the database, so you can deploy them later
 with 'lmm deploy'. Use --uninstall to also remove the database records.
 
+The game directory holds the active profile's mods. A purge of any other
+profile (-p/--profile) only clears what that profile put there: the files it
+recorded as deployed that nothing else still claims. A file is left in
+place, and listed with why, when the game hands it to you after its first
+deploy (a BepInEx config file), another profile or another game sharing
+the directory records it, or the active profile lists its mod. The purged
+profile's record of such a file goes - the others still track it, and a
+config file is yours - except where the active profile lists its mod and
+no other record of the file is the active profile's or for a mod it lists:
+that record is then what keeps the file from the next purge. A record of a
+file that is already gone goes too. It runs no hooks, keeps
+the mod records, and refuses --uninstall ('lmm profile switch' to that
+profile first to remove its records too).
+
+A game whose profile files do not say which one is active - one cannot be
+read, or none or several are marked - is not purged or deployed at all;
+'lmm profile list' says why.
+
+Use --dry-run to print what the purge would do - which mods would be
+undeployed and what happens to their records - without changing anything
+and without prompting.
+
 Examples:
   lmm purge --game skyrim-se
-  lmm purge --game skyrim-se --profile survival
   lmm purge --game skyrim-se --uninstall
+  lmm purge --game skyrim-se --dry-run
   lmm purge --game skyrim-se --yes`,
 	RunE: runPurge,
 }
 
 func init() {
-	purgeCmd.Flags().StringVarP(&purgeProfile, "profile", "p", "", "profile to purge (default: active profile)")
+	purgeCmd.Flags().StringVarP(&purgeProfile, "profile", "p", "", "profile to purge; for a profile that is not active, only the files it recorded as deployed are removed (default: active profile)")
 	purgeCmd.Flags().BoolVar(&purgeUninstall, "uninstall", false, "also remove mod records from database (like uninstalling each mod)")
 	purgeCmd.Flags().BoolVarP(&purgeYes, "yes", "y", false, "skip confirmation prompt")
 	purgeCmd.Flags().BoolVarP(&purgeForce, "force", "f", false, "continue even if hooks fail")
+	purgeCmd.Flags().BoolVar(&purgeDryRun, "dry-run", false, "print what the purge would do without changing anything")
 
 	rootCmd.AddCommand(purgeCmd)
 }
@@ -56,57 +80,46 @@ func runPurge(cmd *cobra.Command, args []string) error {
 }
 
 func doPurge(ctx context.Context, service *core.Service, game *domain.Game) error {
-	profileName, err := resolveProfile(service, game.ID, purgeProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, purgeProfile)
 	if err != nil {
 		return err
 	}
 
-	// The mod list is fetched before confirming so the prompt's count is
-	// exactly the set core.PurgeProfile will purge.
-	mods, err := service.GetInstalledMods(game.ID, profileName)
-	if err != nil {
-		return fmt.Errorf("getting installed mods: %w", err)
-	}
-
-	if len(mods) == 0 {
-		fmt.Printf("No mods installed for %s (profile: %s)\n", game.Name, profileName)
-		return nil
-	}
-
-	// Confirmation prompt
-	if !purgeYes {
-		fmt.Printf("This will undeploy %d mod(s) from %s (profile: %s)\n", len(mods), game.Name, profileName)
-		if purgeUninstall {
-			fmt.Println("Mod records will also be removed from the database.")
-		} else {
-			fmt.Println("Mod records will be preserved. Use 'lmm deploy' to restore.")
-		}
-		fmt.Print("\nContinue? [y/N] ")
-		reader := bufio.NewReader(os.Stdin)
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("reading input: %w", err)
-		}
-		response := strings.TrimSpace(strings.ToLower(line))
-		if response != "y" && response != "yes" {
-			return ErrCancelled
-		}
-	}
-
 	opts := core.PurgeOptions{
-		Uninstall:   purgeUninstall,
-		Hooks:       getResolvedHooks(service, game, profileName),
-		HookRunner:  getHookRunner(service),
-		HookContext: makeHookContext(game),
-		Force:       purgeForce,
+		Uninstall: purgeUninstall,
+		Force:     purgeForce,
+		SkipHooks: noHooks,
+	}
+
+	// PlanPurge does the installed-mods read this command used to do
+	// itself, before confirming: plan.Mods is both the count the prompt
+	// below states and the set ApplyPurge goes on to purge - one object,
+	// so the two can never disagree.
+	plan, err := service.PlanPurge(ctx, game, profileName, opts)
+	if err != nil {
+		return err
+	}
+	mods := plan.Mods
+
+	// Ruling 15: --dry-run --json is the Plan document, emitted before any
+	// other early return - including the empty-profile one below, which an
+	// empty PurgePlan already states on its own (zero-length Mods) -
+	// matching import/profile switch/apply/sync's identical ordering
+	// (Phase 3 close wave, Important 1).
+	if purgeDryRun && jsonOutput {
+		return emitJSON(plan)
 	}
 
 	// progress prints every diagnostic and per-mod line at its exact point
-	// of occurrence, driven entirely by core.PurgeProfile's events (the
+	// of occurrence, driven entirely by core.ApplyPurge's events (the
 	// same adapter pattern as doDeploy's). Entries that also land in
 	// result.Warnings/.Notes are never separately batch-printed below -
 	// every one has a corresponding event here.
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.DeployBeforeAllForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
@@ -125,11 +138,64 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 		}
 	}
 
-	result, err := service.PurgeProfile(ctx, game, profileName, mods, opts, progress)
+	if plan.RecordedOnly {
+		return doRecordedPurge(ctx, service, game, plan, opts, progress)
+	}
+
+	if !plan.HasWork() {
+		// Ruling 15: nothing to purge is not an error, and a --json caller
+		// is still owed a document - the Result a purge of nothing
+		// produces, rather than the console sentence. A profile with no
+		// mods left can still have files to remove from an earlier
+		// mod_path (#451, #466 review F2), which is work.
+		if jsonOutput {
+			return emitJSON(&core.PurgeResult{})
+		}
+		fmt.Printf("No mods installed for %s (profile: %s)\n", game.Name, profileName)
+		return nil
+	}
+
+	if purgeDryRun {
+		// Ruling 15: --dry-run --json already returned above, before the
+		// empty-profile check; this is the plain-text rendering only.
+		renderPurgePlan(plan, game, progress)
+		return nil
+	}
+
+	// Confirmation prompt. Under --json the prompt is unanswerable (Ruling
+	// 2: readPromptLine refuses to read stdin and returns
+	// core.ErrConfirmationRequired), so the preamble is not printed either -
+	// it would be console text beside an error envelope.
+	if !purgeYes {
+		if !jsonOutput {
+			fmt.Printf("This will undeploy %d mod(s) from %s (profile: %s)\n", len(mods), game.Name, profileName)
+			printStrandedPaths(plan, "It will also remove")
+			if purgeUninstall {
+				fmt.Println("Mod records will also be removed from the database.")
+			} else {
+				fmt.Println("Mod records will be preserved. Use 'lmm deploy' to restore.")
+			}
+			fmt.Print("\nContinue? [y/N] ")
+		}
+		response, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if response != "y" && response != "yes" {
+			return ErrCancelled
+		}
+	}
+
+	result, err := service.ApplyPurge(ctx, game, plan, opts, quietSink(progress))
 	if err != nil {
 		// Diagnostics accumulated before a fatal error were already
 		// printed above, live, via progress - nothing left to print here.
 		return err
+	}
+
+	// Ruling 15: the applying run's document is the Result.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	fmt.Printf("\nPurged: %d mod(s)", result.Purged)
@@ -137,10 +203,226 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 		fmt.Printf(", Failed: %d", failed)
 	}
 	fmt.Println()
+	if result.RemovedPaths > 0 {
+		// #451: files removed from a mod_path the game no longer uses.
+		fmt.Printf("Removed %d file(s) deployed under an earlier mod_path\n", result.RemovedPaths)
+	}
+	// #445 gate 2, G2-1: the files another game records, left in place -
+	// and (#466) the files the user changed.
+	printKeptPaths(result.Kept)
 
 	if !purgeUninstall {
 		fmt.Println("\nMod records preserved. Use 'lmm deploy' to restore mods.")
 	}
 
 	return nil
+}
+
+// printStrandedPaths lists the files plan removes from a mod_path the game
+// no longer uses (#451), each as the absolute path it is removed from,
+// after lead ("It will also remove"), and the ones there it leaves.
+func printStrandedPaths(plan *core.PurgePlan, lead string) {
+	if len(plan.Stranded) > 0 {
+		fmt.Printf("%s %d file(s) deployed under an earlier mod_path:\n", lead, len(plan.Stranded))
+		for _, st := range plan.Stranded {
+			fmt.Printf("  - %s\n", filepath.Join(st.ModPath, filepath.FromSlash(st.Path)))
+		}
+	}
+	var kept []core.PurgeKeptPath
+	for _, k := range plan.Kept {
+		if k.ModPath != "" {
+			kept = append(kept, k)
+		}
+	}
+	printKeptPaths(kept)
+}
+
+// doRecordedPurge is doPurge for a profile that is not the game's active
+// one (#445, core.PurgePlan.RecordedOnly): it says that only the files the
+// profile recorded as deployed are removed, lists them and the ones it
+// leaves - each with why - confirms, and applies. A dry run stops after the
+// list.
+func doRecordedPurge(ctx context.Context, service *core.Service, game *domain.Game, plan *core.PurgePlan, opts core.PurgeOptions, progress func(core.Event)) error {
+	if !jsonOutput {
+		if purgeDryRun {
+			fmt.Printf("Purge plan for profile %q (dry run)\n\n", plan.Profile)
+		}
+		fmt.Printf("%s is not the active profile of %s (%s is), so this purge only removes the files %s recorded as deployed that nothing else still claims:\n",
+			plan.Profile, game.Name, plan.ActiveProfile, plan.Profile)
+		strandedAt := make(map[string]string, len(plan.Stranded))
+		for _, st := range plan.Stranded {
+			strandedAt[st.Path] = st.ModPath
+		}
+		for _, path := range plan.Remove {
+			if root, ok := strandedAt[path]; ok {
+				// #451: under a mod_path the game no longer uses.
+				path = filepath.Join(root, filepath.FromSlash(path)) + " (deployed under an earlier mod_path)"
+			}
+			fmt.Printf("  - %s\n", path)
+		}
+		if len(plan.Remove) == 0 {
+			fmt.Println("  (none)")
+		}
+		printKeptPaths(plan.Kept)
+		fmt.Println("Mod records and the profile are kept, and no hooks run.")
+	}
+
+	// A kept file whose record goes is still work to do: skipping it would
+	// leave that record, and with it the game's mod_path locked (#427).
+	dropped := 0
+	for _, k := range plan.Kept {
+		if k.Reason.DropsRecord() {
+			dropped++
+		}
+	}
+	if len(plan.Remove) == 0 && dropped == 0 {
+		if jsonOutput {
+			return emitJSON(&core.PurgeResult{Kept: plan.Kept})
+		}
+		fmt.Println("\nNothing to remove.")
+		return nil
+	}
+	if purgeDryRun {
+		fmt.Printf("\nWould remove: %d file(s)", len(plan.Remove))
+		if dropped > 0 {
+			fmt.Printf(", and drop %s's record of %d file(s) it leaves", plan.Profile, dropped)
+		}
+		fmt.Println()
+		return nil
+	}
+
+	if !purgeYes {
+		if !jsonOutput {
+			fmt.Print("\nContinue? [y/N] ")
+		}
+		response, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if response != "y" && response != "yes" {
+			return ErrCancelled
+		}
+	}
+
+	result, err := service.ApplyPurge(ctx, game, plan, opts, quietSink(progress))
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	fmt.Printf("\nRemoved: %d file(s); cleared: %d mod(s)", result.RemovedPaths, result.Purged)
+	if kept := len(result.Skipped); kept > 0 {
+		fmt.Printf(", left in place: %d", kept)
+	}
+	fmt.Println()
+	printKeptPaths(result.Kept)
+	fmt.Printf("\nRun 'lmm profile switch %s' to deploy %s again.\n", plan.Profile, plan.Profile)
+	return nil
+}
+
+// printKeptPaths lists the paths a recorded-only purge leaves in place,
+// each with why - and, for a file the game hands to the user, that lmm
+// stops tracking it.
+func printKeptPaths(kept []core.PurgeKeptPath) {
+	for _, k := range kept {
+		path := k.Path
+		if k.ModPath != "" {
+			// #451: under a mod_path the game no longer uses.
+			path = filepath.Join(k.ModPath, filepath.FromSlash(k.Path))
+		}
+		if k.Reason == core.PurgeKeptUserFile {
+			fmt.Printf("Kept your file; lmm no longer tracks it (%s): %s\n", keptReason(k), path)
+			continue
+		}
+		fmt.Printf("Left in place (%s): %s\n", keptReason(k), path)
+	}
+}
+
+// keptReason is why k was left, as printKeptPaths says it.
+func keptReason(k core.PurgeKeptPath) string {
+	switch k.Reason {
+	case core.PurgeKeptListed:
+		return "its mod is in the active profile " + strings.Join(k.Profiles, ", ")
+	case core.PurgeKeptOtherGame:
+		return "still recorded by game " + strings.Join(k.Games, ", ")
+	case core.PurgeKeptUserFile:
+		if k.Note != "" {
+			// #466: a copy or hardlink the user changed; #469: a link the
+			// user replaced with a file.
+			return k.Note
+		}
+		return "the game hands it to you after its first deploy"
+	default:
+		return "still recorded by " + strings.Join(k.Profiles, ", ")
+	}
+}
+
+// renderPurgePlan prints a core.PurgePlan under a "(dry run)" header, in the
+// same vocabulary a real purge would use: the "Purging mods from <Game>..."
+// header and the per-mod "✓ <name>" lines are synthesized as core flow
+// events and pushed through doPurge's OWN progress closure, so a dry run's
+// lines cannot drift from the live ones. The lines the plan alone owns - the
+// header, the records statement, the summary and the hook readout - are
+// printed here. All of it is new output behind the new --dry-run flag, so no
+// existing invocation is affected.
+//
+// A dry run does not prompt: there is nothing to confirm when nothing will
+// change. It states the records consequence in the prompt's own words
+// instead, which is the half of that block a dry run still needs to convey.
+//
+// The summary says "Would purge", not "Purged", and the live trailer
+// ("Mod records preserved. Use 'lmm deploy' to restore mods.") is omitted -
+// the records line above already covers it, unconditionally, for both
+// --uninstall and not.
+//
+// PurgePlan lists mods, not files. On a DeployCompile game a purge also
+// removes the profile's merged artifact (purgeMergedPak) - an effect Mods
+// cannot express, so it gets a line of its own rather than letting the mod
+// count read as the whole story. That line comes from plan.MergedArtifact
+// and is printed only when there is a deployed artifact to remove (Ruling
+// 8): a compile game with nothing merged yet gets no line at all.
+//
+// Exit code: like `deploy --dry-run` and `uninstall --dry-run`, a dry run
+// that renders successfully returns nil. A game/profile that cannot be
+// resolved at all is still a PlanPurge error and fails normally, exactly as
+// the live path does.
+func renderPurgePlan(plan *core.PurgePlan, game *domain.Game, progress func(core.Event)) {
+	fmt.Printf("Purge plan for profile %q (dry run)\n\n", plan.Profile)
+
+	fmt.Printf("Would undeploy %d mod(s) from %s (profile: %s)\n", len(plan.Mods), game.Name, plan.Profile)
+	if plan.Uninstall {
+		fmt.Println("Mod records will also be removed from the database.")
+	} else {
+		fmt.Println("Mod records will be preserved. Use 'lmm deploy' to restore.")
+	}
+
+	total := len(plan.Mods)
+	progress(core.StepEvent{Scope: core.Scope{Op: core.OpPurge, Total: total}, Phase: core.DeployPurging})
+	for i, m := range plan.Mods {
+		progress(core.ModEvent{
+			Scope: core.Scope{
+				Op: core.OpPurge, Index: i + 1, Total: total,
+				ModName: m.Name, Mod: &domain.ModReference{SourceID: m.SourceID, ModID: m.ID},
+			},
+			Phase: core.PurgeModPurged,
+		})
+	}
+
+	fmt.Printf("\nWould purge: %d mod(s)\n", total)
+	printStrandedPaths(plan, "Would also remove")
+	// #269: PurgePlan.External exists "so the preview says what it will not
+	// touch" (design §2). Without it the user sees a shorter mod count with
+	// no explanation for the difference.
+	if len(plan.External) > 0 {
+		fmt.Printf("Left alone (tracked from Steam): %s\n", strings.Join(plan.External, ", "))
+	}
+	if plan.MergedArtifact != nil {
+		fmt.Println("The profile's merged artifact would be removed too")
+	}
+
+	if len(plan.Hooks) > 0 {
+		fmt.Printf("\nHooks that would run: %s\n", strings.Join(plan.Hooks, ", "))
+	}
 }

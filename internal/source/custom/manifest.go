@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // defaultManifestRefresh is the remote-manifest cache TTL when the definition
@@ -48,6 +48,8 @@ type Manifest struct {
 	apiKey     string
 	httpClient *http.Client
 	now        func() time.Time // injectable for TTL tests
+
+	dated datedCatalogue // whether the last search saw any dated entry (#503)
 
 	mu        sync.Mutex
 	cached    *manifestDoc
@@ -248,13 +250,24 @@ func (m *Manifest) ExchangeToken(ctx context.Context, code string) (*source.Toke
 }
 
 // Capabilities implements source.CapabilityReporter. Auth reflects whether the
-// definition declares an auth block.
+// definition declares an auth block. Sorts is updated alone (#503): a
+// manifest entry may carry updated_at, and the schema has no download or
+// endorsement count. updated_at is optional per entry, so it is offered only
+// once a search has loaded the manifest and found a date on at least one
+// entry (see datedCatalogue); a manifest with none offers no sort.
 func (m *Manifest) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: m.auth != nil, Versions: true}
+	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: m.auth != nil, Versions: true,
+		Sorts: m.dated.sorts()}
 }
 
 // TypeLabel implements source.TypeLabeler.
 func (m *Manifest) TypeLabel() string { return "manifest" }
+
+// IgnoresGameIdentifier implements source.GameIdentifierIgnorer: the mapped
+// value only FILTERS a manifest's own per-mod game_ids, and an empty one
+// matches every entry (gameMatches) - so a manifest that serves one game, or
+// serves them all, needs no mapping at all (#387).
+func (m *Manifest) IgnoresGameIdentifier() bool { return true }
 
 // toMod converts a manifest entry to a domain.Mod. GameID is stamped by
 // searchMods / the callers, not here.
@@ -307,6 +320,7 @@ func (m *Manifest) Search(ctx context.Context, query source.SearchQuery) (source
 		}
 		mods = append(mods, m.toMod(mm))
 	}
+	m.dated.note(mods)
 	return searchMods(mods, query), nil
 }
 
@@ -331,14 +345,19 @@ func (m *Manifest) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.D
 	}
 	files := make([]domain.DownloadableFile, 0, len(mm.Files))
 	for _, f := range mm.Files {
+		var uploadedAt time.Time
+		if parsed, err := time.Parse(time.RFC3339, f.UpdatedAt); err == nil {
+			uploadedAt = parsed
+		}
 		files = append(files, domain.DownloadableFile{
-			ID:        f.ID,
-			Name:      f.Name,
-			FileName:  f.Filename,
-			Version:   f.Version,
-			Size:      f.Size,
-			IsPrimary: f.Primary,
-			SHA256:    f.SHA256,
+			ID:         f.ID,
+			Name:       f.Name,
+			FileName:   f.Filename,
+			Version:    f.Version,
+			Size:       f.Size,
+			IsPrimary:  f.Primary,
+			UploadedAt: uploadedAt,
+			SHA256:     f.SHA256,
 		})
 	}
 	return files, nil
@@ -379,7 +398,9 @@ func (m *Manifest) sameOrigin(fileURL string) bool {
 	return sameOriginURLs(fileURL, m.url)
 }
 
-// findMod fetches the manifest and returns the entry with the given ID.
+// findMod fetches the manifest and returns the entry with the given ID. A
+// mod a successfully fetched manifest does not list is
+// domain.ErrModNotFound; a failed fetch is its own error.
 func (m *Manifest) findMod(ctx context.Context, modID string) (*manifestMod, error) {
 	doc, err := m.fetch(ctx)
 	if err != nil {
@@ -390,7 +411,13 @@ func (m *Manifest) findMod(ctx context.Context, modID string) (*manifestMod, err
 			return &doc.Mods[i], nil
 		}
 	}
-	return nil, fmt.Errorf("source %q: mod not found: %s", m.id, modID)
+	return nil, m.notFound(modID)
+}
+
+// notFound is the manifest's answer for a mod a successful fetch does not
+// list.
+func (m *Manifest) notFound(modID string) error {
+	return fmt.Errorf("source %q: mod %s: not in manifest %s: %w", m.id, modID, m.url, domain.ErrModNotFound)
 }
 
 // GetDependencies implements source.ModSource: manifest dependencies are IDs
@@ -408,7 +435,12 @@ func (m *Manifest) GetDependencies(ctx context.Context, mod *domain.Mod) ([]doma
 }
 
 // CheckUpdates implements source.ModSource by comparing installed versions to
-// the current manifest.
+// the current manifest. An installed mod the manifest no longer lists is
+// reported as a *source.ModNotFoundError (#541), joined into the returned
+// error, so core lists it as gone instead of the check reading as "up to
+// date". Only a manifest that was fetched and parsed says so: a failed fetch
+// is a failed check that marks nothing missing, and so does one that lists
+// no mods at all.
 func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	doc, err := m.fetch(ctx)
 	if err != nil {
@@ -420,6 +452,7 @@ func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.Installe
 	}
 
 	var updates []domain.Update
+	var missing []error
 	for _, inst := range installed {
 		select {
 		case <-ctx.Done():
@@ -428,7 +461,13 @@ func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.Installe
 		}
 		current, ok := byID[inst.ID]
 		if !ok {
-			continue // mod removed from the manifest; nothing to offer
+			// An empty manifest is far likelier a truncated or
+			// placeholder document than every mod withdrawn at once: it
+			// says nothing.
+			if len(doc.Mods) > 0 {
+				missing = append(missing, &source.ModNotFoundError{ModID: inst.ID, Err: m.notFound(inst.ID)})
+			}
+			continue
 		}
 		if domain.IsNewerVersion(inst.Version, current.Version) {
 			updates = append(updates, domain.Update{
@@ -437,7 +476,7 @@ func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.Installe
 			})
 		}
 	}
-	return updates, nil
+	return updates, errors.Join(missing...)
 }
 
 // DownloadHeaders implements source.DownloadHeaderProvider. Header-mode auth

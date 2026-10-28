@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // mergedPakModID/mergedPakVersion identify the merged pak as a synthetic,
@@ -58,7 +58,7 @@ type MergedFingerprintEntry struct {
 	FailReason string `json:",omitempty"`
 }
 
-// mergeSourceClassifier is the one sliver of source.MergeCompiler the
+// mergeSourceClassifier is the one sliver of adapter.MergeCompiler the
 // package-level fingerprint helpers need: ClassifyMergeSource as a function
 // value (a method value like mc.ClassifyMergeSource assigns directly).
 // Kept narrow so the helpers stay pure and tests can exercise fingerprint
@@ -72,9 +72,8 @@ type mergeSourceClassifier func(id string) (kind string, convertible bool)
 // retained-source disk checks (unlike enabledMergeSources, which
 // additionally confirms ingest actually RETAINED something). Callers that
 // only need "does pak-conversion state have any effect on this mod at all"
-// - e.g. the TUI deciding whether to show the "raw" flag or honor the
-// convert-toggle key - want this cheaper check, not enabledMergeSources'
-// full retained-file resolution. A game with no (or an ambiguous)
+// want this cheaper check, not enabledMergeSources' full retained-file
+// resolution. A game with no (or an ambiguous)
 // merge-compiler source has no merge sources of any kind, so resolution
 // failure is simply false, not an error. Deliberately NOT gated on
 // game.DeployMode: `lmm mod convert` persists the per-mod flag on
@@ -87,7 +86,7 @@ func (s *Service) ModHasPakMergeSource(game *domain.Game, mod *domain.InstalledM
 	if game == nil || mod == nil {
 		return false
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return false
 	}
@@ -181,21 +180,59 @@ func mergedFingerprintsEqual(a, b MergedFingerprint, classify mergeSourceClassif
 // while an import-compiled entry's is keyed by its own archive filename
 // (see Task 2/3's ingest branches) - FileIDs is the one list that already
 // carries whichever identity applies, for either origin.
-func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]source.MergeSource, error) {
-	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
+func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, profileName string) ([]adapter.MergeSource, error) {
+	retained, err := s.retainedMergeFiles(ctx, game, profileName)
 	if err != nil {
-		return nil, fmt.Errorf("loading profile mods: %w", err)
+		return nil, err
 	}
 
-	gameCache := s.GetGameCache(game)
 	// The compile source is resolved lazily, on the first retained file
 	// found (#256): classification is its business now, but a profile with
 	// nothing retained has nothing to classify, and must keep working -
 	// exactly as it did pre-#256 - even for a game whose MergeCompiler
 	// source isn't configured (syncMergedPak's uninstall-to-zero path runs
 	// unconditionally from every mutation flow).
-	var mc source.MergeCompiler
-	var sources []source.MergeSource
+	var mc adapter.MergeCompiler
+	var sources []adapter.MergeSource
+	for _, f := range retained {
+		if mc == nil {
+			var mcErr error
+			if mc, mcErr = s.adapterCompiler(game); mcErr != nil {
+				return nil, mcErr
+			}
+		}
+		kind, convertible := mc.ClassifyMergeSource(f.fileID)
+		if convertible && (!game.ConvertPaks || !f.mod.ConvertPaks) {
+			continue // opted out (game- or mod-level): stays raw-deployed (#221)
+		}
+		sources = append(sources, adapter.MergeSource{
+			ModRef:     f.mod.SourceID + ":" + f.mod.ID,
+			ModName:    f.mod.Name,
+			SourcePath: f.path,
+			Kind:       kind,
+		})
+	}
+	return sources, nil
+}
+
+// retainedMergeFile is one retained merge-source file of an enabled mod.
+type retainedMergeFile struct {
+	mod    domain.InstalledMod
+	fileID string
+	path   string
+}
+
+// retainedMergeFiles is enabledMergeSources' walk without the
+// classification: every enabled mod's retained merge-source files, in
+// profile load order. It needs no compiler, so it can answer "would a
+// sync have anything to merge" for a game whose adapter is refused.
+func (s *Service) retainedMergeFiles(ctx context.Context, game *domain.Game, profileName string) ([]retainedMergeFile, error) {
+	mods, err := s.GetInstalledModsInProfileOrder(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("loading profile mods: %w", err)
+	}
+	gameCache := s.GetGameCache(game)
+	var files []retainedMergeFile
 	for _, mod := range mods {
 		if !mod.Enabled {
 			continue
@@ -205,33 +242,10 @@ func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]
 			if _, statErr := os.Stat(retainedPath); statErr != nil {
 				continue // not a retained merge source (nothing ingested for this fileID - a legacy-ingest pak, or a non-convert-eligible one)
 			}
-			if mc == nil {
-				var mcErr error
-				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
-					return nil, mcErr
-				}
-			}
-			kind, convertible := mc.ClassifyMergeSource(fileID)
-			if convertible && (!game.ConvertPaks || !mod.ConvertPaks) {
-				continue // opted out (game- or mod-level): stays raw-deployed (#221)
-			}
-			sources = append(sources, source.MergeSource{
-				ModRef:     mod.SourceID + ":" + mod.ID,
-				ModName:    mod.Name,
-				SourcePath: retainedPath,
-				Kind:       kind,
-			})
+			files = append(files, retainedMergeFile{mod: mod, fileID: fileID, path: retainedPath})
 		}
 	}
-	return sources, nil
-}
-
-// EnabledMergeSourcesForTest exposes enabledMergeSources to external
-// (core_test package) tests - the method itself stays unexported since it
-// is an internal implementation detail of syncMergedPak, not part of
-// Service's public API.
-func (s *Service) EnabledMergeSourcesForTest(game *domain.Game, profileName string) ([]source.MergeSource, error) {
-	return s.enabledMergeSources(game, profileName)
+	return files, nil
 }
 
 // syncMergedPak regenerates game+profileName's merged pak if its recorded
@@ -252,20 +266,37 @@ func (s *Service) EnabledMergeSourcesForTest(game *domain.Game, profileName stri
 // already-absent path, matching every other uninstall in this codebase),
 // so calling it unconditionally here is safe even when no pak was ever
 // generated.
+//
+// Every branch that DEPLOYS - the rebuild, the fast path's redeploy of a
+// missing artifact, reconcile's raw-pak fallback - first asks the game's
+// adapter (deployRefusal), because the resync ends every mutation that
+// touches a merge input, including the single-step ones no Plan gates
+// (#413). A refusal comes back as this call's error and the artifact is left
+// exactly as it is; the uninstall-to-zero removal still runs.
 func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileName string) (warnings []string, err error) {
 	if game.DeployMode != domain.DeployCompile {
 		return nil, nil
 	}
+	// #462: the merged artifact in the game directory is the active
+	// profile's. A flow acting for another profile - a recorded-only
+	// uninstall or disable, a relink, a recorded-only profile import -
+	// leaves it alone; that profile's merge set is compiled when a switch
+	// makes it active.
+	if _, recordedOnly, err := s.profileScope(ctx, game.ID, profileName); err != nil {
+		return nil, err
+	} else if recordedOnly {
+		return nil, nil
+	}
 
-	current, sources, err := s.currentMergedFingerprint(game, profileName)
+	current, sources, err := s.currentMergedFingerprint(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
 
 	gameCache := s.GetGameCache(game)
-	syntheticMod := &domain.Mod{ID: mergedPakModID, SourceID: domain.SourceMerged, Version: mergedPakVersion, GameID: game.ID}
+	syntheticMod := mergedPakMod(game)
 
-	installer, err := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +322,7 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	// already consulted it to classify them), so resolving here - earlier
 	// than pre-#256, which only needed the source on the slow path below -
 	// cannot newly fail a flow that used to succeed.
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return nil, err
 	}
@@ -316,6 +347,9 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 			// (self-healing) rather than re-merging - the inputs haven't
 			// changed, so there is nothing new to compute.
 			if _, statErr := os.Stat(deployedPath); statErr != nil {
+				if err := s.deployRefusal(ctx, game, profileName); err != nil {
+					return nil, err
+				}
 				if err := installer.Install(ctx, game, syntheticMod, profileName); err != nil {
 					return nil, fmt.Errorf("redeploying merged pak: %w", err)
 				}
@@ -343,6 +377,12 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 			}
 			return reconWarnings, nil
 		}
+	}
+
+	// A rebuild ends in a deploy: the adapter has its say before anything
+	// is compiled or committed.
+	if err := s.deployRefusal(ctx, game, profileName); err != nil {
+		return nil, err
 	}
 
 	stagePath := cachePath + ".staging"
@@ -397,13 +437,29 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	return warnings, nil
 }
 
-// SyncMergedPak exposes syncMergedPak as the public entry point every
-// mutation flow that can change a merged pak's inputs (enabled-mod set,
-// load order, mod version, base pak) must call after the mutation is
-// durable (#197 fix wave: rollback, purge, and both import paths were
-// found missing this call). Safe to call unconditionally - it no-ops for a
-// non-DeployCompile game and is a cheap fast-path when nothing changed.
+// SyncMergedPak acquires the mutation slot and delegates to syncMergedPak;
+// it is the frontend entry point, not something an internal mutation flow
+// should call - doing so would re-enter the semaphore and hang forever.
+// Internal flows that can change a merged pak's inputs (enabled-mod set,
+// load order, mod version, base pak) must instead call syncMergedPak
+// directly after the mutation is durable (#197 fix wave: rollback, purge,
+// and both import paths were found missing this call). Safe to call
+// unconditionally - it no-ops for a non-DeployCompile game and is a cheap
+// fast-path when nothing changed.
+//
+// `mod edit`'s last cmd caller (v2 Phase 3 Task 10, #303) moved into
+// ApplyRelinkMod (which calls the unexported syncMergedPak directly, already
+// inside its own beginOp). Documented test-seed API kept by ruling (Phase 3
+// Ruling 10): no Plan/Apply substitute at fixture scale (11 sites / 8 files
+// across cmd/lmm as of Unit R) - cmd/lmm test fixtures across several
+// command areas need to force a merged-pak resync as test setup. Not part
+// of the frontend contract.
 func (s *Service) SyncMergedPak(ctx context.Context, game *domain.Game, profileName string) ([]string, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return s.syncMergedPak(ctx, game, profileName)
 }
 
@@ -416,7 +472,7 @@ func (s *Service) SyncMergedPak(ctx context.Context, game *domain.Game, profileN
 // first-install transient (raw deployed, then first sync converts) is
 // healed here, not left for the next verify.
 func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) (warnings []string, err error) {
-	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
+	mods, err := s.GetInstalledModsInProfileOrder(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile mods: %w", err)
 	}
@@ -427,7 +483,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 	// source - the retained-stat therefore runs BEFORE classification,
 	// flipping the pre-#256 order of two independent, side-effect-free
 	// filters.
-	var mc source.MergeCompiler
+	var mc adapter.MergeCompiler
 	for i := range mods {
 		mod := &mods[i]
 		if !mod.Enabled {
@@ -441,7 +497,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 			}
 			if mc == nil {
 				var mcErr error
-				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+				if mc, mcErr = s.adapterCompiler(game); mcErr != nil {
 					return warnings, mcErr
 				}
 			}
@@ -483,11 +539,11 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				// - is always safe, never a double-apply: the raw copy is
 				// never claimed as "gone" (members=nil) before it actually
 				// is.
-				// Single-mod Installer.Uninstall, not UninstallBatch - no
-				// before/after hooks run for this undeploy (hooks are only
-				// wired through the batch path's BatchOptions). User-observable:
-				// a game's uninstall/before_each/after_each hooks never fire
-				// for this reconcile-driven raw-pak takedown.
+				// Single-mod Installer.Uninstall - no before/after hooks run
+				// for this undeploy (hooks are only wired through the BATCH
+				// install path's applyInstallBatchMod, not here).
+				// User-observable: a game's uninstall/before_each/after_each
+				// hooks never fire for this reconcile-driven raw-pak takedown.
 				if uerr := installer.Uninstall(ctx, game, &mod.Mod, profileName); uerr != nil {
 					return warnings, fmt.Errorf("undeploying raw pak for %s: %w", ref, uerr)
 				}
@@ -549,12 +605,19 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				if recorded && len(members) > 0 && sameMemberSet(currentMembers, members) && allMembersDeployed(game.ModPath, currentMembers) {
 					continue // already converged (raw)
 				}
+				// The raw fallback deploys: the adapter has its say before
+				// the manifest is flipped (#413), so a refusal leaves both
+				// the manifest and the game directory as they were. Rare
+				// enough - a mod falling back to raw - to ask each time.
+				if err := s.deployRefusal(ctx, game, profileName); err != nil {
+					return warnings, err
+				}
 				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, members); werr != nil {
 					return warnings, fmt.Errorf("flipping %s to raw-deploy: %w", ref, werr)
 				}
-				// Single-mod Installer.Install, not InstallBatch - same hook
-				// gap as the Uninstall call above: no install hooks run for
-				// this reconcile-driven raw-pak fallback deploy.
+				// Single-mod Installer.Install - same hook gap as the
+				// Uninstall call above: no install hooks run for this
+				// reconcile-driven raw-pak fallback deploy.
 				if ierr := installer.Install(ctx, game, &mod.Mod, profileName); ierr != nil {
 					return warnings, fmt.Errorf("deploying raw pak for %s: %w", ref, ierr)
 				}
@@ -629,7 +692,7 @@ func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]stri
 
 // rawPakRestoreName picks the on-disk name restoreRawPakCopy publishes a
 // healed deployable pak copy under (#250). An import-path fileID IS the
-// original archive filename (Importer.Import stages the deployable copy
+// original archive filename (importWithIdentity stages the deployable copy
 // under exactly that name), so the restore is name-exact - detected by
 // asking the compile source whether the fileID names one of its
 // convertible artifacts (#256: the format test lives behind the seam). A
@@ -643,7 +706,7 @@ func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]stri
 // ingest keys fileIDs, which is uniform across games - while both format
 // questions inside it are the source's. Both inputs are
 // source-controlled, so both are Base'd before use as a path component.
-func rawPakRestoreName(mc source.MergeCompiler, fileID, modID string) string {
+func rawPakRestoreName(mc adapter.MergeCompiler, fileID, modID string) string {
 	base := filepath.Base(fileID)
 	if mc.IsConvertibleArtifact(base) {
 		return base
@@ -660,7 +723,7 @@ func rawPakRestoreName(mc source.MergeCompiler, fileID, modID string) string {
 // (rawPakMembers just matched nothing), and it could be a sibling fileID's
 // claimed member - failing loudly beats corrupting it, and the next
 // reconcile pass retries.
-func restoreRawPakCopy(mc source.MergeCompiler, versionDir, retainedPath, fileID, modID string) (string, error) {
+func restoreRawPakCopy(mc adapter.MergeCompiler, versionDir, retainedPath, fileID, modID string) (string, error) {
 	name := rawPakRestoreName(mc, fileID, modID)
 	target := filepath.Join(versionDir, name)
 	if _, err := os.Stat(target); err == nil {
@@ -696,17 +759,6 @@ func sameMemberSet(a, b []string) bool {
 	return true
 }
 
-// ReconcilePakManifestsForTest exposes reconcilePakManifests to external
-// (core_test package) fault-injection tests, which need to pass a caller-
-// constructed Installer wrapping a fault-injecting linker directly - the
-// same installer parameter production syncMergedPak already threads
-// through, just supplied by the test instead of GetInstallerForProfile.
-// The method itself stays unexported; this mirrors EnabledMergeSourcesForTest
-// above.
-func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) ([]string, error) {
-	return s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
-}
-
 // classifyCompileDeployMods pre-classifies each mod DeployProfile is about
 // to deploy on a DeployCompile game (#255): a mod contributing at least one
 // enabled merge source is DeployModMerged (its content will ride the merged
@@ -722,12 +774,13 @@ func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain
 // reachable when nothing enabled is retained but a mod in mods still holds
 // a retained file, e.g. a disabled mod under --all with no compile source
 // configured) returns the classes computed so far.
-func (s *Service) classifyCompileDeployMods(game *domain.Game, profileName string, mods []*domain.InstalledMod) map[string]DeployModClass {
+func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Game, profileName string, mods []*domain.InstalledMod) map[string]DeployModClass {
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	sources, err := s.enabledMergeSources(game, profileName)
+	sources, err := s.enabledMergeSources(ctx, game, profileName)
 	if err != nil {
+		s.logger().Warn("resolving enabled merge sources failed while classifying compile deploy mods", "game_id", game.ID, "profile", profileName, "err", err)
 		return nil
 	}
 	mergedRefs := make(map[string]bool, len(sources))
@@ -737,7 +790,7 @@ func (s *Service) classifyCompileDeployMods(game *domain.Game, profileName strin
 	gameCache := s.GetGameCache(game)
 	// Lazily resolved on the first retained file found, exactly like
 	// enabledMergeSources/reconcilePakManifests (#256).
-	var mc source.MergeCompiler
+	var mc adapter.MergeCompiler
 	classes := make(map[string]DeployModClass, len(mods))
 	for _, mod := range mods {
 		ref := domain.ModKey(mod.SourceID, mod.ID)
@@ -748,11 +801,15 @@ func (s *Service) classifyCompileDeployMods(game *domain.Game, profileName strin
 		for _, fileID := range mod.FileIDs {
 			retained := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retained); statErr != nil {
+				if !os.IsNotExist(statErr) {
+					s.logger().Warn("stat failed while checking retained merge source", "game_id", game.ID, "file_id", fileID, "err", statErr)
+				}
 				continue // nothing retained for this fileID - not a merge source of any kind
 			}
 			if mc == nil {
 				var mcErr error
-				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+				if mc, mcErr = s.adapterCompiler(game); mcErr != nil {
+					s.logger().Warn("resolving the compile adapter failed while classifying compile deploy mods", "game_id", game.ID, "file_id", fileID, "err", mcErr)
 					return classes
 				}
 			}
@@ -767,25 +824,26 @@ func (s *Service) classifyCompileDeployMods(game *domain.Game, profileName strin
 
 // recordMergeOutcome reports #255's post-sync merge readout: after a
 // successful syncMergedPak on a DeployCompile game, the just-written merge
-// fingerprint (MergedPakOutcomes) is the authoritative record of which
+// fingerprint (mergedPakOutcomes) is the authoritative record of which
 // mods' content the merged artifact carries and which participants fell
 // back to a raw individual deploy. The artifact name and counts land on
-// result (for progress-less callers - the TUI) and as one DeployMergeSynced
-// event. A missing fingerprint means no merged artifact exists (zero merge
+// result (for progress-less callers) and as one DeployMergeSynced
+// event, stamped with the calling flow's op. A missing fingerprint means
+// no merged artifact exists (zero merge
 // participants - the uninstall-to-zero path) so there is nothing to report;
 // resolution failures likewise skip the readout rather than fail an
 // already-successful deploy. Counts are per MOD, not per file: a mod
 // contributing both a converted and a failed file counts once on each side,
 // which is the accurate reading of that (rare) state.
-func (s *Service) recordMergeOutcome(game *domain.Game, profileName string, result *DeployResult, emit func(DeployProgress)) {
+func (s *Service) recordMergeOutcome(ctx context.Context, game *domain.Game, profileName string, op Op, result *DeployResult, emit func(Event)) {
 	if game.DeployMode != domain.DeployCompile {
 		return
 	}
-	outcomes, ok := s.MergedPakOutcomes(game, profileName)
+	outcomes, ok := s.mergedPakOutcomes(ctx, game, profileName)
 	if !ok {
 		return
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return
 	}
@@ -802,22 +860,22 @@ func (s *Service) recordMergeOutcome(game *domain.Game, profileName string, resu
 	result.MergedArtifact = mc.MergedArtifactName()
 	result.MergedMods = len(merged)
 	result.RawFallbacks = len(raw)
-	emit(DeployProgress{Phase: DeployMergeSynced, Total: result.MergedMods, Detail: result.MergedArtifact, RawFallbacks: result.RawFallbacks})
+	emit(MergeEvent{Scope: Scope{Op: op}, Phase: DeployMergeSynced, MergedMods: result.MergedMods, Artifact: result.MergedArtifact, RawFallbacks: result.RawFallbacks})
 }
 
-// MergedPakOutcomes returns the stored merge fingerprint's per-mod entries
+// mergedPakOutcomes returns the stored merge fingerprint's per-mod entries
 // (with #221 conversion outcomes), if a merged pak exists for game+profile.
 // The game's compile source interprets the stored Kind strings (#256); a
 // stored fingerprint implies a source produced it, so failing to resolve
 // one now (unconfigured since) reads as "no outcomes available".
-func (s *Service) MergedPakOutcomes(game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
+func (s *Service) mergedPakOutcomes(ctx context.Context, game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
 	gameCache := s.GetGameCache(game)
 	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
 	fp, ok := readMergedFingerprint(cachePath)
 	if !ok {
 		return nil, false
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return nil, false
 	}
@@ -831,7 +889,7 @@ func (s *Service) MergedPakOutcomes(game *domain.Game, profileName string) ([]Me
 // those fields didn't exist yet, and fingerprintInputs/
 // mergedFingerprintsEqual deliberately never regenerate them for an
 // unchanged profile (input equality ignores outcomes). Without this
-// normalization, every consumer of MergedPakOutcomes (verify's
+// normalization, every consumer of mergedPakOutcomes (verify's
 // conversion_failed rows, status's conversion-failure counts) would report
 // a spurious, permanent "CONVERSION FAILED" for every exmodz mod on any
 // profile that predates #221 - forever, since nothing ever rewrites the
@@ -857,11 +915,15 @@ func normalizeOutcomes(mods []MergedFingerprintEntry, classify mergeSourceClassi
 // retains the source on redownload, and the next SyncMergedPak picks it up.
 // Gated on BOTH game- and mod-level ConvertPaks (like enabledMergeSources'
 // own participation gate) so a legacy/opted-out mod is never touched.
-func (s *Service) PakNeedsReingest(game *domain.Game, mod *domain.InstalledMod, fileID string) (bool, error) {
+//
+// No cmd/app caller today (Verify calls it internally); kept exported as a
+// serve-facing query (Phase 3 Ruling 10) - a frontend surfacing pending
+// lazy-migration state needs the same detector.
+func (s *Service) PakNeedsReingest(ctx context.Context, game *domain.Game, mod *domain.InstalledMod, fileID string) (bool, error) {
 	if game.DeployMode != domain.DeployCompile || !game.ConvertPaks || !mod.ConvertPaks {
 		return false, nil
 	}
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return false, err
 	}
@@ -907,8 +969,8 @@ func readMergedFingerprint(cachePath string) (fp MergedFingerprint, ok bool) {
 // error) when there is nothing to merge - callers distinguish "nothing to
 // do" from "failed to compute" via the returned slice's length, exactly
 // like syncMergedPak's own zero-sources branch does.
-func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string) (MergedFingerprint, []source.MergeSource, error) {
-	sources, err := s.enabledMergeSources(game, profileName)
+func (s *Service) currentMergedFingerprint(ctx context.Context, game *domain.Game, profileName string) (MergedFingerprint, []adapter.MergeSource, error) {
+	sources, err := s.enabledMergeSources(ctx, game, profileName)
 	if err != nil {
 		return MergedFingerprint{}, nil, fmt.Errorf("listing enabled merge sources: %w", err)
 	}
@@ -918,7 +980,7 @@ func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string
 
 	// Non-empty sources imply enabledMergeSources already resolved the
 	// compile source, so this cannot newly fail (#256).
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return MergedFingerprint{}, sources, err
 	}
@@ -941,7 +1003,7 @@ func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string
 		current.Mods = append(current.Mods, MergedFingerprintEntry{SourceID: sourceID, ModID: modID, Checksum: sum, Kind: src.Kind, Converted: true})
 	}
 
-	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
+	mods, err := s.GetInstalledModsInProfileOrder(ctx, game.ID, profileName)
 	if err != nil {
 		return MergedFingerprint{}, sources, fmt.Errorf("loading profile mods: %w", err)
 	}
@@ -962,12 +1024,16 @@ func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string
 // model). Returns nil, nil - not an error - when the merged pak is
 // up to date, when there is nothing to merge (zero enabled exmodz mods),
 // or when game is not a DeployCompile game.
-func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string) (*domain.Update, error) {
+//
+// No cmd/app caller today (Updater.CheckUpdates and Verify call it
+// internally); kept exported as a serve-facing query (Phase 3 Ruling 10) -
+// a frontend showing merged-pak status needs the same staleness check.
+func (s *Service) CheckMergedPakStaleness(ctx context.Context, game *domain.Game, profileName string) (*domain.Update, error) {
 	if game.DeployMode != domain.DeployCompile {
 		return nil, nil
 	}
 
-	current, sources, err := s.currentMergedFingerprint(game, profileName)
+	current, sources, err := s.currentMergedFingerprint(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -977,7 +1043,7 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 
 	// Non-empty sources imply currentMergedFingerprint already resolved the
 	// compile source, so this cannot newly fail (#256).
-	mc, err := s.mergeCompilerForGame(game)
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return nil, err
 	}
@@ -1027,13 +1093,27 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 // merged pak or exclude the mod's diff; reading a locked mod's retained
 // source to feed the merge is not "touching" it in the sense a lock
 // protects against).
-func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, progress func(DeployProgress)) (*UpdateApplyResult, error) {
+func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, sink EventSink) (*UpdateApplyResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &UpdateApplyResult{}, err
+	}
+	defer release()
+	return s.applyMergedPakRegen(ctx, game, profileName, sink)
+}
+
+func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, sink EventSink) (*UpdateApplyResult, error) {
 	result := &UpdateApplyResult{}
-	// Resolved up front: the Applied entry below reports the merged
-	// artifact by the name only the compile source knows (#256), and a
-	// regen request for a game without one is a misconfiguration worth
-	// failing loud on before touching anything.
-	mc, err := s.mergeCompilerForGame(game)
+	// #462: the regenerated artifact is written into the game directory,
+	// which holds the active profile's.
+	if err := s.requireActiveProfile(ctx, game.ID, profileName, VerbRegenMerged); err != nil {
+		return result, err
+	}
+	// Resolved up front: Name below reports the merged artifact by the name
+	// only the compile source knows (#256), and a regen request for a game
+	// without one is a misconfiguration worth failing loud on before
+	// touching anything.
+	mc, err := s.adapterCompiler(game)
 	if err != nil {
 		return result, err
 	}
@@ -1042,14 +1122,15 @@ func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 		return result, err
 	}
 	result.Warnings = warnings
-	result.Applied = []string{mc.MergedArtifactName()}
-	if progress != nil {
-		progress(DeployProgress{Phase: UpdateDownloadDone})
+	result.Name = mc.MergedArtifactName()
+	result.Status = UpdateRecompiled
+	if sink != nil {
+		sink(StepEvent{Scope: Scope{Op: OpMergeRegen}, Phase: UpdateDownloadDone})
 	}
 	return result, nil
 }
 
-// PurgeMergedPak explicitly undeploys game+profileName's merged pak (#197
+// purgeMergedPak explicitly undeploys game+profileName's merged pak (#197
 // I2 fix). `lmm purge`'s own contract is "remove ALL deployed mod files...
 // resetting the game directory back to its pre-modded state" - but exmodz
 // mods deploy EXCLUSIVELY through this one shared artifact, never their
@@ -1068,15 +1149,21 @@ func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 // confirming the deployed artifact still exists - #197 I5's fix); true
 // (--uninstall) also clears the cache entry, matching every real mod's
 // full removal.
-func (s *Service) PurgeMergedPak(ctx context.Context, game *domain.Game, profileName string, deleteCache bool) error {
+//
+// Unexported by Phase 3 Ruling 10: purgeProfile (PurgeProfile/ApplyPurge)
+// is its only caller in production or test - the exported PurgeMergedPak
+// wrapper this replaced had no caller that didn't already go through a
+// full purge. core's own fixture (merged_pak_test.go's purgeMergedPakOnly)
+// drives it via PurgeProfile with an empty mods list instead.
+func (s *Service) purgeMergedPak(ctx context.Context, game *domain.Game, profileName string, deleteCache bool) error {
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	installer, err := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return err
 	}
-	syntheticMod := &domain.Mod{ID: mergedPakModID, SourceID: domain.SourceMerged, Version: mergedPakVersion, GameID: game.ID}
+	syntheticMod := mergedPakMod(game)
 	if err := installer.Uninstall(ctx, game, syntheticMod, profileName); err != nil {
 		return fmt.Errorf("removing merged pak: %w", err)
 	}
@@ -1085,6 +1172,244 @@ func (s *Service) PurgeMergedPak(ctx context.Context, game *domain.Game, profile
 		if err := gameCache.Delete(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion); err != nil {
 			return fmt.Errorf("clearing merged pak cache entry: %w", err)
 		}
+	}
+	return nil
+}
+
+// mergedArtifactEffectForUninstall reports what removing mod from
+// game+profileName would do to the profile's merged artifact - the
+// syncMergedPak call uninstallMod makes once the mod is gone (Ruling 8).
+//
+// It is judged against the merge INPUTS the uninstall would leave behind
+// (enabledMergeSources minus the mod's own contributions) plus the
+// artifact's presence in the game directory, because those are exactly what
+// syncMergedPak itself acts on:
+//
+//   - no sources left: the uninstall-to-zero branch takes the artifact out,
+//     so a DEPLOYED artifact is a remove and an absent one is no change.
+//   - sources left, and the mod contributed one: the fingerprint moves, so
+//     the artifact is rebuilt (resync).
+//   - sources left, and the mod contributed none: this uninstall leaves the
+//     merge INPUTS unaffected, but syncMergedPak's fast path also requires
+//     the STORED fingerprint to still match those inputs - so this compares
+//     the stored fingerprint against the current one (mergedFingerprintsEqual,
+//     the same comparison syncMergedPak makes). A stale stored fingerprint
+//     (e.g. a base-game patch since the last sync, #196) is a resync even
+//     though the mod itself changed nothing; only a genuine match, with the
+//     artifact present, is no change. An artifact missing from the game
+//     directory is always a resync (#197 I5), regardless of the fingerprint.
+//
+// Side-effect-free (reads only), like every other Plan input. It describes
+// the GAME DIRECTORY: a cache-entry deletion with no deployed artifact to
+// go with it is not a merged-artifact effect. A game whose compile source
+// cannot be resolved has no artifact to name, so the answer is nil - that
+// is the ONLY error path that answers nil. Every other read that fails
+// (listing the merge sources, computing the current fingerprint) leaves the
+// outcome UNDECIDABLE with the artifact name already in hand, and an
+// undecidable outcome answers resync: nil renders as silence, which
+// under-states, and this modelling errs toward over-stating (unit Q review
+// M6, restoring the direction the superseded decisions row named).
+func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *domain.Game, profileName string, mod *domain.InstalledMod) *MergedArtifactEffect {
+	if game.DeployMode != domain.DeployCompile {
+		return nil
+	}
+	mc, err := s.adapterCompiler(game)
+	if err != nil {
+		return s.mergedArtifactEffectWithoutCompiler(ctx, game, profileName, mod)
+	}
+	name := mc.MergedArtifactName()
+	resync := &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+	// syncMergedPak asks the adapter before it rebuilds (#413): where the
+	// adapter refuses, a resync leaves the artifact exactly as it is.
+	if s.deployRefusal(ctx, game, profileName) != nil {
+		resync = nil
+	}
+
+	sources, err := s.enabledMergeSources(ctx, game, profileName)
+	if err != nil {
+		// Undecidable, not "nothing happens": the artifact NAME is already
+		// in hand, so answer in the safe direction (unit Q review, M6).
+		s.logger().Warn("listing enabled merge sources failed while planning an uninstall",
+			"game_id", game.ID, "profile", profileName, "err", err)
+		return resync
+	}
+	ref := mod.SourceID + ":" + mod.ID
+	contributes, remaining := false, 0
+	for _, src := range sources {
+		if src.ModRef == ref {
+			contributes = true
+			continue
+		}
+		remaining++
+	}
+
+	deployed := isDeployedNow(game, name)
+	switch {
+	case remaining == 0:
+		if deployed {
+			return &MergedArtifactEffect{Action: MergedArtifactRemove, Path: name}
+		}
+		return nil
+	case contributes, !deployed:
+		return resync
+	default:
+		// The mod isn't itself a merge source, so removing it leaves the
+		// merge INPUTS unchanged - but syncMergedPak's fast path also needs
+		// the STORED fingerprint to still match those inputs. Consult the
+		// same comparison it makes (merged_pak.go:297-298) before claiming
+		// "nothing changes".
+		cachePath := s.GetGameCache(game).ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+		stored, ok := readMergedFingerprint(cachePath)
+		if !ok {
+			return resync
+		}
+		current, _, cerr := s.currentMergedFingerprint(ctx, game, profileName)
+		if cerr != nil {
+			// Same class as the unreadable STORED fingerprint immediately
+			// above - we cannot tell - so the same answer (unit Q review,
+			// M6): resync, never silence.
+			s.logger().Warn("computing current merge fingerprint failed while planning an uninstall",
+				"game_id", game.ID, "profile", profileName, "err", cerr)
+			return resync
+		}
+		if eq, eqErr := mergedFingerprintsEqual(current, stored, mc.ClassifyMergeSource); eqErr != nil || !eq {
+			return resync
+		}
+		return nil
+	}
+}
+
+// mergedArtifactEffectWithoutCompiler is mergedArtifactEffectForUninstall
+// for a compile game whose adapter is refused (#413 fix round 4, F7): an
+// uninstall still runs there, and so does the syncMergedPak it ends with.
+// With no compiler, that sync can do one thing only - its
+// uninstall-to-zero branch, which needs none - and it takes that branch
+// exactly when no other enabled mod still retains a merge source. With one
+// left, it fails before it touches the artifact (the uninstall reports the
+// failure), so nothing happens to it.
+//
+// A failed read is undecidable, and answers remove when there is an
+// artifact to remove: silence under-states (unit Q review M6).
+func (s *Service) mergedArtifactEffectWithoutCompiler(ctx context.Context, game *domain.Game, profileName string, mod *domain.InstalledMod) *MergedArtifactEffect {
+	retained, err := s.retainedMergeFiles(ctx, game, profileName)
+	if err != nil {
+		s.logger().Warn("listing retained merge sources failed while planning an uninstall",
+			"game_id", game.ID, "profile", profileName, "err", err)
+		return s.mergedArtifactRemoval(ctx, game, profileName)
+	}
+	for _, f := range retained {
+		if f.mod.SourceID != mod.SourceID || f.mod.ID != mod.ID {
+			return nil
+		}
+	}
+	return s.mergedArtifactRemoval(ctx, game, profileName)
+}
+
+// mergedArtifactEffectForPurge reports what `lmm purge` would do to
+// game+profileName's merged artifact (Ruling 8). purgeMergedPak only ever
+// undeploys - a purge never rebuilds - so the answer is a remove when the
+// artifact is on disk and nil otherwise, including for a --uninstall purge
+// whose only remaining work is clearing an undeployed cache entry.
+//
+// Side-effect-free, and nil for a non-DeployCompile game. It asks no
+// compiler: purgeMergedPak does not need one either, so a compile game
+// whose adapter is refused - which a purge is exempt from - still has its
+// recorded artifact removed, and the plan must say so (#413 fix round 4,
+// F7).
+func (s *Service) mergedArtifactEffectForPurge(ctx context.Context, game *domain.Game, profileName string) *MergedArtifactEffect {
+	if game.DeployMode != domain.DeployCompile {
+		return nil
+	}
+	return s.mergedArtifactRemoval(ctx, game, profileName)
+}
+
+// mergedArtifactRemoval is the removal Installer.Uninstall of the merged
+// artifact's synthetic mod would make right now - the same Installer
+// purgeMergedPak and syncMergedPak build, asked for the same path list its
+// removal loop walks - or nil when that removes nothing on disk.
+func (s *Service) mergedArtifactRemoval(ctx context.Context, game *domain.Game, profileName string) *MergedArtifactEffect {
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
+	if err != nil {
+		s.logger().Warn("resolving the installer failed while planning a merged-artifact removal",
+			"game_id", game.ID, "profile", profileName, "err", err)
+		return nil
+	}
+	paths, err := installer.removalPaths(ctx, game, mergedPakMod(game), profileName)
+	if err != nil {
+		s.logger().Warn("listing the merged artifact failed while planning its removal",
+			"game_id", game.ID, "profile", profileName, "err", err)
+		return nil
+	}
+	for _, p := range paths {
+		if isDeployedNow(game, p) {
+			return &MergedArtifactEffect{Action: MergedArtifactRemove, Path: filepath.ToSlash(p)}
+		}
+	}
+	return nil
+}
+
+// mergedPakMod is the synthetic mod a game's merged artifact is cached and
+// deployed as.
+func mergedPakMod(game *domain.Game) *domain.Mod {
+	return &domain.Mod{ID: mergedPakModID, SourceID: domain.SourceMerged, Version: mergedPakVersion, GameID: game.ID}
+}
+
+// mergedArtifactEffectForImport reports what importing one archive into
+// game+profileName would do to the profile's merged artifact - the
+// syncMergedPak call ApplyImportArchive makes once the mod is in (Ruling 8).
+// contributes says whether the archive itself becomes a merge source (a
+// native ".exmodz" or a convertible pak), which is the only thing an import
+// can change about the merge INPUTS.
+//
+// It follows mergedArtifactEffectForUninstall's modelling, minus the
+// remove direction - an import never takes the artifact away:
+//
+//   - the archive contributes a merge source: the fingerprint moves, so the
+//     artifact is rebuilt (resync).
+//   - it contributes none: the inputs are unaffected, but syncMergedPak's
+//     fast path also requires the STORED fingerprint to still match them and
+//     the artifact to actually be on disk. A stale stored fingerprint (e.g. a
+//     base-game patch since the last sync, #196) or a missing artifact (#197
+//     I5) is a resync even though this import changes nothing itself; only a
+//     genuine match, with the artifact present, is no change.
+//
+// Side-effect-free (reads only). A game that does not deploy by compilation,
+// or whose compile source cannot be resolved to name the artifact, has no
+// merged-artifact consequence to report, so the answer is nil - the only
+// error path that answers nil. Every other failed read leaves the outcome
+// undecidable with the name already in hand, and an undecidable outcome
+// answers resync (unit Q review M6): nil renders as silence, which
+// under-states.
+func (s *Service) mergedArtifactEffectForImport(ctx context.Context, game *domain.Game, profileName string, contributes bool) *MergedArtifactEffect {
+	if game.DeployMode != domain.DeployCompile {
+		return nil
+	}
+	mc, err := s.adapterCompiler(game)
+	if err != nil {
+		s.logger().Warn("resolving merge compiler failed while planning an import",
+			"game_id", game.ID, "err", err)
+		return nil
+	}
+	name := mc.MergedArtifactName()
+	resync := &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+
+	if contributes || !isDeployedNow(game, name) {
+		return resync
+	}
+
+	cachePath := s.GetGameCache(game).ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+	stored, ok := readMergedFingerprint(cachePath)
+	if !ok {
+		return resync
+	}
+	current, _, cerr := s.currentMergedFingerprint(ctx, game, profileName)
+	if cerr != nil {
+		s.logger().Warn("computing current merge fingerprint failed while planning an import",
+			"game_id", game.ID, "profile", profileName, "err", cerr)
+		return resync
+	}
+	if eq, eqErr := mergedFingerprintsEqual(current, stored, mc.ClassifyMergeSource); eqErr != nil || !eq {
+		return resync
 	}
 	return nil
 }

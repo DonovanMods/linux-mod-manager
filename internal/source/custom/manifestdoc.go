@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 )
 
 // sha256Pattern matches a lowercase- or uppercase-hex SHA-256 digest.
@@ -32,14 +32,15 @@ type manifestMod struct {
 }
 
 type manifestFile struct {
-	ID       string `yaml:"id"`
-	Name     string `yaml:"name"`
-	Filename string `yaml:"filename"`
-	Version  string `yaml:"version"`
-	Size     int64  `yaml:"size"`
-	URL      string `yaml:"url"`
-	SHA256   string `yaml:"sha256"` // optional; verified on download when present
-	Primary  bool   `yaml:"primary"`
+	ID        string `yaml:"id"`
+	Name      string `yaml:"name"`
+	Filename  string `yaml:"filename"`
+	Version   string `yaml:"version"`
+	Size      int64  `yaml:"size"`
+	URL       string `yaml:"url"`
+	UpdatedAt string `yaml:"updated_at"` // RFC 3339; unparseable -> zero value (design §4 rule)
+	SHA256    string `yaml:"sha256"`     // optional; verified on download when present
+	Primary   bool   `yaml:"primary"`
 }
 
 // parseManifest decodes and validates a manifest document. allowHTTP mirrors
@@ -48,7 +49,7 @@ type manifestFile struct {
 // URL only.
 func parseManifest(data []byte, allowHTTP bool) (*manifestDoc, error) {
 	var doc manifestDoc
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := safeyaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parsing manifest: %w", err)
 	}
 	if doc.Version != 1 {

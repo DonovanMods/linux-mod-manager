@@ -1,0 +1,214 @@
+// failures.js - what a failed job offers to do about itself.
+//
+// The design's rule for the tray is "failures with their next step inline -
+// a conflict shows Overwrite? right in the tray" (docs/plans/2026-08-31-
+// serve-spa-design.md §Jobs). The next step is decided by the failure
+// envelope's TYPED DETAILS, never by matching on its message text: core's
+// errors carry a Details() extension exactly so a frontend can branch on
+// structure (internal/core/errors.go, and cmd/lmm's own --json envelope),
+// and a UI that string-matched "conflict" would break the first time
+// someone reworded an error.
+//
+// Answering one of these is always the same move, and it is v2 Phase 3
+// Ruling 1's: Apply never calls back into the frontend, so a mid-flight
+// decision is a typed error the caller answers by RE-RUNNING Apply with the
+// matching option. In the tray that means re-planning the same mutation
+// with AcceptConflicts set (main.js's retryInstallOverwrite, issue 331,
+// widened by issue 333 to cover "import_archive" - kind_import_archive.go's
+// own doc comment: "the Overwrite affordance answers it by re-running with
+// AcceptConflicts", the identical wire field name install already uses) -
+// the only two kinds whose ConflictError this failure implies a next step
+// for; every other failed kind still renders its details in full with no
+// action under them.
+
+import { safeWebUrl } from "./weburl.js";
+
+// conflictKinds is every plan kind whose *core.ConflictError this failure
+// implies "re-plan and set accept_conflicts" for - both take that exact
+// wire field, so retryInstallOverwrite's re-plan-and-apply shape (main.js)
+// needs no branch of its own between them.
+const conflictKinds = new Set(["install", "import_archive"]);
+
+/**
+ * nextStepFor returns the affordance job's failure envelope implies, or
+ * null when its details name no action this UI knows.
+ *
+ * `action` is the actions.js entry point that answers it - always fired
+ * with job.id, since that is the one thing every caller (the tray) already
+ * has in hand; the entry point itself resolves the rest (which origin, what
+ * to re-plan) from state main.js alone keeps.
+ */
+export function nextStepFor(job) {
+  const envelope = job?.error ?? {};
+  const conflicts = envelope?.details?.conflicts;
+  if (
+    conflictKinds.has(job?.kind) &&
+    Array.isArray(conflicts) &&
+    conflicts.length > 0
+  ) {
+    return {
+      action: "overwrite",
+      label: `Overwrite ${conflicts.length} file${conflicts.length === 1 ? "" : "s"}?`,
+    };
+  }
+  return null;
+}
+
+/**
+ * explainerFor returns the sentence a failed job's TYPED details say the
+ * user should read, or null when its details name none.
+ *
+ * Today that is issue 269 Tier 3's Steam Workshop download failure, which is
+ * identified by `published_file_id` - a key no other Details() shape has -
+ * rather than by matching on the message. That matters here more than
+ * anywhere: the four things this can be (the publisher refusing anonymous
+ * downloads, an item Steam will not serve, steamcmd not being installed,
+ * and a tool failure lmm has no name for) are one wire shape with four
+ * reasons in it, and the reason is written by core, once, for both
+ * frontends. The UI's whole job is to show it.
+ *
+ * `tool` is carried alongside so a missing-tool failure can say WHICH
+ * program the user has to install, and `outputTail` so an unclassified
+ * failure shows what the tool actually said - the same two extras the
+ * terminal prints under its own error line.
+ */
+export function explainerFor(job) {
+  const details = job?.error?.details;
+  if (!details || !details.published_file_id || !details.reason) return null;
+  return {
+    reason: details.reason,
+    tool: details.tool ?? "",
+    outputTail: details.output_tail ?? "",
+  };
+}
+
+/**
+ * downloadFailureFor returns the failed download a failure's TYPED details
+ * describe (core.DownloadError, issue 513), or null when they describe
+ * something else.
+ *
+ * Identified by structure - `source_id`, `mod_id` and `manual_download`
+ * together are the shape no other Details() type has - never by the message.
+ * `url` is the mod's page, already vetted by core, and vetted AGAIN here
+ * (weburl.js): this is the last stop before an href. `manual` says the
+ * source will not hand the file to lmm at all, so the page is not just
+ * somewhere to read about the mod but where the file has to come from.
+ * `fileID`/`fileName` name the file the download was for (issue 535) - the
+ * one "Install from file…" expects the downloaded archive to be.
+ */
+export function downloadFailureFor(details) {
+  if (!details || typeof details !== "object") return null;
+  if (
+    !details.source_id ||
+    !details.mod_id ||
+    !("manual_download" in details)
+  ) {
+    return null;
+  }
+  return {
+    sourceID: details.source_id,
+    modID: details.mod_id,
+    modName: details.mod_name ?? "",
+    url: safeWebUrl(details.mod_url),
+    manual: Boolean(details.manual_download),
+    fileID: details.file_id ?? "",
+    fileName: details.file_name ?? "",
+  };
+}
+
+/**
+ * batchFailuresFor returns every failed item an update batch's RESULT
+ * reports (core.UpdateBatchResult's `failed[]`, issues 530 and 533), each
+ * carrying what a readout needs to head and explain it: the mod's name, the
+ * change that was attempted (`from_version` -> `to_version`), the failure's
+ * own text, and - when the failure was a download - the mod's page and
+ * whether the source refuses to hand the file over at all (downloadFailureFor's
+ * `url`/`manual`).
+ *
+ * A failed update arrives as a finished batch, not a failed job, so its
+ * typed error never reaches an error envelope; the result keeps the text and
+ * those two facts of it. Every failed item is returned, not only the ones
+ * with a download way out: an item that failed for any other reason still
+ * has to say which mod it was.
+ */
+export function batchFailuresFor(result) {
+  if (!result || !Array.isArray(result.failed)) return [];
+  const out = [];
+  for (const item of result.failed) {
+    if (!item || typeof item.mod !== "string") continue;
+    const at = item.mod.indexOf(":");
+    if (at <= 0) continue;
+    out.push({
+      sourceID: item.mod.slice(0, at),
+      modID: item.mod.slice(at + 1),
+      modName: item.name ?? "",
+      fromVersion: item.from_version ?? "",
+      toVersion: item.to_version ?? "",
+      error: item.error ?? "",
+      url: safeWebUrl(item.mod_url),
+      manual: Boolean(item.manual_download),
+    });
+  }
+  return out;
+}
+
+/**
+ * loaderSetupFor returns the loader refusal a failure's TYPED details
+ * describe (core.LoaderRequiredError, issue 423), or null when they
+ * describe something else.
+ *
+ * Identified by structure - an ordered `setup` list of sentences beside the
+ * loader `kind` - never by the message. `setup` is DATA precisely so this
+ * UI renders the same sentences the terminal prints rather than carrying
+ * its own copy; `version` is the loader version the mod asked for, when
+ * whatever reported the requirement knew one (a Thunderstore package's own
+ * BepInExPack dependency, issue 409).
+ */
+export function loaderSetupFor(details) {
+  if (!details || !Array.isArray(details.setup) || !details.kind) return null;
+  return {
+    kind: details.kind,
+    loaderVersion: details.version ?? "",
+    modName: details.mod_name ?? "",
+    steps: details.setup.filter((s) => typeof s === "string" && s !== ""),
+  };
+}
+
+/**
+ * retryAtFor returns when lmm will next ask a source that is refusing to be
+ * asked (core.IndexUnavailableError's retry_at, issue 436), or null. The
+ * message already says why; this is the one fact worth pulling out of it.
+ */
+export function retryAtFor(details) {
+  if (!details?.retry_at || !details.source) return null;
+  const at = Date.parse(details.retry_at);
+  if (Number.isNaN(at)) return null;
+  return { source: details.source, at: new Date(at) };
+}
+
+/**
+ * adapterRefusalFor returns the adapter refusal a failure's TYPED details
+ * describe, or null (issue 461). Two core shapes carry it:
+ * core.AdapterRefusedError ({game_id, adapter}: the game's configured
+ * adapter cannot run at all) and core.AdapterPreconditionError ({game_id,
+ * adapter, reason}: the adapter refused this flow). Identified by structure
+ * - exactly those members - never by the message, which already names the
+ * problem and, where core knows one, the fix.
+ */
+export function adapterRefusalFor(details) {
+  if (!details || typeof details !== "object") return null;
+  const keys = Object.keys(details);
+  const known = new Set(["game_id", "adapter", "reason"]);
+  if (
+    !details.game_id ||
+    !("adapter" in details) ||
+    !keys.every((k) => known.has(k))
+  ) {
+    return null;
+  }
+  return {
+    gameID: details.game_id,
+    adapter: details.adapter ?? "",
+    reason: details.reason ?? "",
+  };
+}

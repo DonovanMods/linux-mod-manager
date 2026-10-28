@@ -1,0 +1,30 @@
+{
+  "response": {
+    "result": 1,
+    "resultcount": 1,
+    "publishedfiledetails": [
+      {
+        "publishedfileid": "68336872",
+        "result": 1,
+        "creator": "76561198000000002",
+        "creator_app_id": 72850,
+        "consumer_app_id": 72850,
+        "filename": "legacy.zip",
+        "file_size": "18",
+        "file_url": "FILE_URL_PLACEHOLDER",
+        "hcontent_file": "5544332211009988776",
+        "preview_url": "https://steamuserimages-a.akamaihd.net/ugc/0000000000000000003/",
+        "title": "Legacy UGC Item",
+        "description": "An old item Valve still serves over a plain URL.",
+        "time_created": 1300000000,
+        "time_updated": 1300000001,
+        "visibility": 0,
+        "banned": 0,
+        "subscriptions": 3,
+        "lifetime_subscriptions": 4,
+        "views": 20,
+        "tags": [{ "tag": "Gameplay" }]
+      }
+    ]
+  }
+}

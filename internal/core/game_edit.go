@@ -1,0 +1,1496 @@
+// game_edit.go is the game-EDIT flow `lmm game edit` and `PUT
+// /api/v1/games/{id}` share (#326): rewriting which sources a configured
+// game maps, the one part of games.yaml neither frontend could reach
+// before - a custom source created in the Setup editor sat at "In use: -"
+// forever unless the user stopped the server and hand-edited the file
+// (epic live review, C-4).
+//
+// It is a settings-class single-step write, not a Plan/Apply pair: there
+// is nothing to preview beyond the map itself and nothing that can go
+// stale between a preview and a commit, exactly the shape mod_settings.go
+// documents for lock/policy/convert.
+package core
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"maps"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
+)
+
+// GameEdit is one edit of a configured game's games.yaml entry - what `lmm
+// game edit` and `PUT /api/v1/games/{id}` send (#326, #353, #427), and since
+// #527 everything the web UI's one game editor saves at once. A nil member
+// (and LoaderSet false) leaves its key alone.
+type GameEdit struct {
+	// Name, when non-nil, sets the display name; it is trimmed, and an
+	// empty one is refused.
+	Name *string
+	// Sources, when non-nil, REPLACES the game's source map - the map
+	// handed over is the map the game ends up with, which is what makes
+	// "remove this source" expressible at all. `lmm game edit`'s
+	// --source/--remove-source flags are a delta the CLI resolves against
+	// the current map first. An empty map is refused.
+	Sources map[string]string
+	// Adapter, when non-nil, sets the `adapter:` key; "" clears it, handing
+	// the game back to the adapter Service.AdapterName derives for it.
+	Adapter *string
+	// ModPath, when non-nil, sets `mod_path:`, resolved by the rules `lmm
+	// game add` applies (relative to install_path, "~/" expanded). With
+	// InstallPath in the same edit, a relative value is relative to the NEW
+	// install path.
+	ModPath *string
+	// InstallPath, when non-nil, sets `install_path:` (#528): "~/"
+	// expanded, and it must be an existing directory. A mod_path inside the
+	// old install path follows it there; see refuseInstallPathMove for what
+	// lmm requires of the files it recorded under the old one.
+	InstallPath *string
+	// Loader, when LoaderSet, REPLACES the mod-loader declaration (#359):
+	// the spec handed over is the declaration the game ends up with, and a
+	// nil one removes it. It changes no deployed state - see
+	// UpdateGameLoader.
+	Loader    *LoaderSpec
+	LoaderSet bool
+}
+
+// EditGame applies edit to gameID's games.yaml entry and returns the game's
+// own `lmm game list --json` row (GameListEntry), re-read after the write,
+// so a caller never needs a follow-up request to see what it changed.
+//
+// ALL OR NOTHING (#427 review F6): every requested change is checked, as
+// part of the game the whole edit leaves behind, before any of it is
+// written - and it is written once. So the adapter and the mod_path are
+// validated together and can move in one edit in either direction (onto
+// bepinex at the game root, or off bepinex into a subdirectory, #427 review
+// F5), and a bad source map cannot leave the mod_path moved behind a failed
+// command.
+//
+// Gated (beginOp) for AddGame's reason: it is a games.yaml write that must
+// not interleave with a deploy job running on `lmm serve`'s own goroutine.
+// Every check happens INSIDE the gate - the game must still exist, and
+// every source id must still be registered - so a source unregistered
+// between the check and the write cannot be mapped anyway
+// (UnregisterSourceIfUnused takes the same gate).
+//
+// Refusals:
+//
+//   - domain.ErrGameNotFound for an unknown game - the 404 every other
+//     game-scoped route already answers with.
+//   - GameSpecError, whose Field is the wire key PUT /api/v1/games/{id}
+//     takes ("name", "install_path", "sources", "adapter", "mod_path",
+//     "loader.kind", "loader.runtime", "loader.bootstrap"), so an SPA marks the
+//     offending input rather than parsing a sentence. See validatedSourceMap
+//     for the source map's rules. An adapter must be registered, and must
+//     compose with the rest of the entry the edit leaves (AdapterFor: a
+//     `deploy_mode: compile` game's adapter must compile, and bepinex needs
+//     the game root). A mod_path must be non-empty and must not name a file;
+//     an absent directory is fine, because a deploy creates it.
+//   - GameSourceInUseError when a removed source still has installed mods.
+//   - GameModPathInUseError when the mod_path would move while any profile
+//     has files deployed under it (refuseModPathMove).
+//   - GameInstallPathInUseError when the install_path would change while
+//     lmm has files recorded against the game's folder and the change is
+//     not a move of the whole folder (refuseInstallPathMove, #528).
+//
+// A mod_path move that would turn a game its adapter accepts into one
+// AdapterFor refuses (`adapter: bepinex` off the game root) is refused on
+// "mod_path"; a game that is ALREADY refused may be moved, because that is
+// how such a game is repaired.
+func (s *Service) EditGame(ctx context.Context, gameID string, edit GameEdit) (*GameListEntry, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	game, ok := s.game(gameID)
+	if !ok {
+		return nil, domain.ErrGameNotFound
+	}
+
+	updated, changed, reroot, err := s.editedGame(ctx, game, edit)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		if err := s.saveEditedGame(ctx, updated, reroot); err != nil {
+			return nil, err
+		}
+	}
+
+	defaultGame, err := s.DefaultGame(ctx)
+	if err != nil {
+		return nil, err
+	}
+	entry, err := s.newGameListEntry(ctx, updated, defaultGame)
+	if err != nil {
+		return nil, err
+	}
+	return &entry, nil
+}
+
+// editedGame is EditGame's checks: the game edit leaves, whether it differs
+// from game enough to write, and the deployed-file records an install_path
+// move takes along (nil when it takes none). It writes nothing.
+func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEdit) (*domain.Game, bool, *ledgerReroot, error) {
+	// A COPY: s.game returns the pointer the in-memory set holds, which
+	// concurrent readers (GetGame, ListGames, SourcesForGame) are walking
+	// right now. Mutating it in place would be a data race no lock here
+	// could close; saveGame publishes the replacement atomically.
+	updated := *game
+	changed := false
+
+	// The fields that are only input come first, so a typo is reported
+	// before anything about the game's state.
+	if edit.Name != nil {
+		name := strings.TrimSpace(*edit.Name)
+		if name == "" {
+			return nil, false, nil, newGameSpecError("name", *edit.Name, "a display name is required")
+		}
+		if name != game.Name {
+			updated.Name, changed = name, true
+		}
+	}
+
+	if edit.LoaderSet {
+		declared, err := edit.Loader.loader()
+		if err != nil {
+			return nil, false, nil, err
+		}
+		updated.Loader, changed = declared, true
+	}
+
+	if edit.Sources != nil {
+		cleaned, err := s.validatedSourceMap(edit.Sources)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		if err := s.refuseRemovingReferencedSources(ctx, game, cleaned); err != nil {
+			return nil, false, nil, err
+		}
+		updated.SourceIDs = cleaned
+		changed = true
+	}
+
+	if edit.Adapter != nil {
+		updated.Adapter = strings.TrimSpace(*edit.Adapter)
+		changed = true
+	}
+
+	// #528: the install path first, because a mod_path inside it follows it
+	// and a relative --mod-path in the same edit resolves against it.
+	installMoved := false
+	followed := game.ModPath
+	if edit.InstallPath != nil {
+		install, err := installPathValue(*edit.InstallPath)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		if !samePath(install, game.InstallPath) {
+			followed = followInstallPath(game, install)
+			updated.InstallPath, updated.ModPath = install, followed
+			installMoved, changed = true, true
+		}
+	}
+
+	if edit.ModPath != nil {
+		raw := config.ExpandPath(strings.TrimSpace(*edit.ModPath))
+		if raw == "" {
+			return nil, false, nil, newGameSpecError("mod_path", "", "a mod path is required")
+		}
+		resolved, err := resolveModPathValue(updated.InstallPath, raw)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		// Setting the value the game already has - in any spelling of it -
+		// moves nothing.
+		updated.ModPath = game.ModPath
+		if !samePath(resolved, game.ModPath) {
+			updated.ModPath = resolved
+			changed = true
+		}
+	}
+	moved := !samePath(updated.ModPath, game.ModPath)
+
+	if err := s.refuseAdapterComposition(game, &updated, edit.Adapter != nil, moved || installMoved); err != nil {
+		return nil, false, nil, err
+	}
+	switch {
+	case installMoved:
+		reroot, err := s.refuseInstallPathMove(ctx, game, &updated, followed)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		return &updated, changed, reroot, nil
+	case moved:
+		if err := s.refuseModPathMove(ctx, game, updated.ModPath); err != nil {
+			return nil, false, nil, err
+		}
+	}
+	return &updated, changed, nil, nil
+}
+
+// installPathValue is the install_path an edit writes (#528): trimmed and
+// "~/" expanded the way `lmm game add` takes one, absolute, and an existing
+// directory - the game is there now, so a path that is not is a typo.
+func installPathValue(value string) (string, error) {
+	install := config.ExpandPath(strings.TrimSpace(value))
+	if install == "" {
+		return "", newGameSpecError("install_path", "", "the game's install path is required")
+	}
+	if !filepath.IsAbs(install) {
+		return "", newGameSpecError("install_path", install, "the install path must be absolute")
+	}
+	if err := requireDir(install); err != nil {
+		return "", &GameSpecError{Field: "install_path", Value: install, Reason: err.Error(), Err: err}
+	}
+	return filepath.Clean(install), nil
+}
+
+// followInstallPath is where game's mod_path goes when its install path
+// becomes install (#528): the same place inside the new folder when it lay
+// inside the old one - "mod_path: Data" is part of the game folder, however
+// games.yaml spells it - and where it was otherwise, since a mod_path
+// elsewhere (a Proton prefix, Documents) is not part of the folder.
+func followInstallPath(game *domain.Game, install string) string {
+	if game.ModPath == "" || game.InstallPath == "" {
+		return game.ModPath
+	}
+	oldInstall, modPath := filepath.Clean(game.InstallPath), filepath.Clean(game.ModPath)
+	if !pathWithin(modPath, oldInstall) {
+		return game.ModPath
+	}
+	rel, err := filepath.Rel(oldInstall, modPath)
+	if err != nil {
+		return game.ModPath
+	}
+	return filepath.Join(install, rel)
+}
+
+// ledgerReroot is the deployed-file records an install_path move takes
+// along (#528): every row recorded under one of from is re-recorded under
+// to, and back is where they go again if games.yaml cannot be written.
+type ledgerReroot struct {
+	from     []string
+	to, back string
+}
+
+// saveEditedGame writes EditGame's result: games.yaml, and with it the
+// ledger an install_path move takes along. The two are one change, so once
+// the ledger is re-rooted cancellation cannot split them (Ruling 16), and a
+// games.yaml write that fails puts the ledger back.
+func (s *Service) saveEditedGame(ctx context.Context, updated *domain.Game, reroot *ledgerReroot) error {
+	if reroot == nil {
+		return s.saveGame(ctx, updated)
+	}
+	ctx = context.WithoutCancel(ctx)
+	if _, err := s.db.RerootDeployedFiles(ctx, updated.ID, reroot.from, reroot.to); err != nil {
+		return err
+	}
+	if err := s.saveGame(ctx, updated); err != nil {
+		if _, undo := s.db.RerootDeployedFiles(ctx, updated.ID, []string{reroot.to}, reroot.back); undo != nil {
+			return fmt.Errorf("%w (and recording the deployed files under %s again failed: %w)", err, reroot.back, undo)
+		}
+		return err
+	}
+	return nil
+}
+
+// refuseInstallPathMove is the in-use check for an install_path change
+// (#528), the coordinator-approved policy. What lmm has recorded against
+// the game's folder is its deployed files (relative to the mod_path, when
+// the mod_path moves with the install path) and the originals it backed up
+// before replacing a file (relative to the install path, and to the
+// mod_path when that moves). With none of that, the edit is a CORRECTION
+// and goes ahead. With any, it goes ahead only as a MOVE of the whole
+// folder: the old install path is gone and every recorded file - and every
+// backed-up original's target - is at the same place under the new one,
+// with every backup intact. The deployed files' records then follow
+// (the returned ledgerReroot). Anything else is a GameInstallPathInUseError.
+//
+// A mod_path the same edit sends somewhere other than where it would follow
+// to is a mod_path move, and refuseModPathMove decides it; files recorded
+// under a mod_path other than the current one (#451) refuse the move with
+// that problem, which has to be resolved first.
+func (s *Service) refuseInstallPathMove(ctx context.Context, game, updated *domain.Game, followed string) (*ledgerReroot, error) {
+	modMoves := !samePath(updated.ModPath, game.ModPath)
+	inUse := &GameInstallPathInUseError{
+		GameID: game.ID, InstallPath: game.InstallPath, NewInstallPath: updated.InstallPath, ModPath: game.ModPath,
+	}
+	var from []string
+	switch {
+	case modMoves && !samePath(updated.ModPath, followed):
+		if err := s.refuseModPathMove(ctx, game, updated.ModPath); err != nil {
+			return nil, err
+		}
+		inUse.NewModPath = updated.ModPath
+	case modMoves:
+		inUse.NewModPath = updated.ModPath
+		if problem, err := modPathMovedProblem(ctx, s.db, game); err != nil || problem != nil {
+			if err != nil {
+				return nil, err
+			}
+			return nil, problem
+		}
+		records, err := s.db.DeployedPathRecords(ctx, game.ID)
+		if err != nil {
+			return nil, err
+		}
+		counts := map[string]int{}
+		for rel, recs := range records {
+			for _, r := range recs {
+				counts[r.Profile]++
+				if !slices.Contains(from, r.ModPath) {
+					from = append(from, r.ModPath)
+				}
+			}
+			inUse.DeployedFiles += len(recs)
+			if _, err := os.Lstat(filepath.Join(updated.ModPath, filepath.FromSlash(rel))); err != nil {
+				inUse.MissingFiles += len(recs)
+			}
+		}
+		for _, profile := range slices.Sorted(maps.Keys(counts)) {
+			inUse.Profiles = append(inUse.Profiles, ProfileDeployedFiles{Profile: profile, DeployedFiles: counts[profile]})
+		}
+	}
+
+	if store := s.originalsStoreFor(game.ID); store != nil {
+		rows, err := store.list()
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if row.Root == OriginalRootModPath && !modMoves {
+				continue
+			}
+			inUse.Originals++
+			dest, err := originalDestination(updated, row)
+			if err == nil {
+				err = store.verify(row)
+			}
+			if err == nil {
+				_, err = os.Lstat(dest)
+			}
+			if err != nil {
+				inUse.MissingOriginals++
+			}
+		}
+	}
+
+	if inUse.DeployedFiles == 0 && inUse.Originals == 0 {
+		return nil, nil
+	}
+	if _, err := os.Lstat(game.InstallPath); !errors.Is(err, fs.ErrNotExist) {
+		inUse.OldInstallPathExists = true
+	}
+	if inUse.OldInstallPathExists || inUse.MissingFiles > 0 || inUse.MissingOriginals > 0 {
+		return nil, inUse
+	}
+	if inUse.DeployedFiles == 0 {
+		return nil, nil
+	}
+	slices.Sort(from)
+	return &ledgerReroot{from: from, to: updated.ModPath, back: game.ModPath}, nil
+}
+
+// isInUseRefusal reports whether err is one of the refusals
+// refuseInstallPathMove makes because of what lmm has recorded against the
+// game's folder - the per-game finding a detect repair reports
+// (GameDetectRefusal) rather than a failure of the whole selection.
+func isInUseRefusal(err error) bool {
+	var installInUse *GameInstallPathInUseError
+	var modPathInUse *GameModPathInUseError
+	var stranded *ModPathMissingError
+	return errors.As(err, &installInUse) || errors.As(err, &modPathInUse) ||
+		errors.As(err, &stranded) || errors.Is(err, ErrActiveProfileUnknown)
+}
+
+// GameInstallPathInUseError refuses an install_path change (#528) while lmm
+// has files recorded against the game's folder and the change is not a
+// move of that whole folder: the old install path still exists, or some of
+// what lmm recorded is not at the same place under the new one.
+type GameInstallPathInUseError struct {
+	GameID         string `json:"game_id"`
+	InstallPath    string `json:"install_path"`
+	NewInstallPath string `json:"new_install_path"`
+	ModPath        string `json:"mod_path"`
+	// NewModPath is where the mod_path would have moved with the install
+	// path; empty when it stays where it is.
+	NewModPath string `json:"new_mod_path,omitempty"`
+	// DeployedFiles is how many deployed-file records would move with the
+	// mod_path, and Profiles each profile's share of them - each is purged
+	// on its own.
+	DeployedFiles int                    `json:"deployed_files"`
+	Profiles      []ProfileDeployedFiles `json:"profiles,omitempty"`
+	// Originals is how many backed-up originals (files lmm replaced) would
+	// be restored somewhere else after the change.
+	Originals int `json:"originals,omitzero"`
+	// OldInstallPathExists is set when InstallPath is still there, so the
+	// change cannot be a move of the folder.
+	OldInstallPathExists bool `json:"old_install_path_exists"`
+	// MissingFiles and MissingOriginals count what a move would have had to
+	// find under NewInstallPath and did not (an original also counts when
+	// its backup is gone or damaged).
+	MissingFiles     int `json:"missing_files,omitzero"`
+	MissingOriginals int `json:"missing_originals,omitzero"`
+}
+
+// Error names what is recorded, why the change is not a move, and the way
+// out.
+func (e *GameInstallPathInUseError) Error() string {
+	var recorded []string
+	if e.DeployedFiles > 0 {
+		recorded = append(recorded, fmt.Sprintf("%d deployed file(s) under %s", e.DeployedFiles, e.ModPath))
+	}
+	if e.Originals > 0 {
+		recorded = append(recorded, fmt.Sprintf("backups of %d game file(s) it replaced", e.Originals))
+	}
+	msg := fmt.Sprintf("cannot change install_path for game %s from %s to %s: lmm recorded %s against the current folder, and changes the install path with them only as a move of the whole folder",
+		e.GameID, e.InstallPath, e.NewInstallPath, strings.Join(recorded, " and "))
+	if e.OldInstallPathExists {
+		msg += fmt.Sprintf(", but %s still exists", e.InstallPath)
+	} else {
+		var missing []string
+		if e.MissingFiles > 0 {
+			missing = append(missing, fmt.Sprintf("%d of the deployed files", e.MissingFiles))
+		}
+		if e.MissingOriginals > 0 {
+			missing = append(missing, fmt.Sprintf("%d of the replaced files", e.MissingOriginals))
+		}
+		msg += fmt.Sprintf(": %s is gone, but %s are not at the same place under %s", e.InstallPath, strings.Join(missing, " and "), e.NewInstallPath)
+	}
+	if len(e.Profiles) > 0 {
+		purges := make([]string, 0, len(e.Profiles))
+		for _, p := range e.Profiles {
+			purges = append(purges, fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, p.Profile))
+		}
+		msg += fmt.Sprintf("; purge them first - run %s - then change install_path, then run `lmm deploy --game %s`",
+			strings.Join(purges, ", then "), e.GameID)
+	}
+	if e.Originals > 0 {
+		msg += "; lmm puts each replaced file back relative to the install path, so with those recorded the old folder has to be gone and the new one has to hold them"
+	}
+	return msg
+}
+
+// Details returns the error itself for the --json error envelope's
+// "details" field (Ruling 3).
+func (e *GameInstallPathInUseError) Details() any { return e }
+
+// refuseAdapterComposition is EditGame's AdapterFor check on the game the
+// edit leaves (updated), blamed on the key the user asked to change.
+//
+// An adapter edit must leave a game AdapterFor accepts. A mod_path move
+// alone must not turn an accepted game into a refused one - but may move a
+// refused game, since that is its repair. bepinex off the game root gets a
+// sentence about THIS edit rather than AdapterFor's own, which describes a
+// game already saved that way and whose remedy (purge, then move the
+// mod_path to where it already is) would be a no-op here.
+func (s *Service) refuseAdapterComposition(game, updated *domain.Game, adapterSet, moved bool) error {
+	switch {
+	case adapterSet:
+		if _, err := s.AdapterFor(updated); err != nil {
+			reason := err.Error()
+			if bepinexOffRoot(updated) {
+				reason = fmt.Sprintf("adapter bepinex deploys into the game root (%s), and this edit leaves mod_path at %s; set both in one command: `lmm game edit %s --adapter bepinex --mod-path %s`",
+					updated.InstallPath, updated.ModPath, updated.ID, updated.InstallPath)
+			}
+			return &GameSpecError{Field: "adapter", Value: updated.Adapter, Reason: reason, Err: err}
+		}
+	case moved:
+		if _, err := s.AdapterFor(game); err != nil {
+			return nil
+		}
+		if _, err := s.AdapterFor(updated); err != nil {
+			reason := err.Error()
+			if bepinexOffRoot(updated) {
+				reason = fmt.Sprintf("game %q sets adapter: bepinex, which deploys into the game root (%s), so its mod_path cannot move to %s; to deploy archives there exactly as packaged, change the adapter in the same command: `lmm game edit %s --adapter generic-files --mod-path %s`",
+					updated.ID, updated.InstallPath, updated.ModPath, updated.ID, updated.ModPath)
+			}
+			return &GameSpecError{Field: "mod_path", Value: updated.ModPath, Reason: reason, Err: err}
+		}
+	}
+	return nil
+}
+
+// UpdateGameSources is EditGame with only a source map: it REPLACES
+// gameID's map with sources (nil is the empty map, which is refused).
+func (s *Service) UpdateGameSources(ctx context.Context, gameID string, sources map[string]string) (*GameListEntry, error) {
+	if sources == nil {
+		sources = map[string]string{}
+	}
+	return s.EditGame(ctx, gameID, GameEdit{Sources: sources})
+}
+
+// SetGameAdapter is EditGame with only an adapter (#353): name sets the
+// `adapter:` key, and "" clears it - the returned row's EffectiveAdapter
+// then names the adapter lmm derives (icarus for `deploy_mode: compile`,
+// bepinex for a game-root game with BepInEx, generic-files otherwise).
+func (s *Service) SetGameAdapter(ctx context.Context, gameID, name string) (*GameListEntry, error) {
+	return s.EditGame(ctx, gameID, GameEdit{Adapter: &name})
+}
+
+// SetGameModPath is EditGame with only a mod_path (#427, #456): the repair
+// for a mod_path that is gone, and the command form of the "set its
+// mod_path" step the BepInEx remedies used to leave to a hand edit of
+// games.yaml.
+func (s *Service) SetGameModPath(ctx context.Context, gameID, modPath string) (*GameListEntry, error) {
+	return s.EditGame(ctx, gameID, GameEdit{ModPath: &modPath})
+}
+
+// refuseModPathMove is THE in-use check (#427 review F1): every path that
+// can change a configured game's mod_path runs it before writing - EditGame,
+// and the `lmm game detect` repair of an already-configured game
+// (applyGameDetectLocked, which `lmm init`, `lmm game detect` and POST
+// /api/v1/games/detect all reach). AddGame cannot change one: it refuses an
+// id that is already configured.
+//
+// It refuses with a GameModPathInUseError while any profile of game has
+// files deployed and to is a different directory. lmm records a deployed
+// file relative to the mod_path it was deployed under, so a move under a
+// live deployment strands every file: still live, no longer recorded, and
+// looked for in the wrong place by the next purge. The purge comes first.
+// When the profile files do not say which profile is active, the refusal
+// is ErrActiveProfileUnknown instead (#445 review F2): every purge the
+// in-use error would name refuses then, and the profile it would name for
+// `lmm deploy` would be a guess.
+func (s *Service) refuseModPathMove(ctx context.Context, game *domain.Game, to string) error {
+	if samePath(game.ModPath, to) {
+		return nil
+	}
+	// #451: each row is judged by the mod_path it was deployed under, so a
+	// games.yaml hand edit made with files deployed does not hide them - and
+	// moving back to where they are strands nothing.
+	roots, err := s.db.DeployedFileRoots(ctx, game.ID)
+	if err != nil {
+		return err
+	}
+	counts := map[string]int{}
+	var under []string
+	current := false
+	for _, r := range roots {
+		root := r.ModPath
+		if root == "" {
+			root = game.ModPath
+		}
+		if samePath(root, to) {
+			continue
+		}
+		counts[r.Profile] += r.Files
+		switch {
+		case samePath(root, game.ModPath):
+			current = true
+		case !slices.Contains(under, root):
+			under = append(under, root)
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	if len(under) > 0 && current {
+		under = append(under, game.ModPath)
+	}
+
+	inUse := &GameModPathInUseError{GameID: game.ID, ModPath: game.ModPath, NewModPath: to, DeployedUnder: under}
+	slices.Sort(inUse.DeployedUnder)
+	for _, profile := range slices.Sorted(maps.Keys(counts)) {
+		inUse.Profiles = append(inUse.Profiles, ProfileDeployedFiles{Profile: profile, DeployedFiles: counts[profile]})
+		inUse.DeployedFiles += counts[profile]
+	}
+	if inUse.ActiveProfile, err = s.liveProfile(ctx, game.ID); err != nil {
+		return fmt.Errorf("cannot move the mod_path of %s: %d deployed file(s) are recorded under it, and they cannot be purged until lmm can tell which profile is active - %w",
+			game.ID, inUse.DeployedFiles, err)
+	}
+	if err := s.countListedUnrecorded(ctx, game, inUse); err != nil {
+		return err
+	}
+	if counts[inUse.ActiveProfile] > 0 {
+		if inUse.OrphanedRecords, err = s.orphanedRecordCount(ctx, game.ID, inUse.ActiveProfile); err != nil {
+			return err
+		}
+	}
+	return inUse
+}
+
+// refuseCachePathMove keeps deployed links associated with the cache root
+// that supplied them. A cache_path change changes the game-scoped cache
+// layout too, so even a path equal to the global cache root needs a purge.
+func (s *Service) refuseCachePathMove(ctx context.Context, game *domain.Game, to string) error {
+	if game.CachePath == to {
+		return nil
+	}
+	roots, err := s.db.DeployedFileRoots(ctx, game.ID)
+	if err != nil {
+		return err
+	}
+	if len(roots) == 0 {
+		return nil
+	}
+	inUse := &GameCachePathInUseError{GameID: game.ID, CachePath: game.CachePath, NewCachePath: to}
+	for _, root := range roots {
+		inUse.DeployedFiles += root.Files
+		if len(inUse.Profiles) > 0 && inUse.Profiles[len(inUse.Profiles)-1].Profile == root.Profile {
+			inUse.Profiles[len(inUse.Profiles)-1].DeployedFiles += root.Files
+		} else {
+			inUse.Profiles = append(inUse.Profiles, ProfileDeployedFiles{Profile: root.Profile, DeployedFiles: root.Files})
+		}
+	}
+	return inUse
+}
+
+// GameCachePathInUseError refuses a cache_path change while deployed-file
+// records remain. Each named profile must be purged before the edit.
+type GameCachePathInUseError struct {
+	GameID        string
+	CachePath     string
+	NewCachePath  string
+	DeployedFiles int
+	Profiles      []ProfileDeployedFiles
+}
+
+// Error names the purge sequence that clears the recorded deployments.
+func (e *GameCachePathInUseError) Error() string {
+	purges := make([]string, 0, len(e.Profiles))
+	for _, profile := range e.Profiles {
+		purges = append(purges, fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, profile.Profile))
+	}
+	return fmt.Sprintf("cannot change cache_path for game %s while %d deployed file(s) are recorded; run %s before changing it, then redeploy the active profile. If cache_path was edited by hand after deployment, restore its previous value in games.yaml and reopen lmm before purging",
+		e.GameID, e.DeployedFiles, strings.Join(purges, ", then "))
+}
+
+// orphanedRecordCount is how many of profileName's deployed-file records
+// name a mod it has no installed row for (#469).
+func (s *Service) orphanedRecordCount(ctx context.Context, gameID, profileName string) (int, error) {
+	rows, err := s.db.ListDeployedFiles(ctx, gameID, profileName)
+	if err != nil {
+		return 0, fmt.Errorf("listing deployed files: %w", err)
+	}
+	installed, err := s.GetInstalledMods(ctx, gameID, profileName)
+	if err != nil {
+		return 0, fmt.Errorf("getting installed mods: %w", err)
+	}
+	owned := make(map[string]bool, len(installed))
+	for _, m := range installed {
+		owned[domain.ModKey(m.SourceID, m.ID)] = true
+	}
+	n := 0
+	for _, row := range rows {
+		if !owned[domain.ModKey(row.SourceID, row.ModID)] {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// countListedUnrecorded fills inUse's ListedUnrecorded, NeedsApply,
+// NeedsDeploy and ListedUnavailable (#445 audit, final gate F-C): the files
+// a non-active profile's purge keeps because the active profile lists their
+// mods (PurgeKeptListed) - live for the active profile, recorded only by
+// that other profile. Until the active profile records them, no purge the
+// refusal names can clear them, and when an apply cannot deploy the mod at
+// the version the active profile lists, nothing records them at all: only
+// an edit of the active profile's document ends that.
+//
+// A file among those that another game records as well (#445 gate 2,
+// G2-1) is one no command of this game can record while that game does:
+// lmm never replaces another game's file. Each profile of another game
+// recording one is named in ReleaseFirst - none is its game's active
+// profile, or the file would be that game's (heldForActive) - and when lmm
+// cannot tell which profile of such a game is active, the move is refused
+// with that instead, since the purge it would name could be that game's
+// whole deployment.
+func (s *Service) countListedUnrecorded(ctx context.Context, game *domain.Game, inUse *GameModPathInUseError) error {
+	var view *activeApplyView
+	named := make(map[string]bool)
+	others, err := s.otherGamesRecording(ctx, game)
+	if err != nil {
+		return err
+	}
+	release := make(map[OtherGameProfile]bool)
+	for _, p := range inUse.Profiles {
+		if p.Profile == inUse.ActiveProfile {
+			continue
+		}
+		_, kept, err := s.recordedPaths(ctx, game, p.Profile, inUse.ActiveProfile, others, nil, false)
+		if err != nil {
+			return err
+		}
+		for _, k := range kept {
+			if k.Reason != PurgeKeptListed {
+				// A file of a mod the active profile lists that another
+				// game keeps for its own active profile is that game's
+				// (heldForActive), so the active profile deploys the mod
+				// into the new directory only - and only an apply does it
+				// when the profile has no enabled row of it.
+				if !inUse.ApplyAfterMove && len(others.heldForActive(k.Path)) > 0 {
+					if view == nil {
+						if view, err = s.activeApplyViewOf(ctx, game, inUse.ActiveProfile); err != nil {
+							return err
+						}
+					}
+					key := domain.ModKey(k.row.SourceID, k.row.ModID)
+					if ref, listed := view.refs[key]; listed && !ref.Disabled {
+						if own := view.rows[key]; own == nil || !own.Enabled {
+							inUse.ApplyAfterMove = true
+						}
+					}
+				}
+				continue
+			}
+			if view == nil {
+				if view, err = s.activeApplyViewOf(ctx, game, inUse.ActiveProfile); err != nil {
+					return err
+				}
+			}
+			inUse.ListedUnrecorded++
+			key := domain.ModKey(k.row.SourceID, k.row.ModID)
+			switch own := view.rows[key]; {
+			case own != nil && own.Enabled:
+				inUse.NeedsDeploy = true
+			case view.canDeploy(key, s.hasSource):
+				inUse.NeedsApply = true
+			default:
+				if !named[key] {
+					named[key] = true
+					inUse.ListedUnavailable = append(inUse.ListedUnavailable, view.unavailable(key))
+				}
+				continue
+			}
+			for _, h := range others.holding(k.Path) {
+				if c := others.claims(h.game); c.err != nil {
+					return fmt.Errorf("cannot move the mod_path of %s: %d deployed file(s) are recorded under it, and game %s, which shares the directory, records %s too - lmm cannot name the purge that lets it go until it can tell which profile of %s is active: %w",
+						game.ID, inUse.DeployedFiles, h.game.id, k.Path, h.game.id, c.err)
+				}
+				for _, rec := range h.records {
+					release[OtherGameProfile{GameID: h.game.id, Profile: rec.Profile}] = true
+				}
+			}
+		}
+	}
+	inUse.ReleaseFirst = slices.SortedFunc(maps.Keys(release), func(a, b OtherGameProfile) int {
+		return cmp.Or(strings.Compare(a.GameID, b.GameID), strings.Compare(a.Profile, b.Profile))
+	})
+	return nil
+}
+
+// hasSource reports whether lmm has a source registered as id - one an
+// apply can fetch a mod from.
+func (s *Service) hasSource(id string) bool {
+	_, err := s.registry.Get(id)
+	return err == nil
+}
+
+// activeApplyView is what `lmm profile apply` of a game's active profile
+// decides a listed mod from (planProfileApply), read once for the mod_path
+// refusal.
+type activeApplyView struct {
+	game  *domain.Game
+	cache *cache.Cache
+	file  string                          // the active profile's document
+	refs  map[string]domain.ModReference  // its first references, by mod key
+	rows  map[string]*domain.InstalledMod // its installed rows, by mod key
+	// elsewhere is every other profile's rows, by mod key.
+	elsewhere map[string][]domain.InstalledMod
+}
+
+// activeApplyViewOf reads game's active profile, active, for an
+// activeApplyView.
+func (s *Service) activeApplyViewOf(ctx context.Context, game *domain.Game, active string) (*activeApplyView, error) {
+	file, err := config.ProfilePath(s.configDir, game.ID, active)
+	if err != nil {
+		return nil, err
+	}
+	profile, err := config.LoadProfile(s.configDir, game.ID, active)
+	if err != nil {
+		return nil, fmt.Errorf("%w for %s: reading %s's profile file: %w", ErrActiveProfileUnknown, game.ID, active, err)
+	}
+	installed, err := s.GetInstalledMods(ctx, game.ID, active)
+	if err != nil {
+		return nil, fmt.Errorf("getting installed mods: %w", err)
+	}
+	view := &activeApplyView{
+		game:      game,
+		cache:     s.GetGameCache(game),
+		file:      file,
+		refs:      firstRefs(profile.Mods),
+		rows:      make(map[string]*domain.InstalledMod, len(installed)),
+		elsewhere: s.rowsElsewhere(ctx, s.NewProfileManager(), game.ID, active),
+	}
+	for i := range installed {
+		view.rows[domain.ModKey(installed[i].SourceID, installed[i].ID)] = &installed[i]
+	}
+	return view, nil
+}
+
+// canDeploy reports whether an apply of the active profile deploys the mod
+// it lists as key, deciding as planProfileApply does: from its own row's
+// cache entry at the listed version, from another profile's
+// (cachedRowElsewhere), or else by fetching it - which only a source lmm
+// has (hasSource) can do. Whether that source still offers the version is
+// not known offline, so a source lmm has counts as able.
+func (v *activeApplyView) canDeploy(key string, hasSource func(string) bool) bool {
+	ref := v.refs[key]
+	if own := v.rows[key]; own != nil {
+		if own.External {
+			return true
+		}
+		if (ref.Version == "" || own.Version == ref.Version) && v.cache.Exists(v.game.ID, own.SourceID, own.ID, own.Version) {
+			return true
+		}
+	} else {
+		if slices.ContainsFunc(v.elsewhere[key], func(row domain.InstalledMod) bool { return row.External }) {
+			return true
+		}
+		if _, ok := cachedRowElsewhere(v.cache, v.game.ID, ref, v.elsewhere[key]); ok {
+			return true
+		}
+	}
+	return hasSource(ref.SourceID)
+}
+
+// unavailable describes the mod the active profile lists as key, which no
+// apply can deploy (canDeploy).
+func (v *activeApplyView) unavailable(key string) ListedVersionUnavailable {
+	ref := v.refs[key]
+	u := ListedVersionUnavailable{SourceID: ref.SourceID, ModID: ref.ModID, Version: ref.Version, ProfileFile: v.file}
+	rows := slices.Clone(v.elsewhere[key])
+	if own := v.rows[key]; own != nil {
+		rows = append(rows, *own)
+	}
+	for _, row := range rows {
+		if !slices.Contains(u.Cached, row.Version) && v.cache.Exists(v.game.ID, row.SourceID, row.ID, row.Version) {
+			u.Cached = append(u.Cached, row.Version)
+		}
+	}
+	slices.Sort(u.Cached)
+	// #445 gate 2, G2-3: the cache holds the listed version, so what an
+	// apply cannot get past is the other version deployed.
+	if ref.Version != "" && slices.Contains(u.Cached, ref.Version) {
+		if prior, drift := liveOtherVersion(v.elsewhere[key], ref); drift {
+			u.LiveVersion, u.LiveProfile = prior.Version, prior.ProfileName
+		}
+	}
+	return u
+}
+
+// samePath reports whether a and b name the same directory: equal once
+// cleaned, or equal once symlinks are resolved (resolvedPath) - a detected
+// install path can be another spelling of the configured one.
+func samePath(a, b string) bool {
+	return filepath.Clean(a) == filepath.Clean(b) || resolvedPath(a) == resolvedPath(b)
+}
+
+// resolveModPathValue applies the loader's mod_path rule to an
+// already-expanded, non-empty value on the WRITE side (#363): a relative
+// value is relative to installPath, and what is written is the resolved
+// absolute path. A path that exists and is not a directory is refused -
+// every later deploy would fail on it with a confusing link error - while
+// an absent one is fine, because a deploy creates it. Shared by GameSpec
+// (`lmm game add`) and EditGame, so the two cannot accept different values.
+func resolveModPathValue(installPath, modPath string) (string, error) {
+	resolved, err := config.ResolveModPath(installPath, modPath)
+	if err != nil {
+		return "", &GameSpecError{Field: "mod_path", Value: modPath, Reason: err.Error(), Err: err}
+	}
+	if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
+		return "", newGameSpecError("mod_path", resolved, "path exists and is not a directory")
+	}
+	return resolved, nil
+}
+
+// modPathReasonAbsent is ModPathMissingError.Reason for a mod_path that is
+// not there at all - the one reason that is not always a problem.
+const modPathReasonAbsent = "does not exist"
+
+// modPathReasonMoved is ModPathMissingError.Reason for a mod_path that is
+// not the one lmm deployed files under (#451).
+const modPathReasonMoved = "is not where lmm deployed its files"
+
+// ModPathProblem reports whether game's mod_path needs the user's attention
+// - a *ModPathMissingError - or nil when it does not. It is what every game
+// document's mod_path_error says (GameListEntry, GameSummary, GameStatus,
+// GameDetectEntry - `lmm game list/show`, `lmm status`, `lmm game detect`,
+// the web Games rows) and what `lmm verify`'s mod_path_missing row reports
+// (#427).
+//
+// A mod_path that is not a directory, or cannot be read, is always a
+// problem. An ABSENT one is the ordinary state of a game nobody has deployed
+// to yet - `lmm game add` and detection both leave it to the first deploy,
+// which creates it - so it is flagged only when that is not what is going
+// on (#427 review F3):
+//
+//   - lmm recorded files deployed under it, for any profile: its own files
+//     are gone (the owner's #427 case), or
+//   - a deploy could not create it: the install path is gone too, or the
+//     nearest part of the mod_path that exists is outside the install path.
+//
+// Before any of that, a mod_path that is not the one lmm deployed files
+// under is always a problem (#451): games.yaml was edited with files
+// deployed, so they are still live where they were and lmm no longer looks
+// there. That answer's DeployedUnder names each recorded mod_path.
+//
+// A game with no mod_path configured is a different complaint, made
+// elsewhere, and answers nil.
+func (s *Service) ModPathProblem(ctx context.Context, game *domain.Game) (*ModPathMissingError, error) {
+	if moved, err := modPathMovedProblem(ctx, s.db, game); err != nil || moved != nil {
+		return moved, err
+	}
+	problem := modPathStatProblem(game)
+	if problem == nil || problem.Reason != modPathReasonAbsent {
+		return problem, nil
+	}
+
+	counts, err := s.db.DeployedFileCounts(ctx, game.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range counts {
+		problem.DeployedFiles += n
+	}
+	problem.InstallPathMissing, problem.OutsideInstallPath = modPathUncreatable(game)
+	if problem.InstallPathMissing || problem.OutsideInstallPath {
+		problem.InstallPath = game.InstallPath
+	}
+	if problem.DeployedFiles == 0 && problem.InstallPath == "" {
+		return nil, nil
+	}
+	return problem, nil
+}
+
+// modPathMovedProblem is ModPathProblem's #451 half: the answer for a game
+// with files recorded under a mod_path other than its current one, or nil.
+// Installer uses it too, to refuse every deploy while that is so.
+func modPathMovedProblem(ctx context.Context, database *db.DB, game *domain.Game) (*ModPathMissingError, error) {
+	if game == nil || game.ModPath == "" {
+		return nil, nil
+	}
+	roots, err := strandedRoots(ctx, database, game)
+	if err != nil || len(roots) == 0 {
+		return nil, err
+	}
+	problem := &ModPathMissingError{GameID: game.ID, ModPath: game.ModPath, Reason: modPathReasonMoved}
+	for _, r := range roots {
+		problem.DeployedFiles += r.Files
+		problem.DeployedUnder = append(problem.DeployedUnder, DeployedUnder(r))
+	}
+	return problem, nil
+}
+
+// modPathStatProblem is the stat half of ModPathProblem, with no judgement
+// about an absent directory: `lmm import`'s scan has nothing to scan either
+// way, so it refuses on this alone. One stat.
+func modPathStatProblem(game *domain.Game) *ModPathMissingError {
+	if game == nil || game.ModPath == "" {
+		return nil
+	}
+	modPath := config.ExpandPath(game.ModPath)
+	info, err := os.Stat(modPath)
+	var reason string
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		reason = modPathReasonAbsent
+	case err != nil:
+		reason = "cannot be read: " + err.Error()
+	case !info.IsDir():
+		reason = "is not a directory"
+	default:
+		return nil
+	}
+	e := &ModPathMissingError{GameID: game.ID, ModPath: game.ModPath, Reason: reason}
+	// A BepInEx layout is relative to the game root, so for a game that has
+	// BepInEx the right mod_path is not a guess.
+	if hasBepInEx(game) && filepath.Clean(game.ModPath) != filepath.Clean(game.InstallPath) {
+		e.SuggestedModPath = game.InstallPath
+	}
+	return e
+}
+
+// modPathUncreatable reports why a deploy could not create game's absent
+// mod_path where the user expects it: the install path is gone
+// (installMissing), or the nearest existing ancestor of the mod_path lies
+// outside the install path (outside) - so the mod_path is not somewhere in
+// the game at all. A game with no install path has nothing to compare
+// against, and answers neither.
+func modPathUncreatable(game *domain.Game) (installMissing, outside bool) {
+	if game.InstallPath == "" {
+		return false, false
+	}
+	install := config.ExpandPath(game.InstallPath)
+	if _, err := os.Stat(install); errors.Is(err, fs.ErrNotExist) {
+		return true, false
+	}
+	ancestor := filepath.Clean(config.ExpandPath(game.ModPath))
+	for {
+		if _, err := os.Stat(ancestor); err == nil {
+			break
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			break
+		}
+		ancestor = parent
+	}
+	return false, !pathWithin(resolvedPath(ancestor), resolvedPath(install))
+}
+
+// pathWithin reports whether path is root or lies beneath it; both are
+// cleaned, absolute paths.
+func pathWithin(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// ModPathMissingError is ModPathProblem's answer: GameID's mod_path is not a
+// directory lmm can deploy into as things stand, and Error names the
+// command that repairs it.
+type ModPathMissingError struct {
+	GameID  string `json:"game_id"`
+	ModPath string `json:"mod_path"`
+	// Reason is what is wrong with it: "does not exist", "is not a
+	// directory", "cannot be read: <cause>", or "is not where lmm deployed
+	// its files" (DeployedUnder).
+	Reason string `json:"reason"`
+	// DeployedFiles is how many deployed files lmm has recorded under the
+	// absent mod_path, across every profile - the reason an absent
+	// directory is a problem rather than a game nobody has deployed to.
+	DeployedFiles int `json:"deployed_files,omitzero"`
+	// InstallPath is the game's install path, present when it is part of
+	// the problem: InstallPathMissing (it is gone as well) or
+	// OutsideInstallPath (the absent mod_path is not inside it).
+	InstallPath        string `json:"install_path,omitempty"`
+	InstallPathMissing bool   `json:"install_path_missing,omitzero"`
+	OutsideInstallPath bool   `json:"outside_install_path,omitzero"`
+	// SuggestedModPath is the value lmm can recommend with confidence - the
+	// install path, for a game that has BepInEx - and empty otherwise.
+	SuggestedModPath string `json:"suggested_mod_path,omitempty"`
+	// DeployedUnder names each other mod_path lmm recorded deployed files
+	// under (#451): mod_path was changed without purging them first, so
+	// they are still there. DeployedFiles counts them then.
+	DeployedUnder []DeployedUnder `json:"deployed_under,omitempty"`
+}
+
+// DeployedUnder is a mod_path, other than a game's current one, that lmm
+// recorded deployed files under (ModPathMissingError.DeployedUnder).
+type DeployedUnder struct {
+	ModPath string `json:"mod_path"`
+	Files   int    `json:"files"`
+	// Profiles names each profile with files there, since each is purged
+	// on its own.
+	Profiles []string `json:"profiles"`
+}
+
+// Error implements error.
+func (e *ModPathMissingError) Error() string {
+	if len(e.DeployedUnder) > 0 {
+		return e.movedError()
+	}
+	head := fmt.Sprintf("mod_path %s %s", e.ModPath, e.Reason)
+	switch {
+	case e.DeployedFiles > 0:
+		head += fmt.Sprintf(", but lmm recorded %d deployed file(s) under it", e.DeployedFiles)
+		if e.InstallPathMissing {
+			head += fmt.Sprintf(", and the install path %s does not exist either", e.InstallPath)
+		}
+	case e.InstallPathMissing:
+		head += ", and neither does the install path " + e.InstallPath
+	case e.OutsideInstallPath:
+		head += ", and is outside the install path " + e.InstallPath
+	case e.Reason == modPathReasonAbsent:
+		head += " yet (a deploy creates it)"
+	}
+
+	switch {
+	case e.DeployedFiles > 0 && e.SuggestedModPath != "":
+		return fmt.Sprintf("%s; a BepInEx game deploys into its root: purge them, then run `lmm game edit %s --mod-path %s`, which names the purge each profile needs",
+			head, e.GameID, e.SuggestedModPath)
+	case e.DeployedFiles > 0:
+		return fmt.Sprintf("%s; if the game still loads mods from there, run `lmm deploy --game %s` to put the active profile's back, or, if it loads them from somewhere else, purge them and run `lmm game edit %s --mod-path <path>`, which names the purge each profile needs",
+			head, e.GameID, e.GameID)
+	case e.SuggestedModPath != "":
+		return fmt.Sprintf("%s; a BepInEx game deploys into its root: run `lmm game edit %s --mod-path %s`",
+			head, e.GameID, e.SuggestedModPath)
+	default:
+		return fmt.Sprintf("%s; if the game loads mods from somewhere else, run `lmm game edit %s --mod-path <path>`", head, e.GameID)
+	}
+}
+
+// movedError is Error for a DeployedUnder problem: where the files are,
+// where lmm looks now, and the two ways out.
+func (e *ModPathMissingError) movedError() string {
+	var where, back, purges []string
+	for _, u := range e.DeployedUnder {
+		where = append(where, fmt.Sprintf("%d under %s (profile %s)", u.Files, u.ModPath, strings.Join(u.Profiles, ", ")))
+		back = append(back, fmt.Sprintf("`lmm game edit %s --mod-path %s`", e.GameID, u.ModPath))
+		for _, p := range u.Profiles {
+			cmd := fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, p)
+			if !slices.Contains(purges, cmd) {
+				purges = append(purges, cmd)
+			}
+		}
+	}
+	setBack := "set it back with " + back[0]
+	if len(back) > 1 {
+		setBack = "set it back to where the files are (" + strings.Join(back, " or ") + ")"
+	}
+	return fmt.Sprintf("files are deployed under a mod_path this game no longer uses - %s - but mod_path is now %s, so lmm will not deploy until that is resolved: either %s, or run %s, which removes them from where they were deployed, then `lmm deploy --game %s`",
+		strings.Join(where, "; "), e.ModPath, setBack, strings.Join(purges, ", then "), e.GameID)
+}
+
+// Details returns the error itself for the --json error envelope's
+// "details" field (Ruling 3).
+func (e *ModPathMissingError) Details() any { return e }
+
+// GameModPathInUseError refuses a mod_path move (refuseModPathMove) while
+// GameID has files deployed under ModPath. Profiles names each profile that
+// has them, because each is purged on its own (`lmm purge --profile`), and
+// ActiveProfile is the one `lmm deploy` redeploys afterwards.
+type GameModPathInUseError struct {
+	GameID  string `json:"game_id"`
+	ModPath string `json:"mod_path"`
+	// NewModPath is where the refused edit would have moved it.
+	NewModPath string `json:"new_mod_path"`
+	// DeployedUnder names every mod_path the files were deployed under,
+	// when any of them is not ModPath (#451): ModPath was changed behind
+	// lmm's back, and those files are still there.
+	DeployedUnder []string               `json:"deployed_under,omitempty"`
+	DeployedFiles int                    `json:"deployed_files"`
+	Profiles      []ProfileDeployedFiles `json:"profiles"`
+	ActiveProfile string                 `json:"active_profile"`
+	// ListedUnrecorded is how many of those files are live for
+	// ActiveProfile - its document lists their mods - while only another
+	// profile records them: what a v1.30.1 switch between profiles sharing
+	// a mod left (#445 audit). That profile's purge keeps them
+	// (PurgeKeptListed), so ActiveProfile has to record them first, and is
+	// then purged too, rows or not: `lmm profile apply` does it for a mod
+	// ActiveProfile has no enabled row for (NeedsApply), `lmm deploy` for
+	// one it has (NeedsDeploy).
+	ListedUnrecorded int `json:"listed_unrecorded,omitzero"`
+	// OrphanedRecords is how many of ActiveProfile's deployed-file records
+	// name a mod it has no installed row for (#469): no purge or apply
+	// looks at them, so `lmm verify --fix` drops them first - leaving their
+	// files where they are.
+	OrphanedRecords int  `json:"orphaned_records,omitzero"`
+	NeedsApply      bool `json:"needs_apply,omitzero"`
+	NeedsDeploy     bool `json:"needs_deploy,omitzero"`
+	// ListedUnavailable names, once each, the mods among those that no
+	// apply can deploy at the version ActiveProfile lists (#445 final gate
+	// F-C): no command records their files, and no purge removes them,
+	// until ActiveProfile's document lists another version or marks them
+	// off.
+	ListedUnavailable []ListedVersionUnavailable `json:"listed_unavailable,omitempty"`
+	// ReleaseFirst names the profiles of other games sharing the directory
+	// that record some of the files NeedsApply or NeedsDeploy is for (#445
+	// gate 2, G2-1), in game and profile order. lmm never replaces a file
+	// another game records, so ActiveProfile cannot record those until each
+	// of these lets go of them: none is its game's active profile, and its
+	// purge keeps a file this game records and drops its own record of it.
+	ReleaseFirst []OtherGameProfile `json:"release_first,omitempty"`
+	// ApplyAfterMove is set when ActiveProfile lists a mod, and has no
+	// enabled row of it, whose file here another game keeps for its own
+	// active profile (#445 gate 2, G2-1): that file stays that game's, so
+	// the mod is deployed into the new directory only, and `lmm deploy`
+	// deploys only rows - `lmm profile apply` after the move does it.
+	ApplyAfterMove bool `json:"apply_after_move,omitzero"`
+}
+
+// OtherGameProfile is a profile of another game (GameModPathInUseError.
+// ReleaseFirst).
+type OtherGameProfile struct {
+	GameID  string `json:"game_id"`
+	Profile string `json:"profile"`
+}
+
+// ListedVersionUnavailable is a mod a game's active profile lists at a
+// version lmm cannot deploy: no cache entry holds it, and lmm has no source
+// to download it from - a local mod pinned to a version it was never
+// imported at, say.
+type ListedVersionUnavailable struct {
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	// Version is the version the active profile lists; empty when it lists
+	// none, and then the cache holds no version at all.
+	Version string `json:"version,omitempty"`
+	// Cached is the versions of the mod the game's cache holds.
+	Cached []string `json:"cached,omitempty"`
+	// LiveVersion and LiveProfile are set when the cache does hold Version
+	// and what keeps an apply from deploying it is another profile's
+	// deployment of the mod at LiveVersion (#445 gate 2, G2-3): an enable
+	// cannot replace a deployed version, and only a download could.
+	LiveVersion string `json:"live_version,omitempty"`
+	LiveProfile string `json:"live_profile,omitempty"`
+	// ProfileFile is the active profile's document, where Version is set.
+	ProfileFile string `json:"profile_file"`
+}
+
+// ProfileDeployedFiles is one profile's share of a GameModPathInUseError.
+type ProfileDeployedFiles struct {
+	Profile       string `json:"profile"`
+	DeployedFiles int    `json:"deployed_files"`
+}
+
+// Error implements error.
+func (e *GameModPathInUseError) Error() string {
+	shares := make([]string, len(e.Profiles))
+	purged := make([]string, 0, len(e.Profiles)+1)
+	var others []string
+	for i, p := range e.Profiles {
+		shares[i] = fmt.Sprintf("%d by profile %s", p.DeployedFiles, p.Profile)
+		purged = append(purged, p.Profile)
+		if p.Profile != e.ActiveProfile {
+			others = append(others, p.Profile)
+		}
+	}
+	// The files the active profile first records are its to purge.
+	if e.ListedUnrecorded > 0 && !slices.Contains(purged, e.ActiveProfile) {
+		purged = append(purged, e.ActiveProfile)
+		slices.Sort(purged)
+	}
+	purges := make([]string, 0, len(purged)+1)
+	if e.OrphanedRecords > 0 {
+		purges = append(purges, fmt.Sprintf("`lmm verify --fix --game %s --profile %s`", e.GameID, e.ActiveProfile))
+	}
+	for _, profile := range purged {
+		purges = append(purges, fmt.Sprintf("`lmm purge --game %s --profile %s`", e.GameID, profile))
+	}
+
+	purge := "purge them first"
+	if e.OrphanedRecords > 0 {
+		purge = fmt.Sprintf("%d of them are records of the active profile %s that no installed mod owns, which a verify --fix drops (leaving the files where they are); purge the rest first", e.OrphanedRecords, e.ActiveProfile)
+	}
+	if e.ListedUnrecorded > 0 {
+		var steps []string
+		for _, r := range e.ReleaseFirst {
+			steps = append(steps, fmt.Sprintf("`lmm purge --game %s --profile %s`", r.GameID, r.Profile))
+		}
+		if e.NeedsApply {
+			steps = append(steps, fmt.Sprintf("`lmm profile apply %s --game %s`", e.ActiveProfile, e.GameID))
+		}
+		if e.NeedsDeploy {
+			steps = append(steps, fmt.Sprintf("`lmm deploy --game %s`", e.GameID))
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "the active profile %s lists the mods of %d of them, which only another profile records", e.ActiveProfile, e.ListedUnrecorded)
+		those := "those"
+		if len(e.ListedUnavailable) > 0 {
+			those = "the others"
+		}
+		if len(e.ReleaseFirst) > 0 {
+			b.WriteString(" - and another game sharing the directory records some of them too, which lmm leaves to that game until its purge lets them go")
+		}
+		if len(steps) > 0 {
+			fmt.Fprintf(&b, ", so first run %s to record %s under %s", strings.Join(steps, ", then "), those, e.ActiveProfile)
+		}
+		if len(e.ListedUnavailable) > 0 {
+			b.WriteString(", but " + listedUnavailableText(e.ActiveProfile, e.ListedUnavailable) + ";")
+		} else {
+			b.WriteString(",")
+		}
+		b.WriteString(" then purge them all")
+		purge = b.String()
+	}
+
+	where := e.ModPath
+	if len(e.DeployedUnder) > 0 {
+		where = strings.Join(e.DeployedUnder, " and ")
+	}
+	msg := fmt.Sprintf("%d file(s) are deployed under %s (%s), and lmm records each one relative to the mod_path, so moving it to %s would strand them; %s - run %s - then change the mod_path, then run `lmm deploy --game %s`, which deploys the active profile (%s) into the new one",
+		e.DeployedFiles, where, strings.Join(shares, ", "), e.NewModPath,
+		purge, strings.Join(purges, ", then "), e.GameID, e.ActiveProfile)
+	if e.ApplyAfterMove {
+		msg += fmt.Sprintf(", then `lmm profile apply %s --game %s`, which deploys the mods it lists whose files another game keeps in the old one",
+			e.ActiveProfile, e.GameID)
+	}
+	for _, profile := range others {
+		msg += fmt.Sprintf("; profile %s is deployed there when you next switch to it (`lmm profile switch %s --game %s`)",
+			profile, profile, e.GameID)
+	}
+	return msg
+}
+
+// Details returns the error itself for the --json error envelope's
+// "details" field (Ruling 3).
+func (e *GameModPathInUseError) Details() any { return e }
+
+// listedUnavailableText is GameModPathInUseError's clause for the listed
+// mods no apply can deploy: what is listed, what the cache holds, and the
+// edit of the active profile's document that ends the refusal. It names no
+// command, since none would record their files.
+//
+// What blocks each is named (#445 gate 2, G2-3): the cache, or - when the
+// cache holds the listed version - another profile's deployment of another
+// one, and the edit that ends it lists the version deployed then.
+func listedUnavailableText(active string, mods []ListedVersionUnavailable) string {
+	items := make([]string, len(mods))
+	live := 0
+	for i, u := range mods {
+		listed := u.SourceID + ":" + u.ModID
+		if u.Version != "" {
+			listed += " at version " + u.Version
+		}
+		var why string
+		switch {
+		case u.LiveVersion != "":
+			live++
+			why = fmt.Sprintf("the cache holds it, but profile %s has it deployed at %s, which only a download of %s could replace", u.LiveProfile, u.LiveVersion, u.Version)
+		case len(u.Cached) > 0:
+			why = "the cache holds it only at " + strings.Join(u.Cached, ", ")
+		default:
+			why = "the cache does not hold it"
+		}
+		items[i] = fmt.Sprintf("%s (%s, and lmm has no source %s to download it from)", listed, why, u.SourceID)
+	}
+	files, them, each := "its file", "it", "it"
+	if len(mods) > 1 {
+		files, them, each = "their files", "them", "each"
+	}
+	at := "a version the cache holds"
+	switch {
+	case live == 1 && len(mods) == 1:
+		at = "the version deployed, " + mods[0].LiveVersion
+	case live == len(mods):
+		at = "the version deployed"
+	case live > 0:
+		at = "a version the cache holds, or at the version deployed where another profile has one"
+	}
+	return fmt.Sprintf("it lists %s, which lmm cannot deploy - nothing records %s under %s, and no purge removes %s, until you edit %s to list %s at %s (and ask for this move again, to be told what records %s) or to mark %s `disabled: true` (so the purges remove %s)",
+		strings.Join(items, " and "), files, active, them, mods[0].ProfileFile, each, at, them, each, files)
+}
+
+// validatedSourceMap trims and checks every entry of a proposed source
+// map, returning the map to persist. Each id must be non-empty and must
+// name a source registered with this Service - the same check AddGame
+// runs inside its own gate, for the same reason: a game mapping a source
+// that does not exist is unusable, and nothing later would say why.
+func (s *Service) validatedSourceMap(sources map[string]string) (map[string]string, error) {
+	if len(sources) == 0 {
+		return nil, newGameSpecError("sources", "", "a game must map at least one source")
+	}
+
+	cleaned := make(map[string]string, len(sources))
+	// Sorted so a map with two bad ids always reports the same one - an
+	// error message that changes between identical requests is untestable
+	// and unexplainable.
+	for _, id := range slices.Sorted(maps.Keys(sources)) {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			return nil, newGameSpecError("sources", id, "a source id is required")
+		}
+		if _, err := s.GetSource(trimmed); err != nil {
+			return nil, &GameSpecError{
+				Field: "sources", Value: trimmed,
+				Reason: "no source is registered with that id", Err: err,
+			}
+		}
+		// M6 (epic review M-6): two distinct keys that trim to the same id
+		// - {" nexusmods":"a","nexusmods":"b"}, say - are legal JSON but not
+		// a legal source map: silently keeping whichever sorts last hides
+		// which value the caller actually gets, and does not tell them
+		// their input had a collision at all.
+		if _, dup := cleaned[trimmed]; dup {
+			return nil, newGameSpecError("sources", trimmed, "duplicate source id after trimming whitespace")
+		}
+		identifier := strings.TrimSpace(sources[id])
+		// T1 review #3: the same question AddGame asks, on the only other
+		// way into games.yaml. A source that does not declare its mapped
+		// value meaningless REQUIRES one, and writing an empty mapping for
+		// it produces a game that fails at first use - or worse, for a
+		// source that keeps a local index, one that quietly indexes a
+		// community the user never named.
+		if identifier == "" && !s.sourceIgnoresGameIdentifier(trimmed) {
+			return nil, emptyIdentifierRefusal(trimmed)
+		}
+		cleaned[trimmed] = identifier
+	}
+	return cleaned, nil
+}
+
+// refuseRemovingReferencedSources refuses to drop a source id from game's
+// map while any of game's profiles still has an installed mod that came
+// from it (#326 fix wave, epic review M-4). Silently dropping the mapping
+// left those mods degrading quietly: update checks skip them, a re-link to
+// the source is refused ("source %q is not configured for %s",
+// mod_edit.go), and archive imports warn the source isn't configured for
+// the game. `lmm source remove` already refuses the mirror case
+// (SourceInUseError, a GAME still mapping a source about to be
+// unregistered entirely); this is the same rule one level down, for
+// installed MODS a game's own edit would otherwise orphan.
+//
+// Only ids present in game.SourceIDs but absent from cleaned are checked -
+// an id that stays mapped, or one newly added, references nothing to
+// orphan. Sorted so a removal dropping two still-referenced sources always
+// names the same one first, the same determinism validatedSourceMap's own
+// field selection gives the caller.
+func (s *Service) refuseRemovingReferencedSources(ctx context.Context, game *domain.Game, cleaned map[string]string) error {
+	for _, sourceID := range slices.Sorted(maps.Keys(game.SourceIDs)) {
+		if _, kept := cleaned[sourceID]; kept {
+			continue
+		}
+		mods, err := s.modsReferencingSource(ctx, game.ID, sourceID)
+		if err != nil {
+			return err
+		}
+		if len(mods) > 0 {
+			return &GameSourceInUseError{SourceID: sourceID, GameID: game.ID, Count: len(mods), Mods: mods}
+		}
+	}
+	return nil
+}
+
+// modsReferencingSource returns every distinct "source:mod" key
+// (domain.ModKey) across every profile of gameID whose installed row
+// names sourceID, sorted - the population refuseRemovingReferencedSources
+// refuses to orphan. A mod installed in more than one profile counts once.
+func (s *Service) modsReferencingSource(ctx context.Context, gameID, sourceID string) ([]string, error) {
+	profileNames, err := s.NewProfileManager().ListNames(ctx, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("listing profiles: %w", err)
+	}
+
+	seen := map[string]bool{}
+	for _, profileName := range profileNames {
+		installed, err := s.GetInstalledMods(ctx, gameID, profileName)
+		if err != nil {
+			return nil, fmt.Errorf("getting installed mods: %w", err)
+		}
+		for _, im := range installed {
+			if im.SourceID == sourceID {
+				seen[domain.ModKey(im.SourceID, im.ID)] = true
+			}
+		}
+	}
+
+	keys := slices.Sorted(maps.Keys(seen))
+	return keys, nil
+}
+
+// GameSourceInUseError refuses UpdateGameSources' removal of a source id
+// because at least one profile of GameID still has an installed mod that
+// came from it. Mods names them (ModKey form, "source:mod-id"), so a
+// frontend can say WHICH mods to uninstall rather than "some mod,
+// somewhere".
+type GameSourceInUseError struct {
+	SourceID string   `json:"source_id"`
+	GameID   string   `json:"game_id"`
+	Count    int      `json:"count"`
+	Mods     []string `json:"mods"`
+}
+
+// Error implements error.
+func (e *GameSourceInUseError) Error() string {
+	return fmt.Sprintf("%d installed mod(s) still come from %q; uninstall them first", e.Count, e.SourceID)
+}
+
+// Details returns the error itself for the --json error envelope's
+// "details" field (Ruling 3), the same shape SourceInUseError uses.
+func (e *GameSourceInUseError) Details() any { return e }

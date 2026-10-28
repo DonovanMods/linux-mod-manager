@@ -1,0 +1,148 @@
+package core_test
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestService_ListGames_OrderedByGameID pins Ruling 4 (#299): ListGames
+// (games.go, gamesSnapshot's caller - consumed by lmm status/lmm game list)
+// orders its result by game ID, not whatever order Go's games map iteration
+// happens to produce this run. IDs are seeded deliberately out of order.
+func TestService_ListGames_OrderedByGameID(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	ctx := context.Background()
+
+	for _, id := range []string{"zulu", "mike", "alpha", "yankee", "bravo"} {
+		require.NoError(t, svc.SaveGame(ctx, &domain.Game{ID: id, Name: id, ModPath: t.TempDir()}))
+	}
+
+	games := svc.ListGames()
+	require.Len(t, games, 5)
+	got := make([]string, len(games))
+	for i, g := range games {
+		got[i] = g.ID
+	}
+	assert.Equal(t, []string{"alpha", "bravo", "mike", "yankee", "zulu"}, got)
+}
+
+// Public game values must not expose the Service's published configuration,
+// including its map and optional loader pointer.
+func TestService_GameQueriesAndSaveGameOwnIndependentCopies(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	ctx := context.Background()
+	original := &domain.Game{ID: "g", Name: "Game", ModPath: t.TempDir(),
+		SourceIDs: map[string]string{"nexus": "game"}, Loader: &domain.GameLoader{Kind: "bepinex"}}
+	require.NoError(t, svc.SaveGame(ctx, original))
+	original.Name = "caller edit"
+	original.SourceIDs["nexus"] = "caller edit"
+	original.Loader.Kind = "caller edit"
+
+	first, err := svc.GetGame("g")
+	require.NoError(t, err)
+	listed := svc.ListGames()
+	require.Len(t, listed, 1)
+	assert.Equal(t, "Game", first.Name)
+	assert.Equal(t, "game", first.SourceIDs["nexus"])
+	assert.Equal(t, "bepinex", first.Loader.Kind)
+	first.Name = "query edit"
+	first.SourceIDs["nexus"] = "query edit"
+	first.Loader.Kind = "query edit"
+	assert.Equal(t, "Game", listed[0].Name)
+	assert.Equal(t, "game", listed[0].SourceIDs["nexus"])
+	assert.Equal(t, "bepinex", listed[0].Loader.Kind)
+	listed[0].SourceIDs["nexus"] = "list edit"
+	listed[0].Loader.Kind = "list edit"
+	latest, err := svc.GetGame("g")
+	require.NoError(t, err)
+	assert.Equal(t, "Game", latest.Name)
+	assert.Equal(t, "game", latest.SourceIDs["nexus"])
+	assert.Equal(t, "bepinex", latest.Loader.Kind)
+
+	// Nil nested fields stay nil through both query paths.
+	require.NoError(t, svc.SaveGame(ctx, &domain.Game{ID: "empty", ModPath: t.TempDir()}))
+	empty, err := svc.GetGame("empty")
+	require.NoError(t, err)
+	assert.Nil(t, empty.SourceIDs)
+	assert.Nil(t, empty.Loader)
+	for _, game := range svc.ListGames() {
+		if game.ID == "empty" {
+			assert.Nil(t, game.SourceIDs)
+			assert.Nil(t, game.Loader)
+		}
+	}
+}
+
+// TestService_SaveGame_ConcurrentWithReaders pins the games-map contract: a
+// writer and many readers may interleave freely (run with -race).
+func TestService_SaveGame_ConcurrentWithReaders(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	ctx := context.Background()
+
+	errs := make(chan error, 8)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			install := t.TempDir()
+			// #313: SaveGame refuses a relative mod_path, so this fixture
+			// names an absolute one - the concurrency this test is about is
+			// unchanged either way.
+			errs <- svc.SaveGame(ctx, &domain.Game{ID: fmt.Sprintf("g%d", i), Name: "G", InstallPath: install, ModPath: filepath.Join(install, "Mods")})
+		}(i)
+		go func() {
+			defer wg.Done()
+			_ = svc.ListGames()
+			_, _ = svc.GetGame("g0")
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.Len(t, svc.ListGames(), 8)
+	g, err := svc.GetGame("g3")
+	require.NoError(t, err)
+	require.Equal(t, "g3", g.ID)
+}
+
+// TestService_SaveGame_FailurePath pins that a persistence failure (an
+// unwritable ConfigDir) returns an error and leaves the in-memory games map
+// unchanged: service.go's saveGame only writes svc.games[game.ID] after
+// config.SaveGame returns nil, so a failed write must never become visible
+// via GetGame.
+func TestService_SaveGame_FailurePath(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks are bypassed when running as root")
+	}
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	require.NoError(t, os.Chmod(configDir, 0500))
+	t.Cleanup(func() { _ = os.Chmod(configDir, 0755) })
+
+	err = svc.SaveGame(context.Background(), &domain.Game{ID: "unwritable", Name: "G", ModPath: t.TempDir()})
+	require.Error(t, err)
+
+	_, err = svc.GetGame("unwritable")
+	require.Error(t, err, "a failed SaveGame must not publish the game to the in-memory map")
+}

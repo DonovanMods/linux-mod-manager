@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.30.1" "User Commands"
+.TH "LMM" "1" "Oct 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
 lmm-game-detect - Detect Steam games and add them to config
@@ -10,37 +10,113 @@ lmm-game-detect - Detect Steam games and add them to config
 
 
 .SH DESCRIPTION
-Scan Steam libraries for known moddable games and optionally add them to games.yaml.
+Scan Steam libraries for moddable games and optionally add them to games.yaml.
 
 .PP
-Prompts for which games to add (e.g. 1,2 or all or none). A game already
-configured (present in games.yaml) is marked "[configured]" and is
-excluded from the default "all" selection, since it needs no re-offering
-- but it stays listed, and you can still name its number explicitly to
-re-add/repair it (this replays the same games.yaml + default-profile
-overwrite 'lmm game add' always performs, so a repair also resets the
-default profile's mod list). Each added game gets a NexusMods source
-mapping, the symlink link method, and an empty default profile; edit
-games.yaml afterwards for anything more specific, including the
-NexusMods slug if none was detected.
+Prompts for which games to add (e.g. 1,2 or all or none). Every listed
+row is numbered and prints its Steam app id, curated games first, and the
+prompt takes either - the app id does not shift when the listing widens. A bare number that is BOTH a row number and some other
+row's Steam app id is refused rather than guessed at (Steam's own back
+catalogue occupies the low integers - 10, 20, 70, 220, 400 - and a wide
+listing has that many rows): spell it '#3' to mean row 3, or 'app:10' to
+mean Steam app id 10. Both explicit forms are always accepted, whether
+anything collides or not.
+
+.PP
+A game already configured (present in games.yaml) is marked
+"[configured]" and is excluded from the default "all" selection, since it
+needs no re-offering - but it stays listed, and you can still name a
+CURATED one explicitly to re-add/repair it (this replays the same
+games.yaml + default-profile overwrite 'lmm game add' always performs, so
+a repair also resets the default profile's mod list). An
+already-configured UNCURATED row is refused instead of overwritten -
+change it with 'lmm game edit'. A repair that moves a game's install path
+follows 'lmm game edit --install-path's rule: with files deployed, only a
+move of the whole folder is accepted (the files are then recorded where
+they are); otherwise that game is left as it was and reported, the rest
+of the selection is still added, and the command fails with the refusal.
+Each added game gets a source mapping, the symlink link method, and an
+empty default profile; edit games.yaml afterwards for anything more
+specific, including the NexusMods slug if none was detected.
+
+.PP
+Use --all or --select to decide non-interactively (required under
+--json, which never reads stdin): --all selects every not-yet-configured
+game, the same set the interactive "all" answer selects; --select takes
+the same values the prompt accepts (e.g. "1,2", "1,1133870" or
+"#3,app:10"), including already-configured games for a repair.
+
+.PP
+A game whose Steam Workshop manifest shows items already downloaded is
+mapped to the 'steamworkshop' source automatically, so 'lmm import
+--workshop' can track them; --no-workshop suppresses that. Such a game is
+LISTED even when lmm has no curated entry for it - the downloaded items
+are what say it is moddable - with its item count beside it, and
+selecting it configures it straight from the detection, exactly as 'lmm
+game add --from-detected <app-id>\&' would.
+
+.PP
+--include-unknown also lists every OTHER installed Steam game, in the same
+uncurated section (#206). Nothing tells lmm where those keep their mods,
+so selecting one is refused with a pointer to 'lmm game add
+--from-detected <app-id>\&', which prefills the name, install path, game id
+and a default mod path and asks only for the source. Under --json,
+--include-unknown with neither --all nor --select emits the detect LISTING
+document (every candidate, known and unknown) instead of prompting: search
+first, add second. That flag is what produces a listing document at all: a
+plain --json scan emits none - with neither --all nor --select it refuses,
+since nothing may prompt under --json, and with either one it emits the
+RESULT document naming what it added. What --all/--select choose from is
+the default listing, which since #368 includes a game with Steam Workshop
+items already downloaded.
+
+.PP
+If a plain scan finds no known games but this machine has OTHER installed
+Steam games lmm has no known-games entry for, it says so and names
+--include-unknown, instead of reporting "No moddable Steam games found" -
+the game is right there, just not curated yet. --all/--select in that same
+situation - nothing here is selectable, so nothing gets added - carries a
+warning saying so (under --json too) instead of a silent empty success.
 
 .PP
 Examples:
   lmm game detect
+  lmm game detect --all
+  lmm game detect --select 1,3
+  lmm game detect --select '#3,app:10'
+  lmm game detect --include-unknown
+  lmm game detect --include-unknown --json
+  lmm game detect --no-workshop
 
 
 .SH OPTIONS
+\fB--all\fP[=false]
+	select every not-yet-configured detected game without prompting
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for detect
+
+.PP
+\fB--include-unknown\fP[=false]
+	also list installed games that are not in the known-games list (add one with 'game add --from-detected')
+
+.PP
+\fB--no-workshop\fP[=false]
+	do not map games with subscribed Steam Workshop items to the steamworkshop source
+
+.PP
+\fB--select\fP=""
+	comma-separated row numbers or Steam app ids to add/repair without prompting - '#3'/'app:10' name one explicitly (see the printed listing)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
 \fB--config\fP=""
-	config directory (default: ~/.config/lmm)
+	config directory (default: $XDG_CONFIG_HOME/lmm or ~/.config/lmm)
 
 .PP
 \fB--data\fP=""
-	data directory (default: ~/.local/share/lmm)
+	data directory (default: $XDG_DATA_HOME/lmm or ~/.local/share/lmm)
 
 .PP
 \fB-g\fP, \fB--game\fP=""
@@ -48,7 +124,11 @@ Examples:
 
 .PP
 \fB--json\fP[=false]
-	output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)
+	output JSON instead of text; mutating commands print their result, --dry-run prints the plan; never prompts
+
+.PP
+\fB--log-level\fP="off"
+	diagnostic log level written to stderr (off, error, warn, info, debug)
 
 .PP
 \fB--no-color\fP[=false]
@@ -68,4 +148,4 @@ Examples:
 
 
 .SH HISTORY
-27-Jul-2026 Auto generated by spf13/cobra
+28-Oct-2026 Auto generated by spf13/cobra

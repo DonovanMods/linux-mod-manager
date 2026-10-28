@@ -9,12 +9,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,6 +36,7 @@ mods:
         version: 1.2.0
         size: 4
         url: https://files.test/cool-mod-1.2.0.zip
+        updated_at: 2026-07-02T03:04:05Z
         sha256: aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd
         primary: true
   - id: other-mod
@@ -246,7 +248,8 @@ func TestManifestIsAuthenticated(t *testing.T) {
 
 func TestManifestIdentityAndCapabilities(t *testing.T) {
 	m := newLocalManifest(t)
-	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: false, Versions: true}, m.Capabilities())
+	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: false, Versions: true}, m.Capabilities(),
+		"no sort is claimed before a search has shown the catalogue carries dates")
 	assert.Empty(t, m.AuthURL())
 
 	_, err := m.ExchangeToken(context.Background(), "code")
@@ -339,6 +342,7 @@ func TestManifestFilesAndDownloadURL(t *testing.T) {
 	assert.Equal(t, "cool-mod-1.2.0.zip", f.FileName)
 	assert.Equal(t, "1.2.0", f.Version)
 	assert.Equal(t, int64(4), f.Size)
+	assert.True(t, f.UploadedAt.Equal(time.Date(2026, 7, 2, 3, 4, 5, 0, time.UTC)))
 	assert.Equal(t, "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd", f.SHA256)
 	assert.True(t, f.IsPrimary)
 
@@ -348,6 +352,21 @@ func TestManifestFilesAndDownloadURL(t *testing.T) {
 
 	_, err = m.GetDownloadURL(ctx, mod, "nope")
 	assert.ErrorContains(t, err, "not found")
+}
+
+func TestManifestFileUnparseableUpdatedAtIsUnset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mods.yaml")
+	doc := strings.Replace(testManifest, "updated_at: 2026-07-02T03:04:05Z", "updated_at: yesterday-ish", 1)
+	require.NoError(t, os.WriteFile(path, []byte(doc), 0o644))
+	m, err := NewManifest(manifestDef(path))
+	require.NoError(t, err)
+
+	mod, err := m.GetMod(context.Background(), "skyrim", "cool-mod")
+	require.NoError(t, err)
+	files, err := m.GetModFiles(context.Background(), mod)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.True(t, files[0].UploadedAt.IsZero())
 }
 
 func TestManifestDownloadURLQueryAuth(t *testing.T) {
@@ -546,8 +565,8 @@ func TestManifestCheckUpdates(t *testing.T) {
 	installed := []domain.InstalledMod{
 		{Mod: domain.Mod{ID: "cool-mod", SourceID: "my-repo", Version: "1.0.0"}},
 		{Mod: domain.Mod{ID: "other-mod", SourceID: "my-repo", Version: "0.9.0"}},
-		{Mod: domain.Mod{ID: "removed", SourceID: "my-repo", Version: "1.0"}},
 	}
+	// A mod gone from the manifest is catalog_missing_test.go's subject (#541).
 
 	updates, err := m.CheckUpdates(context.Background(), installed)
 	require.NoError(t, err)
@@ -743,4 +762,16 @@ func TestManifestDownloadHeaders(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, noKey.DownloadHeaders("https://repo.test/a.zip"))
 	})
+}
+
+// TestManifestIgnoresGameIdentifier: the mapped value only filters a
+// manifest's own per-mod game_ids, and an empty one matches every entry, so
+// a manifest may be mapped with no identifier at all (#387, P1b review F5).
+func TestManifestIgnoresGameIdentifier(t *testing.T) {
+	m, err := NewManifest(SourceDefinition{
+		ID: "my-repo", Name: "My Repo", Type: TypeManifest,
+		Manifest: &ManifestConfig{URL: "https://example.test/mods.yaml"},
+	})
+	require.NoError(t, err)
+	assert.True(t, source.IgnoresGameIdentifier(m))
 }

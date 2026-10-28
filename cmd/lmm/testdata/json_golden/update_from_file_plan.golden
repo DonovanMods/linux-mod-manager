@@ -1,0 +1,54 @@
+{
+  "archive": "/GOLDEN/downloads/mod1-2.0 (1).zip",
+  "archive_name": "mod1-2.0 (1).zip",
+  "mod": {
+    "id": "mod1",
+    "source_id": "test-src",
+    "name": "Mod One",
+    "version": "1.0",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "g1",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "profile_name": "default",
+    "update_policy": "notify",
+    "installed_at": "<TIME>",
+    "enabled": true,
+    "deployed": true,
+    "link_method": "symlink",
+    "file_ids": [
+      "old-1"
+    ],
+    "manual_download": false,
+    "convert_paks": true
+  },
+  "from_version": "1.0",
+  "to_version": "2.0",
+  "file_ids": [
+    "new-1"
+  ],
+  "match": "advertised",
+  "matched_file": {
+    "id": "new-1",
+    "file_name": "mod1-2.0.zip",
+    "version": "2.0"
+  },
+  "match_normalized": true,
+  "advertised": {
+    "id": "new-1",
+    "file_name": "mod1-2.0.zip",
+    "version": "2.0"
+  },
+  "locked": false,
+  "files": [
+    "mod1-new.esp"
+  ],
+  "hooks": [],
+  "warnings": []
+}

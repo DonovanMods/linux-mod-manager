@@ -1,0 +1,39 @@
+package app
+
+import (
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/bepinex"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter/icarus"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+)
+
+// RegisterAdapters registers the built-in game adapters (#353) - exactly the
+// set Open registers, and the call Open makes. It is exported for one
+// reason: a frontend's tests build a Service without Open, and a document
+// such a Service emits is only the document production emits if its
+// adapters are the same ones (#413 re-review L3 - two goldens pinned a game
+// row no production lmm writes, because their fixture registered none).
+//
+// This layer is
+// the only one that names a concrete adapter: internal/core resolves a game's
+// adapter through the registry and never imports one
+// (internal/adapter/boundary_test.go ratchets both halves).
+//
+// The identity adapter needs no line here - adapter.NewRegistry pre-registers
+// it, so Resolve can never hand core a nil adapter.
+//
+// Registering icarus is what makes U1's `deploy_mode: compile` => `icarus`
+// migration LIVE (design §2, OQ1, and the U1 amendment): the derivation in
+// Service.AdapterName fires only for an adapter that is actually registered,
+// so an existing Icarus games.yaml starts compiling through its adapter with
+// no user action and no file rewritten. It is also the user-visible
+// improvement this unit carries - compilation is now a property of the GAME,
+// so an Icarus .pak or .exmodz compiles whichever source served it.
+// Registering bepinex is what makes U3's derivation live in the same way
+// (#413): a game declaring `loader: kind: bepinex`, or one with BepInEx
+// simply installed in its directory, resolves to it, and the archive-layout
+// rules, the config routing, the loader precondition and the loader verify
+// tier come with it. Nothing in games.yaml has to change for that either.
+func RegisterAdapters(svc *core.Service) {
+	svc.RegisterAdapter(icarus.New())
+	svc.RegisterAdapter(bepinex.New())
+}

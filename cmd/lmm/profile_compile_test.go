@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,19 +22,19 @@ func TestDoProfileApply_DeployCompile_SyncsMergedPakOnDisable(t *testing.T) {
 	game.DeployMode = domain.DeployCompile
 	game.InstallPath = t.TempDir()
 	game.SourceIDs = map[string]string{"fake-compiler": "external-icarus-id"}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	const modID, version, fileID = "bear-mount", "1.0", "exmodz-file"
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID), []byte("bear-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: "Bear Mount", Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -42,7 +42,7 @@ func TestDoProfileApply_DeployCompile_SyncsMergedPakOnDisable(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: version, FileIDs: []string{fileID}}))
 
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestDoProfileApply_DeployCompile_SyncsMergedPakOnDisable(t *testing.T) {
 
 	// Remove the mod from profile.Mods (still installed+enabled in the DB)
 	// - doProfileApply's toDisable path.
-	require.NoError(t, pm.RemoveMod(game.ID, "default", "fake-compiler", modID))
+	require.NoError(t, pm.RemoveMod(context.Background(), game.ID, "default", "fake-compiler", modID))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -75,19 +75,19 @@ func TestDoProfileSync_DeployCompile_AddingDriftedModDeploysMergedPak(t *testing
 	game.DeployMode = domain.DeployCompile
 	game.InstallPath = t.TempDir()
 	game.SourceIDs = map[string]string{"fake-compiler": "external-icarus-id"}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	const modID, version, fileID = "bear-mount", "1.0", "exmodz-file"
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID), []byte("bear-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: "Bear Mount", Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,

@@ -1,0 +1,72 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "updates": [
+    {
+      "installed_mod": {
+        "id": "b",
+        "source_id": "test-src",
+        "name": "Mod B",
+        "version": "1.0",
+        "author": "",
+        "summary": "",
+        "description": "",
+        "game_id": "g1",
+        "category": "",
+        "downloads": 0,
+        "picture_url": "",
+        "source_url": "",
+        "files": [],
+        "dependencies": [],
+        "profile_name": "default",
+        "update_policy": "notify",
+        "installed_at": "<TIME>",
+        "enabled": true,
+        "deployed": true,
+        "link_method": "symlink",
+        "manual_download": false,
+        "convert_paks": true
+      },
+      "new_version": "2.0",
+      "recompile_needed": false,
+      "locked": false
+    }
+  ],
+  "skipped": {
+    "pinned": 0,
+    "local": 0,
+    "updates": 1
+  },
+  "skipped_updates": [
+    {
+      "installed_mod": {
+        "id": "a",
+        "source_id": "test-src",
+        "name": "Mod A",
+        "version": "1.0",
+        "author": "",
+        "summary": "",
+        "description": "",
+        "game_id": "g1",
+        "category": "",
+        "downloads": 0,
+        "picture_url": "",
+        "source_url": "",
+        "files": [],
+        "dependencies": [],
+        "profile_name": "default",
+        "update_policy": "notify",
+        "installed_at": "<TIME>",
+        "enabled": true,
+        "deployed": true,
+        "link_method": "symlink",
+        "manual_download": false,
+        "convert_paks": true,
+        "skipped_version": "2.0"
+      },
+      "new_version": "2.0",
+      "recompile_needed": false,
+      "locked": false
+    }
+  ]
+}

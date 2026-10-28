@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
-	"github.com/spf13/cobra"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +26,7 @@ func TestDoGameList_EmptyState(t *testing.T) {
 	svc := setupGameAddTest(t)
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	assert.Contains(t, out, "game add")
@@ -36,7 +37,7 @@ func TestDoGameList_EmptyState(t *testing.T) {
 // ID, name, install path, mod path, deploy mode, sources.
 func TestDoGameList_ShowsConfiguredGames(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:          "skyrim-se",
 		Name:        "Skyrim Special Edition",
 		InstallPath: "/games/skyrim",
@@ -46,7 +47,7 @@ func TestDoGameList_ShowsConfiguredGames(t *testing.T) {
 	}))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	assert.Contains(t, out, "ID")
@@ -72,18 +73,18 @@ func TestDoGameList_ShowsConfiguredGames(t *testing.T) {
 // (ConvertPaks is meaningless there).
 func TestDoGameList_ConvertPaksColumnUsesOnOff(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID: "icarus-convert-on", Name: "Icarus On", DeployMode: domain.DeployCompile, ConvertPaks: true,
 	}))
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID: "icarus-convert-off", Name: "Icarus Off", DeployMode: domain.DeployCompile, ConvertPaks: false,
 	}))
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID: "skyrim-se", Name: "Skyrim SE", DeployMode: domain.DeployExtract,
 	}))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	onLine := lineContaining(out, "icarus-convert-on")
@@ -95,7 +96,7 @@ func TestDoGameList_ConvertPaksColumnUsesOnOff(t *testing.T) {
 	assert.Contains(t, onLine, "on")
 	assert.Contains(t, offLine, "off")
 	// A non-DeployCompile game's column is blank - assert by field count
-	// (tabwriter columns) rather than substring, since "extract" itself
+	// (table columns) rather than substring, since "extract" itself
 	// contains no false positive here either way.
 	assert.NotContains(t, skyrimLine, "on")
 	assert.NotContains(t, skyrimLine, "off")
@@ -104,14 +105,14 @@ func TestDoGameList_ConvertPaksColumnUsesOnOff(t *testing.T) {
 // TestDoGameList_MarksDefaultGame pins the "(default)" marker (#205 item 1).
 func TestDoGameList_MarksDefaultGame(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{ID: "skyrim-se", Name: "Skyrim SE"}))
-	require.NoError(t, svc.AddGame(&domain.Game{ID: "starrupture", Name: "Star Rupture"}))
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: "skyrim-se", Name: "Skyrim SE"}))
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: "starrupture", Name: "Star Rupture"}))
 
 	cfg := &config.Config{DefaultGame: "starrupture"}
 	require.NoError(t, cfg.Save(svc.ConfigDir()))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	starLine := lineContaining(out, "starrupture")
@@ -124,7 +125,7 @@ func TestDoGameList_MarksDefaultGame(t *testing.T) {
 // rendering, sorted by key for determinism (#205 item 1).
 func TestDoGameList_MultipleSourcesCompactKV(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:   "icarus",
 		Name: "Icarus",
 		SourceIDs: map[string]string{
@@ -134,7 +135,7 @@ func TestDoGameList_MultipleSourcesCompactKV(t *testing.T) {
 	}))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	line := lineContaining(out, "icarus")
@@ -146,10 +147,10 @@ func TestDoGameList_MultipleSourcesCompactKV(t *testing.T) {
 // a "-" placeholder makes "no sources configured" explicit.
 func TestDoGameList_NoSourcesShowsPlaceholder(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{ID: "bare-game", Name: "Bare Game"}))
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: "bare-game", Name: "Bare Game"}))
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	line := lineContaining(out, "bare-game")
@@ -160,7 +161,7 @@ func TestDoGameList_NoSourcesShowsPlaceholder(t *testing.T) {
 // null, even when empty) with an explicit "default" boolean per entry.
 func TestDoGameList_JSONOutput(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:          "skyrim-se",
 		Name:        "Skyrim SE",
 		InstallPath: "/games/skyrim",
@@ -175,15 +176,15 @@ func TestDoGameList_JSONOutput(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
-	var rows []gameListJSON
+	var rows []core.GameListEntry
 	require.NoError(t, json.Unmarshal([]byte(out), &rows))
 	require.Len(t, rows, 1)
 	assert.Equal(t, "skyrim-se", rows[0].ID)
 	assert.True(t, rows[0].Default)
-	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, rows[0].Sources)
+	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, rows[0].SourceIDs)
 }
 
 // TestDoGameList_JSONOutput_EmptyIsArrayNotNull mirrors search/list's
@@ -196,17 +197,17 @@ func TestDoGameList_JSONOutput_EmptyIsArrayNotNull(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
 	assert.Equal(t, "[]", strings.TrimSpace(out))
 }
 
 // TestDoGameList_JSONOutput_NoSourcesEmitsEmptyObject tests that a game
-// with no sources configured emits "sources": {} in JSON, not null.
+// with no sources configured emits "source_ids": {} in JSON, not null.
 func TestDoGameList_JSONOutput_NoSourcesEmitsEmptyObject(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:          "bare-game",
 		Name:        "Bare Game",
 		InstallPath: "/games/bare",
@@ -219,14 +220,14 @@ func TestDoGameList_JSONOutput_NoSourcesEmitsEmptyObject(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doGameList(&cobra.Command{}, svc)
+		return doGameList(commandWithContext(), svc)
 	})
 
-	var rows []gameListJSON
+	var rows []core.GameListEntry
 	require.NoError(t, json.Unmarshal([]byte(out), &rows))
 	require.Len(t, rows, 1)
 	assert.Equal(t, "bare-game", rows[0].ID)
-	assert.Equal(t, map[string]string{}, rows[0].Sources)
+	assert.Equal(t, map[string]string{}, rows[0].SourceIDs)
 }
 
 func lineContaining(out, needle string) string {

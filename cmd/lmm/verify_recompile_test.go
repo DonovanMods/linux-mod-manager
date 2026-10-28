@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +21,7 @@ import (
 // issue - it's self-healing via `lmm update`, not corruption).
 func TestDoVerify_StaleCompile_ReportedAsWarning(t *testing.T) {
 	svc, game, _, _ := setupDoUpdateRecompileTest(t)
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
 
 	verifyProfile = "default"
 	t.Cleanup(func() { verifyProfile = "" })
@@ -31,7 +33,7 @@ func TestDoVerify_StaleCompile_ReportedAsWarning(t *testing.T) {
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	err := doVerify(cmd, svc, game, nil)
+	err := doVerify(cmd.Context(), svc, game, nil)
 	_ = w.Close()
 	os.Stdout = oldStdout
 	require.NoError(t, err)
@@ -53,7 +55,7 @@ func TestDoVerify_StaleCompile_ReportedAsWarning(t *testing.T) {
 // text unconditionally.
 func TestDoVerify_StaleCompile_NotDeployed_ReasonSaysSo(t *testing.T) {
 	svc, game, _, _ := setupDoUpdateRecompileTest(t)
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
@@ -66,7 +68,7 @@ func TestDoVerify_StaleCompile_NotDeployed_ReasonSaysSo(t *testing.T) {
 	cmd.SetContext(context.Background())
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	assert.Contains(t, out, "RECOMPILE NEEDED")
@@ -77,7 +79,7 @@ func TestDoVerify_StaleCompile_NotDeployed_ReasonSaysSo(t *testing.T) {
 // TestDoVerify_StaleCompile_JSON is the --json sibling of the above.
 func TestDoVerify_StaleCompile_JSON(t *testing.T) {
 	svc, game, _, _ := setupDoUpdateRecompileTest(t)
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
 
 	verifyProfile = "default"
 	jsonOutput = true
@@ -90,19 +92,20 @@ func TestDoVerify_StaleCompile_JSON(t *testing.T) {
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	err := doVerify(cmd, svc, game, nil)
+	err := doVerify(cmd.Context(), svc, game, nil)
 	_ = w.Close()
 	os.Stdout = oldStdout
 	require.NoError(t, err)
 	_, _ = buf.ReadFrom(r)
 
-	var out verifyJSONOutput
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &out))
+	var outDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &outDoc))
+	out := outDoc.Result
 
-	var found *verifyFileJSON
-	for i := range out.Files {
-		if out.Files[i].Status == "stale_compile" {
-			found = &out.Files[i]
+	var found *core.VerifyFinding
+	for i := range out.Findings {
+		if out.Findings[i].Status == "stale_compile" {
+			found = &out.Findings[i]
 		}
 	}
 	require.NotNil(t, found, "expected a stale_compile row")
@@ -122,7 +125,7 @@ func TestDoVerify_StaleCompile_JSON(t *testing.T) {
 // up-to-date exmodz mod verifies with no file_count_mismatch row at all.
 func TestDoVerify_HealthyExmodzMod_NoFileCountMismatch(t *testing.T) {
 	svc, game, _, _ := setupDoUpdateRecompileTest(t)
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
 	// Sync so the merged pak is up to date - isolates the file-count check
 	// from the (separately tested) stale_compile row.
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
@@ -139,16 +142,17 @@ func TestDoVerify_HealthyExmodzMod_NoFileCountMismatch(t *testing.T) {
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	err = doVerify(cmd, svc, game, nil)
+	err = doVerify(cmd.Context(), svc, game, nil)
 	_ = w.Close()
 	os.Stdout = oldStdout
 	require.NoError(t, err)
 	_, _ = buf.ReadFrom(r)
 
-	var out verifyJSONOutput
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &out))
+	var outDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &outDoc))
+	out := outDoc.Result
 
-	for _, f := range out.Files {
+	for _, f := range out.Findings {
 		assert.NotEqual(t, "file_count_mismatch", f.Status,
 			"a healthy exmodz mod (validate+retain only, zero deployment members by design) must never report file_count_mismatch")
 	}
@@ -165,7 +169,7 @@ func TestDoVerify_HealthyExmodzMod_NoFileCountMismatch(t *testing.T) {
 // broken to repair.
 func TestDoVerify_Fix_SyncsMergedPak(t *testing.T) {
 	svc, game, _, _ := setupDoUpdateRecompileTest(t)
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
@@ -182,7 +186,7 @@ func TestDoVerify_Fix_SyncsMergedPak(t *testing.T) {
 	cmd.SetContext(context.Background())
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	_, err = os.Stat(deployedPath)

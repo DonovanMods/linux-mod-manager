@@ -1,0 +1,22 @@
+{
+  "game_id": "minecraft",
+  "profile": "default",
+  "applied": [],
+  "skipped": [
+    {
+      "mod": {
+        "source_id": "curseforge",
+        "mod_id": "238222",
+        "version": "2.0",
+        "locked": false
+      },
+      "name": "Opted Out",
+      "from_version": "2.0",
+      "to_version": "2.1",
+      "status": "skipped",
+      "reason": "its source will not serve this file through its API, so lmm never downloads it automatically - download it by hand from the mod's page and update from that file",
+      "manual_only": true,
+      "mod_url": "https://www.curseforge.com/minecraft/mc-mods/opted-out"
+    }
+  ]
+}

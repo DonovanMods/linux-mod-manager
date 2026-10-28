@@ -13,10 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -128,19 +128,37 @@ func seedDeployableMod(t *testing.T, svc *core.Service, game *domain.Game, modID
 	t.Helper()
 
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", modID, "1.0", fileName, []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
+}
+
+// seedLiveRowUnderProfile records an installed row that is already enabled
+// AND deployed under profileName, without touching the cache (the bytes are
+// usually already there under another profile). It is what "this mod is
+// already live under the target profile" looks like in the DB - the state
+// #430 made PlanProfileSwitch ask about, instead of reading the outgoing
+// profile's row and assuming it answers for the target's.
+func seedLiveRowUnderProfile(t *testing.T, svc *core.Service, game *domain.Game, profileName, modID, name string) {
+	t.Helper()
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
+		ProfileName:  profileName,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+	}))
 }
 
 // TestDoDeploy_Verbose_HappyPath_PrintsExpectedOutput guards doDeploy's
@@ -209,20 +227,19 @@ func TestDoDeploy_AfterEachHookFailure_PrintsWarningToStderrUnconditionally(t *t
 // the Notes display contract for deploy's per-mod bookkeeping diagnostics:
 // a failed "undeploy old files before redeploy" step is recorded with its
 // historical "Warning: undeploy <name>: <err>" text and only shown under
-// --verbose, without stopping the mod from redeploying successfully.
+// --verbose, while a later mod still deploys successfully.
 func TestDoDeploy_Verbose_PrintsUndeployWarningNoteWithHistoricalPrefix(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "blocked/plugin.esp")
 
-	// Deploy once for real, then corrupt the deployed symlink into a plain
-	// file so the symlink linker's Undeploy fails deterministically on the
-	// second pass ("not a symlink") - mirrors
-	// TestService_DisableMod_UndeployFailureIsNonFatal. The cache itself is
-	// untouched, so the subsequent Install still succeeds.
+	// Block traversal through the deployed path's parent to produce a real
+	// undeploy error. A second mod still deploys after the diagnostic.
 	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
-	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
+	deployedPath := filepath.Join(game.ModPath, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
+	seedDeployableMod(t, svc, game, "2", "Good Mod", "good.esp")
 
 	oldVerbose := verbose
 	verbose = true
@@ -233,11 +250,11 @@ func TestDoDeploy_Verbose_PrintsUndeployWarningNoteWithHistoricalPrefix(t *testi
 	})
 
 	assert.Contains(t, out, "  Warning: undeploy Test Mod: ")
-	assert.Contains(t, out, "  ✓ Test Mod\n")
-	assert.Contains(t, out, "\nDeployed: 1\n")
+	assert.Contains(t, out, "  ✓ Good Mod\n")
+	assert.Contains(t, out, "\nDeployed: 1, Failed: 1\n")
 	assert.Equal(t, 1, strings.Count(out, "Warning: undeploy Test Mod:"), "must print exactly once, not double-printed via both an inline event and the end-of-run batch")
-	assert.Less(t, strings.Index(out, "Warning: undeploy Test Mod:"), strings.Index(out, "✓ Test Mod"),
-		"the undeploy warning must print inline, immediately before THIS mod's own success line - not batched at the end of the run (review finding 3)")
+	assert.Less(t, strings.Index(out, "Warning: undeploy Test Mod:"), strings.Index(out, "✓ Good Mod"),
+		"the undeploy warning must print inline before a later mod's success line")
 }
 
 // TestDoDeploy_NonVerbose_DoesNotPrintNotes guards the other half of the
@@ -425,14 +442,14 @@ func TestDoDeploy_Verbose_LinkMethodAndMarkDeployedWarnings_PrintAdjacentToTheir
 // warnings, even though (both pre- and post-extraction) after_each/
 // after_all are computed earlier in the function than the overrides check -
 // the overrides warning was printed immediately when computed, while the
-// hook warnings were accumulated and only printed afterward via
-// printHookWarnings. All three land on stderr, unconditionally.
+// hook warnings were accumulated and only printed afterward, in one batch.
+// All three land on stderr, unconditionally.
 func TestDoDeploy_OverridesWarning_PrintsBeforeAfterEachAfterAllHookWarnings(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	// An absolute override path is rejected by ApplyProfileOverrides
 	// deterministically - no filesystem trickery required.
@@ -468,18 +485,18 @@ func TestDoDeploy_OverridesWarning_PrintsBeforeAfterEachAfterAllHookWarnings(t *
 // guards review finding 4: the pre-extraction purgeDeployedMods printed its
 // closing blank line at the END of the purge phase (after any inline
 // purge diagnostics), not immediately after the "Purging N mod(s) before
-// deploy..." header. Corrupts a previously-deployed symlink into a plain
-// file so purge's own Uninstall call fails deterministically ("not a
-// symlink"), producing an inline --verbose purge diagnostic to place the
+// deploy..." header. Blocks a previously-deployed path's parent so purge's
+// own Uninstall call fails with ENOTDIR, producing an inline diagnostic to place the
 // blank line after.
 func TestDoDeploy_Verbose_PurgeBlankLine_AppearsAfterInlineDiagnosticsNotImmediatelyAfterHeader(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "blocked/plugin.esp")
 
 	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
-	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
+	deployedPath := filepath.Join(game.ModPath, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 
 	oldPurge, oldVerbose := deployPurge, verbose
 	deployPurge = true
@@ -512,7 +529,7 @@ func TestDoDeploy_Verbose_PurgeBlankLine_AppearsAfterInlineDiagnosticsNotImmedia
 // a cache-miss mod's redownload loop, on the success path (git show
 // b2ad559:cmd/lmm/deploy.go) - a blank line between "cache missing,
 // re-downloading..." and the mod's own "✓" success line. The extracted
-// flow (internal/core/flows.go's redeployFromSource) emits no event for
+// flow (internal/core/deploy.go's redeployFromSource) emits no event for
 // this on success, so doDeploy has nothing to print it from. A real custom
 // manifest source served over httptest provides a working redownload
 // (mockSourceWithDownloads/createTestZip are internal/core-only test
@@ -554,16 +571,16 @@ mods:
 
 	// InstalledMod row exists (enabled, in the profile) but nothing was
 	// ever stored in the cache - forces DeployProfile's redownload branch.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "redl", SourceID: "e2e-repo", Name: "Redownload Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "e2e-repo", ModID: "redl", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "e2e-repo", ModID: "redl", Version: "1.0"}))
 
 	oldVerbose := verbose
 	verbose = false
@@ -643,16 +660,16 @@ mods:
 
 	// InstalledMod row exists (enabled, in the profile) but nothing was ever
 	// stored in the cache - forces DeployProfile's redownload branch.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "redlfail", SourceID: "e2e-repo-fail", Name: "Redownload Fail Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "e2e-repo-fail", ModID: "redlfail", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "e2e-repo-fail", ModID: "redlfail", Version: "1.0"}))
 
 	oldVerbose := verbose
 	verbose = false
@@ -794,4 +811,35 @@ func TestDoDeploy_ProfileForm_IgnoresSourceEntirely(t *testing.T) {
 	})
 
 	assert.Contains(t, out, "✓ Test Mod")
+}
+
+// TestDoDeploy_ALiveModTheProfileSwitchedOffIsNamedNotFailed is #431 fix
+// round 2's R9 at the CLI: a mod the profile marks off whose files are still
+// live is left in place - deploy is not a converge run - and named, with the
+// command that takes it down, both by the deploy and by its dry run. It is
+// not a failure, so neither summary counts it as one.
+func TestDoDeploy_ALiveModTheProfileSwitchedOffIsNamedNotFailed(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "on", "On Mod", "on.esp")
+	seedDeployableMod(t, svc, game, "off", "Off Mod", "off.esp")
+	captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	require.NoError(t, svc.NewProfileManager().SetModDisabled(context.Background(), game.ID, "default", "src", "off", true))
+
+	want := `  ⊘ Off Mod — switched off in profile "default" but still deployed - ` + "`lmm deploy`" + ` does not take mods down; run ` + "`lmm profile apply`" + ` to remove it`
+
+	deployDryRun = true
+	dry := captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	deployDryRun = false
+	assert.Contains(t, dry, want)
+	assert.Contains(t, dry, "Deploying 1 mod(s)")
+	assert.Contains(t, dry, "Would deploy: 1\n")
+	assert.NotContains(t, dry, "Skipped:")
+
+	live := captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	assert.Contains(t, live, want)
+	assert.Contains(t, live, "Deploying 1 mod(s)")
+	assert.Contains(t, live, "  ✓ On Mod\n")
+	assert.Contains(t, live, "\nDeployed: 1\n")
+	assert.NotContains(t, live, "Failed")
+	assert.FileExists(t, filepath.Join(game.ModPath, "off.esp"), "deploy leaves it in place")
 }

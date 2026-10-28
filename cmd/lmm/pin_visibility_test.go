@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -17,7 +17,8 @@ import (
 // setPolicy overwrites a seeded mod's update policy.
 func setPolicy(t *testing.T, svc *core.Service, game *domain.Game, modID string, policy domain.UpdatePolicy) {
 	t.Helper()
-	require.NoError(t, svc.SetModUpdatePolicy("src", modID, game.ID, "default", policy))
+	_, settingErr14 := svc.SetModUpdatePolicy(context.Background(), "src", modID, game.ID, "default", policy)
+	require.NoError(t, settingErr14)
 }
 
 // listVerbose runs doList with --verbose and returns stdout.
@@ -28,7 +29,7 @@ func listVerbose(t *testing.T, svc *core.Service, game *domain.Game, asJSON bool
 	t.Cleanup(func() { verbose, jsonOutput = oldVerbose, oldJSON })
 
 	return captureStdout(t, func() error {
-		return doList(&cobra.Command{}, svc, game)
+		return doList(context.Background(), &cobra.Command{}, svc, game)
 	})
 }
 
@@ -86,7 +87,7 @@ func TestApplySingleUpdate_PinnedSaysPinned(t *testing.T) {
 	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 	setPolicy(t, svc, game, "a", domain.UpdatePinned)
 
-	mod, err := svc.GetInstalledMod("src", "a", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
 
 	out := captureStdout(t, func() error {
@@ -166,7 +167,7 @@ func TestList_VerboseShowsLockedVersion(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 	seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "b", "1.2.3"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "b", "1.2.3"))
 
 	out := listVerbose(t, svc, game, false)
 
@@ -194,7 +195,7 @@ func TestList_JSONIncludesLockState(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 	seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "b", "1.2.3"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "b", "1.2.3"))
 
 	var out struct {
 		Mods []struct {

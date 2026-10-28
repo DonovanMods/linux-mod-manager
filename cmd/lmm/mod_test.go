@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -216,7 +216,7 @@ func TestModDisableCmd_NoModID(t *testing.T) {
 // guards Task 6 item a: EnableMod/DisableMod's (bool, error) -> result-struct
 // convergence restores the pre-5a --verbose diagnostic doModDisable dropped
 // in 5a Task 1 (adjudicated acceptable-until-convergence at the time - see
-// DisableMod's doc comment in flows.go). Asserts the printed line is
+// DisableMod's doc comment in mod_toggle.go). Asserts the printed line is
 // byte-identical to `git show v1.10.0:cmd/lmm/mod.go`'s
 // `fmt.Printf("  Warning: failed to undeploy some files: %v\n", err)`.
 func TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically(t *testing.T) {
@@ -239,21 +239,20 @@ func TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically(t
 	// TestService_DisableMod_UndeployFailureIsNonFatal) so there is
 	// something to undeploy.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "blocked/plugin.esp", []byte("data")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default")
 
-	// Corrupt the deployed file into a plain file (not a symlink) so the
-	// symlink linker's Undeploy fails deterministically ("not a symlink").
-	deployedPath := filepath.Join(gameDir, "plugin.esp")
+	// Block traversal through the deployed path's parent to force ENOTDIR.
+	deployedPath := filepath.Join(gameDir, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 
 	oldSource, oldProfile, oldVerbose := modSource, modProfile, verbose
 	modSource = "src"
@@ -307,7 +306,7 @@ func blockEnabledColumnUpdates(t *testing.T, dbPath string) {
 // recording a Note; a SUBSEQUENT SetModEnabled failure is then forced via
 // blockEnabledColumnUpdates above, so DisableMod returns its accumulated
 // *DisableResult alongside the fatal error (see DisableMod's doc comment in
-// flows.go: undeploy failures are non-fatal, but a SetModEnabled failure is
+// mod_toggle.go: undeploy failures are non-fatal, but a SetModEnabled failure is
 // not).
 func TestDoModDisable_ErrorPath_PrintsAccumulatedNoteToStdout(t *testing.T) {
 	configDir = t.TempDir()
@@ -326,22 +325,21 @@ func TestDoModDisable_ErrorPath_PrintsAccumulatedNoteToStdout(t *testing.T) {
 	}
 
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "blocked/plugin.esp", []byte("data")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default")
 
-	// Corrupt the deployed file into a plain file (not a symlink) so the
-	// symlink linker's Undeploy fails deterministically ("not a symlink"),
-	// recording a Note before the fatal SetModEnabled failure below.
-	deployedPath := filepath.Join(gameDir, "plugin.esp")
+	// Obstruct the parent so Uninstall records an ENOTDIR note before the
+	// fatal SetModEnabled failure below.
+	deployedPath := filepath.Join(gameDir, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 
 	blockEnabledColumnUpdates(t, filepath.Join(dataDir, "lmm.db"))
 
@@ -366,7 +364,7 @@ func TestDoModDisable_ErrorPath_PrintsAccumulatedNoteToStdout(t *testing.T) {
 // counterpart of doModDisable's fix above: printModNotes(result.Notes) must
 // now be reachable before doModEnable returns its error too, for consistency
 // and forward-compat with a future EnableMod diagnostic (see EnableResult's
-// doc comment in flows.go: Notes is "kept for parity with DisableResult...
+// doc comment in mod_toggle.go: Notes is "kept for parity with DisableResult...
 // so a future EnableMod diagnostic wouldn't need another signature change").
 //
 // Unlike DisableMod, EVERY error path EnableMod has today returns a nil
@@ -394,7 +392,7 @@ func TestDoModEnable_ErrorPath_NilResultDoesNotPanic(t *testing.T) {
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -417,4 +415,63 @@ func TestDoModEnable_ErrorPath_NilResultDoesNotPanic(t *testing.T) {
 	require.Error(t, cmdErr, "SetModEnabled must fail while the trigger blocks the update")
 	assert.Contains(t, cmdErr.Error(), "failed to update mod status")
 	assert.Empty(t, out, "EnableResult carries no Notes on any error path today, so nothing should print")
+}
+
+// TestDoModEnableDisable_AcceptAnImportedModsLocalSource: an imported mod's
+// source is "local", which no game configures, and `lmm mod enable`/`disable`
+// refused `--source local` - so the recovery command #431's one-time upgrade
+// notice prints (and the `lmm mod disable` its docs recommend) could not
+// reach the mods most often imported by hand. They accept it now, as `lmm
+// uninstall` already did.
+func TestDoModEnableDisable_AcceptAnImportedModsLocalSource(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"nexusmods": "g1"},
+	}
+	ctx := context.Background()
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, domain.SourceLocal, "imp", "1.0", "imported.esp", []byte("data")))
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "imp", SourceID: domain.SourceLocal, Name: "Imported Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "imp", SourceID: domain.SourceLocal, Version: "1.0", GameID: "g1"}, "default")
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(ctx, "g1", "default", domain.ModReference{SourceID: domain.SourceLocal, ModID: "imp"}))
+
+	oldSource, oldProfile := modSource, modProfile
+	t.Cleanup(func() { modSource, modProfile = oldSource, oldProfile })
+
+	modSource, modProfile = domain.SourceLocal, "default"
+	captureStdout(t, func() error { return doModDisable(ctx, svc, game, "imp") })
+	profile, err := pm.Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	assert.True(t, profile.Mods[0].Disabled)
+	assert.NoFileExists(t, filepath.Join(gameDir, "imported.esp"))
+
+	modSource, modProfile = domain.SourceLocal, "default"
+	captureStdout(t, func() error { return doModEnable(ctx, svc, game, "imp") })
+	profile, err = pm.Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, profile.Mods[0].Disabled)
+	assert.FileExists(t, filepath.Join(gameDir, "imported.esp"))
+
+	// A source the game does not configure is still refused.
+	modSource = "curseforge"
+	err = doModEnable(ctx, svc, game, "imp")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `source "curseforge" is not configured`)
 }

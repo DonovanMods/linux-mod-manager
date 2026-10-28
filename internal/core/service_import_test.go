@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,7 +64,7 @@ func TestImportMod_LocalArchive(t *testing.T) {
 
 	// Import the mod
 	ctx := context.Background()
-	result, err := importer.Import(ctx, archivePath, game, core.ImportOptions{
+	result, err := importer.ImportForTest(ctx, archivePath, game, core.ImportOptions{
 		ProfileName: "default",
 	})
 	require.NoError(t, err)
@@ -101,7 +101,7 @@ func TestImportMod_NexusModsFilename(t *testing.T) {
 	importer := core.NewImporter(modCache)
 
 	ctx := context.Background()
-	result, err := importer.Import(ctx, archivePath, game, core.ImportOptions{
+	result, err := importer.ImportForTest(ctx, archivePath, game, core.ImportOptions{
 		ProfileName: "default",
 	})
 	require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestImportMod_UnsupportedFormat(t *testing.T) {
 	importer := core.NewImporter(modCache)
 
 	ctx := context.Background()
-	_, err := importer.Import(ctx, archivePath, game, core.ImportOptions{})
+	_, err := importer.ImportForTest(ctx, archivePath, game, core.ImportOptions{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported")
 }
@@ -144,7 +144,7 @@ func TestImportMod_FileNotFound(t *testing.T) {
 	importer := core.NewImporter(modCache)
 
 	ctx := context.Background()
-	_, err := importer.Import(ctx, "/nonexistent/file.zip", game, core.ImportOptions{})
+	_, err := importer.ImportForTest(ctx, "/nonexistent/file.zip", game, core.ImportOptions{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -171,7 +171,7 @@ func TestImportMod_ExplicitSourceAndModID(t *testing.T) {
 	importer := core.NewImporter(modCache)
 
 	ctx := context.Background()
-	result, err := importer.Import(ctx, archivePath, game, core.ImportOptions{
+	result, err := importer.ImportForTest(ctx, archivePath, game, core.ImportOptions{
 		SourceID: "nexusmods",
 		ModID:    "99999",
 	})
@@ -205,7 +205,7 @@ func TestImportMod_ReimportOverwritesCache(t *testing.T) {
 		"file1.txt": "original content",
 	})
 
-	result1, err := importer.Import(ctx, archivePath, game, core.ImportOptions{
+	result1, err := importer.ImportForTest(ctx, archivePath, game, core.ImportOptions{
 		SourceID: domain.SourceLocal,
 		ModID:    "test-mod-123",
 	})
@@ -219,7 +219,7 @@ func TestImportMod_ReimportOverwritesCache(t *testing.T) {
 		"file3.txt": "more content",
 	})
 
-	result2, err := importer.Import(ctx, archivePath, game, core.ImportOptions{
+	result2, err := importer.ImportForTest(ctx, archivePath, game, core.ImportOptions{
 		SourceID: domain.SourceLocal,
 		ModID:    "test-mod-123",
 	})

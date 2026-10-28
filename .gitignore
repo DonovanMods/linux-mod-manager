@@ -29,11 +29,22 @@ go.work.sum
 
 # Dependency directories
 vendor/
+# ... except the SPA's vendored browser libraries, which are committed on
+# purpose: `go build` is the whole build (no Node, no npm, no bundler), so
+# preact/htm ship in the repo, pinned and go:embed-ed, and are never fetched
+# by anything (docs/plans/2026-08-31-serve-spa-design.md §Settled decisions).
+!internal/serve/vendor/
 
 # Build output
 /bin/
 /dist/
 /lmm
+
+# Release-time generated packaging inputs (see .goreleaser.yaml's before hooks):
+# shell completions emitted by `lmm completion`, and gzipped copies of the
+# tracked man pages under docs/man/man1.
+/completions/
+/manpages/
 
 # IDE and editor files
 .idea/
@@ -61,6 +72,11 @@ coverage.html
 .envrc
 
 # Other files
+mise.toml
 *.local.md
 docs/plans/*
 !docs/plans/archive
+/.superpowers
+
+# trunk/mise local caches the Makefile points at; never content
+/.trunk-cache-local/

@@ -12,12 +12,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/curseforge"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 func TestSourceCmd_Structure(t *testing.T) {
@@ -30,15 +31,8 @@ func TestSourceCmd_Structure(t *testing.T) {
 	}
 	assert.Contains(t, names, "list")
 	assert.Contains(t, names, "validate")
-}
-
-// TestCapabilitySummary_IncludesVersions pins that capabilitySummary appends
-// the "versions" token after "auth" (#96).
-func TestCapabilitySummary_IncludesVersions(t *testing.T) {
-	assert.Equal(t, "search,deps,updates,auth,versions", capabilitySummary(source.Capabilities{
-		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
-	}))
-	assert.Equal(t, "search", capabilitySummary(source.Capabilities{Search: true}))
+	assert.Contains(t, names, "add")
+	assert.Contains(t, names, "remove")
 }
 
 // runSourceCmd executes the source command tree with args against a fresh
@@ -185,12 +179,91 @@ manifest:
 	})
 }
 
+// runGoldenSourceValidate runs `source validate [--probe]` through cobra
+// WITHOUT redirecting the command's output: under --json the document must
+// be captured off the real os.Stdout, matching runGoldenSourceList's own
+// rationale.
+func runGoldenSourceValidate(t *testing.T, path string, probe bool) (stdout, stderr string, fnErr error) {
+	t.Helper()
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(sourceCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
+	args := []string{"source", "validate", path}
+	if probe {
+		args = append(args, "--probe")
+	}
+	cmd.SetArgs(args)
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	return captureStdoutStderrErr(t, cmd.Execute)
+}
+
+// TestSourceValidate_JSON pins the SourceValidationReport document's framing
+// (one document decoding into the declared type with no unknown members,
+// empty stderr) and its recorded golden, both without and with --probe
+// (#309); the plain path's unaffected byte-for-byte behaviour is pinned
+// above by TestSourceValidateCmd/TestSourceValidateProbe.
+func TestSourceValidate_JSON(t *testing.T) {
+	t.Run("valid, no probe", func(t *testing.T) {
+		resetSourceProbeFlags(t)
+		t.Cleanup(func() { resetSourceProbeFlags(t) })
+		path := filepath.Join(t.TempDir(), "good.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(`
+id: my-mods
+name: My Mods
+type: directory
+directory:
+  path: `+t.TempDir()+`
+`), 0644))
+
+		out, stderr, err := runGoldenSourceValidate(t, path, false)
+		require.NoError(t, err)
+		assert.Empty(t, stderr, "--json must leave stderr empty: events are suppressed (Ruling 15)")
+		var got app.SourceValidationReport
+		decodeStrict(t, out, &got)
+		assertJSONCLIGolden(t, "source_validate", out, path, "<PATH>")
+	})
+
+	t.Run("valid, with probe", func(t *testing.T) {
+		resetSourceProbeFlags(t)
+		t.Cleanup(func() { resetSourceProbeFlags(t) })
+		configDir = t.TempDir()
+		dataDir = t.TempDir()
+
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "SomeMod"), 0755))
+		path := filepath.Join(t.TempDir(), "dir.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(`
+id: probe-dir
+name: Probe Dir
+type: directory
+directory:
+  path: `+root+`
+`), 0644))
+
+		out, stderr, err := runGoldenSourceValidate(t, path, true)
+		require.NoError(t, err)
+		assert.Empty(t, stderr)
+		var got app.SourceValidationReport
+		decodeStrict(t, out, &got)
+		assertJSONCLIGolden(t, "source_validate_probe", out, path, "<PATH>")
+	})
+
+	// The invalid-file and probe-failure envelopes are pinned directly
+	// against sourceValidationError in jsonout_test.go
+	// (TestReportError_JSON_SourceValidationError) - no need to re-drive the
+	// whole command tree for the same shape.
+}
+
 // TestSourceListCmd_ErrorRows is a regression test for final-review finding 2:
 // `lmm source list` must not silently drop a definition whose source failed to
 // construct, and must not relabel a built-in source's type just because a
 // custom definition collides with its ID.
 func TestSourceListCmd_ErrorRows(t *testing.T) {
-	runList := func(t *testing.T) []sourceInfo {
+	runList := func(t *testing.T) []app.SourceInfo {
 		t.Helper()
 		// Task 4 made sourceListCmd read the package-level gameID (game
 		// scoping) - this test doesn't care about game context at all, so
@@ -200,28 +273,28 @@ func TestSourceListCmd_ErrorRows(t *testing.T) {
 		cmd := &cobra.Command{Use: "test"}
 		cmd.AddCommand(sourceCmd)
 		t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
-		buf := new(bytes.Buffer)
-		cmd.SetOut(buf)
-		cmd.SetErr(buf)
 		cmd.SetArgs([]string{"source", "list"})
 
 		jsonOutput = true
 		t.Cleanup(func() { jsonOutput = false })
 
-		require.NoError(t, cmd.Execute())
+		// Captured off os.Stdout, not cmd.SetOut: --json documents go
+		// through emitJSON, which owns the one-document-on-stdout invariant
+		// (#302).
+		out := captureStdout(t, cmd.Execute)
 
-		var rows []sourceInfo
-		require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+		var rows []app.SourceInfo
+		require.NoError(t, json.Unmarshal([]byte(out), &rows))
 		return rows
 	}
 
-	findRow := func(rows []sourceInfo, id, typ string) (sourceInfo, bool) {
+	findRow := func(rows []app.SourceInfo, id, typ string) (app.SourceInfo, bool) {
 		for _, r := range rows {
 			if r.ID == id && r.Type == typ {
 				return r, true
 			}
 		}
-		return sourceInfo{}, false
+		return app.SourceInfo{}, false
 	}
 
 	t.Run("definition with missing path produces an error row", func(t *testing.T) {
@@ -240,7 +313,7 @@ directory:
 
 		row, found := findRow(rows, "broken-mods", "error")
 		require.True(t, found, "a definition whose source fails to construct must still produce a row: %+v", rows)
-		assert.NotEmpty(t, row.Error)
+		assert.NotEmpty(t, row.ErrorMessage)
 	})
 
 	t.Run("definition colliding with a built-in id keeps the built-in row and adds an error row", func(t *testing.T) {
@@ -262,29 +335,23 @@ directory:
 
 		errRow, errFound := findRow(rows, "nexusmods", "error")
 		require.True(t, errFound, "an id collision must still produce an error row: %+v", rows)
-		assert.Contains(t, errRow.Error, "already in use")
+		assert.Contains(t, errRow.ErrorMessage, "already in use")
 	})
 }
 
 // TestSourceInfoRows_EmptyJSONEncode pins the JSON contract for `source list
-// --json`: a zero-length row slice must encode as `[]`, never `null` (#52
-// item 13). This is unreachable through the CLI today — registerSources
-// always registers the built-in sources before sourceListCmd builds its row
-// slice, so rows is never actually empty at runtime — so this exercises the
-// encoding contract directly, guarding against a future regression back to
-// `var rows []sourceInfo` (whose zero value is nil and encodes as `null`).
+// --json`: an empty registry must emit `[]`, never `null` (#52 item 13).
+// This is unreachable through the CLI today — app.Open always registers the
+// built-in sources before app.SourceInfos assembles the rows — so it
+// exercises emitJSON directly, on the nil slice that is the failure mode
+// being guarded against (encoding/json v1 wrote `null` for it; emitJSON's
+// json/v2 does not).
 func TestSourceInfoRows_EmptyJSONEncode(t *testing.T) {
-	rows := make([]sourceInfo, 0)
-	b, err := json.Marshal(rows)
-	require.NoError(t, err)
-	assert.Equal(t, "[]", string(b))
+	var nilRows []app.SourceInfo
 
-	// Sanity check on the failure mode being guarded against: a nil slice of
-	// the same type really does encode as `null`.
-	var nilRows []sourceInfo
-	b, err = json.Marshal(nilRows)
-	require.NoError(t, err)
-	assert.Equal(t, "null", string(b))
+	out := captureStdout(t, func() error { return emitJSON(nilRows) })
+
+	assert.Equal(t, "[]\n", out)
 }
 
 // TestSourceListCmd_ReportsBrokenDefinitionOnce is the regression test for
@@ -391,7 +458,7 @@ func TestSourceTypeLabel_AllRealTypesPlusBareMock(t *testing.T) {
 // same TypeLabel()-derived values in its TYPE column, alongside both
 // built-ins (always registered). A bare mock can't be exercised here — the
 // real registration pipeline only ever constructs sources via
-// registerSources' built-in factories or custom.New, both of which always
+// app's built-in factories or custom.New, both of which always
 // return a TypeLabeler — so that fallback stays covered at the unit level
 // above only.
 func TestSourceListCmd_TypeColumnFromTypeLabeler(t *testing.T) {
@@ -431,18 +498,15 @@ api:
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(sourceCmd)
 	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
 	cmd.SetArgs([]string{"source", "list"})
 
 	jsonOutput = true
 	t.Cleanup(func() { jsonOutput = false })
 
-	require.NoError(t, cmd.Execute())
+	out := captureStdout(t, cmd.Execute)
 
-	var rows []sourceInfo
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+	var rows []app.SourceInfo
+	require.NoError(t, json.Unmarshal([]byte(out), &rows))
 
 	byID := make(map[string]string, len(rows))
 	for _, r := range rows {
@@ -537,7 +601,7 @@ func TestSourceListCmd_AllFlagShowsFullRegistryWithInUseColumn(t *testing.T) {
 
 	rows := runSourceListJSON(t)
 
-	byID := make(map[string]sourceInfo, len(rows))
+	byID := make(map[string]app.SourceInfo, len(rows))
 	for _, r := range rows {
 		byID[r.ID] = r
 	}
@@ -608,7 +672,7 @@ directory:
 	for _, r := range rows {
 		if r.ID == "broken-mods" && r.Type == "error" {
 			found = true
-			assert.NotEmpty(t, r.Error)
+			assert.NotEmpty(t, r.ErrorMessage)
 		}
 	}
 	assert.True(t, found, "a broken definition must stay visible even in the scoped default view: %+v", rows)
@@ -632,14 +696,11 @@ func TestSourceListCmd_ScopedUsesConfigDefaultGame(t *testing.T) {
 // by the caller) and decodes the row slice - the shared tail every test
 // above uses instead of hand-rolling runList (TestSourceListCmd_ErrorRows'
 // own private copy predates --all and only ever ran ungamed).
-func runSourceListJSON(t *testing.T) []sourceInfo {
+func runSourceListJSON(t *testing.T) []app.SourceInfo {
 	t.Helper()
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(sourceCmd)
 	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
 	args := []string{"source", "list"}
 	if sourceAll {
 		args = append(args, "--all")
@@ -654,17 +715,65 @@ func runSourceListJSON(t *testing.T) []sourceInfo {
 	jsonOutput = true
 	defer func() { jsonOutput = prevJSON }()
 
-	require.NoError(t, cmd.Execute())
+	out := captureStdout(t, cmd.Execute)
 
-	var rows []sourceInfo
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+	var rows []app.SourceInfo
+	require.NoError(t, json.Unmarshal([]byte(out), &rows))
 	return rows
 }
 
-func rowIDs(rows []sourceInfo) []string {
+func rowIDs(rows []app.SourceInfo) []string {
 	ids := make([]string, 0, len(rows))
 	for _, r := range rows {
 		ids = append(ids, r.ID)
 	}
 	return ids
+}
+
+// TestSourceListCmd_ScopedViewSaysHowManyMoreExist is #395: a user who has
+// just written their first sources/*.yaml runs `lmm source list`, sees only
+// the sources mapped to the active game, and has nothing on screen to say
+// their new definition is registered but unmapped. The scoping is
+// documented in --help and --all exists; a one-line footer is what makes
+// either discoverable at the moment it matters.
+func TestSourceListCmd_ScopedViewSaysHowManyMoreExist(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t, "nexusmods")
+	gameID = "test-game"
+
+	out, err := runSourceCmd(t, "source", "list")
+	require.NoError(t, err)
+
+	// The registry holds the five built-ins plus my-directory; only
+	// nexusmods is mapped, so five are missing from this view.
+	assert.Contains(t, out, "5 more registered source(s) not mapped to test-game")
+	assert.Contains(t, out, "lmm source list --all")
+}
+
+// TestSourceListCmd_ScopedViewWithNothingMoreHasNoFooter keeps #395's
+// footer from becoming noise: a game mapped to every registered source has
+// nothing else to offer.
+func TestSourceListCmd_ScopedViewWithNothingMoreHasNoFooter(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t, "my-directory", "nexusmods", "curseforge", "icarus", "steamworkshop", "thunderstore")
+	gameID = "test-game"
+
+	out, err := runSourceCmd(t, "source", "list")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "more registered source(s)")
+}
+
+// TestSourceListCmd_AllViewHasNoFooter: --all IS the full registry, so
+// there is nothing left to point at.
+func TestSourceListCmd_AllViewHasNoFooter(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t, "nexusmods")
+	gameID = "test-game"
+
+	out, err := runSourceCmd(t, "source", "list", "--all")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "more registered source(s)")
 }

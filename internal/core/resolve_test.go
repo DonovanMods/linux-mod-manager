@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -123,7 +123,7 @@ func TestServiceResolveModVersion(t *testing.T) {
 	assert.ErrorIs(t, err, core.ErrVersionNotFound)
 }
 
-// TestService_AvailableModVersions covers the TUI version picker's data
+// TestService_AvailableModVersions covers AvailableModVersions' data
 // source: distinct per-file versions in first-seen order, and the
 // ErrNotSupported degrade when the source's file list carries no version
 // info at all (#97).

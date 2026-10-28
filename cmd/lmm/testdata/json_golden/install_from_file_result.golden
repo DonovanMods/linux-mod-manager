@@ -1,0 +1,27 @@
+{
+  "mod": {
+    "id": "mod1",
+    "source_id": "test-src",
+    "name": "Mod One",
+    "version": "2.0",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "g1",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "https://example.test/mods/mod1",
+    "files": [],
+    "dependencies": []
+  },
+  "linked_source": "test-src",
+  "auto_detected": false,
+  "renamed": false,
+  "file_id": "new-1",
+  "file_ids": [
+    "new-1"
+  ],
+  "deployed": 1,
+  "merged_pak_synced": false
+}

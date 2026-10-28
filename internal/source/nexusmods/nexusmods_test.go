@@ -7,9 +7,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,7 @@ var (
 	_ source.AuthInstructionsProvider = (*NexusMods)(nil)
 	_ source.TypeLabeler              = (*NexusMods)(nil)
 	_ source.CapabilityReporter       = (*NexusMods)(nil)
+	_ source.ChangelogProvider        = (*NexusMods)(nil)
 )
 
 func writeJSON(t *testing.T, w http.ResponseWriter, v interface{}) {
@@ -254,6 +256,150 @@ func TestNexusMods_GetDownloadURL_InvalidFileID(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid file ID")
 }
 
+// TestNexusMods_Changelog_MatchesVersion (#87): the REST files endpoint's
+// FileData.Changelog (changelog_html) is a real, already-consumed field -
+// CheckUpdatesWithProgress reads it today (nexusmods.go's changelog
+// selection loop). Changelog exposes that same data by exact version match
+// first, ahead of the primary-file fallback used when no file matches.
+func TestNexusMods_Changelog_MatchesVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/games/skyrimspecialedition/mods/12345/files.json" {
+			writeJSON(t, w, ModFileList{
+				Files: []FileData{
+					{FileID: 100, IsPrimary: true, Version: "2.0.0", Changelog: "Primary file notes"},
+					{FileID: 101, IsPrimary: false, Version: "1.5.0", Changelog: "Optional file notes"},
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	cl, err := nm.Changelog(context.Background(), "skyrimspecialedition", "12345", "1.5.0")
+	require.NoError(t, err)
+	assert.Equal(t, "Optional file notes", cl, "an exact version match must win over the primary-file fallback")
+}
+
+// TestNexusMods_Changelog_FallsBackToPrimaryFile: no file matches the
+// requested version (e.g. it was requested before ModDetail's fresh GetMod
+// call resolved a slightly different string) - fall back to the primary
+// file's changelog. Narrower than CheckUpdatesWithProgress's own fallback
+// (any file's non-empty changelog) - see
+// TestNexusMods_Changelog_NonPrimaryFileNeverFallsBack for the case where
+// that narrower scope actually bites.
+func TestNexusMods_Changelog_FallsBackToPrimaryFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/games/skyrimspecialedition/mods/12345/files.json" {
+			writeJSON(t, w, ModFileList{
+				Files: []FileData{
+					{FileID: 101, IsPrimary: false, Version: "1.0.0", Changelog: "Optional file notes"},
+					{FileID: 100, IsPrimary: true, Version: "2.0.0", Changelog: "Primary file notes"},
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	cl, err := nm.Changelog(context.Background(), "skyrimspecialedition", "12345", "9.9.9")
+	require.NoError(t, err)
+	assert.Equal(t, "Primary file notes", cl)
+}
+
+// TestNexusMods_Changelog_NoFilesHaveChangelogs returns an empty string, not
+// an error - the caller (core.Service.ModDetail) treats an error as a
+// best-effort Note, so "nothing to show" must stay the ordinary empty case.
+func TestNexusMods_Changelog_NoFilesHaveChangelogs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/games/skyrimspecialedition/mods/12345/files.json" {
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 100, IsPrimary: true, Version: "2.0.0"}}})
+		}
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	cl, err := nm.Changelog(context.Background(), "skyrimspecialedition", "12345", "2.0.0")
+	require.NoError(t, err)
+	assert.Empty(t, cl)
+}
+
+// TestNexusMods_Changelog_InvalidModID: a real error, unlike the no-changelog
+// case above - the caller must be able to tell "nothing to show" from
+// "the lookup failed."
+func TestNexusMods_Changelog_InvalidModID(t *testing.T) {
+	nm := New(nil, "testapikey")
+
+	_, err := nm.Changelog(context.Background(), "skyrimspecialedition", "not-a-number", "1.0.0")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid mod ID")
+}
+
+// TestNexusMods_Changelog_NonPrimaryFileNeverFallsBack (task-2 review,
+// Important #2): the ONLY file with a changelog is non-primary and doesn't
+// match the requested version - Changelog must return "" rather than
+// falling back to it. CheckUpdatesWithProgress would return that file's
+// changelog in this exact shape (it falls back to any file's non-empty
+// changelog, not just the primary's); Changelog's narrower, primary-only
+// fallback fails safe instead: a changelog that exists gets silently
+// omitted, not a wrong changelog surfaced.
+func TestNexusMods_Changelog_NonPrimaryFileNeverFallsBack(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/games/skyrimspecialedition/mods/12345/files.json" {
+			writeJSON(t, w, ModFileList{
+				Files: []FileData{
+					{FileID: 101, IsPrimary: false, Version: "1.0", Changelog: "notes"},
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	cl, err := nm.Changelog(context.Background(), "skyrimspecialedition", "12345", "9.9.9")
+	require.NoError(t, err)
+	assert.Empty(t, cl, "a non-primary file's changelog must never be used as a fallback")
+}
+
+// TestNexusMods_Changelog_StripsHTML (task-2 review item 4): changelog_html
+// is exactly that - HTML - so Changelog must never hand raw markup to
+// ModDetail.Changelog. Unlike Mod.Description (which stays raw all the way
+// to `--json` by existing precedent, #86), Changelog has no such precedent
+// and is plain text from the source adapter onward.
+func TestNexusMods_Changelog_StripsHTML(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/games/skyrimspecialedition/mods/12345/files.json" {
+			writeJSON(t, w, ModFileList{
+				Files: []FileData{
+					{FileID: 100, IsPrimary: true, Version: "2.0.0", Changelog: "<p>Fixed a crash.</p><br/>Also &amp; other stuff."},
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	cl, err := nm.Changelog(context.Background(), "skyrimspecialedition", "12345", "2.0.0")
+	require.NoError(t, err)
+	assert.NotContains(t, cl, "<p>", "raw HTML tags must not reach ModDetail.Changelog")
+	assert.NotContains(t, cl, "&amp;", "HTML entities must be decoded")
+	assert.Equal(t, "Fixed a crash.\n\nAlso & other stuff.", cl)
+}
+
 func TestNexusMods_CheckUpdates_FindsUpdate(t *testing.T) {
 	// Mock server: GetMod returns newer version; GetModFiles returns changelog for update
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -379,6 +525,181 @@ func TestNexusMods_CheckUpdates_FindsFileUpdate(t *testing.T) {
 	assert.Equal(t, map[string]string{"100": "101"}, updates[0].FileIDReplacements)
 }
 
+// checkUpdatesForFileChain runs CheckUpdates for one installed mod (file 100,
+// mod version unchanged unless remoteVersion differs) against a mock files
+// endpoint serving the given listing, and returns the updates.
+func checkUpdatesForFileChain(t *testing.T, list ModFileList, installedVersion, remoteVersion string) []domain.Update {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/files.json") {
+			writeJSON(t, w, list)
+			return
+		}
+		writeJSON(t, w, ModData{ModID: 12345, Name: "Test Mod", Version: remoteVersion})
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{{
+		Mod:     domain.Mod{ID: "12345", Name: "Test Mod", Version: installedVersion, GameID: "skyrimspecialedition"},
+		FileIDs: []string{"100"},
+	}}
+	updates, err := nm.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	return updates
+}
+
+func TestNexusMods_CheckUpdates_ChainWithDeletedMiddleAdvertisesNewest(t *testing.T) {
+	// 100 -> 101 -> 102, but 101 was deleted: advertising 101 would be a file that
+	// is gone (#507); the newest listed file is 102.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 102, Version: "1.0.2", Changelog: "Latest"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 102},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "102"}, updates[0].FileIDReplacements)
+	assert.Equal(t, "1.0.2", updates[0].NewVersion, "NewVersion reads the final chosen file")
+}
+
+func TestNexusMods_CheckUpdates_ChainWithListedMiddleAdvertisesNewest(t *testing.T) {
+	// 100 -> 101 -> 102, 101 still listed (archived): the user must be sent to
+	// 102, not the stale 101 (#507).
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 101, Version: "1.0.1"},
+			{FileID: 102, Version: "1.0.2"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 102},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "102"}, updates[0].FileIDReplacements)
+	assert.Equal(t, "1.0.2", updates[0].NewVersion)
+}
+
+func TestNexusMods_CheckUpdates_ChainChangelogComesFromChosenFile(t *testing.T) {
+	// The superseded primary file's changelog is not the update's changelog:
+	// with only a file update (mod version unchanged) it is the chosen file's.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 100, IsPrimary: true, Version: "1.0.0", Changelog: "Old primary"},
+			{FileID: 101, Version: "1.0.1", Changelog: "Stale hop"},
+			{FileID: 102, Version: "1.0.2", Changelog: "Latest"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 102},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, "Latest", updates[0].Changelog)
+}
+
+func TestNexusMods_CheckUpdates_ChainCycleTerminates(t *testing.T) {
+	// 100 -> 101 -> 102 -> 101: the walk stops at the last listed file before
+	// the cycle closes rather than looping.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 101, Version: "1.0.1"},
+			{FileID: 102, Version: "1.0.2"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 102},
+			{OldFileID: 102, NewFileID: 101},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "102"}, updates[0].FileIDReplacements)
+}
+
+func TestNexusMods_CheckUpdates_ChainCycleBackToInstalledFile(t *testing.T) {
+	// 100 -> 101 -> 100: the installed file is the start of the chain, so it is
+	// never advertised as its own replacement.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 100, Version: "1.0.0"},
+			{FileID: 101, Version: "1.0.1"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 100},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "101"}, updates[0].FileIDReplacements)
+}
+
+func TestNexusMods_CheckUpdates_ChainWithNoListedSuccessorAdvertisesNothing(t *testing.T) {
+	// 100 -> 101 -> 102, both successors gone: no replacement is advertised and,
+	// with the mod version unchanged, no update at all.
+	list := ModFileList{
+		Files: []FileData{{FileID: 200, Version: "1.0.0"}},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 101, NewFileID: 102},
+		},
+	}
+	assert.Empty(t, checkUpdatesForFileChain(t, list, "1.0.0", "1.0.0"))
+
+	// A newer mod version still reports the update, but with no file replacement.
+	updates := checkUpdatesForFileChain(t, list, "1.0.0", "2.0.0")
+	require.Len(t, updates, 1)
+	assert.Equal(t, "2.0.0", updates[0].NewVersion)
+	assert.Empty(t, updates[0].FileIDReplacements)
+}
+
+func TestNexusMods_CheckUpdates_BranchPicksNewestUpload(t *testing.T) {
+	// 100 branches to 101 and 102; the later upload wins even with the lower id.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 101, Version: "1.1.0", UploadedTime: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)},
+			{FileID: 102, Version: "1.0.5", UploadedTime: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 102},
+			{OldFileID: 100, NewFileID: 101},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "101"}, updates[0].FileIDReplacements)
+}
+
+func TestNexusMods_CheckUpdates_BranchFallsBackToHighestFileID(t *testing.T) {
+	// No upload times: the highest file id wins.
+	updates := checkUpdatesForFileChain(t, ModFileList{
+		Files: []FileData{
+			{FileID: 101, Version: "1.0.1"},
+			{FileID: 103, Version: "1.0.3"},
+			{FileID: 102, Version: "1.0.2"},
+		},
+		FileUpdates: []FileUpdate{
+			{OldFileID: 100, NewFileID: 103},
+			{OldFileID: 100, NewFileID: 101},
+			{OldFileID: 100, NewFileID: 102},
+		},
+	}, "1.0.0", "1.0.0")
+
+	require.Len(t, updates, 1)
+	assert.Equal(t, map[string]string{"100": "103"}, updates[0].FileIDReplacements)
+}
+
 func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
 	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -416,6 +737,97 @@ func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
 	assert.Len(t, updates, 2, "should find 2 mods with updates")
 	// 3 GetMod + 3 GetModFiles (one per mod)
 	assert.Equal(t, 6, requestCount, "should make GetMod and GetModFiles per mod")
+}
+
+func TestNexusMods_CheckUpdatesWithProgress_ReportsEachMod(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/v1/games/skyrimspecialedition/mods/111.json":
+			writeJSON(t, w, ModData{ModID: 111, Version: "2.0.0"}) // Update available
+		case "/v1/games/skyrimspecialedition/mods/111/files.json":
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 1, IsPrimary: true}}})
+		case "/v1/games/skyrimspecialedition/mods/222.json":
+			writeJSON(t, w, ModData{ModID: 222, Version: "1.0.0"}) // No update
+		case "/v1/games/skyrimspecialedition/mods/222/files.json":
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 10, IsPrimary: true}}})
+		case "/v1/games/skyrimspecialedition/mods/333.json":
+			writeJSON(t, w, ModData{ModID: 333, Version: "3.5.0"}) // Update available
+		case "/v1/games/skyrimspecialedition/mods/333/files.json":
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 2, IsPrimary: true}}})
+		}
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "111", Name: "Mod A", Version: "1.0.0", GameID: "skyrimspecialedition"}},
+		{Mod: domain.Mod{ID: "222", Name: "Mod B", Version: "1.0.0", GameID: "skyrimspecialedition"}},
+		{Mod: domain.Mod{ID: "333", Name: "Mod C", Version: "3.0.0", GameID: "skyrimspecialedition"}},
+	}
+
+	type progressCall struct {
+		n, total int
+		name     string
+	}
+	var calls []progressCall
+	report := func(n, total int, name string) {
+		calls = append(calls, progressCall{n, total, name})
+	}
+
+	updates, err := nm.CheckUpdatesWithProgress(context.Background(), installed, report)
+	require.NoError(t, err)
+
+	want := []progressCall{
+		{1, 3, "Mod A"},
+		{2, 3, "Mod B"},
+		{3, 3, "Mod C"},
+	}
+	assert.Equal(t, want, calls, "report should be called exactly once per mod, in order")
+
+	plainUpdates, err := nm.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	assert.Equal(t, plainUpdates, updates, "the reported-progress call should find the same updates as CheckUpdates")
+}
+
+func TestNexusMods_CheckUpdates_DelegatesWithNilReport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/files.json") {
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 100, IsPrimary: true}}})
+			return
+		}
+		writeJSON(t, w, ModData{ModID: 12345, Name: "Test Mod", Version: "2.0.0"})
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{
+		{
+			Mod: domain.Mod{
+				ID:      "12345",
+				Name:    "Test Mod",
+				Version: "1.0.0",
+				GameID:  "skyrimspecialedition",
+			},
+		},
+	}
+
+	want, err := nm.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+
+	var got []domain.Update
+	require.NotPanics(t, func() {
+		got, err = nm.CheckUpdatesWithProgress(context.Background(), installed, nil)
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, want, got)
 }
 
 func TestNexusMods_GetDependencies(t *testing.T) {
@@ -557,7 +969,10 @@ func TestNexusMods_TypeLabel(t *testing.T) {
 
 func TestNexusMods_Capabilities(t *testing.T) {
 	nm := New(nil, "")
-	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}, nm.Capabilities())
+	assert.Equal(t, source.Capabilities{
+		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
+		Sorts: []domain.SearchSort{domain.SortUpdated, domain.SortDownloads, domain.SortPopular},
+	}, nm.Capabilities())
 }
 
 func TestNexusMods_AuthInstructions(t *testing.T) {
@@ -636,4 +1051,100 @@ func TestModDataToDomain_RealDescriptionFlowsThrough(t *testing.T) {
 
 	assert.Equal(t, "short summary", mod.Summary)
 	assert.Equal(t, "the real full description", mod.Description)
+}
+
+// TestNexusMods_SearchPagingContract is the NexusMods half of the Track C
+// review's finding 1. Nothing here is wrong on its own - the offset really
+// is page*pageSize, which is contiguous for any page size the API honours -
+// but the API caps a page at around 30 rows and says so nowhere: Search
+// reports the REQUESTED page size back and an unconditional TotalCount of
+// 0. This test pins that shape so the aggregate's protection against it
+// (core.sourceIsPageable: a short page is never paged on) stays anchored to
+// what the source actually does rather than to a comment about it.
+func TestNexusMods_SearchPagingContract(t *testing.T) {
+	const serverCap = 3
+
+	var gotCount, gotOffset []float64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Variables struct {
+				Count  float64 `json:"count"`
+				Offset float64 `json:"offset"`
+			} `json:"variables"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		gotCount = append(gotCount, req.Variables.Count)
+		gotOffset = append(gotOffset, req.Variables.Offset)
+
+		nodes := make([]string, 0, serverCap)
+		for i := range serverCap {
+			nodes = append(nodes, `{"modId":`+string(rune('1'+i))+`,"name":"Mod","version":"1.0","uploader":{"name":"A"}}`)
+		}
+		_, _ = w.Write([]byte(`{"data":{"mods":{"nodes":[` + strings.Join(nodes, ",") + `]}}}`))
+	}))
+	defer server.Close()
+
+	nm := New(nil, "key")
+	nm.client.graphqlURL = server.URL + "/v2/graphql"
+
+	for _, page := range []int{0, 1} {
+		res, err := nm.Search(context.Background(), source.SearchQuery{
+			GameID: "skyrimspecialedition", Query: "x", Page: page, PageSize: 10,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 10, res.PageSize,
+			"the requested page size is reported back - the real cap is not knowable from the response")
+		assert.Zero(t, res.TotalCount, "the GraphQL search reports no total at all")
+		assert.Len(t, res.Mods, serverCap,
+			"the server returns its own cap, which is what makes the page SHORT")
+	}
+
+	assert.Equal(t, []float64{10, 10}, gotCount, "the requested count goes upstream unchanged")
+	assert.Equal(t, []float64{0, 10}, gotOffset,
+		"the offset is page*pageSize: contiguous for any page size the API honours, and strided for one it does not - which is why a short page must not be paged")
+}
+
+// TestNexusMods_SearchForwardsSortAndCarriesCounts is #503's NexusMods half:
+// the query's Sort reaches the upstream as ModsSort (so the right PAGE is
+// fetched, not the first page re-ordered), and the hits carry the real
+// download and endorsement counts the sorts key on - not the zero a search
+// that never fetched them used to report.
+func TestNexusMods_SearchForwardsSortAndCarriesCounts(t *testing.T) {
+	var gotSort any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Variables map[string]any `json:"variables"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		gotSort = req.Variables["sort"]
+		_, _ = w.Write([]byte(`{"data":{"mods":{"nodes":[
+			{"modId":1,"name":"Popular","version":"1.0","downloads":5000,"endorsements":42,"uploader":{"name":"a"}},
+			{"modId":2,"name":"Quiet","version":"1.0","downloads":0,"endorsements":0,"uploader":{"name":"b"}}
+		]}}}`))
+	}))
+	defer server.Close()
+
+	nm := New(nil, "key")
+	nm.client.graphqlURL = server.URL
+
+	res, err := nm.Search(context.Background(), source.SearchQuery{GameID: "skyrim", Query: "x", Sort: domain.SortDownloads})
+	require.NoError(t, err)
+	assert.Equal(t, []any{map[string]any{"downloads": map[string]any{"direction": "DESC"}}}, gotSort)
+
+	require.Len(t, res.Mods, 2)
+	assert.Equal(t, int64(5000), res.Mods[0].Downloads)
+	require.NotNil(t, res.Mods[0].Endorsements)
+	assert.Equal(t, int64(42), *res.Mods[0].Endorsements)
+	assert.Equal(t, int64(0), res.Mods[1].Downloads)
+}
+
+// A REST mod document carries its own counts (mod_downloads,
+// endorsement_count); both flow through modDataToDomain so GetMod reports
+// them as the search now does.
+func TestModDataToDomain_CarriesCounts(t *testing.T) {
+	mod := modDataToDomain(ModData{ModID: 1, DownloadCount: 900, EndorsementCount: 12}, "skyrim")
+
+	assert.Equal(t, int64(900), mod.Downloads)
+	require.NotNil(t, mod.Endorsements)
+	assert.Equal(t, int64(12), *mod.Endorsements)
 }

@@ -1,0 +1,14 @@
+{
+  "id": "nexusmods",
+  "name": "NexusMods",
+  "type": "built-in",
+  "auth": "authenticated",
+  "capabilities": [
+    "search",
+    "deps",
+    "updates",
+    "auth",
+    "versions"
+  ],
+  "in_use": true
+}

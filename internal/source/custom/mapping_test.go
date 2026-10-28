@@ -119,8 +119,8 @@ func TestMapModOptionalMissingYieldsZero(t *testing.T) {
 }
 
 func TestMapFile(t *testing.T) {
-	doc := jsonDoc(t, `{"id": 900, "title": "Main File", "file_name": "cool-1.2.0.zip", "version": "1.2.0", "size_bytes": 123456}`)
-	mapping := map[string]string{"id": "id", "name": "title", "filename": "file_name", "version": "version", "size": "size_bytes"}
+	doc := jsonDoc(t, `{"id": 900, "title": "Main File", "file_name": "cool-1.2.0.zip", "version": "1.2.0", "size_bytes": 123456, "uploaded": "2026-07-02T03:04:05Z"}`)
+	mapping := map[string]string{"id": "id", "name": "title", "filename": "file_name", "version": "version", "size": "size_bytes", "uploaded_at": "uploaded"}
 
 	f, err := mapFile(doc, mapping)
 	require.NoError(t, err)
@@ -129,7 +129,14 @@ func TestMapFile(t *testing.T) {
 	assert.Equal(t, "cool-1.2.0.zip", f.FileName)
 	assert.Equal(t, "1.2.0", f.Version)
 	assert.Equal(t, int64(123456), f.Size)
+	assert.Equal(t, 2026, f.UploadedAt.Year())
 
 	_, err = mapFile(jsonDoc(t, `{"title": "no id"}`), mapping)
 	assert.ErrorContains(t, err, `required field "id"`)
+}
+
+func TestMapFileUnparseableUploadedAtIsUnset(t *testing.T) {
+	f, err := mapFile(jsonDoc(t, `{"id": "a", "uploaded": "yesterday-ish"}`), map[string]string{"id": "id", "uploaded_at": "uploaded"})
+	require.NoError(t, err)
+	assert.True(t, f.UploadedAt.IsZero())
 }

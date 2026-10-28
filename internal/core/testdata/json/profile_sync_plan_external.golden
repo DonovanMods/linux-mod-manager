@@ -1,0 +1,21 @@
+{
+  "game_id": "space-engineers-2",
+  "profile": "default",
+  "to_add": [
+    {
+      "source_id": "steamworkshop",
+      "mod_id": "3617086610",
+      "version": "7987119735124793734",
+      "locked": false,
+      "external": true,
+      "updated_at": "2026-08-27T12:00:00Z"
+    }
+  ],
+  "to_remove": [],
+  "to_update": [],
+  "no_changes": false,
+  "missing": false,
+  "names": {
+    "steamworkshop:3617086610": "Sample Workshop Item"
+  }
+}

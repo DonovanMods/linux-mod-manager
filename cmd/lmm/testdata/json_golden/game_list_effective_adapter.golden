@@ -1,0 +1,38 @@
+[
+  {
+    "id": "icarus",
+    "name": "Icarus",
+    "install_path": "/games/icarus",
+    "mod_path": "/games/icarus/Mods",
+    "source_ids": {},
+    "link_method": "symlink",
+    "link_method_explicit": false,
+    "hooks": {
+      "install": {},
+      "uninstall": {}
+    },
+    "deploy_mode": "compile",
+    "convert_paks_explicit": false,
+    "default": false,
+    "convert_paks": true,
+    "effective_adapter": "icarus"
+  },
+  {
+    "id": "valheim",
+    "name": "Valheim",
+    "install_path": "/games/valheim",
+    "mod_path": "/games/valheim",
+    "source_ids": {},
+    "link_method": "symlink",
+    "link_method_explicit": false,
+    "hooks": {
+      "install": {},
+      "uninstall": {}
+    },
+    "deploy_mode": "extract",
+    "convert_paks_explicit": false,
+    "adapter": "bepinex",
+    "default": false,
+    "effective_adapter": "bepinex"
+  }
+]

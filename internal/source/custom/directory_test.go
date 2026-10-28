@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -75,7 +75,8 @@ func TestDirectoryIdentityAndCapabilities(t *testing.T) {
 	d := newTestDirectory(t)
 	assert.Equal(t, "my-mods", d.ID())
 	assert.Equal(t, "My Mods", d.Name())
-	assert.Equal(t, source.Capabilities{Search: true, Updates: true}, d.Capabilities())
+	assert.Equal(t, source.Capabilities{Search: true, Updates: true}, d.Capabilities(),
+		"no sort is claimed before a search has shown the catalogue carries dates")
 	assert.Empty(t, d.AuthURL())
 
 	_, err := d.ExchangeToken(context.Background(), "code")
@@ -225,7 +226,7 @@ func writeTestZip(t *testing.T, path, entryPath, content string) {
 	t.Helper()
 	f, err := os.Create(path)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { require.NoError(t, f.Close(), "closing test archive") }()
 
 	w := zip.NewWriter(f)
 	fw, err := w.Create(entryPath)
@@ -406,12 +407,25 @@ func TestDirectoryCheckUpdates(t *testing.T) {
 	installed := []domain.InstalledMod{
 		{Mod: domain.Mod{ID: "BiggerBackpack", SourceID: "my-mods", Name: "Bigger Backpack", Version: "1.0.0"}},
 		{Mod: domain.Mod{ID: "PlainMod-0.5", SourceID: "my-mods", Name: "PlainMod", Version: "0.5"}},
-		{Mod: domain.Mod{ID: "Removed", SourceID: "my-mods", Name: "Removed", Version: "1.0"}},
 	}
+	// A mod gone from the scan is catalog_missing_test.go's subject (#541).
 
 	updates, err := d.CheckUpdates(context.Background(), installed)
 	require.NoError(t, err)
 	require.Len(t, updates, 1)
 	assert.Equal(t, "BiggerBackpack", updates[0].InstalledMod.ID)
 	assert.Equal(t, "1.2.0", updates[0].NewVersion)
+}
+
+// TestDirectoryIgnoresGameIdentifier pins the README's own claim as a
+// capability the rest of lmm can ask about (#387, P1b review F5): a
+// directory source scans a path and never reads the value a game maps it
+// to, which is what makes `donovan-mods: ""` a legitimate mapping.
+func TestDirectoryIgnoresGameIdentifier(t *testing.T) {
+	d, err := NewDirectory(SourceDefinition{
+		ID: "my-mods", Name: "My Mods", Type: TypeDirectory,
+		Directory: &DirectoryConfig{Path: t.TempDir()},
+	})
+	require.NoError(t, err)
+	assert.True(t, source.IgnoresGameIdentifier(d))
 }

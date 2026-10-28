@@ -1,0 +1,16 @@
+{
+  "recorded_only": true,
+  "active_profile": "default",
+  "removed": [
+    "Data/alt.esp"
+  ],
+  "kept": [
+    {
+      "path": "Data/shared.esp",
+      "reason": "recorded",
+      "profiles": [
+        "default"
+      ]
+    }
+  ]
+}

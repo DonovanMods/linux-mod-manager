@@ -1,0 +1,37 @@
+{
+  "mod": {
+    "id": "42",
+    "source_id": "nexusmods",
+    "name": "Sample Mod",
+    "version": "1.2.3",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "skyrim-se",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "2026-08-27T12:00:00Z"
+  },
+  "linked_source": "nexusmods",
+  "auto_detected": true,
+  "renamed": true,
+  "file_id": "file-1",
+  "file_ids": [
+    "file-1"
+  ],
+  "deployed": 7,
+  "merged_pak_synced": true,
+  "hook_warnings": [
+    "install.after_each hook failed: exit status 1"
+  ],
+  "warnings": [
+    "could not mark cache entry complete: permission denied"
+  ],
+  "notes": [
+    "Warning: could not update profile: mod is locked"
+  ]
+}

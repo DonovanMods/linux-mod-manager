@@ -2,14 +2,16 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom/metadata"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom/metadata"
 )
 
 // Directory is a ModSource backed by a local directory: each subdirectory (or
@@ -19,6 +21,8 @@ type Directory struct {
 	id   string
 	name string
 	path string // absolute, verified at construction
+
+	dated datedCatalogue // whether the last scan found any dated entry (#503)
 }
 
 // NewDirectory constructs a directory source from a validated definition.
@@ -61,13 +65,22 @@ func (d *Directory) ExchangeToken(ctx context.Context, code string) (*source.Tok
 	return nil, fmt.Errorf("source %q: authentication: %w", d.id, source.ErrNotSupported)
 }
 
-// Capabilities implements source.CapabilityReporter.
+// Capabilities implements source.CapabilityReporter. Sorts is updated alone
+// (#503): an entry's modification time is the one date a directory has, and
+// there is no download or endorsement count to read from a folder. It is
+// offered only once a search has scanned the directory and found an entry
+// (see datedCatalogue), so an empty directory offers no sort.
 func (d *Directory) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Updates: true}
+	return source.Capabilities{Search: true, Updates: true, Sorts: d.dated.sorts()}
 }
 
 // TypeLabel implements source.TypeLabeler.
 func (d *Directory) TypeLabel() string { return "directory" }
+
+// IgnoresGameIdentifier implements source.GameIdentifierIgnorer: a directory
+// source scans a path and never consults the value a game maps it to, which
+// is why `sources: {localmods: ""}` is a legitimate mapping (#387).
+func (d *Directory) IgnoresGameIdentifier() bool { return true }
 
 // dirMod pairs a scanned mod with its filesystem location.
 type dirMod struct {
@@ -105,7 +118,9 @@ func (d *Directory) scan() ([]dirMod, error) {
 		}
 
 		if info.IsDir() {
-			mods = append(mods, d.scanDir(entry.Name(), entryPath))
+			dm := d.scanDir(entry.Name(), entryPath)
+			dm.mod.UpdatedAt = modTime(info)
+			mods = append(mods, dm)
 			continue
 		}
 
@@ -114,7 +129,7 @@ func (d *Directory) scan() ([]dirMod, error) {
 			continue
 		}
 		base := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		mod := domain.Mod{ID: base, SourceID: d.id}
+		mod := domain.Mod{ID: base, SourceID: d.id, UpdatedAt: modTime(info)}
 		if meta := metadata.ResolveArchive(entryPath); meta != nil {
 			applyMetadata(&mod, meta)
 		} else {
@@ -128,6 +143,13 @@ func (d *Directory) scan() ([]dirMod, error) {
 	}
 
 	return mods, nil
+}
+
+// modTime is an entry's modification time, in UTC, as the mod's UpdatedAt
+// (#433): a directory source has no publisher to ask, and the time the
+// archive or folder last changed on disk is the one date it does have.
+func modTime(info os.FileInfo) time.Time {
+	return info.ModTime().UTC()
 }
 
 // scanDir builds a dirMod for a mod directory, preferring well-known metadata
@@ -196,6 +218,7 @@ func (d *Directory) Search(ctx context.Context, query source.SearchQuery) (sourc
 	for _, dm := range scanned {
 		mods = append(mods, dm.mod)
 	}
+	d.dated.note(mods)
 	return searchMods(mods, query), nil
 }
 
@@ -225,17 +248,18 @@ func (d *Directory) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.
 		return nil, err
 	}
 	return []domain.DownloadableFile{{
-		ID:        "main",
-		Name:      dm.mod.Name,
-		FileName:  filepath.Base(dm.path),
-		Version:   dm.mod.Version,
-		Size:      dm.size,
-		IsPrimary: true,
+		ID:         "main",
+		Name:       dm.mod.Name,
+		FileName:   filepath.Base(dm.path),
+		Version:    dm.mod.Version,
+		Size:       dm.size,
+		IsPrimary:  true,
+		UploadedAt: dm.mod.UpdatedAt,
 	}}, nil
 }
 
 // GetDownloadURL implements source.ModSource, returning a file:// URL that
-// Service.DownloadModToCache ingests by local copy instead of HTTP download.
+// core's download path ingests by local copy instead of HTTP download.
 func (d *Directory) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	dm, err := d.find(mod.ID)
 	if err != nil {
@@ -244,8 +268,17 @@ func (d *Directory) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID 
 	return "file://" + dm.path, nil
 }
 
+// ServesLocalFiles implements source.LocalFileServer: a directory source's
+// GetDownloadURL legitimately returns a file:// URL, unlike every other
+// source (#300).
+func (d *Directory) ServesLocalFiles() bool { return true }
+
 // CheckUpdates implements source.ModSource by comparing installed versions to
-// the current scan.
+// the current scan. An installed mod the scan does not hold has been removed
+// from the directory, and is reported as a *source.ModNotFoundError (#541),
+// joined into the returned error, so core lists it as gone instead of the
+// check reading as "up to date". Only a scan that succeeded says so: a
+// failed one is a failed check that marks nothing missing.
 func (d *Directory) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	scanned, err := d.scan()
 	if err != nil {
@@ -257,6 +290,7 @@ func (d *Directory) CheckUpdates(ctx context.Context, installed []domain.Install
 	}
 
 	var updates []domain.Update
+	var missing []error
 	for _, inst := range installed {
 		select {
 		case <-ctx.Done():
@@ -265,7 +299,12 @@ func (d *Directory) CheckUpdates(ctx context.Context, installed []domain.Install
 		}
 		current, ok := byID[inst.ID]
 		if !ok {
-			continue // mod removed from the directory; nothing to offer
+			// An empty scan is far likelier an unmounted or emptied
+			// directory than every mod withdrawn at once: it says nothing.
+			if len(scanned) > 0 {
+				missing = append(missing, &source.ModNotFoundError{ModID: inst.ID, Err: d.notFound(inst.ID)})
+			}
+			continue
 		}
 		if domain.IsNewerVersion(inst.Version, current.Version) {
 			updates = append(updates, domain.Update{
@@ -274,10 +313,11 @@ func (d *Directory) CheckUpdates(ctx context.Context, installed []domain.Install
 			})
 		}
 	}
-	return updates, nil
+	return updates, errors.Join(missing...)
 }
 
-// find scans and returns the mod with the given ID.
+// find scans and returns the mod with the given ID. A mod a successful scan
+// does not hold is domain.ErrModNotFound; a failed scan is its own error.
 func (d *Directory) find(modID string) (dirMod, error) {
 	scanned, err := d.scan()
 	if err != nil {
@@ -288,5 +328,11 @@ func (d *Directory) find(modID string) (dirMod, error) {
 			return dm, nil
 		}
 	}
-	return dirMod{}, fmt.Errorf("source %q: mod not found: %s", d.id, modID)
+	return dirMod{}, d.notFound(modID)
+}
+
+// notFound is the directory's answer for a mod a successful scan does not
+// hold.
+func (d *Directory) notFound(modID string) error {
+	return fmt.Errorf("source %q: mod %s: not in %s: %w", d.id, modID, d.path, domain.ErrModNotFound)
 }

@@ -1,0 +1,14 @@
+## stdout
+Uninstall plan for profile "default" (dry run)
+
+Would uninstall: Mod A (src:a)
+  Would remove from profile: default
+  Would remove 1 file(s) from the game directory
+  Cache entry would be deleted
+
+Hooks that would run: uninstall.before_all, uninstall.after_each
+## stderr
+## error
+<nil>
+## tree
+a.esp

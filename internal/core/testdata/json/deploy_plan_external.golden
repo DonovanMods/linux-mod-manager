@@ -1,0 +1,20 @@
+{
+  "profile": "default",
+  "mods": [
+    {
+      "ref": {
+        "source_id": "steamworkshop",
+        "mod_id": "3617086610",
+        "version": "7987119735124793734",
+        "locked": false
+      },
+      "name": "Workshop Item",
+      "class": "external",
+      "link": [],
+      "remove": []
+    }
+  ],
+  "purge": [],
+  "hooks": [],
+  "no_changes": false
+}

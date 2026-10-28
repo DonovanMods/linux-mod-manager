@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,7 +72,7 @@ mods:
 	svc.RegisterSource(src)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCopy}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	ctx := context.Background()
 
 	// Search finds the mod and stamps identity.
@@ -95,7 +95,7 @@ mods:
 	require.Len(t, files, 1)
 	assert.Equal(t, archiveSHA, files[0].SHA256)
 
-	result, err := svc.DownloadMod(ctx, "e2e-repo", game, &mod, &files[0], nil)
+	result, err := svc.DownloadModForTest(ctx, "e2e-repo", game, &mod, &files[0], nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 	gameCache := svc.GetGameCache(game)
@@ -146,7 +146,7 @@ mods:
 	svc.RegisterSource(src)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCopy}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	ctx := context.Background()
 
 	mod, err := src.GetMod(ctx, "testgame", "bad-mod")
@@ -154,7 +154,7 @@ mods:
 	files, err := src.GetModFiles(ctx, mod)
 	require.NoError(t, err)
 
-	_, err = svc.DownloadMod(ctx, "bad-repo", game, mod, &files[0], nil)
+	_, err = svc.DownloadModForTest(ctx, "bad-repo", game, mod, &files[0], nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sha256 mismatch")
 	gameCache := svc.GetGameCache(game)

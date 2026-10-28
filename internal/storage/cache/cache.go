@@ -1,11 +1,14 @@
 package cache
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,17 +18,27 @@ import (
 type Cache struct {
 	basePath   string
 	gameScoped bool // when true, basePath is game-specific; omit gameID from ModPath
+	log        *slog.Logger
 }
 
 // New creates a new cache manager for the global cache (basePath/gameID/source-mod/version).
 func New(basePath string) *Cache {
-	return &Cache{basePath: basePath}
+	return &Cache{basePath: basePath, log: slog.New(slog.DiscardHandler)}
 }
 
 // NewGameScoped creates a cache for a per-game cache_path.
 // Paths are basePath/source-mod/version (no gameID); the base is already game-specific.
 func NewGameScoped(basePath string) *Cache {
-	return &Cache{basePath: basePath, gameScoped: true}
+	return &Cache{basePath: basePath, gameScoped: true, log: slog.New(slog.DiscardHandler)}
+}
+
+// SetLogger sets the logger used for diagnostics (a nil-mod cache stat error,
+// etc.). nil resets to discard, which is also the default.
+func (c *Cache) SetLogger(l *slog.Logger) {
+	if l == nil {
+		l = slog.New(slog.DiscardHandler)
+	}
+	c.log = l
 }
 
 // ModPath returns the path where a mod version's files are stored
@@ -41,7 +54,13 @@ func (c *Cache) ModPath(gameID, sourceID, modID, version string) string {
 func (c *Cache) Exists(gameID, sourceID, modID, version string) bool {
 	path := c.ModPath(gameID, sourceID, modID, version)
 	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+	if err != nil {
+		if !os.IsNotExist(err) {
+			c.log.Debug("stat failed while checking cache entry", "path", path, "err", err)
+		}
+		return false
+	}
+	return info.IsDir()
 }
 
 // ReservedPrefix marks lmm's own bookkeeping entries inside a cache version
@@ -160,6 +179,26 @@ type FileManifest struct {
 	Recorded bool
 }
 
+// FileMarkerName reports whether a cache-directory entry name is a
+// per-source-file completion marker (the write side of MarkFileComplete).
+//
+// Exported for internal/core's BepInEx re-layout (#424), which rebuilds a
+// cache entry into a fresh directory and must tell a marker - whose recorded
+// member list has to be REWRITTEN to the new paths - apart from the other
+// reserved bookkeeping, which is carried across untouched. The marker's
+// naming scheme stays in this package, where the rest of the format lives.
+func FileMarkerName(name string) bool {
+	return strings.HasPrefix(name, fileMarkerPrefix)
+}
+
+// FileManifestsAt reads the completion markers in a raw version directory,
+// for a caller holding a path rather than a cache key - a staging directory,
+// or the moved-aside original the BepInEx re-layout rebuilds from (#424).
+// Same contract as FileManifests, which is this function on a key.
+func FileManifestsAt(versionDir string) (map[string]FileManifest, error) {
+	return fileManifestsAt(versionDir)
+}
+
 // FileManifests reads every completion marker in the version directory and
 // returns each file ID's manifest. A directory (or entry) with no markers
 // returns an empty map, never an error. A marker whose body is empty or
@@ -222,7 +261,7 @@ func parseManifest(body []byte) FileManifest {
 // download run that stored file 1 of 2 before failing - each file is
 // committed to the cache individually, so a broken-off run leaves the
 // directory present but incomplete). Callers doing a "cache already has this,
-// skip downloading" check (see internal/core/flows.go's ApplyProfileSwitch
+// skip downloading" check (see internal/core/switch.go's ApplyProfileSwitch
 // and cmd/lmm/profile.go's doProfileApply, both #96) should use this instead
 // of Exists to decide whether a re-download is genuinely unnecessary.
 //
@@ -252,7 +291,11 @@ func (c *Cache) HasFileIDs(gameID, sourceID, modID, version string, fileIDs []st
 		if !VerifiableFileID(id) {
 			return false
 		}
-		if _, err := os.Stat(filepath.Join(versionDir, fileMarkerPrefix+id)); err != nil {
+		markerPath := filepath.Join(versionDir, fileMarkerPrefix+id)
+		if _, err := os.Stat(markerPath); err != nil {
+			if !os.IsNotExist(err) {
+				c.log.Debug("stat failed while checking file marker", "path", markerPath, "err", err)
+			}
 			return false
 		}
 	}
@@ -636,16 +679,19 @@ func (c *Cache) GetFilePath(gameID, sourceID, modID, version, relativePath strin
 // Unlike every other walker it deliberately INCLUDES lmm's own .lmm-*
 // bookkeeping entries: a clone is meant to reproduce the entry itself, not
 // enumerate its mod content, and the reinstall cache transaction
-// (internal/core/flows.go) round-trips a live entry through a staged/snapshot
+// (internal/core/install.go) round-trips a live entry through a staged/snapshot
 // cache and back. Dropping the completion markers on that round trip would
 // silently downgrade a complete entry to a pre-marker one and cost a
 // redundant redownload on the next cache-first check.
-func (c *Cache) CloneMod(dest *Cache, gameID, sourceID, modID, version string) error {
+func (c *Cache) CloneMod(ctx context.Context, dest *Cache, gameID, sourceID, modID, version string) error {
 	files, err := walkEntries(c.ModPath(gameID, sourceID, modID, version), true)
 	if err != nil {
 		return err
 	}
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		srcPath := c.GetFilePath(gameID, sourceID, modID, version, file)
 		dstPath := dest.GetFilePath(gameID, sourceID, modID, version, file)
 		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
@@ -692,12 +738,12 @@ func (c *Cache) Size(gameID, sourceID, modID, version string) (int64, error) {
 	return totalSize, nil
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {
@@ -708,7 +754,11 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}
-	defer dstFile.Close()
+	defer func() {
+		if closeErr := dstFile.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("closing destination: %w", closeErr))
+		}
+	}()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("copying file: %w", err)

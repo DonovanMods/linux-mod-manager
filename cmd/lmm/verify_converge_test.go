@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +18,7 @@ import (
 // --- doVerify wires deploy convergence (#168/#212) ---
 //
 // setupDoVerifyConvergeTest builds a fixture with the two shapes
-// ConvergeDeployedFiles detects (internal/core/converge_test.go exercises the
+// convergeDeployedFiles detects (internal/core/converge_test.go exercises the
 // same shapes at the core seam: TestConverge_RowDrivenStaleRemoved and
 // TestConverge_DanglingCacheLinkSwept), driven here through the real doVerify
 // CLI path instead:
@@ -49,23 +49,22 @@ func setupDoVerifyConvergeTest(t *testing.T) (*cobra.Command, *core.Service, *do
 	require.NoError(t, gameCache.Store(game.ID, domain.SourceLocal, "mod1", "1.0", "a.esp", []byte("a")))
 	require.NoError(t, gameCache.Store(game.ID, domain.SourceLocal, "mod1", "1.0", "gone.esp", []byte("g")))
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "mod1", SourceID: domain.SourceLocal, Name: "Mod One", Version: "1.0", GameID: game.ID},
 		ProfileName: "default",
 		Enabled:     true,
 		FileIDs:     []string{"a.esp"},
 	}))
-	require.NoError(t, svc.SaveFileChecksum(domain.SourceLocal, "mod1", game.ID, "default", "a.esp", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), domain.SourceLocal, "mod1", game.ID, "default", "a.esp", "deadbeef"))
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: domain.SourceLocal, ModID: "mod1", Version: "1.0", FileIDs: []string{"a.esp"},
 	}))
 
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: domain.SourceLocal, Version: "1.0", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: domain.SourceLocal, Version: "1.0", GameID: game.ID}, "default")
 
 	// gone.esp is now stale: its deployed_files row and game-dir symlink
 	// survive, but the file itself is gone from the cache, so no installed
@@ -99,7 +98,7 @@ func TestDoVerify_StaleDeployment_ReportedAsWarning(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "gone.esp - STALE DEPLOYMENT")
 	assert.Contains(t, out, "stray.pak - STALE DEPLOYMENT")
@@ -107,15 +106,16 @@ func TestDoVerify_StaleDeployment_ReportedAsWarning(t *testing.T) {
 
 	jsonOutput = true
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues)
 	assert.Equal(t, 2, result.Warnings, "both convergence candidates must be counted as warnings")
 
 	var staleFiles []string
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.Status == "stale_deployment" {
 			staleFiles = append(staleFiles, f.FileID)
 		}
@@ -128,7 +128,7 @@ func TestDoVerify_StaleDeployment_ReportedAsWarning(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(game.ModPath, "stray.pak"))
 	assert.NoError(t, err, "plain verify must not sweep the dangling link")
 
-	rows, err := svc.GetDeployedFilesForMod(game.ID, "default", domain.SourceLocal, "mod1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "default", domain.SourceLocal, "mod1")
 	require.NoError(t, err)
 	assert.Contains(t, rows, "gone.esp", "plain verify must not delete the stale row")
 }
@@ -147,7 +147,7 @@ func TestDoVerify_Fix_StaleDeployment_RemovesAndReports(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Fixed: removed gone.esp")
 	assert.Contains(t, out, "Fixed: removed stray.pak")
@@ -157,7 +157,7 @@ func TestDoVerify_Fix_StaleDeployment_RemovesAndReports(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(game.ModPath, "stray.pak"))
 	assert.True(t, os.IsNotExist(err), "--fix must sweep the dangling link")
 
-	rows, err := svc.GetDeployedFilesForMod(game.ID, "default", domain.SourceLocal, "mod1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "default", domain.SourceLocal, "mod1")
 	require.NoError(t, err)
 	assert.NotContains(t, rows, "gone.esp", "--fix must delete the stale row")
 	assert.Contains(t, rows, "a.esp", "the still-valid row must survive")
@@ -176,14 +176,15 @@ func TestDoVerify_Fix_StaleDeployment_JSONReportsFixed(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Warnings, "a successfully fixed candidate must not be counted as an outstanding warning")
 
 	var fixedFiles []string
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.Status == "fixed_stale_deployment" {
 			fixedFiles = append(fixedFiles, f.FileID)
 		}
@@ -205,11 +206,11 @@ func TestDoVerify_Fix_StaleDeployment_SecondRunClean(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	_ = captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 
 	out2 := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.NotContains(t, out2, "STALE DEPLOYMENT", "a second --fix run must not re-report anything")
 	assert.Contains(t, out2, "All files verified OK.", "a second --fix run must be genuinely clean")
@@ -228,7 +229,7 @@ func setupDoVerifyEmptyProfileConvergeTest(t *testing.T) (*cobra.Command, *core.
 	svc, game, _ := setupDoInstallTest(t)
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	cacheRoot := svc.GetGameCachePath(game)
@@ -257,7 +258,7 @@ func TestDoVerify_EmptyProfile_ConvergenceStillRuns(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "No installed mods to verify.")
 	assert.Contains(t, out, "stray.pak - STALE DEPLOYMENT")
@@ -269,15 +270,16 @@ func TestDoVerify_EmptyProfile_ConvergenceStillRuns(t *testing.T) {
 
 	jsonOutput = true
 	outJSON := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues)
 	assert.Equal(t, 1, result.Warnings)
-	require.Len(t, result.Files, 1)
-	assert.Equal(t, "stale_deployment", result.Files[0].Status)
-	assert.Equal(t, "stray.pak", result.Files[0].FileID)
+	require.Len(t, result.Findings, 1)
+	assert.Equal(t, "stale_deployment", result.Findings[0].Status)
+	assert.Equal(t, "stray.pak", result.Findings[0].FileID)
 
 }
 
@@ -292,7 +294,7 @@ func TestDoVerify_Fix_EmptyProfile_SweepsDanglingLink(t *testing.T) {
 	t.Cleanup(func() { jsonOutput, verifyFix = oldJSON, oldFix })
 
 	out := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out, "Fixed: removed stray.pak")
 
@@ -301,7 +303,7 @@ func TestDoVerify_Fix_EmptyProfile_SweepsDanglingLink(t *testing.T) {
 
 	// Second run: converged, nothing to report beyond the no-mods line.
 	out2 := captureStdout(t, func() error {
-		return doVerify(cmd, svc, game, nil)
+		return doVerify(cmd.Context(), svc, game, nil)
 	})
 	assert.Contains(t, out2, "No installed mods to verify.")
 	assert.NotContains(t, out2, "STALE DEPLOYMENT")

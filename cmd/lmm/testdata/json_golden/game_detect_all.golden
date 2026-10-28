@@ -1,0 +1,11 @@
+{
+  "saved": [
+    "starrupture"
+  ],
+  "profiles": [
+    "starrupture/default"
+  ],
+  "warnings": [
+    "steam library at /nowhere is unreadable"
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "applied": [
+    {
+      "mod": {
+        "source_id": "nexusmods",
+        "mod_id": "42",
+        "version": "1.2.4",
+        "file_ids": [
+          "file-1"
+        ],
+        "locked": false
+      },
+      "name": "Sample Mod",
+      "from_version": "1.2.3",
+      "to_version": "1.2.4",
+      "status": "updated"
+    }
+  ],
+  "failed": [
+    {
+      "mod": "curseforge:7",
+      "name": "Broken Mod",
+      "from_version": "1.2",
+      "to_version": "1.3",
+      "error": "fetching mod: source unavailable"
+    },
+    {
+      "mod": "curseforge:8",
+      "name": "Manual Mod",
+      "from_version": "2.0",
+      "to_version": "2.1",
+      "error": "downloading update: mod author has disabled third-party downloads",
+      "mod_url": "https://www.curseforge.com/minecraft/mc-mods/manual-mod",
+      "manual_download": true
+    }
+  ],
+  "skipped": [
+    {
+      "mod": {
+        "source_id": "nexusmods",
+        "mod_id": "9",
+        "version": "1.0",
+        "locked": true
+      },
+      "name": "Locked Mod",
+      "from_version": "1.0",
+      "to_version": "2.0",
+      "status": "skipped",
+      "reason": "Locked Mod is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 9' first"
+    }
+  ]
+}

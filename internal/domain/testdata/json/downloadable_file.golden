@@ -1,0 +1,11 @@
+{
+  "id": "file-1",
+  "name": "Main File",
+  "file_name": "sample-mod-1.2.3.zip",
+  "version": "1.2.3",
+  "size": 104857600,
+  "is_primary": true,
+  "category": "MAIN",
+  "description": "The primary archive for this mod.",
+  "sha256": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+}

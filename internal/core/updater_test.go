@@ -2,12 +2,14 @@ package core_test
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"testing"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,7 +91,7 @@ func TestUpdater_CheckUpdates(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	require.Len(t, updates, 1)
 	assert.Equal(t, "2.0.0", updates[0].NewVersion)
@@ -125,7 +127,7 @@ func TestUpdater_CheckUpdates_NoUpdates(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, updates)
 }
@@ -155,7 +157,7 @@ func TestUpdater_CheckUpdates_PinnedModsSkipped(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, updates, "pinned mods should not show updates")
 }
@@ -177,7 +179,7 @@ func TestUpdater_CheckUpdates_LocalModsSkipped(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, updates, "local mods should not be checked for updates")
 }
@@ -217,12 +219,115 @@ func TestCheckUpdatesTranslatesGameIDPerSourceMapping(t *testing.T) {
 		{Mod: domain.Mod{ID: "b", SourceID: "my-repo", GameID: "skyrim-se", Version: "1.0"}},
 	}
 
-	_, err := u.CheckUpdates(context.Background(), game, installed)
+	_, err := u.CheckUpdates(context.Background(), game, installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"skyrimspecialedition"}, mapped.received)
 	assert.Equal(t, []string{"skyrim-se"}, unmapped.received)
 	// Caller's slice must be untouched.
 	assert.Equal(t, "skyrim-se", installed[0].GameID)
+}
+
+// reportingMockSource is a mock that reports per-mod progress like
+// nexusmods/curseforge do.
+type reportingMockSource struct {
+	updateMockSource
+}
+
+func (r *reportingMockSource) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
+	for i, m := range installed {
+		report(i+1, len(installed), m.Name)
+	}
+	return r.CheckUpdates(ctx, installed)
+}
+
+func TestUpdater_CheckUpdates_EmitsUpdateCheckEventsPerReportingSource(t *testing.T) {
+	registry := source.NewRegistry()
+	rs1 := &reportingMockSource{updateMockSource: updateMockSource{id: "rep"}}
+	rs2 := &reportingMockSource{updateMockSource: updateMockSource{id: "rep2"}}
+	registry.Register(rs1)
+	registry.Register(rs2)
+
+	updater := core.NewUpdater(registry)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "a", SourceID: "rep", Name: "A"}},
+		{Mod: domain.Mod{ID: "b", SourceID: "rep", Name: "B"}},
+		{Mod: domain.Mod{ID: "c", SourceID: "rep2", Name: "C"}},
+		{Mod: domain.Mod{ID: "d", SourceID: "rep2", Name: "D"}},
+	}
+
+	sink, got := core.RecordEvents()
+	_, err := updater.CheckUpdates(context.Background(), nil, installed, sink, core.UpdateCheckOptions{})
+	require.NoError(t, err)
+	require.Len(t, *got, 4)
+
+	// Sources are iterated from a map, so bucket by SourceID rather than
+	// assuming a fixed global order between "rep" and "rep2".
+	type tick struct {
+		modName      string
+		index, total int
+	}
+	bySource := map[string][]tick{}
+	for _, ev := range *got {
+		e := ev.(core.UpdateCheckEvent)
+		assert.Equal(t, core.OpUpdateCheck, e.Op)
+		bySource[e.SourceID] = append(bySource[e.SourceID], tick{e.ModName, e.Index, e.Total})
+	}
+
+	// M2: the second reporting source's ticks restart at 1/2, 2/2 rather
+	// than continuing the running total (3/4, 4/4) - per-source counters
+	// are preserved behaviour.
+	assert.Equal(t, []tick{{"A", 1, 2}, {"B", 2, 2}}, bySource["rep"])
+	assert.Equal(t, []tick{{"C", 1, 2}, {"D", 2, 2}}, bySource["rep2"])
+}
+
+// TestUpdater_CheckUpdates_GlobalCounterSpansSources is Ruling 6 (#283): the
+// per-source ticks above restart at 1 by design, but GlobalIndex/GlobalTotal
+// must not - a two-source listing reports 1/5..5/5 across the whole run,
+// never 1/2..2/2 then 1/3..3/3. bySource is still a map, so which source the
+// Updater visits first is not fixed; the assertions below hold regardless of
+// that order rather than pinning one.
+func TestUpdater_CheckUpdates_GlobalCounterSpansSources(t *testing.T) {
+	registry := source.NewRegistry()
+	rs1 := &reportingMockSource{updateMockSource: updateMockSource{id: "rep"}}
+	rs2 := &reportingMockSource{updateMockSource: updateMockSource{id: "rep2"}}
+	registry.Register(rs1)
+	registry.Register(rs2)
+
+	updater := core.NewUpdater(registry)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "a", SourceID: "rep", Name: "A"}},
+		{Mod: domain.Mod{ID: "b", SourceID: "rep", Name: "B"}},
+		{Mod: domain.Mod{ID: "c", SourceID: "rep2", Name: "C"}},
+		{Mod: domain.Mod{ID: "d", SourceID: "rep2", Name: "D"}},
+		{Mod: domain.Mod{ID: "e", SourceID: "rep2", Name: "E"}},
+	}
+
+	sink, got := core.RecordEvents()
+	_, err := updater.CheckUpdates(context.Background(), nil, installed, sink, core.UpdateCheckOptions{})
+	require.NoError(t, err)
+	require.Len(t, *got, 5)
+
+	bySource := map[string][]core.UpdateCheckEvent{}
+	globalIndices := make([]int, 0, 5)
+	for _, ev := range *got {
+		e := ev.(core.UpdateCheckEvent)
+		assert.Equal(t, 5, e.GlobalTotal, "global total is the sum of every source's batch, not just this source's")
+		bySource[e.SourceID] = append(bySource[e.SourceID], e)
+		globalIndices = append(globalIndices, e.GlobalIndex)
+	}
+
+	sort.Ints(globalIndices)
+	assert.Equal(t, []int{1, 2, 3, 4, 5}, globalIndices, "global indices form one unbroken run across both sources")
+
+	for sourceID, evs := range bySource {
+		offset := evs[0].GlobalIndex - evs[0].Index
+		for i, e := range evs {
+			assert.Equalf(t, i+1, e.Index, "source %s: per-source Index still restarts at 1", sourceID)
+			assert.Equalf(t, offset+e.Index, e.GlobalIndex, "source %s: GlobalIndex is Index plus a constant per-source offset", sourceID)
+		}
+	}
 }
 
 func TestCompareVersions(t *testing.T) {
@@ -248,4 +353,59 @@ func TestCompareVersions(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// allUpdatesMockSource reports every installed mod handed to it as having an
+// update to "2.0", regardless of ID - unlike updateMockSource above (which
+// tracks a single currentMod and so can only represent an update for ONE
+// installed mod at a time), this lets
+// TestService_CheckGameUpdates_LoadsProfileOnce seed more than one
+// updatable mod from a single mock instance. Embeds updateMockSource purely
+// for its ID()/Name()/etc. no-op implementations; CheckUpdates below shadows
+// the promoted one.
+type allUpdatesMockSource struct {
+	*updateMockSource
+}
+
+func (m *allUpdatesMockSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	updates := make([]domain.Update, len(installed))
+	for i, inst := range installed {
+		updates[i] = domain.Update{InstalledMod: inst, NewVersion: "2.0"}
+	}
+	return updates, nil
+}
+
+// TestService_CheckGameUpdates_LoadsProfileOnce guards #289 review's
+// performance/correctness fix: CheckGameUpdates' lock-state stamping loop
+// used to call lockState (and so ProfileManager.Get -> a fresh profile YAML
+// read) once PER update entry, reloading the same profile from disk N times
+// for a listing of N mods. It must now load the profile once for the whole
+// call, deriving each entry's lock state from that single read
+// (lockStateFromProfile). Instrumented via core.CountProfileLoadsForTest
+// (profile_export_test.go), which wraps ProfileManager.Get's own file-read
+// seam (loadProfile, profile.go) with a counter - a filesystem-level
+// alternative (deleting/mutating the on-disk profile mid-loop) would be
+// racy and non-deterministic, so this counts the seam directly instead.
+func TestService_CheckGameUpdates_LoadsProfileOnce(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	svc.RegisterSource(&allUpdatesMockSource{updateMockSource: &updateMockSource{id: "src"}})
+
+	const n = 3
+	installed := make([]domain.InstalledMod, 0, n)
+	for i := 1; i <= n; i++ {
+		modID := fmt.Sprintf("mod%d", i)
+		mod := seedUpdatableMod(t, svc, game, "src", modID, "Mod "+modID, "1.0", []string{"file-" + modID}, map[string][]byte{modID + ".esp": []byte("content")})
+		installed = append(installed, *mod)
+	}
+
+	var updates []domain.Update
+	loads := core.CountProfileLoadsForTest(func() {
+		var err error
+		updates, err = svc.CheckGameUpdates(context.Background(), game, "default", installed, nil, core.UpdateCheckOptions{})
+		require.NoError(t, err)
+	})
+
+	require.Len(t, updates, n, "sanity: every seeded mod must be reported as updatable")
+	assert.Equal(t, 1, loads, "CheckGameUpdates must load the profile once for the whole listing, not once per update entry")
 }

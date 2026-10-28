@@ -1,0 +1,17 @@
+{
+  "response": {
+    "result": 1,
+    "resultcount": 1,
+    "collectiondetails": [
+      {
+        "publishedfileid": "2500900001",
+        "result": 1,
+        "children": [
+          { "publishedfileid": "3617086610", "sortorder": 0, "filetype": 0 },
+          { "publishedfileid": "3512001122", "sortorder": 1, "filetype": 0 },
+          { "publishedfileid": "2900001111", "sortorder": 2, "filetype": 0 }
+        ]
+      }
+    ]
+  }
+}

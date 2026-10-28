@@ -1,0 +1,18 @@
+{
+  "game_id": "valheim",
+  "install_path": "/games/valheim",
+  "new_install_path": "/mnt/library/valheim",
+  "mod_path": "/games/valheim/BepInEx/plugins",
+  "new_mod_path": "/mnt/library/valheim/BepInEx/plugins",
+  "deployed_files": 3,
+  "profiles": [
+    {
+      "profile": "default",
+      "deployed_files": 3
+    }
+  ],
+  "originals": 2,
+  "old_install_path_exists": false,
+  "missing_files": 1,
+  "missing_originals": 1
+}

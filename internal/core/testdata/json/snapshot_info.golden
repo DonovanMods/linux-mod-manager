@@ -1,0 +1,11 @@
+{
+  "name": "auto-deploy-20260827-120000",
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "created_at": "2026-08-27T12:00:00Z",
+  "auto": true,
+  "mods": 12,
+  "deployed_files": 340,
+  "originals": 3,
+  "size_bytes": 1048576
+}

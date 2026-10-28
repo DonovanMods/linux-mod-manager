@@ -1,0 +1,20 @@
+## stdout
+Purge plan for profile "default" (dry run)
+
+Would undeploy 2 mod(s) from Game (profile: default)
+Mod records will be preserved. Use 'lmm deploy' to restore.
+
+Purging mods from Game...
+
+  ✓ Mod A
+  ✓ Mod B
+
+Would purge: 2 mod(s)
+
+Hooks that would run: uninstall.before_each, uninstall.after_all
+## stderr
+## error
+<nil>
+## tree
+a.esp
+b.esp

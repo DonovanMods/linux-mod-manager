@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -135,20 +137,38 @@ func TestStatusCmd_ShowsDefaultGame(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestStatusCmd_JSONOutput verifies status --json output structure (JSON contract / E2E shape).
-// Encodes the same struct used by status --json and asserts round-trip and expected keys.
-func TestStatusCmd_JSONOutput(t *testing.T) {
-	out := statusJSONOutput{Games: []statusGameJSON{}}
-	data, err := json.Marshal(out)
-	require.NoError(t, err)
-
-	var decoded struct {
-		Games []interface{} `json:"games"`
+// TestDoStatus_OrdersGamesByID pins Ruling 4 (#299): `lmm status` (both
+// plain-text and --json) lists multiple games ordered by game ID, not
+// whatever order Go's games map iteration happened to produce that run. IDs
+// are seeded deliberately out of order.
+func TestDoStatus_OrdersGamesByID(t *testing.T) {
+	svc := setupGameAddTest(t)
+	for _, id := range []string{"zulu", "mike", "alpha"} {
+		require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: id, Name: id, ModPath: t.TempDir()}))
 	}
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err, "status JSON output must be valid JSON with 'games' key")
-	assert.NotNil(t, decoded.Games)
-	assert.Len(t, decoded.Games, 0)
+	gameID = ""
+	verbose = false
+
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = false })
+	out := captureStdout(t, func() error {
+		return doStatus(context.Background(), svc)
+	})
+	iAlpha := strings.Index(out, "alpha")
+	iMike := strings.Index(out, "mike")
+	iZulu := strings.Index(out, "zulu")
+	require.True(t, iAlpha >= 0 && iMike >= 0 && iZulu >= 0, "all three games must appear in the output: %q", out)
+	assert.True(t, iAlpha < iMike && iMike < iZulu, "games must be listed in ID order (alpha, mike, zulu), got: %q", out)
+
+	jsonOutput = true
+	out = captureStdout(t, func() error {
+		return doStatus(context.Background(), svc)
+	})
+	var decoded core.StatusReport
+	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+	require.Len(t, decoded.Games, 3)
+	gotIDs := []string{decoded.Games[0].ID, decoded.Games[1].ID, decoded.Games[2].ID}
+	assert.Equal(t, []string{"alpha", "mike", "zulu"}, gotIDs)
 }
 
 // --- Last Deploy: CLI parity for #106(d) ---
@@ -157,18 +177,18 @@ func TestStatusCmd_JSONOutput(t *testing.T) {
 // pair but never registers the game with the service's config-backed game
 // map (doDeploy takes the game directly, so it never needed to) - these
 // tests call showGameStatus(JSON) by gameID instead, which resolves through
-// service.GetGame, so each test below adds its own svc.AddGame(game) call.
+// service.GetGame, so each test below adds its own svc.SaveGame(context.Background(), game) call.
 
 // TestShowGameStatus_NeverDeployed_ShowsNeverInText pins the "never
 // deployed" text rendering: a game whose profile has no deployed_files rows
 // renders "Last Deploy: never", not an empty string or a zero time.
 func TestShowGameStatus_NeverDeployed_ShowsNeverInText(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp") // profile exists, never deployed
 
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.Contains(t, out, "Last Deploy: never")
@@ -176,18 +196,17 @@ func TestShowGameStatus_NeverDeployed_ShowsNeverInText(t *testing.T) {
 
 // TestShowGameStatus_AfterDeploy_ShowsTimestampInText pins that a real
 // deploy populates the Last Deploy line with an absolute local timestamp -
-// deliberately NOT the TUI's relative-age rendering (lastDeployLabel,
-// internal/tui/app.go), since the CLI's output is scriptable and an
-// absolute, stable format is preferable there (see formatLastDeploy's doc
-// comment in status.go).
+// deliberately NOT a relative-age rendering, since the CLI's output is
+// scriptable and an absolute, stable format is preferable there (see
+// formatLastDeploy's doc comment in status.go).
 func TestShowGameStatus_AfterDeploy_ShowsTimestampInText(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
 
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.NotContains(t, out, "Last Deploy: never")
@@ -201,11 +220,11 @@ func TestShowGameStatus_AfterDeploy_ShowsTimestampInText(t *testing.T) {
 // byte-for-byte the same document as before this change.
 func TestShowGameStatusJSON_NeverDeployed_OmitsLastDeploy(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 
 	out := captureStdout(t, func() error {
-		return showGameStatusJSON(svc, game.ID)
+		return showGameStatusJSON(context.Background(), svc, game.ID)
 	})
 
 	var raw map[string]interface{}
@@ -232,17 +251,17 @@ func TestShowGameStatusJSON_ProfileLinkMethodOverride_TextJSONParity(t *testing.
 	svc, game := setupDoDeployTest(t)
 	game.LinkMethod = domain.LinkSymlink
 	game.LinkMethodExplicit = true
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 	setVerifyProfileLinkMethod(t, svc, game.ID, "default", domain.LinkCopy)
 
 	textOut := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 	require.Contains(t, textOut, "Link Method: copy (per-profile)", "sanity: the text twin resolves the profile override")
 
 	jsonOut := captureStdout(t, func() error {
-		return showGameStatusJSON(svc, game.ID)
+		return showGameStatusJSON(context.Background(), svc, game.ID)
 	})
 
 	var raw map[string]interface{}
@@ -274,11 +293,11 @@ func TestShowGameStatusJSON_LinkMethodSource_GameAndGlobal(t *testing.T) {
 				game.LinkMethod = domain.LinkHardlink
 				game.LinkMethodExplicit = true
 			}
-			require.NoError(t, svc.AddGame(game))
+			require.NoError(t, svc.SaveGame(context.Background(), game))
 			seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 
 			out := captureStdout(t, func() error {
-				return showGameStatusJSON(svc, game.ID)
+				return showGameStatusJSON(context.Background(), svc, game.ID)
 			})
 
 			var raw map[string]interface{}
@@ -299,10 +318,10 @@ func TestShowGameStatusJSON_NoProfiles_LinkMethodSourceStillPresent(t *testing.T
 	svc, game := setupDoDeployTest(t)
 	game.LinkMethod = domain.LinkCopy
 	game.LinkMethodExplicit = true
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	out := captureStdout(t, func() error {
-		return showGameStatusJSON(svc, game.ID)
+		return showGameStatusJSON(context.Background(), svc, game.ID)
 	})
 
 	var raw map[string]interface{}
@@ -315,15 +334,15 @@ func TestShowGameStatusJSON_NoProfiles_LinkMethodSourceStillPresent(t *testing.T
 // deploy surfaces a parseable last_deploy timestamp in the JSON document.
 func TestShowGameStatusJSON_AfterDeploy_IncludesLastDeploy(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
 
 	out := captureStdout(t, func() error {
-		return showGameStatusJSON(svc, game.ID)
+		return showGameStatusJSON(context.Background(), svc, game.ID)
 	})
 
-	var decoded statusGameDetailJSON
+	var decoded core.GameStatus
 	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
 	require.NotNil(t, decoded.LastDeploy)
 	assert.WithinDuration(t, time.Now(), *decoded.LastDeploy, time.Minute)
@@ -345,17 +364,17 @@ func TestShowGameStatus_ConversionFailures_ShownInTextAndJSON(t *testing.T) {
 		compilerInstallSource: compiler,
 		failRefs:              map[string]string{"fake-compiler:" + modID: "table X not present in current base"},
 	}
-	svc.RegisterSource(outcome)
+	registerCompileSource(svc, outcome)
 
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
-	textOut := captureStdout(t, func() error { return showGameStatus(svc, game.ID) })
+	textOut := captureStdout(t, func() error { return showGameStatus(context.Background(), svc, game.ID) })
 	assert.Contains(t, textOut, "pak conversion failures: 1")
 	assert.Contains(t, textOut, "lmm verify")
 
-	jsonOut := captureStdout(t, func() error { return showGameStatusJSON(svc, game.ID) })
-	var decoded statusGameDetailJSON
+	jsonOut := captureStdout(t, func() error { return showGameStatusJSON(context.Background(), svc, game.ID) })
+	var decoded core.GameStatus
 	require.NoError(t, json.Unmarshal([]byte(jsonOut), &decoded))
 	assert.Equal(t, 1, decoded.ConversionFailures)
 }

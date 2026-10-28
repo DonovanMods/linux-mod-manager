@@ -1,0 +1,20 @@
+{
+  "response": {
+    "result": 1,
+    "resultcount": 1,
+    "publishedfiledetails": [
+      {
+        "publishedfileid": "1000000001",
+        "result": 1,
+        "creator": "76561198000000009",
+        "file_size": "4096",
+        "hcontent_file": "0",
+        "title": "Timestamp Only Item",
+        "description": "An item whose content id the API does not report.",
+        "time_created": 1700000000,
+        "time_updated": 1799999999,
+        "tags": []
+      }
+    ]
+  }
+}

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,4 +61,28 @@ func TestRegistry_List(t *testing.T) {
 
 	sources := reg.List()
 	assert.Len(t, sources, 2)
+}
+
+func TestRegistryUnregister(t *testing.T) {
+	r := source.NewRegistry()
+	r.Register(&mockSource{id: "a"})
+
+	assert.True(t, r.Unregister("a"), "removing a registered source reports the removal")
+	_, err := r.Get("a")
+	require.Error(t, err)
+
+	assert.False(t, r.Unregister("a"), "removing an id nobody registered is a tolerated no-op")
+}
+
+func TestRegistryReplace(t *testing.T) {
+	r := source.NewRegistry()
+	r.Register(&mockSource{id: "a"})
+
+	assert.True(t, r.Replace(&mockSource{id: "a"}), "the swap displaced the existing registration")
+	assert.False(t, r.Replace(&mockSource{id: "b"}), "nothing was registered under b")
+
+	got, err := r.Get("b")
+	require.NoError(t, err)
+	assert.Equal(t, "b", got.ID())
+	assert.Len(t, r.List(), 2)
 }

@@ -1,0 +1,34 @@
+{
+  "archive": "<ARCHIVE-DIR>/second.zip",
+  "mod": {
+    "id": "B1",
+    "source_id": "acme-source",
+    "name": "Second Mod",
+    "version": "1.0",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "g1",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": []
+  },
+  "linked_source": "acme-source",
+  "auto_detected": false,
+  "files": [
+    "shared.txt"
+  ],
+  "conflicts": [
+    {
+      "relative_path": "shared.txt",
+      "current_source_id": "acme-source",
+      "current_mod_id": "A1"
+    }
+  ],
+  "hooks": [],
+  "entry_pre_exists": false,
+  "warnings": []
+}

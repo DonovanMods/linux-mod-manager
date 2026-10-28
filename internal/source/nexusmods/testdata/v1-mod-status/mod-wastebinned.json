@@ -1,0 +1,26 @@
+{
+  "uid": 7318624272404,
+  "mod_id": 20,
+  "game_id": 1704,
+  "allow_rating": true,
+  "domain_name": "skyrimspecialedition",
+  "category_id": 95,
+  "version": "1",
+  "endorsement_count": 0,
+  "created_timestamp": 1477478609,
+  "created_time": "2016-10-26T10:43:29.000+00:00",
+  "updated_timestamp": 1505224691,
+  "updated_time": "2017-09-12T13:58:11.000+00:00",
+  "author": "tiz",
+  "uploaded_by": "IAmTiz",
+  "uploaded_users_profile_url": "https://www.nexusmods.com/users/3366657",
+  "contains_adult_content": false,
+  "status": "wastebinned",
+  "available": false,
+  "user": { "member_id": 3366657, "member_group_id": 27, "name": "IAmTiz" },
+  "endorsement": {
+    "endorse_status": "Undecided",
+    "timestamp": null,
+    "version": null
+  }
+}

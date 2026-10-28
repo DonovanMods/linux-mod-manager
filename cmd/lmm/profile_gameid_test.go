@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,12 +74,12 @@ mods:
 		DeployMode: domain.DeployCopy,
 		SourceIDs:  map[string]string{"e2e-repo": "skyrim"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := getProfileManager(svc)
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "e2e-repo",
 		ModID:    "cool-mod",
 		Version:  "1.2.0",
@@ -93,13 +93,13 @@ mods:
 
 	require.NoError(t, doProfileApply(context.Background(), svc, game, []string{"default"}))
 
-	installed, err := svc.GetInstalledMods(game.ID, "default")
+	installed, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, installed, 1, "installed mod must be visible under the lmm game ID after profile apply")
 	assert.Equal(t, "cool-mod", installed[0].ID)
 	assert.Equal(t, "testgame", installed[0].GameID, "persisted GameID must be normalized to the lmm game, not the source-mapped value")
 
-	orphaned, err := svc.GetInstalledMods("skyrim", "default")
+	orphaned, err := svc.GetInstalledMods(context.Background(), "skyrim", "default")
 	require.NoError(t, err)
 	assert.Empty(t, orphaned, "installed mod must not be filed under the source-mapped game ID")
 }

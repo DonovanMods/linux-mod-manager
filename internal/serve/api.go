@@ -1,0 +1,635 @@
+// api.go implements Task 5's read-only /api/v1 JSON surface
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface): the same core
+// documents the CLI's --json output emits for the identical call, framed
+// identically via core.EncodeJSON - no other encoder appears anywhere in
+// this file, so the bytes match --json byte for byte. Every failure path
+// answers the {"error","details"} envelope (apiErrorEnvelope below); a
+// successful response is never wrapped, and no cache headers are set (a
+// dashboard must never be served a stale response).
+package serve
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+)
+
+// apiContentType is every /api/v1 response's Content-Type, success or
+// failure alike.
+const apiContentType = "application/json"
+
+// apiErrorEnvelope is the {"error","details"} document every /api/v1
+// failure emits (docs/plans/2026-08-30-serve-design.md §HTTP surface:
+// "Failures use the CLI's {"error","details"} envelope, same typed
+// details"). Details is declared after Error - not alphabetical, but so
+// "error" is always the first wire key (core.EncodeJSON's Deterministic
+// option governs map/key ordering, not struct field order) - matching
+// cmd/lmm's jsonErrorEnvelope byte-for-byte. Unit 4's job-failure envelope
+// reuses this same type.
+type apiErrorEnvelope struct {
+	Error   string `json:"error"`
+	Details any    `json:"details,omitempty"`
+}
+
+// errorDetails returns the data err carries for the /api/v1 error
+// envelope's "details" field via the shared `Details() any` convention
+// (*core.ConflictError, *core.ProfileWarningsError, ...) - the same
+// extension point cmd/lmm's own errorDetails (jsonout.go) uses, guard
+// included: core.ErrStalePlan is a plain sentinel with no data of its own,
+// so it must never surface a Details() payload even from a hypothetical
+// wrapper that carries one. It is its own copy here rather than shared
+// code: cmd/lmm imports internal/serve, never the reverse (boundary rule),
+// so serve cannot reuse cmd/lmm's unexported definition. No Details()
+// implementer wraps ErrStalePlan today (task-5 gate review Minor 4) - this
+// guard is prophylactic for Unit 4, which routes job failures (including a
+// stale plan) through this same writer.
+func errorDetails(err error) any {
+	if errors.Is(err, core.ErrStalePlan) {
+		return nil
+	}
+	var withDetails interface{ Details() any }
+	if errors.As(err, &withDetails) {
+		return withDetails.Details()
+	}
+	return nil
+}
+
+// writeJSON encodes v as status's response body via core.EncodeJSON only -
+// the exact wire framing (2-space indent, deterministic key ordering, one
+// trailing newline) the CLI's --json output uses for the identical value
+// (docs/plans/2026-08-30-serve-impl.md Task 5 ruling: no second encoder
+// anywhere in this file). A mid-stream encode/write failure is logged, not
+// silently discarded (task-5 gate review Minor 5): the status line and
+// headers are already on the wire by the time EncodeJSON runs, so nothing
+// about the response itself can still change - logging is all that's left,
+// unlike cmd/lmm's emitJSON, which can still return the error to its caller.
+func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", apiContentType)
+	w.WriteHeader(status)
+	if err := core.EncodeJSON(w, v); err != nil {
+		s.log.Error("api response encode failed", "status", status, "err", err)
+	}
+}
+
+// writeAPIError writes err as the {"error","details"} envelope at status.
+//
+// One error overrides the status the route computed:
+// core.ErrOperationInProgress (#317) is 409 wherever it surfaces. Another
+// lmm process holds the mutation lock - the request is refused, nothing is
+// wrong with the server, and the same request a second later succeeds,
+// which is what 409 says and 500 does not. Classifying it here rather than
+// in each route means the synchronous write routes (mod settings, profile
+// CRUD, game add/edit, auth, the source editor) cannot answer it
+// differently from one another; the job-backed routes never reach this
+// path, since there the refusal becomes the job's failure.
+func (s *Server) writeAPIError(w http.ResponseWriter, status int, err error) {
+	if errors.Is(err, core.ErrOperationInProgress) {
+		status = http.StatusConflict
+	}
+	s.log.Debug("api error", "status", status, "err", err)
+	s.writeJSON(w, status, apiErrorEnvelope{Error: err.Error(), Details: errorDetails(err)})
+}
+
+// selectionErrorDetails is the "details" payload for a game/profile
+// selection that did not resolve (docs/plans/2026-08-30-serve-impl.md Task
+// 5 ruling: "unknown game/profile -> the envelope, status 404, details
+// listing the valid choices") - the same choices the page's nav switcher
+// would offer. Profiles is empty whenever the game itself didn't resolve,
+// since resolveSelection never populates it in that case. Games is built
+// by writeSelectionError, the one place a selection needs game rows.
+type selectionErrorDetails struct {
+	Games    []core.GameListEntry `json:"games"`
+	Profiles []string             `json:"profiles,omitempty"`
+}
+
+// writeSelectionError answers a game/profile-scoped /api/v1 endpoint whose
+// resolveSelection did not produce what the endpoint needs: the 404
+// envelope Task 5 rules for "unknown game/profile". sel.Warning already
+// names an explicit unresolvable ?game=/?profile= value or a missing
+// default; it is empty only for the one case resolveSelection itself never
+// messages - zero games configured at all - so that gets a generic
+// fallback instead.
+//
+// It builds the game rows the details list here, on the 404 path only
+// (resolveSelection's doc comment says why); a failure to build them is the
+// 500 a genuine core failure answers with.
+func (s *Server) writeSelectionError(w http.ResponseWriter, r *http.Request, sel selection) {
+	games, err := s.gameRows(r.Context())
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	msg := sel.Warning
+	if msg == "" {
+		msg = "no games configured"
+	}
+	s.log.Debug("api selection unresolved", "msg", msg)
+	s.writeJSON(w, http.StatusNotFound, apiErrorEnvelope{
+		Error:   msg,
+		Details: selectionErrorDetails{Games: games, Profiles: sel.Profiles},
+	})
+}
+
+// resolveReadyAPISelection resolves r's game/profile selection for an
+// endpoint that needs both a game AND a profile - every scoped endpoint
+// except /api/v1/profiles (resolveGameAPISelection). On failure it writes
+// the response itself (500 for a genuine resolveSelection error, 404 via
+// writeSelectionError when the selection simply didn't resolve) and
+// returns ok=false, so the caller only has to check ok before proceeding.
+func (s *Server) resolveReadyAPISelection(w http.ResponseWriter, r *http.Request) (selection, bool) {
+	sel, err := s.resolveSelection(r)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return sel, false
+	}
+	if !sel.ready() {
+		s.writeSelectionError(w, r, sel)
+		return sel, false
+	}
+	return sel, true
+}
+
+// handleAPIMods answers GET /api/v1/mods with exactly the core.ModList
+// document `lmm list --json` emits for the resolved game/profile
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/mods" -> ListMods).
+func (s *Server) handleAPIMods(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	list, err := s.svc.ListMods(r.Context(), sel.Game, sel.Profile)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, list)
+}
+
+// handleAPIModDetail answers GET /api/v1/mods/{source}/{id} with exactly
+// the core.ModDetail document `lmm mod show --json` emits
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface). Any ModDetail
+// failure renders as 404: it mirrors pages_mods.go's handleModDetail,
+// which has no way to tell a genuinely unknown mod ID apart from a
+// transient source failure either, and treats both the same way.
+func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
+	sourceID := r.PathValue("source")
+	modID := r.PathValue("id")
+
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	detail, err := s.svc.ModDetail(r.Context(), sel.Game, sel.Profile, sourceID, modID)
+	if err != nil {
+		s.writeAPIError(w, http.StatusNotFound, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, detail)
+}
+
+// handleAPISearch answers GET /api/v1/search?q= with exactly the
+// core.SearchReport document `lmm search --json` emits
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface). Unlike the /search
+// PAGE, which renders the bare form when q is absent, the API has no form
+// to fall back to: a missing/empty q is bad input (400), matching the
+// CLI's own cobra.MinimumNArgs(1) requirement for `lmm search`. That check
+// runs before selection resolution, since a malformed request is wrong
+// regardless of what game/profile might have resolved.
+//
+// An optional ?limit= caps core.SearchReport.Mods via SearchOptions.Limit
+// (task-5 gate review Minor 7: a zero SearchOptions always returned every
+// hit, while `lmm search --json` defaults to --limit 10 - the one endpoint
+// whose bytes could diverge from its CLI twin for a reason unrelated to
+// Important 1). The default (no ?limit=) stays unset/uncapped, matching
+// the /search PAGE's own call and every existing test's expectations; a
+// non-numeric ?limit= is bad input (400), the same class as a missing q.
+// Since #109 ?limit= is also core's per-source PAGING TARGET, not only a
+// ceiling: combined with ?page_size= on page 0 it makes the aggregate keep
+// pulling pages until that many merged hits exist (SearchOptions.Limit's
+// own doc comment). The omnibar's fan-out sends ?limit= alone - no
+// ?page_size= - so it stays one round per source, and the search PAGE
+// sends ?page=/?page_size= with no ?limit=, so its own pagination cursor is
+// never advanced behind its back.
+//
+// ?page=/?page_size= are #331's pagination params, for the dedicated search
+// PAGE's escape-hatch browsing (the omnibar never sets either - a live
+// filter has no "next page", it just re-fans-out): forwarded verbatim into
+// SearchOptions.Page/PageSize, which core.Search already threads through to
+// searchAllSources/SearchMods (both paginate per-source). Absent, both
+// default to 0 - "page 0, let each source apply its own default size" -
+// matching the CLI's own historical always-page-0 behavior.
+//
+// ?category=/?source= (unit 5 fix wave, Important 1b) are the search PAGE's
+// category/source filters, moved server-side from a client-side slice of
+// one page's own hits: forwarded verbatim into SearchOptions.Category
+// (already a SearchQuery field every source may honor) and SearchOptions.
+// SourceID (the existing named-source path, `lmm search --source`'s own
+// option) - naming a source narrows the aggregate merge to exactly it,
+// making any of ITS failures the call's own error rather than a Warning
+// (SearchOptions' own doc comment). Neither is validated here: an unknown
+// source name is SearchMods' own "source not found" error, the same 500 an
+// unregistered ?source= produces for every other per-source call.
+//
+// ?tag= is #326's parity fix (epic live review C-3: `lmm search --tag` had
+// no API twin at all). It forwards verbatim into SearchOptions.Tags - the
+// same field the flag sets - and is REPEATABLE like the flag, so
+// ?tag=a&tag=b narrows on both. Not validated here, and deliberately not
+// refused for a source that ignores tags: support varies by source
+// (NexusMods honours it today), exactly as `lmm search`'s own help says.
+//
+// ?page_size= is NEVER used to derive an implicit Limit on the AGGREGATE
+// path (SourceID empty; unit 5 fix wave, Important 6 - previously
+// `if limit == 0 && pageSize != 0 { limit = pageSize }` ran unconditionally
+// regardless of SourceID). searchAllSources requests page N from EVERY
+// configured source and merges - a page can therefore hold up to
+// page_size × (number of sources) rows - so capping the merge at a single
+// page_size silently and PERMANENTLY dropped whatever a page's later-ranked
+// sources contributed: with two sources at page_size=20, page 0 fetched 40
+// candidates and kept only the top-ranked 20, and page 1 asked each source
+// for ITS OWN next 20, never revisiting the 20 that were dropped from page
+// 0's merge - they were unreachable on any page. A NAMED source (SourceMods,
+// which paginates ONE cursor directly) has no such coupling - its own page
+// already IS the merge, so page_size doubling as its cap is harmless, and
+// is what lets the search page's source filter promise "at most page_size
+// rows" the same way it always could for a single-source game. An explicit
+// ?limit= still wins over either derivation - it says what it means
+// regardless of how many sources answered.
+// Either non-numeric value is bad input (400), the same class as ?limit=.
+//
+// ?sort= (#503) is relevance|updated|downloads|popular; see the forwarding
+// comment where it is read.
+func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		s.writeAPIError(w, http.StatusBadRequest, errors.New(`missing required query parameter "q"`))
+		return
+	}
+
+	limit, ok := s.parseOptionalIntParam(w, r, "limit")
+	if !ok {
+		return
+	}
+	page, ok := s.parseOptionalIntParam(w, r, "page")
+	if !ok {
+		return
+	}
+	pageSize, ok := s.parseOptionalIntParam(w, r, "page_size")
+	if !ok {
+		return
+	}
+	category := r.URL.Query().Get("category")
+	sourceID := r.URL.Query().Get("source")
+	// REPEATABLE, like the flag it mirrors: ?tag=a&tag=b is `--tag a --tag
+	// b`. Absent, Query()["tag"] is nil - never a one-element slice holding
+	// "", which a source would treat as a tag named "" (#326).
+	tags := r.URL.Query()["tag"]
+	// ?sort= is #503's twin of `lmm search --sort`: forwarded verbatim into
+	// SearchOptions.Sort, which core.Search validates (a value outside
+	// domain.SearchSorts is bad input, 400, via searchErrorStatus) and echoes
+	// on the report. Absent means relevance.
+	sortBy := domain.SearchSort(r.URL.Query().Get("sort"))
+	if limit == 0 && pageSize != 0 && sourceID != "" {
+		limit = pageSize
+	}
+
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query,
+		core.SearchOptions{Limit: limit, Page: page, PageSize: pageSize, Category: category, SourceID: sourceID, Tags: tags, Sort: sortBy})
+	if err != nil {
+		s.writeAPIError(w, searchErrorStatus(err), err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, report)
+}
+
+// searchErrorStatus classifies a search failure core returns UNWRAPPED for
+// exactly this purpose (core.Service.Search's own doc comment: "Source
+// failures are returned unwrapped so a caller can classify them").
+//
+// One of them is not the server failing at all: a source that needs a
+// credential the user has not supplied is 401, not 500. Since Tier 2 that
+// is the ORDINARY state of a Workshop-only game whose owner has not run
+// `lmm auth login steamworkshop` (#269 W2), and answering 500 told the SPA
+// "something broke" where the truthful answer is "get a key".
+//
+// domain.ErrAuthRequired only - this package may import no more than
+// app/core/domain (boundary_test.go), so source.ErrNotSupported is not a
+// sentinel it can name; core would have to classify that one, and no
+// surface needs it yet.
+//
+// Only the NAMED-source path and the all-sources-failed case reach here; an
+// aggregate search where some source worked reports the rest as
+// core.SearchReport.Warnings and answers 200.
+//
+// Two more are the local-index surface's (#410): a game whose identifier
+// for the source is missing or malformed is bad input (400), and an index
+// that could not be had at all is the upstream failing (502) - both
+// classified by core, the only package here that may name the sentinels.
+func searchErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, domain.ErrAuthRequired):
+		return http.StatusUnauthorized
+	case core.IsInvalidSearchSort(err):
+		return http.StatusBadRequest
+	case core.IsGameIdentifierInvalid(err):
+		return http.StatusBadRequest
+	case core.IsIndexUnavailable(err):
+		return http.StatusBadGateway
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// maxPagingParam bounds every numeric paging parameter this endpoint
+// accepts (T1 review #1). A page, a page size and a limit all count ROWS,
+// and no catalogue lmm can search holds a billion of them - Thunderstore's
+// largest community, the biggest single document any source serves, is
+// 50,707 packages - so a value above this is not a request, it is
+// malformed input.
+//
+// The bound exists because these values are forwarded to a SOURCE, and a
+// source that paginates locally rather than handing the number to a remote
+// API does arithmetic with it: thunderstore's (page-1)*pageSize overflowed
+// int at ?page=9223372036854775807 and sliced a negative index, panicking
+// the request. That source clamps for itself now; this is the rule for
+// every source that will ever be written, applied where the untrusted
+// value actually enters.
+const maxPagingParam = 1_000_000_000
+
+// parseOptionalIntParam reads name from r's query string: 0/true when
+// absent, the parsed value/true when present and in range, or 0/false (the
+// 400 envelope already written) when present and not. Shared by every
+// ?limit=/?page=/?page_size= parse on this endpoint so the three agree on
+// what "bad input" means.
+//
+// Out of range is the same class of bad input as non-numeric, and answers
+// the same way: negative counts nothing, and a value past maxPagingParam
+// counts more rows than any source has.
+func (s *Server) parseOptionalIntParam(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid query parameter %q: %w", name, err))
+		return 0, false
+	}
+	if n < 0 || n > maxPagingParam {
+		s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf(
+			"invalid query parameter %q: %d is out of range (0-%d)", name, n, maxPagingParam))
+		return 0, false
+	}
+	return n, true
+}
+
+// handleAPIUpdates answers GET /api/v1/updates with exactly the
+// core.UpdateCheckReport document a bulk `lmm update --json` (no mod ID)
+// emits (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/updates" ->
+// CheckGameUpdates), assembled by the same core.CheckGameUpdateReport the
+// CLI uses. A partial CheckGameUpdates failure (e.g. one
+// source down) still answers 200 with the one document ErrorMessage names -
+// the CLI's own --json contract for this call keeps the partial results on
+// stdout rather than discarding them - never the generic error envelope,
+// which is reserved for a failure that leaves no usable document at all.
+func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	ctx := r.Context()
+	// #538: record the revision Steam has installed for every tracked
+	// Workshop item first, so the library and the mod page read the real
+	// one. Never waits behind a running job and never fails the request:
+	// the check below reads Steam's manifest itself, so its answer is right
+	// either way, and the next hydrate reconciles. Logged, not surfaced.
+	if _, err := s.svc.ReconcileExternalMods(ctx, sel.Game, sel.Profile); err != nil {
+		s.log.Debug("serve: reconciling external revisions", "game", sel.Game.ID, "profile", sel.Profile, "err", err)
+	}
+
+	installed, err := s.svc.GetInstalledMods(ctx, sel.Game.ID, sel.Profile)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// ?refresh=1 bypasses a source's own metadata cache (#269): the Steam
+	// Workshop source caches Valve's keyless answers for hours, so the web
+	// UI's explicit refresh action needs a way to say "ask again".
+	opts := core.UpdateCheckOptions{Refresh: r.URL.Query().Get("refresh") == "1"}
+	report, _ := s.svc.CheckGameUpdateReport(ctx, sel.Game, sel.Profile, installed, nil, opts)
+	s.writeJSON(w, http.StatusOK, report)
+}
+
+// resolveGameAPISelection is resolveReadyAPISelection for /api/v1/profiles,
+// which - like its page (pages_profiles.go) - only needs the game half of
+// the selection to resolve: it lists every profile a game has, active one
+// or not, so an unresolvable ?profile= is irrelevant to it.
+func (s *Server) resolveGameAPISelection(w http.ResponseWriter, r *http.Request) (selection, bool) {
+	sel, err := s.resolveSelection(r)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return sel, false
+	}
+	if sel.Game == nil {
+		s.writeSelectionError(w, r, sel)
+		return sel, false
+	}
+	return sel, true
+}
+
+// handleAPIProfiles answers GET /api/v1/profiles with exactly the
+// core.ProfileListing document `lmm profile list --json` emits
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/profiles" ->
+// ListProfiles). Only the game half of the selection needs to resolve,
+// like its page.
+func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveGameAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	listing, err := s.svc.ListProfiles(r.Context(), sel.Game.ID)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, listing)
+}
+
+// handleAPIHealth answers GET /api/v1/health with exactly the
+// core.VerifyReport document `lmm verify --json` emits (docs/plans/2026-08-30
+// -serve-design.md §HTTP surface: "/health" -> Verify). Ruled deviation from
+// the design doc's original api-route list (coordinator ruling, Task 5):
+// this endpoint answers with the bare VerifyReport document - exact
+// CLI-document parity, no serve-local composite type - and the conflicts
+// half of the page's pairing gets its own additive GET /api/v1/conflicts
+// route (handleAPIConflicts) instead of being folded into this one's shape.
+// The design doc's HTTP-surface table gets a one-line amendment for this in
+// Unit 6's docs task.
+//
+// Tier is VerifyFull, matching the CLI's own hardcoded tier (cmd/lmm/verify.go
+// has no tier flag) - task-5 gate review Important 1: an earlier version
+// pinned VerifyLocal to keep the endpoint cheap and offline, but
+// core.VerifyReport carries no tier field, so the API and the CLI's --json
+// document were silently disagreeing on the same state with no way for a
+// consumer to tell. The /health PAGE (pages_health.go) and its repair
+// (kind_verify_fix.go) made the same mistake for the same reason and were
+// fixed to VerifyFull too (epic live review C1) - all three surfaces now
+// agree. An additive `?tier=` query param (default full) to let an API
+// caller opt back into the cheap offline check is a possible later
+// addition - not added here.
+//
+// `?force=1` (#336) runs the tier even when core could answer from its
+// unchanged-installation memo. Off by default: an ordinary Mission Control
+// hydrate is exactly the repeated caller the memo exists for, and the
+// answer it gets carries `cached: true` plus the original `checked_at`, so
+// the card can say how old it is and offer a forced re-run.
+func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	// ?force=1 opts out of core's unchanged-installation memo (#336): the
+	// Health card's Re-verify sends it, an ordinary hydrate does not. Only
+	// that exact value counts, so a hydrate cannot accidentally spell the
+	// expensive request.
+	force := r.URL.Query().Get("force") == "1"
+	report, err := s.svc.VerifyReport(r.Context(), sel.Game, sel.Profile,
+		core.VerifyOptions{Tier: core.VerifyFull, Force: force}, nil)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, report)
+}
+
+// handleAPIConflicts answers GET /api/v1/conflicts with exactly the
+// core.ConflictReport document `lmm conflicts --json` emits. Additive route
+// beyond the design doc's original api-route list - see handleAPIHealth's
+// doc comment for the ruling that put conflicts here instead of folded into
+// /api/v1/health.
+//
+// ?order= (#332) is the reorder modal's live preview: a comma-separated
+// list of mod identifiers - the same ones POST /profiles/{name}/reorder
+// takes, resolved through the same core.Service.ResolveReorder - asking
+// "which mod would win each contested path if I committed THIS order".
+// Absent, the report describes the order the profile currently holds,
+// which is this endpoint's original and unchanged behaviour. The answer
+// comes from core.GetProfileConflictsForOrder, so the preview and the
+// commit share one winner rule rather than the frontend re-deriving it;
+// nothing is written either way. A bad identifier is bad input (400), the
+// same classification the reorder route itself gives it.
+func (s *Server) handleAPIConflicts(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	order, ok := s.parseConflictOrderParam(w, r, sel)
+	if !ok {
+		return
+	}
+
+	conflicts, err := s.svc.GetProfileConflictsForOrder(r.Context(), sel.Game, sel.Profile, order)
+	if err != nil {
+		status := http.StatusInternalServerError
+		// #455: a game whose adapter is refused is a known state, not a
+		// server failure - the refusal is the answer, and the conflicts
+		// card renders it.
+		var refused *core.AdapterRefusedError
+		if errors.As(err, &refused) {
+			status = http.StatusConflict
+		}
+		s.writeAPIError(w, status, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, &core.ConflictReport{GameID: sel.Game.ID, Profile: sel.Profile, Conflicts: conflicts})
+}
+
+// parseConflictOrderParam resolves ?order= into the load order
+// GetProfileConflictsForOrder previews against: nil/true when the param is
+// absent (the saved order), the resolved refs/true when it names mods the
+// profile holds, or nil/false with the 400 envelope already written when it
+// does not. An empty entry ("a,,b") is refused rather than silently
+// dropped - it is the shape a client that joined an array containing a
+// blank produces, and quietly ignoring it would preview an order the caller
+// did not describe.
+func (s *Server) parseConflictOrderParam(w http.ResponseWriter, r *http.Request, sel selection) ([]domain.ModReference, bool) {
+	raw := r.URL.Query().Get("order")
+	if raw == "" {
+		return nil, true
+	}
+	ids := strings.Split(raw, ",")
+	for _, id := range ids {
+		if id == "" {
+			s.writeAPIError(w, http.StatusBadRequest, errors.New(`invalid query parameter "order": empty mod id`))
+			return nil, false
+		}
+	}
+	order, err := s.svc.ResolveReorder(r.Context(), sel.Game, sel.Profile, ids)
+	if err != nil {
+		s.writeAPIError(w, s.reorderErrorStatus(err), err)
+		return nil, false
+	}
+	return order, true
+}
+
+// handleAPIStatus answers GET /api/v1/status with exactly the
+// core.StatusReport document `lmm status --json` emits with no --game flag
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/" -> Status).
+// Unlike every other /api/v1 endpoint, status is not game/profile-scoped by
+// the shared resolveSelection default-game fallback - it summarizes every
+// configured game at once when ?game is absent, mirroring "/"'s own
+// handleStatus, which never calls resolveSelection either.
+//
+// An explicit ?game=<id> switches to exactly the core.GameStatus document
+// `lmm status --game <id> --json` emits (task-5 gate review Minor 6: ?game
+// was previously silently ignored, with no API twin for that CLI form even
+// though the design doc's page row lists both documents). An unresolvable
+// ?game answers the same selection-error envelope every other scoped
+// endpoint uses, via writeSelectionError - GetGame's own untyped "game not
+// found" error mirrors cmd/lmm's own showGameStatusJSON here, so this is
+// the one selection check done by hand rather than through
+// resolveReadyAPISelection/resolveGameAPISelection, both of which default
+// an absent ?game to the configured default game - a default this endpoint
+// must not apply, since "no ?game" means "summarize every game", not "the
+// default one".
+func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
+	gameID := r.URL.Query().Get(gameParam)
+	if gameID == "" {
+		report, err := s.svc.Status(r.Context())
+		if err != nil {
+			s.writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, report)
+		return
+	}
+
+	game, err := s.svc.GetGame(gameID)
+	if err != nil {
+		s.writeSelectionError(w, r, selection{Warning: fmt.Sprintf("unknown game %q", gameID)})
+		return
+	}
+
+	status, err := s.svc.GameStatus(r.Context(), game)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, status)
+}

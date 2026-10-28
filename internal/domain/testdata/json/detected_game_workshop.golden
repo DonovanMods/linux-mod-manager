@@ -1,0 +1,12 @@
+{
+  "steam_app_id": "1133870",
+  "slug": "space-engineers-2",
+  "name": "Space Engineers 2",
+  "install_path": "/home/user/.steam/steam/steamapps/common/SpaceEngineers2",
+  "mod_path": "/home/user/.steam/steam/steamapps/common/SpaceEngineers2/Mods",
+  "sources": {
+    "steamworkshop": "1133870"
+  },
+  "known": true,
+  "workshop_items": 30
+}

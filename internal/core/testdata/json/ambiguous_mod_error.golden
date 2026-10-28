@@ -1,0 +1,10 @@
+{
+  "mod_id": "alpha",
+  "profile": "default",
+  "sources": [
+    "localmods",
+    "repo"
+  ],
+  "flag": "--source",
+  "caveat": "(local mods cannot be update-checked)"
+}

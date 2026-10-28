@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // CurseForge implements the ModSource interface
@@ -111,9 +113,13 @@ func (c *CurseForge) TypeLabel() string {
 }
 
 // Capabilities implements source.CapabilityReporter. CurseForge supports all
-// ModSource operations.
+// ModSource operations, and its hits carry UpdatedAt, Downloads and
+// Endorsements (thumbsUpCount), so every sort is meaningful.
 func (c *CurseForge) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}
+	return source.Capabilities{
+		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
+		Sorts: []domain.SearchSort{domain.SortUpdated, domain.SortDownloads, domain.SortPopular},
+	}
 }
 
 // resolveGameID converts a game identifier (numeric ID or slug) to a numeric ID.
@@ -160,10 +166,14 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) (sour
 		return source.SearchResult{}, err
 	}
 
-	pageSize := query.PageSize
-	if pageSize == 0 {
-		pageSize = 20
-	}
+	// The EFFECTIVE page size, not the requested one: the client clamps
+	// anything over CurseForge's own maximum, and an index computed from a
+	// size the API refused strides past every row in between - page 1 of a
+	// requested 100 would ask for index 100 while page 0 returned rows
+	// 0-49 (Track C review, finding 1). Clamping here keeps this source's
+	// own offsets contiguous and lets it report the size really in effect,
+	// which is what a caller paging it has to page on.
+	pageSize := clampSearchPageSize(query.PageSize)
 	index := query.Page * pageSize
 
 	// Parse category if provided
@@ -175,7 +185,7 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) (sour
 		}
 	}
 
-	results, pagination, err := c.client.SearchMods(ctx, gameID, query.Query, categoryID, pageSize, index)
+	results, pagination, err := c.client.SearchMods(ctx, gameID, query.Query, categoryID, pageSize, index, query.Sort)
 	if err != nil {
 		return source.SearchResult{}, err
 	}
@@ -185,21 +195,113 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) (sour
 		mods[i] = modToDomain(r, query.GameID)
 	}
 
-	// Sort results: prioritize name matches over description/tag matches
-	queryLower := strings.ToLower(query.Query)
-	sort.SliceStable(mods, func(i, j int) bool {
-		iNameMatch := strings.Contains(strings.ToLower(mods[i].Name), queryLower)
-		jNameMatch := strings.Contains(strings.ToLower(mods[j].Name), queryLower)
-		if iNameMatch && !jNameMatch {
-			return true
+	// Relevance only: prioritize name matches over description/tag matches.
+	// Any other sort was applied by the API itself, and re-sorting the page
+	// here would undo it.
+	if _, sorted := searchSortField(query.Sort); !sorted {
+		queryLower := strings.ToLower(query.Query)
+		sort.SliceStable(mods, func(i, j int) bool {
+			iNameMatch := strings.Contains(strings.ToLower(mods[i].Name), queryLower)
+			jNameMatch := strings.Contains(strings.ToLower(mods[j].Name), queryLower)
+			if iNameMatch && !jNameMatch {
+				return true
+			}
+			if !iNameMatch && jNameMatch {
+				return false
+			}
+			return mods[i].Downloads > mods[j].Downloads
+		})
+	}
+
+	if query.Page == 0 {
+		exact, err := c.exactNameHit(ctx, gameID, query, mods)
+		if err != nil {
+			return source.SearchResult{}, err
 		}
-		if !iNameMatch && jNameMatch {
-			return false
+		if exact != nil {
+			mods = append([]domain.Mod{*exact}, mods...)
 		}
-		return mods[i].Downloads > mods[j].Downloads
-	})
+	}
 
 	return source.SearchResult{Mods: mods, TotalCount: pagination.TotalCount, Page: query.Page, PageSize: pageSize}, nil
+}
+
+// exactNameHit finds the mod whose name IS the query when the fetched first
+// page does not already hold one (#503): CurseForge's default ordering can
+// bury a mod's own exact name below page 1, and core puts exact-name hits
+// first, so the page has to contain it. It spends one slug request, only on a
+// non-empty query with a usable slug, and keeps the hit only when its own
+// name passes the exact-name rule, so a slug collision cannot promote an
+// unrelated mod. The lookup is best-effort: any failure yields no hit and no
+// error, except a cancelled or expired context, which is returned.
+func (c *CurseForge) exactNameHit(ctx context.Context, gameID int, query source.SearchQuery, page []domain.Mod) (*domain.Mod, error) {
+	if query.Query == "" || slices.ContainsFunc(page, func(m domain.Mod) bool { return nameMatchesQuery(m.Name, query.Query) }) {
+		return nil, nil
+	}
+	slug := slugForQuery(query.Query)
+	if slug == "" {
+		return nil, nil
+	}
+
+	hit, err := c.client.SearchModBySlug(ctx, gameID, slug)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil || hit == nil || !nameMatchesQuery(hit.Name, query.Query) {
+		return nil, nil
+	}
+	if slices.ContainsFunc(page, func(m domain.Mod) bool { return m.ID == strconv.Itoa(hit.ID) }) {
+		return nil, nil
+	}
+	mod := modToDomain(*hit, query.GameID)
+	return &mod, nil
+}
+
+// nameMatchesQuery is the exact-name rule core orders search results by
+// (source packages cannot import core, so it is restated here): equal
+// ignoring case and surrounding space, or equal after folding both to their
+// lowercase letters and digits. An empty query matches nothing.
+func nameMatchesQuery(name, query string) bool {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(name), q) {
+		return true
+	}
+	fq := foldAlnum(q)
+	return fq != "" && fq == foldAlnum(name)
+}
+
+// foldAlnum lowercases s and drops everything but letters and digits.
+func foldAlnum(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// slugForQuery is the CurseForge slug a mod named query would have:
+// lowercase, each run of non-alphanumerics a single '-', no leading or
+// trailing '-'. It is empty when the query has no letters or digits.
+func slugForQuery(query string) string {
+	var b strings.Builder
+	pendingDash := false
+	for _, r := range strings.ToLower(query) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if pendingDash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			pendingDash = false
+			b.WriteRune(r)
+		} else {
+			pendingDash = true
+		}
+	}
+	return b.String()
 }
 
 // GetMod retrieves a specific mod
@@ -250,6 +352,22 @@ func (c *CurseForge) GetDependencies(ctx context.Context, mod *domain.Mod) ([]do
 	return refs, nil
 }
 
+// Description implements source.DescriptionFetcher (#246): CurseForge's mod
+// document has no full-description field - only a Summary, which #235
+// stopped aliasing into Description - so the real one comes from its own
+// endpoint. Returns the source's raw HTML, which is what Mod.Description
+// has always carried (the terminal display path runs it through
+// core.CleanChangelog; `mod show --json` keeps the markup).
+//
+// sourceGameID is unused: the endpoint is keyed on the mod alone.
+func (c *CurseForge) Description(ctx context.Context, _, modID string) (string, error) {
+	id, err := strconv.Atoi(modID)
+	if err != nil {
+		return "", fmt.Errorf("invalid mod ID: %w", err)
+	}
+	return c.client.GetModDescription(ctx, id)
+}
+
 // GetModFiles returns the available download files for a mod
 func (c *CurseForge) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
 	modID, err := strconv.Atoi(mod.ID)
@@ -257,7 +375,10 @@ func (c *CurseForge) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain
 		return nil, fmt.Errorf("invalid mod ID: %w", err)
 	}
 
-	fileList, err := c.client.GetModFiles(ctx, modID)
+	// The whole list, not the API's first page: the update check advertises
+	// files by id (some only latestFilesIndexes names), and applying one - or
+	// installing an older version - resolves that id in this list.
+	fileList, err := c.client.GetAllModFiles(ctx, modID)
 	if err != nil {
 		return nil, fmt.Errorf("getting mod files: %w", err)
 	}
@@ -268,11 +389,12 @@ func (c *CurseForge) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain
 			ID:          strconv.Itoa(f.ID),
 			Name:        f.DisplayName,
 			FileName:    f.FileName,
-			Version:     extractVersion(f.DisplayName, f.FileName),
+			Version:     fileVersion(f),
 			Size:        f.FileLength,
 			IsPrimary:   i == 0, // First file is typically the latest/main
 			Category:    releaseTypeName(f.ReleaseType),
 			Description: "", // CurseForge doesn't have per-file descriptions
+			UploadedAt:  f.FileDate,
 		}
 	}
 
@@ -291,18 +413,66 @@ func (c *CurseForge) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID
 		return "", fmt.Errorf("invalid file ID: %w", err)
 	}
 
-	url, err := c.client.GetDownloadURL(ctx, modID, fID)
-	if err != nil {
-		return "", fmt.Errorf("getting download URL: %w", err)
-	}
-
-	return url, nil
+	// Returned as it came (#514): core's download path names the step
+	// ("getting download URL: ") once for every source, so a prefix here -
+	// or in the client - only repeats it.
+	return c.client.GetDownloadURL(ctx, modID, fID)
 }
 
 // CheckUpdates checks for available updates.
 func (c *CurseForge) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	return c.CheckUpdatesWithProgress(ctx, installed, nil)
+}
+
+// CheckUpdatesWithProgress is CheckUpdates plus a per-mod progress callback
+// (source.UpdateProgressReporter); report is called once per installed mod,
+// with a 1-based index, in the order given. report may be nil.
+//
+// Since #28 the whole batch is fetched in ONE round trip per chunk of 50
+// (Client.GetMods' POST /v1/mods) instead of one GET per mod, so the
+// progress tick now fires as each mod's result is COMPARED rather than
+// before its own request - one call per mod, same order, same arguments.
+//
+// A mod whose id is not a number, and one the API omits from its batch
+// answer, are both skipped rather than fatal: the check reports the ones it
+// could make and names the ones it could not, as before.
+func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
 	var updates []domain.Update
-	var fetchErrs []error
+	// skipped holds ONE reason per mod that could not be checked - never
+	// two for the same mod, and never the whole batch error repeated per
+	// mod (Track C review, finding 8).
+	var skipped []error
+
+	ids := make([]int, 0, len(installed))
+	unparseable := make(map[string]bool)
+	for _, inst := range installed {
+		id, err := strconv.Atoi(inst.ID)
+		if err != nil {
+			skipped = append(skipped, fmt.Errorf("%s (id %s): invalid mod ID: %w", inst.Name, inst.ID, err))
+			unparseable[inst.ID] = true
+			continue
+		}
+		ids = append(ids, id)
+	}
+
+	// GetMods' own error already names every id it could not resolve; it is
+	// kept only to explain a mod's absence below, never to abort the check.
+	fetched, fetchErr := c.client.GetMods(ctx, ids)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	byID := make(map[string]Mod, len(fetched))
+	for _, m := range fetched {
+		byID[strconv.Itoa(m.ID)] = m
+	}
+	// #539: only an id the API answered WITHOUT is gone from the catalog;
+	// one whose chunk's request failed is merely unanswered. fetchErr keeps
+	// only the failed requests - each omitted id is reported once, below.
+	omitted := make(map[string]bool)
+	notFound, fetchErr := source.SplitModNotFound(fetchErr)
+	for _, nf := range notFound {
+		omitted[nf.ModID] = true
+	}
 
 	for i, inst := range installed {
 		select {
@@ -311,30 +481,69 @@ func (c *CurseForge) CheckUpdates(ctx context.Context, installed []domain.Instal
 		default:
 		}
 
-		if fn, ok := ctx.Value(domain.UpdateProgressContextKey).(domain.UpdateProgressFunc); ok && fn != nil {
-			fn(i+1, len(installed), inst.Name)
+		if report != nil {
+			report(i+1, len(installed), inst.Name)
 		}
 
-		remoteMod, err := c.GetMod(ctx, inst.GameID, inst.ID)
+		if unparseable[inst.ID] {
+			continue // already reported above; it was never in the batch
+		}
+
+		data, ok := byID[inst.ID]
+		if !ok {
+			// Its own reason, not the batch's: fetchErr names every id the
+			// whole call could not resolve, so stapling it here once per
+			// absent mod turned one failed chunk of 50 into 50 copies of a
+			// 50-id string. The batch error is attached once, below.
+			reason := fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, domain.ErrModNotFound)
+			if omitted[inst.ID] {
+				reason = &source.ModNotFoundError{ModID: inst.ID, Err: reason}
+			}
+			skipped = append(skipped, reason)
+			continue
+		}
+
+		latest, err := c.latestUpdate(ctx, data, inst)
 		if err != nil {
-			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err))
+			if cerr := ctx.Err(); cerr != nil {
+				return updates, cerr
+			}
+			skipped = append(skipped, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err))
+			continue
+		}
+		if latest == nil {
 			continue
 		}
 
-		// Compare versions
-		if !isNewerVersion(inst.Version, remoteMod.Version) {
-			continue
-		}
-
-		updates = append(updates, domain.Update{
+		upd := domain.Update{
 			InstalledMod: inst,
-			NewVersion:   remoteMod.Version,
+			NewVersion:   fileVersion(*latest),
 			Changelog:    "", // CurseForge changelog requires separate fetch
-		})
+		}
+		// #543: the batch answer already says whether the author allows
+		// third-party downloads, so the row says so without one being tried.
+		upd.InstalledMod.ManualOnly = upd.InstalledMod.ManualOnly || distributionDisallowed(data)
+		if ids := installedFileIDs(inst.FileIDs); len(ids) > 0 {
+			// Name the file the check advertised: ApplyUpdate installs the
+			// listed file with this id rather than re-deriving "the latest"
+			// from a version label, which can match another flavor's file.
+			upd.FileIDReplacements = map[string]string{
+				strconv.Itoa(slices.Max(ids)): strconv.Itoa(latest.ID),
+			}
+		}
+		updates = append(updates, upd)
 	}
 
-	if len(fetchErrs) > 0 {
-		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(fetchErrs), errors.Join(fetchErrs...))
+	if len(skipped) > 0 {
+		errs := skipped
+		if fetchErr != nil {
+			// Why the ids are missing - a chunk whose REQUEST failed reads
+			// as "not found" per mod above, which is true but not the
+			// reason. Attached once, and outside the count, which counts
+			// mods.
+			errs = append(slices.Clone(skipped), fmt.Errorf("batch fetch: %w", fetchErr))
+		}
+		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(skipped), errors.Join(errs...))
 	}
 	return updates, nil
 }
@@ -356,10 +565,11 @@ func modToDomain(data Mod, gameID string) domain.Mod {
 		category = strconv.Itoa(data.PrimaryCategoryID)
 	}
 
-	// Extract version from latest file if available
+	// The version shown is the newest file's, not latestFiles' first entry:
+	// that list is the newest file per game flavor in no promised order (#504).
 	version := ""
-	if len(data.LatestFiles) > 0 {
-		version = extractVersion(data.LatestFiles[0].DisplayName, data.LatestFiles[0].FileName)
+	if newest := newestFile(installableFiles(data.LatestFiles)); newest != nil {
+		version = fileVersion(*newest)
 	}
 
 	return domain.Mod{
@@ -379,35 +589,101 @@ func modToDomain(data Mod, gameID string) domain.Mod {
 		Endorsements: int64Ptr(int64(data.ThumbsUpCount)),
 		PictureURL:   pictureURL,
 		UpdatedAt:    data.DateModified,
+		ManualOnly:   distributionDisallowed(data),
 	}
+}
+
+// distributionDisallowed reports a mod whose author turned off third-party
+// distribution (allowModDistribution: false): CurseForge refuses its
+// download URLs, so its files can only be fetched from the website (#543).
+// An absent field says nothing, and is not read as a refusal.
+func distributionDisallowed(data Mod) bool {
+	return data.AllowModDistribution != nil && !*data.AllowModDistribution
 }
 
 // versionRegex matches semantic version patterns like 1.2.3, v1.2.3, 1.2.3-beta, etc.
 // The optional suffix must start with a letter (to avoid matching 1.20.1-15.3.0 as one version).
 var versionRegex = regexp.MustCompile(`[vV]?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:[-+][a-zA-Z][\w.]*)?)`)
 
-// extractVersion attempts to extract a version string from a display name or filename
-// Returns the last version-like pattern found (mod version typically comes after MC version)
+// maxBareVersionLen bounds a bare version label: a real one ("339-1-g23f0261")
+// is short, and anything much longer is a title that merely starts with a digit.
+const maxBareVersionLen = 32
+
+// fileExtensions are the archive extensions stripped from a file name before
+// it is read for a version.
+var fileExtensions = []string{".jar", ".zip", ".7z", ".rar"}
+
+// stripFileExtension removes one known archive extension from name.
+func stripFileExtension(name string) string {
+	for _, ext := range fileExtensions {
+		if trimmed, ok := strings.CutSuffix(name, ext); ok {
+			return trimmed
+		}
+	}
+	return name
+}
+
+// bareVersionLabel returns s as a version when it is nothing but a version
+// label: one token (no whitespace) that starts with a digit, or a v/V then a
+// digit, of reasonable length. A leading v/V is dropped, as the dotted
+// extraction does. Otherwise "".
+func bareVersionLabel(s string) string {
+	if s == "" || len(s) > maxBareVersionLen || strings.ContainsAny(s, " \t\r\n") {
+		return ""
+	}
+	label := strings.TrimLeft(s, "vV")
+	if len(s)-len(label) > 1 || label == "" || label[0] < '0' || label[0] > '9' {
+		return ""
+	}
+	return label
+}
+
+// fileNameVersionLabel reads a bare version label out of a file name:
+// "Auctionator-339-1-g23f0261.zip" is "339-1-g23f0261". Everything before the
+// first digit must be a prefix ending in a '-' or '_' (the mod's name), so a
+// digit inside a word ("Mod2-Pro") is not taken for a version.
+func fileNameVersionLabel(fileName string) string {
+	base := stripFileExtension(fileName)
+	i := strings.IndexAny(base, "0123456789")
+	if i < 0 {
+		return ""
+	}
+	// A 'v' right before the digit belongs to the label ("Thing-v12").
+	if i > 0 && (base[i-1] == 'v' || base[i-1] == 'V') {
+		i--
+	}
+	if i > 0 && base[i-1] != '-' && base[i-1] != '_' {
+		return ""
+	}
+	return bareVersionLabel(base[i:])
+}
+
+// extractVersion attempts to extract a version string from a display name or filename.
+//
+// A dotted version wins: it returns the last version-like pattern found in the
+// display name, else in the file name (the mod version typically comes after
+// the game version in "jei-1.20.1-15.3.0.4"). A file whose version is not
+// dotted - a build number ("339") or a git-describe label ("339-1-g23f0261") -
+// has none, so then the display name itself is the version when it is a bare
+// label, and otherwise the label the file name carries after the mod's name
+// (#510). A prose display name ("Auctionator for Classic") is never a version.
 func extractVersion(displayName, fileName string) string {
-	// Try to extract version from displayName first, then fileName
 	for _, s := range []string{displayName, fileName} {
 		if s == "" {
 			continue
 		}
-		// Strip file extension for cleaner matching
-		base := strings.TrimSuffix(s, ".jar")
-		base = strings.TrimSuffix(base, ".zip")
-		base = strings.TrimSuffix(base, ".7z")
-		base = strings.TrimSuffix(base, ".rar")
+		base := stripFileExtension(s)
 
-		// Find all version matches and take the last one
-		// (mod version typically comes after MC version in filenames like "jei-1.20.1-15.3.0.4")
+		// Find all version matches and take the last one.
 		matches := versionRegex.FindAllStringSubmatch(base, -1)
 		if len(matches) > 0 {
 			return matches[len(matches)-1][1]
 		}
 	}
-	return "" // No version found
+	if v := bareVersionLabel(displayName); v != "" {
+		return v
+	}
+	return fileNameVersionLabel(fileName)
 }
 
 // releaseTypeName converts a release type code to a name
@@ -422,12 +698,6 @@ func releaseTypeName(releaseType int) string {
 	default:
 		return "Unknown"
 	}
-}
-
-// isNewerVersion returns true if newVersion is newer than currentVersion
-// Simple string comparison - CurseForge versions are often file names
-func isNewerVersion(currentVersion, newVersion string) bool {
-	return currentVersion != newVersion && newVersion != ""
 }
 
 // int64Ptr returns a pointer to the given int64 value.

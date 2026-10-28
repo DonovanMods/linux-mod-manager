@@ -2,7 +2,7 @@ package main
 
 // Capture tests for doUpdateRollback (Phase 6b Task 5), pinning the
 // pre-extraction CLI's console output and error text BEFORE
-// Service.ApplyRollback existed - see internal/core/flows.go's
+// Service.ApplyRollback existed - see internal/core/rollback.go's
 // ApplyRollback/RollbackResult/RollbackOptions doc comments for the
 // extraction target, and .superpowers/sdd/task-5-report.md for the full
 // before/after comparison. These reuse setupDoUpdateTest/
@@ -22,8 +22,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,11 +45,29 @@ func setupRollbackReadyMod(t *testing.T) (*core.Service, *domain.Game, *domain.I
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	}))
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	require.Equal(t, "2.0", updated.Version)
 	require.Equal(t, "1.0", updated.PreviousVersion)
 	return svc, game, updated
+}
+
+// TestDoUpdateRollback_NotInstalled_ReturnsExactError guards doUpdateRollback's
+// own GetInstalledMod lookup, ahead of every other guard: a mod ID absent
+// from the profile must fail with the exact pre-extraction error text,
+// before the header ever prints (v2 Phase 2 Unit I Task 10 characterization,
+// #289 - this branch previously had no dedicated capture).
+func TestDoUpdateRollback_NotInstalled_ReturnsExactError(t *testing.T) {
+	svc, game, _ := setupDoUpdateTest(t)
+
+	var callErr error
+	out := captureStdout(t, func() error {
+		callErr = doUpdateRollback(context.Background(), svc, game, "mod1")
+		return nil
+	})
+	require.Error(t, callErr)
+	assert.Equal(t, "mod not found: mod1", callErr.Error())
+	assert.Empty(t, out, "the header must never print when this guard fails")
 }
 
 // TestDoUpdateRollback_NoPreviousVersion_ReturnsExactError guards the first
@@ -105,12 +123,16 @@ func TestDoUpdateRollback_Locked_RefusesBeforeHeader_Text(t *testing.T) {
 		callErr = doUpdateRollback(context.Background(), svc, game, "mod1")
 		return nil
 	})
-	require.NoError(t, callErr, "a locked rollback is a skip, like a locked single-mod update, not a failure")
+	// #382: a refusal exits non-zero. ErrReported, because the two lines
+	// below ARE the report - `lmm update rollback X && echo restored` used
+	// to print "restored" over a rollback that never happened.
+	require.ErrorIs(t, callErr, ErrReported)
 	assert.NotContains(t, out, "Rolling back", "the optimistic header must never print for a refused rollback")
-	assert.Contains(t, out, "Rollback available: 2.0 → 1.0 — but Mod One is locked at v2.0.")
-	assert.Contains(t, out, "Move the lock: lmm mod lock -s test-src -p default mod1 1.0   |   Unlock: lmm mod unlock -s test-src -p default mod1", "both remedies must carry -s/-p so a copy-paste can never resolve against a different source/profile")
+	// #294 (Ruling 5): the whole refused-rollback readout, byte-exact - see
+	// lock_visibility_test.go's sibling capture.
+	assert.Equal(t, "Rollback available: 2.0 → 1.0\nMod One is locked at v2.0 in profile default - unlock with 'lmm mod unlock -s test-src -p default mod1' first\n", out)
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version, "a locked mod must not roll back")
 }
@@ -124,20 +146,25 @@ func TestDoUpdateRollback_Locked_JSON_SkippedDocument(t *testing.T) {
 	withJSONOutput(t)
 	setLockedForUpdate(t, svc, game, "test-src", "mod1", "2.0")
 
+	var callErr error
 	out := captureStdout(t, func() error {
-		return doUpdateRollback(context.Background(), svc, game, "mod1")
+		callErr = doUpdateRollback(context.Background(), svc, game, "mod1")
+		return nil
 	})
+	require.ErrorIs(t, callErr, ErrReported, "#382: the document is emitted, and the command still exits non-zero")
 
-	var doc singleUpdateJSON
+	var doc core.RollbackResult
 	decodeSingleDoc(t, out, &doc)
-	assert.Equal(t, "mod1", doc.ModID)
-	assert.Equal(t, "Mod One", doc.Name)
+	assert.Equal(t, "mod1", doc.Mod.ModID)
+	assert.Equal(t, "test-src", doc.Mod.SourceID)
+	assert.Equal(t, "1.0", doc.Mod.Version, "Mod.Version is the version rolled back TO, even on this refused-locked branch - not the lock's own version (final review, Important #4 / #302)")
+	assert.Equal(t, "Mod One", doc.ModName)
 	assert.Equal(t, "2.0", doc.FromVersion)
 	assert.Equal(t, "1.0", doc.ToVersion)
-	assert.Equal(t, "skipped", doc.Status)
+	assert.Equal(t, "skipped", doc.Status.String())
 	assert.Equal(t, "locked", doc.Reason)
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version)
 }
@@ -157,7 +184,7 @@ func TestDoUpdateRollback_HookForceGate(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uninstall.before_each hook failed")
 
-		updated, gerr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		updated, gerr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		require.NoError(t, gerr)
 		assert.Equal(t, "2.0", updated.Version, "a fatal before_each hook must leave the DB row untouched")
 	})
@@ -177,7 +204,7 @@ func TestDoUpdateRollback_HookForceGate(t *testing.T) {
 		assert.Contains(t, stderr,
 			"Warning: uninstall.before_each hook failed (forced): hook failed with exit code 1: "+failScript+"\n")
 
-		updated, gerr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		updated, gerr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		require.NoError(t, gerr)
 		assert.Equal(t, "1.0", updated.Version, "the rollback must still apply despite the forced hook failure")
 	})
@@ -241,7 +268,7 @@ func TestDoUpdateRollback_AfterEachHookFailures_PrintWarningsInOrderAndSucceed(t
 	require.GreaterOrEqual(t, iIdx, 0, "install.after_each warning must be present")
 	assert.Less(t, uIdx, iIdx, "uninstall.after_each warning must print before install.after_each")
 
-	updated, gerr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, gerr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, gerr)
 	assert.Equal(t, "1.0", updated.Version, "the rollback itself must still have applied")
 }

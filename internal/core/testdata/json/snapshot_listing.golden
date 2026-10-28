@@ -1,0 +1,19 @@
+{
+  "game_id": "skyrim-se",
+  "snapshots": [
+    {
+      "name": "before-tweaks",
+      "game_id": "skyrim-se",
+      "profile": "default",
+      "created_at": "2026-08-27T12:00:00Z",
+      "auto": false,
+      "mods": 12,
+      "deployed_files": 340,
+      "originals": 3,
+      "size_bytes": 1048576
+    }
+  ],
+  "warnings": [
+    "broken.json could not be read: parsing the snapshot: unexpected EOF"
+  ]
+}

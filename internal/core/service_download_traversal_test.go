@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,13 +37,13 @@ func TestDownloadModToCache_TraversalFileName_SanitizedAgainstEscape(t *testing.
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: filepath.Join(t.TempDir(), "mods"), DeployMode: domain.DeployCopy}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Evil Mod", Version: "1.0.0", GameID: "testgame"}
 	file := &domain.DownloadableFile{ID: "file1", Name: "Evil File", FileName: "../evil-traversal.zip"}
 	mock.AddDownload(file.ID, []byte("payload"))
 
-	result, err := svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	result, err := svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.FilesExtracted)
 
@@ -88,15 +88,15 @@ func TestDownloadMod_DeployCompile_TraversalFileID_SanitizedAgainstEscape(t *tes
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	src := &fakeCompilerSource{downloadURL: dlSrv.URL}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", GameID: "icarus", Version: "3.3"}
 	file := &domain.DownloadableFile{ID: "../evil-traversal-id", FileName: "Bear_Mount.exmodz"}
 
-	result, err := svc.DownloadMod(context.Background(), "fake-compiler", game, mod, file, nil)
+	result, err := svc.DownloadModForTest(context.Background(), "fake-compiler", game, mod, file, nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, result.FilesExtracted, "#197: DeployCompile ingest retains only, no per-mod deployment member")
 

@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,19 +59,19 @@ func setupDoModLockTest(t *testing.T) (*core.Service, *domain.Game, *fakeInstall
 func seedLockableMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, version string) {
 	t.Helper()
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: version}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: version}))
 }
 
 // noVersionsCapSource is a real, registered ModSource that explicitly
@@ -234,16 +234,16 @@ func TestDoModLock_VersionlessSource_NamesPin(t *testing.T) {
 	svc.RegisterSource(novers)
 	game.SourceIDs["novers"] = "g1"
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "a", SourceID: "novers", Name: "Mod A", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "novers", ModID: "a", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "novers", ModID: "a", Version: "1.0"}))
 
 	modSource = "novers"
 
@@ -262,10 +262,10 @@ func TestDoModUnlock_ClearsMarkerLeavesVersionIntact(t *testing.T) {
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
 
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "src", "a", "2.0"))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "src", "a", "2.0"))
 
 	out := captureStdout(t, func() error {
-		return doModUnlock(svc, game, "a")
+		return doModUnlock(context.Background(), svc, game, "a")
 	})
 
 	assert.Contains(t, out, "✓ Mod A unlocked (update policy: notify)")
@@ -288,7 +288,7 @@ func TestDoModUnlock_AlreadyUnlocked_IdempotentSuccess(t *testing.T) {
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
 
 	out := captureStdout(t, func() error {
-		return doModUnlock(svc, game, "a")
+		return doModUnlock(context.Background(), svc, game, "a")
 	})
 
 	assert.Contains(t, out, "✓ Mod A unlocked (update policy: notify)")
@@ -309,14 +309,14 @@ func TestDoModUnlock_AlreadyUnlocked_IdempotentSuccess(t *testing.T) {
 // silently regress into writing a lock with an empty target.
 func TestDoModLock_NoVersion_MissingFromProfile_Errors(t *testing.T) {
 	svc, game, _ := setupDoModLockTest(t)
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	err = doModLock(context.Background(), svc, game, "a", "")
@@ -347,7 +347,7 @@ func TestDoModLock_NotInstalled_ModNotFound(t *testing.T) {
 func TestDoModUnlock_NotInstalled_ModNotFound(t *testing.T) {
 	svc, game, _ := setupDoModLockTest(t)
 
-	err := doModUnlock(svc, game, "missing")
+	err := doModUnlock(context.Background(), svc, game, "missing")
 
 	require.Error(t, err)
 	assert.Equal(t, "mod not found: missing", err.Error())

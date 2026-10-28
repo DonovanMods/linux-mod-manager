@@ -1,0 +1,24 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "conflicts": [
+    {
+      "path": "shared.esp",
+      "owner": {
+        "key": "src:b",
+        "name": "Mod B"
+      },
+      "also_in": [
+        {
+          "key": "src:a",
+          "name": "Mod A"
+        }
+      ],
+      "load_order_winner": {
+        "key": "src:b",
+        "name": "Mod B"
+      },
+      "stale": false
+    }
+  ]
+}

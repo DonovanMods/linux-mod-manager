@@ -1,0 +1,9 @@
+{
+  "source": "thunderstore",
+  "game": "lethal-company",
+  "present": true,
+  "packages": 50707,
+  "fetched_at": "2026-08-27T12:00:00Z",
+  "bytes": 239075328,
+  "stale": true
+}

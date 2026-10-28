@@ -1,0 +1,6 @@
+{
+  "before_all": "scripts/before_all.sh",
+  "before_each": "scripts/before_each.sh",
+  "after_each": "scripts/after_each.sh",
+  "after_all": "scripts/after_all.sh"
+}

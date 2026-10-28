@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,6 +15,11 @@ import (
 // twoModSource is a minimal ModSource returning a fixed two-mod result set,
 // so search's results table has both an installed and a not-installed row.
 type twoModSource struct{ id string }
+
+// twoModSource ignores the per-game mapped identifier: its two canned
+// mods do not depend on the game id, which is what lets the fixture map
+// it with an empty value (T1 review #3).
+func (s *twoModSource) IgnoresGameIdentifier() bool { return true }
 
 func (s *twoModSource) ID() string      { return s.id }
 func (s *twoModSource) Name() string    { return s.id }
@@ -62,18 +67,18 @@ func setupSearchColorTest(t *testing.T) (*core.Service, *domain.Game) {
 		ID: "g1", Name: "Game", ModPath: t.TempDir(),
 		SourceIDs: map[string]string{spy.id: ""},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "m1", SourceID: spy.id, Name: "Installed Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: spy.id, ModID: "m1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: spy.id, ModID: "m1", Version: "1.0"}))
 
 	withSearchFlags(t, spy.id, 10)
 	return svc, game
@@ -94,7 +99,7 @@ func TestDoSearch_InstalledMarker_PlainWhenColorDisabled(t *testing.T) {
 // richer palette: an installed mod's ENTIRE row is now tinted green (whole-
 // row, via printTable's rowColor), not just the trailing [installed] marker
 // - #112's cell-only accent read as too subtle in smoke feedback. Still
-// safe under the tabwriter alignment constraint since whole-row tinting
+// safe under the table alignment constraint since whole-row tinting
 // wraps an already-flushed line, same as the header accent.
 func TestDoSearch_InstalledRow_GreenWhenTTY_AlignmentUnaffected(t *testing.T) {
 	svc, game := setupSearchColorTest(t)

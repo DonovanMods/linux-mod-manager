@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.30.1" "User Commands"
+.TH "LMM" "1" "Oct 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
 lmm-verify - Verify cached mod files
@@ -157,19 +157,66 @@ it - rewriting a locked record would silently move what the lock means
 instead of fixing anything. The refusal names the mod and the lock's
 target version, and points at the remedy: 'lmm mod lock' to move the
 lock, or 'lmm mod unlock' to release it; in --json the row keeps
-"version_mismatch" and gains note "locked". Separately, a locked mod whose
-recorded version hasn't yet caught up to the lock's target (pending a
-"lmm profile apply", not corruption) prints its own "~ NAME - lock pending
-convergence" informational line instead of being silently folded into the
-OK case - this is never counted in issues or warnings.
+"version_mismatch" and gains note "locked". A locked mod's MISSING, NO
+CHECKSUM and NEEDS REINGEST repairs are refused on the same grounds
+whenever the source cannot identify the recorded version's own file: each
+of them downloads into the RECORDED version's cache slot, and a source
+that does not stamp a version on its files can never identify it, so
+unlock first to repair such a mod. Those refusals print as
+"--fix skipped: ..." naming the unlock remedy - not as a repair that
+failed - and their --json rows keep their status with note "locked" too.
+Separately, a locked mod whose recorded version hasn't yet caught up to
+the lock's target (pending a "lmm profile apply", not corruption) prints
+its own "~ NAME - lock pending convergence" informational line instead of
+being silently folded into the OK case - this is never counted in issues
+or warnings.
 
 .PP
---json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
-status, note}], issues, warnings}; status is one of "ok", "missing",
-"no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
+--json emits {game_id, profile, result: {findings: [{mod_id, mod_name,
+file_id, status, note, recorded, effective, version, external}], issues,
+warnings, checked, has_files, mods, external, unverified}}; each finding
+key is omitted when unset (a row only carries the fields its status needs -
+e.g. "version_mismatch" carries recorded/effective, "missing" carries
+version, most statuses carry neither). checked is the number of files/mods
+verify walked (feeds the "No files found for mod X" text-mode message
+alongside mods, since a mod-filter run that matched an external or
+otherwise-unverified mod leaves checked at 0 too but did find that mod, #429);
+has_files is false when no installed mod has recorded files, so no
+per-file checks run - the game-level checks (Steam Workshop presence, the
+adapter's, the loader's) and the deploy-convergence sweep still do. mods
+counts the installed mods the run covered (absent for an empty profile -
+the only case text mode says "No installed mods to verify."), external the
+Steam Workshop items among them - each checked for presence and named by
+a row: "ok" with external true while Steam still has it, "external_missing"
+once it does not - and unverified the others lmm has no recorded files for
+(a mod imported from disk), which it cannot compare against anything.
+status is one of "ok", "missing", "no_checksum",
+"file_count_mismatch", "skipped", "version_mismatch",
 "version_unverifiable", "stale_compile", "stale_deployment",
-"fixed_stale_deployment", "conversion_failed", "needs_reingest", or
-"fixed_needs_reingest"; note adds detail where there's something extra to
+"fixed_stale_deployment", "conversion_failed", "needs_reingest",
+"fixed_needs_reingest", "external_missing", "external_stale" (Steam has
+updated a tracked Workshop item since lmm recorded its revision - recorded
+and effective carry the two content ids, and --fix records Steam's) and
+"fixed_external_stale", "mod_path_missing" (the
+game's mod_path is not a directory while it has mods to deploy, or is not
+the one lmm deployed files under - a warning whose note names the repair),
+"deployed_modified" (a copied or hard-linked file whose content changed
+after lmm deployed it - a warning --fix leaves alone, since the file is
+yours), "orphaned_record" and "fixed_orphaned_record" (deployed-file records
+of a mod the profile has no installed row for; --fix drops the active
+profile's, leaving the files), "missing_cache" (an installed mod with no
+recorded file whose cache entry is gone), or one of the loader tier's own rows -
+"loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
+"loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
+"fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",
+"fixed_loader_deployed_outside_loader", "loader_adapter_ignored" (a game
+with BepInEx whose adapter is another one), "loader_nested_tree" and
+"fixed_loader_nested_tree" (a BepInEx/ directory inside BepInEx/plugins/
+holding links into the game's own cache that no game records, which --fix
+removes unless the run names a mod) and "loader_foreign_nested_tree" (one
+holding anything lmm cannot prove it left there for this game, a warning
+--fix leaves alone), each of which carries its
+whole sentence in note; note adds detail where there's something extra to
 say - a blocked cache rename, sibling-repair results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
@@ -178,11 +225,11 @@ stale-deployment row's reason (populated on both "stale_deployment" and
 "fixed_stale_deployment"), a pak's conversion-failure reason
 ("conversion_failed"), or why/whether a pak needed re-ingesting
 (populated on both "needs_reingest" and "fixed_needs_reingest") - and is
-omitted otherwise. issues counts MISSING files and VERSION MISMATCH rows
-(a successful --fix repair of either decrements it back out; a locked
-VERSION MISMATCH stays counted since --fix refuses it); warnings counts
-everything else that isn't OK, including "stale_deployment",
-"conversion_failed", and "needs_reingest" rows (never
+omitted otherwise. result.issues counts MISSING files and VERSION
+MISMATCH rows (a successful --fix repair of either decrements it back
+out; a locked VERSION MISMATCH stays counted since --fix refuses it);
+result.warnings counts everything else that isn't OK, including
+"stale_deployment", "conversion_failed", and "needs_reingest" rows (never
 "fixed_stale_deployment" or "fixed_needs_reingest" - a successful --fix
 removal/re-ingest is a resolved problem, not an outstanding one, the same
 convention as a successful re-download or version repair). Lock-pending-convergence rows
@@ -210,11 +257,11 @@ Examples:
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
 \fB--config\fP=""
-	config directory (default: ~/.config/lmm)
+	config directory (default: $XDG_CONFIG_HOME/lmm or ~/.config/lmm)
 
 .PP
 \fB--data\fP=""
-	data directory (default: ~/.local/share/lmm)
+	data directory (default: $XDG_DATA_HOME/lmm or ~/.local/share/lmm)
 
 .PP
 \fB-g\fP, \fB--game\fP=""
@@ -222,7 +269,11 @@ Examples:
 
 .PP
 \fB--json\fP[=false]
-	output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)
+	output JSON instead of text; mutating commands print their result, --dry-run prints the plan; never prompts
+
+.PP
+\fB--log-level\fP="off"
+	diagnostic log level written to stderr (off, error, warn, info, debug)
 
 .PP
 \fB--no-color\fP[=false]
@@ -242,4 +293,4 @@ Examples:
 
 
 .SH HISTORY
-27-Jul-2026 Auto generated by spf13/cobra
+28-Oct-2026 Auto generated by spf13/cobra

@@ -1,0 +1,6 @@
+{
+  "source": "thunderstore",
+  "game": "broken-community",
+  "retry_at": "2026-08-27T12:05:00Z",
+  "reason": "suspended after 3 failed requests in a row; the last: Thunderstore has no package index at /c/broken-community/api/v1/package/ (HTTP 404)"
+}

@@ -8,20 +8,21 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 	"github.com/stretchr/testify/require"
 )
 
-// importFlowCompilerSource is a full ModSource + source.MergeCompiler fake
+// importFlowCompilerSource is a full ModSource + adapter.MergeCompiler fake
 // serving one real HTTP download (an ".exmodz" file) - unlike
 // fakeCompilerSource (service_icarus_compile_test.go), which stubs
 // GetMod/GetModFiles as source.ErrNotSupported, ApplyImport's download
 // loop needs a working GetMod->GetModFiles->DownloadMod chain end to end.
 type importFlowCompilerSource struct {
-	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+	fakeMergeFormat // #256: the format-vocabulary half of adapter.MergeCompiler
 
 	mod      *domain.Mod
 	fileName string
@@ -70,7 +71,7 @@ func (s *importFlowCompilerSource) ValidateSource(sourceFilePath string) error {
 	_, err := os.Stat(sourceFilePath)
 	return err
 }
-func (s *importFlowCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *importFlowCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	var out []byte
 	for _, src := range sources {
 		data, err := os.ReadFile(src.SourcePath)
@@ -83,8 +84,8 @@ func (s *importFlowCompilerSource) MergeCompile(ctx context.Context, basePakPath
 }
 
 var (
-	_ source.ModSource     = (*importFlowCompilerSource)(nil)
-	_ source.MergeCompiler = (*importFlowCompilerSource)(nil)
+	_ source.ModSource      = (*importFlowCompilerSource)(nil)
+	_ adapter.MergeCompiler = (*importFlowCompilerSource)(nil)
 )
 
 // TestApplyImport_DeployCompile_SyncsMergedPak is the #197 I3 regression
@@ -104,12 +105,12 @@ func TestApplyImport_DeployCompile_SyncsMergedPak(t *testing.T) {
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", Name: "Bear Mount", Version: "1.0", GameID: "icarus"}
 	src := newImportFlowCompilerSource(mod, "Bear_Mount.exmodz", []byte("bear-exmodz-bytes"))
 	defer src.Close()
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	profile := &domain.Profile{Name: "target", GameID: game.ID, Mods: []domain.ModReference{{SourceID: "fake-compiler", ModID: "bear-mount", Version: "1.0"}}}
 	data, err := config.ExportProfile(profile)
@@ -119,7 +120,7 @@ func TestApplyImport_DeployCompile_SyncsMergedPak(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.Missing, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Installed)
 

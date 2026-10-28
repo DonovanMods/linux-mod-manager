@@ -1,0 +1,353 @@
+# `lmm serve` SPA — UX/UI Design
+
+**Date:** 2026-08-31
+**Status:** Approved direction, pre-implementation (issue [#326](https://github.com/DonovanMods/linux-mod-manager/issues/326); implementation plan follows owner sign-off)
+**Supersedes:** the page-per-command web UI shipped by EPIC #276's units 2–6 (the server-rendered *page layer* only — the `/api/v1` + SSE + jobs backend is this design's foundation and stays)
+**Owner decisions incorporated:** 2026-08-31 brainstorming session (mockups preserved under `.superpowers/brainstorm/`)
+
+## Why (one paragraph)
+
+The first web UI converted the TUI too literally: six pages mapped to CLI verbs, context
+re-established per page, actions far from the data they act on (50-finding UX audit, 14 blockers,
+in the #326 thread). This design starts fresh as a **single-page application**.
+
+## Settled decisions (owner, 2026-08-31 — do not re-litigate)
+
+- **WEBUI.md is relaxed for this project.** It targets public-facing web apps; `lmm serve` is a
+  single-user localhost tool. Remaining hard constraints: no major security risks, no poor
+  performance, no external dependencies a user could struggle to install (users install nothing —
+  everything embeds in the binary). Modern browsers assumed; **the CLI is the fallback**, so the
+  no-JS requirement is dropped. **Desktop only, ≥ 1080p** — no small-screen design (gaming tool).
+- **SPA**: most elements on one page, modals for popups, separate routed pages only where a
+  whole-page design earns it.
+- **Stack**: vendored **Preact + htm** — two pinned files in-repo, native ES modules, **no
+  npm/Node/bundler**; `go build` remains the entire build; assets via `go:embed`.
+- **Home = "Mission Control"**: per-game overview — attention cards that act in place, the library
+  beneath, common actions in the frame.
+- **Drill-in = slide-over by default**, with *More info →* routing to a full mod page.
+- **Search = omnibar** (live-filters the library; source results append in place), with a
+  dedicated **search page** as the escape hatch for heavy browsing.
+- **Jobs = inline state + activity tray**: the control you clicked morphs into its progress; a
+  top-bar activity bell collects running/queued/recent/failed jobs; toasts when appropriate.
+- **Style = "Launcher"**: dark-energy palette (charcoal, amber/green accents, confident headers),
+  **follow-the-system by default with a user-selectable light/dark override** — so Launcher gets a
+  first-class light variant, both defined as CSS custom-property token sets.
+- **Design principle (named):** *quick path inline, full path one click away* — every heavy
+  surface (full mod page, search page, tray→event stream) is the one-click deepening of an inline
+  affordance, never the default.
+
+## Information architecture
+
+URL scheme (History API; the Go server serves the SPA shell for all app routes):
+
+```text
+/                                → game chooser (or redirect to the single/default game)
+/g/{game}/{profile}              → Mission Control (home)
+/g/{game}/{profile}/mod/{source}/{id}   → full mod page
+/g/{game}/{profile}/search?q=…          → dedicated search page
+/g/{game}/{profile}/setup               → the Setup page (admin: games, auth,
+                                          custom sources, archive import, adopt)
+```
+
+`/setup` was added with the admin surface (#333) and recorded here in the closing wave (#326,
+epic live review D-1) — until then the router served it and neither this block nor the README's
+named it.
+
+Context (game + profile) lives **in the path** — the audit's B1 wrong-game bug class becomes
+structurally impossible. The slide-over annotates the URL (`…?mod=nexus/123`) so deep links and
+Back behave.
+
+### Mission Control (home)
+
+- **Top bar**: game picker ▾ · profile picker ▾ (with *Manage profiles…* opening the profiles
+  modal) · undeployed-changes indicator + **Deploy** button · omnibar · activity bell 🔔 · theme
+  toggle (system/light/dark) .
+- **Attention cards** (render only when non-empty; each acts in place):
+  - *Updates (n)* — per-row checkboxes, "Update selected" → one batch job.
+  - *Health (n)* — findings with per-finding *Repair* and *Repair all*; last-verify timestamp + re-run.
+  - *Conflicts (n)* — each conflict names the contenders and the winning rule, with *Resolve…*
+    opening the reorder modal.
+- **Library** — the spine. Rich table: enabled toggle, name, version (+update target), badges
+  (⬆ update, ⚠ health, ⇄ conflict, 🔒 lock, policy), load-order position, row actions (primary
+  action + ⋯ menu). Filter/sort controls (all/enabled/updatable/unhealthy; name/load-order/
+  recently-updated). Multi-select rows → a batch bar (enable/disable/uninstall/update selected).
+  Row click → slide-over.
+- **Empty states**: no games → setup guidance; empty library → inline search prompt.
+
+### Slide-over (default drill-in)
+
+Right-side panel over a still-visible home: name, author, installed → available version, lock +
+policy controls (editable), summary prose, key actions (update/enable/disable/uninstall), its own
+findings/conflicts, *Changelog* preview, **More info →** (routes to the full page). Esc / outside
+click closes; ←/→ steps through the current list.
+
+### Full mod page
+
+Everything, unlimited room: full description, complete changelog, files table, versions table
+(install/rollback per version honoring lock rules), dependency info, per-mod job history. Back
+returns to home exactly as left.
+
+### Search
+
+- **Omnibar**: typing live-filters the library ("In your library (n)"); Enter fans out to the
+  game's sources and appends "From sources (n)" rows in place — install inline (version picker ▾
+  where applicable), slide-over on click. Source failures surface as a warning row, never
+  swallowed.
+- **Search page** (escape hatch, and the model for "pages that earn it"): source badges, star/
+  download counts, summaries, category/source filters, sort, pagination.
+- **Result rows** (#520), on the search page and in the omnibar's fan-out alike: one grid with
+  named columns (name, version, source, author, date, downloads on the page, actions), each
+  row a subgrid of it, and every cell always rendered, so the columns line up down the list
+  whether or not a row has an author or a date. A failed source is a notice region named for
+  it ("Search failed on …"), after the hits.
+
+### Jobs
+
+- The initiating control morphs: button → progress bar with phase text (from the SSE
+  `DeployPhase`/event vocabulary, humanized); cards show live counts.
+- **Activity tray** (bell dropdown): running jobs with progress, queued, recent results, failures
+  with their next step inline (a conflict shows *Overwrite?* right in the tray). Entries expand to
+  the phase-by-phase event stream. Backed by the registry's retained jobs (adds `GET /api/v1/jobs`).
+- Toasts: job completion/failure when its origin isn't on-screen; never for things in view.
+
+### Modals (inventory)
+
+Confirm-plan (one framework, one renderer per kind: install/uninstall/update batch/deploy/
+rollback/switch/profile apply/profile sync/profile import/purge/archive import/adopt/mod re-link/
+repair — renders the Plan, the SPA sibling of the CLI's confirm), conflict-overwrite, **reorder**
+(drag-and-drop load order with live conflict preview; reachable from Conflicts card and library),
+**profiles** (list/create/rename/delete/export/import/set-default, plus per-profile Sync… and
+Purge…), keyboard-shortcuts help. Modals stack at most one deep; everything else is slide-over or
+page.
+
+Two things every confirm-plan modal carries since the closing wave (#326). An **Advanced**
+disclosure holds that kind's own flags, split the way the backend splits its request: a PLAN-time
+option re-computes the plan (so the preview can never describe one mutation while Confirm submits
+another), an APPLY-time one patches the pending job. And a kind may demand a **typed name** before
+Confirm enables — `purge` is the one that does, enforced by the modal rather than by its renderer,
+because the modal owns Confirm.
+
+## Visual design
+
+Launcher tokens as CSS custom properties, two full sets (dark + light), applied via
+`prefers-color-scheme` with a persisted `data-theme` override (localStorage). Dark: deep charcoal
+surfaces (#0b0f14/#111823), amber primary action, green=good/amber=warn/red=conflict semantics,
+confident uppercase-tracked headers. Light: same hues re-weighted on paper-white. Density tuned
+for ≥1080p desktop: comfortable rows, three-across cards, slide-over ≈ 40% width. System font
+stack; `ui-monospace` for versions/paths/phases.
+
+### Controls (#518)
+
+One control system draws every button, select and text input: our own, not a CSS framework
+(owner decision, 2026-10-02; Tailwind is reconsidered after 2.0 in #519). It lives in one
+delimited block of `app.css` (`@control-system begin` … `end`).
+
+- **Scale** (`:root` tokens, shared by every theme): `--control-height` (2rem) and
+  `--control-height-sm` (1.5rem), `--control-padding-x`/`-sm`, `--control-radius`,
+  `--control-border-width`, `--control-font-size`/`-sm` and `--control-line-height`. `.button`,
+  `select` and the text-like inputs all use it, and `box-sizing: border-box` makes the height
+  exact, so controls sharing a row line up. A label is centred on both axes, with
+  `line-height: 1` on the button itself: Chrome rounds a positive half-leading down to whole
+  pixels, so a line box taller than the text set every label about a pixel high. A label never
+  wraps (`white-space: nowrap`; the prose-shaped `--link`, `--tile` and `--prose` excepted, which
+  wrap between words and are never clipped). A row of
+  controls wraps between them (`flex-wrap`), and a container too narrow for one label is a
+  layout to fix: the attention cards' minimum width is the widest footer on one line (26rem),
+  and Setup's tables size their columns to their content (in the Games table only the paths give).
+- **Variants**: `.button` (secondary, the default), `--primary` (the one main action of a bar,
+  card footer or modal footer), `--quiet` (borderless at rest, bordered on hover and focus) and
+  `--danger`. Quiet is only for a control with an affordance of its own: a picker or menu
+  trigger, which draws its ▾ (the game/profile pickers, Add mods, the activity bell), or a
+  glyph-only `--icon` button (?, ✕, ‹ ›). A text-only control with no glyph reads as a label
+  when it has no boundary at rest, so it stays secondary. The theme toggle is one: it cycles on
+  a click rather than opening a choice. Four shapes
+  cover the remaining cases: `--link` (reads as text: a row's own name, an inline "View"),
+  `--tab` (a tab in a tablist; `aria-selected` carries the underline), `--tile` (a whole
+  card that is one button, the game chooser) and `--prose` (a bordered button whose label is a
+  title of any length, the add-game picker's game names: it wraps between words, left-aligned).
+  The layout is never checked in one font alone (#521): the text is the host's own system-ui
+  face, so every E2E layout check also runs under a wide sans and a monospace face
+  (`e2e_font_face_test.go`). The omnibar's search box cannot shrink below its own placeholder (an
+  invisible sizer carries the text a second time), so a bar too full for it wraps instead of
+  clipping it, and Setup's tables lay out automatically, sized to their content.
+- **Sizes**: default everywhere - bars, toolbars, card footers, modal footers, forms - and
+  `--small` only in dense contexts: table rows, a card's item rows, menus, inline result rows.
+  Small never sits beside default-size controls in one bar, toolbar or footer, and a button
+  beside a text input is default size, as the input is. `--icon` makes a glyph-only control
+  square at either size.
+- **Menus**: `.menu-item` is one item in a picker, a row's ⋯ menu or the activity tray.
+- **Tabs** (#520): a tab reserves its bold label's width (a hidden, zero-height bold copy
+  from `data-label`), so selecting one never moves its neighbours.
+- **Arrows** (#520): a navigation arrow (Prev/Next, Back to library, More info, the
+  slide-over's steps) is `components/arrow.js`'s inline SVG, centred in the label's own box,
+  never a "←"/"→" glyph from a fallback font.
+- **Pencils and tooltips** (#525): a table row's "edit this value" is `components/pencil.js`'s
+  `EditButton` - a `--quiet --icon --small` button drawing an inline-SVG pencil (like the
+  arrows: `currentColor`, no icon font, no asset) - never a repeated "Edit <field>…" text
+  button, which duplicates the column header and crowds the row. Its accessible name, from
+  `aria-label`, carries the row ("Edit Skyrim" - since #527 a Games row has one pencil,
+  which opens the game's one editor panel with a single Save; a per-field pencil would name
+  the field too); an open editor is `aria-expanded`, not a changed label. An
+  action ("Set default", Download, Delete) stays a word. Any control may carry
+  `data-tooltip="Edit Skyrim"` and `app/tooltip.js` draws it: on hover AND keyboard
+  `:focus-visible`, dismissed by Escape, one shared `aria-hidden` element with no role
+  (the `aria-label` is the name; the tooltip is for sighted people and never announces it
+  twice). It is `position: fixed` from the trigger's measured box - below, flipped above at
+  the bottom edge, slid inside the viewport gutters at the sides (`menuplacement.js`'s
+  rule) - so no table or scroller clips it. Its colours are `--text-inverted` on
+  `--text-primary`, a pair `TestThemeTokenContrast` certifies in both themes.
+- **Focus**: one 2px `--focus-ring` outline on every control (inset on a menu item, whose menu
+  would clip it).
+- **Search**: the browser's own search-cancel is hidden; the omnibar's clear button also resets
+  what the search fanned out, so it is the one ✕.
+
+Ratchets: `control_system_test.go` fails the build if a `<button>` carries neither `button` nor
+`menu-item`, or if a rule outside the control block sets height, padding, border, radius or type
+size on a selector that targets a button (element classes may place a control - margin,
+position, flex, colour - but not reshape it), or if a `--quiet` button is neither `--icon` nor a
+`picker__trigger`. `e2e_controls_test.go` holds every control in the top bar and the library
+toolbar to one computed height in both themes. `e2e_control_centring_test.go` holds labels in
+the bars, card footers, a picker menu, the slide-over, Setup's Games table (and, since #520,
+its Sources and search-index tables, buttons and button-styled links alike) to vertically
+centred (±1px) and single-line text at 1280px. It also requires the attention cards' footers
+to fit one row and the omnibar's placeholder to show whole.
+
+## Architecture
+
+```text
+internal/serve/
+  spa/                 index.html shell, app/ (ES modules: components, store, router, api, sse, theme)
+  vendor/              preact.module.js, htm.module.js   (pinned versions, vendored, doc-commented)
+  … existing api.go, jobs.go, sse.go, plans.go, middleware.go stay (the backend)
+  templates/, pages_*  DELETED with the old page layer (README/CLAUDE.md updated)
+```
+
+- **State**: one small store (plain Preact signals-style implementation or context; no external
+  state lib) hydrated from `/api/v1`, updated by actions + the activity SSE stream.
+- **Router**: History API; server-side catch-all serves the shell for `/`, `/g/…` routes.
+- **CSRF**: token delivered in the shell (meta tag), sent as the existing header on every mutation.
+- **API additions** (all additive): `GET /api/v1/jobs` (tray index); a global **activity SSE
+  stream** (`GET /api/v1/events`: job lifecycle events multiplexed; per-job streams stay for
+  detail); endpoints for the audit's five CLI-only actions via small core wrappers — set update
+  policy, lock/unlock, **reorder** (`ResolveReorder` exists; needs the apply), profile CRUD +
+  set-default; plus search pagination params. The wire stays "core documents only" (Phase 3 rule).
+- **Old URLs**: the six old page routes 301 to their SPA equivalents.
+
+## Scope
+
+**In (feature-complete bar — owner decision at doc review, 2026-08-31): FULL BIDIRECTIONAL
+PARITY.** The web UI can do everything the CLI can — including **all admin tools**: game
+add/detect, `auth login`, custom-source management, archive import/adopt (the primary user IS the
+admin; this is a single-user tool). That pulls in #307 (non-interactive game add + credential
+store in core) and a real **Setup surface**: first-run flow in the game chooser, game add/detect
+UI, source auth UI, custom-source editor, archive import/adopt UI (over `ImportArchivePlan`).
+And vice-versa **by judgment, not symmetry** (owner clarification, 2026-08-31): capabilities
+cross modalities only where they make sense there — visual-native features (e.g. the full-context
+search) may stay web-only, CLI-native ones CLI-only. Concretely judged in: per-item update
+batches land in core (#324) with the CLI's `-i` picker (#254), which was independently wanted.
+**Out:** remote access/auth, mobile layouts, no-JS operation, i18n.
+
+### The parity ledger (settled in the closing wave, #326)
+
+The epic live review measured this bar and found four commands and several flags web-unreachable
+(its C-3). The closing wave landed all of them — `purge`, `profile sync`, `mod edit`
+(`mod_relink`) and `mod convert` as web paths, `search --tag`, `install --no-deps`,
+`install --skip-verify` and `deploy --all` as wire options and Advanced controls, and the
+source↔game mapping as a NEW capability on BOTH sides (`lmm game edit` and
+`PUT /api/v1/games/{id}`, which neither frontend had). What remains outside parity is
+modality-bound, and this is the exhaustive list — re-derived from `lmm <cmd> --help` for every
+command and every persistent flag in the closing wave's fix pass (#326):
+
+**CLI-only, by judgment.** Each is a scripting- or terminal-native affordance whose web
+equivalent already exists in a better form:
+
+- `lmm profile reorder -i` — a numbered-list picker for a terminal. The web's equivalent is the
+  reorder modal's drag-and-drop with its live winner preview; both write the same load order
+  through the same core call.
+- `lmm gen-man` — generates the man pages for the CLI itself. There is nothing for a browser to do
+  with roff.
+- `lmm completion` and `lmm help` — cobra's own two built-ins: a shell completion script and the
+  command tree's help text. Same shape as `gen-man`; both configure or describe the terminal that
+  runs them.
+- `lmm serve` — the command that starts this UI. A browser reaching it would already be looking
+  at it.
+- `--json` on every command — the web UI *is* the JSON consumer. `/api/v1` returns the identical
+  documents, so the flag has no browser meaning.
+- The persistent process/output flags — `--config`, `--data`, `--verbose`, `--no-color` and
+  `--log-level`. Each configures the *process*, not the mutation: the first two are what
+  `lmm serve` itself was started with (a running server cannot re-point its own config and data
+  directories mid-session without becoming a different server), and the last three describe a
+  terminal's stdout/stderr. `-g/--game` and `--no-hooks` are the two persistent flags that are
+  NOT here: the game is the URL's own `/g/{game}/{profile}` scope, and `--no-hooks` is the "Skip
+  hooks" control on every confirm step that takes one.
+- `lmm auth login --key-from-env`/`--key-stdin` — terminal-native ways to hand over a secret
+  without typing it into a form; the web's own `type=password` field is the equivalent affordance,
+  and there is no browser analogue of "read this from an env var" or a piped stdin.
+- `lmm search -l/--limit` — the web paginates the results at a fixed page size instead of taking an
+  arbitrary limit; `← Prev` / `Next →` is the browser's own answer to "how much do I see at once".
+- `lmm init` (#351) — the guided first run. It is the CLI TWIN of the web's own setup wizard
+  (`/setup`: games → sources/auth → adopt), which is why it is a judgment entry rather than a
+  parity hole: both walk the same four core flows in the same order, each in its own modality's
+  idiom (a sequence of prompts; a tabbed panel you can revisit). Neither is a capability the other
+  lacks. `lmm init` refuses under `--json` with `ErrInteractiveOnly` and prints the five
+  equivalent commands, which is the scripted path.
+
+**Bidirectional since #350** — `lmm snapshot` is on both sides from the day it shipped, and is
+recorded here because it is the newest command and the ledger is meant to be exhaustive:
+`create`/`list`/`delete` are `POST`/`GET`/`DELETE /api/v1/snapshots` (single-step writes, like
+lock and policy), and `restore` is the `snapshot_restore` plan kind behind Mission Control's
+Snapshots card. `--dry-run` is the plan document the confirm modal renders;
+`--no-safety-snapshot`, `--force` and `--no-hooks` are its Advanced controls.
+
+**Bidirectional since #410** - `lmm source index` is on both sides too. The
+read (`lmm source index`) is `GET /api/v1/sources/{id}/index`, `--refresh`
+is the `POST` to the same path (the Setup page's **Refresh index** button,
+which is also the web's answer to `lmm search --refresh`), `--all` is
+`GET /api/v1/indexes` (the Setup page's index rows), and
+`lmm source index prune` with `--dry-run` and `--all` is
+`POST /api/v1/indexes/prune` behind the **Prune unused indexes** preview and
+its "also remove indexes a game uses" control; `-y` has no browser meaning,
+since the preview IS the confirmation. The Setup section that holds them is
+now titled "Sources". One recorded exception: `--source` has no web
+counterpart - the prune and the listing always cover every source that
+keeps an index, and with Thunderstore the only such source there is nothing
+to narrow (the route would gain a `source` field the day a second one
+ships). The holds `lmm source index` prints (when lmm will next ask a held
+host) are the listing's `holds`, shown on the same card.
+
+The epic re-review's own N-7 named two further omissions — `--version` and `lmm game add
+--game-id` — that the polish wave closed rather than left as exceptions (#326): the running
+server's display version now rides the SPA shell itself (a `<meta name="lmm-version">`, surfaced
+in the shortcuts help), and the manual add form's Advanced disclosure carries a "Game id" input
+mapped to the same request field the catalog path already filled in silently. Neither belongs on
+this list any more — both are bidirectional now, which is why they are not named as exceptions
+below either.
+
+**Web-only, by judgment.** Nothing here is a CAPABILITY the CLI lacks — each is a rendering of
+one it has:
+
+- the activity tray, the multiplexed SSE stream and inline job progress (the CLI streams the same
+  core events to the terminal as they happen);
+- drag-and-drop reordering (`lmm profile reorder`, positionally or with `-i`);
+- the version/file picker and the inline conflict "Overwrite?" affordance (`install
+  --version/--file`, and re-running with `--force`).
+
+Judged per modality, the bar is met: CLI ⊇ web, and web ⊇ CLI for everything a browser can
+meaningfully express. Every command and flag not named above has a web path — the two lists on
+this page are the whole difference between the two frontends.
+
+## Testing
+
+- Backend: existing Go httptest suites (API/jobs/SSE) extend to the new endpoints/wrappers.
+- SPA: `chromedp`-driven E2E smoke in Go (test-only dependency; skips when no Chrome/Chromium on
+  PATH, like the 7z pattern) covering: home render, drill-in, install w/ conflict round-trip,
+  batch update, deploy progress, reorder, theme override. No Node test runner (no Node anywhere).
+- The security middleware tests (Host/Origin/CSRF) continue unchanged — same origin story.
+
+## Process
+
+Long-lived feature branch **`webui`** off `v2`; story branches off `webui`, `--no-ff` merges back;
+issues close at the `webui` merge; `webui` merges to `v2` only when the owner declares the UI
+feature-complete and approves UI+UX. **No releases until further notice** (owner directive). The
+old page layer's deletion is the feature branch's first commit, so every subsequent screen is
+judged as the SPA, never against the old look.

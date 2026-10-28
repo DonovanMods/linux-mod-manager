@@ -1,0 +1,25 @@
+{
+  "response": {
+    "result": 1,
+    "resultcount": 2,
+    "publishedfiledetails": [
+      {
+        "publishedfileid": "3617086610",
+        "result": 1,
+        "creator": "76561198000000000",
+        "file_size": "572330",
+        "hcontent_file": "7987119735124793734",
+        "preview_url": "https://steamuserimages-a.akamaihd.net/ugc/0000000000000000001/",
+        "title": "Sample Workshop Item",
+        "description": "An item subscribed in the Steam client.",
+        "time_created": 1700000000,
+        "time_updated": 1764767935,
+        "tags": [{ "tag": "Blueprint" }]
+      },
+      {
+        "publishedfileid": "2900001111",
+        "result": 9
+      }
+    ]
+  }
+}

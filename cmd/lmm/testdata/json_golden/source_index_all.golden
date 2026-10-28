@@ -1,0 +1,28 @@
+{
+  "indexes": [
+    {
+      "source": "thunderstore",
+      "game": "content-warning",
+      "cached": true,
+      "present": true,
+      "packages": 900,
+      "fetched_at": "2026-09-16T09:00:00Z",
+      "bytes": 4096000,
+      "mapped_by": []
+    },
+    {
+      "source": "thunderstore",
+      "game": "lethal-company",
+      "cached": true,
+      "present": true,
+      "packages": 50707,
+      "fetched_at": "2026-09-16T09:00:00Z",
+      "bytes": 239075328,
+      "mapped_by": [
+        "lethal"
+      ]
+    }
+  ],
+  "holds": [],
+  "warnings": []
+}

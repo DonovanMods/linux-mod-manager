@@ -1,0 +1,9 @@
+{
+  "changed": true,
+  "notes": [
+    "forced reinstall before enabling"
+  ],
+  "warnings": [
+    "could not sync merged pak"
+  ]
+}

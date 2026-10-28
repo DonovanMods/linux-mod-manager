@@ -1,0 +1,72 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "hardcore",
+  "to_disable": [],
+  "to_enable": [
+    {
+      "id": "7",
+      "source_id": "nexusmods",
+      "name": "Realistic Needs",
+      "version": "",
+      "author": "",
+      "summary": "",
+      "description": "",
+      "game_id": "skyrim-se",
+      "category": "",
+      "downloads": 0,
+      "picture_url": "",
+      "source_url": "",
+      "files": [],
+      "dependencies": [],
+      "updated_at": "2026-08-27T12:00:00Z",
+      "profile_name": "hardcore",
+      "update_policy": "notify",
+      "installed_at": "2026-08-27T12:00:00Z",
+      "enabled": false,
+      "deployed": false,
+      "link_method": "symlink",
+      "manual_download": false,
+      "convert_paks": false
+    }
+  ],
+  "to_install": [
+    {
+      "ref": {
+        "source_id": "nexusmods",
+        "mod_id": "42",
+        "version": "1.2.3",
+        "locked": false
+      },
+      "mod": {
+        "id": "42",
+        "source_id": "nexusmods",
+        "name": "Sample Mod",
+        "version": "1.2.3",
+        "author": "",
+        "summary": "",
+        "description": "",
+        "game_id": "skyrim-se",
+        "category": "",
+        "downloads": 0,
+        "picture_url": "",
+        "source_url": "",
+        "files": [],
+        "dependencies": [],
+        "updated_at": "2026-08-27T12:00:00Z"
+      },
+      "files": [
+        {
+          "id": "file-1",
+          "name": "Main File",
+          "file_name": "sample-mod-1.2.3.zip",
+          "version": "1.2.3",
+          "size": 104857600,
+          "is_primary": true
+        }
+      ],
+      "version": "1.2.3",
+      "cached": true
+    }
+  ],
+  "no_changes": false
+}

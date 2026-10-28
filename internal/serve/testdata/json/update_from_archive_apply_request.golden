@@ -1,0 +1,5 @@
+{
+  "accept_mismatch": true,
+  "force": true,
+  "skip_hooks": true
+}

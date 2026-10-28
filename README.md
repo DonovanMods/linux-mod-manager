@@ -1,20 +1,231 @@
 # lmm - Linux Mod Manager
 
-A terminal-based mod manager for Linux that provides a CLI interface for searching, installing, updating, and managing game mods from various sources.
+A native, terminal-first Linux mod manager focused on reproducible profiles,
+multiple mod sources, and scriptable game-mod deployment — with a full local
+web UI over the same engine.
+
+A profile is a declaration of the mods and versions a game should be running.
+`lmm` resolves that declaration against the sources you have configured, caches
+what it downloads, deploys it into the game directory by a method you choose,
+and can tell you at any point whether what is on disk still matches. Two
+first-class frontends drive the same engine: a CLI built for scripting,
+automation and remote work over SSH, and `lmm serve`, a local web UI built for
+day-to-day use.
 
 ## Features
 
-- **Multi-Source Support**: Search, download, install mods from NexusMods and CurseForge
-- **Profile System**: Manage multiple mod configurations per game
-- **Update Management**: Check for updates with configurable policies (auto, notify, pinned)
-- **Version Locking**: Lock a mod's profile entry to an exact version, independent of update policy — see [Locking mods to a version](#locking-mods-to-a-version)
-- **Rollback Support**: Revert to previous mod versions when updates cause issues
-- **Flexible Deployment**: Symlink, hardlink, or copy mods to game directories
-- **Dependency Resolution**: Automatically fetches and installs mod dependencies
-- **Infinite-Scroll Search**: Browse a continuously loading result list with clean cancel support
-- **Pure Go**: No CGO required, easy cross-compilation
+### The model
+
+- **Profiles are desired state**: a profile records the mods, versions and load
+  order a game should be running, and `lmm profile apply` **converges** the
+  installation to it — installing what is missing, undeploying and disabling
+  what it no longer lists, and moving versions in either direction, downgrades
+  included
+- **Locks are enforced when converging**, not merely when checking.
+  `lmm mod lock` pins a build in the profile, it travels with
+  `lmm profile export`/`import`, and it holds through apply, deploy, update and
+  rollback — see [Locking mods to a version](#locking-mods-to-a-version)
+- **Verification reasons about provenance**: `lmm verify` checks the cache
+  against recorded checksums, the deployed tree against what the profile
+  actually provides, and each recorded version against its source. `--fix`
+  removes only the files lmm itself deployed — never a file it did not put
+  there — and it names a finding it will not attempt rather than guessing at
+  one; a locked mod's record is left alone on purpose
+- **Snapshots and an originals store**: lmm keeps the game files it displaces,
+  so `lmm snapshot create|list|restore|delete` can bring a game back to a
+  recorded arrangement — see [Snapshots](#snapshots)
+- **Sources are first-class, not hard-coded**: NexusMods, CurseForge, Steam
+  Workshop, Thunderstore and Icarus are built in, and `directory`, `manifest`
+  and `api` sources are defined in YAML — with advertised capabilities, live
+  validation
+  (`lmm source validate --probe`), their own authentication, and graceful
+  degradation where a capability is missing — see
+  [Custom Sources](#custom-sources)
+- **Steam Workshop, three ways**: track the items Steam already installed,
+  search the Workshop and import a collection as a profile, or download an item
+  so lmm manages its own copy — see [Steam Workshop](#steam-workshop)
+- **Update policies and rollback**: `auto`, `notify` (default) or `pinned` per
+  mod, with `lmm update rollback` to step back a version
+
+### Getting it onto disk
+
+- **Flexible deployment**: symlink, hardlink or copy, set globally, per game or
+  per profile
+- **Dependency resolution**: dependencies are fetched and installed in order,
+  with cycle detection (opt out with `--no-deps`)
+- **Conflict detection**: `lmm conflicts` names every contested file, its
+  contenders and the rule that decides the winner
+- **Two first-class frontends, one core**: everything below is the CLI;
+  `lmm serve` is a full single-page web UI over the same database, profiles
+  and engine — the same games, sources, profiles, plans, locks, conflicts,
+  snapshots and imports, with live progress over SSE. Neither is a cut-down
+  view of the other — see [Web UI](#web-ui-lmm-serve)
+- **Scriptable**: `--json` prints exactly one document on stdout and nothing
+  else, and `/api/v1` returns those same documents — see
+  [JSON output](#json-output)
+- **Pure Go**: one static binary, no CGO, easy cross-compilation
+
+## Why lmm?
+
+Vortex, Limo and Mosaic are **GUI-first interactive mod managers**: you arrange
+your setup by hand, in an application, and the application holds the result.
+The difference is not whether there is a window — lmm has one — it is where
+the truth about your setup lives.
+
+lmm is aimed at **reproducible, source-agnostic mod environments** — the setup
+is a document you can export, review, diff and re-apply. If you have ever
+wanted your mod list to behave more like a package manifest than a pile of
+state managed by buttons, that is the pitch.
+
+You drive that model from **either of two first-class frontends**: the CLI,
+for scripting, automation, `--json` pipelines and a headless box over SSH, and
+`lmm serve`, a local web UI meant for daily use — the library, search,
+updates, health, conflicts, profiles, snapshots, imports and setup, every
+mutation previewed as the same plan the CLI prints. They are the same code
+underneath — one engine, one database, one binary, nothing extra to
+install — which is why neither drifts behind the other, and why the web UI
+keeps growing with the engine rather than trailing it.
+
+The whole program is one pipeline:
+
+```text
+mod sources          NexusMods, CurseForge, Steam Workshop, Icarus,
+      ↓              plus directory / manifest / api sources you define
+normalized mod/version model
+      ↓              one Mod + version + file shape, whatever answered
+profile (desired state)
+      ↓              mods, versions, locks, load order — exportable YAML
+cache
+      ↓              one copy per source/mod/version, checksummed
+game adapter
+      ↓              what THIS game does with mod content: archive layout,
+                     which files are configuration, whether its mods compile
+                     into one artifact, what verify can honestly check
+deployment strategy
+                     symlink, hardlink or copy into the game directory
+```
+
+The **game adapter** is a real seam rather than a description of one: one
+`adapter:` key in `games.yaml`, defaulting to `generic-files` — the identity,
+which is what every game lmm managed before adapters existed. `icarus` and
+`bepinex` ship on top of it, and a contributor adds a third without touching
+lmm's core. See [docs/adapters.md](docs/adapters.md).
+
+**What lmm does not have.** There is no FOMOD installer UI, no _automated_
+LOOT-style plugin sorting (masterlists, a generated `plugins.txt`) and no
+Nexus Collections import. Load order itself lmm does have: a profile records
+it, `lmm profile reorder` and the web UI's reorder modal change it, and it
+decides precedence at merge and deploy time — what is missing is the Bethesda
+ecosystem's _automatic_ sorting of plugins, not ordering as such.
+
+**When to pick something else.** lmm installs, deploys, updates, locks and
+reproduces Skyrim and Fallout mods perfectly well. What it cannot do for that
+ecosystem _today_ is walk you through a FOMOD option tree or sort your plugins
+the way LOOT does, and a Bethesda setup that leans on those two is better
+served by [Limo](https://github.com/limo-app/limo) or Mosaic for now — both
+are tracked here as work, not dismissed
+([#354](https://github.com/DonovanMods/linux-mod-manager/issues/354),
+[#355](https://github.com/DonovanMods/linux-mod-manager/issues/355)). Reach
+for lmm when you want your mod setup scripted, reproduced across machines,
+driven over SSH or from a browser, or extended to a source nobody has written
+a client for.
+
+### Non-goals for 2.0
+
+These are deliberate omissions, tracked so they are not mistaken for oversights:
+
+- **FOMOD installers** — [#354](https://github.com/DonovanMods/linux-mod-manager/issues/354)
+- **Automated LOOT-style plugin sorting** — masterlists and a generated
+  `plugins.txt`, for the games that need one:
+  [#355](https://github.com/DonovanMods/linux-mod-manager/issues/355). Load
+  ordering itself is a shipped feature (`lmm profile reorder`, the web UI's
+  reorder modal, and precedence at merge and deploy time); it is the
+  _automatic_ sorting that is out of scope for 2.0
+- **Nexus Collections** — no tracking issue; a Steam Workshop collection
+  already imports as a profile, and the Nexus equivalent is not planned for 2.0
+- **A separate native desktop application** — the graphical frontend is
+  `lmm serve`, and it is a first-class one: a full web UI over the same `core`
+  package the CLI calls, in the same binary, with no Node, no bundler and no
+  config of its own. What is not planned is a _second_ application with its
+  own build, its own packaging and its own drift.
+
+### The adapter seam
+
+Two games in lmm need more than "put these files there". Icarus does not
+merely copy its archives: lmm converts prebuilt `.pak` mods, derives their
+changes against the current base game, merges them by profile precedence and
+regenerates the result when load order changes. BepInEx games need their
+plugin archives placed correctly in the game root, their `BepInEx/config/**`
+seeded rather than linked, and their loader installation checked.
+
+Since 2.0 both of those are **game adapters** behind a documented seam, not
+special cases in lmm's core:
+[#353](https://github.com/DonovanMods/linux-mod-manager/issues/353). One
+`adapter:` key in `games.yaml` selects one, the default (`generic-files`) is
+the identity — so every game lmm managed before adapters behaves
+byte-for-byte as it did — and an adapter supplies pure rule tables and
+read-only reports while core keeps every side effect. Adapters live in the
+tree and are compile-time, not plugins: adding one for Unreal, another Unity
+loader or anything else is a package under `internal/adapter/` plus one
+registration line, with a boundary test making sure it stays that way.
+
+A game whose configuration its adapter refuses — an adapter name this build
+does not have, `adapter: bepinex` with a `mod_path` off the game root or with
+`deploy_mode: compile` — is refused by every command that deploys, each with
+the same message naming the way out: `lmm deploy`, `lmm install`,
+`lmm mod enable` (and the web UI's Enable), `lmm verify --fix`'s re-deploy
+repairs, and the rest. `lmm purge`, `lmm uninstall` and `lmm mod disable`
+still run there, removing only what lmm recorded deploying, so taking lmm's
+files back out is always the first step available.
+
+[docs/adapters.md](docs/adapters.md) is the contributor's guide;
+[docs/configuration.md](docs/configuration.md#adapter-gamesyaml) is how you
+choose one for your game.
 
 ## Installation
+
+### Arch Linux
+
+Every release on the
+[Releases page](https://github.com/DonovanMods/linux-mod-manager/releases)
+carries a `PKGBUILD` for `lmm-bin`. Build and install it with `makepkg`:
+
+```bash
+mkdir lmm-bin && cd lmm-bin
+curl -LO https://github.com/DonovanMods/linux-mod-manager/releases/latest/download/PKGBUILD
+makepkg -si
+```
+
+It installs the released binary, the man pages, and shell completions for
+bash, zsh and fish, and `provides`/`conflicts` `lmm`, so it will not fight a
+source build of the same name. `makepkg` checks the downloaded archive against
+the checksum in the `PKGBUILD`. The package is not on the AUR yet ([#549](https://github.com/DonovanMods/linux-mod-manager/issues/549)).
+
+### Debian, Ubuntu, Fedora, openSUSE, Alpine
+
+`.deb`, `.rpm` and `.apk` packages are attached to every release on the
+[Releases page](https://github.com/DonovanMods/linux-mod-manager/releases),
+for `amd64` and `arm64`:
+
+```bash
+# Debian / Ubuntu
+sudo dpkg -i lmm_<version>_linux_amd64.deb
+
+# Fedora / RHEL
+sudo rpm -i lmm_<version>_linux_amd64.rpm
+
+# openSUSE
+sudo zypper install ./lmm_<version>_linux_amd64.rpm
+
+# Alpine
+sudo apk add --allow-untrusted lmm_<version>_linux_amd64.apk
+```
+
+These install `/usr/bin/lmm`, the man pages under `/usr/share/man/man1`
+(`man lmm`), shell completions, and the README, CHANGELOG and LICENSE under
+`/usr/share/doc/lmm`. `p7zip` is a _recommended_ dependency, not a required
+one: lmm extracts `.zip` archives itself and shells out to `7z` (and `unrar`)
+only for `.7z` and `.rar` mods.
 
 ### From GitHub Releases
 
@@ -30,13 +241,20 @@ tar -xzf lmm_*.tar.gz
 sudo mv lmm /usr/local/bin/
 ```
 
+The tarball also carries the man pages under `docs/man/man1/`; copy them to
+`/usr/share/man/man1` (or `~/.local/share/man/man1`) to get `man lmm`.
+
 ### With Go Install
 
-Requires Go 1.21 or later.
+Requires Go 1.27 or later.
 
 ```bash
-go install github.com/DonovanMods/linux-mod-manager/cmd/lmm@latest
+go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest
 ```
+
+The module path carries the `/v2` suffix, so `@latest` resolves to the newest
+2.x release. Until the v2.0.0 tag is published, name the branch instead:
+`...@v2`.
 
 ### From Source
 
@@ -46,7 +264,76 @@ cd linux-mod-manager
 go build -o lmm ./cmd/lmm
 ```
 
+This checks out `main`, which still holds the v1.x line: the 2.0 work lives on
+the `v2` branch until the release merges it. Run `git checkout v2` before
+`go build` to build what this README describes.
+
+### Shell completions
+
+The distro packages and the Arch `PKGBUILD` install completions for you. If you
+installed from a tarball, `go install`, or source, generate them yourself —
+`lmm completion --help` covers every shell, including PowerShell:
+
+```bash
+# bash (needs bash-completion)
+lmm completion bash | sudo tee /usr/share/bash-completion/completions/lmm >/dev/null
+
+# zsh
+lmm completion zsh | sudo tee /usr/share/zsh/site-functions/_lmm >/dev/null
+
+# fish
+lmm completion fish > ~/.config/fish/completions/lmm.fish
+```
+
+Start a new shell afterwards. To try one without installing it, source it in
+the current shell instead: `source <(lmm completion bash)`.
+
+Every flag that takes a folder — `--config`, `--data`, `lmm game add`'s
+`--path` and `--mod-path`, `lmm game edit`'s `--install-path` and
+`--mod-path` — completes folders only, never files. The web UI's equivalent
+is the **Browse…** button beside each folder field.
+
 ## Quick Start
+
+### `lmm init` — the guided first run
+
+```bash
+lmm init
+```
+
+One command that walks the whole setup, once: it scans your Steam libraries
+for moddable games and adds the ones you pick (filling in their paths and
+sources from the install itself), sets a default game so you can leave
+`--game` off from then on, signs you in to each mod source your games use
+with that source's own instructions, and scans the game's mod directory for
+mods that are already there so lmm can manage them.
+
+Every step is skippable — press Enter to take the default, or answer `n` to
+move on — and **re-running it is safe**: a game that is already configured
+is marked and not added again, a source that is already authenticated is not
+asked for a key, and a default game that is already set is left alone. So
+it doubles as "add the game I just installed".
+
+It is interactive by design. Under `--json`, or with nothing to read from,
+it prints the equivalent commands instead of prompting — a script wants
+those, not a wizard.
+
+The rest of this section is the same setup done by hand, which is worth
+reading once even if you used `lmm init`.
+
+### `lmm serve` — the same first run in a browser
+
+```bash
+lmm serve
+# lmm serve listening on http://127.0.0.1:7420/
+```
+
+If you would rather click than type, `lmm serve` opens a local web UI on the
+same database and profiles, and with no games configured yet it opens on the
+same first-run flow: detect your Steam games and add them, sign in to each
+source, define a custom source if you need one, and adopt the mods already in
+the game folder. Everything the CLI does below is there too — see
+[Web UI](#web-ui-lmm-serve).
 
 ### Authentication
 
@@ -72,17 +359,33 @@ lmm auth login curseforge
 export CURSEFORGE_API_KEY="your-api-key"
 ```
 
+#### Where the key is stored
+
+A key from `lmm auth login` is stored **encrypted** (AES-256-GCM) in
+`~/.local/share/lmm/lmm.db`, under a 32-byte key file at
+`~/.local/share/lmm/key` that lmm creates `0600` the first time you log in.
+`lmm auth status` identifies a stored credential by a short fingerprint and
+never prints it back.
+
+Be clear about what this buys you: it protects a database that gets
+**copied, synced, or backed up** — the write-ahead log included — not
+against someone already running as you on your own machine, who can read
+the key file just as easily. **The key file is the secret: back it up with
+the database, or expect to run `lmm auth login` again.** The full threat
+model, the failure modes and their fixes are in
+[docs/security.md](docs/security.md).
+
 ### Set Default Game
 
 Set a default game to avoid specifying `--game` for every command:
 
 ```bash
 # Set default game
-lmm game set-default skyrim-se
+lmm game set-default baldurs-gate-3
 
 # Now all game commands work without --game
-lmm search "skyui"
-lmm install "skyui"
+lmm search "camera"
+lmm install "camera"
 lmm list
 lmm update
 lmm uninstall 12345
@@ -94,6 +397,10 @@ lmm game show-default
 
 # Clear the default
 lmm game clear-default
+
+# Everything lmm knows about one game, including its mod-loader status and
+# the Steam launch option a BepInEx game needs (see BepInEx (Unity games))
+lmm game show skyrim-se
 ```
 
 ### Basic Usage
@@ -102,32 +409,77 @@ lmm game clear-default
 
 ```bash
 # Search for mods (all configured sources by default)
-lmm search "skyui" --game skyrim-se
+lmm search "camera" --game baldurs-gate-3
 
 # Install a mod (interactive selection)
-lmm install "skyui" --game skyrim-se
+lmm install "camera" --game baldurs-gate-3
 
 # Install multiple mods (select with 1,3-5 or 1..3 syntax)
-lmm install "stack" --game starrupture
+lmm install "ui" --game baldurs-gate-3
 
 # Install by mod ID (for scripting)
-lmm install --id 12345 --game skyrim-se
+lmm install --id 12345 --game baldurs-gate-3
+
+# Install a mod from an archive you downloaded by hand (a source that refuses API downloads)
+lmm install --id 12345 -s curseforge --game baldurs-gate-3 --from-file ~/Downloads/SomeMod-2.0.zip
 
 # List installed mods
-lmm list --game skyrim-se
+lmm list --game baldurs-gate-3
 
 # Check for updates (shows partial results and a warning if some mods can't be checked)
-lmm update --game skyrim-se
+lmm update --game baldurs-gate-3
 
 # Update a specific mod
-lmm update 12345 --game skyrim-se
+lmm update 12345 --game baldurs-gate-3
+
+# Update a mod from an archive you downloaded by hand (a source that refuses API downloads)
+lmm update 12345 --game baldurs-gate-3 --from-file ~/Downloads/SomeMod-2.0.zip
 
 # Rollback to previous version
-lmm update rollback 12345 --game skyrim-se
+lmm update rollback 12345 --game baldurs-gate-3
 
 # Show status
 lmm status
 ```
+
+### Updating from a downloaded file
+
+Some sources will not serve a file through their API - a CurseForge author
+can disable third-party downloads, and `lmm update` then fails with the
+mod's page to download it from. Download it there, then hand the archive
+to the update: `lmm update <mod-id> --from-file <archive>`. The source,
+mod ID, game and profile come from the installed mod, so nothing is
+retyped. When the update check advertises a specific file, the archive's
+name is compared with it (case-insensitively, and ignoring the ` (1)` a
+browser adds to a repeated download): a match records that file's version
+and file ID, so later update checks stay correct; a different file - say
+another loader's build - is refused unless you pass `--accept-mismatch`.
+Without an advertised file, a file the source lists under the archive's
+name supplies the version and ID; otherwise the version comes from the
+archive's name, or from `--version`. The lock and update policy are kept,
+hooks run as for any update, and the previous version stays available to
+`lmm update rollback`. In the web UI, "Update from file…" sits in the mod's
+panel, its page and its library-row menu, and beside "Open on <source>"
+on a failed download.
+
+### Installing from a downloaded file
+
+The install twin of the above. When a source refuses to serve the file a
+new install needs, `lmm install` fails with the mod's page and the command
+that finishes the job once you have downloaded it there:
+`lmm install --id <mod-id> -s <source> --file <file-id> --from-file <archive>`,
+every ID filled in. The archive's name is compared with the file the install
+would have downloaded (`--file`, else the install's own pick - at
+`--version` when given) the same way: a match records that file's version
+and file ID, a different file is refused unless you pass
+`--accept-mismatch`, and with nothing to compare against the version comes
+from the archive's name or `--version`. Hooks, conflicts, deploy and the
+checksum work as for any install. Dependencies are not installed from a
+file: the ones that are missing are listed, each with the `lmm install`
+command that adds it. A mod that is already installed is updated from a
+file instead. In the web UI, "Install from file…" sits beside "Open on
+<source>" on the failed install - in the search results, the slide-over and
+the activity tray - with the source, mod and file already known.
 
 ### Update Policies
 
@@ -135,13 +487,13 @@ Control how each mod handles updates:
 
 ```bash
 # Auto-update when checking
-lmm mod set-update 12345 --game skyrim-se --auto
+lmm mod set-update 12345 --game baldurs-gate-3 --auto
 
 # Notify only (default)
-lmm mod set-update 12345 --game skyrim-se --notify
+lmm mod set-update 12345 --game baldurs-gate-3 --notify
 
 # Mute update checks for this mod (does not hold a version — see Locking below)
-lmm mod set-update 12345 --game skyrim-se --pin
+lmm mod set-update 12345 --game baldurs-gate-3 --pin
 ```
 
 `--pin` is a check-mute, not a version freeze: it stops `lmm update` from asking
@@ -151,6 +503,24 @@ an update check. If what you actually want is "this profile deploys exactly
 version X, and nothing changes that", lock it instead (below). `--pin`
 remains the only freeze available on sources that cannot resolve versions
 (e.g. plain `directory` sources), since locking requires that capability.
+
+### Skipping an update
+
+To hold off on one update without pinning the mod, skip it. The mod keeps
+being checked; `lmm update` (and the web UI's Updates card, library and
+**Update all**) leaves the skipped version out until the source offers a
+newer one, which is then reported as normal.
+
+```bash
+# Skip the version the source offers now (or name one with --version)
+lmm mod skip-update 12345 --game baldurs-gate-3
+
+# Offer it again
+lmm mod unskip-update 12345 --game baldurs-gate-3
+```
+
+`lmm update` names skipped updates in its summary. `lmm update <mod-id>`
+still applies a skipped version, and clears the skip.
 
 ### Locking mods to a version
 
@@ -166,13 +536,13 @@ instead.
 
 ```bash
 # Lock at the currently installed version
-lmm mod lock 12345 --game skyrim-se
+lmm mod lock 12345 --game baldurs-gate-3
 
 # Lock at a specific version
-lmm mod lock 12345 1.2.3 --game skyrim-se
+lmm mod lock 12345 1.2.3 --game baldurs-gate-3
 
 # Clear the lock (recorded version is left untouched)
-lmm mod unlock 12345 --game skyrim-se
+lmm mod unlock 12345 --game baldurs-gate-3
 ```
 
 Locking is a metadata write, not a deploy: if the locked version differs
@@ -181,12 +551,6 @@ doesn't change until the next `lmm profile apply` (or `lmm deploy`), which
 converges the mod to the locked version — downgrades included. `lmm mod
 unlock` clears only the lock marker; the mod's recorded version is left
 exactly as-is, since that's the record, not the lock.
-
-In the TUI, `L` on the Installed Mods screen opens an async version picker
-for the selected mod (fetched from the source); picking a version confirms
-and locks/moves the lock immediately, and a locked mod's picker gains a
-trailing "unlock" entry. The row's flags column shows `lck` for a locked mod
-(it outranks `pin` when both apply — the lock is what the UI names).
 
 **Lock vs. pin, in one line**: pinning mutes a mod's update _notifications_;
 a lock is a lockfile entry that pins a _build_.
@@ -214,13 +578,13 @@ wherever they'd conflict, the lock wins and the output names it:
   "locked at v*X*; move the lock (`lmm mod lock <id> <version>`) or unlock
   first."
 - **`lmm install` of a locked mod at any other version** (an explicit
-  `--version`, or a plain reinstall that would land on a newer latest — TUI
-  install included): refused with the same remedies before anything
-  downloads or deploys. Installing at exactly the locked version
-  (reinstall/repair) still works and keeps the lock.
+  `--version`, or a plain reinstall that would land on a newer latest):
+  refused with the same remedies before anything downloads or deploys.
+  Installing at exactly the locked version (reinstall/repair) still works
+  and keeps the lock.
 - **`lmm mod edit` of a locked mod**: refused before anything is written —
   `--version` (other than the locked version itself) with the same
-  move-the-lock/unlock remedies, and `--source`/`--source-id` re-linking
+  move-the-lock/unlock remedies, and `--to-source`/`--to-source-id` re-linking
   with the unlock remedy alone, since a re-link would replace the locked
   profile entry with a fresh, unlocked one and moving the lock can't help.
   Metadata-only edits (`--name`/`--author`) still work.
@@ -229,17 +593,24 @@ Lock state shows up alongside version info wherever it's installed: `lmm
 list -v`'s `LOCKED` column (the locked version, or `-`), `lmm mod show`'s
 Installed section, and `lmm update`'s table, where a locked mod's `POLICY`
 cell gets a `[locked@<version>]` suffix. `--json` output for `list` and `mod
-show` carries the same information additively (`locked`, `locked_version`),
-and bulk `lmm update --json` marks a locked mod's `updates[]` entry with
-`"locked": true` (omitted when unlocked); single-mod `lmm update --json`
+show` carries the same information (`locked`, `locked_version`), and bulk
+`lmm update --json` marks a locked mod's `updates[]` entry with
+`"locked": true`; single-mod `lmm update --json`
 instead reports a refused apply as `status: "skipped", reason: "locked"`, and
 `lmm update rollback` of a locked mod is refused the same way — before its
 "Rolling back..." header, with the same remedies and JSON document. `lmm verify` still reports a locked mod's version-record
-mismatches, but `--fix` refuses to rewrite a locked mod's record (other,
-unlocked mods in the same run are still fixed) — and when the installed
-version hasn't yet converged to a lock's target, `verify` prints an
-informational "lock pending convergence" note rather than treating it as
-drift to repair.
+mismatches, but `--fix` refuses to rewrite a locked mod's record, and
+refuses its missing-file, missing-checksum and pak re-ingest repairs too
+whenever the source cannot identify the recorded version's own file — every
+one of those repairs downloads into the _recorded_ (locked) version's cache
+slot, so filling it with whatever the source serves today is exactly what a
+lock exists to prevent. A source that does not version its files at all
+(Icarus, for one) can never identify it, so a locked mod there is repaired
+by unlocking first. Other, unlocked mods in the same run are still fixed,
+and each refusal reports as a `--fix skipped:` line naming the unlock
+remedy, not as a repair that failed. Separately, when the installed version
+hasn't yet converged to a lock's target, `verify` prints an informational
+"lock pending convergence" note rather than treating it as drift to repair.
 
 ### Pak conversion (Icarus)
 
@@ -264,9 +635,9 @@ precedence](#games-gamesyaml) applies identically to converted paks and
 
 Conversion is on by default, and controlled at two levels: a per-game
 `convert_paks: false` in `games.yaml` turns it off for every pak mod on
-that game, and `lmm mod convert <mod-id> off` (TUI: `m` on Installed
-Mods) keeps one specific mod's pak raw regardless of the game setting —
-either one is enough to keep a pak raw. An irreconcilable pak (unreadable
+that game, and `lmm mod convert <mod-id> off` keeps one specific mod's
+pak raw regardless of the game setting — either one is enough to keep a
+pak raw. An irreconcilable pak (unreadable
 or unresolvable layout, a hyphen-ambiguous table path, a `RowStruct`
 mismatch) produces a per-mod error and falls back to raw deploy instead
 of blocking the rest of the merge; `lmm verify` reports it as
@@ -277,187 +648,207 @@ to convert from. `lmm verify` flags these `needs_reingest`, and `--fix`
 re-ingests them — redownloading via the normal cache path — into the
 conversion pipeline; there is no separate migration step to run.
 
-### Terminal UI
+### BepInEx (Unity games)
 
-Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, reorder load order, resolve file conflicts, verify integrity and fix findings, switch profiles, install from search results, check/apply updates (with changelogs and rollback), edit update policies, view a mod's deployed files, view a mod's full details, purge a profile, switch games, and create/delete/export/import profiles — with every mutating action behind a confirmation prompt:
+Many Unity games are modded through [BepInEx](https://github.com/BepInEx/BepInEx),
+a loader that installs into the **game root** and injects plugins from
+`BepInEx/plugins/`. lmm supports those games, and the split of
+responsibility is deliberate and worth reading before you start: **lmm
+deploys and verifies plugins; you install the loader and set the Steam
+launch option.**
 
-```bash
-lmm tui                     # real data
-lmm tui --theme amber       # themes: wizardry (default), amber, dos, green
-lmm tui --prototype         # demo mode with static fake data
+Everything below is the `bepinex` [game adapter](docs/adapters.md), and a
+game gets it without you naming one: declaring the loader selects it, and so
+does simply having BepInEx installed in the game directory.
+
+#### Configure the game
+
+BepInEx-managed content is game-root-relative, so the game's `mod_path` is
+its own `install_path` — the same absolute path twice:
+
+```yaml
+games:
+  lethal-company:
+    name: "Lethal Company"
+    install_path: "~/.steam/steam/steamapps/common/Lethal Company"
+    mod_path: "~/.steam/steam/steamapps/common/Lethal Company"
+    sources:
+      nexusmods: "lethalcompany"
+    loader:
+      kind: bepinex
+      version: 5.4.23.5
+      runtime: mono # mono | il2cpp - omit and lmm reads it off the game directory
+      bootstrap: proton # native | proton - likewise
 ```
 
-Keys: `tab`/`h`/`l` cycle screens (landing on Search this way does not focus
-the input), `1`–`6` jump directly (`3` focuses search immediately, like `/`;
-`5` opens Sources, `6` opens Health, which also reports file conflicts),
-`↑↓`/`j`/`k` move, `enter`
-open/select (on Installed Mods or Search, opens a full mod details view
-with `lmm mod show` field parity — `↑↓` scroll the description, `esc`
-returns; on Profiles, switch to the selected profile; selecting "Search
-Archives" from the Dashboard menu also focuses search — explicit search
-intent focuses, passive cycling doesn't), `/` focus search from anywhere,
-type query, `enter` to search, `esc` unfocus (clears focus; afterward `s`
-cycles sources, number keys switch screens), `n`/`p` skip a paneful of
-results ahead/back (search results load continuously — there are no
-pages to turn; `n`/`p` just move the selection by a screenful, refilling
-the buffer as needed), `e`/`x`/`D` enable-disable/uninstall/deploy (see below), `i` install the
-selected search result (Search, input blurred — see below), `u` check for
-updates (Dashboard or Installed Mods — see below), `g` switch games (any
-screen — see below), `?` help, `q` quit.
+Not `mod_path: ""` — an empty value is not "the game root", it is a
+relative path, and lmm would deploy into whatever directory you ran it
+from.
 
-The Search screen defaults to **All sources**, mirroring the CLI: the typed
-query runs concurrently against every source configured for the game. Press
-`s` to cycle to a single source and back to "All sources". While "All
-sources" is selected, results carry a source column, and if any source
-failed, a one-line warning (e.g. `⚠ 1 source unavailable: my-repo: ...`)
-appears above the results — the sources that succeeded are still shown.
-Results mark already-installed mods; selecting a result shows a detail
-panel. With the search input blurred, `i` installs the selected result: lmm
-plans the install first ("Planning install…" on the status line), then opens
-a confirmation panel with the version and size, source, file(s) that will
-download, resolved dependencies (with their own download disclosure),
-conflicting files if any, and a warning if a dependency is missing or
-circular. Confirming streams download/extract/deploy progress into the
-status line; a successful install re-runs the current search so the
-result's "installed" marker updates right away.
+`lmm game add` with `--loader bepinex` uses the install path as the mod path
+when you give none. A game whose `mod_path` is anywhere else — a
+`games.yaml` from before lmm supported BepInEx, pointing it at
+`BepInEx/plugins` — does **not** get the BepInEx rules below: every path
+they produce is relative to the game root, so lmm keeps deploying that
+game's archives exactly as packaged into that directory, as it always did.
+`lmm game show` and `lmm verify` say so and give you both ways out: move
+the game to its root (`lmm purge --game <id> --profile <name>` for each
+profile with files deployed, then `lmm game edit <id> --mod-path <install
+path>`, then `lmm deploy`; the warning lists every step), or run `lmm game edit <id> --adapter generic-files` to keep it as it
+is. Every other command prints one line naming the game and pointing at
+`lmm game show <id>`.
 
-The **Sources** screen (key `5`) lists the active game's configured
-sources by default, with the same ID/TYPE/AUTH/CAPABILITIES columns as
-`lmm source list`; press `a` to toggle to every source registered with lmm
-— built-in and custom — marking which ones the active game uses. It only
-shows sources that actually registered: a custom source whose definition
-file failed to load (bad YAML, ID collision, etc.) has no row here — check
-`lmm source list` for those.
+The same goes for any explicit `adapter:` other than `bepinex`. With no
+`loader:` block on a game whose BepInEx is merely installed, that key is
+how you tell lmm to treat the game's archives as plain files, and lmm only
+mentions it on the import of an archive it would otherwise have laid out.
+A `loader:` block the adapter ignores is a contradiction instead, and lmm
+flags it until one side changes. [docs/adapters.md](docs/adapters.md#loader)
+has the whole rule.
 
-On **Installed Mods**, `e` toggles the selected mod's enable/disable state
-(the direction follows its current status: disabled mods enable, everything
-else disables) and `x` uninstalls it — removing deployed files, cache, and
-its profile entry, running uninstall hooks along the way. `D` deploys the
-active profile (using its current enabled mods) from either Installed Mods
-or the Dashboard. `f` opens a scrollable panel listing the selected mod's
-deployed files (`f` again, or `esc`, closes it). `P` opens a notify/auto/pin
-picker for the selected mod's update policy — picking one applies
-immediately, no separate confirmation. `L` opens an async version picker
-(fetched from the source) to lock the mod, or move an existing lock — a
-locked mod's picker gains a trailing "unlock" entry — see [Locking mods to a
-version](#locking-mods-to-a-version). On a merge-compile game (e.g.
-Icarus), `m` toggles the selected mod's pak-to-exmod conversion on/off —
-applies immediately, no confirmation modal (the same "reversible
-metadata write" exception as the `P` policy picker above), but it's a
-metadata write, not a deploy — the merged pak itself is unchanged until
-the next deploy, which the status line's "(deploy to apply)" reminds you
-of — and a non-compile game reports the toggle as inapplicable on the
-status line instead of doing anything. The row's flags column shows `raw`
-whenever the mod's prebuilt pak is deploying unconverted — either this
-mod's own conversion flag is off, or the game's `convert_paks: false`
-disables it for the whole game (either one is enough to keep a pak raw) —
-see [Pak conversion (Icarus)](#pak-conversion-icarus).
-`J`/`K` (also `ctrl+down`/`ctrl+up`)
-swap the selected mod with its neighbor in load order and persist the new
-order right away; the list itself renders in load order, and a hint reads
-"order changed — deploy (`D`) to apply" until you redeploy. `<` rolls the
-selected mod back to its previous version behind a confirmation prompt — a
-mod with no previous version is refused on the status line instead. `X`, on
-Dashboard or Installed Mods, purges the active profile (undeploying every
-currently-deployed mod) behind a confirmation prompt; an empty profile
-short-circuits with a one-line "no mods installed" message.
+The same thing from the command line, or in the web UI's Setup → Games row
+(its pencil opens the game's editor, which has the loader fields):
 
-The **Health** screen (key `6`) lists the findings from the most recent
-verify scan — missing or mismatched cache files, unrecorded checksums, mods
-needing re-ingest, stale compiles, conversion failures, and stale
-deployments — followed by every game-directory file that two or more enabled
-mods provide (formerly the standalone Conflicts screen, folded in here): the
-current load-order winner, every other mod that also provides the file, and
-a `CONFLICT`/`STALE CONFLICT` status (stale meaning the deployed copy no
-longer matches the winner — a reorder or update landed but hasn't been
-redeployed yet). One row per finding or conflict, tinted by severity;
-selecting a finding row shows its detail and a one-line remedy naming the
-fix, selecting a conflict row shows the owner, every other providing mod,
-and a resolution hint — reorder (`J`/`K` on Installed Mods) or redeploy if
-stale. `c` runs a full (network) check, the same tier `lmm verify` runs, and
-replaces the findings with the fresh results — no confirmation, since it
-changes nothing. `F` opens a confirmation panel summarizing what a fix pass
-will attempt (counts grouped by finding type), and confirming runs that same
-full check with `lmm verify --fix`'s repairs enabled, then shows a results
-overlay listing what was fixed and what's still outstanding. `D` deploys the
-active profile directly from this screen, same as Installed Mods/Dashboard —
-the fix for a stale conflict. The header names how many rows were checked
-and how many conflicts are outstanding. The Dashboard's Health line mirrors
-this screen's findings counts — `?` before the first scan lands this
-session, `OK (local)`/`OK (full)` once a scan finds nothing, or `N
-issue(s), M warning(s) (local|full)` otherwise, `(local)`/`(full)` naming
-whichever tier last updated it — and the Dashboard's separate conflict count
-reflects this screen's real conflict detection.
+```bash
+lmm game add --name "Lethal Company" --source nexusmods --id lethalcompany   --path "$HOME/.steam/steam/steamapps/common/Lethal Company"   --mod-path "$HOME/.steam/steam/steamapps/common/Lethal Company"   --loader bepinex --loader-version 5.4.23.5
 
-`u`, on Dashboard or Installed Mods, checks every checkable installed mod
-for updates (pinned and local mods are skipped) — "Checking for updates…"
-on the status line while it runs. Zero updates reports a one-line status;
-one or more opens a confirmation panel listing each `<mod> <from> → <to>`,
-and confirming applies all of them in sequence with per-update download
-progress streamed into the status line — one mod failing doesn't stop the
-rest, it's folded into the batch's warnings instead. While that panel is
-open, `v` opens the changelog for the update it names — or, with several
-updates pending, a "View changelog" picker naming each `<mod> <from> →
-<to>` first — as a scrollable overlay. After a check, `v` also works
-directly on an Installed Mods row: it shows that mod's changelog from the
-most recent check (or says there's none for it). When a confirmed batch
-finishes, an "update results" overlay lists exactly what happened, one
-`✓ <mod> <from> → <to>` (or `✗ <mod>: <error>`) line per update, so the
-applied set is never just a status-line count. The Dashboard's Updates count shows
-`?` until a check has run this session, then reflects the real number (it
-survives unrelated refreshes and only reverts to `?` after an update batch
-is actually applied, since that's what makes the count stale).
+lmm game edit lethal-company --loader bepinex --loader-bootstrap proton
+lmm game edit lethal-company --loader ""   # remove the declaration
+```
 
-On **Profiles**, `enter` on a profile other than the active one plans the
-switch and shows a preview: mods to enable/disable, or "No mod changes; set
-as default." when nothing would change. `enter` on the already-active
-profile just reports "Already on profile ..." with no modal. If the plan
-needs mods that aren't installed yet, the preview also discloses what it
-will fetch (`Will download & install N mod(s):` plus one `↓` line per mod)
-— confirming downloads and installs them as part of applying the switch,
-streaming the same progress as an install. `c` opens an input for a new
-profile name, validated inline against duplicates and invalid characters;
-`d` deletes the selected profile behind a confirmation prompt, refusing the
-active profile on the status line instead. `I` opens a "path to YAML" input
-for profile import: lmm plans the import and shows a categorized preview
-(new mods, already-installed mods, overwrite/cross-game warnings), then
-confirming downloads and installs mods as needed, with an optional
-immediate switch to the imported profile afterward. `E` opens a "path to
-save" input, prefilled with a default filename, for profile export;
-submitting refuses to overwrite an existing file.
+#### What lmm does
 
-`g`, on any screen, opens a picker of every game configured in
-`games.yaml` with the active one marked; picking one rebinds the session
-(data providers, active profile, sources) and reloads the current screen.
+- **Normalises plugin archive layouts at install.** A BepInEx plugin
+  archive comes in a handful of real shapes, and lmm places all of them
+  correctly: game-root-relative (`BepInEx/plugins/Foo.dll`, the common
+  case), wrapped in a single directory (`BepInExPack/BepInEx/…`, whose
+  wrapper is stripped), and BepInEx-relative (a bare `plugins/`,
+  `patchers/`, `monomod/` or `config/` root, which gains its `BepInEx/`
+  prefix). A loose `.dll` at the archive root becomes
+  `BepInEx/plugins/<ModName>/`. A **plugin folder** — the standard
+  NexusMods shape, one or more directories that each hold an assembly, as
+  in `Jotunn/Jotunn.dll` — moves under `BepInEx/plugins/` whole and keeps
+  its own name, so the `.pdb`, `.xml` and README beside the assembly stay
+  beside it. The package metadata every Thunderstore archive carries — a
+  `manifest`, an `icon`, a `readme`, a `changelog` or a `license`, whatever
+  extension it is spelled with — is dropped, not scattered into your game
+  directory. That drop runs both before and after the wrapper strip, so a
+  package that keeps its metadata _inside_ the wrapper — which is how
+  Thunderstore builds one — does not deliver four files into your Steam
+  install directory. A layout lmm does not recognise is reported, never
+  guessed at: a root that mixes a plugin folder with loose files, with a
+  directory holding no assembly, with a BepInEx-owned name, or with
+  `BepInEx/` itself, is one lmm cannot place and says so.
 
-Every mutating action — enable/disable, uninstall, deploy, reorder, rollback,
-purge, profile switch/create/delete/import, install, apply updates — opens a
-confirmation panel describing what will change before it runs (reorder and
-policy edits apply immediately instead, since the choice itself is the
-confirmation): `y`/`enter` confirms, `n`/`esc` cancels, and only one action
-can be in flight at a time. Install, apply-updates, and any switch
-that downloads mods stream live progress into the status line while they
-run; once an action finishes, a one-line status message reports the outcome
-(including a warning count, if the flow reported any) and clears on your
-next keypress. Quitting (`q`/`ctrl+c`) while an action is running cancels it
-immediately but waits — "Finishing current step…" on the status line,
-bounded to a few seconds — for that step to actually finish instead of
-killing it mid-download. A source that can't perform a requested action, or
-needs authentication, renders as a clean one-line message naming the right
-CLI fallback (e.g. "run 'lmm update' from a shell instead", or `lmm auth
-login <source>`) instead of a raw error. `--prototype` mode demos all of
-these actions end to end against simulated data, including one canned
-profile that always exercises the download-and-switch path.
+  A plugin folder is also never one of the game's **own** directories. For
+  a BepInEx game the archive root and the game root are the same namespace,
+  so a mod that overlays `<Game>_Data/`, `MonoBleedingEdge/` or
+  `unstripped_corlib/` looks exactly like a plugin folder — a directory
+  with an assembly inside it. lmm decides that from what your game
+  directory actually holds rather than from a list of names: a root
+  directory the game already has, holding anything the archive does not
+  account for, is a game-root overlay and deploys exactly where the archive
+  puts it.
+
+  The `BepInEx/`-rooted and wrapped shapes are unmistakable for any game —
+  which is what lets lmm refuse one imported into a game that has no loader,
+  below, rather than deploy it into nothing. The ambiguous ones — a bare `plugins/` root, a plugin folder and a bare
+  `.dll` — need lmm to believe this is a BepInEx game, so a mod for a
+  different game that happens to be rooted at `plugins/` (or at
+  `Mods/<Mod>/<Mod>.dll`) keeps deploying exactly where it always did.
+
+  Two things satisfy that: the `loader:` declaration above, or **BepInEx
+  actually being installed** in the game directory. The declaration is
+  what lmm asks you for; an installed loader is a fact lmm can read, and
+  refusing to place a plugin because of missing paperwork while the thing
+  the paperwork describes is sitting on disk helps nobody. When the
+  installation is what answered, lmm places the files and prints one line,
+  `BepInEx found in <path>; declare it with lmm game edit <id> --loader bepinex`,
+  so the answer becomes permanent.
+
+- **Seeds plugin configuration instead of linking it.** BepInEx writes its
+  `BepInEx/config/*.cfg` files on first run and you hand-edit them
+  afterwards, so a mod that ships one is offering a default. Those files
+  are written as **real files, copied only when nothing is there already**
+  — the same treatment a profile's own config overrides get. Your edits are
+  never overwritten by a later deploy, never written back into the mod
+  cache, and never removed by an uninstall.
+
+- **Refuses to deploy a plugin into a game with no loader.** A
+  BepInEx-shaped archive installed into a game that neither declares a
+  loader nor has one installed fails at plan time with the setup
+  instructions, rather than putting a DLL somewhere nothing will ever load
+  it from — which fails silently and is the hardest kind of failure to
+  diagnose.
+
+- **Refuses to install BepInEx itself as a mod.** An archive carrying
+  `BepInEx/core/` is the loader, not a plugin: it belongs to the game
+  installation and must survive a profile switch, so tracking it as a
+  profile member would tear it out from under every plugin the next time
+  you switched. lmm says so and points at the setup.
+
+- **Tells you the exact launch option.** `lmm game show <game>` — and the
+  web UI's loader panel — read the game directory to work out whether it is
+  a native Linux build or a Windows one running under Proton, and print the
+  string to paste:
+
+  ```text
+  Steam launch options for this game:
+    WINEDLLOVERRIDES="winhttp=n,b" %command%
+  ```
+
+  (`./run_bepinex.sh %command%` for a native Linux build.) Where lmm cannot
+  tell, it says so instead of guessing — the wrong option launches the game
+  normally and loads nothing.
+
+- **Verifies the result.** For a game with a `loader:` block, `lmm verify`
+  adds five checks: the preloader is present, the installed version matches
+  what you declared, the bootstrap files match the declared mode,
+  `BepInEx/LogOutput.log` exists and is newer than your last deploy, and
+  every enabled plugin is actually linked. A sixth runs for any game that
+  HAS BepInEx, declared or not: a mod with an assembly deployed outside
+  `BepInEx/`, which is what an install made before lmm recognised that
+  archive's layout looks like. The log check is the point of
+  the tier — it is the only honest evidence the loader **ran**, as opposed
+  to being installed correctly, and it is how you find out you pasted the
+  launch option wrong instead of finding out from a mod that mysteriously
+  does nothing. Only the last two checks are `--fix`-able (they re-deploy
+  the mod, re-laying its cache entry out first where that is what is
+  wrong); the others report and point at the setup.
+
+- **Keeps the download when it refuses one.** A plugin archive installed
+  into a game that declares no loader is refused at ingest, which is the
+  earliest point the archive's shape is knowable — but the downloaded file
+  is kept, so the retry after `lmm game edit <game> --loader bepinex` does
+  not fetch it again. Only this refusal keeps anything: a checksum
+  mismatch or a truncated download means the bytes are suspect, and those
+  are discarded as before.
+
+#### What lmm never does
+
+- **It does not install BepInEx.** Choosing the build is the hard part: the
+  Thunderstore `BepInExPack` is Windows-only and correct only under Proton,
+  a native Linux build needs the `BepInEx_linux_x64` archive from BepInEx's
+  own GitHub releases, and IL2CPP needs a BepInEx 6 bleeding-edge build
+  that is not a GitHub release at all. Get it wrong and you have a game
+  that silently loads nothing.
+- **It does not write Steam's configuration.** Launch options live in
+  `localconfig.vdf`, which must be edited with the client closed, in an
+  undocumented format that has changed; a bad write loses every launch
+  option for every game in your account, and the failure would look like
+  "Steam ate my settings". lmm prints the string; you paste it.
+- **It does not touch a Proton prefix.** No `user.reg`, no `winecfg`
+  automation, no `protontricks` shell-outs.
 
 ## Configuration
 
-Configuration files are stored in `~/.config/lmm/`:
+Configuration files are stored in `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`; override with `--config`):
 
 ### Main Config (`config.yaml`)
 
 ```yaml
 default_link_method: symlink # Global default: symlink, hardlink, or copy
-default_game: skyrim-se # Optional, set via 'lmm game set-default'
+default_game: baldurs-gate-3 # Optional, set via 'lmm game set-default'
 cache_path: ~/.local/share/lmm/cache # Optional, defaults to <data_dir>/cache
 ```
 
@@ -473,14 +864,14 @@ Paths support `~` expansion for the home directory.
 
 ```yaml
 games:
-  skyrim-se:
-    name: "Skyrim Special Edition"
-    install_path: "/path/to/skyrim"
-    mod_path: "/path/to/skyrim/Data"
+  baldurs-gate-3:
+    name: "Baldur's Gate 3"
+    install_path: "/path/to/Steam/steamapps/common/Baldurs Gate 3"
+    mod_path: "Data" # Relative to install_path; an absolute path works too
     sources:
-      nexusmods: "skyrimspecialedition"
+      nexusmods: "baldursgate3"
     # link_method: symlink  # Optional: override default_link_method for this game
-    # cache_path: ~/skyrim-mods  # Optional: override global cache_path for this game
+    # cache_path: ~/bg3-mods  # Optional: override global cache_path for this game
 
   starfield:
     name: "Starfield"
@@ -499,9 +890,33 @@ games:
       icarus: "icarus"
     deploy_mode: compile
     # convert_paks: true  # Optional: default; set false to deploy every prebuilt .pak mod raw instead of converting it
+
+  lethal-company:
+    name: "Lethal Company"
+    install_path: "/path/to/Steam/steamapps/common/Lethal Company"
+    mod_path: "/path/to/Steam/steamapps/common/Lethal Company" # BepInEx deploys into the game root
+    sources:
+      nexusmods: "lethalcompany"
+    loader: # Optional: this game uses a mod loader (see BepInEx (Unity games))
+      kind: bepinex
+      version: 5.4.23.5
+      # runtime: mono        # mono | il2cpp - omit and lmm reads it off the game directory
+      # bootstrap: proton    # native | proton - likewise
 ```
 
-Steam auto-detection (`lmm game detect`) knows about Icarus (App ID `1149460`) and generates an equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
+An optional **`loader:`** block declares that a mod loader is installed in
+the game directory. Only `kind: bepinex` means anything to lmm today;
+`version`, `runtime` and `bootstrap` are each optional, and an unrecognised
+`runtime` or `bootstrap` fails the load naming the game, the value and the
+valid set rather than defaulting silently. What the declaration changes is
+which rules apply: archive-layout normalisation for the two ambiguous
+BepInEx shapes, a plan-time refusal to deploy a plugin the game cannot load,
+and `lmm verify`'s loader checks. lmm never installs the loader itself. See
+[BepInEx (Unity games)](#bepinex-unity-games).
+
+`mod_path` may be **absolute, or relative to `install_path` — everywhere**. A relative value — `mod_path: Data` — is resolved against that game's `install_path`, never against your current working directory (`~` expands first, so `~/mods` is absolute, not relative). That rule is the same on every path that writes a game, not just for a hand-written `games.yaml`: `lmm game add`, `lmm game add --from-detected`, `lmm game detect`, `POST /api/v1/games` and the web UI's add-game form all accept `Data` and store the resolved absolute path, so what lmm writes reads back identically from any shell. A relative `mod_path` with no `install_path` to resolve it against is refused — naming the game and the field when `games.yaml` is read, and naming `install_path` (the value that is actually missing) at the prompt, the form and the API.
+
+Steam auto-detection (`lmm game detect`) knows about all three of these — Baldur's Gate 3, Starfield and Icarus (App ID `1149460`) — and generates the equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
 
 **Merge precedence**: with more than one `compile`-mode mod installed (currently Icarus only), the profile's load order — the same order `lmm list` displays and `lmm profile reorder` changes — decides how conflicting changes resolve. Mods are merged in load order, so a mod later in the list is applied later and wins conflicting _fields_ on a shared data-table row; it's a per-field upsert, not a whole-row overwrite, so untouched fields from earlier mods still survive. Bundled asset files can't compose that way — a same-path collision between two mods is whole-file last-wins, and installing or updating a colliding mod prints a warning naming both. Either way, the bottom of the load order has final say, and `lmm profile reorder` regenerates the merged pak immediately, so a reorder's effect on precedence is visible right away rather than at the next deploy. Prebuilt `.pak` mods participate in this same merge: at merge time each one is converted and rebased onto the game's current base pak — a pak embedding a `data.EXMOD` manifest converts exactly, otherwise lmm diff-derives the changes against the current base — and only an irreconcilable pak falls back to a raw, unconverted deploy, with a warning naming it (see [Pak conversion (Icarus)](#pak-conversion-icarus)). Set `convert_paks: false` in a game's `games.yaml` entry, or `lmm mod convert <mod-id> off` for one mod, to keep specific paks deployed raw instead.
 
@@ -525,15 +940,30 @@ The mod cache location is determined by:
 
 1. Per-game `cache_path` in `games.yaml` (if set)
 2. Global `cache_path` in `config.yaml` (if set)
-3. Default: `~/.local/share/lmm/cache/`
+3. Default: `<data>/cache/` (`~/.local/share/lmm/cache/` unless `XDG_DATA_HOME` is set)
 
 This allows you to store different games' mods on different drives (e.g., large games on HDD, frequently accessed games on SSD).
+
+Before changing a game's `cache_path`, run `lmm purge --game <id> --profile <name>`
+for **each profile with deployed files**, while the old cache path is still
+configured. lmm refuses a programmatic change until those deployments are
+gone: symlinks already in the game directory still point into the old cache. Then
+change `cache_path`, place the cached mods in the new layout (or download them
+again), and run `lmm deploy --game <id>` for the active profile. Keep the old
+cache until the new deployment works.
+
+If you already edited `games.yaml` by hand with files deployed, restore that
+game's previous `cache_path` in `games.yaml` first and reopen lmm (or restart
+`lmm serve`). You can inspect a deployed link's target with `readlink` to find
+the old cache directory. Purge every affected profile while the old path is
+configured, then make the change and redeploy as above. This leaves files you
+placed in the game directory alone.
 
 ## Custom Sources
 
 In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. Three types are fully implemented: `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list you publish, over `https://` or as a local file), and `api` (a GET+JSON REST API described declaratively) — all three work from `search`/`install`/`update` like any built-in source (within each type's capabilities), and `manifest`/`api` sources also support optional API-key authentication. Because `lmm search` queries every source configured for a game concurrently by default (see [Search](#search)), a game mapping several of these alongside NexusMods/CurseForge surfaces results from all of them in one query.
 
-Custom source definitions are loaded from `~/.config/lmm/sources/*.yaml` (or `*.yml`). Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
+Custom source definitions are loaded from `<config>/sources/*.yaml` (or `*.yml`). Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
 
 ### Source Definition Format
 
@@ -627,7 +1057,7 @@ mods:
     version: 1.2.0
     author: someone
     summary: Makes things cooler
-    game_ids: [skyrimspecialedition] # matched against this source's mapped `sources:` value
+    game_ids: [baldursgate3] # matched against this source's mapped `sources:` value
     url: https://example.com/mods/cool-mod # optional web page
     updated_at: 2026-07-01T00:00:00Z # optional, RFC 3339
     dependencies: [other-mod] # optional, IDs of other mods in this manifest
@@ -638,6 +1068,7 @@ mods:
         version: 1.2.0
         size: 123456
         url: https://example.com/files/cool-mod-1.2.0.zip
+        updated_at: 2026-07-02T03:04:05Z # optional, RFC 3339
         sha256: <hex digest> # optional; verified on download if present
         primary: true
 ```
@@ -661,25 +1092,26 @@ mods:
 
 **`files[]` fields:**
 
-| Field      | Type    | Required | Description                                                                                                               |
-| ---------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `id`       | string  | **yes**  | File ID, used to request a download                                                                                       |
-| `filename` | string  | **yes**  | Name given to the downloaded/cached file                                                                                  |
-| `url`      | string  | **yes**  | Download URL (`https://` unless `allow_http: true`)                                                                       |
-| `name`     | string  | no       | Display name                                                                                                              |
-| `version`  | string  | no       | —                                                                                                                         |
-| `size`     | integer | no       | Size in bytes                                                                                                             |
-| `sha256`   | string  | no       | Hex-encoded SHA-256 checksum; when present, lmm verifies it after download and **aborts the install if it doesn't match** |
-| `primary`  | boolean | no       | Marks the default file when a mod publishes more than one                                                                 |
+| Field        | Type    | Required | Description                                                                                                               |
+| ------------ | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | string  | **yes**  | File ID, used to request a download                                                                                       |
+| `filename`   | string  | **yes**  | Name given to the downloaded/cached file                                                                                  |
+| `url`        | string  | **yes**  | Download URL (`https://` unless `allow_http: true`)                                                                       |
+| `name`       | string  | no       | Display name                                                                                                              |
+| `version`    | string  | no       | —                                                                                                                         |
+| `size`       | integer | no       | Size in bytes                                                                                                             |
+| `updated_at` | string  | no       | RFC 3339 timestamp for this file; an unparseable value is silently treated as unset                                       |
+| `sha256`     | string  | no       | Hex-encoded SHA-256 checksum; when present, lmm verifies it after download and **aborts the install if it doesn't match** |
+| `primary`    | boolean | no       | Marks the default file when a mod publishes more than one                                                                 |
 
 To use a manifest source with a game, map it under that game's `sources:` block in `games.yaml`, the same as any built-in source — the mapped value should match the IDs used in the manifest's `game_ids` (unlike `directory` sources, this value is not ignored):
 
 ```yaml
 games:
-  skyrim-se:
+  baldurs-gate-3:
     sources:
-      nexusmods: skyrimspecialedition
-      my-repo: skyrimspecialedition
+      nexusmods: baldursgate3
+      my-repo: baldursgate3
 ```
 
 ### API Sources
@@ -697,6 +1129,11 @@ api:
     api_key:
       in: header # "header" or "query"
       name: X-API-Key
+    validate: # optional (api sources only): the live key check `lmm auth login` runs
+      method: GET # optional: GET (default), HEAD or POST — nothing that could mutate state
+      path: /me # required: appended to base_url, like an endpoint path
+      status: 200 # optional: the exact status a valid key must produce (default: any 2xx)
+      field: user.id # optional: a JSON dot-path that must be present in the response
   endpoints: # each endpoint is optional; an undefined one is a capability gap (see below)
     search:
       path: /mods?game={game_id}&q={query}&page={page}&limit={page_size}
@@ -710,6 +1147,9 @@ api:
     download_url:
       path: /files/{file_id}/download
       field: url # required: dot-path to the URL string in the response
+    dependencies: # declaring this is what enables dependency resolution for the source
+      path: /mods/{mod_id}/dependencies
+      list: requires # required: dot-path to the dependency array
   mappings:
     mod: # domain field -> JSON dot-path
       id: id
@@ -726,21 +1166,26 @@ api:
       filename: file_name
       version: version
       size: size_bytes
+      uploaded_at: published_at # RFC 3339 expected; unparseable is left unset
+    dependency: # one entry of the dependencies list -> a mod reference
+      mod_id: id # required when endpoints.dependencies is defined
+      source_id: source # optional; defaults to this source's own id
+      version: min_version # optional
 ```
 
 **Placeholders** — every `{placeholder}` in an endpoint's `path` is substituted with a URL-escaped value before the request is made; a placeholder with no value for that request is left in the URL as-is:
 
-| Placeholder   | Value                                                                                                                                    | Used by                                          |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `{game_id}`   | The current game's ID for this source (from the search query, the mod being fetched/installed, or an installed mod during update checks) | `search`, `get_mod`, `mod_files`, `download_url` |
-| `{query}`     | The search text                                                                                                                          | `search`                                         |
-| `{page}`      | The internal 0-based page number, plus `page_start` (default `1`)                                                                        | `search`                                         |
-| `{page_size}` | The requested page size (defaults to 20 when unspecified or ≤ 0)                                                                         | `search`                                         |
-| `{offset}`    | The internal 0-based page × `page_size` — independent of `page_start`, for offset-paginated APIs                                         | `search`                                         |
-| `{category}`  | The search query's category filter (source-specific ID or name), empty when unset                                                        | `search`                                         |
-| `{tags}`      | The search query's tag filters, comma-joined, empty when unset                                                                           | `search`                                         |
-| `{mod_id}`    | The mod ID                                                                                                                               | `get_mod`, `mod_files`, `download_url`           |
-| `{file_id}`   | The file ID                                                                                                                              | `download_url`                                   |
+| Placeholder   | Value                                                                                                                                    | Used by                                                          |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `{game_id}`   | The current game's ID for this source (from the search query, the mod being fetched/installed, or an installed mod during update checks) | `search`, `get_mod`, `mod_files`, `download_url`, `dependencies` |
+| `{query}`     | The search text                                                                                                                          | `search`                                                         |
+| `{page}`      | The internal 0-based page number, plus `page_start` (default `1`)                                                                        | `search`                                                         |
+| `{page_size}` | The requested page size (defaults to 20 when unspecified or ≤ 0)                                                                         | `search`                                                         |
+| `{offset}`    | The internal 0-based page × `page_size` — independent of `page_start`, for offset-paginated APIs                                         | `search`                                                         |
+| `{category}`  | The search query's category filter (NexusMods: a name, CurseForge: an id), empty when unset                                              | `search`                                                         |
+| `{tags}`      | The search query's tag filters, comma-joined, empty when unset                                                                           | `search`                                                         |
+| `{mod_id}`    | The mod ID                                                                                                                               | `get_mod`, `mod_files`, `download_url`, `dependencies`           |
+| `{file_id}`   | The file ID                                                                                                                              | `download_url`                                                   |
 
 **`mappings.mod` keys** (`id` and `name` are required; every other key is optional and left at its zero value when unmapped or the path doesn't resolve):
 
@@ -759,15 +1204,24 @@ api:
 
 **`mappings.file` keys** (`id` is required only when `mod_files` is defined):
 
-| Key        | Required                       | Domain field                             |
-| ---------- | ------------------------------ | ---------------------------------------- |
-| `id`       | **yes** (when `mod_files` set) | File ID, used to request a download      |
-| `name`     | no                             | Display name                             |
-| `filename` | no                             | Name given to the downloaded/cached file |
-| `version`  | no                             | —                                        |
-| `size`     | no                             | Size in bytes                            |
+| Key           | Required                       | Domain field                             |
+| ------------- | ------------------------------ | ---------------------------------------- |
+| `id`          | **yes** (when `mod_files` set) | File ID, used to request a download      |
+| `name`        | no                             | Display name                             |
+| `filename`    | no                             | Name given to the downloaded/cached file |
+| `version`     | no                             | —                                        |
+| `size`        | no                             | Size in bytes                            |
+| `uploaded_at` | no                             | RFC 3339 timestamp for this file         |
 
-Unknown keys anywhere in `mappings.mod` or `mappings.file` fail validation at load time (typo detection) instead of silently mapping to nothing.
+**`mappings.dependency` keys** (`mod_id` is required only when `dependencies` is defined):
+
+| Key         | Required                          | Domain field                                           |
+| ----------- | --------------------------------- | ------------------------------------------------------ |
+| `mod_id`    | **yes** (when `dependencies` set) | The required mod's ID                                  |
+| `source_id` | no                                | The source the dependency lives in (default: this one) |
+| `version`   | no                                | Minimum/required version, recorded on the reference    |
+
+Unknown keys anywhere in `mappings.mod`, `mappings.file` or `mappings.dependency` fail validation at load time (typo detection) instead of silently mapping to nothing.
 
 **Capability gaps** — an endpoint you don't define makes the corresponding operation report "not supported" instead of failing at load time:
 
@@ -775,16 +1229,20 @@ Unknown keys anywhere in `mappings.mod` or `mappings.file` fail validation at lo
 - no `get_mod` → fetching a single mod is unsupported, and so are update checks (`api` sources check for updates by calling `get_mod` on each installed mod and comparing versions)
 - no `mod_files` → listing a mod's files is unsupported, and so is the `versions` capability (per-file version→file resolution, used by `install --version` and profile version convergence)
 - no `download_url` → resolving a download URL is unsupported
-- dependency resolution (`GetDependencies`) is **always** unsupported for `api` sources — there is no dependency endpoint in v1
+- no `dependencies` → dependency resolution is unsupported, and lmm installs the source's mods on their own
 
-`lmm source list`'s `CAPABILITIES` column reflects exactly this: a definition with only `get_mod` shows `updates`; adding `search` adds `search` to that list; `auth` appears only when the definition declares an `auth` block; `versions` appears once `mod_files` is defined. That `versions` flag only advertises the endpoint's presence, though — whether `install --version` can actually resolve a given mod depends on whether the files that mod's `mod_files` call returns carry version info, checked dynamically per call (see `install --version`'s own entry below).
+`lmm source list`'s `CAPABILITIES` column reflects exactly this: a definition with only `get_mod` shows `updates`; adding `search` adds `search` to that list; `auth` appears only when the definition declares an `auth` block; `versions` appears once `mod_files` is defined; `deps` appears once `dependencies` is defined. That `versions` flag only advertises the endpoint's presence, though — whether `install --version` can actually resolve a given mod depends on whether the files that mod's `mod_files` call returns carry version info, checked dynamically per call (see `install --version`'s own entry below).
 
 **Guardrails:**
 
-- Requests are `GET` only, and only JSON responses are understood — no POST, GraphQL, or scraping.
+- Mod-data requests are `GET` only, and only JSON responses are understood — no GraphQL or scraping. (`auth.validate` may declare `HEAD` or `POST` for its own probe, which fetches no mod data.)
 - `api.base_url` must be `https://` unless the definition sets `allow_http: true` (same rule as `manifest` sources).
 - Every request is bounded by a 30-second timeout.
 - Responses are capped at 10 MiB; a larger response fails the operation instead of being read into memory.
+
+**Key validation** — an `api` source that declares `auth.validate` is checked **live** by `lmm auth login <id>` (and by the web UI's authentication screen) before the key is stored, exactly as NexusMods and CurseForge are. The probe request goes to `base_url` + `path`, carrying the candidate key the same way every other request to that source carries it, and the key passes when the response matches `status` (or, with no `status`, is any 2xx) and — when `field` is set — contains that JSON dot-path. `field` exists for an API that answers `200` with an anonymous document rather than refusing outright. `401`/`403` mean the key was rejected; anything else means the service could not answer, which is reported as a failure to check rather than a bad key, and the response body is never quoted back (the one thing a rejection body might echo is the key itself). A definition **without** `auth.validate` keeps the old behaviour: the key is stored unvalidated and exercised on first use, and `lmm auth login` says so instead of claiming it authenticated.
+
+**Dependencies** — an `api` source resolves mod dependencies only when it declares `endpoints.dependencies` and `mappings.dependency`; without them the source reports no dependency capability and lmm installs its mods on their own, exactly as before. Each entry of the endpoint's `list` becomes one mod reference: `mod_id` is required, `version` is optional, and `source_id` is optional and defaults to **this** source — a self-contained catalogue needs only `mod_id`. A dependency naming another source is resolved against that source when the game maps it, and reported as a missing dependency when it does not.
 
 **Credentials** — `api` sources use the same `auth.api_key` block as `manifest` sources (see [Authentication](#authentication) below): the resolved key is attached to every API request per `in: header` / `in: query`. For downloads, both header- and query-mode keys are only sent when the URL returned by `download_url` shares scheme and host with `api.base_url` — an endpoint that hands back a third-party CDN URL never receives the source's key, in either form. If a download is redirected to a different scheme or host, a header-mode key is stripped before the redirect is followed (the same v1.8.0 machinery `manifest` sources use).
 
@@ -803,7 +1261,10 @@ manifest:
 
 - **Key resolution**, checked in order:
   1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
-  2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store.
+  2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store. An `api` source that also declares `auth.validate` has its key checked live before it is stored (see [API Sources](#api-sources)); every other custom source stores it unvalidated and exercises it on first use.
+
+  When both exist the environment variable wins, and `lmm auth status` (and the web UI's Auth card) say so: the row names the variable and adds `(stored key present, shadowed by $VAR)`, so the answer to "which key is lmm sending?" is always the key it is really sending (#356). The stored key is left alone — unset the variable, or `lmm auth logout <id>` to drop the stored one.
+
 - The resolved key is always attached to the manifest fetch itself (the request for the mod list document); for `api` sources, it's attached to every request built from an `endpoints.*.path` template (search, get_mod, mod_files, download_url).
 - File downloads follow the same same-origin rule regardless of whether the key is `in: header` or `in: query`:
   - **Remote manifests** (`https://` URL): the key (as a header, or appended to the URL) is only sent to file downloads whose scheme and host match the manifest URL's — a manifest pointing files at a third-party CDN never receives the source's key, in either form.
@@ -822,7 +1283,7 @@ lmm source list
 
 Output:
 
-```
+```text
 ID            NAME                    TYPE       AUTH  CAPABILITIES                       ERROR
 nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth,versions
 donovan-mods  Donovan's 7D2D Modlets  directory  n/a   search,updates
@@ -836,7 +1297,7 @@ lmm source list --all
 
 Output:
 
-```
+```text
 ID            NAME                    TYPE       AUTH  CAPABILITIES                       IN USE  ERROR
 nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth,versions  yes
 curseforge    CurseForge              built-in   yes   search,deps,updates,auth,versions  no
@@ -855,13 +1316,13 @@ lmm source validate ~/.config/lmm/sources/my-source.yaml
 
 On success:
 
-```
+```text
 ~/.config/lmm/sources/my-source.yaml: valid (directory source "my-source")
 ```
 
 On error (exits with code 1):
 
-```
+```text
 Error: invalid definition: id "my-bad-source!" must match ^[a-z0-9-]+$
 ```
 
@@ -873,7 +1334,7 @@ lmm source validate --probe ~/.config/lmm/sources/my-source.yaml
 
 For an `api` definition with no `search` endpoint (install-by-ID-only), pass `--id` with a known mod ID so `--probe` has something to call `get_mod` with. Captured against a local test definition (a `get_mod`-only `api` source pointed at a throwaway local server):
 
-```
+```text
 $ lmm source validate --probe --id 42 demo-api.yaml
 demo-api.yaml: valid (api source "demo-api")
 probe: ok — get_mod 42 returned "Cool Mod"
@@ -881,7 +1342,7 @@ probe: ok — get_mod 42 returned "Cool Mod"
 
 Without `--id` on a search-less `api` definition, `--probe` fails with a clear message instead of silently doing nothing:
 
-```
+```text
 Error: probe: this definition has no search endpoint; provide a known mod id with --id to probe get_mod
 ```
 
@@ -911,111 +1372,1034 @@ Error: probe: this definition has no search endpoint; provide a known mod id wit
    lmm source validate ~/.config/lmm/sources/my-mods.yaml
    ```
 
+   Steps 2 and 3 have a one-command form: `lmm source add ./my-mods.yaml`
+   validates a definition and installs it under the config directory's
+   `sources/` folder, refusing an id a built-in already owns or a
+   definition that cannot be constructed. `lmm source remove <id>` takes
+   one out again, and refuses while any configured game still maps it,
+   naming those games.
+
 4. Map it under the game(s) that should use it in `games.yaml` (see [Directory Sources](#directory-sources) above):
 
    ```yaml
    games:
-     skyrim-se:
+     baldurs-gate-3:
        sources:
-         nexusmods: skyrimspecialedition
+         nexusmods: baldursgate3
          my-local-mods: ""
    ```
 
 5. Search and install from it like any built-in source:
+
    ```bash
-   lmm search bigger -g skyrim-se --source my-local-mods
-   lmm install --source my-local-mods --id BiggerBackpack -g skyrim-se
+   lmm search bigger -g baldurs-gate-3 --source my-local-mods
+   lmm install --source my-local-mods --id BiggerBackpack -g baldurs-gate-3
    ```
 
 A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A `manifest` source shows `search,deps,updates,versions` (plus `auth` if the definition declares one, with the `AUTH` column reporting `yes`/`no` once a key is or isn't configured). An `api` source shows only the capabilities its defined endpoints provide — `updates` alone for a `get_mod`-only definition, `search,updates` once a `search` endpoint is added, plus `auth` if the definition declares one, plus `versions` once a `mod_files` endpoint is defined — and never `deps` (dependency resolution isn't supported for `api` sources). Any type will show as an `error` row if construction fails (e.g. a directory source's path doesn't exist). A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
+
+## Web UI (`lmm serve`)
+
+`lmm serve` starts a local, browser-based UI over the same database and
+profiles the CLI uses — no separate install, no separate config, and (by
+default) nothing reachable beyond your own machine:
+
+```bash
+lmm serve
+# lmm serve listening on http://127.0.0.1:7420/
+```
+
+It opens your default browser automatically; add `--no-open` to skip that
+and open the printed URL yourself, or `--addr` to bind somewhere other than
+the default `127.0.0.1:7420`:
+
+```bash
+lmm serve --addr 127.0.0.1:8080
+lmm serve --no-open
+```
+
+The CLI stays usable while it runs, and the two agree: `lmm serve` re-reads
+`games.yaml` whenever it changes, so a game you add, edit or remove with
+`lmm game add`/`edit` in another terminal shows up in the browser on the
+next request — no restart. Stored credentials are the one exception: a key
+saved after the server started needs a restart before the server can use
+it, and the Setup page says so when that happens.
+
+It is a single-page application: one small shell, then everything happens
+in place. It is desktop-first: it needs JavaScript and a current desktop
+browser, and there is no small-screen layout yet — on a phone, reach for the
+CLI over SSH, which drives the same flows. It still installs nothing: Preact and htm are vendored in the
+repo at pinned versions and embedded in the binary, so `go build` remains
+the entire build and the UI never fetches anything from the network.
+
+### Screens
+
+**Mission Control** (`/g/{game}/{profile}`) is home. Its top bar carries the
+game and profile pickers, the undeployed-changes indicator and **Deploy**,
+the omnibar, the activity bell, **⚙ Setup** and the theme toggle. Beneath
+it, attention cards render only when they have something to say, and each
+acts in place:
+
+| Card          | What it shows                                                                                                          | What it does                                                                                                                                                                                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Updates**   | every mod with a newer version                                                                                         | **Check again** re-asks the sources; **Update all (N)** takes every applicable row; or tick rows — one at a time, or the header box — and **Update N mods**                                                                                                                                 |
+| **Health**    | `lmm verify`'s findings, and when it last ran (or "Unchanged since …" when the answer came from the verify memo, #336) | per-finding **Repair**, **Repair all**, **Re-verify** (a real re-run, never the memo); a finding that `verify --fix` would not attempt says so in the engine's own words. The card renders only when something is wrong — **Verify** in the library toolbar is the one that is always there |
+| **Conflicts** | each contested file, its contenders and the winning rule                                                               | **Resolve…** opens the reorder modal scrolled to that file                                                                                                                                                                                                                                  |
+| **Profile**   | which way the profile and the installed set have drifted                                                               | **Apply profile…** runs `lmm profile apply`; **Sync…** runs `lmm profile sync`                                                                                                                                                                                                              |
+
+The **library** is the spine: an enabled toggle, the name, the installed
+version (with its update target), badges (⬆ update, health, ⇄ conflict,
+🔒 lock, update policy), load order, a visible **Update** button on any row
+with one pending, and a ⋯ menu per row (Uninstall / Lock / Verify /
+Repair… / pak conversion / Re-link… / Reorder here). Pak conversion and
+Repair… appear only where they apply.
+
+The health badge states which of three things is true of that mod, rather
+than marking only the bad one: **✓** verified and clean, **⚠** with the
+number of findings in its tooltip, or **?** for not verified yet — so a
+healthy mod and one nothing has checked no longer look the same. The
+slide-over says the same thing in words.
+
+Ticking the enabled toggle moves it **immediately**, to the state you asked
+for, with "Enabling…"/"Disabling…" and a spinner on the row while the deploy
+behind it runs; if the job fails the row goes back to what is actually true.
+A mod has one such change in flight at a time — the row, the slide-over and
+the full mod page all show it, and a batch leaves that mod out. If the
+page's live connection to `lmm serve` drops meanwhile, it catches up when
+the connection returns, and says so if the server no longer knows the job;
+a change the server takes and never answers is given up on after a minute,
+and the row shows whatever the server reports once it answers. The row
+settles only on a fresh read of the library taken after the change; if that
+read fails, or brings nothing back within a minute while you are looking at
+it, a toast says the mod's current state could not be read and the row shows
+the last state the server reported.
+
+Filter (all/enabled/updatable/unhealthy) and sort (load order/name/recently
+installed) narrow it. The header checkbox selects **everything in view**
+— after the filter and whatever the omnibar is narrowing by — skipping rows
+the batch actions cannot apply to, and reads back as checked, empty or
+partial; `a` does the same from the keyboard anywhere on Mission Control
+(outside a text field, and not while a modal or the slide-over is open). A
+selection raises a batch bar that says how much is selected out of what is in
+view, with the applicable count on each action (Enable / Disable / Update /
+Uninstall). More columns appear as the display widens: author and install
+date at 1440px, source and link method at 1920px. Its toolbar also carries
+**Check for updates** (which re-asks the sources rather than re-reading what
+they cached), **Update all (N)**, **Verify**, **Reorder…** and
+**Add mods ▾**: Search sources… (focuses the omnibar), Import an archive…
+and Adopt untracked mods… — the same three flows, and the same component,
+the empty-library state offers before you have installed a first mod.
+
+Below the library sits the **Snapshots** card, which — unlike the attention
+cards — renders whether or not it has anything to show, because its value is
+knowing the safety net is there. It lists the game's snapshots newest first
+(with what each recorded and how much a restore would put back), and each
+row carries **Restore…** (through the same confirm-plan modal every other
+mutation uses, with the refusals up front) and **Delete** (confirmed in
+place on the row, and it says what it keeps: the stored originals). **Snapshot
+now** records one with no name to type — see [Snapshots](#snapshots).
+
+Clicking a row opens the **slide-over**: author, installed → available
+version, that mod's health in words, an editable lock, update policy and
+(where it applies) pak conversion, that mod's own findings and conflicts, a
+changelog preview, and Update / Enable-or-Disable / Uninstall. **More info →** opens the **full mod
+page** (`/g/{game}/{profile}/mod/{source}/{id}`), which carries all of that
+plus what only it has room for: full description, complete changelog, a
+files table, a versions table with per-version install and rollback,
+**Re-link…** (`lmm mod edit`), dependencies, and that mod's own job history.
+
+Every confirm-plan modal has an **Advanced** section holding that command's
+own flags — `install --show-archived` / `--no-deps` / `--skip-verify`,
+`uninstall --keep-cache`, `deploy <mod-id>` / `--method` / `--purge` /
+`--all`, `--force` and the global `--no-hooks`. Flags that change what the
+plan SAYS re-compute it, so the preview always describes the mutation
+Confirm will submit.
+
+The **Setup page** (`/g/{game}/{profile}/setup`) holds everything
+administrative, in five sections: **Games** (the configured games table with
+its sources; each row's pencil opens one editor for the game's name, install
+path, mod path, sources and loader, with one Save that writes them all or
+nothing; Steam detection, manual add, set/clear the default), **Authentication**
+(per-source status, log in and out, the environment variable each source
+reads shown beside its field, orphaned-token removal), **Sources**
+(a line-numbered YAML editor for custom sources with validate-then-save and
+an optional live probe, delete, download; and the local search indexes a
+source like Thunderstore keeps, with their size, the games that use them, a
+**Refresh index** button and a previewed **Prune unused indexes**),
+**Archive import** (upload an archive, optionally link it to a
+source and mod id, then confirm), and **Adopt** (scan the game folder for
+untracked mods, preview, confirm). With no games configured yet, `/` is the
+first-run flow and shares those same detect/add forms — **and the
+custom-source editor**, because a game can only be added against a source
+that already exists and nothing about defining one is game-scoped.
+
+Steam detection lists every installed game it finds, not only the curated
+ones: a curated row is badged **Known** and adds by ticking its checkbox
+same as always, while a game lmm has no known-games entry for is shown
+beside it — never hidden — with an **Add with details…** action instead of
+a checkbox (it has no scan index to select with). That opens the manual add
+form pre-filled from the scan: the display name, a read-only install path,
+and the Advanced section's game id, all as the scan reported them; the mod
+path field shows `<install path>/mods` as a placeholder guess, editable
+like any other field. Picking a mod source then auto-searches its catalog
+by the detected game's own name and highlights a single exact-name match
+without submitting anything — the same suggestion `lmm game add
+--from-detected` makes non-interactively, just requiring a click here
+instead of taking it silently. The manual add form also gets its own **Pick
+an installed game…** control — the identical picker and prefill, reachable
+without going through the detect list first, for when you already know you
+want the manual form. Either path submits with `from_steam_app_id` plus
+only the fields you actually changed; the browser never invents a slug, a
+mod path or a source map of its own. On a **curated** (Known) row that is
+the whole form: Submit is live on the app id alone, the form names the
+source map the known-games list will supply, and the source fields become
+an optional override you can layer on top — the same thing `lmm game add
+--from-detected 489830` does with no further arguments. An uncurated row
+still needs a source and identifier, because nothing on disk supplies them. If the scan that offered a game goes
+stale (it was uninstalled between the scan and the submit), the form says
+so by name and offers a **Rescan** rather than a dead end.
+
+A game whose **mod path** needs you — lmm deployed files into a directory
+that has since gone — is flagged wherever the game is shown: a warning at
+the top of Mission Control, a row in the Health card, the Games table, the
+game's loader panel and the game chooser, each with **Set mod path…**,
+which opens that row's editor. Saving a new mod path while files are still
+deployed under the old one is refused, and the refusal lists what to do in
+order: record any files the active profile lists but only another profile
+records (`lmm profile apply` / `lmm deploy`), purge each profile with files
+there, save the new path again, then deploy. Steam detection marks such a
+game **needs repair** and never offers it for re-adding, which would reset
+its profile.
+
+### Flows
+
+**Every mutation works the same way**, and it is the CLI's own way: the plan
+is computed and shown to you first — the exact mods, files, hooks and paths
+`--dry-run` would print — and confirming runs it as a background job. The
+control you clicked then _becomes_ that job's progress, with live phase
+text and byte counters, and its outcome resurfaces in the same place. A job
+runs under the server's own context, so closing the tab never interrupts
+one.
+
+The **activity bell** collects every job of the session: running (with
+progress), queued, failed (with its next step right there — an install
+refused for a file conflict offers **Overwrite?**), and recently finished.
+Each entry expands to that job's own phase-by-phase event stream. A
+completion whose control is no longer on screen arrives as a toast instead.
+
+**Searching**: type in the omnibar to narrow your library as you go; press
+**Enter** to fan the same text out to the game's configured sources and
+append the results below your library, installable in place, with a version
+picker where the source offers more than one. A source that fails to answer
+shows a warning row beside whatever did — never in place of it. A **✕**
+appears in the omnibar the moment it holds text; click it (or press **Esc**
+while the field has focus) to clear the search, drop the fanned-out results
+and return to your plain library, without losing focus. For heavier
+browsing, the **search page** (`/g/{game}/{profile}/search?q=…`) adds source
+badges, download counts, summaries, category and source filters, a tag
+filter where a source honours one (`lmm search --tag`), a sort menu
+(relevance, last updated, most downloaded, popular — each shown only where a
+searched source can order by it; `lmm search --sort`) and pagination.
+
+**Switching profiles**: picking a profile's _name_ in the profile picker
+only changes what you are looking at. **Switch and deploy…** beside it runs
+the real `lmm profile switch` — undeploy what the old profile deployed,
+deploy what the new one lists, move the game's active profile — behind the
+same plan-and-confirm every other mutation uses.
+
+**Modals** stack at most one deep: the confirm-plan modal, the **reorder**
+modal (drag a row — a ghost follows the pointer and a dashed outline marks
+where it will land, since the drag itself is plain mouse events with no
+browser-provided drag image — or use its ↑ ↓ First Last buttons, with a live
+"current vs proposed winner" preview per contested path before Save
+commits), the **profiles** modal (create, rename, delete, set default,
+export, import, plus per-profile **Sync…** and **Purge…**), the **keyboard
+shortcuts** help (`?`), and a batch-uninstall confirm.
+
+**Purge** is the one mutation that asks for more than a click: its confirm
+step keeps **Purge** disabled until you type the profile's own name back,
+because it undeploys the whole profile and, with its own option set,
+removes every mod record behind it.
+
+The profiles modal follows the active-profile rules: the active profile has
+no **Delete** (its mods are the ones in the game directory — switch first),
+and every other profile's purge is labelled **Clean up…**, because it
+removes only the files that profile deployed which nothing else uses; its
+preview lists what it will remove and each file it keeps, with the reason
+(another profile or game records it, the active profile lists its mod, or it
+is your file and lmm no longer tracks it). The modal shows the listing's own
+warnings (no profile, or several, marked active); a sync previews the mods
+it keeps despite a disagreement; and a switch in a game with no single
+active profile says it will only mark its target, then finishes with the
+commands that finish the job.
+
+### Keyboard
+
+The whole UI is operable from the keyboard, and every focused control shows
+a visible ring in both themes.
+
+| Key                        | Where                                                                   | What it does                                                                                                   |
+| -------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Tab` / `Shift+Tab`        | anywhere                                                                | move through the controls; the first stop on every screen is **Skip to content**, which jumps past the top bar |
+| `?`                        | anywhere outside a text field                                           | open this keyboard-shortcuts help                                                                              |
+| `Enter`                    | omnibar                                                                 | search the game's sources for what you typed                                                                   |
+| `Esc`                      | omnibar                                                                 | clear the search and return to your plain library                                                              |
+| `Esc`                      | any modal, the slide-over, any open dropdown                            | close it and return focus to whatever opened it                                                                |
+| `a`                        | Mission Control, outside a text field, with no modal or slide-over open | select every mod in view, or clear the selection                                                               |
+| `←` / `→`                  | the slide-over                                                          | step to the previous/next mod in the library's current order                                                   |
+| `←` / `→` / `Home` / `End` | the Setup page's section tabs                                           | move between sections                                                                                          |
+
+The same table is in the app itself: press `?` (or the **?** button beside
+**⚙ Setup**) to open it. It is generated from one list, so the two cannot
+drift.
+
+Focus is contained inside a modal and the slide-over while either is open,
+so `Tab` cannot wander onto the page behind the scrim. If your system asks
+for reduced motion, every animation is disabled.
+
+Every view names itself: the browser tab, your history and your window
+switcher show the screen and the game/profile it is showing (for example
+`Mission Control — baldurs-gate-3/default · lmm`), and a screen reader is told
+the new view's name on each navigation.
+
+### URLs
+
+```text
+/                                        game chooser
+/g/{game}/{profile}                      Mission Control (home)
+/g/{game}/{profile}/mod/{source}/{id}    a mod's full page
+/g/{game}/{profile}/search?q=…           the search page
+/g/{game}/{profile}/setup                the Setup page
+```
+
+The game and profile live in the **path**, not in a query parameter, so the
+context you are working in cannot be lost or silently defaulted as you move
+around, and any URL can be bookmarked or shared as-is. The old
+query-parameter URLs (`/mods`, `/mods/{source}/{id}`, `/search`,
+`/updates`, `/profiles`, `/health`, `/jobs/{id}`) permanently redirect into
+this scheme, carrying whatever game/profile they resolved to; when they
+resolve to nothing, they land on `/`.
+
+### Theme
+
+Light and dark, following your system by default, with a persisted
+override you can set from the top bar. The override is remembered in the
+browser's local storage and applied before the first paint, so switching
+pages never flashes the wrong theme.
+
+### `/api/v1` and Server-Sent Events
+
+The UI is built entirely on this API, which returns exactly the documents
+`lmm <command> --json` does, with the CLI's `{"error", "details"}` envelope
+on failure — so anything the web UI can do, a script can do too:
+
+```text
+GET  /api/v1/status
+GET  /api/v1/mods
+GET  /api/v1/mods/{source}/{id}
+GET  /api/v1/mods/{source}/{id}/files
+GET  /api/v1/mods/{source}/{id}/versions
+GET  /api/v1/search?q=&page=&page_size=&limit=&category=&source=&tag=
+GET  /api/v1/updates
+GET  /api/v1/profiles
+GET  /api/v1/profiles/{name}/export
+GET  /api/v1/health
+GET  /api/v1/conflicts?order=
+GET  /api/v1/games
+GET  /api/v1/games/catalog?source=&q=
+GET  /api/v1/games/detect?all=
+GET  /api/v1/fs/dirs?path=&hidden=&nearest=
+GET  /api/v1/auth
+GET  /api/v1/sources
+GET  /api/v1/sources/{id}/definition
+GET  /api/v1/sources/{id}/index?game=
+GET  /api/v1/indexes
+GET  /api/v1/snapshots
+```
+
+`GET /api/v1/fs/dirs` is the web UI's folder chooser (a browser cannot name a
+folder, so the page browses the machine `lmm serve` runs on): the subfolders
+of one absolute path (`~` is expanded), sorted case-insensitively, never a
+file — `core.DirectoryListing` with each folder's `name`, `path`, `hidden`,
+`readable` and `symlink` flag (a symlinked folder is marked, never followed).
+`hidden=1` includes dot-folders; `nearest=1` answers for the closest existing
+folder when the path is empty, relative or missing (`requested` says what was
+asked for). A refusal is the error envelope with `details` `{path, reason}`:
+400 `not_absolute` or `not_a_directory`, 404 `not_found`, 403
+`permission_denied`. It is a read-only GET behind the same Host allow-list as
+the rest of the API and sends no CORS headers.
+
+`GET /api/v1/conflicts?order=` is the reorder preview: a comma-separated
+list of mod ids (`source:modid`, or a bare mod id where it is unambiguous)
+answers "which mod would win each contested path under THIS load order",
+from the same rule a real reorder applies. Leaving it off describes the
+order the profile currently holds. `GET /api/v1/profiles/{name}/export`
+serves the same document `lmm profile export --json` prints, as a
+downloadable attachment.
+
+Most mutations run as a Plan, then a background job:
+
+```text
+POST /api/v1/plans/{kind}       -> the plan, plus a single-use plan_id
+POST /api/v1/jobs               -> {plan_id, options} -> {id}
+GET  /api/v1/jobs/{id}          -> job status: running / succeeded / failed
+GET  /api/v1/jobs/{id}/events   -> Server-Sent Events: live progress
+```
+
+The start response also carries `job_id`, the same value under the name it
+originally shipped with. That spelling is **deprecated** — read `id`, which
+is what `GET /api/v1/jobs` and `GET /api/v1/jobs/{id}` have always called it
+— and it will be dropped in a later major version. (`job_id` on the event
+stream is a different thing and stays: there it names the job an event
+belongs to.)
+
+`{kind}` is one of sixteen, each the browser-side twin of a CLI command:
+`deploy`, `install`, `uninstall`, `updates`, `rollback`, `switch`,
+`profile_apply`, `profile_import`, `profile_sync`, `purge`, `mod_relink`,
+`verify_fix`, `import_archive`, `adopt`, `workshop_adopt` and
+`snapshot_restore`. An unknown kind is a 400 whose details list the ones that
+exist. (`mod_relink` is
+`lmm mod edit`: it is named for the core flow it drives,
+`PlanRelinkMod`/`ApplyRelinkMod`.)
+
+`?tag=` on `GET /api/v1/search` is `lmm search --tag`, and is repeatable
+the same way: `?tag=lore-friendly&tag=armor` narrows on both. Support
+varies by source.
+
+`?sort=` on `GET /api/v1/search` is `lmm search --sort`:
+`relevance|updated|downloads|popular`, absent meaning `relevance`. Any other
+value is a 400 whose error names the four. The report echoes the sort in
+`sort` and lists the ones worth offering in `sorts_available`.
+
+Two endpoints report on jobs as a whole rather than one at a time — what
+the UI's activity tray is built on:
+
+```text
+GET  /api/v1/jobs               -> every retained job, newest first
+GET  /api/v1/events             -> Server-Sent Events: every job's lifecycle
+```
+
+Profile management is the other set of synchronous mutations - a create, a
+delete, a set-default, a rename and a reorder each write once with nothing
+to preview, so like lock/policy they answer immediately with the same
+document their `lmm profile ...  --json` twin prints:
+
+```text
+POST   /api/v1/mods/{source}/{id}/lock      {"version"?} -> the mod's settings
+POST   /api/v1/mods/{source}/{id}/unlock               -> the mod's settings
+POST   /api/v1/mods/{source}/{id}/update-policy {"policy"}
+                                                       -> the mod's settings
+POST   /api/v1/mods/{source}/{id}/convert   {"enabled"} -> the mod's settings
+POST   /api/v1/mods/{source}/{id}/skip-update {"version"}
+                                                       -> the mod's settings
+POST   /api/v1/mods/{source}/{id}/unskip-update        -> the mod's settings
+```
+
+Those six are `lmm mod lock`/`unlock`/`set-update`/`convert`/
+`skip-update`/`unskip-update`, each answering the `core.ModSettingResult`
+document its `--json` twin prints.
+`convert` is the pak-conversion toggle for a compile-mode game (Icarus); a
+mod with no convertible `.pak` is a 400, the same refusal the CLI gives.
+
+```text
+POST   /api/v1/profiles                     {"name"}   -> the profile created
+DELETE /api/v1/profiles/{name}                         -> the profile deleted
+POST   /api/v1/profiles/{name}/rename       {"name"}   -> under its new name
+POST   /api/v1/profiles/{name}/set-default             -> the new default
+POST   /api/v1/profiles/{name}/reorder      {"ids"}    -> the new load order
+```
+
+The Setup surface — how a game and its credentials come to exist — is the
+other set of synchronous mutations. None of these is game-scoped, so none
+takes `?game=`:
+
+```text
+POST   /api/v1/games          {"source_id","identifier","name",
+                               "install_path"[,"game_id","mod_path",
+                               "from_steam_app_id","loader"]}
+                                          -> the new game's `lmm game list` row
+GET    /api/v1/games/{id}                 -> core.GameDetail (the row plus the
+                                             mod-loader report, incl. the Steam
+                                             launch option to paste)
+PUT    /api/v1/games/{id}     {"sources"} -> the game's `lmm game list` row
+PUT    /api/v1/games/{id}     {"loader","loader_set"}
+                                          -> the game's `lmm game list` row
+                                             (one request, one edit: a body
+                                             carrying both is refused)
+POST   /api/v1/games/{id}/set-default     -> the new default (core.SettingsResult)
+DELETE /api/v1/games/default              -> the default cleared (core.SettingsResult)
+POST   /api/v1/games/detect   {"select"}  -> what was added (index or slug)
+POST   /api/v1/auth/{source}  {"api_key"} -> the authentication report
+DELETE /api/v1/auth/{source}              -> the authentication report
+POST   /api/v1/sources/validate  {"yaml"[,"probe","probe_id"]}
+                                          -> the source validation report
+PUT    /api/v1/sources/{id}      {"yaml"} -> the source list, re-read
+DELETE /api/v1/sources/{id}               -> the source list, re-read
+POST   /api/v1/sources/{id}/index?game= {"refresh"?}
+                                          -> what the rebuild did (core.IndexReport)
+POST   /api/v1/indexes/prune  {"all"?,"dry_run"?,"only"?}
+                                          -> what the prune did (core.IndexPruneReport)
+POST   /api/v1/snapshots      {"name"?}   -> the snapshot recorded
+DELETE /api/v1/snapshots/{name}           -> {"name","game_id","deleted"}
+```
+
+The two snapshot writes are single-step for the same reason the lock and
+policy writes are: there is nothing to preview and nothing to watch. An
+omitted `name` gets the same date-and-time default `lmm snapshot create`
+uses with no `--name`, so the UI's "Snapshot now" needs no text input; a
+name already taken is a 409 (a snapshot is never silently overwritten) and
+one that is not usable as a file name is a 400. A delete removes the record
+and keeps the stored originals. RESTORE is the destructive, five-stage half
+and is a plan kind (`POST /api/v1/plans/snapshot_restore` with
+`{"snapshot":"<name>"}`), so it gets a real preview and a job.
+
+`GET /api/v1/games` answers with the rows `lmm game list --json` prints —
+an empty array is the first-run signal; each row carries the game's
+`source_ids` map, its configured `adapter` (exactly what `games.yaml` says)
+and `effective_adapter`, the adapter it actually uses — including one lmm
+derived — omitted when that is `generic-files`. `PUT /api/v1/games/{id}`
+rewrites that map (`lmm game edit`'s twin) and answers with the same row:
+the body's `sources` object is the FULL map the game ends up with, so an
+omitted source id is removed. An id no registered source claims is a 400
+whose `details.field` is `"sources"`, an unknown game is a 404, and an
+empty map is refused — a game must keep at least one source. The same body
+may carry `name`, `install_path`, `mod_path`, `adapter` and `loader` (with
+`loader_set`; `null` removes the declaration): every member present is
+checked before any is written, so a refusal writes nothing. `GET /api/v1/games/catalog` is the
+game-add form's search, over any source with a searchable catalog
+(CurseForge today); a source without one answers 400, which is the signal
+to ask for an identifier instead. `POST /api/v1/games` answers 400 with a
+`{"field","value","reason"}` details payload naming the input at fault,
+and 409 when the game id is already taken; the install path must exist.
+`game_id` is the local games.yaml key — omit it and it is derived from the
+identifier, or pass the `game_id` a catalog match carries so a CurseForge
+game is keyed `minecraft` rather than `432`. `from_steam_app_id` prefills
+the whole body from an installed Steam game (the `steam_app_id` of a detect
+row): the name, install path, game id, mod path and — for a game in the
+known-games list — its source map all come from the scan, and every other
+member becomes an override. A known installed game is therefore added with
+that member alone; an unknown one needs only `source_id`/`identifier` on
+top.
+
+`GET /api/v1/games/detect` lists what a Steam scan found, each row with its
+1-based index and an `already_configured` flag; the POST re-runs the scan
+itself and applies the rows the request names, so the paths written to
+games.yaml always come from the machine. `?all=1` widens the listing to
+EVERY installed Steam game: the extra rows carry no `known` member at all
+(absent = not in the known-games list; a curated row carries `"known":
+true`), no sources, an empty `mod_path` and `index: 0` — they are listed, not
+selectable, because nothing on disk says where they keep their mods.
+(The known rows keep the same numbering either way.) Naming one in the
+POST's `select` is a 400 pointing at `POST /api/v1/games` with its
+`from_steam_app_id`, which is how such a game is added.
+
+The three auth routes all answer
+the document `lmm auth status --json` prints — the writes with it re-read.
+A key is validated live where the source supports it and is never stored if
+that check refuses it (400) or could not be performed at all (502); it never
+appears in a log line, an error, or a response. A key stored or removed here
+takes effect IMMEDIATELY: the affected source is rebuilt with the new
+credential and swapped into the running registry, so the next search or
+install uses it with no restart. (The swap waits at most a few seconds for
+any in-flight mutation to finish; if it cannot get in, the key is still
+stored and is picked up at the next start, and the server logs that it
+was.) `GET /api/v1/games/catalog` answers 401 when the source refused for
+want of a credential — distinct from the 502 every other failure of its own
+call gets, so a client can offer "authenticate this source first" instead
+of a generic upstream error.
+
+The five source routes are the custom-source editor. `GET /api/v1/sources`
+is the document `lmm source list --json` prints — the full registry plus
+every definition that failed to load or construct — and is deliberately not
+game-scoped: a source exists before any game maps it, and the editor's job
+is to show every definition including the broken ones. `GET
+/api/v1/sources/{id}/definition` serves a user-defined source's YAML as
+`text/yaml`, comments and key order intact (404 for a built-in, which has
+no definition file). `POST /api/v1/sources/validate` judges a draft that has
+no file yet, with `lmm source validate --probe/--id`'s live smoke test
+behind `probe`. `PUT` and `DELETE` save and remove one, and both answer with
+the source list re-read — one save can change more than one row. A save
+writes the file atomically and registers the source on the running server;
+the path id must equal the document's id (400 otherwise), a built-in id is
+409, and an invalid or unconstructable definition is 400 with the validation
+report as the envelope's details. A delete refuses with 409 and a
+`{"source_id","games"}` details payload while any configured game still maps
+the source. `lmm source add <file>` and `lmm source remove <id>` are the
+same two operations from the command line.
+
+The four index routes are the Setup page's local search indexes (#410) and
+answer the documents `lmm source index` prints with `--json`.
+`GET /api/v1/sources/{id}/index?game=` is one game's index
+(`core.IndexStatus`) - 404 for a source that keeps none, 400 for a game that
+does not map the source or maps it to an identifier it cannot use (the
+envelope's details name the game, the source and the value), and 404 for an
+unknown game. `POST` to the same path rebuilds it (`{"refresh": true}` skips
+the six-hour TTL) and answers `core.IndexReport`; an index that could not be
+built at all is 502, with the community, the reason and - when lmm is
+holding the host off - `retry_at` in the details. `GET /api/v1/indexes` is
+every index on disk plus every mapped one not built yet
+(`core.SourceIndexListing`), and `POST /api/v1/indexes/prune` is
+`lmm source index prune`: `dry_run` previews, and `only` - the preview's
+`source/community` keys - binds a confirmed run to exactly what the preview
+listed. The same 502 and 400 answer a search or a plan that meets those two
+failures, and a plan refused for a mod loader the game does not declare is
+409, with the setup steps in the details.
+
+The profile is named in the path rather than taken from `?profile=`: these
+routinely act on a profile other than the selected one. Profile IMPORT is
+the exception that stays a plan (`POST /api/v1/plans/profile_import`,
+body `{"data": "<the exported document>"}`), because it has a real preview:
+which of its mods are already installed, which need re-downloading and which
+are missing entirely.
+
+Importing a mod ARCHIVE takes one more step, because `lmm import <archive>`
+takes a path and a browser cannot hand a server one (and a server must not
+accept one from a browser). The file itself travels first:
+
+```text
+POST   /api/v1/uploads        multipart/form-data, one file
+                                          -> {"upload_id","filename","size"}
+DELETE /api/v1/uploads/{id}               -> 204, the staged file is reclaimed
+```
+
+The upload is streamed straight into the same staging directory downloads
+and extraction already use (never `/tmp`, which is tmpfs on most distros),
+capped at **2 GiB**, and accepted only for an extension the extractor
+handles (`.zip`, `.7z`, `.rar`). The id is opaque and is never a path. A
+staged archive expires after **30 minutes**, is deleted when its import
+succeeds, and is kept when its import fails so a retry does not mean
+re-uploading it.
+
+`import_archive` is then an ordinary plan kind: `POST
+/api/v1/plans/import_archive` with `{"upload_id"[,"source_id","mod_id"]}`
+answers with the same `core.ImportArchivePlan` `lmm import --dry-run
+--json` prints — the resolved identity, the files, the conflicts, the
+hooks — and the job takes
+`{"accept_conflicts","force","skip_hooks"}`. `accept_conflicts` is the
+Overwrite answer; `force` is a different question (it skips the conflict
+check entirely and downgrades a failed install hook to a warning).
+
+`adopt` is `lmm import`'s scan mode as a plan kind: `POST
+/api/v1/plans/adopt` with `{"skip_match"}` answers with `core.AdoptPlan` —
+the whole local scan, one match entry per untracked mod, and the duplicate
+preview — and the job takes no options. Previewing without confirming IS
+the dry run. Its job runs the metadata backfill and the adoption together
+and reports both in one `core.AdoptResult` (`backfilled` alongside
+`adopted`/`skipped`/`failed`).
+
+`workshop_adopt` is `lmm import --workshop` as a plan kind: `POST
+/api/v1/plans/workshop_adopt` with `{"refresh"}` (the CLI's `--refresh`,
+bypassing the Workshop metadata cache) answers with `core.WorkshopAdoptPlan`
+— every subscribed item lmm does not already track — and the job takes no
+options at all, since the only choice this flow offers is made at plan time.
+
+(Enable/disable are an exception: with no options and nothing to preview,
+they skip the plan step entirely — `POST /api/v1/mods/{source}/{id}/enable`
+and `.../disable` start the job directly and answer with the same
+`{"id"}` document. Lock/unlock/update-policy skip jobs too, but for a
+different reason: `POST /api/v1/mods/{source}/{id}/lock`, `.../unlock` and
+`.../update-policy` are single DB writes with nothing to run in the
+background at all, so they answer synchronously with the mod's full
+settings snapshot — the same document `lmm mod lock`/`unlock`/`set-update
+--json` print.)
+
+The per-job events stream sends one JSON frame per typed core progress event
+(`event:` names the event type), a comment heartbeat roughly every 15
+seconds while a job is otherwise quiet, and a final `event: done` frame
+carrying the same job status document `GET /api/v1/jobs/{id}` returns — so
+a client never has to race "the stream closed" against "go fetch the final
+status" separately.
+
+`GET /api/v1/events` is the other shape: one stream for the whole session,
+multiplexing every job. It opens with an `event: snapshot` frame carrying
+the same document `GET /api/v1/jobs` answers with — so a client that
+connects mid-deploy is caught up before it is told anything new — then
+sends `event: job_started`, `event: job_progress` and `event: job_done`
+frames, each naming the job it belongs to. Progress frames are summaries
+(phase, mod, position, percent) rather than whole core events, and a
+download's ticks are coalesced to whole percents; open the per-job stream
+above for the full detail. The job index and the `job_done` frame both
+carry a failed job's `{"error", "details"}` envelope, but never its result
+document — read `GET /api/v1/jobs/{id}` for that.
+
+### Security posture
+
+There is **no authentication** in this release. `lmm serve` is meant for a
+single trusted user on their own machine:
+
+- Binds to `127.0.0.1:7420` by default. Binding a non-loopback address (a
+  LAN IP, `0.0.0.0`) prints a loud warning on every startup: anyone who can
+  reach that address can drive `lmm` exactly as you can.
+- Every request's `Host` header is checked against an allow-list built from
+  the bind address (plus `localhost`, for a loopback bind) — a
+  DNS-rebinding guard. A **wildcard bind** (`0.0.0.0`, `[::]`, or a bare
+  `:port`) has no single correct `Host` to pin, so rather than accept any
+  `Host` unconditionally it accepts only a `Host` that is an **IP literal**
+  or the name `localhost` — and, when that `Host` names a port, only if it
+  matches the port actually bound. An IP literal or `localhost` can't be
+  "rebound" by attacker-controlled DNS the way an arbitrary name could,
+  which is what real LAN traffic to a wildcard bind normally uses anyway.
+- `Origin` is checked against `Host` on every state-changing request, and a
+  CSRF token — one per server process, delivered to the UI in the shell's
+  `<meta name="csrf-token">` and sent back as an `X-CSRF-Token` header — is
+  required for every state-changing request.
+- Every response, shell or static asset, carries conservative headers
+  (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, a
+  same-origin `Referrer-Policy`, and a `default-src 'self'`
+  Content-Security-Policy). The policy admits exactly one inline script —
+  the theme bootstrap — and it does so by the SHA-256 of that script's own
+  bytes, not by `'unsafe-inline'`. There is no `'unsafe-eval'`.
+- **The Health card does not re-verify what has not changed** (#336). A
+  hydrate — and the web UI hydrates on every route change, job completion
+  and profile switch — asks core for the same full verify tier the CLI
+  runs. Core answers from the previous run when nothing it inspects has
+  moved: the profile's mods and locks, the installed rows, the recorded
+  file checksums it compares against (so a `lmm verify --fix` typed in
+  another terminal is noticed), and a stat-only walk (path, size,
+  modification time) of the deployed tree. The card then
+  says "Unchanged since …" instead of "Last verified …", and the document
+  carries `cached: true` beside the original `checked_at`. **Any** lmm
+  mutation drops the memo, and **Re-verify** (like `lmm verify` itself,
+  which never uses the memo) forces a real run. The limit is the
+  fingerprint's: a deployed file rewritten to the same size with its
+  modification time preserved looks unchanged, so a memoised answer can be
+  stale until a mutation or a forced run — which is exactly why a typed
+  `lmm verify` always runs for real.
+
+- **Cross-process mutations are serialized** (#317). Every lmm mutation —
+  CLI or `serve` — takes an advisory `flock` on `<data dir>/.oplock` for as
+  long as it holds the in-process mutation slot, so a `lmm deploy` typed
+  while a `serve` job is mid-deploy cannot interleave its file operations
+  with it. That is every lmm mutation, not only the ones that touch the
+  game directory — `lmm auth login` during a long deploy is refused too. The second one waits up to two seconds and then refuses, naming
+  the holder: `another lmm operation is in progress (pid 4242, since
+2026-09-09T12:00:00Z)` — under `--json`, with `pid` and `started_at` in
+  the error envelope's `details`. Reads never take the lock, so `lmm list`,
+  `lmm status` and every `GET /api/v1` route keep working while a mutation
+  runs. The lock is held by an open file descriptor, so a killed lmm
+  releases it immediately: there is never a stale lock to clear by hand.
+  Two installations (different `--data` directories) never contend.
 
 ## CLI Reference
 
 ### Global Flags
 
-| Flag         | Short | Description                                                                                                             |
-| ------------ | ----- | ----------------------------------------------------------------------------------------------------------------------- |
-| `--game`     | `-g`  | Game ID (optional if default set via `game set-default`)                                                                |
-| `--verbose`  | `-v`  | Enable verbose output                                                                                                   |
-| `--config`   |       | Custom config directory                                                                                                 |
-| `--data`     |       | Custom data directory                                                                                                   |
-| `--json`     |       | Output in JSON (list, status, search, update, conflicts, verify, mod show, source list); errors print `{"error":"..."}` |
-| `--no-hooks` |       | Disable all hooks at runtime                                                                                            |
-| `--no-color` |       | Disable colored output (respects NO_COLOR env)                                                                          |
+| Flag          | Short | Description                                                                                                                                     |
+| ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                                        |
+| `--verbose`   | `-v`  | Enable verbose output                                                                                                                           |
+| `--config`    |       | Custom config directory                                                                                                                         |
+| `--data`      |       | Custom data directory                                                                                                                           |
+| `--json`      |       | Output JSON instead of text; mutating commands print their result, `--dry-run` prints the plan; never prompts — see [JSON output](#json-output) |
+| `--no-hooks`  |       | Disable all hooks at runtime                                                                                                                    |
+| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                                                  |
+| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                                                 |
 
 Output is colorized by default whenever stdout is a terminal (headers, status accents like enabled/disabled/pinned, success/warning/error markers); piped or redirected output stays plain automatically, and `--json` output is never colored. Disable explicitly with `--no-color` or the `NO_COLOR` environment variable.
 
+### JSON output
+
+`--json` prints **exactly one JSON document to stdout**, 2-space indented,
+with a single trailing newline and nothing else. Warnings and human notices
+travel inside the document itself (its `warnings`/`notes` fields), not
+stderr; stderr stays empty except for `--log-level` diagnostics, so
+`lmm ... --json | jq` is always safe. Map keys and list order are
+deterministic, so two runs over the same state produce byte-identical
+output.
+
+On failure the document is an envelope instead:
+
+```json
+{ "error": "game not found: baldurs-gate-3" }
+```
+
+An error that carries structured data adds a `details` object beside it;
+plain errors have no `details` key at all. Either way, stdout still holds one
+document and the exit code is non-zero. Three shapes populate `details`
+today: a blocked `install`/`import <archive>` conflict names the colliding
+files as `details.conflicts` (`[]core.Conflict`); a `game detect --json` run
+that partially applied (some games saved, one failed) reports what it did
+save as `details.saved`/`details.profiles` alongside the failure; and a
+fatal error on `profile apply`/`switch`/`sync` after an already-printed
+`UpsertMod` lock-refusal warning (Ruling 5, below) carries those warnings as
+`details.warnings` since there is no result document left to carry them on.
+Every type that implements this extension point is pinned by a named test
+(`cmd/lmm/details_coverage_test.go`'s `TestDetailsTypesAreCovered`), so a
+new one can't go undocumented.
+
+Every document is a type from `internal/core`, `internal/domain` or
+`internal/app` — never a shape invented by the CLI — and each of those types
+has a recorded golden under `internal/core/testdata/json/`,
+`internal/domain/testdata/json/` or `internal/app/testdata/json/` that pins
+its exact wire shape. A field can only change by changing that golden, which
+shows up as a diff in review.
+
+| Command                        | Document                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lmm list`                     | `core.ModList` — `{game_id, profile, mods[]}`                                                                                                                                                                                                                                                                                                                      |
+| `lmm list --profiles`          | `core.ProfileNames` — `{game_id, profiles[]}`                                                                                                                                                                                                                                                                                                                      |
+| `lmm profile list`             | `core.ProfileListing` — `{game_id, profiles[]}`                                                                                                                                                                                                                                                                                                                    |
+| `lmm profile export <name>`    | `domain.ExportedProfile` — `{name, game_id, mods[], link_method?, overrides?, hooks, hooks_explicit}`                                                                                                                                                                                                                                                              |
+| `lmm status`                   | `core.StatusReport` — `{games[]}`                                                                                                                                                                                                                                                                                                                                  |
+| `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                                                                                                                                                                                                                                                                                                 |
+| `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count, sort, sorts_available[], page?, page_size?, has_more?}` (each of the last three is omitted when it is unset; `lmm search` always sets `page_size` from `--limit`, default 10, and never sets `page`, while `/api/v1/search` sets none of them unless the caller pages) |
+| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`; each finding carries `fixable` when `verify --fix` would attempt a repair for it                                                                                                                                                                                              |
+| `lmm snapshot create`          | `core.SnapshotResult` — `{name, game_id, profile, created_at, auto?, path, mods, deployed_files, originals, size_bytes}`                                                                                                                                                                                                                                           |
+| `lmm snapshot list`            | `core.SnapshotListing` — `{game_id, snapshots[], warnings[]}`                                                                                                                                                                                                                                                                                                      |
+| `lmm snapshot restore`         | `core.SnapshotRestoreResult` — `{snapshot, profile, safety_snapshot?, purged, originals_restored, originals_skipped[], disabled, enabled, installed, replaced, deployed, refused[], notes[], warnings[]}`; `--dry-run` emits `core.SnapshotRestorePlan`                                                                                                            |
+| `lmm snapshot delete`          | `core.SnapshotDeleteResult` — `{name, game_id, deleted}`                                                                                                                                                                                                                                                                                                           |
+| `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                                                                                                                                                                                                                                                                                          |
+| `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                                                                                                                                                                                                                                                                                       |
+| `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                                                                                                                                                                                                                                                                                       |
+| `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                                                                                                                                                                                                                                                                                             |
+| `lmm source validate <file>`   | `app.SourceValidationReport` — `{path, id?, type?, valid, errors[], warnings[], probe?}` (an invalid file/failed probe is the error envelope instead, `details` = this report)                                                                                                                                                                                     |
+| `lmm source add <file>`        | `[]app.SourceInfo` — the full registry, re-read (an invalid definition is the error envelope instead, `details` = the validation report)                                                                                                                                                                                                                           |
+| `lmm source remove <id>`       | `[]app.SourceInfo` — the full registry, re-read (a source a game still maps is the error envelope, `details` = `core.SourceInUseError`'s `{source_id, games[]}`)                                                                                                                                                                                                   |
+| `lmm source index`             | `core.IndexStatus` — `{source, game, present, packages, fetched_at?, bytes, stale}`; with `--refresh`, `core.IndexReport` — `{source, game, status, changed, packages, bytes, duration_ms, warnings[]}` (no index and no way to build one is the error envelope, `details` = `{source, game, reason, retry_at?}`)                                                  |
+| `lmm source index --all`       | `core.SourceIndexListing` — `{indexes[{source, game, cached, present, packages, fetched_at?, bytes, mapped_by[]}], warnings[]}`                                                                                                                                                                                                                                    |
+| `lmm source index prune`       | `core.IndexPruneReport` — `{dry_run, all, entries[{source, game, bytes, fetched_at?, mapped_by[], action, reason}], removed, freed_bytes, warnings[]}`                                                                                                                                                                                                             |
+| `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                                                                                                                                                                                                                                                                                         |
+| `lmm game show-default`        | `core.DefaultGame` — `{set, id?, name?}`                                                                                                                                                                                                                                                                                                                           |
+| `lmm auth status`              | `app.AuthStatusReport` — `{sources[], orphaned[]}`                                                                                                                                                                                                                                                                                                                 |
+| `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, external?, external_missing[]?, warnings[]?, catalog_missing[]?, error?}`                                                                                                                                                                                                                     |
+| `lmm update <mod-id>`          | `core.UpdateApplyResult` — `{mod{}, name, from_version, to_version, status, …}`                                                                                                                                                                                                                                                                                    |
+| `lmm update rollback <mod-id>` | `core.RollbackResult` — `{mod{}, mod_name, from_version, to_version, status, …}`                                                                                                                                                                                                                                                                                   |
+
+Mutating commands emit their **result**, or - with `--dry-run` - the **plan**
+that run would have applied:
+
+| Command                                                     | Document                                                                                                                                                                                                                                        |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lmm install`                                               | `core.InstallResult` — `{installed[], skipped[], failed[], …}`                                                                                                                                                                                  |
+| `lmm import <archive>`                                      | `core.ImportArchiveResult` / `core.ImportArchivePlan` under `--dry-run` (conflicts need `--force`, above)                                                                                                                                       |
+| `lmm import` (scan)                                         | `core.AdoptResult` — `{adopted, skipped, failed, backfilled?, warnings[]}` (`backfilled` is set only by a frontend that runs the metadata backfill in the same step — `lmm serve` does; the CLI reports it while rendering the scan)            |
+| `lmm import --dry-run` (scan)                               | `core.AdoptPlan`                                                                                                                                                                                                                                |
+| `lmm deploy`                                                | `core.DeployResult` / `core.DeployPlan` under `--dry-run`                                                                                                                                                                                       |
+| `lmm uninstall <mod-id>`                                    | `core.UninstallResult` / `core.UninstallPlan`                                                                                                                                                                                                   |
+| `lmm purge`                                                 | `core.PurgeResult` / `core.PurgePlan`                                                                                                                                                                                                           |
+| `lmm profile apply`                                         | `core.ProfileApplyResult` / `core.ProfileApplyPlan`                                                                                                                                                                                             |
+| `lmm profile switch <name>`                                 | `core.SwitchResult` / `core.SwitchPlan`                                                                                                                                                                                                         |
+| `lmm profile sync`                                          | `core.ProfileSyncResult` / `core.ProfileSyncPlan`                                                                                                                                                                                               |
+| `lmm profile import <file>`                                 | `core.ProfileImportResult`                                                                                                                                                                                                                      |
+| `lmm profile create/delete/rename/reorder`                  | `core.ProfileResult` — `{profile{…}}`                                                                                                                                                                                                           |
+| `lmm mod enable/disable`                                    | `core.EnableResult` / `core.DisableResult` — `{changed, …}`                                                                                                                                                                                     |
+| `lmm mod lock/unlock/set-update/convert`                    | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`                                                                                                                                                                                   |
+| `lmm mod skip-update/unskip-update`                         | `core.ModSettingResult` — `{mod{}, skipped_version, …}`                                                                                                                                                                                         |
+| `lmm mod edit <mod-id>`                                     | `core.RelinkResult` — `{mod{}, changes[], no_changes}`                                                                                                                                                                                          |
+| `lmm game detect --all` / `--select`                        | `core.GameDetectResult` — `{saved[], profiles[], warnings[]}`                                                                                                                                                                                   |
+| `lmm game add` (flag-driven)                                | `core.GameListEntry` — the same row `lmm game list --json` prints for it                                                                                                                                                                        |
+| `lmm game add --query` (no `--pick`)                        | `core.GameCatalogReport` — `{source_id, query, matches[]}`                                                                                                                                                                                      |
+| `lmm game detect --include-unknown` (no `--all`/`--select`) | `core.GameDetectListing` — `{games[], warnings[]}`; the CLI's twin of `GET /api/v1/games/detect?all=1`                                                                                                                                          |
+| `lmm auth login --key-from-env`/`--key-stdin`               | `app.AuthStatusReport` — the same document `lmm auth status --json` prints                                                                                                                                                                      |
+| `lmm auth logout [source]`                                  | `app.AuthStatusReport` — the same document, re-read after the removal                                                                                                                                                                           |
+| `lmm update --all`                                          | `core.UpdateBatchResult` — `{game_id, profile, applied[], failed[], skipped[]}`, or `core.UpdateCheckReport` when the check found nothing to apply (see below); without `--all` a bulk run is a CHECK and always emits `core.UpdateCheckReport` |
+| `lmm game edit`                                             | `core.GameListEntry` — the same row `lmm game list --json` prints for it                                                                                                                                                                        |
+| `lmm game set-default` / `clear-default`                    | `core.SettingsResult` — `{default_game}`                                                                                                                                                                                                        |
+
+**`lmm update --all --json` emits one of two documents.** With something
+to apply it emits `core.UpdateBatchResult`. With nothing to apply it never
+enters the batch at all and emits the check document,
+`core.UpdateCheckReport` — which is the more useful answer there, since its
+`skipped{}` names the mods that were passed over (pinned, locked, manual
+download) and an empty batch result would say only that nothing happened.
+The two are told apart by their keys: only the batch result carries
+`applied`.
+
+**`--json` never prompts.** Every confirmation has a flag that decides it
+(`-y`/`--yes`, or `--force` where that is the existing meaning); without it
+the run fails **before mutating anything** with the error envelope
+(`"confirmation required: …"`, exit `1`). `lmm game detect --json` therefore
+needs `--all` or `--select`; an `lmm install --json` or
+`lmm import <archive> --json` that hits file conflicts needs `--force`, and
+without it the envelope's `details.conflicts` names every conflicting file.
+`lmm game add` and `lmm auth login` gained a flag for every prompt they had
+(#307), so both now run fully non-interactively and under `--json`; a value
+neither a flag nor a prompt supplied fails with an error naming the flag
+that answers it. Progress and per-mod status lines are suppressed under `--json`, so
+stdout holds the document and nothing else and stderr stays empty (except for
+`--log-level` diagnostics, which are always stderr).
+
+List fields are always arrays, never `null`: an empty listing is `[]` and a
+game with no configured sources is `{}`. Enum-valued fields (link method,
+deploy mode, update policy, update status, auth state) are their text names,
+not integers. Times are RFC 3339.
+
+**Behaviour deltas landed alongside the JSON contract.** A handful of
+plain-text and event changes shipped in the same phase as the `--json`
+switch, each pinned by a re-recorded capture and listed in the CHANGELOG
+under its issue number:
+
+- **#294 — lock refusals, one wording.** Every refusal of a locked mod
+  (`lmm update`, `lmm mod edit`, `lmm mod lock`/`unlock`) now prints the same
+  `core.LockedRefRefusalError` text, replacing four hand-worded messages. A
+  `UpsertMod` refusal swallowed by `lmm profile apply`/`sync` is no longer a
+  `--verbose`-only note — it prints unconditionally to stderr as
+  `Warning: …` and rides along on the command's `--json` document as
+  `warnings` (or `details.warnings` on the error envelope if the run then
+  fails with nothing left to carry them).
+- **#283 — a global update-check counter.** Checking updates across two or
+  more sources under `-v` used to restart its `n/total` counter per source
+  (`1/3 … 3/3`, then `1/2 … 2/2`); `UpdateCheckEvent` gained
+  `GlobalIndex`/`GlobalTotal` and the line now runs unbroken (`1/5 … 5/5`).
+  `--json` is unaffected — progress events are always suppressed there.
+- **Ruling 8 — dry-run merged-artifact modelling.** `lmm uninstall --dry-run`
+  and `lmm purge --dry-run` used to always print a merged-artifact line on a
+  compile-mode game; the plan now models the actual effect
+  (`merged_artifact: {action, path}` under `--json`, the key omitted
+  entirely when nothing would change), so a dry run that would leave the
+  artifact alone
+  says nothing. `lmm import <archive> --json`'s `merged_pak_synced` is set
+  from whether the sync actually ran and succeeded, not from the game's
+  deploy mode alone.
+- **#296 — hooks survive export/import.** `lmm profile export` now writes a
+  `hooks:` block (including an explicitly-disabled override), so
+  `export` → `import` round-trips hook configuration byte-for-byte; an
+  export from before this change (no `hooks:` key) still imports.
+- **Ruling 16 — cancellation never splits DB and profile state.** Ctrl-C
+  (or any context cancellation) during a mutation that writes both the
+  database and a profile file — install, dependency install, archive
+  import, adopt, profile import/switch, uninstall, `purge --uninstall`, and
+  `mod edit`'s relink/version paths — now finishes that pairing before
+  stopping, so a run can no longer be cancelled between the two writes and
+  leave a mod in one store but not the other. A cancelled run prints
+  `Cancelled.` to stderr before exiting `2` in plain mode (`--json` stays
+  silent; it was already unaffected).
+- **A batch install aborts up front on an unloadable profile.** If the
+  target profile.yaml exists but fails to parse (or can't be read), a
+  multi-mod `install` now fails before installing anything, instead of
+  running to completion and reporting per-mod warnings as if it had
+  succeeded.
+- **Ruling 17 — `game show-default`'s plain text moves to stdout.** Its two
+  lines used to land on stderr, an accident of `cmd.Println`/`cmd.Printf`
+  (which write to the command's error stream when no output writer is set);
+  they now go to stdout like every other command's plain text, and `--json`
+  on it now yields the `core.DefaultGame` document instead of an empty one.
+  The bytes themselves are unchanged (#309).
+
+> **v2 changed these shapes.** Before v2 each command projected its own
+> ad-hoc view struct, so the JSON was a parallel, undocumented contract that
+> could drift from what core actually knew. v2 emits core's own types
+> directly — richer, self-describing documents (a `mods[]` row is a whole
+> installed mod; a mod reference names its source, not just an ID) — and
+> keys were renamed where the old name was ambiguous. Scripts written against
+> the 1.x JSON need updating. See the CHANGELOG's "Changed — JSON output
+> (v2)" section for the full field-by-field list.
+
 ### Commands
 
-| Command                                            | Description                                                                                                                                          |
-| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lmm search <query>`                               | Search all configured sources concurrently                                                                                                           |
-| `lmm search <query> --source ID`                   | Search a single source instead of all configured ones                                                                                                |
-| `lmm search <query> --category ID`                 | Filter by category (NexusMods and CurseForge)                                                                                                        |
-| `lmm search <query> --tag TAG`                     | Filter by tag (NexusMods only; repeat for multiple)                                                                                                  |
-| `lmm install [query]`                              | Search and install a mod (query optional with `--id`)                                                                                                |
-| `lmm install --id <mod-id>`                        | Install by mod ID                                                                                                                                    |
-| `lmm install --id <mod-id> --file <file-id>`       | Install a specific file, skipping file selection                                                                                                     |
-| `lmm install --version <version>`                  | Install the exact-match version (archived files searched automatically)                                                                              |
-| `lmm install --show-archived`                      | Include archived/old files when selecting a file                                                                                                     |
-| `lmm install --no-deps`                            | Skip automatic dependency installation                                                                                                               |
-| `lmm install --source ID` / `-s`                   | Use a specific source (default: sole configured source; prompts when several are configured, `-y` picks the first alphabetically)                    |
-| `lmm uninstall <mod-id>`                           | Uninstall a mod                                                                                                                                      |
-| `lmm uninstall <mod-id> --keep-cache`              | Uninstall but keep the cached mod files                                                                                                              |
-| `lmm import`                                       | Scan `mod_path` for untracked mods and import them (see [Import](#import) below)                                                                     |
-| `lmm import <archive-path>`                        | Import one local mod archive                                                                                                                         |
-| `lmm list`                                         | List installed mods                                                                                                                                  |
-| `lmm list --profiles`                              | List profiles for the game                                                                                                                           |
-| `lmm status`                                       | Show current status                                                                                                                                  |
-| `lmm update`                                       | Check for and apply auto-updates                                                                                                                     |
-| `lmm update <mod-id>`                              | Update a specific mod                                                                                                                                |
-| `lmm update --all`                                 | Apply all available updates                                                                                                                          |
-| `lmm update --dry-run`                             | Preview what would update                                                                                                                            |
-| `lmm update rollback <mod-id>`                     | Rollback to previous version                                                                                                                         |
-| `lmm verify`                                       | Verify cached mod files (see below)                                                                                                                  |
-| `lmm verify --fix`                                 | Re-download missing files, populate missing checksums, repair version-record mismatches, remove stale lmm-deployed files                             |
-| `lmm mod enable <mod-id>`                          | Enable a disabled mod                                                                                                                                |
-| `lmm mod disable <mod-id>`                         | Disable mod (keep in cache)                                                                                                                          |
-| `lmm mod set-update <mod-id> --auto`               | Enable auto-updates for mod                                                                                                                          |
-| `lmm mod set-update <mod-id> --notify`             | Notify only (default)                                                                                                                                |
-| `lmm mod set-update <mod-id> --pin`                | Mute update checks for mod (does not hold a version — see [Locking](#locking-mods-to-a-version))                                                     |
-| `lmm mod lock <mod-id> [version]`                  | Lock mod's profile entry to its current or a specific version                                                                                        |
-| `lmm mod unlock <mod-id>`                          | Clear a mod's lock (recorded version is left untouched)                                                                                              |
-| `lmm mod show <mod-id>`                            | Show mod details (description, image, etc.)                                                                                                          |
-| `lmm mod files <mod-id>`                           | List files deployed by mod                                                                                                                           |
-| `lmm mod edit <current-id>`                        | Edit mod details (name, version, author, source, ID)                                                                                                 |
-| `lmm mod convert <mod-id> <on\|off>`               | Toggle pak-to-exmod conversion for a mod (merge-compile games only)                                                                                  |
-| `lmm game set-default <game-id>`                   | Set the default game                                                                                                                                 |
-| `lmm game show-default`                            | Show current default game                                                                                                                            |
-| `lmm game clear-default`                           | Clear the default game setting                                                                                                                       |
-| `lmm game add`                                     | Interactively add a new game configuration                                                                                                           |
-| `lmm game list`                                    | List configured games (ID, name, paths, deploy mode, sources; marks the default)                                                                     |
-| `lmm game detect`                                  | Scan Steam libraries for known moddable games (extend the known-games list via [`steam-games.yaml`](docs/configuration.md#steam-gamesyaml-optional)) |
-| `lmm auth login [source]`                          | Authenticate with a source (any source declaring auth; nexusmods/curseforge validated live)                                                          |
-| `lmm auth logout [source]`                         | Remove stored credentials                                                                                                                            |
-| `lmm auth status`                                  | Show authentication status                                                                                                                           |
-| `lmm profile list`                                 | List profiles                                                                                                                                        |
-| `lmm profile create <name>`                        | Create a profile                                                                                                                                     |
-| `lmm profile switch <name>`                        | Switch to a profile (installs missing mods)                                                                                                          |
-| `lmm profile delete <name>`                        | Delete a profile                                                                                                                                     |
-| `lmm profile export <name>`                        | Export profile to YAML                                                                                                                               |
-| `lmm profile import <file>`                        | Import profile from YAML                                                                                                                             |
-| `lmm profile import <file> --force`                | Import and overwrite existing                                                                                                                        |
-| `lmm profile reorder [mod-id ...]`                 | Show or set load order                                                                                                                               |
-| `lmm profile sync`                                 | Update profile to match installed mods                                                                                                               |
-| `lmm profile apply`                                | Install/enable mods to match profile                                                                                                                 |
-| `lmm deploy`                                       | Deploy all enabled mods from cache                                                                                                                   |
-| `lmm deploy <mod-id>`                              | Deploy specific mod from cache                                                                                                                       |
-| `lmm deploy --method hardlink`                     | Deploy using different link method                                                                                                                   |
-| `lmm deploy --purge`                               | Purge then deploy all mods                                                                                                                           |
-| `lmm purge`                                        | Remove all mods from game directory                                                                                                                  |
-| `lmm conflicts`                                    | Show file conflicts in current profile                                                                                                               |
-| `lmm source list`                                  | List built-in and user-defined mod sources                                                                                                           |
-| `lmm source validate <file>`                       | Validate a user-defined source definition                                                                                                            |
-| `lmm source validate --probe <file>`               | Also live-smoke-test the definition (scan/fetch/API call)                                                                                            |
-| `lmm source validate --probe --id <mod-id> <file>` | Probe an `api` definition that has no `search` endpoint                                                                                              |
+| Command                                                   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lmm init`                                                | Guided first run: detect games → add → default game → sign in → import what is already there. Interactive; every step skippable, safe to re-run (see [Quick Start](#lmm-init--the-guided-first-run))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `lmm search <query>`                                      | Search all configured sources concurrently                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `lmm search <query> --source ID`                          | Search a single source instead of all configured ones                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm search <query> --category NAME`                      | Filter by category (NexusMods: the category name, e.g. `Armour`; CurseForge: its numeric id)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `lmm search <query> --refresh`                            | Rebuild a locally cached source index (Thunderstore) before searching                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm search <query> --sort ORDER`                         | Order results: `relevance` (default), `updated` (newest first), `downloads`, `popular`; an exact name match always leads                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `lmm search <query> --tag TAG`                            | Filter by tag (NexusMods, Thunderstore and Steam Workshop; repeat for multiple)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `lmm install [query]`                                     | Search and install a mod (query optional with `--id`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm install --id <mod-id>`                               | Install by mod ID                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `lmm install --id <mod-id> --file <file-id>`              | Install a specific file, skipping file selection                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm install --version <version>`                         | Install the exact-match version (archived files searched automatically)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm install --id <mod-id> --from-file <archive>`         | Install a mod from an archive downloaded by hand (`--file`, `--version`, `--accept-mismatch`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `lmm install --show-archived`                             | Include archived/old files when selecting a file                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm install --no-deps`                                   | Skip automatic dependency installation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `lmm install --source ID` / `-s`                          | Use a specific source (default: sole configured source; prompts when several are configured, `-y` picks the first alphabetically)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `lmm uninstall <mod-id>`                                  | Uninstall a mod                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `lmm uninstall <mod-id> --keep-cache`                     | Uninstall but keep the cached mod files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm uninstall <mod-id> --dry-run`                        | Preview what an uninstall would do                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `lmm import`                                              | Scan `mod_path` for untracked mods and import them (see [Import](#import) below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm import <archive-path>`                               | Import one local mod archive                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `lmm import <archive-path> --dry-run`                     | Preview what importing one archive would do (the archive is listed, never extracted)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `lmm list`                                                | List installed mods                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `lmm list --profiles`                                     | List profiles for the game                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `lmm status`                                              | Show current status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `lmm update`                                              | Check for and apply auto-updates                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm update <mod-id>`                                     | Update a specific mod                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm update --all`                                        | Apply all available updates in one batch — locked mods are skipped and reported together, a failure on one mod does not stop the rest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm update --dry-run`                                    | Preview what would update                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `lmm update <mod-id> --from-file <archive>`               | Update a mod from an archive downloaded by hand (`--version`, `--accept-mismatch`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `lmm update rollback <mod-id>`                            | Rollback to previous version                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `lmm snapshot create [--name N]`                          | Record a named point you can bring the game back to (metadata only; see [Snapshots](#snapshots) below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `lmm snapshot list`                                       | List the game's snapshots, newest first                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm snapshot restore <name>`                             | Bring the game back to a snapshot (undeploy → put originals back → restore the recorded mods at their recorded versions). Records the current state first                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `lmm snapshot restore <name> --dry-run`                   | Preview the whole restore without changing anything                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `lmm snapshot delete <name>`                              | Delete a snapshot's record (the stored originals are kept)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `lmm verify`                                              | Verify cached mod files (see below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `lmm verify --fix`                                        | Re-download missing files, populate missing checksums, repair version-record mismatches, remove stale lmm-deployed files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `lmm mod enable <mod-id>`                                 | Enable a disabled mod                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm mod disable <mod-id>`                                | Disable mod (keep in cache); recorded as `disabled: true` in the profile, so no switch or apply turns it back on                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm mod set-update <mod-id> --auto`                      | Enable auto-updates for mod                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `lmm mod set-update <mod-id> --notify`                    | Notify only (default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm mod set-update <mod-id> --pin`                       | Mute update checks for mod (does not hold a version — see [Locking](#locking-mods-to-a-version))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm mod lock <mod-id> [version]`                         | Lock mod's profile entry to its current or a specific version                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `lmm mod unlock <mod-id>`                                 | Clear a mod's lock (recorded version is left untouched)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm mod skip-update <mod-id>`                            | Skip the pending update until a newer version appears (the mod stays unpinned; `--version` names one)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm mod unskip-update <mod-id>`                          | Offer a skipped update again                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `lmm mod show <mod-id>`                                   | Show mod details (description, image, etc.)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `lmm mod files <mod-id>`                                  | List files deployed by mod                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `lmm mod edit <current-id>`                               | Edit mod details (name, version, author, source, ID)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `lmm mod edit <current-id> -s <source>`                   | Pick which installed mod to edit when the same ID exists in more than one source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm mod convert <mod-id> <on\|off>`                      | Toggle pak-to-exmod conversion for a mod (merge-compile games only)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `lmm game set-default <game-id>`                          | Set the default game                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `lmm game show-default`                                   | Show current default game                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `lmm game clear-default`                                  | Clear the default game setting                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `lmm game add`                                            | Add a game — prompts for anything a flag did not supply                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm game add --source <id> --id <identifier>`            | Name the mod source and this game's identifier with it (a NexusMods slug, a CurseForge game id, a custom source's key) instead of being prompted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm game add --query <q> [--pick <n>]`                   | Search a source's game catalog instead of naming an identifier; without `--pick` the matches are printed (`core.GameCatalogReport` under `--json`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `lmm game add --name <n> --path <dir> [--mod-path <dir>]` | Display name, install path (must exist) and mod directory (default `<install>/mods`, or the install path for a BepInEx game; absolute, or relative to the install path)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm game add --from-detected <steam-app-id>`             | Prefill everything from an installed Steam game — name, install path, game id, mod path, and a known game's source map; every other flag still wins, and `--source` (with `--id`/`--query`/`--pick`) ADDS to a curated source map rather than replacing it — `--id`/`--query`/`--pick` alone need `--source`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `lmm game list`                                           | List configured games (ID, name, paths, adapter in use, deploy mode, sources; marks the default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm game edit <game-id> --source <id>=<identifier>`      | Add or replace one of the game's source mappings (repeatable); the identifier may be empty for a source that needs none                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm game edit <game-id> --remove-source <id>`            | Drop one source mapping (repeatable; removals apply before additions, and a game must keep at least one source)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `lmm game edit <game-id> --mod-path <dir>`                | Set the directory mods deploy into — the repair for a mod path that no longer exists, which `lmm game show`, `lmm game list` and `lmm status` flag (relative to the install path unless absolute; refused while any profile has files deployed, naming the purge each needs; checked together with `--adapter`/`--source`, so a run applies all of its flags or none)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm game edit <game-id> --install-path <dir>`            | Set the directory the game is installed in — a path mistyped at `lmm game add`, or a moved Steam library (must exist; `~/` expanded). A mod path inside it moves with it. With files deployed it is accepted only as a move of the whole folder (the old path gone, every recorded file at the new one, whose records then follow); otherwise the refusal names the purge each profile needs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `lmm game detect`                                         | Scan Steam libraries for moddable games — every game in the known-games list (extend it via [`steam-games.yaml`](docs/configuration.md#steam-gamesyaml-optional)), plus any game with Steam Workshop items already downloaded. Rows are numbered continuously, curated first, each printing its Steam app id, and the prompt takes a row number **or** an app id — a bare number that is both a row number and another row's app id is refused rather than guessed at, so spell it `#3` (row 3) or `app:10` (Steam app id 10); if nothing is found but this machine has OTHER installed Steam games lmm has no known-games entry for, says how many and names `--include-unknown` instead of reporting nothing found                                                                                                                                                                                                                                                                                                                                                         |
+| `lmm game detect --all`                                   | Non-interactively select every not-yet-configured detected game (same set the "all" prompt answer picks); required under `--json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `lmm game detect --select <rows>`                         | Non-interactively select detected games by row number or Steam app id (e.g. `1,3` or `1,1133870`), or name one explicitly with `#3`/`app:10`; required under `--json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm game detect --include-unknown`                       | Also list the remaining installed games with no known-games entry (the ones with no Workshop items either), with their Steam app ids for `lmm game add --from-detected` — selecting one here is refused with that pointer, since nothing tells lmm which mod source it belongs to; under `--json` (with no selection flag) emits the listing document, which only this flag produces: a plain `lmm game detect --json` emits **no** listing at all — with no `--all`/`--select` it refuses (nothing may prompt under `--json`), and with either one it emits the result document for what it added. What `--all`/`--select` choose from is the default listing, Workshop-bearing uncurated rows included. Steam's own tools (Proton, the Linux runtimes, the redistributables) are filtered out by a small deny-list, so a genuinely misidentified title never appears here — add it to your [`steam-games.yaml`](docs/configuration.md#steam-gamesyaml-optional) override to make it a known game (which skips the filter entirely), or fall back to a plain `lmm game add` |
+| `lmm auth login [source]`                                 | Authenticate with a source (any source declaring auth; nexusmods/curseforge validated live)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `lmm auth login <source> --key-from-env`                  | Read the key from the source's own environment variable (`NEXUSMODS_API_KEY`, `CURSEFORGE_API_KEY`, or the derived `LMM_<ID>_API_KEY`) — no prompt                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `lmm auth login <source> --key-stdin`                     | Read the key as exactly one line from stdin — no prompt                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm auth logout [source]`                                | Remove stored credentials (under `--json`, prints the re-read `lmm auth status` document)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `lmm auth status`                                         | Show authentication status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `lmm profile list`                                        | List profiles                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `lmm profile create <name>`                               | Create a profile                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm profile switch <name>`                               | Switch to a profile (installs missing mods)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `lmm profile switch <name> -y`                            | Skip the confirmation prompt; required under `--json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm profile delete <name>`                               | Delete a profile. The active profile is refused: switch to another one first                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `lmm profile rename <old> <new>`                          | Rename a profile (its mods, load order, hooks, overrides and default status move with it)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `lmm profile export <name>`                               | Export profile to YAML                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `lmm profile import <file>`                               | Import profile from YAML                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `lmm profile import <file> --force`                       | Import and overwrite existing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `lmm profile import <file> -y`                            | Answer "Download and install mods?" without a prompt; required under `--json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `lmm profile reorder [mod-id ...]`                        | Show or set load order                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `lmm profile reorder -i`                                  | Pick the new load order from a numbered list — type positions ("1,3,2", ranges "2-5,1"), no mod IDs needed; Enter keeps it, `q` cancels                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm profile sync`                                        | Update profile to match installed mods                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `lmm profile sync -y`                                     | Skip the confirmation prompt; required under `--json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lmm profile apply`                                       | Install/enable mods to match profile                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `lmm profile apply/switch/sync --dry-run`                 | Preview what an apply/switch/sync would do, changing nothing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `lmm deploy`                                              | Deploy all enabled mods from cache. Skips a mod the profile marks `disabled: true` and never takes files down: one still deployed is named, and `lmm profile apply` removes it. Acts for the active profile only: `-p` naming another profile is refused (`lmm profile switch` makes it active)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `lmm deploy <mod-id>`                                     | Deploy specific mod from cache                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `lmm deploy --method hardlink`                            | Deploy using different link method                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `lmm deploy --purge`                                      | Purge then deploy all mods                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `lmm deploy --dry-run`                                    | Preview what a deploy would do                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `lmm purge`                                               | Remove all mods from game directory. For a profile that is not active (`-p`), only the files it recorded as deployed that nothing else still claims                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `lmm purge --dry-run`                                     | Preview what a purge would do (no confirmation prompt)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `lmm conflicts`                                           | Show file conflicts in current profile                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `lmm source list`                                         | List built-in and user-defined mod sources                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `lmm source validate <file>`                              | Validate a user-defined source definition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `lmm source index`                                        | Show the active game's local search index (Thunderstore); `--refresh` rebuilds it now, `--all` lists every index on disk                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `lmm source index prune`                                  | Remove local search indexes no game needs (`--dry-run` previews, `--all -y` removes every one)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `lmm source validate --probe <file>`                      | Also live-smoke-test the definition (scan/fetch/API call)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `lmm source validate --probe --id <mod-id> <file>`        | Probe an `api` definition that has no `search` endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm source add <file>`                                   | Install a user-defined source definition under the config dir                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `lmm source remove <id>`                                  | Remove a user-defined source (refused while a game still maps it)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `lmm serve`                                               | Start the local web UI — the second frontend — on `127.0.0.1:7420` and open a browser (see [Web UI](#web-ui-lmm-serve))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm serve --addr <host:port>` / `--no-open`              | Bind somewhere other than the default, or don't open a browser                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 `lmm install --version <version>` resolves the exact version against the mod's full file list — archived/old files are searched automatically, no `--show-archived` needed — and the matching file(s) become the pool for `--file`/`-y`/the interactive prompt; when the mod has dependencies, `--version` and `--file` apply to the named mod only (`--file` picks from the version's matches when both are given, and the whole install aborts up front if either fails to resolve) — dependencies are unaffected, still installing at latest with their primary file auto-selected. An unknown version fails with an error listing the versions the source actually has (`version not found: version "..." (available: ...)`). A source whose files carry no version information fails with the standard "not supported" gap instead, same as any other missing capability — this is decided dynamically from the actual file data returned for that mod, not from the source's advertised `versions` capability flag (a source can declare `versions` support and still hit this gap for a mod whose files happen to lack version strings). Omitting `--version` installs the latest, unchanged.
+
+**Acting for a profile that is not active (`-p`)**: a game has one game directory, and it holds the active profile's mods. So `lmm install`, `update`, `update rollback`, `mod enable`, `import` and `deploy` - and `verify --fix`'s repairs that deploy the verified profile's own mods - refuse another profile and name `lmm profile switch <name>`. `lmm uninstall`, `mod disable` and `purge` still work for it, but remove only the files that profile alone recorded deploying, and say what they left and why. `lmm profile import` of a profile you are not switching to records its mods and deploys nothing. A game whose profile files do not say which profile is active refuses all of them until `lmm profile switch` marks one.
 
 **Version behavior in profiles**: a mod reference's `version:` field in a profile is the record of what that profile deploys, not just a display value — `lmm profile apply` and `profile switch` converge the installed mod to match it, downgrades included, healing a stale on-disk deployment back to the recorded version whenever it's still available upstream; `profile import` converges the same way: a mod already installed at a different version than the imported profile records is reinstalled at the profile's version as part of the import itself — so a lock carried by a shared profile takes effect without a second command. Hand-edit a profile's `version:` (or export/share/import the profile) to reproduce an exact build across machines. Sources whose files carry no version information (decided dynamically from the actual file data, not the source's advertised `versions` capability flag) keep the previous file-ID-based behavior instead.
 
@@ -1027,68 +2411,320 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 | `1`  | Error                                                       |
 | `2`  | Cancelled by the user (e.g. declined a confirmation prompt) |
 
+`--dry-run` always exits `0` once it renders a plan, even when the plan's own data records a
+selection that is certain to fail once applied (e.g. an unknown or disabled mod ID) — a plan is
+data, not an attempt. `lmm deploy <id> --dry-run` therefore exits `0` for a mod ID the live
+`lmm deploy <id>` would reject with exit `1`. A scripted pre-flight check cannot rely on
+`--dry-run`'s exit code alone to detect a doomed deploy/uninstall/purge ahead of time. Combined
+with `--json`, `--dry-run` emits the plan document itself rather than its rendering — see
+[JSON output](#json-output).
+
 ### Import
 
-`lmm import` has two distinct modes, chosen by whether an archive path is given:
+`lmm import` has three modes: scan (no arguments), archive (an archive path), and `--workshop`. The first two are chosen by whether an archive path is given:
 
-- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured — stopping at the first source that returns a result; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--dry-run` and `--skip-match` only apply to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
-- **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to the game's sole configured source, prompting interactively when several are configured) to fetch and attach source metadata as part of the import.
+- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Candidates are **scored** against the scanned name, and against the version too when the filename carries one: the best-scoring candidate across all sources wins, ties break deterministically (version agreement, then source ID, then mod ID), an exact name match ends the lookup early, and anything that does not clear the confidence bar is left **untracked** and imported as local rather than adopted as a similarly-named mod — searching `skyui` should never quietly attach your archive to `SkyUI Flashlite`. Three differences are refused outright, however close the rest of the name is: a **differing sequel number** (`Sim Settlements 2` is never `Sim Settlements 3`), **any difference at all in a pair whose longer name is under twelve letters** (`Vortex` is never `Vertex`, and `SkyUI` is never `SkyUI SE`), and **whole extra words** (`RaceMenu` is not `RaceMenu Special Edition`). A subtitle set off by punctuation is the exception: `Ordinator` matches `Ordinator - Perks of Skyrim`, and `HDT-SMP` matches `HDT-SMP (Skinned Mesh Physics)`, always as a `[probable match]` so the elided subtitle is visible before you confirm — unless two catalogue rows hang subtitles off the same name (`Alternate Start - Live Another Life` and `Alternate Start - Realm of Lorkhan`), where the tie is refused and the archive stays untracked instead of being attached to whichever sorts first. A mod that stays local this way is fully usable — it just has no update target; re-link it with `lmm mod edit --to-source`. The scan readout annotates any match short of an exact name with its confidence (`[strong match]`, `[probable match]`). Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--skip-match` only applies to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --to-source` to clear that once it can be checked for updates normally.
+- **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to the game's sole configured source, prompting interactively when several are configured) to fetch and attach source metadata as part of the import. `--dry-run` previews it: the archive's table of contents is read (never extracted), so the preview names the mod, the files it would deploy, and any file it would overwrite, without writing anything ([#314](https://github.com/DonovanMods/linux-mod-manager/issues/314)).
 
-Either way, a mod that ends up unmatched to any remote source is imported as local — it deploys and installs normally, but `lmm update` has nothing to check it against and will never notify about it.
+Either way, a mod that ends up unmatched to any remote source is imported as local — it deploys and installs normally, but `lmm update` has nothing to check it against and will never notify about it. A local mod lives under the `local` source, which no game has to list: every `lmm mod` subcommand (and `lmm uninstall`) reaches it with `--source local`, or with no `--source` at all, since a bare mod id resolves to the source its installed mod carries. It cannot be locked — there is no source to resolve versions against — so `lmm mod set-update <id> --pin` is the way to mute it.
+
+An imported archive whose only top-level directory is `BepInEx/` (or `plugins/`, `patchers/`, …) is named after the one plugin folder inside it, or after the archive itself — never "BepInEx".
 
 ```bash
 lmm import --game hytale                    # Scan mod_path for untracked mods
 lmm import --game hytale --dry-run          # Preview what would be imported
-lmm import ./my-mod.zip --game skyrim-se    # Import a specific archive
-lmm import ./mod.zip --game skyrim-se --id 12345 --source curseforge
+lmm import ./my-mod.zip --game baldurs-gate-3    # Import a specific archive
+lmm import ./mod.zip --game baldurs-gate-3 --id 12345 --source nexusmods
+lmm import --workshop --game space-engineers-2   # Track subscribed Steam Workshop items
 ```
+
+The third mode, `lmm import --workshop`, is described under [Steam Workshop](#steam-workshop). It is mutually exclusive with an archive argument and with `--skip-match`.
+
+### Thunderstore
+
+lmm can **search and install from Thunderstore** — the mod host behind Lethal Company, Valheim, Risk of Rain 2, R.E.P.O., Content Warning and most BepInEx-era Unity games — with no credential of any kind. Thunderstore needs no key for anything, so there is nothing to sign in to and `lmm source list` shows its auth as `n/a`.
+
+`lmm game detect` already knows the community slug for the five games above, so a detected one needs no configuration at all. Otherwise, map a game to it by community slug, which is the per-source game id:
+
+```yaml
+games:
+  - id: lethal-company
+    sources:
+      thunderstore: lethal-company # the slug in a thunderstore.io/c/<slug>/ URL
+```
+
+or `lmm game edit --source thunderstore=lethal-company`.
+
+**Six communities are prefilled for you.** `lmm game detect` (and the web UI's detect list) maps Lethal Company, Valheim, Risk of Rain 2, R.E.P.O., Content Warning and For The King to their communities without being asked, and — since all six are BepInEx games — writes their `loader: {kind: bepinex}` block at the same time, so the first plugin install is not refused. That declaration says the GAME needs BepInEx, not that your copy has it: `lmm game show` tells you whether it is actually installed, and `lmm verify` reports a declared loader that is missing.
+
+The slug is **required**. lmm will not guess a community from the game's own id — a wrong guess silently downloads and searches the wrong 230 MB — so every path that writes a game (`lmm game add`, `lmm game edit`, `lmm game detect`, `lmm init` and their web-UI equivalents) refuses an empty mapping for a source that needs one, whether you typed it or a known-games entry supplied it, and a search against a game whose mapping is already empty says which command fixes it rather than picking a community for you.
+
+**Search runs against a locally cached copy of the community index**, because Thunderstore publishes one unpaginated document per community and no per-query search endpoint at all. The first search for a community downloads that document and turns it into an index under `<data>/cache/_thunderstore/<community>/` — a few seconds and, for the largest community on the site, around 230 MB on disk. lmm says so on stderr while it happens — from whichever command triggered the build, `lmm search`, `lmm install` or `lmm import`'s matching — so `--json` still writes exactly one document on stdout. After that:
+
+- the index is served **without any request at all** for six hours;
+- past that, a refresh is a conditional request that upstream usually answers "unchanged" in **zero bytes**;
+- if Thunderstore cannot be reached, the copy you have keeps answering searches rather than the source going dark;
+- results carry an **exact** total, so paging through them is exact and deep — Thunderstore is the first source that knows how many results it has.
+
+`--category` and `--tag` both filter Thunderstore's own categories (`Mods`, `BepInEx`, `Client-side`, …), case-insensitively and ANDed together. A deprecated package still appears, marked `Deprecated` among its categories, and never above a package that is not; `--tag Deprecated` finds only those. A package Thunderstore flags as NSFW is **left out** unless you ask for it with `--tag NSFW` (or `--category NSFW`) — the default Thunderstore's own clients ship — and is marked `NSFW` when shown. Neither word matches as ordinary search text.
+
+If a refresh fails, the search still answers from the copy on disk and says so: a warning names the community, how old the copy is and why it could not be refreshed.
+
+The index directory is safe to delete at any time; the next search rebuilds it — `lmm source index prune` is the way to do it that checks nothing else is in there.
+
+**The index surface.** `lmm source index` shows what is cached for the active game — packages, when it was last confirmed current, its size — and `lmm source index --refresh` rebuilds it now, the command to reach for when a package published in the last few hours does not show up (`lmm search --refresh` does the same before searching). `lmm source index --all` lists every index on disk, for every game, with the games that use each; `lmm source index prune` removes what nothing needs:
+
+```bash
+lmm source index --game lethal-company   # this game's index
+lmm source index --refresh               # rebuild it now
+lmm source index --all                   # every index on disk, and who uses it
+lmm source index prune --dry-run         # what a prune would remove
+lmm source index prune                   # remove indexes no game uses, and used ones idle for 30 days
+lmm source index prune --all -y          # remove every index
+```
+
+A prune removes an index no game in `games.yaml` maps, and a mapped one only once it has gone 30 days without a refresh; `--all` removes every index, after asking. It is fail-closed: nothing is removed if `games.yaml` cannot be read, and only `--all` removes anything if `games.yaml` is missing, empty, or holds something lmm cannot read as a game (a mistyped key, a game indented out of its block, a game whose profiles exist but which the file does not list); no unused index is removed while any game maps Thunderstore to an identifier lmm cannot use; an index refreshed after the prune decided to remove it is kept; and a directory is removed only when every file in it is one lmm provably wrote there (its exact name and its content — a `.index-my-backup.json` of yours is kept), never through a symbolic link, and never when lmm has no permission to remove it, which the dry run already says. Indexes under a symlinked `_thunderstore` directory are listed, with the reason, and never removed — to keep the indexes on another disk, link lmm's whole cache directory instead. A run that could not remove an index it set out to exits 1. Everything removed is rebuilt by the next search. `--json` prints the same documents the web UI reads.
+
+In the web UI, the **Setup → Sources** page lists the same indexes with a **Refresh index** button for each one a game uses and a **Prune unused indexes** action that previews first and removes exactly what it showed (and says why, for any index it then could not remove or kept after all); it also says when lmm will next ask Thunderstore while it is holding off. The search page says "Building the Thunderstore index for … (one-time)…" while a first search waits on the build, and shows an index failure's reason and when to try again.
+
+**When Thunderstore is slow or refusing.** Thunderstore publishes no rate limit for the endpoints lmm uses, but a busy edge can still answer `429`. lmm retries twice, waiting at least what the server's `Retry-After` asks (up to a minute in all), and says so as it waits — `Rate limited by Thunderstore; retrying in 12s (attempt 2 of 3).` on stderr, or as the progress text of the web UI job that is waiting. A longer requested wait (or one named on the last attempt), or three failed requests in a row, holds Thunderstore off for a while; lmm names when it will ask again (`Not asking Thunderstore again until 12:04:30 (in 4m30s).`), and a search in the meantime answers from the copy on disk if there is one. The hold is kept on disk beside the indexes (`_thunderstore/.holds.json`), so a new command, or `lmm serve`, honours it too; a throttle or a server error holds every community, while a community whose own document is missing or unreadable is held on its own. A requested wait is read as a day at most. A mod download told to wait longer than a minute fails at once, naming the wait. A transfer that stops delivering bytes fails as stalled after 30 seconds (a minute for a mod download) rather than waiting out the ten-minute ceiling a large index is allowed — reported as a failure (exit 1, and a `--json` error document), never as a cancellation.
+
+**Installing.** `lmm install <Namespace-Name> --source thunderstore` — the package's `full_name`, exactly the string in its URL and in every dependency that names it. A Thunderstore **version is a file**: there is no file list to choose from, so `lmm mod files` lists one entry per published version (newest first, none of them dropped), `--version` resolves an exact one, and `lmm update rollback` goes back to any of them. Downloads are plain public URLs with no token and no expiry, and lmm checks the finished file against the exact byte count Thunderstore publishes.
+
+**Updates cost nothing upstream.** Every package's newest version is already in the local index, so `lmm update` for a Thunderstore game is a lookup rather than one request per mod. A version that differs from the installed one is offered — including a re-published older build, which Thunderstore's own ordering says is the current one — and a package that has left the community is reported as unavailable rather than as an update you cannot apply.
+
+**Dependencies** resolve like any other source's, with one exception: the `BepInExPack` entry that most packages declare is **not** a mod. It is the BepInEx loader, it lives in the game root, and it has to survive a profile switch, so lmm never installs it as a profile member. Instead, installing a package that needs it into a game with no `loader:` block is refused **before the download**, naming the version the package asked for and the three steps that fix it — see [BepInEx (Unity games)](#bepinex-unity-games). On a game that declares the loader, the dependency is already satisfied and the install proceeds. Every other dependency is handled by the ordinary resolver, against **this community's index** — including one published only in another community, which that index does not hold and which therefore surfaces as a plan warning rather than being installed.
+
+Mods deploy through the same BepInEx rules every other source's do: an archive rooted at `BepInEx/`, wrapped in a single directory, or rooted at `plugins/` all land under `<game root>/BepInEx/`, and the `manifest.json`/`icon.png`/README every Thunderstore package carries at its root are never deployed into your game directory.
+
+### Steam Workshop
+
+lmm can **track** the Steam Workshop items you are already subscribed to, and **download** an item so it manages its own copy. Tracking reads Steam's own bookkeeping (`steamapps/workshop/appworkshop_<appid>.acf`) across every Steam library on the machine, records each installed item, and checks it for updates through Valve's keyless metadata API.
+
+**Tracking, updates and collections need no credentials at all.** Only _searching_ the Workshop needs a Steam Web API key, and it is yours, not lmm's — see [Searching the Workshop](#searching-the-workshop-your-own-api-key) below.
+
+**Tracking what Steam already installed:**
+
+- `lmm game detect` maps a game whose Workshop manifest shows installed items to the `steamworkshop` source automatically (the per-source game id is the Steam **app id**). Suppress it with `--no-workshop`, or add the mapping later with `lmm game edit --source steamworkshop=<appid>`. Such a game is **listed by default** even when lmm has no curated entry for it — the downloaded items are what say it is moddable — with `Steam Workshop: N items` beside the row, and picking it (by row number or by app id) configures it straight from the detection. The same rows appear in the web UI's detect list.
+- `lmm import --workshop` records every subscribed item lmm does not already track. `--dry-run` previews it; `--refresh` bypasses the cached Steam metadata. In `lmm serve`, the same flow is **Add mods ▾ → Track Steam Workshop items…** or the **Scan Steam Workshop…** card in **Setup → Adopt** — the same preview and confirm either way — offered once the game maps the `steamworkshop` source.
+- `lmm list` marks such mods `EXTERNAL`, `lmm status` counts them separately, and `lmm mod show` prints a "Managed by: Steam Workshop" block naming the directory Steam owns.
+- `lmm update` reports an item whose Steam revision has moved on, and says plainly that **Steam** applies that update — the next time you launch the game, or via Steam's _Verify integrity of game files_.
+- `lmm verify` checks that the directory Steam owns is still there and non-empty; an item you unsubscribed from is reported as a finding.
+- `lmm uninstall` on such a mod removes **lmm's tracking only**. The item stays subscribed in Steam; unsubscribe in the Steam client to remove it.
+
+**What it deliberately does NOT do.** lmm never moves, copies, downloads or deletes a Workshop item's files — the Steam client owns them where they sit, and the game loads them from there. So:
+
+- **Deploying, enabling, disabling, updating, rolling back and re-linking are refused** for a Workshop item, with a message naming what to do in Steam instead. So is `lmm install steamworkshop:<file id>` for an item you are already subscribed to: an lmm-managed second copy alongside the one Steam loads would put the mod in the game twice. A bookkeeping-only "disabled" flag on a mod the game still loads would be a lie.
+- **Profile switches do not change what Steam has on disk.** A Workshop item is game-global; lmm profiles are not. `lmm profile switch` / `apply` leave such items exactly as they are and say so once. Managing which items are active is the Steam client's job.
+- **Conflict detection cannot see them.** `lmm conflicts` compares files deployed under the game's `mod_path`, and a Workshop item has none there. lmm cannot see inside a game's own Workshop loader.
+- **`lmm profile reorder` omits them.** Load order decides deploy precedence, and a tracked-only item deploys nothing, so any position it held would be inert.
+- **A snapshot records them; a restore leaves them alone.** lmm never captures a Workshop item into the [originals store](#snapshots) and holds no copy to put back, so `lmm snapshot restore` undeploys nothing for it and downloads nothing for it. An item Steam no longer has on disk is reported as a finding — the same judgement `lmm verify` makes — not a refusal.
+
+**Downloading an item lmm manages itself.** `lmm install steamworkshop:<file id>` (and the same Install action in `lmm serve`) downloads a Workshop item into lmm's own cache and deploys it like any other mod. Nothing about it is special once the bytes are on disk: it appears in `lmm list` without the `EXTERNAL` marker, deploys, disables, updates and uninstalls normally, and takes part in conflict detection and load order.
+
+lmm gets the bytes one of two ways, and neither needs your Steam password:
+
+- A handful of **old UGC-era items** are still published at a plain URL, which lmm downloads directly and checks against the exact byte count Valve reports for it.
+- Everything else needs **[steamcmd](https://developer.valvesoftware.com/wiki/SteamCMD)**, which lmm shells out to anonymously. Install it from your distribution's packages; lmm never bundles it, never installs it for you, and tells you so with the install link if it is missing when you try. steamcmd runs pinned to lmm's own staging directory with an isolated `HOME`, so it can neither find nor write to your real Steam library.
+
+**Not every game allows this.** Anonymous Workshop downloads are a per-app opt-in, and there is no way to know before trying — an item whose download is refused still describes itself perfectly. When a publisher has not opted in, lmm says so and points you at the route that does work: subscribe to the item in the Steam client, then run `lmm import --workshop` and lmm will track it in place.
+
+**What downloading deliberately does NOT do.** lmm never signs in to your Steam account, never stores a Steam password or session, never manages your subscriptions, and never rehosts or proxies Workshop content. If anonymous download is refused, tracking a subscription is the answer — there is no fallback that logs in as you.
+
+#### Searching the Workshop (your own API key)
+
+Valve's search endpoint refuses an unauthenticated request, so searching the Workshop needs a **Steam Web API key**. Get one free at <https://steamcommunity.com/dev/apikey>.
+
+**The key is personal and confidential.** It is tied to your own Steam account. Never share it, never publish it, and never paste somebody else's — lmm ships no key of its own and never will, because embedding a shared key in a distributed application violates the Web API Terms of Use, and a leaked key is your account's problem, not the tool's.
+
+```bash
+lmm auth login steamworkshop         # store your key (validated live before it is saved)
+export STEAM_WEB_API_KEY=...         # or just export it; lmm reads this name
+lmm search "cargo ship" --game space-engineers-2 --source steamworkshop
+```
+
+Stored keys are encrypted at rest, like every other source's. Without a key, a Workshop search reports that authentication is required rather than silently returning nothing; every other Workshop feature keeps working.
+
+Two Workshop-specific search notes: `--category` and `--tag` are both sent as **required tags** (the Workshop has no category concept distinct from tags), and results are cached for five minutes so pressing the same search twice costs one round trip, not two.
+
+#### Importing a collection
+
+A Workshop **collection** is a mod list, which is what an lmm profile is — so lmm imports one as a profile:
+
+```bash
+lmm profile import --workshop-collection 2500900001 --game space-engineers-2
+lmm profile import --workshop-collection https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001 --as ships
+```
+
+It takes the collection's id or the URL of its page, needs **no API key**, and names the profile after the collection unless you name it with `--as`. The profile **records the collection's list**: every item becomes a `steamworkshop:<file id>` entry in it. Items you are already subscribed to and tracking are marked as such; every other item is listed with what to do about it — subscribe to it in Steam, then run `lmm import --workshop`. Nothing is downloaded: the import records the list.
+
+What such a profile does **not** do is change what the game loads. A Workshop item is game-global — Steam has it on disk and the game loads it whichever lmm profile is active — so switching to a collection profile deploys nothing and undeploys nothing, and `lmm list --profile <name>` for it is empty until the items are installed by something. It is a **record of the list**, useful for seeing what a collection contains and what you are missing from it, not a way to turn a set of Workshop items on and off. To have lmm manage an item's own copy, install it — see [downloading an item lmm manages itself](#steam-workshop) above.
+
+In `lmm serve` the same input is in the **Profiles** modal, and pasting a collection link into the search box offers the import directly.
+
+**Author names.** Valve reports a Workshop item's creator as a steamid64, so lmm looks up the creator's Steam persona name and shows that instead — `lmm mod show` prints `Author: <name> (<steamid64>)`, `lmm search` and `lmm list` show the name, and the web UI shows the name with the id on hover; `--json` keeps the id in `author` and adds the name as `author_name`. With a Steam Web API key the lookup is one batched `GetPlayerSummaries` request; without one, lmm reads each creator's public community profile, one request per author (at most 20 not-yet-known authors per search or detail view), and stops asking for the rest of that call if the community site refuses. A name lmm cannot resolve shows the id. `lmm list` and the web UI's library never make a lookup of their own: they show the names a search, a `mod show` or a mod page has already resolved.
+
+Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop/meta/` — six hours for an item Valve describes, one hour for one it refuses — and author names under `…/_steamworkshop/authors/` with the same lifetimes. The directory is safe to delete at any time; `--refresh` bypasses the item cache for one run.
 
 ### Search
 
 `lmm search <query>` queries every source configured for the game concurrently by default — there's no prompt to pick one first, even when several sources are mapped. Results carry a `SOURCE` column so you can tell which source found each mod:
 
+```text
+$ lmm search bigger --game baldurs-gate-3
+ID                  NAME             AUTHOR   VERSION  UPDATED     SOURCE
+--                  ----             ------   -------  -------     ------
+BiggerBackpack-2.1  Bigger Backpack  donovan  2.1      2026-07-01  donovan-mods
 ```
-$ lmm search bigger --game skyrim-se
-ID                  NAME             AUTHOR   VERSION  SOURCE
---                  ----             ------   -------  ------
-BiggerBackpack-2.1  Bigger Backpack  donovan  2.1      donovan-mods
-```
+
+The `UPDATED` column is when the source last changed the mod: an age for anything from the last week (`3h ago`, `2d ago`), the date (UTC) for anything older. It appears only when at least one result has a date; a result whose source reports none shows `-`. NexusMods, CurseForge, Thunderstore, Steam Workshop and the Icarus catalog report one; a `manifest` source reports its `updated_at`, an `api` source whatever its `updated_at` mapping names, and a `directory` source the time the mod's folder or archive last changed on disk. The install picker shows each file's own date the same way, and the web UI shows it on search results and in the install dialog, with the exact time on hover.
+
+**Ordering and `--sort`.** A result whose name _is_ your query always comes first — compared without regard to case, spacing or punctuation, so `lmm search auctionator` leads with `Auctionator` and `Leatrix Plus` is `leatrix-plus` — and that holds for every source and every sort. The rest follow in the order `--sort` names:
+
+| `--sort`              | Order                                                                                                                                                                       |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `relevance` (default) | exact name, then names containing your query (or all its words), then the rest in each source's own order; across several sources, name matches first, then most downloaded |
+| `updated`             | last updated, **newest first** (a mod with no known date comes last)                                                                                                        |
+| `downloads`           | most downloaded first                                                                                                                                                       |
+| `popular`             | most endorsed (liked, thumbed-up) first; a source that reports no rating comes after one that reports zero                                                                  |
+
+Ties keep the order the sources returned them in. Where a source can sort on its own server — CurseForge, NexusMods, and the sources that hold their whole catalogue to search it (Thunderstore, Icarus, and `directory`/`manifest` sources) — it does, so `--limit 10 --sort updated` is the ten most recently updated mods _that source has_, not the newest of whatever its first page happened to hold. A source that can't (Steam Workshop, `api` sources) is re-ordered within the page it returned. `--sort` is refused up front, naming the four values, when it is anything else.
+
+Not every source can order by every field, and `--json` says which can: `sorts_available` lists the sorts that mean something for the sources that answered (`relevance` plus each of the others that at least one of them can order by), and `sort` echoes the one the hits are in. NexusMods and CurseForge order by all three; Thunderstore, Icarus, `directory` and `manifest` sources by `updated`; Steam Workshop by `updated` and `downloads`. The web UI's sort menu offers only the sorts in that list.
+
+On CurseForge, a search whose exact-named mod is not on the first page of results (the default ordering does not guarantee it) makes one extra, best-effort lookup of that mod by its slug and puts it first. A failed lookup is ignored; the search still returns what it found.
 
 If one source fails, its failure is reported as a warning on stderr and the other sources' results are still returned — a flaky manifest URL doesn't hide results from a source that responded:
 
-```
+```text
 warning: source my-repo: source "my-repo": reading manifest /opt/mods/my-repo.yaml: open /opt/mods/my-repo.yaml: no such file or directory
 ```
 
 Only when **every** configured source fails does the command return an error, which names each source's failure:
 
-```
+```text
 Error: search failed: all 1 source(s) failed: source my-repo: source "my-repo": reading manifest /opt/mods/my-repo.yaml: open /opt/mods/my-repo.yaml: no such file or directory
 ```
+
+`--limit N` (default 10) is a target, not just a ceiling: sources are paged until N merged results exist, every source runs out, or a safety bound of 10 pages per source is reached. A source is only paged at a page size it has shown it can honour, which is what keeps consecutive pages consecutive **rows**: most remote APIs cap how many results one page can hold (CurseForge at 50, NexusMods around 30), and asking such a source for "page 2 of 100" fetches rows 100–149 while rows 50–99 were never returned at all. When a source reports the smaller size it actually served, lmm adopts that size for the rest of the search and keeps paging it — CurseForge answers a `--limit 100` in two contiguous pages of 50 (the exact-name hit it may add to the first page is counted once). `--source` fills a `--limit` the same way. A source that caps **silently** (NexusMods reports neither its cap nor a total) has no safe size to page at, so it contributes one capped page and is not paged further: `--limit 100` can legitimately come back with fewer than 100 results, and `has_more` says so, but every result you do get is really among the first ones that source had. Ask for a smaller `--limit` (at or below such a source's cap) to page it further. A source that fails partway through the paging is reported as a warning like any other source failure, and the results its earlier pages returned are kept.
 
 Use `--source <id>` to search a single configured source instead of aggregating:
 
 ```bash
-lmm search bigger --game skyrim-se --source donovan-mods
+lmm search bigger --game baldurs-gate-3 --source donovan-mods
 ```
 
 A source that doesn't support searching (e.g. an `api` source defined without a `search` endpoint — see [API Sources](#api-sources)) is silently skipped when aggregating, but targeting it directly with `--source` reports a clear notice instead of a generic error:
 
-```
+```text
 Error: source "demo-api" does not support searching; install by ID instead: lmm install --source demo-api --id <mod-id>
 ```
 
+A source that **can** search but that you have never signed in to is skipped the same way, rather than warned about on every query: `lmm init` maps `steamworkshop` from a Steam scan because tracking and updating Workshop items needs no key, while searching the Workshop does. The skip is still reported — a search that comes back empty names what it left out and how to fix it — it just isn't a failure:
+
+```text
+steamworkshop was skipped: not signed in (run: lmm auth login steamworkshop).
+```
+
+Once a key **is** stored (or supplied through `LMM_<ID>_API_KEY` or a built-in's own variable), an authentication failure means that key is expired or revoked — a real problem — and is reported as a warning like any other source failure. Targeting the source directly with `--source` always reports it.
+
 A game with no configured sources at all fails fast with a diagnostic instead of an empty result:
 
-```
-Error: no mod sources configured for Skyrim Special Edition; add sources with 'lmm game add' or edit games.yaml
+```text
+Error: no mod sources configured for Baldur's Gate 3; add sources with 'lmm game add' or edit games.yaml
 ```
 
-`--json search` includes the same per-source failures as a `"warnings"` array alongside `"mods"`.
+`--json search` includes the same per-source failures as a `"warnings"` array alongside `"mods"`, each entry `{source_id, error}`, and names any source skipped for want of a credential in `"skipped_unauthenticated"` (present only when there is one).
 
 ### Update check behavior
 
 When you run `lmm update`, the tool checks each installed mod against the source (e.g. NexusMods). If some mods cannot be fetched (e.g. deleted, private, or network error), you still see **partial results** (any updates that were found), and a **warning** is printed to stderr describing which mods could not be checked.
+
+### Snapshots
+
+A **snapshot** is a named point you can bring a game back to.
+
+```bash
+lmm snapshot create --name before-total-conversion
+lmm snapshot list
+lmm snapshot restore before-total-conversion --dry-run
+lmm snapshot restore before-total-conversion
+lmm snapshot delete before-total-conversion
+```
+
+It is **metadata, not a copy of your mods**: the profile (with its load
+order and locks), the installed versions and settings, and the deployed
+files with their checksums. The mod files themselves are already in the
+cache, so a snapshot costs kilobytes. Creating one hashes the deployed tree,
+which is the same work `lmm verify` does — so on a large install it is not
+instant.
+
+Because a snapshot holds no mod bytes, a **restore** needs each mod's
+recorded version from the cache, or a download of that exact version from
+its source when the cache no longer has it. A version the source can no
+longer serve is a refusal in the preview, before anything is touched. The
+stock content lmm replaced is the exception: that IS kept, in the originals
+store below, which is the only copy of it.
+
+**The originals store** is the part lmm cannot reconstruct any other way.
+Whenever a deploy, or a profile override, would replace a file lmm did not
+put there — stock game content, or a file another tool left — the original
+is copied to `~/.local/share/lmm/snapshots/<game>/_originals/` **first, and
+once**: the first original wins, because the second write's "original" is
+lmm's own first write. `lmm snapshot restore` puts those back, checksum
+-verified. `lmm snapshot delete` never removes them; they are the only copy.
+**Removing the mod puts the original back too**, at the moment lmm's own
+file goes: an `lmm uninstall`, a `lmm purge`, an `lmm update` that drops a
+file the previous version shipped, a rolled-back install and the deploy-time
+convergence all restore what they displaced, so undoing what lmm did no
+longer leaves a hole where stock content was. The stored copy is dropped
+only once the bytes are actually back in place — a put-back that fails keeps
+both, so `lmm snapshot restore` can still do it. A restored original comes
+back with the **mode it had**, so a stock launcher script or shipped binary
+is executable again rather than `rw-r--r--`. A capture that **fails** — a full disk, a permission problem on the store —
+never blocks the operation, but it is printed as a warning on stderr and
+carried on the operation's result at any `--log-level`, because the moment
+lmm cannot preserve an irreplaceable file is not one to discover at the
+restore that cannot put it back.
+
+**A restore is five stages**, in this order: the current deployment is
+undeployed, every stored original goes back, the recorded profile is
+written (and made the active one), the mods it lists are installed at their
+recorded versions — downgrades included, re-downloading anything the cache
+no longer has — and the ones the snapshot recorded as **enabled** are
+deployed. A mod that was disabled when the snapshot was taken comes back
+disabled, with none of its files on disk. A version the source can no longer serve is reported as a **refusal, in
+the preview, before anything is touched**; it is never a quiet partial
+restore. A snapshot of the **current** state is taken first, so a restore is
+itself reversible (`--no-safety-snapshot` to skip that).
+
+**A restore also puts back which profile was active.** Snapshots are listed
+per game, not per profile — the snapshot you want back is often the one you
+took before switching away — so restoring a snapshot taken under another
+profile undeploys the currently active profile first and makes the
+snapshot's profile the active one again. Both the `--dry-run` preview and
+the web UI's confirm dialog say so before anything is touched, and the
+safety snapshot records the profile you were on, so the way back is a
+restore of that.
+
+**Steam Workshop items are recorded, never restored.** A snapshot lists the
+Workshop items the profile tracked, so the preview accounts for the whole
+profile — but lmm holds no copy of one and never deploys it, so a restore
+undeploys nothing for it, downloads nothing for it, and leaves its files
+exactly where Steam put them. If Steam no longer has an item on disk (you
+unsubscribed it after the snapshot), the preview and the result both say
+so; it is a finding, not a refusal, because lmm never promised to put a
+Steam subscription back. See [Steam Workshop](#steam-workshop).
+
+**Automatic snapshots** are opt-in. Set `auto_snapshot: true` in
+`config.yaml` and lmm records one before every deploy, profile switch and
+update, named `auto-<op>-<timestamp>`. They are pruned: the newest
+`auto_snapshot_keep` (default 10, `0` for unlimited) survive, and only the
+automatic ones — a snapshot you named is yours until you delete it. Off by default because hashing a
+large deployed tree on every deploy is a real cost, and because a user who
+wants the safety net can say so once. An automatic snapshot that fails is a
+warning, never a refusal — a backup that blocks the operation it is
+protecting is worse than no backup.
 
 ### Verify output
 
@@ -1108,10 +2744,83 @@ With `--fix`, verify also REMOVES stale lmm-deployed files and dangling lmm-cach
 - **X ModName - VERSION MISMATCH (recorded X, source reports Y)** - The recorded version doesn't match what the installed file ID(s) report upstream; use `--fix` to repair.
 - **? ModName - VERSION UNVERIFIABLE** - None of the recorded file ID(s) are listed by the source anymore; not repaired by `--fix` (reinstall the mod instead).
 
+For a game with a `loader:` block (see [BepInEx (Unity
+games)](#bepinex-unity-games)), verify adds a loader tier — seven checks,
+reporting nine statuses:
+
+- **LOADER MISSING** — the game declares a loader and its preloader
+  (`BepInEx/core/BepInEx.Preloader.dll`) is not in the install directory.
+- **LOADER VERSION MISMATCH (declared X, installed Y)** — drift between the
+  declaration and what is on disk.
+- **LOADER BOOTSTRAP INCOMPLETE** — the files the declared bootstrap needs
+  (`run_bepinex.sh` + `libdoorstop.so` for native, `winhttp.dll` +
+  `doorstop_config.ini` for Proton) are not all there, which usually means
+  the wrong BepInEx pack is installed.
+- **LOADER NEVER RAN** — everything is in place and `BepInEx/LogOutput.log`
+  does not exist, so the loader has not run; the finding names the launch
+  option to paste.
+- **LOADER STALE LOG** — the loader ran, but before the plugins currently on
+  disk were deployed, so nothing proves the current set ever loaded.
+- **LOADER PLUGIN UNLINKED** — an enabled mod's plugin files are not in the
+  game directory; `--fix` re-deploys the mod.
+- **LOADER DEPLOYED OUTSIDE LOADER** — a mod has an **assembly** deployed
+  somewhere other than `BepInEx/`, so the loader reads none of it. (An
+  assembly, not merely a file: on a BepInEx game `mod_path` is the game
+  root, so a mod that legitimately writes into the game's own directories
+  is not misplaced.)
+  This is what an install made before lmm recognised that archive's layout
+  looks like. `--fix` re-lays the mod's cache entry out through the layout
+  rules and re-deploys it — in every profile that has it **deployed**; a
+  profile where the mod is disabled is left exactly as it was. When
+  the entry is a layout lmm cannot place on its own, the row says so and
+  names what has to change — move the files under `BepInEx/plugins/` inside
+  the archive and re-import it — instead of claiming a repair it cannot
+  make, or pointing at a re-import of the same archive that would lay it out
+  the same way again.
+
+  This check also runs for a game that has BepInEx installed without
+  declaring it, since that is exactly where misplaced deployments came
+  from. Every other check above is about the DECLARATION, so they run only
+  for a game that made one.
+
+- **LOADER NESTED TREE** — a `BepInEx/` directory sits inside
+  `BepInEx/plugins/`. BepInEx loads every plugin anywhere under `plugins/`,
+  so a plugin in it loads a second time beside the copy deployed where it
+  belongs, and BepInEx reads no config in it. It is what a
+  `BepInEx/`-rooted archive leaves behind when a game that deployed into
+  `BepInEx/plugins` moves its `mod_path` to the game root without a purge
+  first. When every file in it is a link into THIS game's own part of lmm's
+  mod cache that no game records, `--fix` removes it — but not a `--fix`
+  that names a mod (`lmm verify <mod> --fix`, or the web UI's per-finding
+  Repair): the directory belongs to no one mod, so that run reports it and
+  leaves it for a `--fix` over the whole profile. Anything else is reported
+  as **LOADER FOREIGN NESTED TREE**, a warning `--fix` leaves alone, since
+  lmm cannot tell it from an archive you extracted there yourself — a
+  regular file, a link anywhere else, a directory lmm cannot read, and the
+  deployment of another `games.yaml` entry for the same install (an old
+  entry whose `mod_path` is `BepInEx/plugins` deploys a `BepInEx/`-rooted
+  archive exactly there). The removal re-checks every link at the moment it
+  removes it and keeps any it can no longer prove is a leftover. Like the
+  check above, it runs for a game that has BepInEx installed without
+  declaring it.
+
+Only UNLINKED, DEPLOYED OUTSIDE LOADER and NESTED TREE are `--fix`-able:
+lmm does not install the loader or write Steam launch options, so the
+remedy for the others is the setup `lmm game show` prints. On a game whose
+adapter lmm refuses, UNLINKED and DEPLOYED OUTSIDE LOADER are reported but
+not repaired either (so is a VERSION MISMATCH, whose repair re-links the
+mod, and a stale merged artifact): each repair would deploy, and the row
+names the refusal and how to fix it.
+
 A locked mod's VERSION MISMATCH is still reported, but `--fix` refuses to
 rewrite a locked mod's record (other, unlocked mods in the same run are
 still fixed) since the record is the lock's target, not drift to repair —
-move the lock instead. Separately, when a locked mod's installed version
+move the lock instead. A locked mod's MISSING, NO CHECKSUM and NEEDS
+REINGEST repairs are refused on the same grounds whenever the source cannot
+identify the recorded version's own file: each of them downloads into the
+recorded version's cache slot, and a source that does not stamp a version on
+its files (Icarus, for one) can never identify it — unlock first to repair
+such a mod. Separately, when a locked mod's installed version
 hasn't yet converged to the lock (see [Locking mods to a
 version](#locking-mods-to-a-version)), `verify` prints an informational
 "lock pending convergence" note rather than treating it as an issue.
@@ -1127,65 +2836,151 @@ CONVERSION FAILED is read straight from the merged pak's stored fingerprint — 
 
 ## Architecture
 
+The pipeline above is the design; this is where each stage lives. Everything
+that decides anything is in `internal/core`, and the two frontends — the CLI
+and `lmm serve` — are thin adapters over it: they parse input, call core, and
+render what comes back. Neither reaches past core, and core never calls back
+into either (a mutation that needs an answer mid-flight returns a typed error
+the caller answers by re-running with a different option).
+
 ```text
-cmd/lmm/                  # CLI entry point (Cobra)
+cmd/lmm/                  # CLI entry point (Cobra); imports exactly app/core/domain/source/serve (enforced by a test)
 internal/
-├── domain/               # Core types (Mod, Profile, Game)
-├── source/               # Mod source abstraction
-│   ├── nexusmods/        # NexusMods API client
+├── app/                  # Composition root: app.Open resolves paths (XDG), prepares dirs, opens core, registers sources
+├── domain/               # Core types (Mod, InstalledMod, Game, Profile) — no external dependencies
+├── source/               # The ModSource interface and its implementations
+│   ├── nexusmods/        # NexusMods GraphQL client
 │   ├── curseforge/       # CurseForge API client
+│   ├── steamworkshop/    # Steam Workshop: track subscribed items, search, collections, anonymous steamcmd download
+│   ├── thunderstore/     # Thunderstore: the locally cached community index, and search/packages/versions/dependencies/updates over it
+│   ├── icarus/           # Icarus: its mod catalog, plus the .pak/.exmodz merge compiler
 │   ├── custom/           # User-defined sources (directory, manifest, api)
-│   ├── steam/            # Steam library scanning (for 'lmm game detect')
-│   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirects)
+│   ├── steam/            # Steam library scanning (for `lmm game detect`)
+│   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirect rules)
 ├── storage/
-│   ├── db/               # SQLite storage
-│   ├── config/           # YAML configuration
-│   └── cache/            # Mod file cache
-├── linker/               # Deployment strategies
-├── core/                 # Business logic
-│   ├── service.go        # Main orchestrator
-│   ├── installer.go      # Install/uninstall
-│   ├── updater.go        # Update checking
-│   ├── downloader.go     # HTTP downloads
-│   └── extractor.go      # Archive extraction
-└── tui/                  # Bubble Tea application
-    ├── prototype/        # --prototype demo mode (static fake data)
-    └── theme/            # Color themes (wizardry, amber, dos, green)
+│   ├── db/               # SQLite (mod metadata, encrypted auth tokens) — pure Go, no CGO
+│   ├── config/           # YAML: config.yaml, games.yaml, profiles
+│   └── cache/            # The central mod file cache
+├── linker/               # Deployment strategies: symlink, hardlink, copy
+├── serve/                # `lmm serve`: the SPA (spa/ + vendor/) + /api/v1 JSON + SSE over core.Service
+└── core/                 # Every decision lmm makes (one flat package; frontends never reach past it)
 ```
+
+Inside `core`, one file per concern:
+
+- **The facade and its contracts** — `service.go` (construction and the
+  query/mutation concurrency contract), `ops.go`/`oplock.go` (the single
+  mutation slot, in-process and across processes), `plan.go` (the freshness
+  precondition every Apply re-checks), `errors.go` (the typed errors a
+  frontend branches on), `events.go` (the progress vocabulary both frontends
+  render), `jsonwire.go` and `queries.go` (the documents `--json` and
+  `/api/v1` return).
+- **One file per flow**, named for the command that drives it — most a
+  `Plan…`/`Apply…` pair, a few (the toggles and the settings writes) a single
+  gated call, because there is nothing to preview: `install.go`, `deploy.go`,
+  `uninstall.go`, `update.go`, `rollback.go`, `purge.go`, `switch.go`, `profile_apply.go`,
+  `profile_sync.go`, `profile_import.go`, `profile_reorder.go`, `adopt.go`,
+  `import_archive.go`, `mod_edit.go`, `mod_toggle.go`, `mod_settings.go`,
+  `game_add.go`, `game_detect.go`, `game_edit.go`, `snapshot.go`,
+  `snapshot_restore.go`, `workshop_adopt.go`, `workshop_collection.go`,
+  `verify.go`.
+- **The engines the flows share** — `downloader.go`, `extractor.go`,
+  `installer.go`, `importer.go`, `updater.go`, `dependencies.go`,
+  `resolve.go`, `selection.go`, `conflicts.go`, `converge.go`,
+  `deployable.go`, `overrides.go`, `originals.go`, `staging.go`, `fetch.go`,
+  `hooks.go`, and `merged_pak.go` (the Icarus compile step).
+
+`cmd/lmm` may import only `internal/{app,core,domain,source,serve}`, and
+`internal/serve` only `internal/{app,core,domain}` — both enforced by tests
+that read the packages' real imports, so a new dependency either belongs in
+that list or the logic that wanted it moves into core.
 
 ## File Locations
 
-| Type             | Path                                                                         |
-| ---------------- | ---------------------------------------------------------------------------- |
-| Config           | `~/.config/lmm/`                                                             |
-| Custom Sources   | `~/.config/lmm/sources/*.yaml`                                               |
-| Database         | `~/.local/share/lmm/lmm.db`                                                  |
-| Mod Cache        | `~/.local/share/lmm/cache/` (default)                                        |
-| Download Staging | `~/.local/share/lmm/downloads/` (in-flight downloads and archive extraction) |
+lmm follows the XDG Base Directory specification. `--config` and `--data` override the resolved directories; `cache_path` in `config.yaml` overrides the cache.
+
+| Type                    | Path                                                                                                                                                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Config                  | `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`)                                                                                                                                                                                                                                    |
+| Custom Sources          | `<config>/sources/*.yaml`                                                                                                                                                                                                                                                             |
+| Database                | `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)                                                                                                                                                                                                                     |
+| Credential key          | `$XDG_DATA_HOME/lmm/key` (default `~/.local/share/lmm/key`) — 0600, created on first `auth login`                                                                                                                                                                                     |
+| Mod Cache               | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)                                                                                                                                                                                      |
+| Download Staging        | `<data>/downloads/` (in-flight downloads and archive extraction)                                                                                                                                                                                                                      |
+| Steam Workshop metadata | `<data>/cache/_steamworkshop/meta/` (cached item descriptions; safe to delete)                                                                                                                                                                                                        |
+| Thunderstore index      | `<data>/cache/_thunderstore/<community>/` (the community index searches run against; safe to delete, rebuilt on the next search)                                                                                                                                                      |
+| Snapshots               | `<data>/snapshots/<game-id>/` — one `<name>.json` per snapshot, plus `_originals/` (the files lmm has replaced; the only copy of them). A snapshot name may use letters, digits, `.`, `_` and `-`, and may not start with `.` or `_` — which is what keeps `_originals/` out of reach |
+| steamcmd home           | `<data>/cache/_steamworkshop/steamcmd-home/` (steamcmd's isolated `HOME`; safe to delete)                                                                                                                                                                                             |
+
+**Precedence.** `--config`/`--data` win outright. Otherwise an `XDG_CONFIG_HOME`/`XDG_DATA_HOME` set to an **absolute** path decides, whether or not `$XDG_…/lmm` exists yet — setting the variable is an explicit instruction, and lmm never silently writes somewhere else (#297). Only when the variable is **unset** — or set to a relative path, which the XDG spec requires be ignored — does lmm fall back to the legacy `~/.config/lmm` / `~/.local/share/lmm`, which is the situation an install predating XDG support is in. If you set an XDG variable and want your existing data, move the directory to the new location (or point `--data`/`--config` at the old one).
 
 The mod cache location can be customized via `cache_path` in `config.yaml`. Setting a per-game `cache_path` in `games.yaml` changes that game's on-disk layout too: the global cache is `cache/<game-id>/<source-id>-<mod-id>/<version>/`, but a game-scoped `cache_path` drops the `<game-id>` segment since the configured directory is already specific to that game (`<cache_path>/<source-id>-<mod-id>/<version>/`).
 
 ## Documentation
 
 - **[Configuration reference](docs/configuration.md)** – All options for `config.yaml` and `games.yaml` (including hooks, link method, sources).
+- **[Security](docs/security.md)** – How stored credentials are encrypted at rest, what that protects against (and what it does not), and how to recover from a lost or damaged key file.
 - **Man pages** – In [`docs/man/man1/`](docs/man/man1/), one page per command and subcommand, generated from the CLI's own `--help` text (`make man`; a drift test fails CI if the pages fall out of sync). View with `man -l docs/man/man1/lmm.1` or install to your man path.
 - **[CHANGELOG.md](CHANGELOG.md)** – Release history and notable changes.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** – How to build, test, and submit changes.
 
 ## Roadmap
 
-- [x] NexusMods authentication and downloads
-- [x] Update management with policies and rollback
-- [x] Default game setting (avoid --game on every command)
-- [x] Mod dependency detection from NexusMods
+Everything under the first three headings shipped; the last heading is what
+is still open. The full entry for each shipped item — what changed and why — is
+in [CHANGELOG.md](CHANGELOG.md); the 2.0 line is under `[Unreleased]` until the
+release is cut.
+
+### The model
+
+- [x] Profiles as desired state, converged by `lmm profile apply` (downgrades included)
+- [x] Version locking, enforced when converging and carried by `profile export`/`import`
+- [x] Update policies (`auto`, `notify`, `pinned`) and `lmm update rollback`
+- [x] Mod file verification with provenance-aware `--fix` repair
 - [x] Conflict detection (file conflicts, circular dependency warnings)
-- [x] Mod file verification (checksums, --fix re-download)
 - [x] Automatic dependency installation (opt out with `--no-deps`)
-- [x] Interactive TUI (Bubble Tea) - see the Terminal UI section above
+- [x] Snapshots — `lmm snapshot create|list|restore|delete`, over an originals store ([#350](https://github.com/DonovanMods/linux-mod-manager/issues/350))
+
+### Sources
+
+- [x] NexusMods authentication and downloads
 - [x] CurseForge integration
+- [x] User-defined `directory`, `manifest` and `api` sources, with capabilities and live validation
 - [x] Additional first-party built-in sources beyond NexusMods/CurseForge (Icarus)
-- [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)
-- [ ] Backup and restore
+- [x] Steam Workshop: tracking, search, collection import, and anonymous download ([#269](https://github.com/DonovanMods/linux-mod-manager/issues/269))
+
+### Interfaces and packaging
+
+- [x] Default game setting (avoid `--game` on every command)
+- [x] `lmm serve` — the second frontend: a full local web UI over the same core, with `/api/v1` and SSE
+- [x] `lmm init` — a guided first run ([#351](https://github.com/DonovanMods/linux-mod-manager/issues/351))
+- [x] Encrypted credential storage ([#79](https://github.com/DonovanMods/linux-mod-manager/issues/79))
+- [x] Packaging: Arch `PKGBUILD`, `.deb`, `.rpm`, `.apk` ([#352](https://github.com/DonovanMods/linux-mod-manager/issues/352)); AUR publishing waits on [#549](https://github.com/DonovanMods/linux-mod-manager/issues/549)
+
+### In progress for 2.0
+
+- [ ] BepInEx support, tiered: plugin archives deploy correctly, the loader
+      handled as a per-game prerequisite rather than a mod, and a Thunderstore
+      source gated behind a locally cached index
+      ([#357](https://github.com/DonovanMods/linux-mod-manager/issues/357),
+      [#360](https://github.com/DonovanMods/linux-mod-manager/issues/360))
+- [ ] A documented game-adapter seam — archive normalisation, compile, file
+      routing and verify — so Unreal, Unity and the rest land without touching
+      the generic core; Icarus and BepInEx move behind it
+      ([#353](https://github.com/DonovanMods/linux-mod-manager/issues/353))
+
+Game auto-detection beyond Steam (Lutris, Heroic, Flatpak) was considered and
+declined ([#89](https://github.com/DonovanMods/linux-mod-manager/issues/89)):
+Steam detection works because Steam has one documented on-disk layout, and the
+other launchers each need their own parser against an unstable private schema,
+to save one step of a command most people run once per machine. `lmm game add
+--path` adds any of them by hand today. The issue will be reopened if a
+specific launcher draws real demand. FOMOD
+([#354](https://github.com/DonovanMods/linux-mod-manager/issues/354)) and
+automated LOOT-style plugin sorting
+([#355](https://github.com/DonovanMods/linux-mod-manager/issues/355)) are
+[non-goals for 2.0](#non-goals-for-20), not backlog — lmm's own load ordering
+is shipped and unaffected by either.
 
 ## Development
 
@@ -1205,9 +3000,40 @@ go build -o lmm ./cmd/lmm
 
 `make build` (or `make`) is the preferred way to build a working binary: it
 stamps `git describe --tags --dirty` into the binary, so `lmm --version` on
-a dev build self-identifies as e.g. `1.29.0 (dev: v1.29.0-2-g140e3c6-dirty)`
+a dev build self-identifies as e.g. `2.0.0 (dev: v2.0.0-2-g140e3c6-dirty)`
 instead of silently claiming the last released version. A plain
 `go build`/`go test` (no ldflags) behaves exactly like a clean release build.
+
+### `lmm serve`'s front end
+
+There is **no Node, no npm and no bundler** anywhere in this project, and
+there never will be: `go build` is the entire build, and a user installs
+nothing. The web UI is plain ES modules a browser loads directly.
+
+- `internal/serve/spa/` — the shell (`index.html`), the stylesheet
+  (`app.css`, hand-written CSS custom properties, two full token sets for
+  dark and light), and the application's own modules under `app/`.
+- `internal/serve/vendor/` — Preact and htm, at pinned versions, committed.
+  Each file carries a header naming its package, exact version, source URL
+  and the SHA-256 of the upstream artifact, plus any local edit made to it.
+  **Nothing in this repo ever fetches them**; upgrading one is a deliberate,
+  reviewed commit that replaces the file and updates its header.
+
+Both trees are served from the binary via `go:embed`. Several ratchets keep
+the front end honest: `no_unsafe_dom_test.go` fails the build on any
+raw-markup write (`dangerouslySetInnerHTML`, `.innerHTML`,
+`document.write`, …), any `eval`, or any import over the network;
+`TestSPAModuleGraphResolvesOverHTTP` walks the module graph from the entry
+point and requires every import to resolve — without a bundler, nothing
+else would catch a bad path before a browser did;
+`no_hardcoded_color_test.go` refuses any literal colour outside the token
+blocks, so both themes really do apply everywhere; and
+`contrast_test.go` holds every one of those tokens to WCAG 2.1 AA contrast
+in both palettes and pins the two dark token blocks to the same values.
+The browser E2E (`e2e_test.go`, real headless Chrome via `chromedp`,
+skipped when no browser is on PATH) is the only thing that EXECUTES the
+SPA, so it is the only thing that can see a CSP refusal, a 404 module, or
+a screen where the keyboard loses focus.
 
 ## License
 

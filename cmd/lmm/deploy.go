@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/spf13/cobra"
 )
@@ -18,6 +19,7 @@ var (
 	deployPurge   bool
 	deployAll     bool
 	deployForce   bool
+	deployDryRun  bool
 )
 
 var deployCmd = &cobra.Command{
@@ -34,16 +36,32 @@ which source that mod ID belongs to - it resolves automatically when the
 game has exactly one configured source, or prompts interactively when it
 has several. -s is ignored when deploying the whole profile.
 
+The game directory holds one profile's mods at a time - the active
+profile's - so a deploy acts for the active profile only: -p/--profile
+naming any other profile is refused. Make that profile active first with
+'lmm profile switch', which deploys it.
+
+A mod the profile marks ` + "`disabled: true`" + ` is not deployed. Deploy is not a
+converge run, so it never takes files down: if such a mod's files are still
+in the game directory, deploy leaves them there and names the mod, and
+'lmm profile apply' is what removes them.
+
 Use --purge to remove all deployed mods before deploying. This ensures
 a clean slate, useful when mods have gotten out of sync.
 
 Use --all to deploy all mods including disabled ones (e.g., after a purge).
+It is a one-off: the next converge run ('lmm profile apply' or 'lmm
+profile switch') takes down again any mod the profile marks disabled.
+
+Use --dry-run to print what the deploy would do - which mods, which files,
+what a --purge pass would remove first - without changing anything.
 
 Examples:
   lmm deploy --game skyrim-se
   lmm deploy --game skyrim-se --all
   lmm deploy --game skyrim-se --method hardlink
   lmm deploy --game skyrim-se --purge
+  lmm deploy --game skyrim-se --dry-run
   lmm deploy 12345 --game skyrim-se
   lmm deploy 12345 --game skyrim-se --source curseforge
   lmm deploy 12345 --game skyrim-se --method copy`,
@@ -53,11 +71,12 @@ Examples:
 
 func init() {
 	deployCmd.Flags().StringVarP(&deploySource, "source", "s", "", "mod source for deploying a single mod ID (default: auto-detect when the game has one configured source, prompt when it has several)")
-	deployCmd.Flags().StringVarP(&deployProfile, "profile", "p", "", "profile (default: active profile)")
+	deployCmd.Flags().StringVarP(&deployProfile, "profile", "p", "", "profile; only the active profile can be deployed (default: active profile)")
 	deployCmd.Flags().StringVarP(&deployMethod, "method", "m", "", "link method: symlink, hardlink, or copy (default: game's configured method)")
 	deployCmd.Flags().BoolVar(&deployPurge, "purge", false, "purge all deployed mods before deploying")
-	deployCmd.Flags().BoolVarP(&deployAll, "all", "a", false, "deploy all mods including disabled ones")
+	deployCmd.Flags().BoolVarP(&deployAll, "all", "a", false, "deploy all mods including disabled ones (the next 'lmm profile apply' or 'lmm profile switch' takes down any the profile marks disabled)")
 	deployCmd.Flags().BoolVarP(&deployForce, "force", "f", false, "continue even if hooks fail")
+	deployCmd.Flags().BoolVar(&deployDryRun, "dry-run", false, "print what the deploy would do without changing anything")
 
 	rootCmd.AddCommand(deployCmd)
 }
@@ -69,7 +88,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 }
 
 func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
-	profileName, err := resolveProfile(service, game.ID, deployProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, deployProfile)
 	if err != nil {
 		return err
 	}
@@ -93,7 +112,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if linkMethodOverride != nil {
 		methodName = linkMethodOverride.String()
 	} else {
-		method, err := service.GetEffectiveLinkMethod(game, profileName)
+		method, err := service.GetEffectiveLinkMethod(ctx, game, profileName)
 		if err != nil {
 			return err
 		}
@@ -101,13 +120,11 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	opts := core.DeployOptions{
-		Purge:       deployPurge,
-		LinkMethod:  linkMethodOverride,
-		All:         deployAll,
-		Hooks:       getResolvedHooks(service, game, profileName),
-		HookRunner:  getHookRunner(service),
-		HookContext: makeHookContext(game),
-		Force:       deployForce,
+		Purge:      deployPurge,
+		LinkMethod: linkMethodOverride,
+		All:        deployAll,
+		Force:      deployForce,
+		SkipHooks:  noHooks,
 	}
 	if len(args) > 0 {
 		resolvedSource, err := resolveSource(service, game, deploySource, false)
@@ -158,8 +175,21 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// deploy loop starts (a forced before_all warning, anything from the
 	// --purge pass) return early, without calling printDeployHeaderOnce -
 	// they must print before "Deploying N mod(s)..." even exists.
-	progress := func(p core.DeployProgress) {
+	// offStillDeployed counts DeployOffStillDeployed reports (#431, R9):
+	// they are DeployResult.Skipped entries, but not failures.
+	offStillDeployed := 0
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
+		case core.DeployOffStillDeployed:
+			// Reported before the deploy loop starts, like the purge
+			// phases: a mod left in place is not one of the N deployed.
+			fmt.Printf("  ⊘ %s — %s\n", p.ModName, p.Detail)
+			offStillDeployed++
+			return
 		case core.DeployBeforeAllForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 			return
@@ -205,15 +235,24 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		case core.DeployRedownloading:
 			fmt.Printf("  %s %s - cache missing, re-downloading...\n", colorYellow("⚠"), p.ModName)
 		case core.DeployDownloading:
-			fmt.Printf("\r  ⬇ %s: %.1f%%", p.ModName, p.Percent)
+			printProgressLine("\r  ⬇ %s: %.1f%%", p.ModName, p.Percent)
 		case core.DeployDownloadDone:
-			fmt.Println()
+			finishProgressLine()
 		case core.DeployDownloadFailed:
-			fmt.Println()
+			finishProgressLine()
 			fmt.Printf("  %s %s - %s\n", colorRed("✗"), p.ModName, p.Detail)
 			fmt.Println()
 		case core.DeploySkipped:
 			fmt.Printf("  %s %s - %s\n", colorRed("✗"), p.ModName, p.Detail)
+		case core.DeployExternalSkipped:
+			// #269: not a failure and not a deployment - Steam already has
+			// this item where the game reads it. Emitted by the live deploy
+			// and, since the dry run must not promise a deployment lmm never
+			// makes, by renderDeployPlan too. Detail carries ExternalPath.
+			fmt.Printf("  ⊘ %s — tracked from Steam, not deployed\n", p.ModName)
+			if verbose && p.Detail != "" {
+				fmt.Printf("    %s\n", p.Detail)
+			}
 		case core.DeployDeployed:
 			// #255: on a compile game, label how the mod's content actually
 			// reaches the game dir - "(merged)" rides the merged artifact
@@ -237,12 +276,35 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 	}
 
-	result, err := service.DeployProfile(ctx, game, profileName, opts, progress)
+	plan, err := service.PlanDeploy(ctx, game, profileName, opts)
 	if err != nil {
-		// Diagnostics accumulated before a fatal error (DeployProfile's
+		return err
+	}
+
+	if deployDryRun {
+		// Ruling 15: --dry-run --json emits the Plan itself, not a
+		// rendering of it - renderDeployPlan's synthesized events would
+		// print console lines beside the document.
+		if jsonOutput {
+			return emitJSON(plan)
+		}
+		renderDeployPlan(plan, progress, printDeployHeaderOnce, &mergeFooterPrinted)
+		return nil
+	}
+
+	result, err := service.ApplyDeploy(ctx, game, plan, opts, quietSink(progress))
+	if err != nil {
+		// Diagnostics accumulated before a fatal error (ApplyDeploy's
 		// error-path convention returns them alongside it) were already
 		// printed above, live, via progress - nothing left to print here.
 		return err
+	}
+
+	// Ruling 15: the applying run's document is the Result. Emitted ahead
+	// of the readouts below - all of them are console renderings of the
+	// same data the document already carries.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	if !deployHeaderPrinted {
@@ -259,7 +321,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	} else {
 		fmt.Printf("\nDeployed: %d", result.Deployed)
 	}
-	if failed := len(result.Skipped); failed > 0 {
+	if failed := len(result.Skipped) - offStillDeployed; failed > 0 {
 		fmt.Printf(", Failed: %d", failed)
 	}
 	fmt.Println()
@@ -272,18 +334,145 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	return nil
 }
 
-// findFilesByIDs finds downloadable files matching the given IDs
-func findFilesByIDs(files []domain.DownloadableFile, fileIDs []string) []*domain.DownloadableFile {
-	idSet := make(map[string]bool)
-	for _, id := range fileIDs {
-		idSet[id] = true
+// renderDeployPlan prints a core.DeployPlan under a "(dry run)" header, in
+// the same vocabulary a real deploy would use: the per-mod and merge lines
+// are synthesized as core flow events and pushed through doDeploy's OWN
+// progress closure, so a dry run's "✓ Mod (merged)" / "✗ Mod - reason" /
+// "⚠ Mod - cache missing, re-downloading..." / "Merged N mod(s) → artifact"
+// lines cannot drift from the live ones. A DeployPlanMod.Redownload entry
+// renders as the latter followed by its own "✓ Mod" line and counts as
+// deployable, never as a red "✗" (Task 24 review, Important #2) - a
+// cache-missing mod is exactly what the live deploy heals by re-downloading
+// and then deploying it, not a mod that fails. The lines the plan alone owns
+// - the header, the purge readout, the per-file detail under --verbose, and
+// the "Would deploy:" summary - are printed here; all of them are new output
+// behind the new --dry-run flag, so no existing invocation is affected.
+//
+// The summary deliberately says "Would deploy", not "Deployed", and the
+// --method reminder the live path prints ("Note: Used X method for this
+// deployment.") is omitted: nothing was deployed, and the header above
+// already names the method that would be used.
+//
+// Exit code: like every other flag, --dry-run's own errors (a bad --method,
+// a failing PlanDeploy read) fail normally. But a plan whose OWN data
+// records a selection that is certain to fail once applied (an unknown mod
+// ID, a disabled single-mod selection - DeployPlanMod.Skipped) still renders
+// and returns nil: a plan is data, and doDeploy's real error path is not
+// reached because ApplyDeploy is never called under --dry-run. Reported as
+// Task 24 review Minor #4; scripted pre-flight checks that need a nonzero
+// exit for a doomed deploy cannot rely on --dry-run's exit code alone and
+// should inspect a JSON-rendered plan's Mods[].Skipped instead once such a
+// frontend exists.
+func renderDeployPlan(plan *core.DeployPlan, progress func(core.Event), printHeaderOnce func(int), mergeFooterPrinted *bool) {
+	fmt.Printf("Deploy plan for profile %q (dry run)\n\n", plan.Profile)
+
+	if deployPurge {
+		fmt.Printf("Would purge %d file(s) before deploy...\n", len(plan.Purge))
+		if verbose {
+			for _, f := range plan.Purge {
+				fmt.Printf("    - %s\n", f)
+			}
+		}
+		fmt.Println()
 	}
 
-	var result []*domain.DownloadableFile
-	for i := range files {
-		if idSet[files[i].ID] {
-			result = append(result, &files[i])
+	// #431 (R9): a mod left in place because the profile switched it off
+	// is reported the way the live deploy reports it - ahead of, and not
+	// counted among, the mods that deploy.
+	mods := make([]core.DeployPlanMod, 0, len(plan.Mods))
+	for _, m := range plan.Mods {
+		if m.Class == core.DeployModOff {
+			progress(core.ModEvent{
+				Scope:  core.Scope{Op: core.OpDeploy, ModName: m.Name, Mod: &domain.ModReference{SourceID: m.Ref.SourceID, ModID: m.Ref.ModID}},
+				Phase:  core.DeployOffStillDeployed,
+				Detail: m.Skipped,
+				Class:  m.Class,
+			})
+			continue
+		}
+		mods = append(mods, m)
+	}
+
+	if len(mods) == 0 {
+		if deployAll {
+			fmt.Println("No mods to deploy.")
+		} else {
+			fmt.Println("No enabled mods to deploy. Use --all to deploy disabled mods.")
+		}
+		// A --purge pass still runs its uninstall.* hooks even though the
+		// deploy selection itself is empty (planDeployHooks counts every
+		// installed mod, enabled or not) - a dry run must never under-state
+		// that side effect, so this early return prints the same hook
+		// readout the non-empty path prints below (Final review Important
+		// #1).
+		if len(plan.Hooks) > 0 {
+			fmt.Printf("\nHooks that would run: %s\n", strings.Join(plan.Hooks, ", "))
+		}
+		return
+	}
+
+	printHeaderOnce(len(mods))
+
+	deployable := 0
+	for i, m := range mods {
+		scope := core.Scope{
+			Op: core.OpDeploy, Index: i + 1, Total: len(mods),
+			ModName: m.Name, Mod: &domain.ModReference{SourceID: m.Ref.SourceID, ModID: m.Ref.ModID},
+		}
+		if m.Skipped != "" {
+			progress(core.ModEvent{Scope: scope, Phase: core.DeploySkipped, Detail: m.Skipped})
+			continue
+		}
+		if m.Class == core.DeployModExternal {
+			// #269: an external mod deploys nothing, so it is neither
+			// deployable nor a red skip. Rendered through the LIVE path's
+			// own phase, which is what keeps the two readouts identical.
+			progress(core.ModEvent{Scope: scope, Phase: core.DeployExternalSkipped, Class: m.Class})
+			continue
+		}
+		if m.Redownload {
+			// This mod's cache entry is missing, but the live deploy heals
+			// that by re-downloading from source and then deploying it -
+			// render both live-vocabulary lines (not a red ✗) and count it
+			// as deployable (Task 24 review, Important #2).
+			progress(core.StepEvent{Scope: scope, Phase: core.DeployRedownloading})
+			deployable++
+			progress(core.ModEvent{Scope: scope, Phase: core.DeployDeployed, Class: m.Class})
+			continue
+		}
+		deployable++
+		progress(core.ModEvent{Scope: scope, Phase: core.DeployDeployed, Class: m.Class})
+		if verbose {
+			for _, f := range m.Link {
+				fmt.Printf("    + %s\n", f)
+			}
+			for _, f := range m.Remove {
+				fmt.Printf("    - %s\n", f)
+			}
 		}
 	}
-	return result
+
+	if plan.Merged != nil {
+		progress(core.MergeEvent{
+			Scope:        core.Scope{Op: core.OpDeploy},
+			Phase:        core.DeployMergeSynced,
+			MergedMods:   len(plan.Merged.Sources),
+			Artifact:     plan.Merged.Artifact,
+			RawFallbacks: len(plan.Merged.RawFallbacks),
+		})
+	}
+
+	if *mergeFooterPrinted {
+		fmt.Printf("Would deploy: %d", deployable)
+	} else {
+		fmt.Printf("\nWould deploy: %d", deployable)
+	}
+	if skipped := len(mods) - deployable; skipped > 0 {
+		fmt.Printf(", Skipped: %d", skipped)
+	}
+	fmt.Println()
+
+	if len(plan.Hooks) > 0 {
+		fmt.Printf("\nHooks that would run: %s\n", strings.Join(plan.Hooks, ", "))
+	}
 }

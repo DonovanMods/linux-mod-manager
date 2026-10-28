@@ -1,0 +1,332 @@
+// modrows.js - pure library-table logic: joining the four /api/v1 documents
+// Mission Control's library reads into one row per mod, plus the filtering,
+// sorting and undeployed-change counting the top bar and library controls
+// need (docs/plans/2026-08-31-serve-spa-design.md §Mission Control:
+// "Library"). Extracted from the rendering component so it has no DOM to
+// drive - the SPA has no JS test runner (no Node anywhere), so this is
+// exercised through the library component's chromedp scenarios, but keeping
+// the join and the predicates pure is what makes that coverage mean
+// anything: a rendering bug and a join bug cannot hide behind each other.
+
+import { displayUpdateTarget } from "./version.js";
+
+/** The wire key a mod is addressed by everywhere but the URL (domain.ModKey:
+ * "sourceID:modID") - core.ConflictModRef.Key and every /api/v1/updates row
+ * key off it the same way. */
+export function modKey(mod) {
+  return `${mod.source_id}:${mod.id}`;
+}
+
+/** healthStateLabels is what each of buildRows' healthState values says
+ * (issue 418), as {badge, text}: the badge is what fits in the library's
+ * badge column, the text is the sentence the slide-over and the badge's own
+ * name use. One table, because the row and the panel saying this
+ * differently is the drift verify.js#findingLabel already exists to prevent
+ * one level down. "issues" has no fixed text: its sentence is a count,
+ * which healthLabel builds. */
+const healthStateLabels = {
+  ok: { badge: "✓", text: "Verified — no issues found" },
+  issues: { badge: "⚠" },
+  unknown: { badge: "?", text: "Not verified yet" },
+};
+
+/** healthLabel is one row's health state in words: the count is folded in
+ * for the "issues" state, since "2 health findings" is the whole of what
+ * that state means to a reader. */
+export function healthLabel(row) {
+  if (row?.healthState === "issues") {
+    return countOf(row.findingCount, "health finding");
+  }
+  return (healthStateLabels[row?.healthState] ?? healthStateLabels.unknown)
+    .text;
+}
+
+/** healthBadge is the same state as the one glyph the library's badge column
+ * has room for. */
+export function healthBadge(row) {
+  return (healthStateLabels[row?.healthState] ?? healthStateLabels.unknown)
+    .badge;
+}
+
+/** countOf is "12 mods"/"1 mod" - a count and its noun, agreeing (issue
+ * 434: every select-all surface has to state the size of what it is about
+ * to take, and each one was spelling the agreement by hand).
+ *
+ * Built as ONE string rather than adjacent interpolations for the reason
+ * lockedNote below documents: htm collapses the whitespace between those,
+ * so a caller assembling it in a template would fuse the number to the
+ * noun. */
+export function countOf(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/** lockedNote is how a row that will be REFUSED says so, in the two places
+ * a user meets it before the outcome does: the Updates card's own list and
+ * the confirm modal's (plan_updates.js reads the same field off the same
+ * domain.Update).
+ *
+ * The refusal is core's, decided by ApplyUpdateBatch's own lock gate (#97);
+ * domain.Update.Locked/LockedVersion are stamped by CheckGameUpdates from a
+ * single profile read, so both surfaces know the fact without a second
+ * fetch. Built as ONE string rather than adjacent interpolations - htm
+ * collapses the whitespace between those (the trap cards.js#conflictLabel
+ * documents) - and it names the LOCKED version rather than the installed
+ * one, since a lock can name a version the install has already moved off.
+ * It lives here rather than in either component for the same reason
+ * verify.js#findingLabel does: two surfaces saying the same thing in two
+ * places is two chances to drift. */
+export function lockedNote(update) {
+  // issue 269's version DISPLAY rule reaches even here: a LOCKED external row
+  // (nothing refuses `lmm mod lock` for one) holds Steam's 19-digit content
+  // id as its lock target, and "locked at v7987119735124793734" is the
+  // forbidden shape with a "v" in front of it. There is no readable version
+  // to name for such a row, so the bare word is the whole of the truth.
+  if (update.installed_mod?.external) return "locked";
+  const version = update.locked_version || update.installed_mod?.version;
+  return version ? `locked at v${version}` : "locked";
+}
+
+/** EXTERNAL_UPDATE_NOTE is lockedNote's sibling for an EXTERNAL row (issue
+ * 269): the short reason the Updates card and its confirm modal give for a
+ * row neither of them will apply. Core says the same thing at length in
+ * core.ReasonExternalNoUpdate; this is the phrase that fits on a row.
+ *
+ * The two refusals are NOT the same shape, and the surfaces treat them
+ * differently on purpose. A lock is the user's own reversible choice, so a
+ * locked row stays tickable and merely carries a mark. Steam's ownership of
+ * a Workshop item is not reversible from anywhere in this UI - lmm can
+ * report the update and can never apply it - so an external row carries the
+ * mark and no checkbox at all, and never reaches the batch. */
+export const EXTERNAL_UPDATE_NOTE = "Steam applies this itself";
+
+/** MANUAL_UPDATE_NOTE is the same phrase for a MANUAL-ONLY row (issue 543):
+ * one whose source will not serve the file through its API
+ * (domain.Mod.ManualOnly), which ApplyUpdateBatch declines with
+ * core.ReasonManualDownload. Like an external row it gets no checkbox - no
+ * batch will ever download it - but unlike one it has a way out on the row
+ * itself: the mod's page, and "Update from file…". */
+export const MANUAL_UPDATE_NOTE =
+  "download it yourself, then update from the file";
+
+/** isManualOnly reads issue 543's flag off an installed mod, or off a
+ * domain.Update - whose installed_mod also carries it when the source
+ * classified the mod so during the check itself. */
+export function isManualOnly(modOrUpdate) {
+  return Boolean(
+    modOrUpdate?.manual_only || modOrUpdate?.installed_mod?.manual_only,
+  );
+}
+
+/**
+ * Builds one library row per installed mod (mods: core.ModList's own "mods"
+ * array, already in the profile's load order): the ModListing fields
+ * verbatim, plus the derived badges no single document carries alone,
+ * cross-referenced by the same keys their owning documents use.
+ *
+ *   - updates: core.UpdateCheckReport's "updates" array (domain.Update),
+ *     keyed by its embedded installed_mod.
+ *   - findings: core.VerifyResult's "findings" array (core.VerifyFinding),
+ *     matched by mod_id - the wire format carries no source, so within one
+ *     profile this assumes mod IDs don't collide across sources, the same
+ *     assumption the finding itself already makes.
+ *   - conflicts: core.ConflictReport's "conflicts" array (core.
+ *     ProfileConflict), matched by the owner/also_in ConflictModRef keys.
+ *   - verified: whether a core.VerifyResult exists at all (issue 418).
+ *     Without it "no findings for this mod" is ambiguous between "checked,
+ *     nothing wrong" and "never checked", and those are opposite things to
+ *     tell someone about their install. An absent or failed /api/v1/health
+ *     read is the second.
+ */
+export function buildRows(mods, updates, findings, conflicts, verified) {
+  const updateByKey = new Map(
+    (updates ?? []).map((u) => [modKey(u.installed_mod), u]),
+  );
+  const problems = new Map();
+  for (const f of findings ?? []) {
+    if (f.status === "ok") continue;
+    problems.set(f.mod_id, (problems.get(f.mod_id) ?? 0) + 1);
+  }
+  const conflictKeys = new Set();
+  for (const c of conflicts ?? []) {
+    conflictKeys.add(c.owner.key);
+    for (const also of c.also_in) conflictKeys.add(also.key);
+  }
+
+  return (mods ?? []).map((mod, index) => {
+    const key = modKey(mod);
+    const update = updateByKey.get(key);
+    return {
+      ...mod,
+      key,
+      // index + 1 is a DISPLAY index, not the profile's actual load order:
+      // ListMods (core/queries.go) places a mod that's installed but absent
+      // from the profile's load order first, so those rows are labelled 1,
+      // 2, … under a "Load order" column when they have none. Won't-fix for
+      // now - ModListing carries no field distinguishing "has no load-order
+      // entry" on the wire, and adding one is the same kind of JSON-contract
+      // change this unit's gate keeps frozen (see cards.js's HealthCard
+      // comment for the sibling case).
+      loadOrder: index + 1,
+      hasUpdate: Boolean(update),
+      // version.js#displayUpdateTarget, not the raw field: an external row's
+      // target is another Steam content id (issue 269's version DISPLAY rule).
+      updateTarget: displayUpdateTarget(update),
+      // issue 269: an EXTERNAL mod is tracked, never deployed. The row carries
+      // the flag verbatim from domain.InstalledMod so the badge, the hidden
+      // actions and the deployable counts all read one fact.
+      isExternal: Boolean(mod.external),
+      // issue 543: the source will not serve this mod's files, so no batch
+      // downloads its update - from the row, or from the update the check
+      // just reported.
+      isManual: isManualOnly(mod) || isManualOnly(update),
+      hasHealthIssue: problems.has(mod.id),
+      // issue 418: the three states a reader needs to tell apart, plus the
+      // number behind the middle one. "unknown" is NOT a failure - it is the
+      // honest answer before the first verify of a session has landed.
+      healthState: !verified
+        ? "unknown"
+        : problems.has(mod.id)
+          ? "issues"
+          : "ok",
+      findingCount: problems.get(mod.id) ?? 0,
+      hasConflict: conflictKeys.has(key),
+    };
+  });
+}
+
+// filterPredicates backs the library's filter control. "load-order" has no
+// entry in SORT_PREDICATES below for the identical reason: it is the input
+// order, not a comparator.
+const filterPredicates = {
+  all: () => true,
+  enabled: (row) => row.enabled,
+  updatable: (row) => row.hasUpdate,
+  unhealthy: (row) => row.hasHealthIssue,
+};
+
+/** The filter control's options, in display order. */
+export const FILTER_NAMES = Object.keys(filterPredicates);
+
+/** Applies the named filter (an unknown name behaves as "all"). */
+export function filterRows(rows, filter) {
+  return rows.filter(filterPredicates[filter] ?? filterPredicates.all);
+}
+
+// sortComparators backs the library's sort control. "recent" orders by
+// InstalledAt descending - the wire's own name for the moment a mod joined
+// the library - matching the design doc's "recently-updated" name for what
+// this control moves in a local install's own timeline.
+const sortComparators = {
+  name: (a, b) => a.name.localeCompare(b.name),
+  // Date.parse(...) || 0 rather than bare `new Date(...) - new Date(...)`:
+  // an absent or unparsable installed_at parses to NaN, and Array.sort with
+  // a NaN comparator result gives an arbitrary order - falling back to the
+  // epoch keeps every undated row sorted (last, under "descending").
+  recent: (a, b) =>
+    (Date.parse(b.installed_at) || 0) - (Date.parse(a.installed_at) || 0),
+};
+
+/** The sort control's options, in display order. */
+export const SORT_NAMES = ["load-order", ...Object.keys(sortComparators)];
+
+/** Applies the named sort; "load-order" (and any unknown name) is a no-op -
+ * the rows already arrived in load order. */
+export function sortRows(rows, sort) {
+  const cmp = sortComparators[sort];
+  return cmp ? [...rows].sort(cmp) : rows;
+}
+
+/**
+ * Counts EXTERNAL mods (issue 269) - the ones lmm tracks but never deploys,
+ * because another agent owns their files. Reported separately from the
+ * library's own count so "12 mods" is never read as twelve deployments lmm
+ * made.
+ */
+export function countExternal(mods) {
+  return (mods ?? []).reduce((n, m) => n + (m.external ? 1 : 0), 0);
+}
+
+/**
+ * Counts installed mods whose desired state (Enabled) disagrees with what is
+ * actually on disk (Deployed) - the top bar's undeployed-changes indicator.
+ * Both fields live on every ModListing already; nothing else needs fetching
+ * to answer this.
+ */
+export function countUndeployed(mods) {
+  return (mods ?? []).reduce(
+    // issue 269: an external mod's Deployed is true and never mutates, so it can
+    // never be an undeployed change - the guard is belt-and-braces against
+    // a row whose flags drifted.
+    (n, m) => n + (!m.external && m.enabled !== m.deployed ? 1 : 0),
+    0,
+  );
+}
+
+// modOriginPattern parses the "mod:{source}/{id}:{action}" origin
+// convention every per-mod control this unit adds uses (jobprogress.js's
+// own doc comment names this exact shape). sourceID stops at the FIRST "/"
+// (a registry key never contains one); modID is everything up to the LAST
+// ":" (router.js's own ?mod= parsing tolerates a modID that itself contains
+// "/", so this must too - a greedy `.+` backtracks to let the trailing
+// `:action` anchor win).
+//
+// The versions table's own origin(`update:${v}`) (fullmodpage.js) is a
+// DIFFERENT shape - "action:version", not a bare action - so its trailing
+// ":${v}" is meant to fall outside `[a-z_]+` and never match here at all
+// (M3, harmless: that table's own controls are never looked up through
+// this map). It only holds for a NUMERIC v ("update:2.0" has a "." the
+// action group can't consume). A purely-lowercase v ("update:beta") WOULD
+// match: `[a-z_]+` claims "beta" as the action and modID's own greedy
+// `(.+)` absorbs "a:update" instead, keying a row that never exists. No
+// source in this fixture set reports a non-numeric version, so this stays
+// theoretical - flagged rather than fixed, since a real one would need a
+// less ambiguous origin shape for that table, not a smarter regex here.
+const modOriginPattern = /^mod:([^/]+)\/(.+):([a-z_]+)$/;
+
+/**
+ * runningMutations maps each mod currently being mutated - as far as THIS
+ * browser session's own controls can say - to that job's summary/progress
+ * frame, for the library's own row-level live indicator (issue 330 carry-3:
+ * "say WHICH mutation, or move onto the rows it concerns"). It reads
+ * state.origins (jobprogress.js's control -> job id map), not the job's own
+ * document: the registry attributes a job to no mod at all (activity.go's
+ * jobSummary carries no such field), so only the control that started it -
+ * here, the row itself - can say which mod a running job belongs to. A job
+ * started from another tab or script therefore never appears here; Mission
+ * Control's header falls back to naming the kind alone for that case
+ * (missioncontrol.js).
+ */
+export function runningMutations(jobsIndex, jobProgress, origins) {
+  const byID = new Map((jobsIndex ?? []).map((j) => [j.id, j]));
+  const result = new Map();
+  for (const [origin, jobID] of Object.entries(origins ?? {})) {
+    const match = modOriginPattern.exec(origin);
+    if (!match) continue;
+    const summary = byID.get(jobID);
+    if (!summary || summary.state !== "running") continue;
+    const [, sourceID, modID] = match;
+    result.set(`${sourceID}:${modID}`, {
+      jobID,
+      summary,
+      frame: jobProgress?.[jobID],
+    });
+  }
+  return result;
+}
+
+/**
+ * Renders an ISO timestamp as a short local date for the library's
+ * "Installed" column, or an em dash when there is nothing parsable to
+ * render. The dash matters: a blank cell under a heading reads as a
+ * rendering bug, while "—" says the document carries no date - which is a
+ * real state (an adopted mod whose installed_at was never recorded).
+ */
+export function formatDate(value) {
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return "—";
+  return new Date(ms).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}

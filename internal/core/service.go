@@ -3,57 +3,226 @@ package core
 import (
 	"context"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/linker"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 	"golang.org/x/sync/errgroup"
 )
 
 // ServiceConfig holds configuration for the core service
 type ServiceConfig struct {
-	ConfigDir string // Directory for configuration files
-	DataDir   string // Directory for database and persistent data
-	CacheDir  string // Directory for mod file cache
+	ConfigDir string       // Directory for configuration files
+	DataDir   string       // Directory for database and persistent data
+	CacheDir  string       // Directory for mod file cache
+	Logger    *slog.Logger // Diagnostics logger; nil means discard
+
+	// KeyPath is the token-encryption key file (#79), resolved by the
+	// composition root (internal/app: <DataDir>/key) and passed straight
+	// through to internal/storage/db - core reads it, it never derives it
+	// from an environment variable or a home directory. Empty defaults it
+	// beside the database, exactly as DataDir already positions lmm.db
+	// itself, so a caller that only supplies the three directories still
+	// gets encryption rather than a plaintext fallback.
+	KeyPath string
+
+	// WarnWriter is the always-on user-facing channel for an operational
+	// wait that happens during construction and would otherwise look like
+	// a hang - today only the contended credential scrub (#79). The
+	// composition root passes its stderr; nil means silent. It is passed
+	// straight through to internal/storage/db and is not a logging
+	// channel: diagnostics go to Logger.
+	WarnWriter io.Writer
+	// OpLockPath is the advisory lock file every MUTATION takes, so a CLI
+	// mutation and a running `lmm serve` cannot interleave their work on
+	// one installation (#317). EVERY mutation, not only the ones that
+	// touch the game directory: a token write, a game or profile edit and
+	// a source-definition save all take it too, so `lmm auth login` typed
+	// during a long deploy is refused rather than queued. Supplied by the caller rather than
+	// derived here: core resolves no paths of its own, and internal/app is
+	// the one place that knows where an installation lives (it passes
+	// <DataDir>/.oplock).
+	//
+	// Empty disables the cross-process lock entirely, leaving the
+	// in-process semaphore exactly as it was - which is what a test
+	// constructing a Service for one temp directory wants.
+	OpLockPath string
+
+	// Adapters is the game-adapter registry (#353). Nil means
+	// adapter.NewRegistry(), which already holds the built-in
+	// generic-files identity - so a Service built without the composition
+	// root resolves the same identity the product does, and every existing
+	// caller keeps working untouched.
+	//
+	// The composition root (internal/app) registers only NAMED adapters on
+	// top of that default; core never imports a concrete adapter package.
+	Adapters *adapter.Registry
+
+	// DownloadClient is the HTTP client file downloads use. Nil builds the
+	// default: http.DefaultTransport under a guard that fails a transfer
+	// once it stops delivering bytes for a minute (#436). A caller that
+	// supplies its own client supplies its own stall guard with it - a
+	// test does, to prove over a real HTTP/2 server that a stalled
+	// download is reported as a failure, in well under a minute.
+	DownloadClient *http.Client
+
+	// Now is the clock that time-based policy reads - today the index
+	// prune's 30-day age rule (#548). Nil means time.Now. A test pins it so
+	// that a fixture with a fixed timestamp means the same thing on any
+	// date the suite runs.
+	Now func() time.Time
 }
 
 // DownloadModResult contains the outcome of downloading a mod file
 type DownloadModResult struct {
-	FilesExtracted int    // Number of files extracted
-	Checksum       string // MD5 hash of downloaded archive
+	FilesExtracted int    `json:"files_extracted"` // Number of files extracted
+	Checksum       string `json:"checksum"`        // MD5 hash of downloaded archive
 }
 
-// Service is the main orchestrator for mod management operations
+// Service is the application facade every frontend talks to.
+//
+// It is safe for concurrent use with this guarantee: query methods (Get*,
+// List*, Plan*, Search*, CheckGameUpdates, Verify without Fix) may run
+// concurrently with each other and with at most one in-flight mutation;
+// mutating operations (Apply*, DeployProfile, PurgeProfile, UninstallMod,
+// EnableMod/DisableMod, Set*, Save*, Delete*, Reorder*, SyncMergedPak, Verify
+// with Fix) are serialized service-wide through a one-slot semaphore
+// acquired with the caller's ctx, so a waiter is itself cancellable. Reads
+// during a mutation observe WAL snapshot state, which is per-mod consistent
+// (spec §3).
+//
+// NewProfileManager returns a ProfileManager whose file mutations are NOT
+// serialized through this semaphore; Phase 2 lifts those flows into
+// serialized Service methods.
 type Service struct {
-	config     *config.Config
-	db         *db.DB
-	cache      *cache.Cache
-	registry   *source.Registry
-	games      map[string]*domain.Game
-	downloader *Downloader
-	extractor  *Extractor
+	config   *config.Config
+	db       *db.DB
+	cache    *cache.Cache
+	registry *source.Registry
+	// adapters is the game-adapter registry (#353). Never nil: NewService
+	// substitutes adapter.NewRegistry() for a nil ServiceConfig.Adapters,
+	// so AdapterFor always has at least the built-in identity to resolve.
+	adapters *adapter.Registry
+	// adaptersOnce guards adapterRegistry's lazy allocation for a Service
+	// built as a bare literal rather than through NewService.
+	adaptersOnce sync.Once
+	gamesMu      sync.RWMutex
+	games        map[string]*domain.Game
+	// gamesStat fingerprints the games.yaml the snapshot above was loaded
+	// from, so ReloadGames can skip the parse when nothing changed (#376, #524).
+	// Guarded by gamesMu, like games itself.
+	gamesStat gamesFileState
+	opSem     chan struct{}
+	// verifyMemo caches the last verify answer per (game, profile, tier),
+	// keyed on a cheap fingerprint of what a run actually reads (#336). Any
+	// mutation drops it - beginOp does that - and VerifyOptions.Force
+	// bypasses it. See verify_memo.go for the fingerprint's own limits.
+	verifyMemoMu sync.Mutex
+	verifyMemo   map[string]verifyMemoEntry
+	downloader   *Downloader
+	extractor    *Extractor
+	log          *slog.Logger     // Diagnostics logger; nil means discard (see logger()).
+	nowFunc      func() time.Time // ServiceConfig.Now; nil means time.Now (see now()).
 
 	configDir string
 	dataDir   string
 	cacheDir  string
+	// warnWriter is ServiceConfig.WarnWriter, kept so the originals store
+	// can reach the always-on user channel (review finding 5).
+	warnWriter io.Writer
+	// originalsStores memoises one originals store per game - see
+	// originalsStoreFor's own comment for why sharing matters.
+	originalsMu     sync.Mutex
+	originalsStores map[string]*originalsStore
+	// opLockPath is ServiceConfig.OpLockPath: the advisory lock file
+	// beginOp takes around every mutation, or "" for no cross-process lock.
+	opLockPath string
+
+	// backfillPending is whether #431's profile-document backfill might
+	// still be owed (backfill.go): true once construction found any db_meta
+	// record of it, false once a discharge leaves none. Only a migration
+	// can create the whole obligation, and that runs before construction
+	// returns, so a false here stays false - which is what lets beginOp and
+	// every enable skip the backfill with one atomic load.
+	backfillPending atomic.Bool
+
+	// beforeProfileBackfillScan, when non-nil, runs once the backfill holds
+	// the mutation slot, immediately before it reads its rows. Test-only
+	// seam (export_test.go's SetBeforeProfileBackfillScanForTest); always
+	// nil in production.
+	beforeProfileBackfillScan func()
+
+	// profileMarker, when non-nil, replaces config.MarkModsDisabled as the
+	// profile editor the backfill calls. Test-only seam (export_test.go's
+	// SetProfileMarkerForTest); always nil in production.
+	profileMarker func(path string, mods []domain.ModReference) ([]domain.ModReference, error)
+
+	// relayoutPlaceFile, when non-nil, replaces the per-file placement
+	// verify's BepInEx re-layout uses to build the new cache entry. Test-only
+	// seam (export_test.go's SetRelayoutPlaceFileForTest): the rewrite's
+	// atomicity contract is about an I/O failure PARTWAY through, and the
+	// destination tree is one the re-layout creates itself, so there is
+	// nothing on disk a test could arrange to make one member fail. Always
+	// nil in production.
+	relayoutPlaceFile func(src, dst string) error
+
+	// beforeSaveInstalled, when non-nil, runs immediately before the install
+	// flow's SaveInstalledMod call - the only point between a successful
+	// deploy and the DB write, and therefore the only place a test can arm
+	// the failure the deploy-recovery paths exist for. Test-only seam
+	// (export_test.go's SetBeforeSaveInstalledForTest); always nil in
+	// production.
+	beforeSaveInstalled func()
+	// beforeInstallReplace lets tests cancel after cache activation, so the
+	// failed-replacement recovery path runs with a published repair. Nil in
+	// production.
+	beforeInstallReplace func()
+
+	// afterInstallSave, when non-nil, runs immediately after a successful
+	// SaveInstalledMod call in the BATCH install engine (applyInstallBatchMod)
+	// - the only point between the DB row landing and ensureProfileExists's
+	// own read, and therefore the only place a test can arm the NEW-6 race
+	// (v2 Phase 3 Ruling 16 (B) review): a cancellation landing exactly here
+	// must not vanish silently past ensureProfileExists's Note into a doomed
+	// completeProfileWrite. Test-only seam (export_test.go's
+	// SetAfterInstallSaveForTest); always nil in production.
+	afterInstallSave func()
+
+	// nestedTreeHook, when non-nil, runs with "classify" just before
+	// verify classifies the BepInEx/ trees nested in BepInEx/plugins/, and
+	// with "remove" just before --fix removes one tree's leftovers - the
+	// window in which another process can record, replace or re-point what
+	// was classified (#413 fix round 4). Test-only seam (export_test.go's
+	// SetNestedTreeHookForTest); always nil in production.
+	nestedTreeHook func(stage string)
 }
 
 // NewService creates a new core service instance
 func NewService(cfg ServiceConfig) (*Service, error) {
+	log := cfg.Logger
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+
 	// Load configuration
 	appConfig, err := config.Load(cfg.ConfigDir)
 	if err != nil {
@@ -62,12 +231,16 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 
 	// Open database
 	dbPath := filepath.Join(cfg.DataDir, "lmm.db")
-	database, err := db.New(dbPath)
+	database, err := db.OpenWithOptions(dbPath, db.Options{Logger: log, KeyPath: cfg.KeyPath, WarnWriter: cfg.WarnWriter})
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
-	// Load games
+	// Load games. The fingerprint is taken BEFORE the read on purpose: a
+	// write that lands between the two makes the next ReloadGames re-read
+	// (a wasted parse), where the other order would make it skip one (a
+	// missed change) - #376.
+	gamesStat := fingerprintGamesFile(cfg.ConfigDir)
 	games, err := config.LoadGames(cfg.ConfigDir)
 	if err != nil {
 		if closeErr := database.Close(); closeErr != nil {
@@ -76,18 +249,50 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		return nil, fmt.Errorf("loading games: %w", err)
 	}
 
-	return &Service{
+	adapters := cfg.Adapters
+	if adapters == nil {
+		adapters = adapter.NewRegistry()
+	}
+
+	modCache := cache.New(cfg.CacheDir)
+	modCache.SetLogger(log)
+	downloader := NewDownloader(cfg.DownloadClient)
+	downloader.SetLogger(log)
+
+	svc := &Service{
 		config:     appConfig,
 		db:         database,
-		cache:      cache.New(cfg.CacheDir),
+		cache:      modCache,
 		registry:   source.NewRegistry(),
+		adapters:   adapters,
 		games:      games,
-		downloader: NewDownloader(nil),
+		gamesStat:  gamesStat,
+		opSem:      make(chan struct{}, 1),
+		downloader: downloader,
 		extractor:  NewExtractor(),
+		log:        log,
+		nowFunc:    cfg.Now,
 		configDir:  cfg.ConfigDir,
 		dataDir:    cfg.DataDir,
 		cacheDir:   cfg.CacheDir,
-	}, nil
+		warnWriter: cfg.WarnWriter,
+		opLockPath: cfg.OpLockPath,
+	}
+
+	// #431: whether the one-time profile-document backfill is owed, as the
+	// database found it at open - so every open and every mutation after
+	// this can ask an atomic.Bool instead.
+	svc.backfillPending.Store(database.OwesProfileBackfill())
+
+	// Expire the archives a refused ingest kept (retained_download.go).
+	// Here rather than only on the way in to a NEW retention: an entry
+	// swept only by a LATER refusal is an entry a user who abandons ONE
+	// install keeps forever, which is the leak the TTL exists to close. A
+	// ReadDir of a directory that is usually absent, so it costs an open
+	// nothing measurable.
+	svc.sweepRetainedDownloads()
+
+	return svc, nil
 }
 
 // Close releases resources held by the service
@@ -96,6 +301,261 @@ func (s *Service) Close() error {
 		return s.db.Close()
 	}
 	return nil
+}
+
+// Logger returns the diagnostics logger this Service was constructed with
+// (ServiceConfig.Logger), or a discarding logger if none was given.
+//
+// No cmd caller today, but a long-running frontend needs its own access to
+// the configured logger - `lmm serve`'s intended consumer, same reasoning
+// as ScanLocal - so it is kept by ruling (Phase 3 Ruling 10) rather than
+// unexported (4 sites / 2 files as of Unit R).
+func (s *Service) Logger() *slog.Logger {
+	return s.logger()
+}
+
+// discardLogger is handed back by logger() for a Service whose log field is
+// nil - a single shared instance rather than allocating one per call.
+var discardLogger = slog.New(slog.DiscardHandler)
+
+// logger returns s.log if set, or discardLogger otherwise, so every internal
+// log call site is safe even for a Service built by a raw struct literal
+// (several white-box tests in this package do this) rather than NewService,
+// which is the only place s.log is normally populated.
+func (s *Service) logger() *slog.Logger {
+	if s.log == nil {
+		return discardLogger
+	}
+	return s.log
+}
+
+// now is ServiceConfig.Now, or the wall clock when none was given - which
+// includes a Service built as a bare &Service{} literal, the logger() case.
+func (s *Service) now() time.Time {
+	if s.nowFunc == nil {
+		return time.Now()
+	}
+	return s.nowFunc()
+}
+
+// RegisterAdapter adds a game adapter to the registry (#353). The
+// composition root calls it; nothing else does - core never constructs a
+// concrete adapter, and the built-in generic-files identity is already
+// registered by adapter.NewRegistry.
+func (s *Service) RegisterAdapter(a adapter.GameAdapter) {
+	s.adapterRegistry().Register(a)
+}
+
+// adapterRegistry returns this Service's adapter registry, allocating one
+// for a Service built as a bare &Service{} literal - which internal
+// white-box tests do. Same nil-tolerance idiom as logger(), for the same
+// reason: a zero Service must behave, not panic.
+//
+// The registry is allocated PER SERVICE rather than shared from a package
+// variable (#411, M6): RegisterAdapter registers into whatever this
+// returns, so a process-global default would let one bare Service's
+// registration leak into every other one in the package. sync.Once because
+// the allocation is a write, and a Service is read concurrently.
+func (s *Service) adapterRegistry() *adapter.Registry {
+	s.adaptersOnce.Do(func() {
+		if s.adapters == nil {
+			s.adapters = adapter.NewRegistry()
+		}
+	})
+	return s.adapters
+}
+
+// ListAdapters returns the registered adapter IDs, sorted. It is what a
+// frontend validates `--adapter` against and what an interactive prompt
+// offers, which is why cmd/lmm's import allow-list does not need to grow an
+// internal/adapter entry (design §4).
+func (s *Service) ListAdapters() []string {
+	return s.adapterRegistry().Names()
+}
+
+// AdapterName is the adapter game SELECTS, after the two derivations #353's
+// migration performs, in this order:
+//
+//	`deploy_mode: compile` with no `adapter:` key means the icarus adapter
+//	(design §2, OQ1 - kept for 2.0 so every existing Icarus games.yaml keeps
+//	working with no user action);
+//
+//	a game with BepInEx that deploys into its game root means the bepinex
+//	adapter (#413; the game-root half is modPathIsGameRoot's) - "with BepInEx"
+//	being the same two-source gate #359 and #424 settled on, because the two
+//	answer different halves of one fact and a user has only ever supplied
+//	one of them. The `loader: kind: bepinex` block is a statement of intent
+//	lmm asks for; BepInEx/core/BepInEx.Preloader.dll in the install directory
+//	is a FACT lmm can read, and nothing else plausibly puts that file there.
+//	A Valheim entry added before the catalog declared the loader (#416), on a
+//	machine where the user installed BepInEx by hand, has the second and not
+//	the first - and treating that as "not a BepInEx game" is what let a
+//	plugin extract verbatim into a Steam install directory and report
+//	success.
+//
+// Each derivation fires only once its adapter is REGISTERED, so a build that
+// ships neither resolves every game to the identity and behaves exactly as
+// lmm did before #353.
+//
+// An explicit `adapter:` always wins, and the value is never written back
+// to games.yaml - domain.Game.Adapter stays what the user typed.
+//
+// The BepInEx half is the one derivation that touches DISK, which is a cost
+// worth naming, and only for a game that declares no adapter and is not a
+// compile game: one os.Stat for the preloader unless the game declares the
+// loader, then - only where BepInEx is there and the two paths are SPELLED
+// differently - one each for mod_path and install_path (modPathIsGameRoot).
+// Resolution happens once per flow, never per file.
+func (s *Service) AdapterName(game *domain.Game) string {
+	if game.Adapter != "" {
+		return game.Adapter
+	}
+	if game.DeployMode == domain.DeployCompile && s.adapterRegistry().Has(icarusAdapterID) {
+		return icarusAdapterID
+	}
+	if s.adapterRegistry().Has(bepinexAdapterID) && hasBepInEx(game) && modPathIsGameRoot(game) {
+		return bepinexAdapterID
+	}
+	return adapter.GenericID
+}
+
+// modPathIsGameRoot reports whether game deploys into its install directory
+// itself - the only place a BepInEx layout can be deployed, because every
+// path the bepinex adapter produces (BepInEx/plugins/..., BepInEx/config/...)
+// is relative to the game root (#413 re-review P-b).
+//
+// It is the bepinex derivation's third condition. A v1 games.yaml predates
+// lmm's loader support and points mod_path at <install>/BepInEx/plugins, so
+// that archives deploy into it exactly as packaged; deriving bepinex for such
+// a game joined the game-root layout onto that mod_path and nested every
+// plugin under BepInEx/plugins/BepInEx/plugins/, where nothing loads it.
+// Such a game keeps the identity, which is exactly what v1 did with it.
+//
+// The question is about DIRECTORIES, not spellings (#413 final review F2).
+// Two paths that are equal after filepath.Clean answer it without touching
+// disk - so a trailing separator is the game root, and games.yaml's `~` and
+// relative mod_path arrive here already expanded. Otherwise the two are
+// compared as the directories they name (os.SameFile, which follows
+// symlinks): Steam's ~/.steam/steam is a symlink to ~/.local/share/Steam on
+// most Linux installs, so one install is routinely written both ways, and a
+// lexical answer made such a game "off root" - generic-files, a loose plugin
+// deployed where BepInEx never loads it, and an explicit bepinex refused
+// for a layout that was right. A path that cannot be stat'd is not the game
+// root, which is the lexical answer it already had.
+//
+// An empty mod_path is never the game root: the installer joins it
+// verbatim, relative to the working directory.
+func modPathIsGameRoot(game *domain.Game) bool {
+	if game == nil || game.ModPath == "" || game.InstallPath == "" {
+		return false
+	}
+	if filepath.Clean(game.ModPath) == filepath.Clean(game.InstallPath) {
+		return true
+	}
+	modInfo, err := os.Stat(game.ModPath)
+	if err != nil {
+		return false
+	}
+	installInfo, err := os.Stat(game.InstallPath)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(modInfo, installInfo)
+}
+
+// hasBepInEx reports whether anything says this game loads mods through
+// BepInEx: its own declaration, or the loader's preloader sitting in its
+// install directory. A nil game says nothing, so every caller can ask
+// without a guard.
+func hasBepInEx(game *domain.Game) bool {
+	return hasLoader(game, domain.LoaderKindBepInEx)
+}
+
+// hasLoader is hasBepInEx for a loader kind named at runtime (a source's
+// requirement, an adapter's claim): the game declares kind, or - for
+// BepInEx, the one loader lmm can recognise on disk - the loader is
+// installed in its directory.
+//
+// It is the ONE "does this game have the loader" test (#413 review F6).
+// Adapter resolution asked declared-or-installed while the two loader
+// requirements asked the declaration alone, so a game whose BepInEx was
+// installed but undeclared was told to go and install it - by the source's
+// precondition before a download the resolved bepinex adapter would have
+// laid out correctly, and by the archive claim under an explicit adapter.
+// Kind is compared the way DeclaresLoader compares it.
+func hasLoader(game *domain.Game, kind string) bool {
+	if game == nil {
+		return false
+	}
+	if game.DeclaresLoader(kind) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(kind), domain.LoaderKindBepInEx) &&
+		regularFileAt(game.InstallPath, domain.BepInExPreloaderPath)
+}
+
+// bepinexOffRoot reports the refusal AdapterFor makes of an explicit
+// `adapter: bepinex` whose mod_path is not the game root.
+func bepinexOffRoot(game *domain.Game) bool {
+	return game.Adapter == bepinexAdapterID && !modPathIsGameRoot(game)
+}
+
+// icarusAdapterID and bepinexAdapterID are the adapters core's two
+// derivations migrate to. They are NAMES, not imports: core must never
+// depend on a concrete adapter package (design §4).
+const (
+	icarusAdapterID  = "icarus"
+	bepinexAdapterID = "bepinex"
+)
+
+// AdapterFor resolves game's adapter, failing loud when the configured name
+// is not registered - the existence check design §2 assigns to this layer,
+// because the registry lives here and internal/storage/config must not
+// learn it.
+//
+// It also enforces the two composition rules an explicit `adapter:` has
+// with the rest of the entry, each refused by name with the fix:
+//
+//	an adapter that cannot compile, for a `deploy_mode: compile` game;
+//
+//	bepinex, for a game whose mod_path is not its install path
+//	(modPathIsGameRoot) - every deploy it made would be nested one
+//	BepInEx/ too deep (#413 re-review P-b).
+//
+// The derived case cannot hit either: the derivations only fire for an
+// adapter that exists, the icarus adapter compiles by construction, and
+// bepinex is only derived for a game-root mod_path. So a game with no
+// adapter key is accepted exactly as it always was.
+func (s *Service) AdapterFor(game *domain.Game) (adapter.GameAdapter, error) {
+	return s.adapterForName(game, s.AdapterName(game))
+}
+
+// adapterForName is AdapterFor for a name the caller has already derived,
+// so a caller that needs both does not pay AdapterName's stat twice.
+//
+// Every refusal is an *AdapterRefusedError (#455).
+func (s *Service) adapterForName(game *domain.Game, name string) (adapter.GameAdapter, error) {
+	refuse := func(err error) error {
+		return &AdapterRefusedError{GameID: game.ID, Adapter: name, Err: err}
+	}
+	a, err := s.adapterRegistry().Resolve(name)
+	if err != nil {
+		return nil, refuse(fmt.Errorf("game %q: %w", game.ID, err))
+	}
+	if game.Adapter != "" && game.DeployMode == domain.DeployCompile {
+		if _, ok := adapter.Compiler(a); !ok {
+			return nil, refuse(fmt.Errorf("game %q sets deploy_mode: compile but adapter %q cannot compile; set an adapter that can (%s) or drop deploy_mode: compile",
+				game.ID, game.Adapter, strings.Join(s.adapterRegistry().Names(), ", ")))
+		}
+	}
+	if bepinexOffRoot(game) {
+		// Both ways out, each in the order that works: the purge that
+		// starts the first one is a removal, which this refusal does not
+		// block (removalSnapshotOf).
+		return nil, refuse(fmt.Errorf("game %q sets adapter: bepinex but its mod_path (%s) is not its install path, and a BepInEx layout is relative to the game root. %s%s; or, to deploy archives into %s exactly as packaged, run `lmm game edit %s --adapter generic-files`",
+			game.ID, game.ModPath, bepinexEnableLead, strings.Join(bepinexEnableSteps(game), ", then "), game.ModPath, game.ID))
+	}
+	return a, nil
 }
 
 // RegisterSource adds a mod source to the registry
@@ -109,22 +569,25 @@ func (s *Service) GetSource(id string) (source.ModSource, error) {
 }
 
 // ValidateInstallFileSelection rejects an install selection that mixes a
-// merge-compile source's exmodz variant with any other file (#211): the two
+// merge-compiling game's exmodz variant with any other file (#211): the two
 // are alternate forms of the same mod, and installing both double-applies
 // its table edits (the pak deploys standalone while the exmodz joins the
-// merged pak). Sources that don't implement source.MergeCompiler are never
-// restricted, single-file selections are always fine, and an unknown
-// sourceID is not this check's problem - pool resolution errors on it
-// first.
-func (s *Service) ValidateInstallFileSelection(sourceID string, files []domain.DownloadableFile) error {
+// merged pak). A game with no compile capability is never restricted, and
+// single-file selections are always fine.
+//
+// #353/U2: the capability comes from the game's ADAPTER, and the source the
+// files were listed from no longer has a say - which is why this method
+// lost its sourceID parameter. Asking the source is what would have made
+// this guard silently DEAD the moment U2 moved the MergeCompiler methods
+// off *icarus.Icarus: it would have returned nil for every Icarus
+// selection and #211's released fix would have regressed with nothing
+// failing. TestValidateInstallFileSelectionAsksTheAdapter is what stops
+// that from happening quietly.
+func (s *Service) ValidateInstallFileSelection(game *domain.Game, files []domain.DownloadableFile) error {
 	if len(files) < 2 {
 		return nil
 	}
-	src, err := s.registry.Get(sourceID)
-	if err != nil {
-		return nil
-	}
-	mc, ok := src.(source.MergeCompiler)
+	mc, ok := s.optionalCompiler(game)
 	if !ok {
 		return nil
 	}
@@ -154,38 +617,129 @@ func (s *Service) ListSources() []source.ModSource {
 
 // SearchMods searches for mods in a source
 func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string, category string, tags []string, page, pageSize int) (source.SearchResult, error) {
+	return s.searchSource(ctx, sourceID, gameID, query, category, tags, page, pageSize, domain.SortRelevance)
+}
+
+// SearchModsOrdered is SearchMods for a frontend that shows one named
+// source's page to a person (`lmm install <query>`, #512): the page is asked
+// of the source in sortBy and then put through the search ordering contract
+// (#503) - a hit whose name IS the query first, the rest in the sort - so
+// the picker's first row and an auto-pick agree with `lmm search`. Paging is
+// the source's own: page N is the source's page N, ordered within itself, so
+// next/prev keep working. An empty sortBy is relevance; one outside
+// domain.SearchSorts wraps domain.ErrInvalidSearchSort before any source is
+// asked.
+func (s *Service) SearchModsOrdered(ctx context.Context, sourceID, gameID, query string, sortBy domain.SearchSort, page, pageSize int) (source.SearchResult, error) {
+	sortBy, err := domain.ParseSearchSort(string(sortBy))
+	if err != nil {
+		return source.SearchResult{}, err
+	}
+	result, err := s.searchSource(ctx, sourceID, gameID, query, "", nil, page, pageSize, sortBy)
+	if err != nil {
+		return result, err
+	}
+	orderSearchHits(result.Mods, query, sortBy)
+	return result, nil
+}
+
+// NameMatchesQuery reports whether a hit called name IS the query - the same
+// equality rule the search ordering contract leads with (#503), exported so a
+// frontend deciding whether a hit earned an auto-pick (`lmm install -y`,
+// #512) asks core rather than carrying a second copy of it.
+func NameMatchesQuery(name, query string) bool { return nameMatchesQuery(name, query) }
+
+// searchSource is SearchMods with a sort (#503): the one place a
+// source.SearchQuery is built, so the aggregate and the named-source paths
+// forward the sort identically.
+func (s *Service) searchSource(ctx context.Context, sourceID, gameID, query string, category string, tags []string, page, pageSize int, sortBy domain.SearchSort) (source.SearchResult, error) {
 	src, err := s.registry.Get(sourceID)
 	if err != nil {
 		return source.SearchResult{}, err
 	}
 
-	sourceGameID := gameID
-	if game, ok := s.games[gameID]; ok {
-		// An empty mapping (e.g. directory sources: `donovan-mods: ""`) means
-		// "this source applies to any game" — it must not blank out the ID.
-		if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
-			sourceGameID = id
-		}
+	sourceGameID, err := s.sourceGameID(src, gameID)
+	if err != nil {
+		return source.SearchResult{}, err
 	}
 
-	return src.Search(ctx, source.SearchQuery{
+	result, err := src.Search(ctx, source.SearchQuery{
 		GameID:   sourceGameID,
 		Query:    query,
 		Category: category,
 		Tags:     tags,
 		Page:     page,
 		PageSize: pageSize,
+		Sort:     sortBy,
 	})
+	return result, classifyIndexError(sourceID, sourceGameID, err)
+}
+
+// searchNamedSource is searchSource for `--source`, filling a Limit the way
+// searchAllSources does for the aggregate (#511): when the caller wants a
+// number of hits (searchLimitRounds), the source's following pages are
+// fetched - at most maxSearchPagesPerSource, stopping as soon as limit hits
+// are held, the source has nothing more, or a page adds nothing new - and the
+// ctx is checked between pages. A later page's failure is a warning on the
+// result with the earlier pages' hits kept, exactly like the aggregate; the
+// first page's failure is the error. hasMore is the sources' own
+// "might hold more" for the pages fetched (it stays true after a cut by
+// limit or the page cap), never a statement about the Limit.
+//
+// Without a limit, with an explicit page, or with no page size it is one
+// searchSource call and sourceHasMore, as before.
+func (s *Service) searchNamedSource(ctx context.Context, sourceID, gameID, query, category string, tags []string, page, pageSize, limit int, sortBy domain.SearchSort) (res source.SearchResult, hasMore bool, err error) {
+	rounds := searchLimitRounds(page, pageSize, limit)
+	if rounds == 1 {
+		res, err = s.searchSource(ctx, sourceID, gameID, query, category, tags, page, pageSize, sortBy)
+		return res, sourceHasMore(res, page, pageSize), err
+	}
+
+	st := &searchSourceState{id: sourceID, cursor: page, pageSize: pageSize}
+	var first source.SearchResult
+	pages, failed := 0, false
+	for round := range rounds {
+		if round > 0 {
+			if err := ctx.Err(); err != nil {
+				return source.SearchResult{}, false, err
+			}
+		}
+		pageRes, err := s.searchSource(ctx, sourceID, gameID, query, category, tags, st.cursor, st.pageSize, sortBy)
+		if err != nil {
+			if !st.succeeded {
+				return source.SearchResult{}, false, err
+			}
+			st.warnings = appendNewWarnings(st.warnings, []error{err})
+			st.hasMore = true // cut short by a failure: it might have more
+			failed = true
+			break
+		}
+		if pages == 0 {
+			first = pageRes
+		}
+		pages++
+		st.absorb(pageRes, page, true)
+		if !st.active || len(st.mods) >= limit {
+			break
+		}
+	}
+	if pages == 1 && !failed {
+		// One page answered it: keep the single-round has-more rule the
+		// named path always had, rather than the aggregate's optimistic
+		// union, so `--source x` documents do not change for a limit that
+		// one page fills.
+		st.hasMore = sourceHasMore(first, page, pageSize)
+	}
+	return source.SearchResult{Mods: st.mods, TotalCount: st.total, Page: page, PageSize: st.pageSize, Warnings: st.warnings}, st.hasMore, nil
 }
 
 // SourcesForGame resolves gameID and returns the subset of its configured
 // sources (game.SourceIDs keys) that are currently registered, sorted by
 // ID(). A SourceIDs key with no matching registration is silently skipped -
 // this function has no per-item error channel, only resolved ModSource
-// values come back - matching SearchAllSources's existing tolerance for the
+// values come back - matching searchAllSources's existing tolerance for the
 // same situation. An unknown game is the only error case.
 func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
-	game, ok := s.games[gameID]
+	game, ok := s.game(gameID)
 	if !ok {
 		// Wrap the sentinel like GetGame does, so callers can errors.Is;
 		// the visible text stays "game not found: <id>".
@@ -204,85 +758,87 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 	return srcs, nil
 }
 
-// mergeCompilerSourceForGame resolves the sole MergeCompiler-capable source
-// registered for gameID (#173). The download path pins its MergeCompiler
-// check to the specific source a file was downloaded from
-// (DownloadModToCache's src.(source.MergeCompiler) check); Importer.Import
-// has no such per-archive source to key off of, so it resolves against
-// every source the game maps in its registry instead — at most one of a
-// game's configured sources implements MergeCompiler today. Zero is the expected
-// failure when the game (or its MergeCompiler source) isn't configured;
-// more than one is treated as ambiguous rather than picking arbitrarily —
-// both fail loud instead of letting an .exmodz import silently skip
-// validation.
-func (s *Service) mergeCompilerSourceForGame(gameID string) (source.MergeCompiler, error) {
-	srcs, err := s.SourcesForGame(gameID)
+// adapterCompiler is #353's answer to "can this game compile, and with
+// what": the game's adapter, when it implements adapter.MergeCompiler.
+//
+// It is the ONE resolver, and U2 (#412) is where it became that. Until the
+// Icarus implementation moved behind the seam, three more stood beside it -
+// mergeCompilerSourceForGame walked every source a game mapped,
+// mergeCompilerForGame walked the game struct's own map, and
+// soleMergeCompiler enforced an "exactly one compile-capable source"
+// contract between them. All three asked where the BYTES CAME FROM, which
+// is why an Icarus .pak downloaded from NexusMods could not compile while
+// the identical file from Project Daedalus could, and why two mapped
+// compile sources were "ambiguous" rather than simply two sources. One
+// game has one adapter, so there is nothing left to disambiguate.
+//
+// It FAILS LOUD for a game that cannot compile, which is what every
+// merged-pak and import call site wants: reaching them at all means
+// deploy_mode is compile, and a compile flow that silently skipped would
+// deploy a half-merged artifact. optionalCompiler is the tolerant half.
+func (s *Service) adapterCompiler(game *domain.Game) (adapter.MergeCompiler, error) {
+	a, err := s.AdapterFor(game)
 	if err != nil {
 		return nil, err
 	}
-	var compilers []source.MergeCompiler
-	for _, src := range srcs {
-		if c, ok := src.(source.MergeCompiler); ok {
-			compilers = append(compilers, c)
-		}
+	mc, ok := adapter.Compiler(a)
+	if !ok {
+		return nil, fmt.Errorf("game %q requires deploy_mode: compile but its adapter %q cannot compile; set `adapter:` to one that can (registered: %s)",
+			game.ID, s.AdapterName(game), strings.Join(s.adapterRegistry().Names(), ", "))
 	}
-	return soleMergeCompiler(gameID, compilers)
+	return mc, nil
 }
 
-// mergeCompilerForGame is mergeCompilerSourceForGame for callers that
-// already hold the *domain.Game (#256): it resolves against the game
-// struct's own source map instead of re-looking the game up in s.games, so
-// merged-pak paths that always received their game as a parameter keep
-// working for a game value that was never registered with the service (a
-// distinction only tests exercise today). Same 0/1/many contract.
-func (s *Service) mergeCompilerForGame(game *domain.Game) (source.MergeCompiler, error) {
-	var compilers []source.MergeCompiler
-	for id := range game.SourceIDs {
-		src, err := s.registry.Get(id)
-		if err != nil {
-			continue // unregistered: silently skipped, matching SourcesForGame
-		}
-		if c, ok := src.(source.MergeCompiler); ok {
-			compilers = append(compilers, c)
-		}
+// optionalCompiler is adapterCompiler for the two call sites that must
+// TOLERATE a game with no compile capability rather than fail: the download
+// path, where #221 I1 deliberately lets a raw artifact fall through to the
+// legacy extract path, and #211's variant-exclusivity guard, which simply
+// does not apply to a game that cannot compile.
+//
+// A resolution failure (a games.yaml naming an adapter this build does not
+// ship) reads as "no compiler" here rather than as an error, exactly as it
+// did before U2: the flow's own AdapterFor call reports that fault, and a
+// second, quieter channel for it would only make the first one skippable.
+//
+// Before U2 (#412) this was compilerForSource, and it took the source the
+// file came from so it could type-assert it for the capability. That
+// argument is gone with the walk: the game answers, whichever source
+// served the bytes - which is the user-visible improvement this unit
+// carries.
+func (s *Service) optionalCompiler(game *domain.Game) (adapter.MergeCompiler, bool) {
+	a, err := s.AdapterFor(game)
+	if err != nil {
+		return nil, false
 	}
-	return soleMergeCompiler(game.ID, compilers)
-}
-
-// soleMergeCompiler enforces the "exactly one compile-capable source per
-// game" contract shared by both resolvers above: zero is the expected
-// failure when the game's MergeCompiler source isn't configured; more than
-// one is treated as ambiguous rather than picking arbitrarily - both fail
-// loud instead of letting a compile-path operation silently skip.
-func soleMergeCompiler(gameID string, compilers []source.MergeCompiler) (source.MergeCompiler, error) {
-	switch len(compilers) {
-	case 0:
-		return nil, fmt.Errorf("game %q requires DeployCompile but has no merge-compiler-capable source configured (map a source implementing source.MergeCompiler in the game's sources)", gameID)
-	case 1:
-		return compilers[0], nil
-	default:
-		return nil, fmt.Errorf("game %q has multiple merge-compiler-capable sources configured; ambiguous compile source", gameID)
-	}
+	return adapter.Compiler(a)
 }
 
 // SourceWarning reports a per-source failure during an aggregate operation.
 type SourceWarning struct {
-	SourceID string
-	Err      error
+	SourceID     string `json:"source_id"`
+	Err          error  `json:"-"`
+	ErrorMessage string `json:"error,omitempty"` // Err.Error(), when Err is set
+}
+
+// newSourceWarning builds a SourceWarning with ErrorMessage and Err paired
+// from a single error, so a construction site can't emit one without the
+// other (final review, Minor #1 / #282).
+func newSourceWarning(id string, err error) SourceWarning {
+	return SourceWarning{SourceID: id, ErrorMessage: err.Error(), Err: err}
 }
 
 // AggregateSearchResult is the merged outcome of searching every source
 // configured for a game.
 type AggregateSearchResult struct {
-	Mods       []domain.Mod    // merged, ranked; each Mod carries its SourceID
-	TotalCount int             // sum of per-source totals (sources reporting 0/unknown contribute 0)
-	Warnings   []SourceWarning // per-source failures (design §5: warnings, not errors)
+	Mods       []domain.Mod    `json:"mods"`               // merged, ranked; each Mod carries its SourceID
+	TotalCount int             `json:"total_count"`        // sum of per-source totals (sources reporting 0/unknown contribute 0)
+	Warnings   []SourceWarning `json:"warnings,omitempty"` // per-source failures (design §5: warnings, not errors)
 	// Exhausted reports whether every source that successfully returned a
 	// result for THIS page has nothing left to page through (#58 item 1).
 	// TotalCount is summed across sources with INDEPENDENT per-source
 	// pagination cursors, so a caller cannot derive "is there a next page"
 	// from TotalCount and a single global PageSize the way single-source
-	// search can (see internal/tui/search.go's hasNextPage): 3 sources whose
+	// search can (see sourceHasMore below): 3 sources whose
 	// entire 10-mod catalog fits on page 0 sum to a TotalCount of 30, which
 	// against a pageSize of 10 falsely implies 3 pages exist, when actually
 	// every source already returned everything it has. Exhausted applies
@@ -291,25 +847,42 @@ type AggregateSearchResult struct {
 	// contributing source and ANDs the results, so it is the accurate signal
 	// callers should gate a next-page offer on instead. True when there were
 	// zero successful sources too (nothing left to page through).
-	Exhausted bool
+	Exhausted bool `json:"exhausted"`
 	// AttemptedCount is how many of the game's configured sources actually
 	// had a search attempted against them - capability-less sources are
-	// skipped silently (see SearchAllSources's doc comment) and never
+	// skipped silently (see searchAllSources's doc comment) and never
 	// counted here. Zero means NONE of the game's sources support searching
 	// at all, which is indistinguishable from a genuine zero-result search
 	// unless a caller checks this field - the honesty-notice fix (#58 item
-	// 3): CLI/TUI render a distinct "no source supports search" notice
+	// 3): callers render a distinct "no source supports search" notice
 	// instead of a plain "no mods found" when this is 0.
-	AttemptedCount int
+	AttemptedCount int `json:"attempted_count"`
+	// SkippedUnauthenticated names the sources that CAN search but were
+	// skipped because no credential is available for them (#383). They are
+	// deliberately absent from both Warnings and AttemptedCount - the skip
+	// is not a failure of this search and not an attempt - but they must
+	// not vanish either: a game whose ONLY searchable source is
+	// unauthenticated otherwise reports AttemptedCount 0, which a frontend
+	// reads as "nothing here can search at all". That claim is false and it
+	// replaces the one actionable line the user needs (sign in), so the
+	// skip is reported instead. Sorted by source id, like the states it is
+	// built from.
+	SkippedUnauthenticated []string `json:"skipped_unauthenticated,omitempty"`
+	// Sorts are the sorts worth offering for this merge (#503): relevance
+	// plus every other sort a source that ANSWERED lists in its
+	// Capabilities.Sorts. Search copies it onto SearchReport.SortsAvailable,
+	// which is the document frontends read, so it is not part of this one's
+	// wire shape.
+	Sorts []domain.SearchSort `json:"-"`
 }
 
 // sourceHasMore reports whether res (one source's response to the given
-// page/pageSize request) might have a page N+1 - the exact per-single-source
-// heuristic internal/tui/search.go's hasNextPage already applies (TotalCount
-// bounds it precisely when the source reports one; otherwise a full page
-// might mean more, a short one means none) - applied here per CONTRIBUTING
-// SOURCE so SearchAllSources can tell a truly-exhausted merge from one that
-// might still have more (see AggregateSearchResult.Exhausted's doc comment).
+// page/pageSize request) might have a page N+1, using the per-single-source
+// heuristic (TotalCount bounds it precisely when the source reports one;
+// otherwise a full page might mean more, a short one means none) - applied
+// here per CONTRIBUTING SOURCE so searchAllSources can tell a
+// truly-exhausted merge from one that might still have more (see
+// AggregateSearchResult.Exhausted's doc comment).
 // pageSize <= 0 (e.g. the CLI's "let the source apply its own default" case,
 // see cmd/lmm/search.go's searchPageSize) has no next-page concept at all.
 func sourceHasMore(res source.SearchResult, page, pageSize int) bool {
@@ -322,13 +895,301 @@ func sourceHasMore(res source.SearchResult, page, pageSize int) bool {
 	return len(res.Mods) == pageSize
 }
 
-// SearchAllSources searches every source configured for a game concurrently
+// maxSearchPagesPerSource bounds how many successive pages searchAllSources
+// will pull from any ONE source while filling a caller's requested limit
+// (#109). Ten rounds is far more than any real query needs - a source
+// capped at 5 results per page still contributes 50 - and exists purely as
+// a stop against a source that answers every page with a full page forever
+// (a buggy or hostile API), which would otherwise spin the loop until the
+// limit or the context died. Hitting it is not exhaustion: the aggregate
+// still reports Exhausted false, so a caller can offer another page.
+const maxSearchPagesPerSource = 10
+
+// searchLimitRounds is how many page rounds a search may run per source: the
+// Limit-driven fill of #109/#511 (up to maxSearchPagesPerSource) when the
+// caller wants a NUMBER of hits and is not driving its own paging, else one.
+// Every other shape stays exactly one round:
+//
+//   - limit <= 0: there is no target to fill, so nothing to loop toward.
+//   - pageSize <= 0: no page size means no next-page concept at all
+//     (sourceHasMore's own rule), so there is no cursor to advance.
+//   - page > 0: the caller is driving its OWN pagination cursor - `lmm
+//     serve`'s search page sends page+page_size and no limit - and pulling
+//     pages past the one it asked for would swallow the hits it is about to
+//     request as its next page.
+func searchLimitRounds(page, pageSize, limit int) int {
+	if limit > 0 && pageSize > 0 && page == 0 {
+		return maxSearchPagesPerSource
+	}
+	return 1
+}
+
+// searchSourceState is one source's own cursor and accumulated results
+// across searchAllSources' page rounds. Each round's goroutine owns exactly
+// one element, so the fields are written without synchronisation.
+type searchSourceState struct {
+	id string
+	// cursor is the next page index to request from this source. Sources
+	// paginate INDEPENDENTLY (AggregateSearchResult.Exhausted's doc
+	// comment), so each carries its own.
+	cursor int
+	// pageSize is the size THIS source is asked for. It starts as the size
+	// the caller requested and is lowered once, on the first round, to a
+	// smaller size the source reported it actually served (#361, see
+	// adoptReportedPageSize) - the rest of the loop's arithmetic then reads
+	// it rather than the caller's number.
+	pageSize int
+	// attempted mirrors the old per-source attempted flag: true once a
+	// search was really tried against this source, false for a silent skip
+	// (no Search capability, or a runtime source.ErrNotSupported on the
+	// first round).
+	attempted bool
+	// active is "worth asking for another page": set when the source is
+	// searchable, cleared when it exhausts, errors, or - the case finding 1
+	// of the Track C review added - when the source could not honour the
+	// page size it was asked for, so its next offset would skip rows.
+	active bool
+	// authenticated is whether the user has stored a credential for this
+	// source. Read once, up front, so the auth-required skip below (#383)
+	// costs one DB read per source rather than one per goroutine per round.
+	authenticated bool
+	// skippedUnauth records the auth-required skip (#383) that attempted
+	// above is cleared for. The two are deliberately separate flags: the
+	// search really was not attempted, AND the frontend still has to be
+	// able to say why - see AggregateSearchResult.SkippedUnauthenticated.
+	skippedUnauth bool
+	// hasMore is "this source might still hold results we did not fetch",
+	// which is NOT the same question as active: a source that clamped the
+	// requested page size has more AND cannot be paged for it. Exhausted is
+	// built from this one.
+	hasMore   bool
+	succeeded bool
+	// err is the FIRST failure this source hit, on any round. A failure on
+	// a later page is reported exactly like a first-page failure - a
+	// Warning - and the hits the earlier pages did return are kept.
+	err error
+	// warnings are the source's own non-fatal problems (a stale local
+	// index, #360 §2.4), each reported once however many pages repeated it.
+	warnings []error
+	mods     []domain.Mod
+	total    int // the source's most recently reported TotalCount
+	// seen is the ids already in mods. A source can return the same mod on
+	// two pages - CurseForge's slug lookup (#503) puts an exact-name hit at
+	// the front of page 0 that also sits in its natural place on a later
+	// page - and a merged list must hold it once (#511).
+	seen map[string]struct{}
+}
+
+// addMods appends the hits of one page that st does not hold yet and returns
+// how many were new.
+func (st *searchSourceState) addMods(mods []domain.Mod) int {
+	if st.seen == nil {
+		st.seen = make(map[string]struct{}, len(mods))
+	}
+	added := 0
+	for _, m := range mods {
+		if m.ID != "" {
+			if _, dup := st.seen[m.ID]; dup {
+				continue
+			}
+			st.seen[m.ID] = struct{}{}
+		}
+		st.mods = append(st.mods, m)
+		added++
+	}
+	return added
+}
+
+// absorb folds one successful page into st and decides whether to ask for
+// the next one. page is the page index the caller STARTED at: the paging
+// rules below rest on "the rows fetched so far are exactly [0, len)", a claim
+// about page 0 and not about the cursor (#361, review N10). paging is true
+// when the caller is filling a limit (searchLimitRounds); otherwise one round
+// runs and st.active only records the single-round has-more answer.
+func (st *searchSourceState) absorb(res source.SearchResult, page int, paging bool) {
+	firstRound := page == 0 && st.cursor == page
+	st.succeeded = true
+	st.warnings = appendNewWarnings(st.warnings, res.Warnings)
+	added := st.addMods(res.Mods)
+	st.total = res.TotalCount
+	if paging {
+		// #361: a source that clamped the request AND named the size it
+		// served is paged at THAT size from here on, rather than being
+		// stopped by sourceIsPageable below. Lowering it before the two
+		// heuristics run is what makes them agree with the request that
+		// will actually be sent next round.
+		adoptReportedPageSize(st, res, firstRound)
+
+		// The two questions are kept apart: what this source might still
+		// hold, and whether we can safely ask it for that. A clamping
+		// source answers yes and no.
+		//
+		// Has-more is the UNION of the two heuristics, as it was before
+		// sourceIsPageable existed: they answer differently for a source
+		// returning SHORT pages (pagedSourceHasMore is right) and for one
+		// returning MORE than the page size it was asked for
+		// (sourceHasMore is right, and it is what a `--limit 2` against a
+		// source handing back its whole three-mod catalogue reports), and
+		// neither is wrong about the source it describes. The optimism
+		// costs nothing now: it only ever reaches Exhausted, never a round
+		// trip.
+		st.hasMore = sourceHasMore(res, st.cursor, st.pageSize) ||
+			pagedSourceHasMore(res, len(st.mods), st.pageSize)
+		// A page that added nothing new makes no progress - a source that
+		// ignores the page index and repeats itself would otherwise be
+		// asked maxSearchPagesPerSource times for the same rows (#511).
+		st.active = st.hasMore && sourceIsPageable(res, st.pageSize) && added > 0
+	} else {
+		st.hasMore = sourceHasMore(res, st.cursor, st.pageSize)
+		st.active = st.hasMore
+	}
+	st.cursor++
+}
+
+// pagedSourceHasMore is sourceHasMore's counterpart for searchAllSources'
+// multi-round #109 loop, where a source's own cursor has already advanced
+// page by page. The accurate question there is not "could a page N+1 exist
+// at the REQUESTED page size" but "has this source handed over everything
+// it says it has": a source whose server-side cap sits below the requested
+// page size - #109's whole premise - answers in SHORT pages, which
+// sourceHasMore's requested-size arithmetic reads as exhausted while rows
+// remain. fetched is how many mods this source has contributed so far.
+//
+// Without a reported TotalCount there is nothing to count against, so any
+// non-empty page is treated as possibly having a successor. That optimism
+// is free: it only ever reaches Exhausted, never a round trip - whether the
+// source is ASKED again is sourceIsPageable's decision, and a source that
+// answered short is not asked (Track C review, finding 7 - the extra
+// always-empty round trip against a source reporting no total is gone with
+// it). This rule is used ONLY while looping; the single-round path keeps
+// sourceHasMore verbatim, so Exhausted/HasMore are unchanged for every
+// caller that does not ask for a limit.
+func pagedSourceHasMore(res source.SearchResult, fetched, pageSize int) bool {
+	if pageSize <= 0 {
+		return false
+	}
+	if len(res.Mods) == 0 {
+		// An empty page ends this source regardless of what a (possibly
+		// wrong) TotalCount claims.
+		return false
+	}
+	if res.TotalCount > 0 {
+		return fetched < res.TotalCount
+	}
+	return true
+}
+
+// sourceIsPageable reports whether this source may be asked for page N+1
+// after answering with res, which is a narrower question than "might it
+// have more" (pagedSourceHasMore). searchAllSources addresses a page by
+// INDEX at the size it requested, and a source computes its own upstream
+// offset the same way - both built-ins do it literally, as page*pageSize.
+// So the next page is only fetchable at a contiguous offset when this page
+// was a FULL page of exactly the size that was asked for (Track C review,
+// finding 1):
+//
+//   - A source that reports a different effective PageSize clamped the
+//     request (CurseForge caps at 50), and page 1 of a requested 100 would
+//     start 50 rows past where page 0 ended.
+//   - A source that clamps SILENTLY - no PageSize, no TotalCount, which is
+//     what NexusMods does with its own ~30 cap - is caught by the same
+//     rule, because a clamped page is necessarily a short one.
+//   - A short page from a source that is genuinely finished is stopped by
+//     this too, which costs nothing: there was nothing left to fetch.
+//
+// The cost of the rule is under-fetching rather than mis-fetching: a
+// clamping source contributes one page and the merged count may fall short
+// of the caller's limit. That is the deliberate trade - a short answer is
+// visibly short, while a strided one looks exactly like a complete one
+// after rankAggregate has reordered it.
+//
+// One exception to "exactly the size asked for" (#511): a source that NAMES
+// the size it serves, equal to the one asked for, may hand back MORE rows
+// than that. CurseForge's #503 slug lookup puts an exact-name hit in front
+// of page 0, so a 50-row page arrives as 51. Offsets are still the page
+// index times the named size, so the page was full and the next one starts
+// where it ended; what the guard exists to catch is a SHORT page, and this
+// one is not. A source that names no size keeps the strict rule, because
+// "more rows than asked for" is then equally what a source dumping its
+// whole catalogue looks like.
+func sourceIsPageable(res source.SearchResult, pageSize int) bool {
+	if pageSize <= 0 {
+		return false
+	}
+	if res.PageSize > 0 && res.PageSize != pageSize {
+		return false
+	}
+	if res.PageSize == pageSize {
+		return len(res.Mods) >= pageSize
+	}
+	return len(res.Mods) == pageSize
+}
+
+// adoptReportedPageSize lowers a source's own page size to the smaller one
+// it reported serving, and reports whether it did (#361). sourceIsPageable
+// stops a clamping source outright, which is correct but leaves `lmm search
+// --limit 100` short: CurseForge clamps 100 to 50, says so, and is asked
+// once. Adopting the size it named turns that back into a fillable limit
+// WITHOUT guessing how the source computes its offset - by asking for
+// exactly the size the source says it will use, page*requestedSize and
+// page*effectiveSize become the same number, so page 1 starts where page 0
+// ended whichever of the two it multiplies by internally.
+//
+// Three guards keep it from re-introducing the stride finding 1 removed:
+//
+//   - Only on the source's FIRST round - page 0, with the cursor still on
+//     it - where the rows fetched so far are exactly [0, len) and the next
+//     cursor is unambiguous. The caller checks both halves rather than
+//     inferring page 0 from the paging loop's own entry condition.
+//   - Only a size SMALLER than the one requested - a source answering with
+//     a bigger page than it was asked for is not clamping.
+//   - Only when the rows returned cover the size claimed (#511: more is
+//     fine - an extra hit in front of the page, see sourceIsPageable).
+//     A source that reports a page size it does not actually serve is
+//     lying, and paging on its number would skip the difference.
+//
+// A source that clamps without reporting it (NexusMods) reports no PageSize
+// at all, fails the second guard, and is still stopped after one page.
+func adoptReportedPageSize(st *searchSourceState, res source.SearchResult, firstRound bool) bool {
+	if !firstRound || st.pageSize <= 0 {
+		return false
+	}
+	if res.PageSize <= 0 || res.PageSize >= st.pageSize {
+		return false
+	}
+	if len(res.Mods) < res.PageSize {
+		return false
+	}
+	st.pageSize = res.PageSize
+	return true
+}
+
+// searchAllSources searches every source configured for a game concurrently
 // and merges the results (design §5). Per-source failures become Warnings —
 // one flaky API must not hide local modlets; only all-sources-failed is an
 // error. Sources without search capability are skipped silently. Pagination
-// is per-source: page N requests page N from each source and merges.
-func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize int) (AggregateSearchResult, error) {
-	game, ok := s.games[gameID]
+// is per-source: round 1 asks every searchable source for page `page` and
+// merges.
+//
+// #109: when the caller wants a specific NUMBER of merged hits, one round
+// is not enough. A source whose server-side page cap sits below its share
+// of the limit (NexusMods caps around 30) can only ever return that cap, so
+// `--limit 50` used to return 30 even with hundreds of matches left. When
+// limit > 0, the search keeps advancing the cursor of every source that
+// might still have a page N+1 until the merged hit count reaches limit,
+// every source is exhausted, or maxSearchPagesPerSource rounds have run.
+// Every other shape stays exactly one round (searchLimitRounds). The named
+// --source path fills a limit the same way (searchNamedSource, #511), and a
+// hit a source repeats on a later page is held once (searchSourceState.addMods).
+//
+// Known limit (#109's own Tier-2 note): a source that silently CLAMPS the
+// requested page size while reporting neither a TotalCount nor its
+// effective PageSize reads as exhausted under sourceHasMore's short-page
+// heuristic, and the loop stops early for it. The heuristic is unchanged
+// here on purpose - Exhausted/HasMore keep their existing semantics - and
+// the honest fix is a per-source max-page-size capability.
+func (s *Service) searchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize, limit int, sortBy domain.SearchSort) (AggregateSearchResult, error) {
+	game, ok := s.game(gameID)
 	if !ok {
 		return AggregateSearchResult{}, fmt.Errorf("game not found: %s", gameID)
 	}
@@ -352,74 +1213,147 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 	}
 	sort.Strings(sourceIDs)
 
-	var result AggregateSearchResult
-	type slot struct {
-		res source.SearchResult
-		err error
-	}
-	slots := make([]slot, len(sourceIDs))
-	attempted := make([]bool, len(sourceIDs))
-
-	g, gctx := errgroup.WithContext(ctx)
+	states := make([]searchSourceState, len(sourceIDs))
 	for i, sourceID := range sourceIDs {
+		st := &states[i]
+		st.id = sourceID
+		st.cursor = page
+		st.pageSize = pageSize
 		src, ok := registeredByID[sourceID]
 		if !ok {
 			// Reproduce the exact not-found error. Sound while Get stays a
 			// pure map read and registration stays startup-only (single call
 			// site in cmd/lmm root); revisit if the registry ever hot-reloads.
 			_, err := s.registry.Get(sourceID)
-			slots[i].err = err
-			attempted[i] = true
+			st.attempted = true
+			st.err = err
 			continue
 		}
 		if !source.CapabilitiesOf(src).Search {
 			continue // silent skip (design §5)
 		}
-		attempted[i] = true
-		i, sourceID := i, sourceID
-		g.Go(func() error {
-			res, err := s.SearchMods(gctx, sourceID, gameID, query, category, tags, page, pageSize)
-			if err != nil {
-				if errors.Is(err, source.ErrNotSupported) {
-					attempted[i] = false // runtime capability gap: silent skip, not a warning
-					return nil
-				}
-				slots[i].err = err
-				return nil // never abort the group: siblings keep searching
-			}
-			slots[i].res = res
-			return nil
-		})
+		st.authenticated = s.sourceHasCredential(ctx, src, sourceID)
+		st.attempted = true
+		st.active = true
 	}
-	_ = g.Wait() // goroutines always return nil; errors live in slots
 
+	rounds := searchLimitRounds(page, pageSize, limit)
+	paging := rounds > 1
+
+	for round := range rounds {
+		// Between pages, never inside one: a cancelled search stops asking
+		// instead of reporting the cancellation as every source's warning.
+		if round > 0 {
+			if err := ctx.Err(); err != nil {
+				return AggregateSearchResult{}, err
+			}
+		}
+		anyActive := false
+		for i := range states {
+			if states[i].active {
+				anyActive = true
+				break
+			}
+		}
+		if !anyActive {
+			break // every source has exhausted, errored, or was skipped
+		}
+
+		g, gctx := errgroup.WithContext(ctx)
+		for i := range states {
+			st := &states[i]
+			if !st.active {
+				continue
+			}
+			g.Go(func() error {
+				res, err := s.searchSource(gctx, st.id, gameID, query, category, tags, st.cursor, st.pageSize, sortBy)
+				if err != nil {
+					st.active = false
+					if errors.Is(err, source.ErrNotSupported) && !st.succeeded {
+						st.attempted = false // runtime capability gap: silent skip, not a warning
+						return nil
+					}
+					// #383: a source the user has never signed in to is a
+					// capability they have not opted into, not a failure of
+					// this search - `lmm init` maps steamworkshop from the
+					// ACF prefill (correctly: #269's Tier 1 needs no key),
+					// and warning about Tier 2's missing key on every single
+					// query made the most-used command in the tool carry a
+					// permanent notice. Skipped exactly like the capability
+					// gap above; `lmm source list`'s AUTH column and the
+					// Setup page are where the capability is discoverable.
+					// Once a credential IS stored, an auth failure means
+					// THAT key is expired or revoked, which is a real
+					// problem and stays a warning.
+					if errors.Is(err, domain.ErrAuthRequired) && !st.succeeded && !st.authenticated {
+						st.attempted = false
+						st.skippedUnauth = true
+						return nil
+					}
+					st.err = err
+					return nil // never abort the group: siblings keep searching
+				}
+				st.absorb(res, page, paging)
+				return nil
+			})
+		}
+		_ = g.Wait() // goroutines always return nil; errors live in the states
+
+		merged := 0
+		for i := range states {
+			merged += len(states[i].mods)
+		}
+		if limit > 0 && merged >= limit {
+			break
+		}
+	}
+
+	var result AggregateSearchResult
+	var answered []source.Capabilities
 	succeeded := 0
+	attemptedCount := 0
 	allExhausted := true // vacuously true until a succeeding source proves otherwise
-	for i, sourceID := range sourceIDs {
-		if !attempted[i] {
+	for i := range states {
+		st := &states[i]
+		if st.skippedUnauth {
+			// Counted apart from attemptedCount on purpose: a run whose
+			// only "attempt" was a skip must not trip the all-sources-failed
+			// branch below (there are no warnings to join, so it would
+			// return `all 1 source(s) failed:` with an empty cause), and
+			// must not report an attempt that never happened either.
+			result.SkippedUnauthenticated = append(result.SkippedUnauthenticated, st.id)
 			continue
 		}
-		if slots[i].err != nil {
-			result.Warnings = append(result.Warnings, SourceWarning{SourceID: sourceID, Err: slots[i].err})
+		if !st.attempted {
+			continue
+		}
+		attemptedCount++
+		if st.err != nil {
+			result.Warnings = append(result.Warnings, newSourceWarning(st.id, st.err))
+			// A source whose search was cut short by an error is the
+			// definition of "might have more": it kept st.succeeded from an
+			// earlier page, so without this the report claimed there was
+			// nothing left for a source that merely broke (Track C review,
+			// finding 6).
+			allExhausted = false
+		}
+		if !st.succeeded {
 			continue
 		}
 		succeeded++
-		result.Mods = append(result.Mods, slots[i].res.Mods...)
-		result.TotalCount += slots[i].res.TotalCount
-		if sourceHasMore(slots[i].res, page, pageSize) {
+		answered = append(answered, source.CapabilitiesOf(registeredByID[st.id]))
+		result.Warnings = append(result.Warnings, sourceWarnings(st.id, st.warnings)...)
+		result.Mods = append(result.Mods, st.mods...)
+		result.TotalCount += st.total
+		if st.hasMore {
 			allExhausted = false
 		}
 	}
 	result.Exhausted = allExhausted
+	result.Sorts = sortsOffered(answered)
 
 	rankAggregate(result.Mods, query)
 
-	attemptedCount := 0
-	for _, a := range attempted {
-		if a {
-			attemptedCount++
-		}
-	}
 	result.AttemptedCount = attemptedCount
 	if attemptedCount > 0 && succeeded == 0 {
 		errs := make([]error, 0, len(result.Warnings))
@@ -429,6 +1363,37 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 		return result, fmt.Errorf("all %d source(s) failed: %w", attemptedCount, errors.Join(errs...))
 	}
 	return result, nil
+}
+
+// appendNewWarnings adds each of more to have unless an identical message
+// is already there - a paged search asks one source several times, and its
+// stale-index warning is one fact, not one per page.
+func appendNewWarnings(have, more []error) []error {
+	for _, w := range more {
+		dup := false
+		for _, h := range have {
+			if h.Error() == w.Error() {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			have = append(have, w)
+		}
+	}
+	return have
+}
+
+// sourceWarnings renders one source's own warnings as SourceWarnings.
+func sourceWarnings(sourceID string, warnings []error) []SourceWarning {
+	if len(warnings) == 0 {
+		return nil
+	}
+	out := make([]SourceWarning, 0, len(warnings))
+	for _, w := range warnings {
+		out = append(out, newSourceWarning(sourceID, w))
+	}
+	return out
 }
 
 // rankAggregate orders merged results: query-name matches first, then by
@@ -462,13 +1427,20 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 	// mapping (e.g. directory sources: `donovan-mods: ""`) means "this source
 	// applies to any game" — it must not blank out the ID.
 	sourceGameID := gameID
-	if game, ok := s.games[gameID]; ok {
+	if game, ok := s.game(gameID); ok {
 		if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
 			sourceGameID = id
 		}
 	}
 
-	return src.GetMod(ctx, sourceGameID, modID)
+	mod, err := src.GetMod(ctx, sourceGameID, modID)
+	if err != nil {
+		// #539: a source's "no such mod" reads as a fact about its catalog
+		// (*ModNotInCatalogError), not as its raw transport error.
+		return mod, s.classifyNotInCatalog(sourceID, modID, classifyIndexError(sourceID, sourceGameID, err))
+	}
+	stampCachedAuthorName(src, mod)
+	return mod, nil
 }
 
 // GetModFiles retrieves available download files for a mod
@@ -492,10 +1464,25 @@ func (s *Service) ResolveModVersion(ctx context.Context, sourceID string, mod *d
 	return ResolveVersionFiles(sourceID, files, version)
 }
 
+// ErrSourceVersionsUnsupported is source.ErrNotSupported, re-exported so a
+// frontend can recognize AvailableModVersions' "this source cannot resolve
+// per-file versions at all" outcome without importing internal/source
+// itself - a frontend only ever imports internal/core (the boundary rule
+// cmd/lmm/boundary_test.go and internal/serve/boundary_test.go both
+// enforce; cmd/lmm has never needed this because it imports internal/source
+// directly for other reasons, but `lmm serve` - #330, AvailableModVersions'
+// first real consumer - does not).
+var ErrSourceVersionsUnsupported = source.ErrNotSupported
+
 // AvailableModVersions lists the distinct per-file versions mod's source
-// reports, in first-seen order - the TUI version picker's data (#97).
-// Wraps source.ErrNotSupported (same format as ResolveVersionFiles) when
-// the file list carries no version info at all.
+// reports, in first-seen order (#97).
+// Wraps ErrSourceVersionsUnsupported (same format as ResolveVersionFiles)
+// when the file list carries no version info at all.
+//
+// No cmd caller today, but it is a non-mutating query a frontend can
+// legitimately need - `lmm serve`'s intended consumer, same reasoning as
+// ScanLocal - so it is kept by ruling (Phase 3 Ruling 10) rather than
+// unexported (2 sites / 1 file as of Unit R).
 func (s *Service) AvailableModVersions(ctx context.Context, sourceID string, mod *domain.Mod) ([]string, error) {
 	files, err := s.GetModFiles(ctx, sourceID, mod)
 	if err != nil {
@@ -508,7 +1495,7 @@ func (s *Service) AvailableModVersions(ctx context.Context, sourceID string, mod
 }
 
 // SourceCapabilities reports sourceID's declared capabilities (#97: static
-// lock gating). Mirrors SearchAllSources' registry access (service.go's
+// lock gating). Mirrors searchAllSources' registry access (service.go's
 // source.CapabilitiesOf(src) call).
 func (s *Service) SourceCapabilities(sourceID string) (source.Capabilities, error) {
 	src, err := s.registry.Get(sourceID)
@@ -518,25 +1505,36 @@ func (s *Service) SourceCapabilities(sourceID string) (source.Capabilities, erro
 	return source.CapabilitiesOf(src), nil
 }
 
-// GetDownloadURL gets the download URL for a specific mod file
-func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *domain.Mod, fileID string) (string, error) {
-	src, err := s.registry.Get(sourceID)
-	if err != nil {
-		return "", err
-	}
-
-	return src.GetDownloadURL(ctx, mod, fileID)
-}
-
-// DownloadMod downloads a mod file, extracts it, and stores it in the cache
+// downloadMod downloads a mod file, extracts it, and stores it in the cache.
 // Returns the download result including files extracted and checksum.
-// Multiple files from the same mod can be downloaded to the same cache location.
-func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
-	return s.DownloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, progressFn)
+// Multiple files from the same mod can be downloaded to the same cache
+// location.
+//
+// Unexported by Phase 3 Ruling 10: every production caller (install, update,
+// deploy, profile apply/import, verify's redownload repair) already reached
+// this directly; the exported DownloadMod wrapper this replaced had no
+// caller of its own besides test fixtures. cmd/lmm's fixture
+// (verify_test.go) now seeds the same "cached, no checksum" state through
+// PlanInstall/ApplyInstall with InstallOptions.SkipVerify; internal/core's
+// own fixtures use the DownloadModForTest shim (export_test.go).
+func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
+	return s.downloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, sink)
 }
 
-// DownloadModToCache downloads a mod file, extracts it, and stores it in the provided cache.
-func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
+// downloadModToCache fetches file into gameCache. Any failure comes back as a
+// *DownloadError carrying the mod's page (#513), with the failure's own text.
+func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*DownloadModResult, error) {
+	result, err := s.fetchFileToCache(ctx, gameCache, sourceID, game, mod, file, sink)
+	if game != nil {
+		s.noteDownloadOutcome(ctx, game.ID, sourceID, mod, err) // #543
+	}
+	if err != nil {
+		return nil, asDownloadError(err, sourceID, mod, file)
+	}
+	return result, nil
+}
+
+func (s *Service) fetchFileToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
 
 	// Note: We intentionally do NOT check if cache exists here.
 	// A mod can have multiple downloadable files (e.g., main mod + optional patches),
@@ -552,18 +1550,29 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 
 	url, err := src.GetDownloadURL(ctx, mod, file.ID)
 	if err != nil {
-		return nil, fmt.Errorf("getting download URL: %w", err)
+		// A source that cannot serve a URL at all may still be able to
+		// FETCH the file itself (#269 Tier 3: a steamcmd shell-out is a
+		// subprocess, not a URL). The fallback is gated on the source
+		// saying exactly that - ErrNotSupported - so a real failure from a
+		// source that also implements Fetcher (a 500, a bad key) still
+		// fails here instead of quietly taking a different route.
+		fetcher, isFetcher := src.(source.Fetcher)
+		if !isFetcher || !errors.Is(err, source.ErrNotSupported) {
+			return nil, fmt.Errorf("getting download URL: %w", err)
+		}
+		return s.fetchModToCache(ctx, gameCache, fetcher, sourceID, game, mod, file, sink)
 	}
 
 	if localPath, ok := strings.CutPrefix(url, "file://"); ok {
-		// Only directory sources are allowed to serve local files. A remote
-		// source (NexusMods, CurseForge, a compromised custom API/manifest
-		// source, ...) returning file:// must never be trusted to read
-		// arbitrary paths off disk into the cache.
-		if _, isDirectorySource := src.(*custom.Directory); !isDirectorySource {
+		// Only a source.LocalFileServer is allowed to serve local files. A
+		// remote source (NexusMods, CurseForge, a compromised custom
+		// API/manifest source, ...) returning file:// must never be trusted
+		// to read arbitrary paths off disk into the cache.
+		lfs, servesLocal := src.(source.LocalFileServer)
+		if !servesLocal || !lfs.ServesLocalFiles() {
 			return nil, fmt.Errorf("source %q returned a local file:// URL but is not a directory source", sourceID)
 		}
-		return s.ingestLocalToCache(gameCache, game, mod, file, localPath)
+		return s.ingestLocalToCache(ctx, gameCache, game, mod, file, localPath, sink)
 	}
 
 	// Stage the download under the data dir, not $TMPDIR — see newStagingDir.
@@ -586,13 +1595,42 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	// left untouched for display purposes (the SHA256 mismatch message).
 	safeFileName := filepath.Base(file.FileName)
 	archivePath := filepath.Join(tempDir, safeFileName)
-	var headers map[string]string
-	if hp, ok := src.(source.DownloadHeaderProvider); ok {
-		headers = hp.DownloadHeaders(url)
-	}
-	downloadResult, err := s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, progressFn)
-	if err != nil {
-		return nil, fmt.Errorf("downloading mod: %w", err)
+
+	// An earlier ingest of this exact file may have been refused for a
+	// reason the user answers by reconfiguring the GAME (#359's loader
+	// precondition), in which case the bytes were kept and there is nothing
+	// to fetch (retained_download.go). Everything below runs unchanged
+	// either way - but note WHAT the checks below then check: a reuse
+	// rebuilds DownloadResult from the retention's sidecar, so the SHA256
+	// and exact-size comparisons are against the values the original
+	// download RECORDED, not a re-hash of the retained file. That is
+	// deliberate rather than an oversight: the sidecar is written last
+	// (storeRetainedDownload), so a retention interrupted mid-move has no
+	// sidecar at all and reuseRetainedDownload rejects it outright instead
+	// of trusting a truncated archive.
+	// Whichever branch below reaches the cache, the retained copy is dead
+	// weight once it does - so the drop is deferred on success rather than
+	// written after one of the three commits. Written after the extract
+	// commit alone, it left a retention behind whenever the same file was
+	// later ingested through the compile or copy branch.
+	defer func() {
+		if err == nil {
+			s.dropRetainedDownload(sourceID, mod.ID, file.ID)
+		}
+	}()
+
+	retainedPath, downloadResult, reused := s.reuseRetainedDownload(sourceID, mod.ID, file.ID)
+	if !reused {
+		var headers map[string]string
+		if hp, ok := src.(source.DownloadHeaderProvider); ok {
+			headers = hp.DownloadHeaders(url)
+		}
+		downloadResult, err = s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, sink)
+		if err != nil {
+			return nil, fmt.Errorf("downloading mod: %w", err)
+		}
+	} else {
+		archivePath = retainedPath
 	}
 
 	if file.SHA256 != "" && !strings.EqualFold(downloadResult.SHA256, file.SHA256) {
@@ -600,27 +1638,46 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 			file.FileName, file.SHA256, downloadResult.SHA256)
 	}
 
+	// A source.ExactFileSizer declares its sizes to the byte, so a body
+	// that does not match one is a truncated or wrong file - the only
+	// integrity check available on a CDN that publishes no checksum (#269
+	// Tier 3's legacy file_url items). The partial is removed here rather
+	// than left for the deferred staging teardown, so the failure itself
+	// leaves nothing behind.
+	if es, ok := src.(source.ExactFileSizer); ok && es.ExactFileSizes() && file.Size > 0 && downloadResult.Size != file.Size {
+		_ = os.Remove(downloadResult.Path)
+		return nil, fmt.Errorf("verifying download of %s: size mismatch: source declares %d bytes, downloaded file is %d",
+			file.FileName, file.Size, downloadResult.Size)
+	}
+
 	// Extract to cache location
-	cachePath, stagePath, err := prepareStaging(gameCache, game, mod)
+	cachePath, stagePath, err := prepareStaging(ctx, gameCache, game, mod)
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(stagePath) //nolint:errcheck
+	defer func() {
+		if rmErr := os.RemoveAll(stagePath); rmErr != nil {
+			s.logger().Debug("removing staging directory failed", "path", stagePath, "err", rmErr)
+		}
+	}()
 
 	// convertEligiblePak requires BOTH the game's own eligibility (deploy
-	// mode + ConvertPaks) AND this specific src implementing MergeCompiler
-	// (#221 I1 fix): the game flags alone don't decide, so a raw pak served
-	// by a source that does NOT implement MergeCompiler
-	// (a mixed-source game, or a misconfigured/non-icarus source) must fall
-	// through to the legacy extract/copy path below - exactly as it did
-	// before #221 - rather than hard-erroring the whole download. Unlike a
-	// .exmodz file, which has no other valid interpretation and so still
-	// hard-errors when src lacks MergeCompiler (see the !ok check below).
-	mc, isMergeCompiler := src.(source.MergeCompiler)
+	// mode + ConvertPaks) AND a compile-capable ADAPTER (#221 I1 fix, as
+	// U2/#412 rephrases it): the game flags alone don't decide, so a raw
+	// pak for a game whose adapter cannot compile must fall through to the
+	// legacy extract/copy path below - exactly as it did before #221 -
+	// rather than hard-erroring the whole download. Unlike a .exmodz file,
+	// which has no other valid interpretation and so still hard-errors
+	// (see the !ok check below).
+	//
+	// The question used to be asked of the SOURCE, which is what made an
+	// Icarus .pak from NexusMods un-compilable while the identical file
+	// from Project Daedalus compiled. One game, one adapter, one answer.
+	mc, isMergeCompiler := s.optionalCompiler(game)
 	convertEligiblePak := isMergeCompiler && isConvertEligibleArtifact(game, mc, safeFileName)
 	if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, safeFileName) || convertEligiblePak) {
 		if !isMergeCompiler {
-			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement MergeCompiler", src.ID(), game.ID)
+			return nil, fmt.Errorf("game %q requires DeployCompile but its adapter %q cannot compile (file %q from source %q)", game.ID, s.AdapterName(game), safeFileName, src.ID())
 		}
 		if err := mc.ValidateSource(archivePath); err != nil {
 			return nil, fmt.Errorf("validating %s: %w", safeFileName, err)
@@ -670,8 +1727,9 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		}, nil
 	}
 
-	members, err := s.extractIntoStaging(archivePath, cachePath, stagePath)
+	members, err := s.extractIntoStaging(ctx, game, mod, archivePath, cachePath, stagePath, sink)
 	if err != nil {
+		s.retainRefusedDownload(err, sourceID, mod.ID, file.ID, archivePath, downloadResult)
 		return nil, fmt.Errorf("extracting mod: %w", err)
 	}
 	if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, members); err != nil {
@@ -701,7 +1759,10 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 // install/verify --fix converge instead of looping on NO CHECKSUM. A
 // directory with no regular files yields an empty checksum - nothing to
 // fingerprint - and callers must report that honestly.
-func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string) (*DownloadModResult, error) {
+//
+// sink receives the archive's download-time warnings (#425) - the same
+// DownloadWarning events a fetched archive raises - and may be nil.
+func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string, sink EventSink) (*DownloadModResult, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
 		return nil, fmt.Errorf("local mod path: %w", err)
@@ -720,18 +1781,22 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 	if info.IsDir() {
 		cachePath, stagePath, err = prepareUnseededStaging(gameCache, game, mod)
 	} else {
-		cachePath, stagePath, err = prepareStaging(gameCache, game, mod)
+		cachePath, stagePath, err = prepareStaging(ctx, gameCache, game, mod)
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(stagePath) //nolint:errcheck
+	defer func() {
+		if rmErr := os.RemoveAll(stagePath); rmErr != nil {
+			s.logger().Debug("removing staging directory failed", "path", stagePath, "err", rmErr)
+		}
+	}()
 
 	var members []string
 	var checksum string
 	switch {
 	case info.IsDir():
-		if err := copyDir(localPath, stagePath); err != nil {
+		if err := copyDir(ctx, localPath, stagePath); err != nil {
 			return nil, fmt.Errorf("copying mod directory: %w", err)
 		}
 		// Attribute the STAGED copies, not localPath's own listing: staging
@@ -773,7 +1838,7 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 			return nil, fmt.Errorf("hashing local mod file: %w", err)
 		}
 	default:
-		if members, err = s.extractIntoStaging(localPath, cachePath, stagePath); err != nil {
+		if members, err = s.extractIntoStaging(ctx, game, mod, localPath, cachePath, stagePath, sink); err != nil {
 			return nil, fmt.Errorf("extracting mod: %w", err)
 		}
 		if checksum, err = md5File(localPath); err != nil {
@@ -858,14 +1923,16 @@ func digestDirectoryMembers(root string, members []string) (string, error) {
 // mid-copy failure must leave stagePath exactly as absent as it was before
 // this call, matching the pre-extraction behavior where the caller's own
 // defer was armed BEFORE the copy step (see
-// TestPrepareStagingCleansPartialStagingOnCopyFailure).
-func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
+// TestPrepareStagingCleansPartialStagingOnCopyFailure). A cancelled ctx
+// aborts the seed copy per entry (copyDir) and takes that same
+// error-with-no-debris path.
+func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
 	cachePath, stagePath, err = prepareUnseededStaging(gameCache, game, mod)
 	if err != nil {
 		return "", "", err
 	}
 	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-		if err := copyDir(cachePath, stagePath); err != nil {
+		if err := copyDir(ctx, cachePath, stagePath); err != nil {
 			// Best-effort: restore the "no debris" guarantee even though
 			// copyDir itself already failed. A cleanup failure here isn't
 			// worth surfacing over the original error - it's the same
@@ -962,19 +2029,55 @@ func commitStagedCacheWithMarker(cachePath, stagePath, fileID string, members []
 // Returned members are extractDir-relative paths of regular files only,
 // matching cache.ListFiles semantics (directories and symlinks are never
 // listed, deployed, or undeployed).
-func (s *Service) extractIntoStaging(archivePath, cachePath, stagePath string) ([]string, error) {
+func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod *domain.Mod, archivePath, cachePath, stagePath string, sink EventSink) ([]string, error) {
 	extractPath := cachePath + ".extract"
 	if err := os.RemoveAll(extractPath); err != nil {
 		return nil, fmt.Errorf("clearing extraction dir: %w", err)
 	}
 	defer os.RemoveAll(extractPath) //nolint:errcheck
 
-	if err := s.extractor.Extract(archivePath, extractPath); err != nil {
+	if err := s.extractor.Extract(ctx, archivePath, extractPath); err != nil {
 		return nil, err
 	}
 
+	// #353: the game's adapter gets its say on the archive's layout HERE,
+	// against the PRISTINE intermediate rather than on stagePath - exactly
+	// the attribution property that intermediate exists for, and the only
+	// point at which "what did this archive contribute" is still an
+	// answerable question. A mod downloaded from NexusMods and one imported
+	// from a local archive therefore reach the cache in the same layout,
+	// which is what lets a BepInEx plugin deploy correctly with no source
+	// work at all (spike §5).
+	//
+	// The refusal it makes first (#359/#413) is one a downloaded archive
+	// cannot answer any earlier: its shape is not knowable until it is
+	// extracted, which is why PlanInstall cannot ask. It lands before the
+	// staged entry is committed, so nothing is deployed and nothing is
+	// recorded - a cache fill is not a mutation of managed state (Ruling 1),
+	// the same standing a declined ConflictError leaves behind.
+	layout, err := s.layoutStagedExtract(game, mod.Name, extractPath)
+	if err != nil {
+		return nil, err
+	}
+	// A download has no plan to carry the adapter's warnings: its shape is
+	// not knowable until it is extracted, which is this function. So they
+	// ride the flow's own event sink as ordinary WarningEvents - the wire
+	// type every warning in every flow already uses - under the one phase
+	// every flow forwards (DownloadWarning, #425), and the log keeps the
+	// record for a caller that passed no sink.
+	for _, w := range layout.Warnings {
+		s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
+		if sink != nil {
+			sink(WarningEvent{
+				Scope:   Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}},
+				Phase:   DownloadWarning,
+				Message: w,
+			})
+		}
+	}
+
 	var members []string
-	err := filepath.WalkDir(extractPath, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(extractPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -1064,39 +2167,30 @@ func commitStagedCache(cachePath, stagePath string) error {
 	return nil
 }
 
-// isNativeMergeFile reports whether fileName is the game's compile source's
-// NATIVE merge-source format (#256 - the seam-routed successor to the old
-// static isExmodzFile ".exmodz" test). DeployCompile games can also serve
-// plain, already-built raw paks (icarus.GetModFiles enumerates "pak"
-// before "exmodz") - those must NOT be routed through ingest's
-// validate+retain branch as a native archive, since MergeCompile expects a
-// native diff, not a whole pak (#136 review, Task 13 fix round 1); a
-// prebuilt pak gets its OWN eligibility check instead,
-// isConvertEligibleArtifact (#221), a different Kind through the same
-// validate+retain branch.
+// isNativeMergeFile reports whether fileName is the game's NATIVE
+// merge-source format (#256 - the seam-routed successor to the old static
+// isExmodzFile ".exmodz" test). Compiling games can also serve plain,
+// already-built raw paks (icarus.GetModFiles enumerates "pak" before
+// "exmodz") - those must NOT be routed through ingest's validate+retain
+// branch as a native archive, since MergeCompile expects a native diff, not
+// a whole pak (#136 review, Task 13 fix round 1); a prebuilt pak gets its
+// OWN eligibility check instead, isConvertEligibleArtifact (#221), a
+// different Kind through the same validate+retain branch.
 //
-// mc is the file's own source's MergeCompiler view (nil when that source
-// doesn't implement it). When mc is nil, the GAME's sole compile source is
-// consulted instead, so the "native archive served by a non-compile-capable
-// source" hard error in DownloadModToCache stays reachable on mixed-source
-// games. With no compiler resolvable anywhere, nothing can define "native"
-// and this returns false - such files take the legacy extract/copy path,
-// preserving #221 I1's protected download fall-through for the non-compile
-// source's paks and zips. Known residual, accepted deliberately: because
-// the legacy Extractor content-sniffs zip magic, a REAL native archive
-// downloaded in that doubly-broken state (a game whose SourceIDs map no
-// compiler at all - icarus is always registered, so only a hand-edited map
-// gets here - AND a foreign source serving native archives) is ingested as
-// a plain archive without ValidateSource. The import path has no such
-// residual: Importer.Import hard-errors on an unresolvable compiler, since
-// it has no per-archive source contract forcing a fall-through.
-func (s *Service) isNativeMergeFile(game *domain.Game, mc source.MergeCompiler, fileName string) bool {
+// mc is the game's adapter's MergeCompiler, nil when the adapter has none.
+// Nil therefore means nothing can define "native" for this game and the
+// file takes the legacy extract/copy path, which is #221 I1's protected
+// download fall-through.
+//
+// Before U2 (#412) this took the FILE'S OWN SOURCE's MergeCompiler view and
+// fell back to the game's sole compile source when that source did not
+// implement it - the mixed-source dance, with a documented residual where a
+// hand-edited SourceIDs map could let a real native archive be cached
+// without ValidateSource. One game, one adapter: the two views cannot
+// disagree any more, and the residual is gone with them.
+func (s *Service) isNativeMergeFile(_ *domain.Game, mc adapter.MergeCompiler, fileName string) bool {
 	if mc == nil {
-		gmc, err := s.mergeCompilerForGame(game)
-		if err != nil {
-			return false
-		}
-		mc = gmc
+		return false
 	}
 	return mc.IsNativeMergeSource(fileName)
 }
@@ -1110,54 +2204,258 @@ func (s *Service) isNativeMergeFile(game *domain.Game, mc source.MergeCompiler, 
 // merge-membership time (enabledMergeSources), not here - ingest state is
 // identical either way (retained + raw-deployable), only participation
 // differs. mc must be the source/resolver actually serving the file: a
-// source that does not implement source.MergeCompiler falls through to the
+// source that does not implement adapter.MergeCompiler falls through to the
 // legacy extract/copy path instead (#221 I1 fix), which callers express by
 // never reaching this check without one.
-func isConvertEligibleArtifact(game *domain.Game, mc source.MergeCompiler, fileName string) bool {
+func isConvertEligibleArtifact(game *domain.Game, mc adapter.MergeCompiler, fileName string) bool {
 	return game.DeployMode == domain.DeployCompile && game.ConvertPaks &&
 		mc.IsConvertibleArtifact(fileName)
 }
 
 // GetGame retrieves a game by ID
 func (s *Service) GetGame(gameID string) (*domain.Game, error) {
-	game, ok := s.games[gameID]
+	game, ok := s.game(gameID)
 	if !ok {
 		return nil, domain.ErrGameNotFound
 	}
-	return game, nil
+	return copyGame(game), nil
 }
 
 // ListGames returns all configured games
 func (s *Service) ListGames() []*domain.Game {
-	games := make([]*domain.Game, 0, len(s.games))
-	for _, g := range s.games {
-		games = append(games, g)
-	}
-	return games
+	return s.gamesSnapshot()
 }
 
-// AddGame adds a new game configuration
-func (s *Service) AddGame(game *domain.Game) error {
-	if err := config.SaveGame(s.configDir, game); err != nil {
+// LoadGamesFromDisk re-reads games.yaml directly from disk, unlike ListGames
+// which returns the in-memory snapshot NewService loaded at Open. 'lmm game
+// detect' uses this for its existing-games lookup so that a games.yaml gone
+// unreadable between NewService's load and the detect prompt surfaces as an
+// error there, matching the always-fresh read the pre-Task-22 code
+// performed (v2 Phase 2 Task 22 fix, #292).
+func (s *Service) LoadGamesFromDisk() (map[string]*domain.Game, error) {
+	return config.LoadGames(s.configDir)
+}
+
+// gamesFileState fingerprints games.yaml by CONTENT: whether it exists, and
+// the SHA-256 of its bytes. Two of these comparing equal is ReloadGames'
+// licence to skip a re-parse.
+//
+// A stat-only fingerprint (size + mtime) was the design until #524, and it
+// is unsound: two writes inside one filesystem timestamp tick that leave the
+// byte count equal - swapping one path for another of the same length, the
+// "racy git" problem - look unchanged, and a restore that preserves mtime
+// (cp -p, rsync -t, touch -r) can collide deliberately. Git's own cure is to
+// distrust a stat only while the mtime is younger than the last load, which
+// keeps the one-stat steady state but depends on a safety window (1s ext3,
+// 2s FAT, arbitrary on network filesystems and under clock skew) and still
+// misses the preserved-mtime case, whose mtime is old by construction.
+//
+// Hashing every check is exact with no window to tune, and it is cheap
+// because games.yaml is small - one entry per game, tens of lines each - and
+// the page cache serves the read. Measured by BenchmarkFingerprintGamesFile
+// (25 games, ~6.5 KiB): about 5 microseconds and 7 KiB of allocation per
+// check, noise next to the SQLite query and JSON encode of the request it
+// rides on. ReloadGames runs once per serve request, never in a loop.
+type gamesFileState struct {
+	exists bool
+	sum    [sha256.Size]byte
+}
+
+// fingerprintGamesFile fingerprints games.yaml. Any read failure - including
+// the file not existing, which is the normal pre-first-game state - reports
+// the zero fingerprint, so an appearing or disappearing file is itself a
+// change, and an unreadable one is left for LoadGames to report.
+func fingerprintGamesFile(configDir string) gamesFileState {
+	data, err := os.ReadFile(filepath.Join(configDir, "games.yaml"))
+	if err != nil {
+		return gamesFileState{}
+	}
+	return gamesFileState{exists: true, sum: sha256.Sum256(data)}
+}
+
+// ReloadGames re-reads games.yaml into this Service's in-memory game set
+// when the file's content has changed since the set was loaded, and reports
+// whether it did. An unchanged file costs one read and hash (see
+// gamesFileState for why that, not a stat, and what it costs).
+//
+// It exists for `lmm serve` (#376), the one frontend that outlives the
+// load NewService performs: the CLI writes games.yaml in another process,
+// and without this the server answered every /api/v1 request from the game
+// set it started with - a game added by `lmm game add` never appeared, and
+// (the sharper direction) a game the user DELETED stayed plannable, with
+// the next serve-side SaveGame writing it back out. internal/serve calls
+// this once per wrapped request; a CLI process, which reads games.yaml at
+// startup and exits, has no reason to.
+//
+// A games.yaml that has become unreadable or unparsable returns the error
+// and leaves the previous set in place: a typo saved mid-session must not
+// empty a running server's chooser. The caller decides how loudly to say
+// so.
+//
+// A reload that actually happened invalidates the verify memo, which
+// beginOp would otherwise have done: this is the one path that can move a
+// game's ModPath under a live Service, and the memo does not fingerprint
+// the game record. An unchanged file costs nothing.
+//
+// The change test is content, not mtime/size: a same-size rewrite inside one
+// timestamp tick must not be missed (#524).
+//
+// The fingerprint is taken BEFORE LoadGames reads, as NewService does: a write
+// landing between the two leaves a stored sum older than the loaded set, so
+// the next call re-reads (a wasted parse) rather than skipping a change.
+func (s *Service) ReloadGames() (bool, error) {
+	s.gamesMu.Lock()
+	defer s.gamesMu.Unlock()
+
+	current := fingerprintGamesFile(s.configDir)
+	if current == s.gamesStat {
+		return false, nil
+	}
+	games, err := config.LoadGames(s.configDir)
+	if err != nil {
+		return false, fmt.Errorf("reloading games: %w", err)
+	}
+	s.games = games
+	s.gamesStat = current
+
+	// A real reload can move a game's ModPath/InstallPath, and the verify
+	// memo cannot see that: its key is (game, profile, tier) and its
+	// fingerprint walks game.ModPath without ever hashing the game record,
+	// so a repoint onto a directory that fingerprints the same - "both
+	// empty", the usual state right after one - would keep serving the
+	// previous directory's verdict (P2 review Minor 3).
+	//
+	// Every other path that changes core's picture of an installation drops
+	// the memo at beginOp; this one cannot take beginOp (see above), so it
+	// drops it here, and only when a reload ACTUALLY happened. The unchanged
+	// case is the common one - internal/serve calls this once per request -
+	// and it must stay free.
+	//
+	// Lock order: nothing takes gamesMu while holding verifyMemoMu, so
+	// taking verifyMemoMu under gamesMu cannot invert.
+	s.dropVerifyMemo()
+	return true, nil
+}
+
+// SaveGame persists game to games.yaml and publishes it to this Service's
+// in-memory game set atomically. It replaces an existing entry with the
+// same ID. Readers (GetGame, ListGames, SourcesForGame, …) may run
+// concurrently with it.
+//
+// Replacing an entry is refused, as `lmm game edit --mod-path` is
+// (refuseModPathMove), when it would move the game's mod_path out from
+// under files deployed there (#451). A cache_path change also requires
+// purging every recorded deployment first (#487). An install_path change
+// follows #528's policy (refuseInstallPathMove) - a correction, or a move
+// whose deployed files are re-rooted with it, or GameInstallPathInUseError -
+// so no writer of a game's install_path gets round it.
+func (s *Service) SaveGame(ctx context.Context, game *domain.Game) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
 		return err
 	}
-	s.games[game.ID] = game
+	defer release()
+	if prior, ok := s.game(game.ID); ok {
+		if !samePath(game.InstallPath, prior.InstallPath) {
+			reroot, err := s.refuseInstallPathMove(ctx, prior, game, followInstallPath(prior, game.InstallPath))
+			if err != nil {
+				return err
+			}
+			if err := s.refuseCachePathMove(ctx, prior, game.CachePath); err != nil {
+				return err
+			}
+			return s.saveEditedGame(ctx, game, reroot)
+		}
+		if err := s.refuseModPathMove(ctx, prior, game.ModPath); err != nil {
+			return err
+		}
+		if err := s.refuseCachePathMove(ctx, prior, game.CachePath); err != nil {
+			return err
+		}
+	}
+	return s.saveGame(ctx, game)
+}
+
+func (s *Service) saveGame(ctx context.Context, game *domain.Game) error {
+	// The caller may reuse or edit game after this call. Never publish its
+	// pointer (or its nested mutable fields) into the Service's snapshot.
+	owned := copyGame(game)
+	s.gamesMu.Lock()
+	defer s.gamesMu.Unlock()
+	if err := config.SaveGame(s.configDir, owned); err != nil {
+		return err
+	}
+	s.games[owned.ID] = owned
+	// The map and the file now agree, so re-fingerprint rather than leave
+	// ReloadGames a change it would only re-read to learn what this
+	// function just did (#376).
+	s.gamesStat = fingerprintGamesFile(s.configDir)
 	return nil
 }
 
+// copyGame owns every mutable field of a game. The hooks and other fields
+// contain only values; SourceIDs and Loader are its two mutable references.
+func copyGame(game *domain.Game) *domain.Game {
+	copy := *game
+	if game.SourceIDs != nil {
+		copy.SourceIDs = make(map[string]string, len(game.SourceIDs))
+		for source, id := range game.SourceIDs {
+			copy.SourceIDs[source] = id
+		}
+	}
+	if game.Loader != nil {
+		loader := *game.Loader
+		copy.Loader = &loader
+	}
+	return &copy
+}
+
+// game returns the in-memory game for id under the read lock.
+func (s *Service) game(id string) (*domain.Game, bool) {
+	s.gamesMu.RLock()
+	defer s.gamesMu.RUnlock()
+	g, ok := s.games[id]
+	return g, ok
+}
+
+// gamesSnapshot returns the games in a fresh slice under the read lock,
+// ordered by game ID (Ruling 4, #299) rather than Go's own map iteration
+// order - ListGames' callers (lmm status, lmm game list) need a stable order.
+func (s *Service) gamesSnapshot() []*domain.Game {
+	s.gamesMu.RLock()
+	defer s.gamesMu.RUnlock()
+	out := make([]*domain.Game, 0, len(s.games))
+	for _, g := range s.games {
+		out = append(out, copyGame(g))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
 // GetInstalledMods returns all installed mods for a game/profile (DB order: installed_at).
-func (s *Service) GetInstalledMods(gameID, profileName string) ([]domain.InstalledMod, error) {
-	return s.db.GetInstalledMods(gameID, profileName)
+func (s *Service) GetInstalledMods(ctx context.Context, gameID, profileName string) ([]domain.InstalledMod, error) {
+	rows, err := s.db.GetInstalledMods(ctx, gameID, profileName)
+	s.stampInstalledDisplay(rows)  // #458
+	s.stampCachedAuthorNames(rows) // #420
+	// #543: a column of no row, so stamped like the two above.
+	s.stampManualOnly(ctx, gameID, rows)
+	return rows, err
 }
 
 // GetInstalledModsInProfileOrder returns installed mods in profile load order (first = lowest priority).
 // Mods not present in the profile are omitted. Use this for deploy/switch so deployment order matches load order.
-func (s *Service) GetInstalledModsInProfileOrder(gameID, profileName string) ([]domain.InstalledMod, error) {
+// A mod the profile lists twice (a hand edit) is returned once, at its first
+// reference's position - the copy every flow decides it by (#457).
+//
+// No cmd/app caller today (deploy/merged-pak call it internally); kept
+// exported as a serve-facing query (Phase 3 Ruling 10) - a frontend
+// rendering load order needs the same ordering deploy/merged-pak use.
+func (s *Service) GetInstalledModsInProfileOrder(ctx context.Context, gameID, profileName string) ([]domain.InstalledMod, error) {
 	profile, err := config.LoadProfile(s.configDir, gameID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile: %w", err)
 	}
-	all, err := s.db.GetInstalledMods(gameID, profileName)
+	all, err := s.db.GetInstalledMods(ctx, gameID, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -1170,24 +2468,21 @@ func (s *Service) GetInstalledModsInProfileOrder(gameID, profileName string) ([]
 		key := domain.ModKey(ref.SourceID, ref.ModID)
 		if m, ok := byKey[key]; ok {
 			ordered = append(ordered, *m)
+			delete(byKey, key)
 		}
 	}
 	return ordered, nil
 }
 
-// GetLinker returns a linker for the given method
-func (s *Service) GetLinker(method domain.LinkMethod) linker.Linker {
+// getLinker returns a linker for the given method. Unexported with the
+// archive-import lift (#291), which removed cmd's last caller.
+func (s *Service) getLinker(method domain.LinkMethod) linker.Linker {
 	return linker.New(method)
 }
 
-// GetDefaultLinkMethod returns the default link method from config
-func (s *Service) GetDefaultLinkMethod() domain.LinkMethod {
-	return s.config.DefaultLinkMethod
-}
-
-// GetGameLinkMethod returns the effective link method for a game.
+// getGameLinkMethod returns the effective link method for a game.
 // Uses the game's explicit setting if configured, otherwise falls back to global default.
-func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
+func (s *Service) getGameLinkMethod(game *domain.Game) domain.LinkMethod {
 	if game.LinkMethodExplicit {
 		return game.LinkMethod
 	}
@@ -1207,62 +2502,112 @@ func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
 // error instead of folding into the silent-degrade path (#189). The CLI
 // --method override sits above all of these and is applied by callers
 // (see DeployOptions.LinkMethod).
-func (s *Service) GetEffectiveLinkMethod(game *domain.Game, profileName string) (domain.LinkMethod, error) {
+func (s *Service) GetEffectiveLinkMethod(ctx context.Context, game *domain.Game, profileName string) (domain.LinkMethod, error) {
 	profile, err := config.LoadProfile(s.configDir, game.ID, profileName)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidLinkMethod) {
 			return 0, fmt.Errorf("resolving effective link method: %w", err)
 		}
-		return s.GetGameLinkMethod(game), nil
+		return s.getGameLinkMethod(game), nil
 	}
 	if profile.LinkMethodExplicit {
 		return profile.LinkMethod, nil
 	}
-	return s.GetGameLinkMethod(game), nil
+	return s.getGameLinkMethod(game), nil
 }
 
-// GetInstaller returns an Installer configured for the given game
-func (s *Service) GetInstaller(game *domain.Game) *Installer {
-	return s.NewInstallerWithLinker(game, s.GetLinker(s.GetGameLinkMethod(game)))
+// getInstaller returns an Installer configured for the given game.
+//
+// Unexported by Phase 3 Ruling 10: every production flow already builds its
+// own installer internally via newInstallerWithLinker, so the exported
+// GetInstaller wrapper had no caller besides test fixtures. Those fixtures
+// now deploy through PlanDeploy/ApplyDeploy (a genuine deploy round-trip
+// that also records Deployed/LinkMethod, which hand-driving an *Installer
+// never did); internal/core's own fixtures use the GetInstallerForTest
+// shim (export_test.go).
+func (s *Service) getInstaller(game *domain.Game) *Installer {
+	return s.newInstallerWithLinker(game, s.getLinker(s.getGameLinkMethod(game)))
 }
 
-// GetInstallerForProfile returns an Installer whose linker honors
+// getInstallerForProfile returns an Installer whose linker honors
 // profileName's effective link method (GetEffectiveLinkMethod) - the
 // profile-aware companion to GetInstaller. Propagates GetEffectiveLinkMethod's
-// new error case (#189) rather than swallowing it.
-func (s *Service) GetInstallerForProfile(game *domain.Game, profileName string) (*Installer, error) {
-	method, err := s.GetEffectiveLinkMethod(game, profileName)
+// new error case (#189) rather than swallowing it. Unexported with
+// doProfileApply's lift (#290): an Installer is a core primitive, and that
+// flow held cmd's last reference to one.
+func (s *Service) getInstallerForProfile(ctx context.Context, game *domain.Game, profileName string) (*Installer, error) {
+	method, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
-	return s.NewInstallerWithLinker(game, s.GetLinker(method)), nil
+	return s.newInstallerWithLinker(game, s.getLinker(method)), nil
 }
 
-// NewInstallerWithLinker returns an Installer for the given game using a
-// caller-supplied linker — used when the CLI overrides the game's default
-// link method (e.g. `lmm deploy --method`).
-func (s *Service) NewInstallerWithLinker(game *domain.Game, lnk linker.Linker) *Installer {
-	return NewInstaller(s.GetGameCache(game), lnk, s.db)
+// newInstallerWithLinker returns an Installer for the given game using a
+// caller-supplied linker — used where a flow overrides the game's default
+// link method (e.g. `lmm deploy --method`). Unexported with the archive-
+// import lift (#291), which removed cmd's last caller; an Installer is a
+// core primitive no frontend touches (see getInstallerForProfile).
+func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *Installer {
+	installer := NewInstaller(s.GetGameCache(game), lnk, s.db)
+	installer.SetLogger(s.log)
+	// #350: every Installer this Service hands out captures into the
+	// game's originals store, so no flow has to remember to ask for it.
+	installer.setOriginals(s.originalsStoreFor(game.ID))
+	// #445 gate 2, G2-1: and none of them removes or replaces a file
+	// another game records.
+	installer.otherGames = s.otherGamesRecording
+	// #466 review F1: a link into the game's cache is lmm's.
+	installer.cacheRoots = s.cacheRoots(game)
+	// #353: and every Installer routes its deployable files through the
+	// game's adapter. A resolution failure is reported by the flow's own
+	// AdapterFor call (every flow that reaches an Installer makes one);
+	// nothing here is a second, quieter failure channel for the same fault.
+	a, err := s.AdapterFor(game)
+	if err == nil {
+		installer.setAdapter(a)
+		return installer
+	}
+	// The only flows that get this far with a refused adapter are the two
+	// removals (removalSnapshotOf), and a removal must then prove every
+	// path it takes (#413 fix round 4, F2): a row names it, or it stays.
+	// The routing is still the named adapter's where that adapter is what
+	// laid the game out - a refusal of how it composes with the rest of
+	// the entry (deploy_mode: compile) says nothing about where its files
+	// went - so its own never-remove rules (bepinex's BepInEx/config/**)
+	// still hold. A name that resolves nowhere, or bepinex off the game
+	// root, which never laid anything out, keeps the identity.
+	installer.recordedOnly = true
+	installer.refused = err
+	if named, rerr := s.adapterRegistry().Resolve(s.AdapterName(game)); rerr == nil && !bepinexOffRoot(game) {
+		installer.setAdapter(named)
+	}
+	return installer
 }
 
 // NewProfileManager returns a ProfileManager wired to this service's storage,
 // so callers do not need direct access to the database or registry.
 func (s *Service) NewProfileManager() *ProfileManager {
-	return NewProfileManager(s.configDir, s.db)
+	pm := NewProfileManager(s.configDir, s.db)
+	pm.warn = s.warnWriter
+	return pm
 }
 
 // NewUpdater returns an Updater wired to this service's source registry.
+//
+// No cmd/app caller today (Service.CheckUpdates calls it internally); kept
+// exported as a serve-facing query (Phase 3 Ruling 10) - a frontend running
+// its own update check needs the same wiring.
 func (s *Service) NewUpdater() *Updater {
 	return NewUpdater(s.registry)
 }
 
-// Cache returns the default cache manager
-func (s *Service) Cache() *cache.Cache {
-	return s.cache
-}
-
 // GetGameCachePath returns the effective cache path for a game.
 // Uses the game's cache_path if configured, otherwise falls back to global cache.
+//
+// No cmd/app caller today (StatusReport's ResolvedCachePath calls it
+// internally); kept exported as a serve-facing query (Phase 3 Ruling 10) -
+// a frontend resolving a game's effective cache path needs the same lookup.
 func (s *Service) GetGameCachePath(game *domain.Game) string {
 	if game.CachePath != "" {
 		return game.CachePath
@@ -1278,15 +2623,30 @@ func (s *Service) GetGameCachePath(game *domain.Game) string {
 // root), so callers that need to recognize BOTH cache roots for a game -
 // not just the single one GetGameCachePath resolves to - use this alongside
 // game.CachePath.
+//
+// No cmd/app caller today (converge calls it internally); kept exported as
+// a serve-facing query (Phase 3 Ruling 10) alongside GetGameCachePath - a
+// frontend needing both cache roots for a game has the same need.
 func (s *Service) GlobalCacheDir() string {
 	return s.cacheDir
 }
 
 // GetGameCache returns a cache manager for the specified game.
 // Uses the game's cache_path if configured (game-scoped: paths omit gameID), otherwise the global cache.
+//
+// Dozens of core files call it internally - this is the package's own
+// cache accessor - and `mod files`'s last cmd caller (v2 Phase 3 Task 10,
+// #303) moved into ModFiles, leaving cmd/lmm test fixtures as the only
+// EXTERNAL callers. Documented test-seed API kept by ruling (Phase 3
+// Ruling 10): no Plan/Apply substitute at fixture scale (69 sites / 28
+// files across cmd/lmm as of Unit R) - fixtures across nearly every
+// command area seed cache files directly rather than running a full
+// install. Not part of the frontend contract.
 func (s *Service) GetGameCache(game *domain.Game) *cache.Cache {
 	if game.CachePath != "" {
-		return cache.NewGameScoped(game.CachePath)
+		gameCache := cache.NewGameScoped(game.CachePath)
+		gameCache.SetLogger(s.log)
+		return gameCache
 	}
 	return s.cache
 }
@@ -1296,89 +2656,224 @@ func (s *Service) ConfigDir() string {
 	return s.configDir
 }
 
-// SaveSourceToken saves an API token for a source
-func (s *Service) SaveSourceToken(sourceID, apiKey string) error {
-	return s.db.SaveToken(sourceID, apiKey)
+// CacheDir returns the cache root - where the mod cache lives, and where a
+// source that caches remote metadata locally (#269's Steam Workshop source,
+// under the reserved "_steamworkshop" prefix) puts its own tree. Exported
+// alongside ConfigDir so internal/app can rebuild such a source without
+// re-resolving paths of its own.
+func (s *Service) CacheDir() string {
+	return s.cacheDir
 }
 
-// GetSourceToken retrieves an API token for a source
-func (s *Service) GetSourceToken(sourceID string) (*db.StoredToken, error) {
-	return s.db.GetToken(sourceID)
+// SaveSourceToken saves an API token for a source
+func (s *Service) SaveSourceToken(ctx context.Context, sourceID, apiKey string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.saveSourceToken(ctx, sourceID, apiKey)
+}
+
+func (s *Service) saveSourceToken(ctx context.Context, sourceID, apiKey string) error {
+	return asTokenKeyError(s.db.SaveToken(ctx, sourceID, apiKey))
+}
+
+// GetSourceToken retrieves and decrypts an API token for a source - the one
+// path that hands a credential back in the clear, for the sources that have
+// to put it on a request. Every status surface uses ListSourceTokens
+// instead (#79).
+func (s *Service) GetSourceToken(ctx context.Context, sourceID string) (*db.StoredToken, error) {
+	token, err := s.db.GetToken(ctx, sourceID)
+	return token, asTokenKeyError(err)
 }
 
 // DeleteSourceToken removes an API token for a source
-func (s *Service) DeleteSourceToken(sourceID string) error {
-	return s.db.DeleteToken(sourceID)
-}
-
-// ListSourceTokens returns every stored API token, including ones whose
-// source is no longer registered (e.g. the custom-source definition file
-// was removed) — used by `lmm auth status` to surface orphaned credentials.
-func (s *Service) ListSourceTokens() ([]db.StoredToken, error) {
-	return s.db.ListTokens()
-}
-
-// IsSourceAuthenticated checks if a source has a stored API token
-func (s *Service) IsSourceAuthenticated(sourceID string) bool {
-	has, err := s.db.HasToken(sourceID)
+func (s *Service) DeleteSourceToken(ctx context.Context, sourceID string) error {
+	release, err := s.beginOp(ctx)
 	if err != nil {
+		return err
+	}
+	defer release()
+	return s.deleteSourceToken(ctx, sourceID)
+}
+
+func (s *Service) deleteSourceToken(ctx context.Context, sourceID string) error {
+	return s.db.DeleteToken(ctx, sourceID)
+}
+
+// ListSourceTokens returns every stored API token as presence, timestamps
+// and a short fingerprint - never the key itself (#79) - including ones
+// whose source is no longer registered (e.g. the custom-source definition
+// file was removed), which is how `lmm auth status` surfaces orphaned
+// credentials.
+//
+// A single row that will not decrypt comes back with Readable false rather
+// than failing the call; only a key file that is missing or unusable
+// altogether is an error, because that one is about the installation.
+func (s *Service) ListSourceTokens(ctx context.Context) ([]db.TokenInfo, error) {
+	infos, err := s.db.ListTokens(ctx)
+	return infos, asTokenKeyError(err)
+}
+
+// sourceHasCredential answers "has the user supplied a key for this source",
+// which is the question the auth-required search skip (#383) actually rests
+// on - a refusal from a source the user HAS keyed means that key is expired,
+// revoked or mistyped, and must stay a warning.
+//
+// Both places a credential can live are consulted (P1b review F2). The
+// source's own view covers a key that never reaches the token store at all:
+// app.ResolveAPIKey wires LMM_<ID>_API_KEY (and the built-ins' own env
+// names) straight into the source at registration, and asking the database
+// alone silently skipped exactly the expired-env-key case the rule exists
+// for. The store covers the opposite gap: `lmm serve` re-keys a source live
+// but the running instance only adopts it on restart (api_auth.go's
+// restart_required), so a just-stored key is in the database before it is in
+// the source. Either signal is a supplied credential; only neither is a
+// capability the user never opted into.
+func (s *Service) sourceHasCredential(ctx context.Context, src source.ModSource, sourceID string) bool {
+	if a, ok := src.(interface{ IsAuthenticated() bool }); ok && a.IsAuthenticated() {
+		return true
+	}
+	return s.IsSourceAuthenticated(ctx, sourceID)
+}
+
+// IsSourceAuthenticated checks if a source has a stored API token.
+//
+// No cmd caller today (`lmm auth status` reads via ListSourceTokens
+// instead), but it is a non-mutating query a frontend can legitimately
+// need - `lmm serve`'s intended consumer, same reasoning as ScanLocal - so
+// it is kept by ruling (Phase 3 Ruling 10) rather than unexported (5 sites
+// / 1 file as of Unit R).
+func (s *Service) IsSourceAuthenticated(ctx context.Context, sourceID string) bool {
+	has, err := s.db.HasToken(ctx, sourceID)
+	if err != nil {
+		s.logger().Warn("checking source authentication failed", "source_id", sourceID, "err", err)
 		return false
 	}
 	return has
 }
 
-// UpdateModVersion updates the version of an installed mod, preserving the previous version for rollback
-func (s *Service) UpdateModVersion(sourceID, modID, gameID, profileName, newVersion string) error {
-	return s.db.UpdateModVersion(sourceID, modID, gameID, profileName, newVersion)
+// updateModVersion updates the version of an installed mod, preserving the
+// previous version for rollback. Unexported (phase-2-close review Important
+// #3): zero production callers - the only exported form's beginOp gate ever
+// added is now provided by UpdateModVersionForTest for core's own tests.
+func (s *Service) updateModVersion(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
+	return s.db.UpdateModVersion(ctx, sourceID, modID, gameID, profileName, newVersion)
 }
 
-// ApplyModUpdate updates version and file IDs atomically, preserving rollback state.
-func (s *Service) ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
-	return s.db.ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion, fileIDs)
+// applyModUpdate updates version and file IDs atomically, preserving
+// rollback state. Unexported (phase-2-close review Important #3): zero
+// production callers - see updateModVersion's doc comment.
+func (s *Service) applyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
+	return s.db.ApplyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, fileIDs)
 }
 
-// RollbackModVersion reverts a mod to its previous version
-func (s *Service) RollbackModVersion(sourceID, modID, gameID, profileName string) error {
-	return s.db.SwapModVersions(sourceID, modID, gameID, profileName)
+// rollbackModVersion reverts a mod to its previous version. Unexported
+// (v2 Phase 2 Unit I Task 10, #289): the exported RollbackModVersion wrapper
+// had zero production callers - only ApplyRollback/ApplyUpdate call this
+// directly, already inside their own beginOp - and its DB-level behavior
+// (including the "no previous version" failure) is pinned independently by
+// internal/storage/db's own TestSwapModVersions/TestSwapModVersions_NoPreviousVersion.
+func (s *Service) rollbackModVersion(ctx context.Context, sourceID, modID, gameID, profileName string) error {
+	return s.db.SwapModVersions(ctx, sourceID, modID, gameID, profileName)
 }
 
-// SetModUpdatePolicy sets the update policy for an installed mod
-func (s *Service) SetModUpdatePolicy(sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
-	return s.db.UpdateModPolicy(sourceID, modID, gameID, profileName, policy)
+// SetModLinkMethod sets the deployment method for an installed mod.
+//
+// Documented test-seed API kept by ruling (Phase 3 Ruling 10): seeds DB
+// deploy state without touching disk so verify/repair tests can construct
+// DB-vs-disk divergence that no Plan/Apply produces (checked at Task 19:
+// ApplyDeploy would deploy the file for real, pre-empting the exact repair
+// behavior those tests exist to exercise); not part of the frontend
+// contract (6 sites / 2 files as of Unit R).
+func (s *Service) SetModLinkMethod(ctx context.Context, sourceID, modID, gameID, profileName string, linkMethod domain.LinkMethod) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModLinkMethod(ctx, sourceID, modID, gameID, profileName, linkMethod)
 }
 
-// SetModLinkMethod sets the deployment method for an installed mod
-func (s *Service) SetModLinkMethod(sourceID, modID, gameID, profileName string, linkMethod domain.LinkMethod) error {
-	return s.db.SetModLinkMethod(sourceID, modID, gameID, profileName, linkMethod)
+func (s *Service) setModLinkMethod(ctx context.Context, sourceID, modID, gameID, profileName string, linkMethod domain.LinkMethod) error {
+	return s.db.SetModLinkMethod(ctx, sourceID, modID, gameID, profileName, linkMethod)
 }
 
-// SetModFileIDs updates the file IDs for an installed mod
-func (s *Service) SetModFileIDs(sourceID, modID, gameID, profileName string, fileIDs []string) error {
-	return s.db.SetModFileIDs(sourceID, modID, gameID, profileName, fileIDs)
+func (s *Service) setModFileIDs(ctx context.Context, sourceID, modID, gameID, profileName string, fileIDs []string) error {
+	return s.db.SetModFileIDs(ctx, sourceID, modID, gameID, profileName, fileIDs)
 }
 
-// SetModEnabled toggles the enabled flag for an installed mod.
-func (s *Service) SetModEnabled(sourceID, modID, gameID, profileName string, enabled bool) error {
-	return s.db.SetModEnabled(sourceID, modID, gameID, profileName, enabled)
+// setModEnabled toggles the enabled flag for an installed mod. Unexported
+// with doProfileApply's lift (#290): the profile-apply loops were the last
+// cmd callers, and every flow that flips this flag now lives in core.
+//
+// It is also one of the two writers every enable goes through, so it is
+// where an enable supersedes a profile-document backfill still owed for
+// that row (#431, supersedePendingProfileBackfill).
+func (s *Service) setModEnabled(ctx context.Context, sourceID, modID, gameID, profileName string, enabled bool) error {
+	if err := s.db.SetModEnabled(ctx, sourceID, modID, gameID, profileName, enabled); err != nil {
+		return err
+	}
+	if enabled {
+		s.supersedePendingProfileBackfill(ctx, gameID, profileName, sourceID, modID)
+	}
+	return nil
 }
 
 // SetModDeployed records whether a mod's files are currently deployed.
-func (s *Service) SetModDeployed(sourceID, modID, gameID, profileName string, deployed bool) error {
-	return s.db.SetModDeployed(sourceID, modID, gameID, profileName, deployed)
+//
+// Documented test-seed API kept by ruling (Phase 3 Ruling 10): seeds DB
+// deploy state without touching disk so verify/repair tests can construct
+// DB-vs-disk divergence that no Plan/Apply produces (checked at Task 19:
+// ApplyDeploy would deploy the file for real, pre-empting the exact repair
+// behavior those tests exist to exercise); not part of the frontend
+// contract (12 sites / 6 files as of Unit R).
+func (s *Service) SetModDeployed(ctx context.Context, sourceID, modID, gameID, profileName string, deployed bool) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModDeployed(ctx, sourceID, modID, gameID, profileName, deployed)
 }
 
-// SetModConvertPaks toggles per-mod pak-to-exmod conversion (#221). A local
-// DB write; the caller re-syncs the merged pak to apply the change.
-func (s *Service) SetModConvertPaks(sourceID, modID, gameID, profileName string, convert bool) error {
-	return s.db.SetModConvertPaks(sourceID, modID, gameID, profileName, convert)
+func (s *Service) setModDeployed(ctx context.Context, sourceID, modID, gameID, profileName string, deployed bool) error {
+	return s.db.SetModDeployed(ctx, sourceID, modID, gameID, profileName, deployed)
 }
 
 // SaveInstalledMod persists an installed-mod record (insert or update).
-func (s *Service) SaveInstalledMod(mod *domain.InstalledMod) error {
-	return s.db.SaveInstalledMod(mod)
+//
+// `mod edit`/`mod files` lost their own cmd callers in v2 Phase 3 Task 10
+// (#303, replaced by ApplyRelinkMod/ModFiles); no production caller remains
+// outside this package. Documented test-seed API kept by ruling (Phase 3
+// Ruling 10): no Plan/Apply substitute at fixture scale (68 sites / 30
+// files across cmd/lmm as of Unit R) - dozens of fixtures across nearly
+// every command area (install, deploy, uninstall, profile, update,
+// verify...) call this directly to seed an installed-mod DB row without
+// running a full install. Not part of the frontend contract.
+func (s *Service) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.saveInstalledMod(ctx, mod)
 }
 
-// SetModVersion corrects an installed mod's recorded version without
+// saveInstalledMod is the other writer every enable goes through - see
+// setModEnabled.
+func (s *Service) saveInstalledMod(ctx context.Context, mod *domain.InstalledMod) error {
+	if err := s.db.SaveInstalledMod(ctx, mod); err != nil {
+		return err
+	}
+	if mod.Enabled {
+		s.supersedePendingProfileBackfill(ctx, mod.GameID, mod.ProfileName, mod.SourceID, mod.ID)
+	}
+	return nil
+}
+
+// setModVersion corrects an installed mod's recorded version without
 // shifting PreviousVersion (unlike a real version update) or re-keying its
 // file-ID rows (unlike SaveInstalledMod's full-row upsert, whose
 // replaceModFileIDsTx would silently wipe stored checksums even when the
@@ -1386,33 +2881,66 @@ func (s *Service) SaveInstalledMod(mod *domain.InstalledMod) error {
 // For repairing a version string known to be WRONG (verify --fix's
 // version-record repair, issue #94), where the file IDs and their
 // checksums are already correct.
-func (s *Service) SetModVersion(sourceID, modID, gameID, profileName, version string) error {
-	return s.db.SetModVersion(sourceID, modID, gameID, profileName, version)
+func (s *Service) setModVersion(ctx context.Context, sourceID, modID, gameID, profileName, version string) error {
+	return s.db.SetModVersion(ctx, sourceID, modID, gameID, profileName, version)
 }
 
-// DeleteInstalledMod removes the installed-mod record from the active profile.
-func (s *Service) DeleteInstalledMod(sourceID, modID, gameID, profileName string) error {
-	return s.db.DeleteInstalledMod(sourceID, modID, gameID, profileName)
+// DeleteInstalledMod removes the installed-mod record from the active
+// profile.
+//
+// `mod edit`'s re-link (ApplyRelinkMod) is its only production caller and
+// reaches it through the unexported deleteInstalledMod, already inside its
+// own beginOp; no other production caller remains outside this package.
+// Documented test-seed API kept by ruling (Phase 3 Ruling 10; see
+// SaveInstalledMod's doc comment) - checked at Task 19: both ApplyUninstall
+// and ApplyPurge additionally resync/purge the merged pak as part of
+// removing a mod, which is exactly what verify_convert_test.go's one
+// caller (TestVerifyReportsConversionFailed_UninstalledMod) must NOT
+// happen - it seeds a stale merged-pak fingerprint that outlives the mod it
+// names, so neither real flow is a substitute (3 sites / 3 files as of Unit
+// R). Not part of the frontend contract.
+func (s *Service) DeleteInstalledMod(ctx context.Context, sourceID, modID, gameID, profileName string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.deleteInstalledMod(ctx, sourceID, modID, gameID, profileName)
+}
+
+func (s *Service) deleteInstalledMod(ctx context.Context, sourceID, modID, gameID, profileName string) error {
+	return s.db.DeleteInstalledMod(ctx, sourceID, modID, gameID, profileName)
 }
 
 // GetDeployedFilesForMod returns the relative paths the given mod has deployed
 // in the named profile.
-func (s *Service) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string) ([]string, error) {
-	return s.db.GetDeployedFilesForMod(gameID, profileName, sourceID, modID)
+//
+// No cmd/app caller today (converge/deploy/ModFiles call it internally);
+// kept exported as a serve-facing query (Phase 3 Ruling 10) - a frontend
+// inspecting one mod's deployed files needs the same lookup.
+func (s *Service) GetDeployedFilesForMod(ctx context.Context, gameID, profileName, sourceID, modID string) ([]string, error) {
+	return s.db.GetDeployedFilesForMod(ctx, gameID, profileName, sourceID, modID)
 }
 
-// GetLastDeployTime returns the timestamp of the most recent deploy for the
+// getLastDeployTime returns the timestamp of the most recent deploy for the
 // given game/profile (#106a's dashboard "Last deploy" row), or nil if it has
 // never been deployed - see db.DB.GetLastDeployTime's own doc comment for
-// why nil is not an error.
-func (s *Service) GetLastDeployTime(gameID, profileName string) (*time.Time, error) {
-	return s.db.GetLastDeployTime(gameID, profileName)
+// why nil is not an error. Unexported (final review, Important #3 / #301):
+// GameStatus is the only caller left, cmd's --json switched from its own
+// hand-built read to service.GameStatus, and core.VerifyReport/Status don't
+// need a last-deploy timestamp at all.
+func (s *Service) getLastDeployTime(ctx context.Context, gameID, profileName string) (*time.Time, error) {
+	return s.db.GetLastDeployTime(ctx, gameID, profileName)
 }
 
 // GetFileOwner reports which mod currently owns a deployed file. The bool is
 // false when no record exists; err is non-nil only on storage errors.
-func (s *Service) GetFileOwner(gameID, profileName, relativePath string) (sourceID, modID string, found bool, err error) {
-	owner, err := s.db.GetFileOwner(gameID, profileName, relativePath)
+//
+// No cmd/app caller today (Conflicts calls it internally); kept exported as
+// a serve-facing query (Phase 3 Ruling 10) - a frontend resolving one file's
+// ownership needs the same lookup.
+func (s *Service) GetFileOwner(ctx context.Context, gameID, profileName, relativePath string) (sourceID, modID string, found bool, err error) {
+	owner, err := s.db.GetFileOwner(ctx, gameID, profileName, relativePath)
 	if err != nil {
 		return "", "", false, err
 	}
@@ -1424,16 +2952,20 @@ func (s *Service) GetFileOwner(gameID, profileName, relativePath string) (source
 
 // DeployedFile is a service-boundary view of a tracked mod file with its checksum.
 type DeployedFile struct {
-	SourceID string
-	ModID    string
-	FileID   string
-	Checksum string
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	FileID   string `json:"file_id"`
+	Checksum string `json:"checksum,omitempty"`
 }
 
 // GetFilesWithChecksums returns every tracked file in the profile with its
 // recorded checksum (empty when none has been computed yet).
-func (s *Service) GetFilesWithChecksums(gameID, profileName string) ([]DeployedFile, error) {
-	rows, err := s.db.GetFilesWithChecksums(gameID, profileName)
+//
+// No cmd/app caller today (Verify calls it internally); kept exported as a
+// serve-facing query (Phase 3 Ruling 10) - a frontend rendering per-file
+// checksum state needs the same lookup.
+func (s *Service) GetFilesWithChecksums(ctx context.Context, gameID, profileName string) ([]DeployedFile, error) {
+	rows, err := s.db.GetFilesWithChecksums(ctx, gameID, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -1445,16 +2977,45 @@ func (s *Service) GetFilesWithChecksums(gameID, profileName string) ([]DeployedF
 }
 
 // SaveFileChecksum records the verified checksum for a downloaded mod file.
-func (s *Service) SaveFileChecksum(sourceID, modID, gameID, profileName, fileID, checksum string) error {
-	return s.db.SaveFileChecksum(sourceID, modID, gameID, profileName, fileID, checksum)
+//
+// No production caller remains outside this package (install/update record
+// a checksum through the unexported saveFileChecksum, inside their own
+// beginOp). Documented test-seed API kept by ruling (Phase 3 Ruling 10):
+// no Plan/Apply substitute - verify/repair fixtures need to seed a specific
+// checksum (present, stale, or absent) independently of any download; not
+// part of the frontend contract (35 sites / 5 files as of Unit R).
+func (s *Service) SaveFileChecksum(ctx context.Context, sourceID, modID, gameID, profileName, fileID, checksum string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.saveFileChecksum(ctx, sourceID, modID, gameID, profileName, fileID, checksum)
+}
+
+func (s *Service) saveFileChecksum(ctx context.Context, sourceID, modID, gameID, profileName, fileID, checksum string) error {
+	return s.db.SaveFileChecksum(ctx, sourceID, modID, gameID, profileName, fileID, checksum)
 }
 
 // GetInstalledMod retrieves a single installed mod
-func (s *Service) GetInstalledMod(sourceID, modID, gameID, profileName string) (*domain.InstalledMod, error) {
-	return s.db.GetInstalledMod(sourceID, modID, gameID, profileName)
+func (s *Service) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profileName string) (*domain.InstalledMod, error) {
+	row, err := s.db.GetInstalledMod(ctx, sourceID, modID, gameID, profileName)
+	if row != nil {
+		s.stampDisplayVersion(&row.Mod, row.External) // #458
+		rows := []domain.InstalledMod{*row}
+		s.stampCachedAuthorNames(rows) // #420
+		row.AuthorName = rows[0].AuthorName
+		s.stampManualOnly(ctx, gameID, rows) // #543
+		row.ManualOnly = rows[0].ManualOnly
+	}
+	return row, err
 }
 
 // GetDependencies returns dependencies for a mod from the specified source
+//
+// No cmd/app caller today (ApplyInstall calls it internally); kept exported
+// as a serve-facing query (Phase 3 Ruling 10) - a frontend previewing a
+// mod's dependency tree ahead of an install needs the same lookup.
 func (s *Service) GetDependencies(ctx context.Context, sourceID string, mod *domain.Mod) ([]domain.ModReference, error) {
 	src, err := s.registry.Get(sourceID)
 	if err != nil {

@@ -1,0 +1,9 @@
+{
+  "source": "thunderstore",
+  "game": "content-warning",
+  "bytes": 4096000,
+  "fetched_at": "2026-08-27T12:00:00Z",
+  "mapped_by": [],
+  "action": "removed",
+  "reason": "no game uses it"
+}

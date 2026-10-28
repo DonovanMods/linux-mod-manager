@@ -1,0 +1,24 @@
+## stdout
+Importing: <ARCHIVE-DIR>/second.zip
+
+Fetching metadata from acme-source...
+
+Mod: Second Mod
+  Source: acme-source
+  ID: B1
+  Version: 1.0
+  Files: 1
+
+Would import: Second Mod
+  Would deploy 1 file(s)
+    - shared.txt
+  Would add to profile: default
+  Would overwrite 1 file(s) owned by other mods
+    - shared.txt (acme-source:A1)
+
+(dry run - no changes made)
+## stderr
+## error
+<nil>
+## tree
+shared.txt

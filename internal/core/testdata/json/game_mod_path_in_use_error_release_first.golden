@@ -1,0 +1,21 @@
+{
+  "game_id": "skyrim-se",
+  "mod_path": "/games/shared/Data",
+  "new_mod_path": "/games/skyrim-se/Mods",
+  "deployed_files": 1,
+  "profiles": [
+    {
+      "profile": "default",
+      "deployed_files": 1
+    }
+  ],
+  "active_profile": "survival",
+  "listed_unrecorded": 1,
+  "needs_apply": true,
+  "release_first": [
+    {
+      "game_id": "skyrim-vr",
+      "profile": "vanilla"
+    }
+  ]
+}

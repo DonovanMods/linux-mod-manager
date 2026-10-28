@@ -1,0 +1,10 @@
+Importing profile: target
+
+Found 2 mod(s) in profile.
+  - 2 recorded in the profile only (--no-install: not installed or deployed):
+    - test-src:cached v1.0
+    - test-src:fresh v2.0
+
+✓ Imported profile: target
+
+Nothing was installed or deployed. Use 'lmm profile switch target' to install them later, or 'lmm profile apply target' if it is already the active profile.

@@ -1,0 +1,48 @@
+{
+  "profile": "default",
+  "mods": [
+    {
+      "ref": {
+        "source_id": "nexusmods",
+        "mod_id": "42",
+        "version": "1.2.3",
+        "locked": false
+      },
+      "name": "Sample Mod",
+      "class": "individual",
+      "link": [
+        "Data/Sample.esp"
+      ],
+      "remove": [
+        "Data/Stale_P.pak"
+      ]
+    },
+    {
+      "ref": {
+        "source_id": "curseforge",
+        "mod_id": "7",
+        "locked": false
+      },
+      "name": "Missing Mod",
+      "class": "individual",
+      "link": [],
+      "remove": [],
+      "redownload": true
+    }
+  ],
+  "purge": [
+    "Data/Sample.esp"
+  ],
+  "hooks": [
+    "install.before_all",
+    "install.after_all"
+  ],
+  "merged": {
+    "artifact": "zzz_LMM_Merged_P.pak",
+    "sources": [
+      "Bear Mount"
+    ],
+    "raw_fallbacks": []
+  },
+  "no_changes": false
+}

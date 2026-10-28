@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,7 +32,7 @@ func newImportCompileTestGame(t *testing.T) (*core.Service, *fakeCompilerSource,
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	src := &fakeCompilerSource{}
-	svc.RegisterSource(src)
+	registerCompileSource(svc, src)
 
 	game := &domain.Game{
 		ID:          "icarus",
@@ -41,7 +41,7 @@ func newImportCompileTestGame(t *testing.T) (*core.Service, *fakeCompilerSource,
 		DeployMode:  domain.DeployCompile,
 		SourceIDs:   map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	return svc, src, game
 }
@@ -57,8 +57,8 @@ func TestImportMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) {
 	archivePath := filepath.Join(tempDir, "Bear_Mount.exmodz")
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-exmodz-bytes"), 0o644))
 
-	importer := svc.NewImporter(game)
-	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	importer := svc.NewImporterForTest(game)
+	result, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 1, src.validateCalls)
 	require.Equal(t, 0, src.compileCalls, "import must NOT compile a per-mod pak (#197: merged-only)")
@@ -92,8 +92,8 @@ func TestImportPakRetainsAndDeploysRaw(t *testing.T) {
 	archivePath := filepath.Join(tempDir, "CoolMod.pak")
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-pak-bytes"), 0o644))
 
-	importer := svc.NewImporter(game)
-	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	importer := svc.NewImporterForTest(game)
+	result, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 1, src.validateCalls, "import must validate the pak via ValidateSource")
 	require.Equal(t, 0, src.compileCalls, "import must NOT compile at import time")
@@ -112,7 +112,7 @@ func TestImportPakRetainsAndDeploysRaw(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "fake-pak-bytes", string(deployableData), "a deployable copy of the raw pak must also be staged")
 
-	require.NoError(t, svc.MarkImportedFileComplete(game, result.Mod, result.RetainedFileID))
+	require.NoError(t, svc.MarkImportedFileCompleteForTest(context.Background(), game, result.Mod, result.RetainedFileID))
 
 	manifests, err := gameCache.FileManifests(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
 	require.NoError(t, err)
@@ -131,14 +131,14 @@ func TestImportMod_DeployCompile_MalformedExmodz_FailsLoud(t *testing.T) {
 	// Re-register under the same source ID so the importer resolves the
 	// failing wrapper instead of the passing fake newImportCompileTestGame
 	// already registered.
-	svc.RegisterSource(failing)
+	registerCompileSource(svc, failing)
 
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "Bad_Mount.exmodz")
 	require.NoError(t, os.WriteFile(archivePath, []byte("not-a-valid-exmodz"), 0o644))
 
-	importer := svc.NewImporter(game)
-	_, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	importer := svc.NewImporterForTest(game)
+	_, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 }
 
@@ -157,15 +157,15 @@ func TestImportMod_DeployCompile_ZipPassthroughUnaffected(t *testing.T) {
 	}
 
 	compileSvc, compileSrc, compileGame := newImportCompileTestGame(t)
-	compileImporter := compileSvc.NewImporter(compileGame)
-	compileResult, err := compileImporter.Import(context.Background(), makeArchive(t), compileGame, core.ImportOptions{})
+	compileImporter := compileSvc.NewImporterForTest(compileGame)
+	compileResult, err := compileImporter.ImportForTest(context.Background(), makeArchive(t), compileGame, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 0, compileSrc.compileCalls)
 
 	extractSvc, extractSrc, extractGame := newImportCompileTestGame(t)
 	extractGame.DeployMode = domain.DeployExtract
-	extractImporter := extractSvc.NewImporter(extractGame)
-	extractResult, err := extractImporter.Import(context.Background(), makeArchive(t), extractGame, core.ImportOptions{})
+	extractImporter := extractSvc.NewImporterForTest(extractGame)
+	extractResult, err := extractImporter.ImportForTest(context.Background(), makeArchive(t), extractGame, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 0, extractSrc.compileCalls)
 
@@ -175,12 +175,12 @@ func TestImportMod_DeployCompile_ZipPassthroughUnaffected(t *testing.T) {
 
 // TestImportMod_DeployCompile_NoCompilerSourceFailsLoud pins the "never
 // silently cache an unvalidated .exmodz" requirement (#173/#197): a
-// DeployCompile game with no MergeCompiler-capable source mapped in its
-// SourceIDs must fail loud with an actionable error instead of falling
-// through to extract/copy. (#256: the failure now happens up front - the
-// compiler is resolved for every DeployCompile import, since only it can
-// say which files are native - but the message still names the compiler
-// gap and nothing is ever cached, same as always.)
+// DeployCompile game whose ADAPTER cannot compile must fail loud with an
+// actionable error instead of falling through to extract/copy. (#256: the
+// failure happens up front - the compiler is resolved for every
+// DeployCompile import, since only it can say which files are native.
+// #412: the gap the message names is the adapter's, not a source map's,
+// and nothing is ever cached, same as always.)
 func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
@@ -192,20 +192,20 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	// No RegisterSource call at all - the game has no source mapped, let
-	// alone a MergeCompiler-capable one.
+	// No compiling adapter registered, so `deploy_mode: compile` derives
+	// nothing and the game resolves to the identity (#412).
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "Bear_Mount.exmodz")
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-exmodz-bytes"), 0o644))
 
-	importer := svc.NewImporter(game)
-	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	importer := svc.NewImporterForTest(game)
+	result, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
-	require.Contains(t, err.Error(), "compiler")
+	require.Contains(t, err.Error(), "cannot compile")
 
 	_, statErr := os.Stat(filepath.Join(cfg.CacheDir, game.ID))
 	require.True(t, os.IsNotExist(statErr), "no cache entry should have been created")
@@ -213,7 +213,7 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 
 // TestImportMod_DeployCompile_PakNoCompilerSourceFailsLoud mirrors
 // TestImportMod_DeployCompile_NoCompilerSourceFailsLoud's setup (a
-// DeployCompile game with NO MergeCompiler-capable source mapped) for a
+// DeployCompile game whose adapter cannot compile) for a
 // .pak filename: like every other import into such a game, it must fail
 // loud on the compiler-resolution error, caching nothing.
 //
@@ -226,11 +226,11 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 // cannot tell a raw pak from a native merge archive, and falling through
 // would let the legacy path's zip-content-sniffing extractor silently
 // ingest a real native archive unvalidated. Failing every import of a
-// compiler-less compile game with the actionable resolver message ("map a
-// source implementing source.MergeCompiler") is now both the safe and the
-// accurate behavior. The download path's I1 fall-through is unchanged -
-// it keys on the file's own source, a per-archive signal Import lacks
-// (TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath).
+// compiler-less compile game with the actionable resolver message (set
+// `adapter:` to one that compiles - #412) is now both the safe and the
+// accurate behavior. The download path's I1 fall-through is unchanged: a
+// raw pak for a game that cannot compile is still a legal download
+// (TestDownloadPak_NonCompilingAdapter_FallsThroughToLegacyPath).
 func TestImportMod_DeployCompile_PakNoCompilerSourceFailsLoud(t *testing.T) {
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
@@ -242,20 +242,20 @@ func TestImportMod_DeployCompile_PakNoCompilerSourceFailsLoud(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	// No RegisterSource call at all - the game has no source mapped, let
-	// alone a MergeCompiler-capable one.
+	// No compiling adapter registered, so `deploy_mode: compile` derives
+	// nothing and the game resolves to the identity (#412).
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "CoolMod.pak")
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-pak-bytes"), 0o644))
 
-	importer := svc.NewImporter(game)
-	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	importer := svc.NewImporterForTest(game)
+	result, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
-	require.Contains(t, err.Error(), "merge-compiler-capable source", "must fail loud on the actionable compiler-resolution error, never reach the sniffing legacy path")
+	require.Contains(t, err.Error(), "cannot compile", "must fail loud on the actionable compiler-resolution error, never reach the sniffing legacy path")
 
 	_, statErr := os.Stat(filepath.Join(cfg.CacheDir, game.ID))
 	require.True(t, os.IsNotExist(statErr), "no cache entry (and no retained source) should have been created")
@@ -275,7 +275,7 @@ func TestImportMod_DeployCompile_StandaloneImporterFailsLoud(t *testing.T) {
 	game := &domain.Game{ID: "icarus", DeployMode: domain.DeployCompile}
 
 	importer := core.NewImporter(modCache)
-	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	result, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
 	// The message must name the actual cause - a standalone Importer with

@@ -2,16 +2,18 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/google/uuid"
 )
 
@@ -24,62 +26,163 @@ type ImportOptions struct {
 
 // ImportResult contains the outcome of importing a local mod
 type ImportResult struct {
-	Mod            *domain.Mod
-	FilesExtracted int
-	LinkedSource   string // "nexusmods", "local", etc.
-	AutoDetected   bool   // true if source/ID was parsed from filename
-	// RetainedFileID is the identity Import used to key a retained compile
-	// source (cache.RetainedSourceName) - only set for the DeployCompile
-	// ".exmodz" branch, where it is the archive's own filename (Import has
-	// no other stable identity to retain under; see that branch's own doc
-	// comment). Callers MUST fold this into the InstalledMod/ModReference's
-	// FileIDs (#197 C1 fix): enabledMergeSources walks FileIDs to find each
-	// mod's retained source, and a row whose FileIDs never includes this
-	// value is invisible to every future merge - silently, forever, since
-	// it is also excluded from the staleness fingerprint on both sides of
-	// the comparison. Empty for every other deploy mode.
-	RetainedFileID string
+	Mod            *domain.Mod `json:"mod,omitempty"`
+	FilesExtracted int         `json:"files_extracted"`
+	LinkedSource   string      `json:"linked_source"` // "nexusmods", "local", etc.
+	AutoDetected   bool        `json:"auto_detected"` // true if source/ID was parsed from filename
+	// RetainedFileID is the identity importWithIdentity used to key a
+	// retained compile source (cache.RetainedSourceName) - only set for the
+	// DeployCompile ".exmodz" branch, where it is the archive's own
+	// filename (importWithIdentity has no other stable identity to retain
+	// under; see that branch's own doc comment). Callers MUST fold this into
+	// the InstalledMod/ModReference's FileIDs (#197 C1 fix):
+	// enabledMergeSources walks FileIDs to find each mod's retained source,
+	// and a row whose FileIDs never includes this value is invisible to
+	// every future merge - silently, forever, since it is also excluded
+	// from the staleness fingerprint on both sides of the comparison. Empty
+	// for every other deploy mode.
+	RetainedFileID string `json:"retained_file_id,omitempty"`
 }
 
 // Importer handles importing mods from local archive files
 type Importer struct {
 	cache     *cache.Cache
 	extractor *Extractor
+	// log carries the ingest's own diagnostics - today, the BepInEx
+	// archive-root normaliser's "I could not place this layout" warning
+	// (#358), which has no result field to ride on (the PLAN carries it
+	// where a frontend can still act on it; this is the record for an
+	// import that ran anyway). Never nil: NewImporter discards by default,
+	// matching Installer.
+	log *slog.Logger
 	// stagingRoot is where archives are extracted before being committed to the
 	// cache. Empty means fall back to $TMPDIR — see newStagingDir.
 	stagingRoot string
-	// resolveMergeCompiler resolves the MergeCompiler-capable source mapped
-	// to a DeployCompile game's registry entry (#197), consulted for every
-	// import into such a game (#256: the compile source now answers the
-	// native/convertible format questions too) — Import has no per-archive
-	// source pinned the way DownloadModToCache does, so it must look up the
-	// game's configured sources instead. nil when the Importer was built
-	// via the standalone NewImporter (no Service context): a DeployCompile
-	// import through such an Importer fails loud rather than silently
-	// caching an unvalidated archive.
-	resolveMergeCompiler func(gameID string) (source.MergeCompiler, error)
+	// resolveMergeCompiler resolves a DeployCompile game's MergeCompiler
+	// (#197), consulted for every import into such a game (#256: it answers
+	// the native/convertible format questions too). Since U2 (#412) that is
+	// the game's ADAPTER - it used to be a walk over every source the game
+	// mapped, because importWithIdentity has no per-archive source pinned
+	// the way DownloadModToCache does.
+	//
+	// It stays a func field rather than becoming adapter.Compiler(i.adapter)
+	// because nil is a distinct, load-bearing state: an Importer built via
+	// the standalone NewImporter (no Service context) carries the identity
+	// adapter, which is indistinguishable from a generic game's, and a
+	// DeployCompile import through such an Importer must fail loud rather
+	// than silently cache an unvalidated archive.
+	resolveMergeCompiler func(game *domain.Game) (adapter.MergeCompiler, error)
+	// adapter is the game adapter whose NormalizeArchive decides how an
+	// extracted archive is laid out inside the cache entry (#353). Never
+	// nil: NewImporter defaults it to the built-in identity, which is
+	// exactly what every import did before the seam existed, and
+	// Service.newImporter replaces it with the game's resolved adapter.
+	adapter adapter.GameAdapter
+	// claimArchive refuses an extracted archive that some OTHER registered
+	// adapter recognises as unmistakably its own (#359/#413 - a BepInEx
+	// plugin going into a game with no BepInEx). It is a func field rather
+	// than a call on i.adapter because the question is asked of the
+	// REGISTRY, which only a Service holds; a standalone NewImporter leaves
+	// it nil and makes no such refusal, exactly as it makes none of the
+	// other Service-scoped checks.
+	claimArchive func(game *domain.Game, modName string, members []string) error
 }
 
-// NewImporter creates a new Importer that stages extraction in the OS temp dir.
-// Prefer Service.NewImporter, which stages under the data dir instead.
+// NewImporter creates a new Importer that stages extraction in the OS temp
+// dir. Prefer the service-backed importer (Service.newImporter, reached
+// through the import flows), which stages under the data dir instead.
 func NewImporter(cache *cache.Cache) *Importer {
 	return &Importer{
 		cache:     cache,
 		extractor: NewExtractor(),
+		log:       slog.New(slog.DiscardHandler),
+		adapter:   adapter.Generic{},
 	}
 }
 
-// NewImporter creates an Importer for game, staging archive extraction under the
-// service's data dir rather than $TMPDIR.
-func (s *Service) NewImporter(game *domain.Game) *Importer {
+// newImporter creates an Importer for game, staging archive extraction under
+// the service's data dir rather than $TMPDIR. Unexported with the archive-
+// import lift (#291): ScanLocal/PlanAdopt/ApplyAdopt/ImportArchive are
+// production's only callers, and a frontend reaches an import through one of
+// those.
+func (s *Service) newImporter(game *domain.Game) *Importer {
 	imp := NewImporter(s.GetGameCache(game))
 	imp.stagingRoot = s.stagingRoot()
-	imp.resolveMergeCompiler = s.mergeCompilerSourceForGame
+	imp.resolveMergeCompiler = s.adapterCompiler
+	imp.claimArchive = s.requireAdapterClaim
+	imp.log = s.logger()
+	// #353: a resolution failure here (a games.yaml naming an adapter this
+	// build does not ship) is reported by the flow's own AdapterFor call,
+	// which every import path makes before it reaches an Importer; falling
+	// back to the identity keeps this constructor error-free rather than
+	// inventing a second, quieter failure channel for the same fault.
+	if a, err := s.AdapterFor(game); err == nil {
+		imp.adapter = a
+	}
 	return imp
 }
 
-// Import imports a mod from a local archive file
-func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions) (result *ImportResult, err error) {
+// importIdentity is the cache identity Import keys an archive's entry by,
+// derived from the archive's filename and the caller's explicit linking.
+type importIdentity struct {
+	sourceID     string
+	modID        string
+	version      string
+	autoDetected bool
+	// minted reports that modID is a freshly generated uuid rather than a
+	// value derived from the filename or the options - so the identity is
+	// NOT reproducible across calls, and by construction cannot name a
+	// cache entry that already existed (see ImportArchive's refusal
+	// cleanup, which is the only caller that asks).
+	minted bool
+}
+
+// resolveImportIdentity derives the identity Import will cache filename
+// under: the caller's explicit --source/--id pair, else a NexusMods
+// filename pattern, else a pure-local mod under a freshly minted uuid.
+// Extracted from Import so ImportArchive can ask - BEFORE Import runs -
+// whether the entry Import is about to (re)create already existed.
+//
+// Every branch but the minted one is a pure function of filename and opts;
+// calling this twice for the same archive therefore reproduces the same
+// identity except where minted is true.
+func resolveImportIdentity(filename string, opts ImportOptions) importIdentity {
+	nameNoExt := strings.TrimSuffix(filename, filepath.Ext(filename))
+	versionOrUnknown := func() string {
+		if v := domain.ExtractVersionFromName(nameNoExt); v != "" {
+			return v
+		}
+		return VersionUnknown
+	}
+
+	if opts.SourceID != "" && opts.ModID != "" {
+		// Explicit linking provided
+		return importIdentity{sourceID: opts.SourceID, modID: opts.ModID, version: versionOrUnknown()}
+	}
+	if parsed := ParseNexusModsFilename(filename); parsed != nil {
+		// Auto-detected from filename. Still local until verified via API.
+		return importIdentity{sourceID: domain.SourceLocal, modID: parsed.ModID, version: parsed.Version, autoDetected: true}
+	}
+	// No pattern - pure local mod
+	return importIdentity{sourceID: domain.SourceLocal, modID: uuid.New().String(), version: versionOrUnknown(), minted: true}
+}
+
+// importWithIdentity imports a mod from a local archive file, under a
+// CALLER-SUPPLIED identity - the one PlanImportArchive already resolved
+// (#314). It matters for an unlinked archive, whose identity is a freshly
+// minted uuid: letting the ingest mint its own would give the apply a
+// different ID from the one the plan printed and the frontend prompted
+// about (Ruling 18). For every other identity the resolution is a pure
+// function of filename and opts, so passing it in changes nothing.
+//
+// The exported Import this used to sit behind (a one-line delegate calling
+// resolveImportIdentity itself) lost its last production caller in the same
+// change: every production import site resolves its own identity up front
+// and calls this directly. It was removed rather than kept as a redundant
+// wrapper (Global Constraint: an export whose last external caller a task
+// removes is unexported or deleted in that task); ImportForTest
+// (export_test.go) reproduces its exact behavior for core's own tests.
+func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions, ident importIdentity) (result *ImportResult, err error) {
 	// Validate archive exists
 	if _, err := os.Stat(archivePath); err != nil {
 		return nil, fmt.Errorf("archive not found: %w", err)
@@ -87,33 +190,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 
 	filename := filepath.Base(archivePath)
 
-	// Try to parse NexusMods filename pattern
-	var sourceID, modID, version string
-	var autoDetected bool
-
-	if opts.SourceID != "" && opts.ModID != "" {
-		// Explicit linking provided
-		sourceID = opts.SourceID
-		modID = opts.ModID
-		version = domain.ExtractVersionFromName(strings.TrimSuffix(filename, filepath.Ext(filename)))
-		if version == "" {
-			version = "unknown"
-		}
-	} else if parsed := ParseNexusModsFilename(filename); parsed != nil {
-		// Auto-detected from filename
-		sourceID = domain.SourceLocal // Still local until verified via API
-		modID = parsed.ModID
-		version = parsed.Version
-		autoDetected = true
-	} else {
-		// No pattern - pure local mod
-		sourceID = domain.SourceLocal
-		modID = uuid.New().String()
-		version = domain.ExtractVersionFromName(strings.TrimSuffix(filename, filepath.Ext(filename)))
-		if version == "" {
-			version = "unknown"
-		}
-	}
+	sourceID, modID, version, autoDetected := ident.sourceID, ident.modID, ident.version, ident.autoDetected
 
 	var modName string
 	var fileCount int
@@ -122,7 +199,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 	// #256: whether filename is the game's NATIVE merge format
 	// (mc.IsNativeMergeSource - the seam-routed successor to core's static
 	// ".exmodz" test) or a convertible artifact (mc.IsConvertibleArtifact)
-	// is the compile source's call, so the compiler is resolved up front
+	// is the compile adapter's call, so the compiler is resolved up front
 	// for EVERY DeployCompile import, and a resolution failure is a hard
 	// error for every one of them - not just the native case the old
 	// static test could single out. Falling through instead would be
@@ -134,49 +211,46 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 	// invariant the resolver error protects. This supersedes #221 I1's
 	// import-side pak fall-through: that was safe only while core itself
 	// knew which files were native. (The DOWNLOAD path's I1 fall-through
-	// stands - it pins eligibility to the file's own source, a per-archive
-	// signal Import does not have.) The resolver error names the fix
-	// ("map a source implementing source.MergeCompiler"), which is
-	// accurate for any import into a compile game whose compiler is
-	// missing or ambiguous.
+	// stands - a raw pak for a game that cannot compile is still a legal
+	// download.) The resolver error names the fix - set `adapter:` to one
+	// that compiles - which is accurate for any import into a compile game
+	// whose adapter cannot.
 	//
 	// A NIL RESOLVER fails the same way for the same reason, with its own
 	// message: core.NewImporter (no Service context) cannot answer the
 	// format question for ANY file, and there is a correct importer to use
-	// instead. Production only ever constructs the service-backed importer
-	// (Service.NewImporter); this path is reachable only by direct
-	// core.NewImporter use.
-	var mc source.MergeCompiler
+	// instead. Production only ever constructs the service-backed importer;
+	// this path is reachable only by direct core.NewImporter use.
+	var mc adapter.MergeCompiler
 	if game.DeployMode == domain.DeployCompile {
 		if i.resolveMergeCompiler == nil {
-			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not Service.NewImporter) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
+			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not the service-backed importer) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
 		}
 		var mcErr error
-		if mc, mcErr = i.resolveMergeCompiler(game.ID); mcErr != nil {
+		if mc, mcErr = i.resolveMergeCompiler(game); mcErr != nil {
 			return nil, mcErr
 		}
 	}
-	mergeEligible := mc != nil && mc.IsNativeMergeSource(filename)
-	convertEligiblePak := mc != nil && isConvertEligibleArtifact(game, mc, filename)
+	// #314: which branch this archive takes is answered ONCE, by the
+	// function PlanImportArchive consults too, so a plan and this ingest
+	// cannot disagree about what an archive contributes.
+	kind := classifyImportArchive(game, mc, filename)
+	convertEligiblePak := kind == importKindConvertPak
 
 	// Handle based on game's deploy mode
-	if game.DeployMode == domain.DeployCompile && (mergeEligible || convertEligiblePak) {
-		// Validate mode (#197): Import has no real source file ID the way a
-		// download does (DownloadableFile.ID is resolved later, outside
-		// Import, only when --id was given), so the retained source is
-		// keyed by the archive's own filename instead - stable across
-		// re-imports of the same name, and the ONLY identity Import ever
-		// has for this content.
+	switch kind {
+	case importKindMergeSource, importKindConvertPak:
+		// Validate mode (#197): importWithIdentity has no real source file
+		// ID the way a download does (DownloadableFile.ID is resolved
+		// later, outside importWithIdentity, only when --id was given), so
+		// the retained source is keyed by the archive's own filename
+		// instead - stable across re-imports of the same name, and the
+		// ONLY identity importWithIdentity ever has for this content.
 		if err := mc.ValidateSource(archivePath); err != nil {
 			return nil, fmt.Errorf("validating %s: %w", filename, err)
 		}
 
-		modName = strings.TrimSuffix(filename, filepath.Ext(filename))
-		if version != "" && version != "unknown" {
-			if idx := strings.LastIndex(modName, version); idx > 0 {
-				modName = strings.TrimRight(modName[:idx], "-_ ")
-			}
-		}
+		modName = importedModName(game, kind, filename, version, nil)
 
 		cacheMod := &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID}
 		cachePath, stagePath, err := prepareUnseededStaging(i.cache, game, cacheMod)
@@ -208,20 +282,18 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 			return nil, err
 		}
 		retainedFileID = filename
-	} else if game.DeployMode == domain.DeployCopy {
+	case importKindCopy:
 		// Copy mode: just copy the file as-is to cache (don't extract)
-		modName = strings.TrimSuffix(filename, filepath.Ext(filename))
-		if version != "" && version != "unknown" {
-			if idx := strings.LastIndex(modName, version); idx > 0 {
-				modName = strings.TrimRight(modName[:idx], "-_ ")
-			}
-		}
+		modName = importedModName(game, kind, filename, version, nil)
 
 		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
 
-		// Remove existing cache if present (re-import case)
-		// Ignore errors - if removal fails, MkdirAll/copy will error anyway
-		os.RemoveAll(cachePath)
+		// Remove existing cache if present (re-import case). A failed removal
+		// can leave stale content that an otherwise successful copy would not
+		// expose, so surface it instead of relying on a later write to fail.
+		if err := os.RemoveAll(cachePath); err != nil {
+			return nil, fmt.Errorf("removing existing cache directory: %w", err)
+		}
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
@@ -232,7 +304,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
 		fileCount = 1
-	} else {
+	default:
 		// Extract mode: validate and extract the archive
 		if !i.extractor.CanExtract(archivePath) {
 			return nil, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
@@ -250,12 +322,41 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		}()
 
 		extractedPath := filepath.Join(tempDir, "extracted")
-		if err := i.extractor.Extract(archivePath, extractedPath); err != nil {
+		if err := i.extractor.Extract(ctx, archivePath, extractedPath); err != nil {
 			return nil, fmt.Errorf("extracting archive: %w", err)
 		}
 
-		// Detect mod name from extracted content
-		modName = DetectModName(extractedPath, filename)
+		// #314/#353: the mod name is derived ONCE, off the archive's own
+		// shape, BEFORE the BepInEx normalisation and BEFORE the adapter is
+		// allowed to move anything - the same rule (modNameFromMembers) and
+		// the same pre-rewrite content PlanImportArchive derives from, so
+		// the plan and this ingest name the mod identically and hand
+		// NormalizeArchive the same ModName. Deriving it after either
+		// rewrite would make the name a function of that rewrite's own
+		// output, which is both circular for an adapter that consults
+		// ModName and a plan/ingest disagreement (I1). A normalised shape-A
+		// tree has BepInEx as its sole top-level directory, and
+		// DetectModName's "one top-level directory names the mod" rule
+		// would otherwise name every plugin "BepInEx".
+		modName = DetectModName(game, extractedPath, filename)
+
+		// #353: the game's adapter lays the extracted tree out. It runs
+		// against the PRISTINE extracted tree - this staging directory
+		// holds exactly this archive's members - and before the move into
+		// the cache, so the cache entry, whose layout IS the game
+		// directory's layout, is already correct for every later deploy.
+		//
+		// The refusal PlanImportArchive makes is repeated here because a
+		// caller can reach the ingest without planning first (#359). It
+		// lands before the cache commit, so nothing is deployed and nothing
+		// is recorded.
+		layout, err := i.layoutExtracted(game, modName, extractedPath)
+		if err != nil {
+			return nil, err
+		}
+		for _, w := range layout.Warnings {
+			i.log.Warn(w, "archive", filename, "game", game.ID)
+		}
 
 		// Move extracted files to cache
 		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
@@ -270,7 +371,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 
 		if err := os.Rename(extractedPath, cachePath); err != nil {
 			// If rename fails (cross-device), fall back to copy
-			if err := copyDir(extractedPath, cachePath); err != nil {
+			if err := copyDir(ctx, extractedPath, cachePath); err != nil {
 				return nil, fmt.Errorf("moving to cache: %w", err)
 			}
 		}
@@ -325,7 +426,7 @@ func matchImportedFile(files []domain.DownloadableFile, archiveFilename, version
 	if exact != nil {
 		return exact
 	}
-	if !allowVersionFallback || version == "" || version == "unknown" {
+	if !allowVersionFallback || version == "" || version == VersionUnknown {
 		return nil
 	}
 	var byVersion *domain.DownloadableFile
@@ -341,14 +442,15 @@ func matchImportedFile(files []domain.DownloadableFile, archiveFilename, version
 	return byVersion
 }
 
-// ResolveImportedFile resolves the source file an imported archive
+// resolveImportedFile resolves the source file an imported archive
 // corresponds to (#139): sourceMod is the already-fetched source mod (the
 // import flow fetched it for metadata enrichment or scan matching), version
 // the version the import recorded locally. Matching follows
 // matchImportedFile's rules; a clean no-match or ambiguity is (nil, nil), an
 // error only reports a failed source listing - callers treat it as
-// non-fatal and keep the import marker-less.
-func (s *Service) ResolveImportedFile(ctx context.Context, sourceID string, sourceMod *domain.Mod, archiveFilename, version string, allowVersionFallback bool) (*domain.DownloadableFile, error) {
+// non-fatal and keep the import marker-less. Unexported with the archive-
+// import lift (#291): PlanAdopt and ImportArchive are its only callers.
+func (s *Service) resolveImportedFile(ctx context.Context, sourceID string, sourceMod *domain.Mod, archiveFilename, version string, allowVersionFallback bool) (*domain.DownloadableFile, error) {
 	files, err := s.GetModFiles(ctx, sourceID, sourceMod)
 	if err != nil {
 		return nil, fmt.Errorf("listing source files: %w", err)
@@ -356,14 +458,18 @@ func (s *Service) ResolveImportedFile(ctx context.Context, sourceID string, sour
 	return matchImportedFile(files, archiveFilename, version, allowVersionFallback), nil
 }
 
-// MarkImportedFileComplete stamps fileID's completion marker - with the
+// markImportedFileComplete stamps fileID's completion marker - with the
 // entry's member manifest - onto mod's import-written cache entry (#139), so
 // the file-granular cache-first guards (Cache.HasFileIDs) recognize the
 // entry instead of forcing one redundant redownload, and provenance-based
 // undeploy narrowing can attribute its members. Import writes the cache
 // directly (no staging commit), so the marker is stamped after the fact;
 // the members are whatever the entry actually holds.
-func (s *Service) MarkImportedFileComplete(game *domain.Game, mod *domain.Mod, fileID string) error {
+//
+// The exported wrapper this replaced was removed with the archive-import
+// lift (#291): ApplyAdopt and ImportArchive call it from inside their own
+// beginOp, and core's tests reach it through MarkImportedFileCompleteForTest.
+func (s *Service) markImportedFileComplete(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
 	gameCache := s.GetGameCache(game)
 	members, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
@@ -396,12 +502,20 @@ func (s *Service) MarkImportedFileComplete(game *domain.Game, mod *domain.Mod, f
 // external content into the mod cache (path traversal). Escaping symlinks
 // fail the copy with an error naming the entry, rather than being silently
 // skipped - the mod is malformed or hostile, and the user should see why.
-func copyDir(src, dst string) error {
+//
+// ctx is honored per entry (see copyDirFollowing): a mod directory can hold
+// thousands of files, and on the directory-source local-ingest path
+// (ingestLocalToCache's copy branch) this is the ONLY cancellation guard
+// below the caller's per-file loop - nothing else in that branch consults
+// ctx. Aborting mid-copy is safe because every caller copies into a staging
+// directory and only publishes it (commitStagedCache*, os.Rename) after a
+// nil error, so a cancelled copy never leaves a cache entry marked complete.
+func copyDir(ctx context.Context, src, dst string) error {
 	resolvedRoot, err := filepath.EvalSymlinks(src)
 	if err != nil {
 		return fmt.Errorf("resolving %s: %w", src, err)
 	}
-	return copyDirFollowing(src, dst, resolvedRoot, map[string]bool{})
+	return copyDirFollowing(ctx, src, dst, resolvedRoot, map[string]bool{})
 }
 
 // copyDirFollowing does the recursive work for copyDir. resolvedRoot is the
@@ -415,7 +529,7 @@ func copyDir(src, dst string) error {
 // are legal (just duplicated content) and must not be flagged, but a symlink
 // that points back at a directory still being walked - an actual cycle -
 // would recurse forever without this guard.
-func copyDirFollowing(src, dst, resolvedRoot string, visited map[string]bool) error {
+func copyDirFollowing(ctx context.Context, src, dst, resolvedRoot string, visited map[string]bool) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", src, err)
@@ -441,6 +555,9 @@ func copyDirFollowing(src, dst, resolvedRoot string, visited map[string]bool) er
 	}
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 
@@ -468,7 +585,7 @@ func copyDirFollowing(src, dst, resolvedRoot string, visited map[string]bool) er
 		}
 
 		if entryInfo.IsDir() {
-			if err := copyDirFollowing(srcPath, dstPath, resolvedRoot, visited); err != nil {
+			if err := copyDirFollowing(ctx, srcPath, dstPath, resolvedRoot, visited); err != nil {
 				return err
 			}
 			continue
@@ -498,18 +615,17 @@ func pathWithinRoot(root, target string) bool {
 
 // ScanResult contains the outcome of scanning a single mod file
 type ScanResult struct {
-	FilePath       string      // Original path in mod_path
-	FileName       string      // Base filename
-	Mod            *domain.Mod // Detected/created mod info
-	MatchedSource  string      // a configured source's ID (any registered source, not just curseforge/nexusmods), or "local"
-	AlreadyTracked bool        // True if already in lmm database
-	Error          error       // Any error during processing
+	FilePath       string      `json:"file_path"`       // Original path in mod_path
+	FileName       string      `json:"file_name"`       // Base filename
+	Mod            *domain.Mod `json:"mod,omitempty"`   // Detected/created mod info
+	MatchedSource  string      `json:"matched_source"`  // a configured source's ID (any registered source, not just curseforge/nexusmods), or "local"
+	AlreadyTracked bool        `json:"already_tracked"` // True if already in lmm database
 
 	// ResolvedFile is the matched source's own file this scanned archive
 	// corresponds to (#139), when the import flow could resolve one (exact
-	// FileName match via ResolveImportedFile); nil otherwise. Set by the
+	// FileName match via resolveImportedFile); nil otherwise. Set by the
 	// import flow after source matching, not by ScanModPath itself.
-	ResolvedFile *domain.DownloadableFile
+	ResolvedFile *domain.DownloadableFile `json:"resolved_file,omitempty"`
 }
 
 // ScanOptions configures the scan operation
@@ -518,8 +634,10 @@ type ScanOptions struct {
 	DryRun      bool // If true, don't actually import, just report what would be done
 }
 
-// ScanModPath scans the game's mod_path for untracked mods
-func (i *Importer) ScanModPath(ctx context.Context, game *domain.Game, installedMods []domain.InstalledMod, opts ScanOptions) ([]ScanResult, error) {
+// scanModPath scans the game's mod_path for untracked mods. Unexported
+// with the scan-import lift (#291): ScanLocal is the only caller, and a
+// frontend reaches it through that.
+func (i *Importer) scanModPath(ctx context.Context, game *domain.Game, installedMods []domain.InstalledMod, opts ScanOptions) ([]ScanResult, error) {
 	if game.ModPath == "" {
 		return nil, fmt.Errorf("game has no mod_path configured")
 	}
@@ -532,9 +650,14 @@ func (i *Importer) ScanModPath(ctx context.Context, game *domain.Game, installed
 		}
 	}
 
-	// Check if mod_path exists
-	if _, err := os.Stat(modPath); err != nil {
-		return nil, fmt.Errorf("mod_path does not exist: %s", modPath)
+	// A mod_path that is not a directory refuses with the repair (#427),
+	// not a bare "does not exist" the user has no next step from. Absent
+	// counts here even for a game nobody has deployed to: there is nothing
+	// to scan.
+	expanded := *game
+	expanded.ModPath = modPath
+	if problem := modPathStatProblem(&expanded); problem != nil {
+		return nil, problem
 	}
 
 	var results []ScanResult
@@ -650,8 +773,10 @@ func (i *Importer) isFileTracked(filename string, installedMods []domain.Install
 	return false
 }
 
-// findDuplicateMod checks if a mod with similar name already exists (for duplicate prevention)
-func (i *Importer) FindDuplicateMod(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
+// findDuplicateMod checks if a mod with similar name already exists (for
+// duplicate prevention). Unexported with the scan-import lift (#291):
+// PlanAdopt/ApplyAdopt are the only callers.
+func (i *Importer) findDuplicateMod(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
 	modNameLower := strings.ToLower(modName)
 	// Normalize: remove common suffixes like version numbers, underscores, dashes
 	normalized := normalizeModName(modNameLower)
@@ -705,12 +830,12 @@ func (i *Importer) detectModFromFilename(filename string, gameID string) *domain
 }
 
 // copyFileStreaming copies a file using streaming to avoid loading it all into memory
-func copyFileStreaming(src, dst string) error {
+func copyFileStreaming(src, dst string) (err error) {
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {
@@ -725,7 +850,11 @@ func copyFileStreaming(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}
-	defer dstFile.Close()
+	defer func() {
+		if closeErr := dstFile.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("closing destination: %w", closeErr))
+		}
+	}()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("copying: %w", err)

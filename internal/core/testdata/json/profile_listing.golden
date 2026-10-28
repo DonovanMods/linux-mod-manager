@@ -1,0 +1,15 @@
+{
+  "game_id": "skyrim-se",
+  "profiles": [
+    {
+      "name": "default",
+      "mod_count": 3,
+      "is_default": true
+    },
+    {
+      "name": "survival",
+      "mod_count": 0,
+      "is_default": false
+    }
+  ]
+}

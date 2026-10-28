@@ -1,0 +1,7 @@
+{
+  "name": "steam",
+  "path": "/home/me/Games/steam",
+  "hidden": false,
+  "readable": true,
+  "symlink": true
+}

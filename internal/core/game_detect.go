@@ -1,0 +1,889 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"maps"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+)
+
+// GameFromDetected converts one domain.DetectedGame (an app.DetectGames
+// result) into the domain.Game ApplyGameDetect saves. g.Sources, when the
+// known-games entry supplied one (#177: games with a non-NexusMods or
+// multi-source setup, e.g. Icarus), wins outright; otherwise this derives
+// the single-entry {nexusmods: g.NexusID} map every detected game produced
+// before Sources existed, so every pre-#177 known game generates
+// byte-for-byte the same games.yaml block it always has. A known-games
+// entry setting NEITHER is misconfigured - every legitimate entry sets at
+// least one - and used to silently produce {"nexusmods": ""}, a garbage
+// source mapping that would propagate into games.yaml unnoticed; that is
+// now a fail-loud error naming the game instead (#203 release review).
+// g.DeployMode goes through domain.ParseDeployMode, which already treats ""
+// as DeployExtract (today's default); an unrecognized non-empty value in
+// the known-games schema (steam-games.yaml, built-in or user override) is a
+// load-time error rather than a silent fallback (#172). Moved verbatim from
+// cmd/lmm's gameFromDetected (v2 Phase 2 Task 21).
+func GameFromDetected(g domain.DetectedGame) (*domain.Game, error) {
+	deployMode, ok := domain.ParseDeployMode(g.DeployMode)
+	if !ok {
+		return nil, fmt.Errorf("%w: steam-games.yaml: game %q: deploy_mode %q (valid: %s)",
+			domain.ErrInvalidDeployMode, g.Slug, g.DeployMode, domain.ValidDeployModes)
+	}
+	// A CLONE, for GameSpecFromDetected's reason: the saved game must own
+	// its map rather than alias the scan's, which applyGameDetectLocked
+	// then trims in place.
+	sources := maps.Clone(g.Sources)
+	if len(sources) == 0 {
+		if g.NexusID == "" {
+			return nil, fmt.Errorf("game %q: known-games entry has no sources and no nexus_id - set at least one", g.Slug)
+		}
+		sources = map[string]string{"nexusmods": g.NexusID}
+	}
+	return &domain.Game{
+		ID:          g.Slug,
+		Name:        g.Name,
+		InstallPath: g.InstallPath,
+		ModPath:     g.ModPath,
+		SourceIDs:   sources,
+		LinkMethod:  domain.LinkSymlink,
+		DeployMode:  deployMode,
+		Adapter:     g.Adapter,
+		Loader:      cloneDetectedLoader(g.Loader),
+	}, nil
+}
+
+// cloneDetectedLoader copies a candidate's loader declaration (#416) so the
+// saved game owns its own, rather than aliasing whatever the scan handed
+// over - the same reason Sources is cloned at the spec seam below.
+func cloneDetectedLoader(loader *domain.GameLoader) *domain.GameLoader {
+	if loader == nil {
+		return nil
+	}
+	clone := *loader
+	return &clone
+}
+
+// GameSpecFromDetected prefills a GameSpec from one detected candidate,
+// with overrides winning field by field - #206's "if the user already has
+// the game installed, lmm should fill in most of the add-game fields
+// automatically". It is PURE: no service, no scan, no I/O, so the CLI's
+// `game add --from-detected` and POST /api/v1/games' from_steam_app_id
+// prefill identically and a frontend never re-derives a slug, a mod path
+// or a source map of its own.
+//
+// The rules, in the order a caller will care about them:
+//
+//   - Name, InstallPath, ID (from the candidate's slug), DeployMode and
+//     Adapter come from the candidate unless the caller supplied them.
+//     A candidate whose install path games.yaml ALREADY configures keeps
+//     that game's id instead - but only through Service.PrefillGameSpecFromDetected, which
+//     is the seam both frontends call; this function stays pure.
+//   - ModPath comes from the candidate when detection knew one (a curated
+//     entry's mod_path, already joined onto the install path). An UNKNOWN
+//     candidate has none - detection deliberately refuses to guess - so
+//     this defaults it to GameSpec.DefaultModPath, exactly the default a
+//     bare `game add` applies: <install>/mods, or the install path itself
+//     for a BepInEx game (#413 final review F1) - applied AFTER the loader,
+//     adapter and deploy mode are settled, since they decide it. That
+//     default stats the install directory, the only disk this function
+//     reads. A frontend showing the value should say it is a guess; core
+//     cannot tell the user that, but AddGame will not create the directory
+//     either way.
+//   - Sources: the candidate's own map when it has one (#177's Icarus),
+//     else {nexusmods: <nexus_id>} when it has that, else nothing - which
+//     is the unknown case, where the caller's SourceID/Identifier is the
+//     only mapping there is. An explicit SourceID is layered ON TOP of the
+//     curated map by AddGame rather than replacing it, so naming a source
+//     for an already-curated game ADDS it instead of silently dropping
+//     what detection knew.
+//   - Loader comes from the candidate's curated declaration (#416) when the
+//     caller supplied none, so `game add --from-detected` on a curated
+//     BepInEx game writes the same `loader:` block `game detect` does and
+//     the first plugin install is not refused. An explicit LoaderSpec wins,
+//     the way every other field here does.
+//   - LinkMethod is passed through untouched; its zero value already means
+//     symlink.
+func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
+	spec := overrides
+	if spec.Name == "" {
+		spec.Name = d.Name
+	}
+	if spec.ID == "" {
+		spec.ID = d.Slug
+	}
+	if spec.InstallPath == "" {
+		spec.InstallPath = d.InstallPath
+	}
+	if spec.ModPath == "" {
+		spec.ModPath = d.ModPath
+	}
+	if spec.DeployMode == "" {
+		spec.DeployMode = d.DeployMode
+	}
+	if spec.Adapter == "" {
+		spec.Adapter = d.Adapter
+	}
+	if len(spec.Sources) == 0 {
+		switch {
+		case len(d.Sources) > 0:
+			spec.Sources = maps.Clone(d.Sources)
+		case d.NexusID != "":
+			spec.Sources = map[string]string{"nexusmods": d.NexusID}
+		}
+	}
+	if spec.Loader == nil && d.Loader != nil {
+		spec.Loader = &LoaderSpec{
+			Kind:      d.Loader.Kind,
+			Version:   d.Loader.Version,
+			Runtime:   d.Loader.Runtime.String(),
+			Bootstrap: d.Loader.Bootstrap.String(),
+		}
+	}
+	if spec.ModPath == "" && spec.InstallPath != "" {
+		spec.ModPath = spec.DefaultModPath()
+	}
+	return spec
+}
+
+// ConfiguredGameFor resolves one detected candidate against the games.yaml
+// set (LoadGamesFromDisk's map, keyed by game id), returning the game that
+// ALREADY configures it, or nil.
+//
+// The id match is the obvious half: a candidate whose slug is a games.yaml
+// key is that game. The INSTALL-PATH match is what keeps a curation wave
+// from orphaning a game the user already has (#406 review F1). A curated
+// entry's slug is hand-written and need not equal the one
+// steam.deriveSlug produces from the Steam title - six of #406's entries
+// do not - so the game a user added from an UNCURATED row before the entry
+// existed sits in games.yaml under the derived id ("cyberpunk-2077") while
+// detection now offers the curated one ("cyberpunk2077"). Keyed on the slug
+// alone that reads as "not configured", and configuring it writes a SECOND
+// game at the same install path, with the first one's profiles, mods and
+// deployed links still on the old id. One installed directory is one game,
+// whatever it is called, so the path is what decides.
+//
+// Paths are compared RESOLVED (filepath.EvalSymlinks), because a Steam
+// library on a second drive is routinely reached through a symlink in
+// $HOME: games.yaml then holds the path the user typed while detection
+// reports the one Steam's scan walked to, and a lexical comparison misses
+// exactly the setups most likely to have one. A path that cannot be
+// resolved - the drive is unplugged, the game was deleted - falls back to
+// its cleaned spelling, so a configured game whose directory is gone is
+// still recognised rather than offered again as a fresh add.
+//
+// Ties (two games.yaml entries at one install path - only reachable by
+// hand-editing) resolve to the lowest id, so the answer never depends on
+// map iteration order.
+func ConfiguredGameFor(existing map[string]*domain.Game, detected domain.DetectedGame) *domain.Game {
+	if game, ok := existing[detected.Slug]; ok {
+		return game
+	}
+	if detected.InstallPath == "" {
+		return nil
+	}
+	want := resolvedPath(detected.InstallPath)
+	var match *domain.Game
+	for id, game := range existing {
+		if game == nil || game.InstallPath == "" || resolvedPath(game.InstallPath) != want {
+			continue
+		}
+		if match == nil || id < match.ID {
+			match = game
+		}
+	}
+	return match
+}
+
+// resolvedPath is filepath.EvalSymlinks with filepath.Clean as the answer
+// whenever it cannot resolve - a path that does not exist (yet, or any
+// more), or one no permission reaches. Both spellings of an existing path
+// resolve to the same string; two spellings of a MISSING path only compare
+// equal if they were written the same way, which is the conservative half
+// of the trade and the reason the fallback is Clean rather than "no match".
+func resolvedPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
+}
+
+// PrefillGameSpecFromDetected is GameSpecFromDetected against the games the
+// user actually has - the seam `lmm game add --from-detected` and POST
+// /api/v1/games' from_steam_app_id both call, so neither frontend derives
+// an identity of its own.
+//
+// The only thing it adds to the pure prefill is F1's rule: when games.yaml
+// already configures this candidate's install path, the spec takes THAT
+// game's id rather than the candidate's slug. AddGame then refuses the
+// duplicate by name (ErrGameExists, naming the id the user has) instead of
+// writing a second game over the same directory. An id the CALLER supplied
+// (--game-id, the web form's game_id) always wins - a manual add naming its
+// own id is left exactly as it was.
+func (s *Service) PrefillGameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) (GameSpec, error) {
+	spec := GameSpecFromDetected(d, overrides)
+	if overrides.ID != "" {
+		return spec, nil
+	}
+	existing, err := s.LoadGamesFromDisk()
+	if err != nil {
+		return spec, fmt.Errorf("loading games: %w", err)
+	}
+	if prior := ConfiguredGameFor(existing, d); prior != nil {
+		spec.ID = prior.ID
+	}
+	return spec, nil
+}
+
+// FindDetectedGame resolves a Steam app id against a scan - the value
+// `lmm game add --from-detected` takes and POST /api/v1/games carries as
+// from_steam_app_id. The miss is a GameSpecError naming that wire field,
+// so a web form marks the offending input and the CLI prints a sentence
+// that names the app id it could not find.
+//
+// The reason is deliberately frontend-neutral (#206 review Minor 7): both
+// callers already scan with IncludeUnknown:true before reaching this
+// point, so a miss here means the app id genuinely is not installed, or
+// was uninstalled between an earlier scan and this one - not merely that
+// the caller scanned too narrowly. A frontend that has something more
+// specific to offer (the SPA's stale-scan banner sits beside its own
+// Rescan button) says so itself, rather than getting a baked-in CLI-shaped
+// suggestion in every response.
+func FindDetectedGame(games []domain.DetectedGame, appID string) (domain.DetectedGame, error) {
+	appID = strings.TrimSpace(appID)
+	for _, g := range games {
+		if g.SteamAppID == appID {
+			return g, nil
+		}
+	}
+	return domain.DetectedGame{}, newGameSpecError("from_steam_app_id", appID,
+		"no installed Steam game has that app id - it may have been uninstalled since the scan")
+}
+
+// GameDetectResult is ApplyGameDetect's outcome: which games were written
+// to games.yaml and which got a (re)created default profile, in input
+// order, so a frontend can report exactly what happened without
+// re-deriving it from side effects.
+type GameDetectResult struct {
+	Saved    []string `json:"saved"`    // game IDs written to games.yaml, in input order
+	Profiles []string `json:"profiles"` // "<game>/default" profiles created
+	Warnings []string `json:"warnings"`
+	// KeptProfiles names the repaired games whose profiles were left as
+	// they were (#465): a repair creates a default profile only for a game
+	// with none, and those land in Profiles instead.
+	KeptProfiles []string `json:"kept_profiles,omitempty"`
+	// Refused names each already-configured game whose repair would change
+	// its install_path and is not a valid move under #528's policy (files
+	// deployed under the old folder while it still exists, say). It is
+	// left exactly as it was, the rest of the selection still applies, and
+	// the apply answers a GameDetectRefusedError naming them all.
+	Refused []GameDetectRefusal `json:"refused,omitempty"`
+}
+
+// GameDetectRefusal is one GameDetectResult.Refused finding: the configured
+// game a detected row would have repaired, and the refusal - the same typed
+// error `lmm game edit --install-path` gives (GameInstallPathInUseError, or
+// GameModPathInUseError for a mod_path the catalog moves elsewhere).
+type GameDetectRefusal struct {
+	// GameID is the configured game's id, Slug the detected row's.
+	GameID string `json:"game_id"`
+	Slug   string `json:"slug"`
+	// Error is the refusal's sentence, which names what to run first.
+	Error string `json:"error"`
+	// Details is the refusal's own --json details document, when it has
+	// one.
+	Details any `json:"details,omitempty"`
+	// Err is the refusal itself, for errors.As.
+	Err error `json:"-"`
+}
+
+// newGameDetectRefusal records err as gameID's finding.
+func newGameDetectRefusal(gameID, slug string, err error) GameDetectRefusal {
+	r := GameDetectRefusal{GameID: gameID, Slug: slug, Error: err.Error(), Err: err}
+	var detailed interface{ Details() any }
+	if errors.As(err, &detailed) {
+		r.Details = detailed.Details()
+	}
+	return r
+}
+
+// GameDetectRefusedError is what a detect apply answers when it refused to
+// repair one or more configured games (GameDetectResult.Refused) and
+// everything else in the selection applied. errors.As reaches each
+// refusal's typed error through it.
+type GameDetectRefusedError struct {
+	Refused []GameDetectRefusal
+}
+
+// Error names each refused game and why.
+func (e *GameDetectRefusedError) Error() string {
+	msgs := make([]string, len(e.Refused))
+	for i, r := range e.Refused {
+		msgs[i] = fmt.Sprintf("not repairing %s from the catalog: %s", r.GameID, r.Error)
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// Unwrap exposes every refusal's own error.
+func (e *GameDetectRefusedError) Unwrap() []error {
+	errs := make([]error, len(e.Refused))
+	for i, r := range e.Refused {
+		errs[i] = r.Err
+	}
+	return errs
+}
+
+// refusedError is result's GameDetectRefusedError, or nil when nothing was
+// refused.
+func (r *GameDetectResult) refusedError() error {
+	if len(r.Refused) == 0 {
+		return nil
+	}
+	return &GameDetectRefusedError{Refused: r.Refused}
+}
+
+// Completed is how many of the applied games finished - games.yaml written
+// and their profiles settled - which are the leading entries of Saved and of
+// the caller's selection, in apply order: each finished game adds itself to
+// exactly one of Profiles and KeptProfiles.
+func (r *GameDetectResult) Completed() int {
+	return len(r.Profiles) + len(r.KeptProfiles)
+}
+
+// ApplyGameDetect converts each of games (a caller's detect-prompt
+// selection, in order) via GameFromDetected and persists it to games.yaml
+// and its (re)created "default" profile, stopping at the first failure -
+// conversion or persistence - so a caller can report exactly how far it
+// got. Converting one game right before it is saved, rather than
+// converting the whole batch up front, matters: it's what makes a later
+// game's conversion failure (e.g. an unrecognized deploy_mode) leave every
+// earlier game's save and profile creation untouched, reproducing the
+// pre-lift cmd loop's per-game interleaving byte-for-byte even though the
+// actual "Added:" printing now happens in the caller after this single call
+// returns - since nothing else wrote to stdout/stderr during the pre-lift
+// loop, deferring those prints to after this call doesn't change their
+// order (v2 Phase 2 Task 21 review Important #1, 2026-08-28). Re-running
+// against an already-configured game - the CLI's repair path
+// (gameDetectSelectionIndices lets an explicit numeric selection name an
+// already-configured game) - rewrites the games.yaml entry's paths and
+// sources (repairedGame) and leaves the game's profiles as they are,
+// creating a default profile only for a game with none (#465). One narrow text difference is
+// deliberately not reproduced: beginOp takes the lock before the loop, so a
+// context cancelled between the prompt read and this call now always
+// surfaces as the bare "context canceled" rather than the pre-lift
+// interleaved loop's "saving game <slug>: context canceled" (whole-branch
+// review Minor #1, 2026-08-29).
+func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGame) (*GameDetectResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &GameDetectResult{}, err
+	}
+	defer release()
+
+	result := &GameDetectResult{}
+	if _, err := s.applyGameDetectLocked(ctx, games, result); err != nil {
+		return result, err
+	}
+	return result, result.refusedError()
+}
+
+// applyGameDetectLocked is ApplyGameDetect's loop without the gate, so
+// ApplyDetectSelection can run it as the CURATED half of one selection under
+// a single mutation slot (Ruling: exported mutating methods take the slot,
+// their unexported implementations do not, so flows compose). It appends to
+// result as it goes, which is what lets a caller report exactly how far a
+// partial failure got. A repair refused under #528's install-path policy is
+// not a failure: it is recorded in result.Refused, returned in refused, and
+// the loop goes on.
+func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.DetectedGame, result *GameDetectResult) (refused []domain.DetectedGame, err error) {
+	existing, err := s.LoadGamesFromDisk()
+	if err != nil {
+		return nil, fmt.Errorf("loading games: %w", err)
+	}
+	pm := s.NewProfileManager()
+	for _, g := range games {
+		game, err := GameFromDetected(g)
+		if err == nil {
+			// GameFromDetected is pure and has no registry to ask, so the
+			// per-source "may this be blank" question is asked HERE, where
+			// the Service can ask it (T1 re-review Minor 1). A known-games
+			// entry mapping a source that needs an identifier to "" is
+			// misconfigured, and #203's precedent for a misconfigured entry
+			// is to name it loudly rather than write it.
+			err = normalizeSourceIdentifiers(game.SourceIDs, s.sourceIgnoresGameIdentifier)
+		}
+		if err != nil {
+			return refused, fmt.Errorf("converting detected game %s: %w", g.Slug, err)
+		}
+		// #406 review F1: this install path may already be a game under a
+		// different id - the one detection derived before the known-games
+		// entry named a nicer slug. Selecting the row is then the REPAIR of
+		// that game, applying the curated paths and sources to the id its
+		// profiles, mods and deployed links already hang off, rather than a
+		// second game over the same directory.
+		prior := ConfiguredGameFor(existing, g)
+		var reroot *ledgerReroot
+		if prior != nil {
+			var notice string
+			game, notice = repairedGame(prior, game)
+			if !samePath(game.InstallPath, prior.InstallPath) {
+				// #528: the repair moves the install path - a Steam library
+				// that moved - so it is held to `lmm game edit
+				// --install-path`'s policy: a correction, or a move whose
+				// deployed files are re-rooted with it. Anything else is a
+				// finding for this game alone.
+				reroot, err = s.refuseInstallPathMove(ctx, prior, game, followInstallPath(prior, game.InstallPath))
+				if err != nil {
+					if !isInUseRefusal(err) {
+						return refused, fmt.Errorf("repairing %s from the catalog: %w", prior.ID, err)
+					}
+					result.Refused = append(result.Refused, newGameDetectRefusal(prior.ID, g.Slug, err))
+					refused = append(refused, g)
+					continue
+				}
+			} else if err := s.refuseModPathMove(ctx, prior, game.ModPath); err != nil {
+				// #427 review F1: the repair rewrites mod_path, which is
+				// exactly the move `lmm game edit --mod-path` refuses under a
+				// live deployment - the same check, before anything is
+				// written.
+				return refused, fmt.Errorf("repairing %s from the catalog would move its mod_path: %w", prior.ID, err)
+			}
+			if notice != "" {
+				result.Warnings = append(result.Warnings, notice)
+			}
+		}
+
+		if err := s.saveEditedGame(ctx, game, reroot); err != nil {
+			return refused, fmt.Errorf("saving game %s: %w", game.ID, err)
+		}
+		// The set was loaded once, before the loop; keep it current so a
+		// LATER row resolving to this same game repairs what was just
+		// written rather than a stale copy of it. Steam cannot hand over
+		// two rows at one install path, but a repair is an edit now, and
+		// editing a stale copy loses whatever the earlier row added.
+		existing[game.ID] = game
+		result.Saved = append(result.Saved, game.ID)
+
+		// #465: a repair fixes the game's paths and sources and nothing
+		// else. Its profiles are the user's desired state - resetting the
+		// default one to `mods: []` silently dropped every mod it listed -
+		// so a default profile is created only for a game that has no
+		// profile at all.
+		if prior != nil {
+			none, err := pm.isFirstProfile(game.ID)
+			if err != nil {
+				return refused, fmt.Errorf("repairing %s: %w", game.ID, err)
+			}
+			if !none {
+				if result.Profiles == nil {
+					result.Profiles = []string{} // the document's "profiles" stays a list
+				}
+				result.KeptProfiles = append(result.KeptProfiles, game.ID)
+				continue
+			}
+		}
+		if _, err := pm.CreateOrResetDefaultAfterGameSave(ctx, game.ID); err != nil {
+			return refused, fmt.Errorf("creating default profile for %s: %w", game.ID, err)
+		}
+		result.Profiles = append(result.Profiles, game.ID+"/default")
+	}
+	return refused, nil
+}
+
+// repairedGame applies a detected candidate to the games.yaml entry that
+// already configures its install path, instead of replacing that entry.
+//
+// config.SaveGame writes the whole entry (games[game.ID] = game) and
+// GameFromDetected builds a fresh domain.Game carrying only the curated
+// fields, so saving the converted game directly dropped the user's
+// link_method, cache_path, hooks, deploy_mode/convert_paks and any source
+// mapping they had added by hand - none of which detection knows, or could
+// know (re-review M1). A repair is an edit of the game they have, not a
+// re-add of it.
+//
+// It therefore starts from the game on disk and overwrites only what
+// detection genuinely owns: the display name, where the game is installed,
+// where its mods go, and the source ids the curated entry names (added to
+// the user's map, not swapped for it). Anything domain.Game grows later -
+// a loader or adapter block (#353/#358) - is preserved by construction
+// rather than by remembering to list it here.
+//
+// The NAME is detection's on purpose, and pinned as such: refreshing a
+// stale title from the curated entry is a documented part of the repair
+// (cmd/lmm's TestDoGameDetect_ExplicitSelectionRepairsConfiguredGame and
+// _SelectFlagSelectsExplicitIndices both start from a "Stale Name" entry,
+// and _ExplicitRowFormResolvesACollision from a hand-edited one). A title
+// is a label; the fields above it in this comment change what lmm DOES
+// with the game's files, which is why those are the user's.
+// It returns a notice - empty when there is nothing to say - when the kept
+// `deploy_mode` is not the one the catalog names. deploy_mode is the only
+// field compared, because it is the only behavioural field a curated entry
+// carries an opinion about: `convert_paks` is the other behavioural field
+// kept, and no curated entry sets it, so there is nothing to disagree with.
+// Keeping the user's choice and telling them nothing would trade one silent
+// surprise for another: a game curated as `compile` that they added by hand
+// at `extract` goes on deploying the way they set it, and now they can see
+// that the catalog says otherwise.
+func repairedGame(prior, detected *domain.Game) (*domain.Game, string) {
+	repaired := *prior
+	repaired.Name = detected.Name
+	repaired.InstallPath = detected.InstallPath
+	repaired.ModPath = detected.ModPath
+
+	repaired.SourceIDs = maps.Clone(prior.SourceIDs)
+	if repaired.SourceIDs == nil {
+		repaired.SourceIDs = make(map[string]string, len(detected.SourceIDs))
+	}
+	maps.Copy(repaired.SourceIDs, detected.SourceIDs)
+
+	var notice string
+	if prior.DeployMode != detected.DeployMode {
+		notice = fmt.Sprintf(
+			"kept deploy_mode: %s for %s; the catalog says %s - set deploy_mode in games.yaml to change it",
+			prior.DeployMode, repaired.ID, detected.DeployMode)
+	}
+	return &repaired, notice
+}
+
+// ApplyDetectSelection persists one detect-prompt selection - the seam BOTH
+// frontends' detect selections call, so they cannot diverge (#368 review
+// Minor 8; it lived in cmd/lmm, where `lmm serve` could not reach it).
+//
+// A selection can hold two kinds of row since #368, and they are configured
+// differently on purpose:
+//
+//   - A CURATED row is configured from its known-games entry, exactly as
+//     ApplyGameDetect always has: stop at the first failure, and naming an
+//     already-configured one is the documented REPAIR, which rewrites the
+//     paths and sources of its games.yaml entry (see repairedGame - the
+//     rest of the entry is the user's) and leaves its profiles as they are
+//     (#465) - it creates a default profile only for a game with none.
+//   - An UNCURATED row - listed because detection prefilled a source map for
+//     it, today #269's `steamworkshop: <appid>` - has no curated entry to
+//     configure from, so it takes the path `lmm game add --from-detected
+//     <app-id>` takes: GameSpecFromDetected, then AddGame's own validation
+//     and writes. An already-configured one is therefore REFUSED with
+//     ErrGameExists rather than overwritten: there is nothing curated to
+//     repair it from, and an "add" that destroys a game's default profile
+//     without saying so is a trap. `lmm game edit` is what changes one.
+//
+// Curated rows are applied first, whatever order they were named in, and the
+// returned rows are in that same apply order - one-for-one with the leading
+// entries of result.Saved/result.Profiles - so a caller can name each added
+// game beside its own result row without re-deriving the split. A curated
+// row whose repair was refused (#528, result.Refused) is moved to the end,
+// after the uncurated ones, so that holds; the rest of the selection still
+// applies, and the error is then a GameDetectRefusedError.
+//
+// ONE beginOp covers the lot: a selection is one user action, and the
+// per-row AddGame calls the CLI used to make took N+1 slots, which a
+// concurrent `lmm serve` job could interleave between.
+func (s *Service) ApplyDetectSelection(ctx context.Context, selected []domain.DetectedGame) ([]domain.DetectedGame, *GameDetectResult, error) {
+	curated, uncurated := splitDetectedSelection(selected)
+	applied := append(append([]domain.DetectedGame(nil), curated...), uncurated...)
+	result := &GameDetectResult{}
+
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return applied, result, err
+	}
+	defer release()
+
+	refused, err := s.applyGameDetectLocked(ctx, curated, result)
+	if len(refused) > 0 {
+		applied = applied[:0:0]
+		for _, g := range curated {
+			if !slices.ContainsFunc(refused, func(r domain.DetectedGame) bool { return r.Slug == g.Slug }) {
+				applied = append(applied, g)
+			}
+		}
+		applied = append(append(applied, uncurated...), refused...)
+	}
+	if err != nil {
+		return applied, result, err
+	}
+	for _, g := range uncurated {
+		spec, err := s.PrefillGameSpecFromDetected(g, GameSpec{})
+		if err != nil {
+			return applied, result, fmt.Errorf("adding detected game %s: %w", g.Slug, err)
+		}
+		entry, err := s.addGameLocked(ctx, spec)
+		if err != nil {
+			return applied, result, fmt.Errorf("adding detected game %s: %w", g.Slug, err)
+		}
+		// AddGame creates the same "default" profile the curated half does,
+		// so the two report identically.
+		result.Saved = append(result.Saved, entry.ID)
+		result.Profiles = append(result.Profiles, entry.ID+"/default")
+	}
+	return applied, result, result.refusedError()
+}
+
+// splitDetectedSelection separates a selection into the curated rows (the
+// known-games matches) and the rest, preserving order within each half.
+func splitDetectedSelection(games []domain.DetectedGame) (curated, uncurated []domain.DetectedGame) {
+	for _, g := range games {
+		if g.Known {
+			curated = append(curated, g)
+			continue
+		}
+		uncurated = append(uncurated, g)
+	}
+	return curated, uncurated
+}
+
+// GameDetectEntry is one row of a GameDetectListing: a detected game, the
+// 1-based Index that names it in a selection (the same number the CLI's
+// printed listing shows and `lmm game detect --select` takes), and whether
+// games.yaml already holds it.
+//
+// AlreadyConfigured is the machine-readable form of the CLI listing's
+// "[configured]" marker (#205 item 2). It is omitzero: a row that is not
+// configured carries no key at all, matching how every other boolean on
+// this wire behaves. Selecting a configured row anyway is legal - that is
+// the documented repair path - so this is advisory, not a filter.
+type GameDetectEntry struct {
+	domain.DetectedGame
+	// Index is the 1-based number a selection names, counted over the
+	// KNOWN rows only. An unknown row (#206) carries 0: a detect selection
+	// configures a game from its curated entry, and an unknown candidate
+	// has none, so there is no number that could name it. 0 is therefore
+	// "not selectable here - add it with `lmm game add --from-detected
+	// <steam_app_id>`, or POST /api/v1/games with from_steam_app_id".
+	//
+	// Counting known rows only is what makes an index mean the same row
+	// whether or not the caller asked for unknown rows: adding them to the
+	// document must never renumber the ones a selection can name.
+	Index             int  `json:"index"`
+	AlreadyConfigured bool `json:"already_configured,omitzero"`
+	// ModPathError is the CONFIGURED game's GameListEntry.ModPathError,
+	// when this row is already configured and its mod_path needs attention
+	// (#427) - so a listing marks the game that needs repair.
+	ModPathError string `json:"mod_path_error,omitempty"`
+}
+
+// GameDetectListingOptions tunes the listing document (#206).
+type GameDetectListingOptions struct {
+	// IncludeUnknown keeps the scan's unknown candidates (no `known` member
+	// at all - never a literal false) in the document. Off by default, so a
+	// caller that scanned wide can
+	// still render the default listing, and a caller that
+	// never asked for unknown rows cannot accidentally publish them.
+	//
+	// "Default" is domain.DetectedGame.Listable, not Known (#368): an
+	// uncurated candidate whose Steam Workshop manifest declares installed
+	// items IS in the default document, because that is the one thing on
+	// disk saying the game is moddable. This flag adds everything else.
+	IncludeUnknown bool
+}
+
+// GameDetectListing is the document a detect scan produces BEFORE anything
+// is selected - what the CLI only ever printed to the terminal (under
+// --json it emitted nothing until a selection was made, since Ruling 15
+// allows only the result document on stdout). `lmm serve` needs the
+// listing itself, because its selection happens in a browser between two
+// requests, so it is a document here rather than console text.
+//
+// Games is never nil: a scan that found nothing is an empty list, not an
+// error. Warnings are the scan's own (unreadable libraries, malformed
+// known-games entries), carried in the document rather than written to
+// stderr for the same reason GameDetectResult.Warnings are.
+type GameDetectListing struct {
+	Games    []GameDetectEntry `json:"games"`
+	Warnings []string          `json:"warnings"`
+}
+
+// GameDetectListing builds the pre-selection listing for an
+// already-detected set of games (app.DetectGames' output - core cannot
+// scan Steam itself without importing a concrete source, Ruling 8), marking
+// every row that games.yaml already holds - by id OR by install path, see
+// ConfiguredGameFor.
+//
+// The configured check reads games.yaml FROM DISK (LoadGamesFromDisk)
+// rather than the Service's in-memory set, matching what `lmm game detect`
+// has always done: the listing must reflect the file a concurrent `game
+// add` may have just written.
+func (s *Service) GameDetectListing(ctx context.Context, games []domain.DetectedGame, warnings []string, opts GameDetectListingOptions) (*GameDetectListing, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	existing, err := s.LoadGamesFromDisk()
+	if err != nil {
+		return nil, fmt.Errorf("loading games: %w", err)
+	}
+
+	listing := &GameDetectListing{Games: make([]GameDetectEntry, 0, len(games)), Warnings: warnings}
+	index := 0
+	for _, g := range games {
+		if !g.Listable() && !opts.IncludeUnknown {
+			continue
+		}
+		// Only a known row gets a number - see GameDetectEntry.Index.
+		if g.Known {
+			index++
+		}
+		entry := GameDetectEntry{DetectedGame: g}
+		if configured := ConfiguredGameFor(existing, g); configured != nil {
+			entry.AlreadyConfigured = true
+			if entry.ModPathError, err = s.modPathError(ctx, configured); err != nil {
+				return nil, err
+			}
+		}
+		if g.Known {
+			entry.Index = index
+		}
+		listing.Games = append(listing.Games, entry)
+	}
+	return listing, nil
+}
+
+// ErrUnknownDetectedGame is returned by SelectDetectedGames when a
+// selection names a candidate nothing can configure: it is installed, but
+// lmm has no known-games entry for it AND detection prefilled no source map
+// either (#206, narrowed by #368 - a Workshop-bearing row IS selectable, see
+// domain.DetectedGame.Addable). Such a row has no mod path and no sources,
+// so there is nothing to write; the sanctioned path is the from-detected add
+// flow, which collects exactly those two values. Typed because both
+// frontends branch on it: the CLI points at `lmm game add --from-detected`,
+// and `lmm serve` answers 400 pointing at POST /api/v1/games'
+// from_steam_app_id.
+var ErrUnknownDetectedGame = errors.New("detected game is not in the known-games list")
+
+// SelectDetectedGames resolves a caller's selection against a detect
+// listing, in the order given, returning the detected games
+// ApplyDetectSelection should persist. Each selector is either a 1-based
+// index into games (the number GameDetectEntry.Index carries and the CLI's
+// `--select` takes) or a game's slug, matched case-insensitively - two
+// spellings of the same choice, because the CLI's listing is numbered while
+// an SPA holds the row itself and has no reason to count.
+//
+// A BARE selector that is both a valid index and some OTHER row's slug is
+// refused rather than guessed at (#368 re-review N4, the CLI prompt's own
+// Important 1 one layer down). The index used to win outright, so a game
+// slugged "2" on a listing with two or more known rows silently configured
+// row 2 instead - reachable since #368 let uncurated rows through, because
+// their slugs are derived from the Steam title and a numerically-named game
+// derives an all-digits slug. Both explicit spellings are always accepted,
+// collision or not: "#2" is the index, "slug:2" is the slug.
+//
+// A row is selectable when domain.DetectedGame.Addable says it can be
+// configured with nothing more asked of the user - since #368 that includes
+// an UNCURATED row detection prefilled a source map for, which has no index
+// (only known rows are numbered) and so is named by slug. The rule has to be
+// Addable rather than Known, or the selection would refuse exactly the rows
+// #368 added and ApplyDetectSelection's uncurated half would be unreachable
+// from the web while the CLI's prompt configures them.
+//
+// An empty selection is refused rather than treated as "none": a caller
+// that means "add nothing" does not call this at all, so an empty list here
+// is a malformed request. A duplicate is refused too - ApplyGameDetect
+// overwrites each game it is handed, and applying that twice to one game is
+// never what a caller meant.
+func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]domain.DetectedGame, error) {
+	if len(selectors) == 0 {
+		return nil, errors.New("no games selected")
+	}
+	if len(games) == 0 {
+		// Without this the range hint below reads "use 1-0", which is not a
+		// range and buries the real answer: the scan found nothing at all.
+		return nil, errors.New("no games were detected, so there is nothing to select")
+	}
+	bySlug := make(map[string]int, len(games))
+	// byIndex maps a 1-based selection number to its row. It counts the
+	// KNOWN rows only, exactly as GameDetectEntry.Index does, so a caller
+	// that listed with IncludeUnknown and one that did not name the same
+	// game with the same number.
+	byIndex := make([]int, 0, len(games))
+	for i, g := range games {
+		bySlug[strings.ToLower(g.Slug)] = i
+		if g.Known {
+			byIndex = append(byIndex, i)
+		}
+	}
+
+	// rowByIndex resolves a 1-based selection number, reporting the refusal
+	// that fits: a listing with no known row at all cannot count, and a
+	// number past the end names the range it could have used.
+	rowByIndex := func(sel, digits string) (int, error) {
+		n, err := strconv.Atoi(digits)
+		if err != nil {
+			return -1, fmt.Errorf("invalid selection %q: no detected game with that index or slug", sel)
+		}
+		if len(byIndex) == 0 {
+			// "use 1-0" is not a range; the scan found installed games,
+			// just none of them in the known-games list, so a numbered
+			// selection has nothing to count. ErrUnknownDetectedGame
+			// (not a bare string) so the caller - only `lmm serve`
+			// reaches this today - can append its OWN next step
+			// (api_games.go already does, for the per-row case below);
+			// a CLI command baked into the message here would be wrong
+			// wherever a browser is what actually shows it (#206 review
+			// Minor 7).
+			return -1, fmt.Errorf("%w: nothing in this selection is in the known-games list", ErrUnknownDetectedGame)
+		}
+		if n < 1 || n > len(byIndex) {
+			return -1, fmt.Errorf("invalid selection %q: use 1-%d or a game slug", sel, len(byIndex))
+		}
+		return byIndex[n-1], nil
+	}
+
+	seen := make(map[int]bool, len(selectors))
+	out := make([]domain.DetectedGame, 0, len(selectors))
+	for _, sel := range selectors {
+		sel = strings.TrimSpace(sel)
+		idx, err := resolveDetectSelector(sel, bySlug, rowByIndex)
+		if err != nil {
+			return nil, err
+		}
+		if !games[idx].Addable() {
+			return nil, fmt.Errorf("%w: %s (Steam app id %s) - it is installed, but nothing tells lmm where it keeps its mods, so it has to be added from the detected game with the source and mod path filled in",
+				ErrUnknownDetectedGame, games[idx].Slug, games[idx].SteamAppID)
+		}
+		if seen[idx] {
+			return nil, fmt.Errorf("duplicate selection %q", sel)
+		}
+		seen[idx] = true
+		out = append(out, games[idx])
+	}
+	return out, nil
+}
+
+// resolveDetectSelector turns one selector into a row of the listing.
+//
+// The two explicit prefixes come first and are unconditional, so a caller
+// that knows which axis it means never depends on what else the scan
+// happened to find: "#n" is the index, "slug:name" the slug. A bare
+// selector is resolved BOTH ways, and disagreement is the caller's to
+// settle - resolving it here would silently configure a game nobody named,
+// and a detect selection overwrites the row it lands on.
+func resolveDetectSelector(sel string, bySlug map[string]int, rowByIndex func(sel, digits string) (int, error)) (int, error) {
+	if digits, ok := strings.CutPrefix(sel, "#"); ok {
+		return rowByIndex(sel, strings.TrimSpace(digits))
+	}
+	if slug, ok := strings.CutPrefix(sel, "slug:"); ok {
+		i, found := bySlug[strings.ToLower(strings.TrimSpace(slug))]
+		if !found {
+			return -1, fmt.Errorf("invalid selection %q: no detected game with that slug", sel)
+		}
+		return i, nil
+	}
+
+	bySlugIdx, isSlug := bySlug[strings.ToLower(sel)]
+	byIndexIdx, indexErr := rowByIndex(sel, sel)
+	switch {
+	case indexErr == nil && isSlug && byIndexIdx != bySlugIdx:
+		return -1, fmt.Errorf("ambiguous selection %q: it is index %s and also the slug of another detected game - name the index as %q, or the slug as %q",
+			sel, sel, "#"+sel, "slug:"+sel)
+	case indexErr == nil:
+		return byIndexIdx, nil
+	case isSlug:
+		return bySlugIdx, nil
+	default:
+		return -1, indexErr
+	}
+}

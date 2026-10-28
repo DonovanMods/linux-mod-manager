@@ -1,11 +1,14 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // FileOwner represents the mod that owns a deployed file
@@ -21,21 +24,208 @@ type FileConflict struct {
 	ModID        string
 }
 
-// SaveDeployedFile records that a file is deployed by a specific mod.
+// SaveDeployedFile records that a file is deployed by a specific mod, with
+// no fingerprint and no recorded mod_path (RecordDeployedFile).
 // Uses upsert to handle overwrites (new mod takes ownership).
-func (d *DB) SaveDeployedFile(gameID, profileName, relativePath, sourceID, modID string) error {
-	_, err := d.Exec(`
-		INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id)
-		VALUES (?, ?, ?, ?, ?)
+func (d *DB) SaveDeployedFile(ctx context.Context, gameID, profileName, relativePath, sourceID, modID string) error {
+	return d.RecordDeployedFile(ctx, DeployedFileRecord{
+		GameID: gameID, Profile: profileName, RelativePath: relativePath,
+		SourceID: sourceID, ModID: modID,
+	})
+}
+
+// FileFingerprint identifies the content a copy or hardlink deployment
+// wrote at a path (#466): its hex SHA-256, its length, and its modification
+// and inode-change times in Unix nanoseconds. Size, MTime and CTime are the
+// cheap pre-check; Checksum is the proof.
+type FileFingerprint struct {
+	Checksum string
+	Size     int64
+	MTime    int64
+	CTime    int64
+}
+
+// DeployedFileRecord is one deployed_files row as a deploy writes it.
+type DeployedFileRecord struct {
+	GameID       string
+	Profile      string
+	RelativePath string
+	SourceID     string
+	ModID        string
+	// ModPath is the absolute mod_path RelativePath was deployed under
+	// (#451); empty records none.
+	ModPath string
+	// Fingerprint is the content a copy or hardlink deployment wrote; nil
+	// for a symlink deployment, or a row written without deploying.
+	Fingerprint *FileFingerprint
+}
+
+// RecordDeployedFile upserts rec: a path already recorded for the game and
+// profile changes hands to rec's mod, and its fingerprint and mod_path are
+// replaced by rec's - cleared when rec carries none, since whatever the
+// old row described is no longer what the new one does.
+func (d *DB) RecordDeployedFile(ctx context.Context, rec DeployedFileRecord) error {
+	var checksum, modPath sql.NullString
+	var size, mtime, ctime sql.NullInt64
+	if fp := rec.Fingerprint; fp != nil && fp.Checksum != "" {
+		checksum = sql.NullString{String: fp.Checksum, Valid: true}
+		size = sql.NullInt64{Int64: fp.Size, Valid: true}
+		mtime = sql.NullInt64{Int64: fp.MTime, Valid: true}
+		ctime = sql.NullInt64{Int64: fp.CTime, Valid: true}
+	}
+	if rec.ModPath != "" {
+		modPath = sql.NullString{String: rec.ModPath, Valid: true}
+	}
+	_, err := d.ExecContext(ctx, `
+		INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id, checksum, size, mtime, ctime, mod_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(game_id, profile_name, relative_path) DO UPDATE SET
 			source_id = excluded.source_id,
 			mod_id = excluded.mod_id,
+			checksum = excluded.checksum,
+			size = excluded.size,
+			mtime = excluded.mtime,
+			ctime = excluded.ctime,
+			mod_path = excluded.mod_path,
 			deployed_at = CURRENT_TIMESTAMP
-	`, gameID, profileName, relativePath, sourceID, modID)
+	`, rec.GameID, rec.Profile, rec.RelativePath, rec.SourceID, rec.ModID, checksum, size, mtime, ctime, modPath)
 	if err != nil {
 		return fmt.Errorf("saving deployed file: %w", err)
 	}
 	return nil
+}
+
+// DeployedFileState is one profile's record of a path: the fingerprint it
+// was deployed with (nil when none was recorded), when the row was last
+// written, the mod_path it was deployed under ("" when none was recorded),
+// and the link method on the installed-mod row that owns it. LinkMethod is
+// nil when that row no longer exists; a deployed-file row alone cannot prove
+// whether fingerprintless content was a symlink or a legacy copy/hardlink.
+type DeployedFileState struct {
+	Profile     string
+	SourceID    string
+	ModID       string
+	ModPath     string
+	Fingerprint *FileFingerprint
+	LinkMethod  *domain.LinkMethod
+	DeployedAt  time.Time
+}
+
+// DeployedFileStates returns every profile's record of relativePath in
+// gameID, sorted by profile - what a removal compares the file on disk
+// against (#466), including the method provenance that distinguishes a
+// replaced symlink (#483).
+func (d *DB) DeployedFileStates(ctx context.Context, gameID, relativePath string) (states []DeployedFileState, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT df.profile_name, df.source_id, df.mod_id, df.mod_path,
+		       df.checksum, df.size, df.mtime, df.ctime, im.link_method,
+		       df.deployed_at
+		FROM deployed_files AS df
+		LEFT JOIN installed_mods AS im
+		  ON im.game_id = df.game_id
+		 AND im.profile_name = df.profile_name
+		 AND im.source_id = df.source_id
+		 AND im.mod_id = df.mod_id
+		WHERE df.game_id = ? AND df.relative_path = ?
+		ORDER BY df.profile_name
+	`, gameID, relativePath)
+	if err != nil {
+		return nil, fmt.Errorf("querying deployed file states: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+	for rows.Next() {
+		var st DeployedFileState
+		var modPath, checksum sql.NullString
+		var size, mtime, ctime, linkMethod sql.NullInt64
+		if err := rows.Scan(&st.Profile, &st.SourceID, &st.ModID, &modPath, &checksum, &size, &mtime, &ctime, &linkMethod, &st.DeployedAt); err != nil {
+			return nil, fmt.Errorf("scanning deployed file state: %w", err)
+		}
+		st.ModPath = modPath.String
+		if checksum.Valid && checksum.String != "" {
+			st.Fingerprint = &FileFingerprint{Checksum: checksum.String, Size: size.Int64, MTime: mtime.Int64, CTime: ctime.Int64}
+		}
+		if linkMethod.Valid {
+			method := domain.LinkMethod(linkMethod.Int64)
+			st.LinkMethod = &method
+		}
+		states = append(states, st)
+	}
+	return states, rows.Err()
+}
+
+// DeployedRoot is how many deployed_files rows one profile of a game has
+// under one recorded mod_path ("" for rows that recorded none).
+type DeployedRoot struct {
+	Profile string
+	ModPath string
+	Files   int
+}
+
+// DeployedFileRoots returns gameID's deployed_files rows counted per
+// profile and recorded mod_path, sorted by profile then mod_path (#451).
+func (d *DB) DeployedFileRoots(ctx context.Context, gameID string) (roots []DeployedRoot, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT profile_name, COALESCE(mod_path, ''), COUNT(*) FROM deployed_files
+		WHERE game_id = ?
+		GROUP BY profile_name, COALESCE(mod_path, '')
+		ORDER BY profile_name, COALESCE(mod_path, '')
+	`, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("counting deployed file roots: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+	for rows.Next() {
+		var r DeployedRoot
+		if err := rows.Scan(&r.Profile, &r.ModPath, &r.Files); err != nil {
+			return nil, fmt.Errorf("scanning deployed file root: %w", err)
+		}
+		roots = append(roots, r)
+	}
+	return roots, rows.Err()
+}
+
+// RerootDeployedFiles records every gameID row deployed under one of from as
+// deployed under to instead, in one transaction, and returns how many rows
+// it changed. "" in from names the rows that recorded no mod_path. It is
+// #528's ledger move: a game folder that moved took its deployed files
+// with it, still at the same paths relative to the mod_path.
+func (d *DB) RerootDeployedFiles(ctx context.Context, gameID string, from []string, to string) (int64, error) {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	var total int64
+	for _, root := range from {
+		query := `UPDATE deployed_files SET mod_path = ? WHERE game_id = ? AND mod_path = ?`
+		args := []any{to, gameID, root}
+		if root == "" {
+			query = `UPDATE deployed_files SET mod_path = ? WHERE game_id = ? AND (mod_path IS NULL OR mod_path = '')`
+			args = args[:2]
+		}
+		res, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return 0, fmt.Errorf("re-rooting deployed files: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("re-rooting deployed files: %w", err)
+		}
+		total += n
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing re-rooted deployed files: %w", err)
+	}
+	return total, nil
 }
 
 // GetLastDeployTime returns the most recent deployed_at recorded for
@@ -53,9 +243,9 @@ func (d *DB) SaveDeployedFile(gameID, profileName, relativePath, sourceID, modID
 // Selecting the actual column keeps the declared-type conversion intact and
 // is equivalent to MAX for this query shape (both scoped to one game/profile,
 // ORDER BY DESC LIMIT 1 is exactly "the row with the largest deployed_at").
-func (d *DB) GetLastDeployTime(gameID, profileName string) (*time.Time, error) {
+func (d *DB) GetLastDeployTime(ctx context.Context, gameID, profileName string) (*time.Time, error) {
 	var deployedAt time.Time
-	err := d.QueryRow(`
+	err := d.QueryRowContext(ctx, `
 		SELECT deployed_at FROM deployed_files
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY deployed_at DESC
@@ -72,9 +262,9 @@ func (d *DB) GetLastDeployTime(gameID, profileName string) (*time.Time, error) {
 
 // GetFileOwner returns the mod that owns a specific file path.
 // Returns nil if no mod owns the file.
-func (d *DB) GetFileOwner(gameID, profileName, relativePath string) (*FileOwner, error) {
+func (d *DB) GetFileOwner(ctx context.Context, gameID, profileName, relativePath string) (*FileOwner, error) {
 	var owner FileOwner
-	err := d.QueryRow(`
+	err := d.QueryRowContext(ctx, `
 		SELECT source_id, mod_id FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND relative_path = ?
 	`, gameID, profileName, relativePath).Scan(&owner.SourceID, &owner.ModID)
@@ -87,9 +277,110 @@ func (d *DB) GetFileOwner(gameID, profileName, relativePath string) (*FileOwner,
 	return &owner, nil
 }
 
+// AnyProfileOwnsFile reports whether ANY profile of gameID has a
+// deployed-file record for relativePath.
+//
+// GetFileOwner is scoped to a game AND a profile, which is right for
+// "whose file is this in the deployment I am changing" but wrong for
+// "did lmm put this here at all" (#350 review minor 7): with `lmm deploy
+// -p B` over a copy/hardlink deployment made under profile A, A's own file
+// looked foreign to B - stored as an "original", so a later restore would
+// have written a mod's bytes back as if they were stock content.
+func (d *DB) AnyProfileOwnsFile(ctx context.Context, gameID, relativePath string) (bool, error) {
+	var one int
+	err := d.QueryRowContext(ctx, `
+		SELECT 1 FROM deployed_files
+		WHERE game_id = ? AND relative_path = ?
+		LIMIT 1
+	`, gameID, relativePath).Scan(&one)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking file ownership: %w", err)
+	}
+	return true, nil
+}
+
+// PathRecord is one profile's deployed-file record of a path: the profile
+// and the mod the record names.
+type PathRecord struct {
+	Profile  string
+	SourceID string
+	ModID    string
+	// ModPath is the mod_path the record was deployed under (#451), or ""
+	// when it recorded none.
+	ModPath string
+}
+
+// DeployedPathRecords returns, for every path any profile of gameID has a
+// deployed-file record for, those records, sorted by profile. A purge of a
+// profile that is not active (#445) removes only the paths no other record
+// claims, and hands a path the active profile lists on only to a record
+// that keeps it for the same reason - which depends on the mod each record
+// names.
+func (d *DB) DeployedPathRecords(ctx context.Context, gameID string) (records map[string][]PathRecord, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT relative_path, profile_name, source_id, mod_id, COALESCE(mod_path, '') FROM deployed_files
+		WHERE game_id = ?
+		ORDER BY relative_path, profile_name
+	`, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("querying deployed files: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+
+	records = make(map[string][]PathRecord)
+	for rows.Next() {
+		var path string
+		var r PathRecord
+		if err := rows.Scan(&path, &r.Profile, &r.SourceID, &r.ModID, &r.ModPath); err != nil {
+			return nil, fmt.Errorf("scanning deployed file: %w", err)
+		}
+		records[path] = append(records[path], r)
+	}
+	return records, rows.Err()
+}
+
+// DeployedFileCounts returns how many deployed_files rows each profile of
+// gameID has, keyed by profile name; a profile with none has no entry. It
+// is the population a mod_path move would strand, since each row is
+// relative to the mod_path it was deployed under - per profile, because
+// each profile is purged on its own.
+func (d *DB) DeployedFileCounts(ctx context.Context, gameID string) (counts map[string]int, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT profile_name, COUNT(*) FROM deployed_files
+		WHERE game_id = ?
+		GROUP BY profile_name
+	`, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("counting deployed files: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+
+	counts = map[string]int{}
+	for rows.Next() {
+		var profile string
+		var n int
+		if err := rows.Scan(&profile, &n); err != nil {
+			return nil, fmt.Errorf("scanning deployed file count: %w", err)
+		}
+		counts[profile] = n
+	}
+	return counts, rows.Err()
+}
+
 // DeleteDeployedFiles removes all deployed file records for a specific mod.
-func (d *DB) DeleteDeployedFiles(gameID, profileName, sourceID, modID string) error {
-	_, err := d.Exec(`
+func (d *DB) DeleteDeployedFiles(ctx context.Context, gameID, profileName, sourceID, modID string) error {
+	_, err := d.ExecContext(ctx, `
 		DELETE FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
 	`, gameID, profileName, sourceID, modID)
@@ -99,12 +390,76 @@ func (d *DB) DeleteDeployedFiles(gameID, profileName, sourceID, modID string) er
 	return nil
 }
 
+// DeleteDeployedFilesExcept is DeleteDeployedFiles keeping every row
+// recorded under one of the mod_paths in keepRoots (#451) - an uninstall
+// under a game's current mod_path does not know what is under another one,
+// so it leaves those rows for the purge that does - and every row for one
+// of the relative paths in keepPaths: files the uninstall could not judge
+// (#466), whose records must not change.
+func (d *DB) DeleteDeployedFilesExcept(ctx context.Context, gameID, profileName, sourceID, modID string, keepRoots, keepPaths []string) error {
+	if len(keepRoots) == 0 && len(keepPaths) == 0 {
+		return d.DeleteDeployedFiles(ctx, gameID, profileName, sourceID, modID)
+	}
+	query := `
+		DELETE FROM deployed_files
+		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?`
+	args := []any{gameID, profileName, sourceID, modID}
+	notIn := func(column string, values []string) {
+		if len(values) == 0 {
+			return
+		}
+		query += fmt.Sprintf(" AND %s NOT IN (%s)", column, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
+		for _, v := range values {
+			args = append(args, v)
+		}
+	}
+	notIn("COALESCE(mod_path, '')", keepRoots)
+	notIn("relative_path", keepPaths)
+	if _, err := d.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("deleting deployed files: %w", err)
+	}
+	return nil
+}
+
+// DeployedFileRecordsForMod returns every deployed_files row of one mod in
+// a game's profile exactly as it is stored - fingerprint and mod_path
+// included - sorted by path: what a replace puts back if it fails (#466).
+func (d *DB) DeployedFileRecordsForMod(ctx context.Context, gameID, profileName, sourceID, modID string) (records []DeployedFileRecord, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT relative_path, mod_path, checksum, size, mtime, ctime FROM deployed_files
+		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
+		ORDER BY relative_path
+	`, gameID, profileName, sourceID, modID)
+	if err != nil {
+		return nil, fmt.Errorf("querying deployed file records: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+	for rows.Next() {
+		rec := DeployedFileRecord{GameID: gameID, Profile: profileName, SourceID: sourceID, ModID: modID}
+		var modPath, checksum sql.NullString
+		var size, mtime, ctime sql.NullInt64
+		if err := rows.Scan(&rec.RelativePath, &modPath, &checksum, &size, &mtime, &ctime); err != nil {
+			return nil, fmt.Errorf("scanning deployed file record: %w", err)
+		}
+		rec.ModPath = modPath.String
+		if checksum.Valid && checksum.String != "" {
+			rec.Fingerprint = &FileFingerprint{Checksum: checksum.String, Size: size.Int64, MTime: mtime.Int64, CTime: ctime.Int64}
+		}
+		records = append(records, rec)
+	}
+	return records, rows.Err()
+}
+
 // DeleteDeployedFile removes one deployed-file ownership row. Deleting a
 // row that does not exist is a silent no-op - convergence (#168/#212) calls
 // this for paths it just undeployed, and a row may already be gone when the
 // path was attributed only by a dangling link.
-func (d *DB) DeleteDeployedFile(gameID, profileName, relativePath string) error {
-	_, err := d.Exec(`
+func (d *DB) DeleteDeployedFile(ctx context.Context, gameID, profileName, relativePath string) error {
+	_, err := d.ExecContext(ctx, `
 		DELETE FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND relative_path = ?`,
 		gameID, profileName, relativePath)
@@ -115,8 +470,8 @@ func (d *DB) DeleteDeployedFile(gameID, profileName, relativePath string) error 
 }
 
 // GetDeployedFilesForMod returns all file paths deployed by a specific mod.
-func (d *DB) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string) (paths []string, err error) {
-	rows, err := d.Query(`
+func (d *DB) GetDeployedFilesForMod(ctx context.Context, gameID, profileName, sourceID, modID string) (paths []string, err error) {
+	rows, err := d.QueryContext(ctx, `
 		SELECT relative_path FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
 		ORDER BY relative_path
@@ -142,7 +497,7 @@ func (d *DB) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string)
 
 // CheckFileConflicts checks which of the given paths are already owned by other mods.
 // Returns a slice of conflicts (empty if no conflicts).
-func (d *DB) CheckFileConflicts(gameID, profileName string, paths []string) (conflicts []FileConflict, err error) {
+func (d *DB) CheckFileConflicts(ctx context.Context, gameID, profileName string, paths []string) (conflicts []FileConflict, err error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
@@ -162,7 +517,7 @@ func (d *DB) CheckFileConflicts(gameID, profileName string, paths []string) (con
 		ORDER BY relative_path
 	`, strings.Join(placeholders, ","))
 
-	rows, err := d.Query(query, args...)
+	rows, err := d.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("checking conflicts: %w", err)
 	}
@@ -180,4 +535,45 @@ func (d *DB) CheckFileConflicts(gameID, profileName string, paths []string) (con
 		conflicts = append(conflicts, c)
 	}
 	return conflicts, rows.Err()
+}
+
+// DeployedPath is one deployed_files row: a game-dir-relative path and the
+// mod that owns it.
+type DeployedPath struct {
+	RelativePath string
+	SourceID     string
+	ModID        string
+	// ModPath is the mod_path the row was deployed under (#451), or ""
+	// when it recorded none.
+	ModPath string
+}
+
+// ListDeployedFiles returns every tracked path for gameID/profileName,
+// path-sorted so a caller's output is stable. The per-mod
+// GetDeployedFilesForMod answers "what did THIS mod deploy"; this answers
+// "what is deployed at all", which is what `lmm snapshot create` records
+// as the profile's deployed-files manifest (#350).
+func (d *DB) ListDeployedFiles(ctx context.Context, gameID, profileName string) (files []DeployedPath, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT relative_path, source_id, mod_id, COALESCE(mod_path, '') FROM deployed_files
+		WHERE game_id = ? AND profile_name = ?
+		ORDER BY relative_path
+	`, gameID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("querying deployed files: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+
+	for rows.Next() {
+		var f DeployedPath
+		if err := rows.Scan(&f.RelativePath, &f.SourceID, &f.ModID, &f.ModPath); err != nil {
+			return nil, fmt.Errorf("scanning deployed file: %w", err)
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
 }

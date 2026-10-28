@@ -1,0 +1,9 @@
+{
+  "sources": {},
+  "loader": {
+    "kind": "bepinex",
+    "version": "5.4.23.5",
+    "bootstrap": "native"
+  },
+  "loader_set": true
+}

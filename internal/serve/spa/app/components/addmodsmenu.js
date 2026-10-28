@@ -1,0 +1,132 @@
+// addmodsmenu.js - the "Add mods ▾" control (issue 339, owner Demo 3): once
+// a library holds mods, the only visible way to add another was the omnibar
+// - Archive import and Adopt lived only under ⚙ Setup, with nothing in a
+// populated library pointing at either. This is the ONE component rendered
+// in both places library.js needs it (the populated library's toolbar and
+// the empty-library state) - the same three entries, landing on the design's
+// EXISTING flows rather than a fourth: the omnibar's own fan-out, Setup →
+// Archive import, Setup → Adopt.
+//
+// Issue 269 adds a fourth entry, on the same principle: `lmm import --workshop`
+// is a real flow with a real plan kind (workshop_adopt), and without an
+// entry here a web-only user could be shown a Steam badge and a "Managed by
+// Steam" block with no way to get an item tracked in the first place. It is
+// offered only when the game actually maps the steamworkshop source, since
+// the plan endpoint answers 400 otherwise - an entry that can only fail is
+// the thing this menu's own "land on EXISTING flows" rule argues against.
+//
+// A plain dropdown, the same shape topbar.js's game/profile pickers use
+// (.picker/.picker__trigger/.picker__menu/.picker__item) - reused rather
+// than invented, and dismissed the same way (dismiss.js's outside-click/
+// Escape rule) since this is one more "click elsewhere to close it" menu
+// among several the application already has.
+
+import { html, useRef, useState } from "../render.js";
+import { navigate, setupPath } from "../router.js";
+import { useDismissOnOutsideOrEscape } from "../dismiss.js";
+import { useMenuPlacement } from "../menuplacement.js";
+
+/** focusOmnibar hands the keyboard to the top bar's own search field - the
+ * SAME input the "search sources ↵" fan-out already reads from
+ * (topbar.js) - so "Search sources…" here is a shortcut into that flow,
+ * never a second one. */
+function focusOmnibar() {
+  const input = document.querySelector(".omnibar");
+  if (input instanceof HTMLElement) input.focus();
+}
+
+export function AddModsMenu({ route, actions, state }) {
+  const workshopMapped = Boolean(state?.status?.source_ids?.steamworkshop);
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const menuRef = useMenuPlacement(open);
+
+  useDismissOnOutsideOrEscape(ref, open ? "add-mods" : null, () =>
+    setOpen(false),
+  );
+
+  function pick(run) {
+    setOpen(false);
+    run();
+  }
+
+  return html`
+    <div class="picker add-mods-menu" ref=${ref}>
+      <button
+        type="button"
+        class="button button--quiet picker__trigger add-mods-menu__trigger"
+        data-picker="add-mods"
+        data-action="add-mods"
+        aria-haspopup="true"
+        aria-expanded=${open ? "true" : "false"}
+        onClick=${() => setOpen((v) => !v)}
+      >
+        Add mods ▾
+      </button>
+      ${
+        open &&
+        html`
+          <ul class="picker__menu add-mods-menu__menu" ref=${menuRef}>
+            <li>
+              <button
+                type="button"
+                class="menu-item picker__item"
+                onClick=${() => pick(focusOmnibar)}
+              >
+                Search sources…
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                class="menu-item picker__item"
+                onClick=${() =>
+                  pick(() =>
+                    navigate(setupPath(route.game, route.profile, "archive")),
+                  )}
+              >
+                Import an archive…
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                class="menu-item picker__item"
+                onClick=${() =>
+                  pick(() =>
+                    navigate(setupPath(route.game, route.profile, "adopt")),
+                  )}
+              >
+                Adopt untracked mods…
+              </button>
+            </li>
+            ${
+              workshopMapped &&
+              html`
+                <li>
+                  <button
+                    type="button"
+                    class="menu-item picker__item"
+                    data-action="track-workshop"
+                    onClick=${() =>
+                      pick(() =>
+                        actions.openPlan({
+                          kind: "workshop_adopt",
+                          origin: "add-mods:workshop",
+                          title: "Track Steam Workshop items",
+                          confirmLabel: "Track",
+                          options: {},
+                        }),
+                      )}
+                  >
+                    Track Steam Workshop items…
+                  </button>
+                </li>
+              `
+            }
+          </ul>
+        `
+      }
+    </div>
+  `;
+}

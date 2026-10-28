@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -32,14 +32,14 @@ func setupDoImportCompileTest(t *testing.T) (*core.Service, *domain.Game, *compi
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 
 	game := &domain.Game{
 		ID: "icarus", Name: "Icarus", InstallPath: installDir, ModPath: t.TempDir(),
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	oldProfile, oldSource, oldModID, oldForce, oldDryRun, oldSkipMatch :=
 		importProfile, importSource, importModID, importForce, importDryRun, importSkipMatch
@@ -86,7 +86,7 @@ func TestDoImport_DeployCompile_ImportedModParticipatesInMerge(t *testing.T) {
 	require.Contains(t, out, "Installed (merged pak updated)",
 		"#197 postsmoke UX fix: a zero-file exmodz import must say what happened, not print the misleading 'Files deployed: 0'")
 
-	prof, err := svc.NewProfileManager().Get(game.ID, "default")
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, prof.Mods, 1)
 	require.Contains(t, prof.Mods[0].FileIDs, "Bear_Mount.exmodz",

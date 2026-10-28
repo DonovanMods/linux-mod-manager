@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // lookupPath traverses a decoded JSON document (map[string]any tree) by a
@@ -122,6 +122,11 @@ func mapFile(doc any, mapping map[string]string) (domain.DownloadableFile, error
 	if path, ok := mapping["size"]; ok {
 		if v, found := lookupPath(doc, path); found {
 			f.Size = coerceInt64(v)
+		}
+	}
+	if ts := pathString(doc, mapping, "uploaded_at"); ts != "" {
+		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+			f.UploadedAt = parsed // unparseable -> zero value, by design
 		}
 	}
 	return f, nil

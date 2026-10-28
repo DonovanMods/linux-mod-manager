@@ -1,0 +1,18 @@
+{
+  "error": "confirmation required: -y/--yes only installs a result named exactly \"auction\", and none of the 12 is; nothing was installed - pass --id <id> to install one of the candidates directly. Candidates: fuzzy (Auctionator Classic Skin), other (Auction House Tools), and 10 more",
+  "details": {
+    "query": "auction",
+    "candidates": [
+      {
+        "id": "fuzzy",
+        "name": "Auctionator Classic Skin"
+      },
+      {
+        "id": "other",
+        "name": "Auction House Tools"
+      }
+    ],
+    "total": 12,
+    "remedy": "pass --id <id> to install one of the candidates directly"
+  }
+}

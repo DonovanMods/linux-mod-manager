@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,7 +18,7 @@ import (
 // (mirrors pin_visibility_test.go's setPolicy).
 func setLockedForUpdate(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, version string) {
 	t.Helper()
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", sourceID, modID, version))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", sourceID, modID, version))
 }
 
 // TestApplySingleUpdate_Locked_RefusesUpdate_Text: `lmm update <mod-id>` on a
@@ -37,11 +37,15 @@ func TestApplySingleUpdate_Locked_RefusesUpdate_Text(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	})
 
-	assert.Contains(t, out, "Update available: 1.0 → 2.0 — but Mod One is locked at v1.0.")
-	assert.Contains(t, out, "Move the lock: lmm mod lock -s test-src -p default mod1 2.0   |   Unlock: lmm mod unlock -s test-src -p default mod1", "both remedies must carry -s/-p so a copy-paste can never resolve against a different source/profile (#142 round 5)")
+	// #294 (Ruling 5): the whole refused-update readout, byte-exact - the
+	// context line states what is available, then UpdatePlan.Refusal
+	// (lockedRefUnlockOnlyMessage's canonical text, which names its one
+	// -s/-p unlock remedy inline) states the refusal. The hand-worded
+	// refusal and its own separate remedy line are both gone.
+	assert.Equal(t, "Update available: 1.0 → 2.0\nMod One is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s test-src -p default mod1' first\n", out)
 	assert.NotContains(t, out, "Updating Mod One", "must never print the applying header - it never applies")
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version, "a locked mod must not actually update")
 }
@@ -63,12 +67,12 @@ func TestApplySingleUpdate_Locked_RefusesUpdate_JSON(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	})
 
-	var doc singleUpdateJSON
+	var doc core.UpdateApplyResult
 	require.NoError(t, json.Unmarshal([]byte(out), &doc))
-	assert.Equal(t, "mod1", doc.ModID)
+	assert.Equal(t, "mod1", doc.Mod.ModID)
 	assert.Equal(t, "1.0", doc.FromVersion)
 	assert.Equal(t, "2.0", doc.ToVersion)
-	assert.Equal(t, "skipped", doc.Status)
+	assert.Equal(t, "skipped", doc.Status.String())
 	assert.Equal(t, "locked", doc.Reason)
 }
 
@@ -80,10 +84,11 @@ func TestApplySingleUpdate_Locked_RefusesUpdate_JSON(t *testing.T) {
 func TestApplySingleUpdate_LockedAndPinned_MessageSaysBoth(t *testing.T) {
 	svc, game, _ := setupDoUpdateTest(t)
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "mod1", "g1", "default", domain.UpdatePinned))
+	_, settingErr3 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned)
+	require.NoError(t, settingErr3)
 	setLockedForUpdate(t, svc, game, "test-src", "mod1", "1.0")
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 
 	out := captureStdout(t, func() error {
@@ -94,6 +99,55 @@ func TestApplySingleUpdate_LockedAndPinned_MessageSaysBoth(t *testing.T) {
 	assert.Contains(t, out, "Unpin with: lmm mod set-update -s test-src -p default mod1 --notify", "the unpin remedy must carry -s/-p so a copy-paste can never resolve against a different source/profile (#142 round 5)")
 }
 
+// TestApplySingleUpdate_LockedAndPinned_JSON is TestApplySingleUpdate_LockedAndPinned_MessageSaysBoth's
+// --json sibling, characterized before the Task 9 PlanUpdate lift: the
+// document has no locked-distinguishing field for the pinned branch (unlike
+// the text branch's "(also locked)" suffix) - reason stays "pinned" whether
+// or not the mod is also locked.
+func TestApplySingleUpdate_LockedAndPinned_JSON(t *testing.T) {
+	svc, game, _ := setupDoUpdateTest(t)
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = false })
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+	_, settingErr4 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned)
+	require.NoError(t, settingErr4)
+	setLockedForUpdate(t, svc, game, "test-src", "mod1", "1.0")
+
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	var doc core.UpdateApplyResult
+	require.NoError(t, json.Unmarshal([]byte(out), &doc))
+	assert.Equal(t, "mod1", doc.Mod.ModID)
+	assert.Equal(t, "1.0", doc.FromVersion)
+	assert.Empty(t, doc.ToVersion)
+	assert.Equal(t, "skipped", doc.Status.String())
+	assert.Equal(t, "pinned", doc.Reason)
+}
+
+// TestApplySingleUpdate_LockedUpToDate_MessageUnchanged characterizes the
+// up-to-date branch's indifference to lock state before the Task 9 PlanUpdate
+// lift: unlike the pinned branch, the up-to-date message never gained a
+// "(also locked)" caveat, and this guards against the lift accidentally
+// adding one.
+func TestApplySingleUpdate_LockedUpToDate_MessageUnchanged(t *testing.T) {
+	svc, game, _ := setupDoUpdateTest(t)
+	mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
+	setLockedForUpdate(t, svc, game, "test-src", "mod1", "1.0")
+	// No AddMod: the mod is up to date regardless of lock state.
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	assert.Equal(t, "Mod One is already up to date (v1.0).\n", out)
+}
+
 // TestApplySingleUpdate_UnlockedPinned_MessageUnchanged pins the counterpart:
 // a plain pinned (not locked) mod must NOT gain the "(also locked)" suffix -
 // this is one of pin_visibility_test.go's contract's siblings, guarding
@@ -101,9 +155,10 @@ func TestApplySingleUpdate_LockedAndPinned_MessageSaysBoth(t *testing.T) {
 func TestApplySingleUpdate_UnlockedPinned_MessageUnchanged(t *testing.T) {
 	svc, game, _ := setupDoUpdateTest(t)
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "mod1", "g1", "default", domain.UpdatePinned))
+	_, settingErr5 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned)
+	require.NoError(t, settingErr5)
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 
 	out := captureStdout(t, func() error {
@@ -128,13 +183,14 @@ func TestApplyUpdate_Locked_CoreGateBackstop(t *testing.T) {
 		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 	src.AddDownload("new-1", []byte("new-content"))
 
-	upd := domain.Update{InstalledMod: *mod, NewVersion: "2.0"}
+	plan, err := svc.PlanUpdate(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
 
-	err := applyUpdate(context.Background(), svc, game, upd, "default")
+	_, err = applyUpdate(context.Background(), svc, game, plan)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, core.ErrModLocked, "the core gate must still refuse even when a CLI pre-check is bypassed")
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version)
 }
@@ -148,14 +204,16 @@ func TestDoUpdate_TableMarksLockedAndSkipsAutoApply(t *testing.T) {
 	svc, game, src := setupDoUpdateTest(t)
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "modA", "g1", "default", domain.UpdateAuto))
+	_, settingErr6 := svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr6)
 	setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
 	src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
 	src.AddDownload("a-new", []byte("new"))
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "modB", "Mod B", "1.0", []string{"b-old"}, map[string][]byte{"b-old.esp": []byte("old")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "modB", "g1", "default", domain.UpdateAuto))
+	_, settingErr7 := svc.SetModUpdatePolicy(context.Background(), "test-src", "modB", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr7)
 	src.AddMod(&domain.Mod{ID: "modB", SourceID: "test-src", Name: "Mod B", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "b-new", FileName: "b-new.esp", IsPrimary: true}})
 	src.AddDownload("b-new", []byte("new"))
@@ -180,16 +238,20 @@ func TestDoUpdate_TableMarksLockedAndSkipsAutoApply(t *testing.T) {
 	assert.Contains(t, rowB, "✓")
 	assert.NotContains(t, rowB, "[locked@")
 
-	assert.Contains(t, out, "\nApplying 1 auto-update(s)...\n")
+	// #324: one core batch call replaced the two hand-written loops, so the
+	// two section headers became one. The count still EXCLUDES the locked
+	// row, which is what this assertion is really about: the header must
+	// not promise an apply the lock is going to refuse.
+	assert.Contains(t, out, "\nApplying 1 update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod B 1.0 → 2.0\n")
 	assert.NotContains(t, out, "Mod A 1.0 → 2.0", "the locked mod must never reach applyUpdate")
-	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — move the lock or unlock to update.")
+	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — unlock to update.")
 
-	updatedA, err := svc.GetInstalledMod("test-src", "modA", "g1", "default")
+	updatedA, err := svc.GetInstalledMod(context.Background(), "test-src", "modA", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updatedA.Version, "locked mod must not have applied")
 
-	updatedB, err := svc.GetInstalledMod("test-src", "modB", "g1", "default")
+	updatedB, err := svc.GetInstalledMod(context.Background(), "test-src", "modB", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updatedB.Version, "unlocked auto mod must apply as before")
 }
@@ -198,13 +260,16 @@ func TestDoUpdate_TableMarksLockedAndSkipsAutoApply(t *testing.T) {
 // table's "[locked@<version>]" marker (#143 polish): a locked mod's updates[]
 // entry must carry "locked": true so a JSON consumer can tell that a locked
 // auto-policy mod will not be applied, and an unlocked entry alongside it must
-// stay false (and, being omitempty, absent from the raw document).
+// stay false - now emitted explicitly rather than omitted (#302: under
+// encoding/json/v2, `omitempty` drops only empty JSON values - "", null, {},
+// [] - never a false bool; `omitzero` is the tag that would).
 func TestDoUpdate_BulkJSON_MarksLockedEntries(t *testing.T) {
 	withJSONOutput(t)
 	svc, game, src := setupDoUpdateTest(t)
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "modA", "g1", "default", domain.UpdateAuto))
+	_, settingErr8 := svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr8)
 	setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
 	src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
@@ -219,19 +284,21 @@ func TestDoUpdate_BulkJSON_MarksLockedEntries(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	var doc updateJSONOutput
+	var doc core.UpdateCheckReport
 	require.NoError(t, json.Unmarshal([]byte(out), &doc))
 	require.Len(t, doc.Updates, 2)
 
-	byID := map[string]updateModJSON{}
+	byID := map[string]domain.Update{}
 	for _, u := range doc.Updates {
-		byID[u.ModID] = u
+		byID[u.InstalledMod.ID] = u
 	}
 	require.Contains(t, byID, "modA")
 	require.Contains(t, byID, "modB")
 	assert.True(t, byID["modA"].Locked, "locked mod's entry must carry locked: true")
 	assert.False(t, byID["modB"].Locked, "unlocked mod's entry must stay unmarked")
-	assert.NotContains(t, out, `"locked": false`, "locked is omitempty: absent, not false, on unlocked entries")
+	assert.Contains(t, out, `"locked": false`,
+		"v2 (#302): domain.Update.Locked's `omitempty` no longer drops a false bool - "+
+			"encoding/json/v2 omits only empty JSON values, so an unlocked entry now says so explicitly")
 }
 
 // TestDoUpdate_NoAutoUpdates_StillReportsLockedSkip covers the "no-auto
@@ -242,7 +309,8 @@ func TestDoUpdate_NoAutoUpdates_StillReportsLockedSkip(t *testing.T) {
 	svc, game, src := setupDoUpdateTest(t)
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "modA", "g1", "default", domain.UpdateAuto))
+	_, settingErr9 := svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr9)
 	setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
 	src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
@@ -253,7 +321,7 @@ func TestDoUpdate_NoAutoUpdates_StillReportsLockedSkip(t *testing.T) {
 	})
 
 	assert.NotContains(t, out, "Applying", "no unlocked auto candidate means no apply section at all")
-	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — move the lock or unlock to update.")
+	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — unlock to update.")
 }
 
 // TestDoUpdate_AllSkipsLockedNotifyMods: --all must also refuse a locked
@@ -278,16 +346,52 @@ func TestDoUpdate_AllSkipsLockedNotifyMods(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	assert.Contains(t, out, "\nApplying 1 remaining update(s)...\n")
+	// #324: see TestDoUpdate_TableMarksLockedAndSkipsAutoApply - one header
+	// now, still counting only what will actually be attempted.
+	assert.Contains(t, out, "\nApplying 1 update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod B 1.0 → 2.0\n")
 	assert.NotContains(t, out, "Mod A 1.0 → 2.0", "the locked mod must never reach applyUpdate")
-	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — move the lock or unlock to update.")
+	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — unlock to update.")
 
-	updatedA, err := svc.GetInstalledMod("test-src", "modA", "g1", "default")
+	updatedA, err := svc.GetInstalledMod(context.Background(), "test-src", "modA", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updatedA.Version)
 
-	updatedB, err := svc.GetInstalledMod("test-src", "modB", "g1", "default")
+	updatedB, err := svc.GetInstalledMod(context.Background(), "test-src", "modB", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updatedB.Version)
+}
+
+// TestDoUpdate_DryRun_LockedAutoRow_NeverPromised: the #324 review (Important
+// 2) - a locked auto-policy row must not appear in the `--dry-run` "Would
+// auto-update" preview. The table three lines above already marks the same
+// row "[locked@1.0]" and withholds its ✓ (isLocked's own guard in
+// printUpdateTable); the preview must agree with the table it sits under,
+// not promise an apply the lock is going to refuse.
+func TestDoUpdate_DryRun_LockedAutoRow_NeverPromised(t *testing.T) {
+	svc, game, src := setupDoUpdateTest(t)
+	updateDryRun = true
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
+	_, err := svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, err)
+	setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
+	src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
+	src.AddDownload("a-new", []byte("new"))
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "modB", "Mod B", "1.0", []string{"b-old"}, map[string][]byte{"b-old.esp": []byte("old")})
+	_, err = svc.SetModUpdatePolicy(context.Background(), "test-src", "modB", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, err)
+	src.AddMod(&domain.Mod{ID: "modB", SourceID: "test-src", Name: "Mod B", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "b-new", FileName: "b-new.esp", IsPrimary: true}})
+	src.AddDownload("b-new", []byte("new"))
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "\nWould auto-update 1 mod(s):\n")
+	assert.Contains(t, out, "  - Mod B 1.0 → 2.0\n")
+	assert.NotContains(t, out, "Mod A 1.0 → 2.0", "a locked auto row must never appear in the dry-run preview")
 }

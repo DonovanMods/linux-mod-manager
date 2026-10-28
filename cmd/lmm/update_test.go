@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -121,6 +123,20 @@ type fakeUpdateSource struct {
 	replacements map[string]map[string]string
 	authRequired bool
 	srv          *httptest.Server
+	// downloadURLErr, when set, is GetDownloadURL's answer for every file -
+	// a source.ManualDownloadError is a CurseForge author's opt-out (#535).
+	downloadURLErr error
+	// checkUpdatesCalls counts CheckUpdates invocations (#289 review,
+	// Important 1): applyBulkUpdate must build its plan from the update the
+	// batch listing already found (Service.PlanUpdateFrom), never by
+	// re-invoking CheckGameUpdates - see
+	// TestDoUpdate_BulkApply_ChecksSourceExactlyOnce.
+	checkUpdatesCalls int
+	// manualOnly names the mods whose every download is refused the way a
+	// CurseForge author's opt-out is (#543); refusedCalls counts the
+	// requests for them, so a test can prove a batch never asked.
+	manualOnly   map[string]bool
+	refusedCalls int
 }
 
 func newFakeUpdateSource(id string) *fakeUpdateSource {
@@ -168,9 +184,17 @@ func (s *fakeUpdateSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]
 	return s.files[mod.ID], nil
 }
 func (s *fakeUpdateSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	if s.downloadURLErr != nil {
+		return "", s.downloadURLErr
+	}
+	if s.manualOnly[mod.ID] {
+		s.refusedCalls++
+		return "", &source.ManualDownloadError{Reason: "the author has turned off API downloads"}
+	}
 	return s.srv.URL + "/" + fileID, nil
 }
 func (s *fakeUpdateSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	s.checkUpdatesCalls++
 	if s.authRequired {
 		return nil, domain.ErrAuthRequired
 	}
@@ -188,6 +212,18 @@ func (s *fakeUpdateSource) CheckUpdates(ctx context.Context, installed []domain.
 		})
 	}
 	return updates, nil
+}
+
+// CheckUpdatesWithProgress makes fakeUpdateSource a
+// source.UpdateProgressReporter, like nexusmods/curseforge, so doUpdate's
+// -v sink fires: report each installed mod's 1-based position in THIS
+// batch, then delegate to CheckUpdates for the actual comparison - mirrors
+// internal/core's reportingMockSource.
+func (s *fakeUpdateSource) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
+	for i, im := range installed {
+		report(i+1, len(installed), im.Name)
+	}
+	return s.CheckUpdates(ctx, installed)
 }
 
 // AddMod registers modID's "new version" definition and its downloadable
@@ -266,19 +302,18 @@ func seedInstalledForUpdate(t *testing.T, svc *core.Service, game *domain.Game, 
 		LinkMethod:   domain.LinkSymlink,
 		FileIDs:      fileIDs,
 	}
-	require.NoError(t, svc.SaveInstalledMod(im))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &im.Mod, "default"))
+	deployInstalledMod(t, svc, game, &im.Mod, "default")
 
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
-		_, cerr := pm.Create(game.ID, "default")
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
+		_, cerr := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, cerr)
 	}
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs}))
 
-	updated, err := svc.GetInstalledMod(sourceID, modID, game.ID, "default")
+	updated, err := svc.GetInstalledMod(context.Background(), sourceID, modID, game.ID, "default")
 	require.NoError(t, err)
 	return updated
 }
@@ -331,24 +366,48 @@ func TestApplySingleUpdate_HappyPath_PrintsExpectedOutput(t *testing.T) {
 	})
 }
 
-// TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues guards doUpdate's own
-// loop: auto-policy updates apply automatically, a failure mid-batch prints
-// "✗ %s: %v" and CONTINUES to the next update (never aborts), and --all
-// applies the remaining notify-policy updates afterward.
+// TestApplySingleUpdate_UpToDate_PrintsExpectedText characterizes the
+// plain-text up-to-date branch (Update==nil, not pinned) before the Task 9
+// PlanUpdate lift - no existing test pinned this exact line.
+func TestApplySingleUpdate_UpToDate_PrintsExpectedText(t *testing.T) {
+	svc, game, _ := setupDoUpdateTest(t)
+	mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
+	// No AddMod: fakeUpdateSource's CheckUpdates finds no registered mod, so
+	// no update is produced and the mod reports as current.
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	assert.Equal(t, "Mod One is already up to date (v1.0).\n", out)
+}
+
+// TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues guards doUpdate's
+// bulk apply: auto-policy updates apply automatically, a failure mid-batch
+// prints "✗ %s: %v" and CONTINUES to the next update (never aborts), and
+// --all applies the remaining notify-policy updates too.
+//
+// #324 replaced the two hand-written loops (an auto-policy pass, then
+// --all's remaining pass) with ONE core.ApplyUpdateBatch call, so the two
+// section headers became a single "Applying N update(s)..." - the only
+// output delta. Everything the test actually guards - the ✗ line, the
+// continuation past it, and all three end states - is unchanged.
 func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 	svc, game, src := setupDoUpdateTest(t)
 	updateAll = true
 
 	// mod1: auto-policy, succeeds.
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"m1-old"}, map[string][]byte{"mod1-old.esp": []byte("old1")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "mod1", "g1", "default", domain.UpdateAuto))
+	_, settingErr17 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr17)
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "m1-new", FileName: "mod1-new.esp", IsPrimary: true}})
 	src.AddDownload("m1-new", []byte("new1"))
 
 	// mod2: auto-policy, download fails (no AddDownload registered).
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod2", "Mod Two", "1.0", []string{"m2-old"}, map[string][]byte{"mod2-old.esp": []byte("old2")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "mod2", "g1", "default", domain.UpdateAuto))
+	_, settingErr18 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod2", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr18)
 	src.AddMod(&domain.Mod{ID: "mod2", SourceID: "test-src", Name: "Mod Two", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "m2-new", FileName: "mod2-new.esp", IsPrimary: true}})
 
@@ -362,23 +421,111 @@ func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	assert.Contains(t, out, "\nApplying 2 auto-update(s)...\n")
+	assert.Contains(t, out, "\nApplying 3 update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod One 1.0 → 2.0\n")
 	assert.Contains(t, out, "  ✗ Mod Two: ")
-	assert.Contains(t, out, "\nApplying 1 remaining update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod Three 1.0 → 2.0\n")
 
-	updated1, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated1, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated1.Version, "mod1 must have applied")
 
-	updated2, err := svc.GetInstalledMod("test-src", "mod2", "g1", "default")
+	updated2, err := svc.GetInstalledMod(context.Background(), "test-src", "mod2", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated2.Version, "mod2's failure must not have applied, but the batch must have continued past it")
 
-	updated3, err := svc.GetInstalledMod("test-src", "mod3", "g1", "default")
+	updated3, err := svc.GetInstalledMod(context.Background(), "test-src", "mod3", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated3.Version, "mod3 (--all, notify-policy) must have applied")
+}
+
+// TestDoUpdate_AllJSON_PartialCheckFailure_SurfacesOnDocument is the #324
+// review's Important 3: a partial update-CHECK failure (one source down,
+// another fine) must reach the caller under `--all --json`. Before this fix
+// the stderr warning was suppressed by Ruling 15's `!jsonOutput` guard and
+// the emitted core.UpdateBatchResult carried no error field, so the failure
+// reached neither stream - a caller got a result document plus a bare
+// non-zero exit with nothing to explain it. mod2 lives under a source the
+// service never registered, so CheckGameUpdates reports mod1's update
+// normally but returns a non-nil checkErr for mod2's source - the same
+// partial-failure shape TestDoUpdate_CheckFailed_JSONCarriesError pins for
+// the check-only (non---all) path.
+func TestDoUpdate_AllJSON_PartialCheckFailure_SurfacesOnDocument(t *testing.T) {
+	withJSONOutput(t)
+	svc, game, src := setupDoUpdateTest(t)
+	updateAll = true
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"m1-old"}, map[string][]byte{"mod1-old.esp": []byte("old1")})
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "m1-new", FileName: "mod1-new.esp", IsPrimary: true}})
+	src.AddDownload("m1-new", []byte("new1"))
+
+	// missing-src is never registered with the service - CheckGameUpdates'
+	// per-source loop fails this mod's registry lookup and returns a
+	// non-nil error alongside mod1's perfectly good update.
+	seedInstalledForUpdate(t, svc, game, "missing-src", "mod2", "Mod Two", "1.0", []string{"m2-old"}, map[string][]byte{"mod2-old.esp": []byte("old2")})
+
+	var doUpdateErr error
+	out := captureStdout(t, func() error {
+		doUpdateErr = doUpdate(context.Background(), svc, game, nil)
+		return nil
+	})
+
+	require.Error(t, doUpdateErr, "a partial check failure must still fail the command")
+	assert.ErrorIs(t, doUpdateErr, ErrReported)
+
+	var doc core.UpdateBatchResult
+	dec := json.NewDecoder(strings.NewReader(out))
+	require.NoError(t, dec.Decode(&doc))
+	trailing := strings.TrimSpace(out[dec.InputOffset():])
+	assert.Empty(t, trailing, "stdout must hold exactly one JSON document")
+
+	require.Len(t, doc.Applied, 1)
+	assert.Equal(t, "mod1", doc.Applied[0].Mod.ModID, "the source that DID answer must still apply")
+	assert.NotEmpty(t, doc.ErrorMessage, "the partial check failure must be visible in the document")
+	assert.Contains(t, doc.ErrorMessage, "missing-src")
+
+	updated1, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", updated1.Version)
+}
+
+// TestDoUpdate_BulkApply_ChecksSourceExactlyOnce guards #289 review's
+// Important 1 fix, now one level up: the bulk apply must build its plan
+// from the domain.Updates the batch listing already found
+// (Service.PlanUpdateBatchFrom, #324 - previously applyBulkUpdate's
+// per-mod Service.PlanUpdateFrom), never by re-invoking CheckGameUpdates
+// (and therefore the source's CheckUpdates) a second time. Before the fix, applying 3
+// auto-policy mods cost 1 (the listing) + 3 (one re-check per apply) = 4
+// CheckUpdates calls; after the fix it must cost exactly 1, however many
+// mods are applied.
+func TestDoUpdate_BulkApply_ChecksSourceExactlyOnce(t *testing.T) {
+	svc, game, src := setupDoUpdateTest(t)
+
+	const modCount = 3
+	for i := 1; i <= modCount; i++ {
+		id := fmt.Sprintf("mod%d", i)
+		seedInstalledForUpdate(t, svc, game, "test-src", id, id, "1.0", []string{id + "-old"}, map[string][]byte{id + "-old.esp": []byte("old")})
+		_, settingErr19 := svc.SetModUpdatePolicy(context.Background(), "test-src", id, "g1", "default", domain.UpdateAuto)
+		require.NoError(t, settingErr19)
+		src.AddMod(&domain.Mod{ID: id, SourceID: "test-src", Name: id, Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: id + "-new", FileName: id + "-new.esp", IsPrimary: true}})
+		src.AddDownload(id+"-new", []byte("new"))
+	}
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, fmt.Sprintf("\nApplying %d update(s)...\n", modCount))
+	assert.Equal(t, 1, src.checkUpdatesCalls, "bulk apply of N mods must perform exactly one CheckUpdates call (the listing), not N+1")
+
+	for i := 1; i <= modCount; i++ {
+		id := fmt.Sprintf("mod%d", i)
+		updated, err := svc.GetInstalledMod(context.Background(), "test-src", id, "g1", "default")
+		require.NoError(t, err)
+		assert.Equal(t, "2.0", updated.Version, "%s must have applied", id)
+	}
 }
 
 // TestDoUpdate_DryRun_ZeroSideEffectsAndOutputUnchanged guards --dry-run:
@@ -391,7 +538,8 @@ func TestDoUpdate_DryRun_ZeroSideEffectsAndOutputUnchanged(t *testing.T) {
 	updateDryRun = true
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "mod1", "g1", "default", domain.UpdateAuto))
+	_, settingErr20 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr20)
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 	// Deliberately no AddDownload - if ApplyUpdate were ever called, the
@@ -415,7 +563,7 @@ func TestDoUpdate_DryRun_ZeroSideEffectsAndOutputUnchanged(t *testing.T) {
 	_, err := os.Stat(callLog)
 	assert.True(t, os.IsNotExist(err), "no hook (and therefore no flow) must ever run under --dry-run")
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version, "dry-run must not mutate anything")
 
@@ -507,7 +655,7 @@ func TestDoUpdateRollback_Integration_AfterApplySingleUpdate(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	}))
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	require.Equal(t, "2.0", updated.Version)
 	require.Equal(t, "1.0", updated.PreviousVersion)
@@ -520,7 +668,7 @@ func TestDoUpdateRollback_Integration_AfterApplySingleUpdate(t *testing.T) {
 	assert.Contains(t, out, "Rolling back Mod One 2.0 → 1.0...\n")
 	assert.Contains(t, out, "\n✓ Rolled back: Mod One 2.0 → 1.0\n")
 
-	rolledBack, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	rolledBack, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", rolledBack.Version, "rollback must restore the previous version")
 
@@ -537,7 +685,7 @@ func captureStdoutOnlyErr(t *testing.T, fn func() error) error {
 	t.Helper()
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	require.NoError(t, err)
-	defer devNull.Close()
+	defer func() { require.NoError(t, devNull.Close(), "closing stdout sink") }()
 	old := os.Stdout
 	os.Stdout = devNull
 	defer func() { os.Stdout = old }()
@@ -571,16 +719,18 @@ func TestApplyUpdate_ForcedBeforeEachHookFailure_PrintsWarningAndApplies(t *test
 		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 	src.AddDownload("new-1", []byte("new-content"))
 
-	upd := domain.Update{InstalledMod: *mod, NewVersion: "2.0"}
+	plan, err := svc.PlanUpdate(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
 	stderr, err := captureStderrErr(t, func() error {
-		return applyUpdate(context.Background(), svc, game, upd, "default")
+		_, applyErr := applyUpdate(context.Background(), svc, game, plan)
+		return applyErr
 	})
 
 	require.NoError(t, err, "a forced before_each hook failure must not abort the update")
 	assert.Contains(t, stderr,
 		"Warning: uninstall.before_each hook failed (forced): hook failed with exit code 1: "+failScript+"\n")
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version, "the update must still apply despite the forced hook failure")
 }
@@ -610,9 +760,11 @@ func TestApplyUpdate_AfterEachHookFailures_PrintWarningsAndSucceed(t *testing.T)
 		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 	src.AddDownload("new-1", []byte("new-content"))
 
-	upd := domain.Update{InstalledMod: *mod, NewVersion: "2.0"}
+	plan, err := svc.PlanUpdate(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
 	stderr, err := captureStderrErr(t, func() error {
-		return applyUpdate(context.Background(), svc, game, upd, "default")
+		_, applyErr := applyUpdate(context.Background(), svc, game, plan)
+		return applyErr
 	})
 
 	require.NoError(t, err, "after_each hook failures must never fail the update")
@@ -621,7 +773,164 @@ func TestApplyUpdate_AfterEachHookFailures_PrintWarningsAndSucceed(t *testing.T)
 	assert.Contains(t, stderr,
 		"Warning: install.after_each hook failed: hook failed with exit code 1: "+installScript+"\n")
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version, "the update must have applied despite both after_each hook failures")
+}
+
+// TestDoUpdate_Verbose_GlobalCounterAcrossSources pins Ruling 6 (#283):
+// under -v, doUpdate's per-mod tick prints the GLOBAL position across every
+// source's batch, not each source's own count restarting at 1. Two sources
+// with 2 and 3 checkable mods respectively must print five sequential ticks
+// - 1/5..5/5 - never 1/2..2/2 followed by 1/3..3/3. Which source the
+// Updater visits first is a map iteration and not fixed, so this asserts
+// the sequence property rather than which mod carries which number.
+func TestDoUpdate_Verbose_GlobalCounterAcrossSources(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	srcA := newFakeUpdateSource("src-a")
+	t.Cleanup(srcA.Close)
+	srcB := newFakeUpdateSource("src-b")
+	t.Cleanup(srcB.Close)
+	svc.RegisterSource(srcA)
+	svc.RegisterSource(srcB)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"src-a": "g1", "src-b": "g1"},
+	}
+
+	oldSource, oldProfile, oldAll, oldDryRun, oldForce := updateSource, updateProfile, updateAll, updateDryRun, updateForce
+	oldVerbose, oldNoColor, oldNoHooks, oldJSON := verbose, noColor, noHooks, jsonOutput
+	updateSource, updateProfile, updateAll, updateDryRun, updateForce = "src-a", "", false, false, false
+	verbose, noColor, noHooks, jsonOutput = true, true, false, false
+	t.Cleanup(func() {
+		updateSource, updateProfile, updateAll, updateDryRun, updateForce = oldSource, oldProfile, oldAll, oldDryRun, oldForce
+		verbose, noColor, noHooks, jsonOutput = oldVerbose, oldNoColor, oldNoHooks, oldJSON
+	})
+
+	seedInstalledForUpdate(t, svc, game, "src-a", "a1", "Mod A1", "1.0", nil, map[string][]byte{"a1.esp": []byte("a1")})
+	seedInstalledForUpdate(t, svc, game, "src-a", "a2", "Mod A2", "1.0", nil, map[string][]byte{"a2.esp": []byte("a2")})
+	seedInstalledForUpdate(t, svc, game, "src-b", "b1", "Mod B1", "1.0", nil, map[string][]byte{"b1.esp": []byte("b1")})
+	seedInstalledForUpdate(t, svc, game, "src-b", "b2", "Mod B2", "1.0", nil, map[string][]byte{"b2.esp": []byte("b2")})
+	seedInstalledForUpdate(t, svc, game, "src-b", "b3", "Mod B3", "1.0", nil, map[string][]byte{"b3.esp": []byte("b3")})
+
+	_, stderr, doErr := captureStdoutAndStderr(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+	require.NoError(t, doErr)
+
+	var indices, totals []int
+	for _, line := range strings.Split(strings.TrimRight(stderr, "\n"), "\n") {
+		if !strings.HasPrefix(line, "  ") {
+			continue
+		}
+		var idx, total int
+		var name string
+		n, scanErr := fmt.Sscanf(strings.TrimPrefix(line, "  "), "%d/%d: %s", &idx, &total, &name)
+		require.NoError(t, scanErr)
+		require.Equal(t, 3, n)
+		indices = append(indices, idx)
+		totals = append(totals, total)
+	}
+
+	require.Len(t, indices, 5, "one tick per checkable mod across both sources; got stderr:\n%s", stderr)
+	assert.Equal(t, []int{1, 2, 3, 4, 5}, indices, "global index runs 1..5 across both sources without restarting")
+	for _, total := range totals {
+		assert.Equal(t, 5, total, "global total is the sum of both sources' batches, not either one alone")
+	}
+}
+
+// TestDoUpdate_JSON_TwoSources_NoGlobalCounterLeak confirms Ruling 6's live
+// GlobalIndex/GlobalTotal event fields have no --json equivalent to add:
+// under --json the sink stays nil regardless of --verbose (Ruling 15), so a
+// two-source, progress-reporting listing still emits exactly the one
+// UpdateCheckReport document, stderr stays empty, and nothing
+// update-check-progress-shaped (global_index/global_total) reaches stdout -
+// the existing Updates/Skipped fields already say everything the finished
+// check needs to.
+func TestDoUpdate_JSON_TwoSources_NoGlobalCounterLeak(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	srcA := newFakeUpdateSource("src-a")
+	t.Cleanup(srcA.Close)
+	srcB := newFakeUpdateSource("src-b")
+	t.Cleanup(srcB.Close)
+	svc.RegisterSource(srcA)
+	svc.RegisterSource(srcB)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"src-a": "g1", "src-b": "g1"},
+	}
+
+	oldSource, oldProfile, oldAll, oldDryRun, oldForce := updateSource, updateProfile, updateAll, updateDryRun, updateForce
+	oldVerbose, oldNoColor, oldNoHooks, oldJSON := verbose, noColor, noHooks, jsonOutput
+	updateSource, updateProfile, updateAll, updateDryRun, updateForce = "src-a", "", false, false, false
+	verbose, noColor, noHooks, jsonOutput = true, true, false, true
+	t.Cleanup(func() {
+		updateSource, updateProfile, updateAll, updateDryRun, updateForce = oldSource, oldProfile, oldAll, oldDryRun, oldForce
+		verbose, noColor, noHooks, jsonOutput = oldVerbose, oldNoColor, oldNoHooks, oldJSON
+	})
+
+	seedInstalledForUpdate(t, svc, game, "src-a", "a1", "Mod A1", "1.0", nil, map[string][]byte{"a1.esp": []byte("a1")})
+	seedInstalledForUpdate(t, svc, game, "src-b", "b1", "Mod B1", "1.0", nil, map[string][]byte{"b1.esp": []byte("b1")})
+
+	stdout, stderr, doErr := captureStdoutStderrErr(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+	require.NoError(t, doErr)
+	assert.Empty(t, stderr, "--json must leave stderr empty even with --verbose and a progress-reporting source (Ruling 15)")
+
+	var doc core.UpdateCheckReport
+	decodeSingleDoc(t, stdout, &doc)
+	assert.Equal(t, game.ID, doc.GameID)
+	assert.NotContains(t, stdout, "global_index", "no live-event field leaks into the report document")
+	assert.NotContains(t, stdout, "global_total", "no live-event field leaks into the report document")
+}
+
+// TestDoUpdate_BulkAuthRequired_NamesTheSource is P1a review finding F3: a
+// regression #375 introduced. Moving resolveSource into the single-mod
+// branch left the bulk path's auth handler reading an `updateSource` nothing
+// assigns, so the remedy sentence read "run 'lmm auth login ' to
+// authenticate" - an uncopyable command, on exactly the non-interactive path
+// #375 set out to unblock (a cron `lmm update` whose key expired).
+//
+// The source that actually needs authenticating is the one whose check
+// failed, which is what the message must name.
+func TestDoUpdate_BulkAuthRequired_NamesTheSource(t *testing.T) {
+	svc, game, src := setupDoUpdateTest(t)
+	src.authRequired = true
+	// The bulk path: no args, and no -s/--source, exactly as `lmm update`
+	// runs unattended since #375.
+	updateSource = ""
+	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"},
+		map[string][]byte{"mod1-old.esp": []byte("old-content")})
+
+	var err error
+	_, _ = captureStdoutErr(t, func() error {
+		err = doUpdate(context.Background(), svc, game, nil)
+		return nil
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "authentication required")
+	assert.Contains(t, err.Error(), "lmm auth login test-src",
+		"the remedy must name the source whose check failed, not the unset flag")
 }

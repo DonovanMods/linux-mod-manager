@@ -1,0 +1,32 @@
+{
+  "game_id": "space-engineers-2",
+  "profile": "default",
+  "scan": {
+    "game_id": "space-engineers-2",
+    "app_id": "1133870",
+    "libraries": [
+      "/home/user/.steam/steam"
+    ],
+    "items": [],
+    "tracked": 0,
+    "untracked": 2,
+    "warnings": [
+      "could not fetch Steam metadata (items are still adoptable): timeout"
+    ]
+  },
+  "entries": [
+    {
+      "file_id": "3617086610",
+      "path": "/home/user/.steam/steam/steamapps/workshop/content/1133870/3617086610",
+      "manifest": "7987119735124793734",
+      "time_updated": 1764767935
+    },
+    {
+      "file_id": "2900001111",
+      "path": "/home/user/.steam/steam/steamapps/workshop/content/1133870/2900001111",
+      "unavailable": true,
+      "note": "Steam does not describe this item - it may be delisted, deleted or private"
+    }
+  ],
+  "no_changes": false
+}

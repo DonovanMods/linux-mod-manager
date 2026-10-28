@@ -3,11 +3,15 @@ package icarus
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 const defaultFirestoreBaseURL = "https://firestore.googleapis.com/v1"
@@ -17,6 +21,20 @@ const defaultFirestoreBaseURL = "https://firestore.googleapis.com/v1"
 type firestoreDoc struct {
 	ID     string
 	Fields map[string]any
+	// UpdateTime is the document's own `updateTime` metadata (RFC 3339):
+	// when the catalog entry last changed, the one date the catalog has
+	// (#433). Zero when absent or unparsable.
+	UpdateTime time.Time
+}
+
+// parseUpdateTime reads Firestore's updateTime; anything unparsable is the
+// zero time - a missing date, never a failed listing.
+func parseUpdateTime(s string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 type firestoreClient struct {
@@ -50,8 +68,9 @@ func (c *firestoreClient) listCollection(ctx context.Context, collection string)
 		}
 		var page struct {
 			Documents []struct {
-				Name   string         `json:"name"`
-				Fields map[string]any `json:"fields"`
+				Name       string         `json:"name"`
+				Fields     map[string]any `json:"fields"`
+				UpdateTime string         `json:"updateTime"`
 			} `json:"documents"`
 			NextPageToken string `json:"nextPageToken"`
 		}
@@ -59,7 +78,7 @@ func (c *firestoreClient) listCollection(ctx context.Context, collection string)
 			return nil, fmt.Errorf("listing %s: %w", collection, err)
 		}
 		for _, d := range page.Documents {
-			all = append(all, firestoreDoc{ID: lastPathSegment(d.Name), Fields: decodeFields(d.Fields)})
+			all = append(all, firestoreDoc{ID: lastPathSegment(d.Name), Fields: decodeFields(d.Fields), UpdateTime: parseUpdateTime(d.UpdateTime)})
 		}
 		if page.NextPageToken == "" {
 			break
@@ -69,17 +88,26 @@ func (c *firestoreClient) listCollection(ctx context.Context, collection string)
 	return all, nil
 }
 
-// getDocument fetches a single document by ID.
+// getDocument fetches a single document by ID. A 404 is the catalog's own
+// answer that the document does not exist (#539: Project Daedalus recreated
+// mods under new IDs, leaving installed ones pointing at nothing), so it is
+// domain.ErrModNotFound - a fact a caller acts on - rather than an HTTP
+// failure carrying Firestore's NOT_FOUND body.
 func (c *firestoreClient) getDocument(ctx context.Context, collection, docID string) (*firestoreDoc, error) {
 	url := fmt.Sprintf("%s/%s/%s", c.documentsURL(), collection, docID)
 	var doc struct {
-		Name   string         `json:"name"`
-		Fields map[string]any `json:"fields"`
+		Name       string         `json:"name"`
+		Fields     map[string]any `json:"fields"`
+		UpdateTime string         `json:"updateTime"`
 	}
 	if err := c.getJSON(ctx, url, &doc); err != nil {
+		var status *httpStatusError
+		if errors.As(err, &status) && status.code == http.StatusNotFound {
+			return nil, fmt.Errorf("fetching %s/%s: not in the catalog (HTTP 404): %w", collection, docID, domain.ErrModNotFound)
+		}
 		return nil, fmt.Errorf("fetching %s/%s: %w", collection, docID, err)
 	}
-	return &firestoreDoc{ID: lastPathSegment(doc.Name), Fields: decodeFields(doc.Fields)}, nil
+	return &firestoreDoc{ID: lastPathSegment(doc.Name), Fields: decodeFields(doc.Fields), UpdateTime: parseUpdateTime(doc.UpdateTime)}, nil
 }
 
 func (c *firestoreClient) getJSON(ctx context.Context, url string, out any) error {
@@ -105,13 +133,25 @@ func (c *firestoreClient) getJSON(ctx context.Context, url string, out any) erro
 		const errBodySnippetCap = 512
 		snippetBytes, _ := io.ReadAll(io.LimitReader(resp.Body, errBodySnippetCap))
 		_, _ = io.Copy(io.Discard, resp.Body)
-		snippet := strings.TrimSpace(string(snippetBytes))
-		if snippet == "" {
-			return fmt.Errorf("icarus: GET %s: HTTP %d", url, resp.StatusCode)
-		}
-		return fmt.Errorf("icarus: GET %s: HTTP %d: %s", url, resp.StatusCode, snippet)
+		return &httpStatusError{url: url, code: resp.StatusCode, snippet: strings.TrimSpace(string(snippetBytes))}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// httpStatusError is getJSON's non-200 answer: the status as data, so a
+// caller can classify one (getDocument's 404), and the URL and a capped body
+// snippet in the message for everything else.
+type httpStatusError struct {
+	url     string
+	code    int
+	snippet string
+}
+
+func (e *httpStatusError) Error() string {
+	if e.snippet == "" {
+		return fmt.Sprintf("icarus: GET %s: HTTP %d", e.url, e.code)
+	}
+	return fmt.Sprintf("icarus: GET %s: HTTP %d: %s", e.url, e.code, e.snippet)
 }
 
 func lastPathSegment(resourceName string) string {

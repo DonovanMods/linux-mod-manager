@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,14 +26,14 @@ func setupDoDeployCompileTest(t *testing.T) (*core.Service, *domain.Game, *compi
 	game.ConvertPaks = true
 	game.InstallPath = t.TempDir()
 	game.SourceIDs = map[string]string{"fake-compiler": "external-icarus-id"}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
 	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
-	svc.RegisterSource(compiler)
+	registerCompileSource(svc, compiler)
 	return svc, game, compiler
 }
 
@@ -42,9 +42,9 @@ func setupDoDeployCompileTest(t *testing.T) (*core.Service, *domain.Game, *compi
 func ensureDefaultProfile(t *testing.T, svc *core.Service, game *domain.Game) {
 	t.Helper()
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
 }
@@ -56,7 +56,7 @@ func seedCompileExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, mo
 	ensureDefaultProfile(t, svc, game)
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, "1.0", cache.RetainedSourceName(fileID), []byte(name+"-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -64,7 +64,7 @@ func seedCompileExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, mo
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0", FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0", FileIDs: []string{fileID}}))
 }
 
 // seedCompilePakMod installs an enabled convert-eligible pak mod in the
@@ -81,7 +81,7 @@ func seedCompilePakMod(t *testing.T, svc *core.Service, game *domain.Game, modID
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, "1.0", member, pakContent))
 	versionDir := gameCache.ModPath(game.ID, "fake-compiler", modID, "1.0")
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{member}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -89,7 +89,7 @@ func seedCompilePakMod(t *testing.T, svc *core.Service, game *domain.Game, modID
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0", FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0", FileIDs: []string{fileID}}))
 }
 
 // TestDoDeploy_Compile_LabelsMergedRawAndLooseAndPrintsFooter is #255's CLI
@@ -103,7 +103,8 @@ func TestDoDeploy_Compile_LabelsMergedRawAndLooseAndPrintsFooter(t *testing.T) {
 	svc, game, _ := setupDoDeployCompileTest(t)
 	seedCompileExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
 	seedCompilePakMod(t, svc, game, "raw-pak", "Raw Pak Mod", "raw.pak")
-	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "raw-pak", game.ID, "default", false))
+	_, settingErr2 := svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false)
+	require.NoError(t, settingErr2)
 	seedDeployableMod(t, svc, game, "loose", "Loose Mod", "loose.esp")
 
 	out := captureStdout(t, func() error {
@@ -126,20 +127,20 @@ func TestDoDeploy_Compile_LabelsMergedRawAndLooseAndPrintsFooter(t *testing.T) {
 }
 
 // pakFailCompilerSource wraps compilerInstallSource so a CLI test can script
-// per-ref pak-conversion failures, mirroring internal/source/icarus/merge.go's
+// per-ref pak-conversion failures, mirroring internal/adapter/icarus/merge.go's
 // real failure path (a "... - deploying raw" warning per skipped ref).
 type pakFailCompilerSource struct {
 	*compilerInstallSource
 	failRefs map[string]string
 }
 
-func (s *pakFailCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+func (s *pakFailCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	var out []byte
 	var warnings []string
-	var failed []source.MergeFailure
+	var failed []adapter.MergeFailure
 	for _, src := range sources {
 		if reason, bad := s.failRefs[src.ModRef]; bad {
-			failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: reason})
+			failed = append(failed, adapter.MergeFailure{ModRef: src.ModRef, Reason: reason})
 			warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %s - deploying raw", src.ModName, reason))
 			continue
 		}
@@ -152,7 +153,7 @@ func (s *pakFailCompilerSource) MergeCompile(ctx context.Context, basePakPath st
 	return warnings, failed, os.WriteFile(outputPath, out, 0o644)
 }
 
-var _ source.MergeCompiler = (*pakFailCompilerSource)(nil)
+var _ adapter.MergeCompiler = (*pakFailCompilerSource)(nil)
 
 // TestDoDeploy_Compile_ConversionFailure_FooterCorrectsOptimisticLabel covers
 // #255's accepted optimistic case end to end: an opted-in pak is labeled
@@ -161,7 +162,7 @@ var _ source.MergeCompiler = (*pakFailCompilerSource)(nil)
 // correction, and the footer reports the raw fallback.
 func TestDoDeploy_Compile_ConversionFailure_FooterCorrectsOptimisticLabel(t *testing.T) {
 	svc, game, compiler := setupDoDeployCompileTest(t)
-	svc.RegisterSource(&pakFailCompilerSource{
+	registerCompileSource(svc, &pakFailCompilerSource{
 		compilerInstallSource: compiler,
 		failRefs:              map[string]string{"fake-compiler:flaky-pak": "irreconcilable"},
 	})

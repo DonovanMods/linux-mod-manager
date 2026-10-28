@@ -1,0 +1,31 @@
+{
+  "saved": [
+    "fallout4"
+  ],
+  "profiles": [
+    "fallout4/default"
+  ],
+  "warnings": [],
+  "refused": [
+    {
+      "game_id": "valheim",
+      "slug": "valheim",
+      "error": "cannot change install_path for game valheim from /games/valheim to /mnt/library/valheim: ...",
+      "details": {
+        "game_id": "valheim",
+        "install_path": "/games/valheim",
+        "new_install_path": "/mnt/library/valheim",
+        "mod_path": "/games/valheim/BepInEx/plugins",
+        "new_mod_path": "/mnt/library/valheim/BepInEx/plugins",
+        "deployed_files": 3,
+        "profiles": [
+          {
+            "profile": "default",
+            "deployed_files": 3
+          }
+        ],
+        "old_install_path_exists": true
+      }
+    }
+  ]
+}

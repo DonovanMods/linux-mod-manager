@@ -1,14 +1,16 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/nexusmods"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +22,7 @@ func captureStdout(t *testing.T, fn func() error) string {
 	require.NoError(t, err)
 	os.Stdout = w
 	defer func() { os.Stdout = old }()
-	defer r.Close()
+	defer func() { require.NoError(t, r.Close(), "closing read end of the pipe") }()
 
 	fnErr := fn()
 	require.NoError(t, w.Close(), "closing write end of the pipe")
@@ -70,7 +72,7 @@ func TestDoAuthStatusIncludesCustomSources(t *testing.T) {
 
 	t.Setenv("LMM_MY_REPO_API_KEY", "supersecretkey")
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
 	// "(<id>): ..." — doAuthStatus renders "<Name> (<id>): ..." for every
 	// auth-capable source, built-in or custom (see
@@ -103,7 +105,7 @@ func TestDoAuthStatusListsCustomSourcesInSortedOrder(t *testing.T) {
 		svc.RegisterSource(src)
 	}
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
 	// Each source's Name equals its ID above, so the rendered "<Name>
 	// (<id>): ..." line contains "(<id>):" once per source.
@@ -121,9 +123,9 @@ func TestDoAuthStatusListsCustomSourcesInSortedOrder(t *testing.T) {
 // Registered sources with stored tokens must NOT be reported as orphaned.
 //
 // Registers nexusmods explicitly: post-Task-3, doAuthStatus's "registered"
-// set comes purely from authCapableSources' registry query, with no more
+// set comes purely from app.AuthCapableSources' registry query, with no more
 // hardcoded built-in-ID special case — a *core.Service built directly here
-// (bypassing root.go's registerSources, which registers built-ins in
+// (bypassing app.Open, which registers built-ins in
 // production) must register nexusmods itself for "still-registered
 // built-in" to mean anything.
 func TestDoAuthStatusListsOrphanedTokens(t *testing.T) {
@@ -136,13 +138,13 @@ func TestDoAuthStatusListsOrphanedTokens(t *testing.T) {
 
 	// A token for a source ID that matches nothing registered (built-in or
 	// custom) — e.g. its definition file was deleted after login.
-	require.NoError(t, svc.SaveSourceToken("ghost-repo", "leftover-secret-key"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "ghost-repo", "leftover-secret-key"))
 	// A token for a still-registered built-in must not be reported as orphaned.
-	require.NoError(t, svc.SaveSourceToken("nexusmods", "built-in-key-1234567"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "built-in-key-1234567"))
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
-	assert.Contains(t, out, "ghost-repo: stored token with no matching source (key:")
+	assert.Contains(t, out, "ghost-repo: stored token with no matching source (key ")
 	assert.Contains(t, out, "remove with: lmm auth logout ghost-repo")
 	assert.NotContains(t, out, "leftover-secret-key")
 	assert.NotContains(t, out, "nexusmods: stored token with no matching source")
@@ -172,16 +174,75 @@ func TestDoAuthStatusDistinguishesAuthRemovedFromUnregistered(t *testing.T) {
 	require.NoError(t, err)
 	svc.RegisterSource(dir)
 
-	require.NoError(t, svc.SaveSourceToken("local-mods", "stale-auth-key-123456"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "local-mods", "stale-auth-key-123456"))
 	// Truly-unregistered case must still render its own distinct wording.
-	require.NoError(t, svc.SaveSourceToken("ghost-repo", "leftover-secret-key"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "ghost-repo", "leftover-secret-key"))
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
-	assert.Contains(t, out, "local-mods: stored token for source without auth declared (key:")
+	assert.Contains(t, out, "local-mods: stored token for source without auth declared (key ")
 	assert.Contains(t, out, "stale token? remove with: lmm auth logout local-mods")
 	assert.NotContains(t, out, "local-mods: stored token with no matching source")
 
-	assert.Contains(t, out, "ghost-repo: stored token with no matching source (key:")
+	assert.Contains(t, out, "ghost-repo: stored token with no matching source (key ")
 	assert.NotContains(t, out, "ghost-repo: stored token for source without auth declared")
+}
+
+// TestDoAuthStatus_JSON pins the app.AuthStatusReport document's framing
+// (one document decoding into the declared type with no unknown members,
+// empty stderr) and its recorded golden (#309).
+func TestDoAuthStatus_JSON(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	// The dev shell exports a real NEXUSMODS_API_KEY, which now outranks the
+	// stored token (#356) and would record the developer's own masked key
+	// into the golden. Blank it: this fixture is the STORED case.
+	t.Setenv("NEXUSMODS_API_KEY", "")
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "storedbuiltinkey12345"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "ghost-repo", "leftover-secret-key12"))
+
+	out := runJSONCommand(t, func() error {
+		return doAuthStatus(context.Background(), svc)
+	})
+	var got app.AuthStatusReport
+	decodeStrict(t, out, &got)
+	assertJSONCLIGolden(t, "auth_status", out)
+}
+
+// TestDoAuthStatusNamesAShadowedStoredKey is #356's CLI half: with both an
+// environment variable and a stored token, the environment is what lmm
+// sends, so the line names the environment AND says the stored key is
+// present but not in use. Before this, the line read "authenticated (key:
+// <stored>)" — the one place a user goes to ask which key lmm is sending
+// answered with the one it is not.
+func TestDoAuthStatusNamesAShadowedStoredKey(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(nexusmods.New(nil, ""))
+
+	t.Setenv("NEXUSMODS_API_KEY", "envkey1234567890")
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "storedkey1234567890"))
+
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
+	assert.Contains(t, out,
+		"authenticated via NEXUSMODS_API_KEY (key: env...890) (stored key present, shadowed by $NEXUSMODS_API_KEY)")
+	assert.NotContains(t, out, "storedkey1234567890")
+	assert.NotContains(t, out, "envkey1234567890")
+	// #79: the shadowed key is named as present, never shown - not even
+	// masked, which is what a decrypt-to-display would have produced.
+	assert.NotContains(t, out, "sto...890")
+
+	// Without the environment variable the stored key is the active one and
+	// the line is the stored form #79 gave it: a fingerprint, no key.
+	t.Setenv("NEXUSMODS_API_KEY", "")
+	out = captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
+	assert.Regexp(t, `authenticated \(key [0-9a-f]{8}\)`, out)
+	assert.NotContains(t, out, "shadowed")
 }

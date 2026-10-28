@@ -1,0 +1,13 @@
+{
+  "steam_app_id": "1149460",
+  "slug": "icarus",
+  "name": "Icarus",
+  "install_path": "/home/user/.steam/steam/steamapps/common/Icarus",
+  "mod_path": "/home/user/.steam/steam/steamapps/common/Icarus/Icarus/Content/Paks/mods",
+  "deploy_mode": "compile",
+  "adapter": "icarus",
+  "sources": {
+    "icarus": "icarus"
+  },
+  "known": true
+}

@@ -1,0 +1,7 @@
+{
+  "all": true,
+  "only": [
+    "thunderstore/content-warning",
+    "thunderstore/lethal-company"
+  ]
+}

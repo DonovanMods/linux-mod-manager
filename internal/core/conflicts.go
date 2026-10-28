@@ -7,30 +7,46 @@ import (
 	"io/fs"
 	"sort"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // ConflictModRef identifies one mod participating in a file conflict. Key is
 // domain.ModKey ("sourceID:modID"); Name is the mod's display name, falling
 // back to Key when no installed record supplies one.
-type ConflictModRef struct{ Key, Name string }
+type ConflictModRef struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
 
 // ProfileConflict describes one game-directory path that more than one
 // enabled mod in the profile provides. Owner is the mod whose copy of the
 // file is currently deployed per the deployed_files DB table; AlsoIn lists
 // every other provider, in profile load order (unlisted providers first,
-// mirroring OrderByProfile). LoadOrderWinner is the provider that comes LAST
+// mirroring orderByProfile). LoadOrderWinner is the provider that comes LAST
 // in that ordering - the one whose copy a fresh deploy would leave on disk,
 // since later-ordered mods deploy later and overwrite earlier ones. Stale
 // flags a conflict whose DB owner disagrees with the load-order winner (the
 // profile was reordered - or historically, deploy order was nondeterministic
 // - since the last deploy), meaning a redeploy would change which file wins.
 type ProfileConflict struct {
-	Path            string
-	Owner           ConflictModRef
-	AlsoIn          []ConflictModRef
-	LoadOrderWinner ConflictModRef
-	Stale           bool
+	Path            string           `json:"path"`
+	Owner           ConflictModRef   `json:"owner"`
+	AlsoIn          []ConflictModRef `json:"also_in"`
+	LoadOrderWinner ConflictModRef   `json:"load_order_winner"`
+	Stale           bool             `json:"stale"`
+}
+
+// ConflictReport is the document `lmm conflicts` (and serve) renders:
+// GetProfileConflicts' result paired with the game/profile it describes, so
+// the identity travels with the data instead of each frontend re-stamping
+// its own. Conflicts is sorted by Path (the query's own order) and is empty
+// - never null on the wire - both when the profile has no conflicts and when
+// it has no installed mods at all; telling those two apart is a
+// presentation concern the frontend already owns.
+type ConflictReport struct {
+	GameID    string            `json:"game_id"`
+	Profile   string            `json:"profile"`
+	Conflicts []ProfileConflict `json:"conflicts"`
 }
 
 // GetProfileConflicts is a pure read-only query returning every file path in
@@ -51,20 +67,54 @@ type ProfileConflict struct {
 // The profile's load order is read via the ProfileManager; a profile that
 // fails to load is treated as empty (nil), so every provider counts as
 // unlisted and ordering stays deterministic (sorted by key) rather than the
-// query aborting - mirroring OrderByProfile's nil handling. The query reads
+// query aborting - mirroring orderByProfile's nil handling. The query reads
 // the DB (GetInstalledMods, GetFileOwner) and walks each enabled mod's cache
 // directory (ListFiles); ctx is checked between per-mod cache walks so a
-// caller cancelling mid-query (e.g. the TUI's quit-drain) gets ctx.Err()
-// promptly instead of paying for the remaining walks.
+// caller cancelling mid-query gets ctx.Err() promptly instead of paying for
+// the remaining walks.
 func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, profileName string) ([]ProfileConflict, error) {
-	mods, err := s.GetInstalledMods(game.ID, profileName)
+	return s.profileConflicts(ctx, game, profileName, nil)
+}
+
+// GetProfileConflictsForOrder is GetProfileConflicts computed against a
+// PROPOSED load order rather than the one currently saved in the profile -
+// the read-only preview the web UI's reorder modal renders while a row is
+// being dragged (#332), and the reason the winner rule is never re-derived
+// in a frontend: the answer to "which mod wins this contested path if I
+// commit this order" is the same document, from the same code, as the
+// answer after the reorder really lands.
+//
+// order is a full load order in the shape ResolveReorder returns (every
+// mentioned ref first, then every unmentioned profile mod) - exactly what
+// ReorderProfileMods would persist, so the preview and the commit agree by
+// construction. A nil order means "use the profile's saved order", making
+// this call identical to GetProfileConflicts; a non-nil but EMPTY order
+// means "nothing is listed", which sorts every provider as unlisted (by
+// key), mirroring orderByProfile's own handling.
+//
+// Nothing is written: the proposed order is used only to build the ordering
+// index, never saved.
+func (s *Service) GetProfileConflictsForOrder(ctx context.Context, game *domain.Game, profileName string, order []domain.ModReference) ([]ProfileConflict, error) {
+	return s.profileConflicts(ctx, game, profileName, order)
+}
+
+// profileConflicts is the shared implementation of the two queries above.
+// order, when non-nil, replaces the saved profile's own Mods for ordering
+// purposes and for nothing else.
+func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profileName string, order []domain.ModReference) ([]ProfileConflict, error) {
+	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
 
+	// #269: external mods never contend for a game path lmm can see. Their
+	// files live under Steam's own workshop tree, not under mod_path, and
+	// lmm cannot see inside a game's own Workshop loader - so including
+	// them here could only ever produce an empty provider list, or worse, a
+	// conflict report that cannot explain itself. Documented limitation.
 	var enabled []domain.InstalledMod
 	for _, m := range mods {
-		if m.Enabled {
+		if m.Enabled && !m.External {
 			enabled = append(enabled, m)
 		}
 	}
@@ -91,12 +141,22 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 	// Collect every path each enabled mod PROVIDES (its cache manifest) and
 	// which mods provide it. A mod with no cache entry contributes nothing.
 	gameCache := s.GetGameCache(game)
+	// #353: one adapter resolution for the whole sweep - a games.yaml
+	// naming an adapter this build does not ship is a config error worth
+	// surfacing here rather than per mod. The refusal is returned as the
+	// typed *AdapterRefusedError (#455): which mod wins a path is a
+	// question about the layout, and a refused game has none, so there is
+	// no partial answer worth giving instead.
+	gameAdapter, err := s.AdapterFor(game)
+	if err != nil {
+		return nil, err
+	}
 	fileToKeys := make(map[string][]string)
 	for _, m := range enabled {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		files, err := deployableFiles(gameCache, game.ID, m.SourceID, m.ID, m.Version)
+		files, err := deployableFiles(gameCache, gameAdapter, game, m.SourceID, m.ID, m.Version)
 		if err != nil {
 			// A missing cache entry (e.g. manually deleted) just means the mod
 			// provides nothing; any OTHER read failure (permissions, corruption)
@@ -112,15 +172,21 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 		}
 	}
 
-	// Load order: position in OrderByProfile's ordering (unlisted providers
+	// Load order: position in orderByProfile's ordering (unlisted providers
 	// first sorted by key, then profile.Mods order; last = winner). A
 	// load-failed profile degrades to nil, per the doc comment above.
-	profile, err := s.NewProfileManager().Get(game.ID, profileName)
+	profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName)
 	if err != nil {
 		profile = nil
 	}
+	if order != nil {
+		// The proposed-order preview: an in-memory stand-in whose Mods are
+		// the order being previewed. Only orderByProfile reads it, and it
+		// reads nothing but Mods.
+		profile = &domain.Profile{Name: profileName, GameID: game.ID, Mods: order}
+	}
 	orderIndex := make(map[string]int, len(enabled))
-	for i, m := range OrderByProfile(profile, enabled) {
+	for i, m := range orderByProfile(profile, enabled) {
 		orderIndex[domain.ModKey(m.SourceID, m.ID)] = i
 	}
 
@@ -130,7 +196,7 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 			continue
 		}
 
-		ownerSourceID, ownerModID, found, err := s.GetFileOwner(game.ID, profileName, path)
+		ownerSourceID, ownerModID, found, err := s.GetFileOwner(ctx, game.ID, profileName, path)
 		if err != nil {
 			// GetFileOwner errs only on storage failure; conflating that with
 			// "no owner recorded" would silently under-report conflicts.

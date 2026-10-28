@@ -1,0 +1,389 @@
+package core_test
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// errCallerIsCompletingProfileWrite reports whether the caller of the current
+// Err() method (one frame further up, i.e. two frames from HERE) is the place
+// a completing profile write observes cancellation - core.completeProfileWrite
+// AFTER the write has run (v2 Phase 3 Ruling 16), or, before that ruling, the
+// ProfileManager mutator's OWN guard, which fired BEFORE the write. Naming
+// both is what lets one test bracket the fix: the trigger lands at the same
+// point in the flow either way, and only the resulting on-disk state differs.
+func errCallerIsCompletingProfileWrite() bool {
+	pc, _, _, ok := runtime.Caller(2)
+	if !ok {
+		return false
+	}
+	name := runtime.FuncForPC(pc).Name()
+	return strings.HasSuffix(name, "core.completeProfileWrite") ||
+		strings.HasSuffix(name, "core.(*ProfileManager).RemoveMod")
+}
+
+// cancelAtCompletingProfileWrite is live until core reaches the first
+// completing profile write of a run (see errCallerIsCompletingProfileWrite),
+// then cancels itself - putting the cancellation exactly in the window
+// Ruling 16 is about: after the DB mutation has committed, before the profile
+// file agrees with it. Safe for the concurrent Err() calls database/sql's own
+// (*Rows).awaitDone watcher makes: those never match the caller test, and the
+// fired flag is atomic.
+type cancelAtCompletingProfileWrite struct {
+	context.Context
+	cancel context.CancelFunc
+	fired  atomic.Bool
+}
+
+func (c *cancelAtCompletingProfileWrite) Err() error {
+	if errCallerIsCompletingProfileWrite() && c.fired.CompareAndSwap(false, true) {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+// cancelOnSecondUninstallIteration closes Done when Installer.uninstall starts
+// its second file. The first file is therefore gone while the rest of the mod
+// is still deployed, deterministically reproducing an interrupt in the middle
+// of a large purge without relying on timing.
+type cancelOnSecondUninstallIteration struct {
+	context.Context
+	cancel     context.CancelFunc
+	iterations atomic.Int32
+}
+
+func (c *cancelOnSecondUninstallIteration) Done() <-chan struct{} {
+	if pc, _, _, ok := runtime.Caller(1); ok &&
+		strings.HasSuffix(runtime.FuncForPC(pc).Name(), "core.(*Installer).uninstall") &&
+		c.iterations.Add(1) == 2 {
+		c.cancel()
+	}
+	return c.Context.Done()
+}
+
+// TestService_PurgeProfile_CancellationDuringFileRemoval_LeavesTheModOwned
+// pins #481: Installer.uninstall returns cancellation partway through a mod,
+// so purgeMods must not render that as a best-effort note and then delete the
+// installed-mod row and profile ref. Keeping all deployed_files rows is the
+// conservative recovery choice: a rerun still knows every path it must clear.
+func TestService_PurgeProfile_CancellationDuringFileRemoval_LeavesTheModOwned(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy}
+
+	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{
+		"a.esp": []byte("a"),
+		"b.esp": []byte("b"),
+	})
+	seedProfileWithMod(t, svc, game.ID, "default", "src", "a", "1.0")
+	installSeededMod(t, svc, game, "a")
+
+	mods, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, mods, 1)
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelOnSecondUninstallIteration{Context: inner, cancel: cancel}
+	sink, seen := core.RecordEvents()
+
+	result, err := svc.PurgeProfile(ctx, game, "default", mods, core.PurgeOptions{Uninstall: true}, sink)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "the interrupt must be fatal, not a best-effort per-mod note")
+	assert.Equal(t, int32(2), ctx.iterations.Load(), "the interrupt must land after exactly one file-loop iteration")
+	require.NotNil(t, result)
+	assert.Zero(t, result.Purged, "a partially removed mod must not be reported purged")
+	assert.Empty(t, result.Notes, "cancellation is not a per-mod business note")
+	assert.Empty(t, result.Skipped)
+
+	remaining := 0
+	for _, name := range []string{"a.esp", "b.esp"} {
+		if _, statErr := os.Stat(filepath.Join(game.ModPath, name)); statErr == nil {
+			remaining++
+		}
+	}
+	assert.Equal(t, 1, remaining, "the fixture must cancel after one of the two files is removed")
+
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "default", "src", "a")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"a.esp", "b.esp"}, rows,
+		"all ownership rows stay so a rerun can clear the partial removal")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+	assert.NoError(t, err, "the partially removed mod must retain its installed-mod owner")
+	profile, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.NotNil(t, profile.FindRef("src", "a"), "the partially removed mod must retain its profile owner")
+
+	phases, _ := phasesOf(*seen)
+	for _, phase := range phases {
+		assert.NotEqual(t, core.PurgeModPurged, phase, "a cancelled mod must not emit success")
+		assert.NotEqual(t, core.PurgeComplete, phase, "a cancelled purge must not emit completion")
+	}
+
+	// The retained ownership makes the partial state recoverable: rerunning
+	// the same operation removes the remaining file and every owning record.
+	runAgain, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{Uninstall: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, runAgain.Purged)
+	for _, name := range []string{"a.esp", "b.esp"} {
+		_, statErr := os.Stat(filepath.Join(game.ModPath, name))
+		assert.True(t, os.IsNotExist(statErr), "%s must be absent after recovery", name)
+	}
+	rows, err = svc.GetDeployedFilesForMod(context.Background(), game.ID, "default", "src", "a")
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+	_, err = svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+	profile, err = svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Nil(t, profile.FindRef("src", "a"))
+}
+
+// TestService_PurgeProfile_CancellationBetweenRecordDeleteAndProfileRefRemoval
+// is the class-(A) shape test for v2 Phase 3 Ruling 16: a `purge --uninstall`
+// deletes each mod's DB record and then its profile ref, and a cancellation
+// arriving between those two steps must not leave them disagreeing.
+//
+// One test covers the shape, not the eleven sites that share it: the property
+// is completeProfileWrite's, and every site calls it the same way.
+//
+// Against 85a3ed0 this fails on the profile-ref assertion - RemoveMod's own
+// ctx.Err() guard refused the write, so mod A's record was gone while its ref
+// remained (the call still ended in context.Canceled there, via the next
+// iteration's loop-top check, so that assertion alone would not have caught
+// the drift).
+func TestService_PurgeProfile_CancellationBetweenRecordDeleteAndProfileRefRemoval(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{"a.esp": []byte("a")})
+	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "1.0", true, map[string][]byte{"b.esp": []byte("b")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "b", "1.0")
+	installSeededMod(t, svc, game, "a")
+	installSeededMod(t, svc, game, "b")
+
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, mods, 2)
+	first, second := mods[0], mods[1]
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelAtCompletingProfileWrite{Context: inner, cancel: cancel}
+
+	result, err := svc.PurgeProfile(ctx, game, "default", mods, core.PurgeOptions{Uninstall: true}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "the run must end with the cancellation, not absorb it")
+	require.True(t, ctx.fired.Load(), "the cancellation must have landed on a completing profile write")
+	require.NotNil(t, result)
+
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
+	require.NoError(t, err)
+
+	_, err = svc.GetInstalledMod(context.Background(), first.SourceID, first.ID, "g1", "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "the record delete committed before the cancellation")
+	assert.Nil(t, profile.FindRef(first.SourceID, first.ID),
+		"Ruling 16 (A): the profile write completing that delete must finish under context.WithoutCancel")
+	assert.Empty(t, result.Notes, "the cancellation must not be reported as a per-mod business note")
+
+	_, err = svc.GetInstalledMod(context.Background(), second.SourceID, second.ID, "g1", "default")
+	assert.NoError(t, err, "the next mod must not be processed after the cancellation")
+	assert.NotNil(t, profile.FindRef(second.SourceID, second.ID),
+		"the next mod must not be processed after the cancellation")
+}
+
+// TestService_ApplyRelinkMod_CancellationBetweenDBDeleteAndProfileMove is the
+// residual class-(A) shape for v2 Phase 3 Ruling 16, left open at fix wave
+// round 1's "Left for the coordinator" (deviation 3): a re-link deletes the
+// old DB row, then moves the profile ref, then saves the new DB row - one
+// three-step commit once the old row is gone. Reuses
+// cancelAtCompletingProfileWrite unmodified: the re-link branch's FIRST
+// completeProfileWrite call is the pair's RemoveMod(old ref), which runs
+// immediately after the DB delete with no core-originated ctx.Err() check in
+// between, so the harness's existing trigger point already lands exactly
+// where this test needs it.
+//
+// Against 611b00d this fails on the new-DB-row assertion: the profile pair
+// finishes under WithoutCancel (round 1's fix), but the run then returns
+// before the new DB row is ever saved - the profile agrees with the NEW
+// identity while the DB has NEITHER identity's row.
+func TestService_ApplyRelinkMod_CancellationBetweenDBDeleteAndProfileMove(t *testing.T) {
+	svc, game, _ := newModDetailTestService(t)
+	seedModDetailInstalled(t, svc, game, "a", "1.5")
+	game.SourceIDs["src"] = game.ID // relink target must be a configured source
+
+	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "src", "b")
+	require.NoError(t, err)
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelAtCompletingProfileWrite{Context: inner, cancel: cancel}
+
+	result, err := svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "the run must end with the cancellation, not absorb it")
+	require.True(t, ctx.fired.Load(), "the cancellation must have landed on a completing profile write")
+	assert.Nil(t, result)
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "the old identity's DB row must be gone")
+
+	moved, err := svc.GetInstalledMod(context.Background(), "src", "b", game.ID, "default")
+	require.NoError(t, err, "Ruling 16 (A): the new DB row must be saved even though the run was cancelled")
+	assert.Equal(t, "1.5", moved.Version)
+
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Nil(t, prof.FindRef("src", "a"), "the old profile ref must be removed")
+	require.NotNil(t, prof.FindRef("src", "b"), "the new profile ref must exist, agreeing with the DB")
+}
+
+// TestService_ApplyAdopt_CancellationAtCompletingProfileWrite_EndsFatallyAndCountsAdopted
+// is the class-(A) shape test for the task 18 re-review round-2 NEW-1
+// finding: adoptScannedMod's completing profile write (adopt.go) is the one
+// class-(A) site whose CALLER (ApplyAdopt's loop) renders the completing
+// re-check's own cancellation as a per-mod failure and keeps looping,
+// instead of ending the run fatally with the just-completed mod counted as
+// adopted - the DB row and the profile ref are both fully committed by the
+// time completeProfileWrite reports the cancellation.
+//
+// Against 57dfcfa this fails on both counter assertions: ApplyAdopt returns
+// (result, nil) with Adopted:0, Failed:1, even though the mod is fully
+// registered in both the DB and the profile.
+func TestService_ApplyAdopt_CancellationAtCompletingProfileWrite_EndsFatallyAndCountsAdopted(t *testing.T) {
+	svc, game := newAdoptTestService(t)
+	writeLooseMod(t, game, "LooseMod-1.0.zip", "loose-payload")
+
+	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{SkipMatch: true})
+	require.NoError(t, err)
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelAtCompletingProfileWrite{Context: inner, cancel: cancel}
+
+	result, err := svc.ApplyAdopt(ctx, game, plan, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "the run must end with the cancellation, not absorb it as a per-mod failure")
+	require.True(t, ctx.fired.Load(), "the cancellation must have landed on a completing profile write")
+	require.NotNil(t, result)
+
+	assert.Equal(t, 1, result.Adopted, "the just-completed mod's DB row and profile ref are both written - it counts as adopted")
+	assert.Equal(t, 0, result.Failed, "the completing re-check's own cancellation is not a per-mod failure")
+
+	mods, mErr := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, mErr)
+	require.Len(t, mods, 1, "the DB row must be committed")
+
+	profile, pErr := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, pErr)
+	require.Len(t, profile.Mods, 1, "the profile ref must be committed")
+}
+
+// TestService_ApplyRelinkMod_CancelledBeforeApply_LeavesEverythingUntouched
+// is the bracketing counterpart: a cancellation that lands before the run
+// ever starts (beginOp's own guard) must not touch the old DB row, the new
+// identity, or the profile at all.
+func TestService_ApplyRelinkMod_CancelledBeforeApply_LeavesEverythingUntouched(t *testing.T) {
+	svc, game, _ := newModDetailTestService(t)
+	seedModDetailInstalled(t, svc, game, "a", "1.5")
+	game.SourceIDs["src"] = game.ID
+
+	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "src", "b")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, result)
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+	assert.NoError(t, err, "a cancellation before the run starts must not touch the old record")
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "b", game.ID, "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "the new identity must not have been created")
+
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NotNil(t, prof.FindRef("src", "a"), "the old profile ref must be untouched")
+	assert.Nil(t, prof.FindRef("src", "b"))
+}
+
+// cancelAtRestoringOriginals is live until core reaches a snapshot
+// restore's ORIGINALS stage, then cancels itself - putting the
+// cancellation in the widest window the product has: after stage 1 has
+// emptied the game directory, before stage 3 makes the profile and the
+// database agree with the snapshot again.
+type cancelAtRestoringOriginals struct {
+	context.Context
+	cancel context.CancelFunc
+	fired  atomic.Bool
+}
+
+func (c *cancelAtRestoringOriginals) Err() error {
+	if pc, _, _, ok := runtime.Caller(1); ok &&
+		strings.HasSuffix(runtime.FuncForPC(pc).Name(), "core.(*Service).restoreOriginals") &&
+		c.fired.CompareAndSwap(false, true) {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+// TestService_ApplySnapshotRestore_CancellationBetweenPurgeAndProfileWrite
+// is #350 review minor 8. A restore has the longest window in the product
+// between "the game directory is empty" and "the database and the profile
+// agree again", and the claim that a cancellation there reports HOW FAR IT
+// GOT - rather than a bare "context canceled" - was untested.
+func TestService_ApplySnapshotRestore_CancellationBetweenPurgeAndProfileWrite(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+
+	// A mod that REPLACES the fixture's stock file, so the store has an
+	// original for the cancelled stage to be interrupted before restoring.
+	seedNamedInstalledMod(t, svc, game, "src", "wrecker", "Wrecker", "2.0", true,
+		map[string][]byte{"Data/shipped.esp": []byte("WRECKED")})
+	seedProfileWithMod(t, svc, game.ID, "default", "src", "wrecker", "2.0")
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	_, err = svc.CreateSnapshot(context.Background(), game, "default", "known-good")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(context.Background(), game, "known-good")
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.ToPurge, "the fixture must have something to purge")
+	require.NotEmpty(t, plan.Originals, "and an original to be cancelled before restoring")
+
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &cancelAtRestoringOriginals{Context: base, cancel: cancel}
+
+	result, err := svc.ApplySnapshotRestore(ctx, game, plan,
+		core.SnapshotRestoreOptions{NoSafetySnapshot: true}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+
+	var partial *core.SnapshotRestorePartialError
+	require.ErrorAs(t, err, &partial,
+		"a restore that dies after the purge must report what it had done")
+	require.NotNil(t, partial.Result)
+	assert.Equal(t, len(plan.ToPurge), partial.Result.Purged,
+		"the purge completed, and the partial result says so")
+	assert.Zero(t, partial.Result.OriginalsRestored,
+		"the originals stage was cancelled before it wrote anything")
+	assert.Same(t, result, partial.Result,
+		"the returned result and the error's are the same document")
+}

@@ -1,0 +1,2520 @@
+package core_test
+
+import (
+	"context"
+	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
+)
+
+// --- PlanProfileSwitch / ApplyProfileSwitch (Task 4) ---
+//
+// These extract doProfileSwitch (cmd/lmm/profile.go) into a pure diff
+// computation (PlanProfileSwitch) plus an execution step (ApplyProfileSwitch)
+// that reuses the flow-event/phase-constant pattern established
+// by Task 3, extended with Switch*-prefixed phases rather than a parallel
+// SwitchProgress type - see the task report for the full phase mapping.
+
+// seedInstalledModUnderProfile is seedNamedInstalledMod with a
+// caller-supplied ProfileName, needed because the pre-extraction
+// doProfileSwitch's enable-loop calls SetModEnabled(..., targetName, ...) -
+// the NEW profile's name, not the mod's own current ProfileName (see the
+// task report) - so a toEnable mod's DB row must already live under the
+// target profile name for that call to find and update it.
+func seedInstalledModUnderProfile(t *testing.T, svc *core.Service, game *domain.Game, profileName, sourceID, modID, name, version string, enabled bool, files map[string][]byte) {
+	t.Helper()
+
+	gameCache := svc.GetGameCache(game)
+	for path, content := range files {
+		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+	}
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       modID,
+			SourceID: sourceID,
+			Name:     name,
+			Version:  version,
+			GameID:   game.ID,
+		},
+		ProfileName:  profileName,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      enabled,
+	}))
+}
+
+// seedDeployedModUnderProfile records an installed row that is already
+// enabled AND deployed under profileName, without touching the cache (the
+// caller has usually seeded the bytes under another profile already). It is
+// what "this mod is already live under the target profile" looks like in
+// the DB - the state #430 made the switch ask about, rather than reading
+// the outgoing profile's row and assuming.
+func seedDeployedModUnderProfile(t *testing.T, svc *core.Service, game *domain.Game, profileName, sourceID, modID, name, version string) {
+	t.Helper()
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       modID,
+			SourceID: sourceID,
+			Name:     name,
+			Version:  version,
+			GameID:   game.ID,
+		},
+		ProfileName:  profileName,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+	}))
+}
+
+// installEnabledBlockingTrigger mirrors installBlockingTrigger but targets
+// installed_mods.enabled specifically, isolating SetModEnabled failures from
+// SetModLinkMethod/SetModDeployed (which installBlockingTrigger blocks) or
+// any other column.
+func installEnabledBlockingTrigger(t *testing.T, dbPath string) {
+	t.Helper()
+	conn, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+	_, err = conn.Exec(`
+		CREATE TRIGGER block_enabled_updates
+		BEFORE UPDATE OF enabled ON installed_mods
+		BEGIN
+			SELECT RAISE(ABORT, 'blocked for test');
+		END;
+	`)
+	require.NoError(t, err)
+}
+
+// --- PlanProfileSwitch ---
+
+func TestService_PlanProfileSwitch_AlreadyActive(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	assert.True(t, plan.AlreadyActive)
+	assert.Equal(t, "g1", plan.GameID)
+	assert.Equal(t, "default", plan.From)
+	assert.Equal(t, "default", plan.To)
+	assert.False(t, plan.NoChanges)
+	assert.Empty(t, plan.ToDisable)
+	assert.Empty(t, plan.ToEnable)
+	assert.Empty(t, plan.ToInstall)
+}
+
+// TestService_PlanProfileSwitch_NoChangesWhenModSetsMatch guards the no-op
+// fast path: when the target profile's mod set already matches what is
+// enabled AND already live under the target's own rows, PlanProfileSwitch
+// reports NoChanges (only SetDefault is needed) - mirroring
+// doProfileSwitch's "No mod changes, just switch the default" branch.
+//
+// #430 narrowed what qualifies. This test used to seed the shared mod under
+// the OUTGOING profile only and still expect NoChanges, which is the defect
+// itself written down as an expectation: the target profile had no row, so
+// the switch made it the default with its mod listed, enabled nowhere, and
+// deployed anyway. The "nothing to do" case is the one where the target's
+// own row already says enabled and deployed - asserted here - and the
+// cross-profile case it used to cover is now
+// TestService_ProfileSwitch_SharedModEndsEnabledUnderTheTargetProfile.
+func TestService_PlanProfileSwitch_NoChangesWhenModSetsMatch(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "other")
+	require.NoError(t, err)
+
+	seedInstalledMod(t, svc, game, "src", "shared", "1.0", true, map[string][]byte{"shared.esp": []byte("s")})
+	seedDeployedModUnderProfile(t, svc, game, "other", "src", "shared", "Test Mod", "1.0")
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "other")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	assert.False(t, plan.AlreadyActive)
+	assert.True(t, plan.NoChanges)
+	assert.Empty(t, plan.ToDisable)
+	assert.Empty(t, plan.ToEnable)
+	assert.Empty(t, plan.ToInstall)
+}
+
+// TestService_PlanProfileSwitch_ComputesDisableEnableInstallBuckets guards
+// the diff algorithm's three buckets in one mixed scenario: a mod only in
+// the current profile's enabled set goes to ToDisable, a mod installed (and
+// cached) but disabled that the target references goes to ToEnable, and a
+// mod the target references with no DB row at all goes to ToInstall.
+func TestService_PlanProfileSwitch_ComputesDisableEnableInstallBuckets(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	// modC: enabled under "default", absent from "target" -> ToDisable.
+	seedNamedInstalledMod(t, svc, game, "src", "modC", "Mod C", "1.0", true, map[string][]byte{"c.esp": []byte("c")})
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modC", Version: "1.0"}))
+
+	// modB: installed (under "default") but disabled, cached, referenced by
+	// "target" -> ToEnable.
+	seedNamedInstalledMod(t, svc, game, "src", "modB", "Mod B", "1.0", false, map[string][]byte{"b.esp": []byte("b")})
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modB", Version: "1.0"}))
+
+	// modD: referenced by "target" only, no DB row at all -> ToInstall.
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modD", Version: "2.0"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	assert.False(t, plan.NoChanges)
+
+	require.Len(t, plan.ToDisable, 1)
+	assert.Equal(t, "modC", plan.ToDisable[0].ID)
+
+	require.Len(t, plan.ToEnable, 1)
+	assert.Equal(t, "modB", plan.ToEnable[0].ID)
+
+	require.Len(t, plan.ToInstall, 1)
+	assert.Equal(t, "modD", plan.ToInstall[0].ModID)
+	assert.Equal(t, "2.0", plan.ToInstall[0].Version)
+}
+
+// TestService_PlanProfileSwitch_DeterministicOrder guards Task 1's
+// PlanProfileSwitch fix: ToDisable/ToEnable/ToInstall used to be built by
+// ranging Go maps (currentEnabled/targetKeys), so their element order was
+// arbitrary from run to run. This seeds three mods per bucket with
+// profile.Mods orders that deliberately don't match alphabetical or
+// insertion order, plans twice, and asserts: (1) both runs produce identical
+// slices, and (2) ToDisable follows the FROM profile's ("default") Mods
+// order while ToEnable/ToInstall follow the TO profile's ("target") Mods
+// order - interleaved in a single Mods list, to prove each bucket
+// independently preserves its relative order within that shared list.
+func TestService_PlanProfileSwitch_DeterministicOrder(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	// ToDisable candidates: enabled under "default", absent from "target".
+	// default.Mods is deliberately not alphabetical (disC, disA, disB).
+	for _, id := range []string{"disC", "disA", "disB"} {
+		seedNamedInstalledMod(t, svc, game, "src", id, "Dis "+id, "1.0", true, nil)
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
+	}
+
+	// ToEnable candidates: installed (under "default") but disabled, cached,
+	// referenced by "target".
+	for _, id := range []string{"enA", "enB", "enC"} {
+		seedNamedInstalledMod(t, svc, game, "src", id, "En "+id, "1.0", false, map[string][]byte{id + ".dat": []byte(id)})
+	}
+
+	// ToInstall candidates: referenced by "target" only, no DB row at all.
+	// target.Mods interleaves enable/install refs in an order that matches
+	// neither alphabetical nor insertion order for either sub-sequence.
+	for _, id := range []string{"enC", "insB", "enA", "insC", "enB", "insA"} {
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
+	}
+
+	plan1, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+	plan2, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+
+	assert.Equal(t, plan1.ToDisable, plan2.ToDisable, "two runs must produce identical ToDisable order")
+	assert.Equal(t, plan1.ToEnable, plan2.ToEnable, "two runs must produce identical ToEnable order")
+	assert.Equal(t, plan1.ToInstall, plan2.ToInstall, "two runs must produce identical ToInstall order")
+
+	var disableIDs []string
+	for _, im := range plan1.ToDisable {
+		disableIDs = append(disableIDs, im.ID)
+	}
+	assert.Equal(t, []string{"disC", "disA", "disB"}, disableIDs, "ToDisable must follow the FROM profile's (default) Mods order")
+
+	var enableIDs []string
+	for _, im := range plan1.ToEnable {
+		enableIDs = append(enableIDs, im.ID)
+	}
+	assert.Equal(t, []string{"enC", "enA", "enB"}, enableIDs, "ToEnable must follow the TO profile's (target) Mods order")
+
+	var installIDs []string
+	for _, ref := range plan1.ToInstall {
+		installIDs = append(installIDs, ref.ModID)
+	}
+	assert.Equal(t, []string{"insB", "insC", "insA"}, installIDs, "ToInstall must follow the TO profile's (target) Mods order")
+}
+
+// TestService_PlanProfileSwitch_CacheMissForcesReinstallWithPreservedFileIDs
+// guards doProfileSwitch's re-download branch: when a mod the target
+// profile references IS installed in the DB but its cache entry is gone,
+// PlanProfileSwitch classifies it as ToInstall (not ToEnable) and carries
+// over the installed mod's own FileIDs (not the profile YAML's, which may be
+// empty or stale) so the redownload uses the same files.
+func TestService_PlanProfileSwitch_CacheMissForcesReinstallWithPreservedFileIDs(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	// DB row exists (with FileIDs), but nothing was ever stored in the cache.
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "modE", SourceID: "src", Name: "Mod E", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"f1", "f2"},
+	}))
+	// Profile YAML's own FileIDs are deliberately absent, to prove
+	// PlanProfileSwitch uses the INSTALLED mod's FileIDs, not the profile's.
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modE", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+
+	require.Len(t, plan.ToInstall, 1)
+	assert.Equal(t, "modE", plan.ToInstall[0].ModID)
+	assert.Equal(t, []string{"f1", "f2"}, plan.ToInstall[0].FileIDs)
+	assert.Empty(t, plan.ToEnable, "a cache-miss mod must be reinstalled, not merely re-enabled")
+}
+
+func TestService_PlanProfileSwitch_UnknownTargetProfileReturnsError(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "profile not found: missing")
+	assert.Nil(t, plan)
+}
+
+// TestService_PlanProfileSwitch_PerformsZeroMutations guards the
+// "pure computation" contract callers depend on: calling
+// PlanProfileSwitch speculatively (e.g. to render a confirmation prompt) and
+// discarding the result must leave the DB, cache, and profile YAMLs
+// byte-for-byte untouched.
+func TestService_PlanProfileSwitch_PerformsZeroMutations(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	seedNamedInstalledMod(t, svc, game, "src", "modC", "Mod C", "1.0", true, map[string][]byte{"c.esp": []byte("c")})
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modC", Version: "1.0"}))
+	seedNamedInstalledMod(t, svc, game, "src", "modB", "Mod B", "1.0", false, map[string][]byte{"b.esp": []byte("b")})
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modB", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modD", Version: "2.0"}))
+
+	defaultPath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
+	targetPath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "target.yaml")
+	beforeDefault, err := os.ReadFile(defaultPath)
+	require.NoError(t, err)
+	beforeTarget, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	beforeMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.False(t, plan.NoChanges, "sanity: this scenario must exercise all three diff buckets")
+
+	afterDefault, err := os.ReadFile(defaultPath)
+	require.NoError(t, err)
+	afterTarget, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	assert.Equal(t, beforeDefault, afterDefault, "profile YAML must be byte-for-byte unchanged after planning")
+	assert.Equal(t, beforeTarget, afterTarget, "profile YAML must be byte-for-byte unchanged after planning")
+
+	afterMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, beforeMods, afterMods, "DB rows must be untouched after planning")
+
+	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
+	assert.True(t, os.IsNotExist(err), "planning must not deploy any files")
+}
+
+// TestApplyProfileSwitch_StalePlan_ReturnsErrStalePlan pins the phase-2-close
+// review's Important #1 / Ruling 5 for Switch: an installed-mod set that
+// moved (under plan.From) since the plan was computed is refused, not
+// silently applied against a world it no longer describes.
+func TestApplyProfileSwitch_StalePlan_ReturnsErrStalePlan(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	seedNamedInstalledMod(t, svc, game, "src", "modC", "Mod C", "1.0", true, map[string][]byte{"c.esp": []byte("c")})
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modC", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.False(t, plan.NoChanges, "sanity: this scenario must exercise the disable bucket")
+
+	// State moves after planning: modC is disabled directly, changing the
+	// "default" (plan.From) installed-mod set the plan was computed against.
+	seedNamedInstalledMod(t, svc, game, "src", "modC", "Mod C", "1.0", false, map[string][]byte{"c.esp": []byte("c")})
+
+	_, err = svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.ErrorIs(t, err, core.ErrStalePlan)
+}
+
+// --- ApplyProfileSwitch ---
+
+// TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefaultLastAndUnchangedOnFailure
+// guards doProfileSwitch's overall execution order (disable loop, then
+// enable loop, then install loop, with SetDefault always last) and the
+// error-path convention: SetDefault's own failure must not discard the
+// Disabled/Enabled/Installed accounting from everything that already ran
+// before it, and must leave the previous default profile in place. The
+// target profile's file is made unwritable once the install loop starts, so
+// both the install loop's UpsertMod call and the final SetDefault call fail
+// deterministically - UpsertMod's failure is expected and non-fatal (see
+// TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnostics_ReturnsPartialResult
+// for a dedicated, isolated test of that same convention).
+func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefaultLastAndUnchangedOnFailure(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	if os.Geteuid() == 0 {
+		t.Skip("root writes a read-only file anyway")
+	}
+	// Unwritable DURING the switch: one that already is is refused before
+	// anything changes (#445 review F5).
+	targetPath := filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles", "target.yaml")
+	t.Cleanup(func() { _ = os.Chmod(targetPath, 0o644) })
+
+	seedNamedInstalledMod(t, svc, game, "src", "disable-me", "Disable Me", "1.0", true, map[string][]byte{"disable.esp": []byte("d")})
+	installer := svc.GetInstallerForTest(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "disable-me", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "enable-me", "Enable Me", "1.0", false, map[string][]byte{"enable.esp": []byte("e")})
+
+	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
+	require.NoError(t, err)
+	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "enable-me", "g1", "target")
+	require.NoError(t, err)
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	tmpDir := t.TempDir()
+	zipPath := createTestZip(t, tmpDir, map[string]string{"install.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload("1", zipContent)
+	mock.AddMod("g1", &domain.Mod{ID: "install-me", SourceID: "src", Name: "Install Me", Version: "1.0", GameID: "g1"})
+
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToDisable: []domain.InstalledMod{*disableMod},
+		ToEnable:  []domain.InstalledMod{*enableMod},
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "install-me", Version: "1.0"}},
+	})
+
+	record, seen := core.RecordEvents()
+	sink := func(e core.Event) {
+		if p, ok := e.(core.ModEvent); ok && p.Phase == core.SwitchInstallingMod {
+			require.NoError(t, os.Chmod(targetPath, 0o444))
+		}
+		record(e)
+	}
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	require.Error(t, err, "SetDefault must fail deterministically: target's file became unwritable")
+	assert.Contains(t, err.Error(), "setting default profile")
+	require.NotNil(t, result, "counts/diagnostics accumulated before the fatal SetDefault error must not be discarded")
+	assert.Equal(t, 1, result.Disabled)
+	assert.Equal(t, 1, result.Enabled)
+	assert.Equal(t, 1, result.Installed)
+	assert.Empty(t, result.Notes, "#294 (Ruling 5's class extension, Task 13b): the install loop's UpsertMod failure is no longer a --verbose-only note")
+	require.Len(t, result.Warnings, 1, "the install loop's UpsertMod failure (target's file is unwritable) must be recorded")
+	assert.Contains(t, result.Warnings[0], "could not update profile")
+
+	var disabledIdx, enabledIdx, installingIdx = -1, -1, -1
+	phases, _ := phasesOf(*seen)
+	for i, ph := range phases {
+		switch ph {
+		case core.SwitchDisabled:
+			disabledIdx = i
+		case core.SwitchEnabled:
+			if enabledIdx == -1 {
+				enabledIdx = i
+			}
+		case core.SwitchInstalling:
+			installingIdx = i
+		}
+	}
+	require.NotEqual(t, -1, disabledIdx, "expected a SwitchDisabled event")
+	require.NotEqual(t, -1, enabledIdx, "expected a SwitchEnabled event")
+	require.NotEqual(t, -1, installingIdx, "expected a SwitchInstalling event")
+	assert.Less(t, disabledIdx, enabledIdx, "disable phase must complete before the enable phase starts")
+	assert.Less(t, enabledIdx, installingIdx, "enable phase must complete before the install phase starts")
+
+	def, err := pm.GetDefault(context.Background(), game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "default", def.Name, "a failed SetDefault must leave the previous default profile in place")
+}
+
+// TestApplyProfileSwitch_LockedRef_UpsertRefusalIsWarning pins #294's class
+// extension (Ruling 5, Task 13b): ApplyProfileSwitch's install loop hits the
+// identical swallowed UpsertMod refusal ApplyProfileApply/ApplyProfileSync
+// already surface (a LOCKED profile ref, #143) and now records it the same
+// way - a SwitchInstallWarning event plus a Result.Warnings entry, not the
+// --verbose-only SwitchInstallNote it used to be. Mirrors
+// TestApplyProfileApply_LockedRef_UpsertRefusalIsWarning exactly. The mod
+// still installs.
+func TestApplyProfileSwitch_LockedRef_UpsertRefusalIsWarning(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "mod1", Locked: true}))
+
+	svc.RegisterSource(newTwoVersionSource(t))
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.5"}},
+	}
+
+	sink, events := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Installed, "the refusal must not fail the install")
+	assert.Empty(t, result.Notes, "#294: the refusal is no longer a --verbose-only note")
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "could not update profile: ")
+	assert.Contains(t, result.Warnings[0], "is locked at v")
+	assert.NotContains(t, result.Warnings[0], "Warning: ",
+		"#294: Warnings carry no baked-in prefix - the caller renders `Warning: %s`")
+
+	phases, _ := phasesOf(*events)
+	assert.Contains(t, phases, core.SwitchInstallWarning)
+	assert.NotContains(t, phases, core.SwitchInstallNote)
+
+	profile, err := pm.Get(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
+}
+
+// TestService_ApplyProfileSwitch_UsesTargetProfileLinkMethod guards #81's
+// no-override-hook path: a switch INTO a profile with an explicit link_method
+// must deploy the target's mods with the TARGET profile's method, not the
+// game's. Game explicitly symlink, target profile explicitly copy - the
+// enabled mod's file must land as a real copy.
+func TestService_ApplyProfileSwitch_UsesTargetProfileLinkMethod(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	setProfileLinkMethod(t, svc, "g1", "target", domain.LinkCopy)
+
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "enable-me", "Enable Me", "1.0", false, map[string][]byte{"enable.esp": []byte("e")})
+	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "enable-me", "g1", "target")
+	require.NoError(t, err)
+
+	// Fix-round F9: the freshness precondition now covers the TARGET
+	// profile too, and this plan is hand-built - stamp both halves.
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToEnable: []domain.InstalledMod{*enableMod},
+	})
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Enabled)
+	assert.Empty(t, result.Notes)
+
+	info, err := os.Lstat(filepath.Join(gameDir, "enable.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "the target profile's explicit copy must beat the game's explicit symlink")
+}
+
+// TestService_ApplyProfileSwitch_DisableLoopUsesSourceProfileLinkMethod pins
+// the awkward half of #81's two-profile span: the disable loop undeploys the
+// FROM profile's mods, so it must use the FROM profile's method. The from
+// profile is explicitly copy (its file on disk is a real file); undeploying
+// with the game/target symlink method would refuse ("not a symlink") and
+// leave the file behind with a Note.
+func TestService_ApplyProfileSwitch_DisableLoopUsesSourceProfileLinkMethod(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	setProfileLinkMethod(t, svc, "g1", "default", domain.LinkCopy)
+
+	seedNamedInstalledMod(t, svc, game, "src", "disable-me", "Disable Me", "1.0", true, map[string][]byte{"disable.esp": []byte("d")})
+	copyInstaller := svc.NewInstallerWithLinkerForTest(game, domain.LinkCopy)
+	require.NoError(t, copyInstaller.Install(context.Background(), game, &domain.Mod{ID: "disable-me", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	deployedPath := filepath.Join(gameDir, "disable.esp")
+	info, err := os.Lstat(deployedPath)
+	require.NoError(t, err, "precondition: the from-profile's mod must be deployed")
+	require.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "precondition: the from-profile deployment must be a real copy")
+
+	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
+	require.NoError(t, err)
+
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToDisable: []domain.InstalledMod{*disableMod},
+	})
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Disabled)
+	assert.Empty(t, result.Notes, "undeploying the from-profile's copy with the from-profile's method must not error")
+
+	_, err = os.Lstat(deployedPath)
+	assert.True(t, os.IsNotExist(err), "the disable loop must remove the from-profile's copied file")
+}
+
+// TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAreNonFatalNotes_SuccessEventStillFires
+// guards doProfileSwitch's disable-loop semantics: BOTH a failed Uninstall
+// and a failed SetModEnabled are recorded as Notes (never Warnings, never
+// fatal) and the mod is still counted as Disabled with its success event
+// still firing - the disable loop always "wins" regardless of either
+// sub-step's outcome, unlike the enable loop (see the InstallFailureSkipsMod
+// test below).
+// TestService_ApplyProfileSwitch_DisableLoop_SetEnabledFailureIsANonFatalNote_SuccessEventStillFires:
+// a disable whose files came down is a disable even when its bookkeeping
+// write fails. (A failed UNDEPLOY is not one since #471 - see
+// failed_undeploy_test.go.)
+func TestService_ApplyProfileSwitch_DisableLoop_SetEnabledFailureIsANonFatalNote_SuccessEventStillFires(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	installer := svc.GetInstallerForTest(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	// Block updates to installed_mods.enabled so SetModEnabled fails.
+	installEnabledBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	require.NoError(t, err)
+
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToDisable: []domain.InstalledMod{*disableMod},
+	})
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Disabled, "the mod must still be counted as disabled despite the failure")
+	require.Len(t, result.Notes, 1)
+	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to update Test Mod: "), "note[0]: %q", result.Notes[0])
+	assert.NoFileExists(t, filepath.Join(gameDir, "plugin.esp"))
+
+	var noteEvents []core.StepEvent
+	disabledIdx := -1
+	for i, e := range *seen {
+		if step, ok := e.(core.StepEvent); ok && step.Phase == core.SwitchDisableNote {
+			noteEvents = append(noteEvents, step)
+		}
+		if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.SwitchDisabled {
+			disabledIdx = i
+		}
+	}
+	require.Len(t, noteEvents, 1)
+	assert.Equal(t, result.Notes[0], noteEvents[0].Detail)
+	require.NotEqual(t, -1, disabledIdx, "expected a SwitchDisabled event despite the failure")
+	assert.Greater(t, disabledIdx, 0, "the success event must come after the note events")
+}
+
+// TestService_ApplyProfileSwitch_EnableLoop_InstallFailureSkipsModEntirely
+// guards the enable loop's differing semantics from the disable loop: a
+// failed Install is fatal FOR THAT MOD ONLY - it is recorded as a Note, but
+// SetModEnabled is never called and no SwitchEnabled event fires, mirroring
+// doProfileSwitch's `continue` immediately after the Install failure branch.
+func TestService_ApplyProfileSwitch_EnableLoop_InstallFailureSkipsModEntirely(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	// Block deployment deterministically: "blocked" already exists as a
+	// regular file, so the linker's os.MkdirAll(filepath.Dir(dst)) fails -
+	// mirrors TestService_EnableMod_DeployFailurePropagatesAndLeavesDBUntouched.
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "1", "Test Mod", "1.0", false, map[string][]byte{"blocked/plugin.esp": []byte("data")})
+	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "blocked"), []byte("occupied"), 0644))
+
+	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
+	require.NoError(t, err)
+
+	// Fix-round F9: the freshness precondition now covers the TARGET
+	// profile too, and this plan is hand-built - stamp both halves.
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToEnable: []domain.InstalledMod{*enableMod},
+	})
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	requireIncompleteSwitch(t, result, err, "an Install failure leaves the switch incomplete, not aborted")
+	require.NotNil(t, result)
+	assert.Equal(t, 0, result.Enabled)
+	require.Len(t, result.Notes, 1)
+	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to deploy Test Mod: "), "note: %q", result.Notes[0])
+
+	phases, _ := phasesOf(*seen)
+	for _, ph := range phases {
+		assert.NotEqual(t, core.SwitchEnabled, ph, "no SwitchEnabled event must fire for a mod whose Install failed")
+	}
+
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled, "SetModEnabled must never be called after a failed Install")
+}
+
+// TestService_ApplyProfileSwitch_EnableLoop_SetModEnabledFailureIsNonFatalNote
+// guards the enable loop's OTHER sub-step: when Install succeeds but
+// SetModEnabled fails, the mod is still counted as Enabled and its success
+// event still fires - contrasting with the Install-failure case above.
+func TestService_ApplyProfileSwitch_EnableLoop_SetModEnabledFailureIsNonFatalNote(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "1", "Test Mod", "1.0", false, map[string][]byte{"plugin.esp": []byte("data")})
+	installEnabledBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
+	require.NoError(t, err)
+
+	// Fix-round F9: the freshness precondition now covers the TARGET
+	// profile too, and this plan is hand-built - stamp both halves.
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToEnable: []domain.InstalledMod{*enableMod},
+	})
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Enabled, "Install still succeeded, so the mod must still be counted as enabled")
+	require.Len(t, result.Notes, 1)
+	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to update Test Mod: "))
+
+	var sawEnabled bool
+	phases, _ := phasesOf(*seen)
+	for _, ph := range phases {
+		if ph == core.SwitchEnabled {
+			sawEnabled = true
+		}
+	}
+	assert.True(t, sawEnabled, "a SwitchEnabled event must still fire despite the SetModEnabled failure")
+
+	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+	assert.NoError(t, err, "the mod must still have been deployed")
+}
+
+// TestService_ApplyProfileSwitch_EnableLoop_ModInstalledUnderOtherProfile_CreatesTargetRow
+// guards the #60 fix: when the target profile's YAML references a mod whose
+// installed_mods row lives only under a DIFFERENT profile (reachable via
+// profile export/import or hand-edited profile lists), enabling it must
+// create a row under the target profile - otherwise the deployment is
+// orphaned: files on disk and tracked in deployed_files, but invisible to
+// GetInstalledMods(game, target), so a later switch AWAY from the target
+// never undeploys the mod.
+func TestService_ApplyProfileSwitch_EnableLoop_ModInstalledUnderOtherProfile_CreatesTargetRow(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+
+	// Installed+disabled under "default"; referenced by "target"'s YAML
+	// without ever having been installed there.
+	seedInstalledModUnderProfile(t, svc, game, "default", "src", "1", "Test Mod", "1.0", false, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "target", "src", "1", "1.0")
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+	require.Len(t, plan.ToEnable, 1)
+	require.Equal(t, "default", plan.ToEnable[0].ProfileName,
+		"precondition: the planned mod's row must live under the other profile")
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Enabled)
+	assert.Empty(t, result.Notes, "creating the missing target row must not be downgraded to a warning")
+
+	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+	assert.NoError(t, err, "the mod must be deployed to the game dir")
+
+	row, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
+	require.NoError(t, err, "an installed_mods row must exist under the target profile")
+	assert.True(t, row.Enabled)
+	assert.True(t, row.Deployed)
+
+	// The orphan regression: switching back away from "target" must see the
+	// mod as enabled there and schedule it for disable/undeploy.
+	backPlan, err := svc.PlanProfileSwitch(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.Len(t, backPlan.ToDisable, 1, "switching away must undeploy the mod (it was orphaned before #60)")
+	assert.Equal(t, "1", backPlan.ToDisable[0].ID)
+}
+
+// TestService_ApplyProfileSwitch_InstallLoop_FetchFailureSkipsModAndContinuesToNextMod
+// guards the install loop's per-ref isolation: a mod whose source isn't
+// registered (GetMod fails) is skipped via a SwitchInstallError event and
+// does not stop the remaining ToInstall entries from installing.
+func TestService_ApplyProfileSwitch_InstallLoop_FetchFailureSkipsModAndContinuesToNextMod(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	tmpDir := t.TempDir()
+	zipPath := createTestZip(t, tmpDir, map[string]string{"good.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload("1", zipContent)
+	mock.AddMod("g1", &domain.Mod{ID: "good", SourceID: "src", Name: "Good Mod", Version: "1.0", GameID: "g1"})
+	// "bad" is never registered with the mock source, so GetMod fails.
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{
+			{SourceID: "src", ModID: "bad", Version: "1.0"},
+			{SourceID: "src", ModID: "good", Version: "1.0"},
+		},
+	}
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	requireIncompleteSwitch(t, result, err, "a per-mod fetch failure leaves the switch incomplete, not aborted")
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed, "the good mod must still install")
+
+	var errEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError {
+			errEvt = &m
+			break
+		}
+	}
+	require.NotNil(t, errEvt)
+	require.NotNil(t, errEvt.Mod)
+	assert.Equal(t, "bad", errEvt.Mod.ModID)
+	assert.Contains(t, errEvt.Detail, "failed to fetch mod")
+
+	_, err = os.Lstat(filepath.Join(gameDir, "good.esp"))
+	assert.NoError(t, err, "the second mod must still be installed")
+}
+
+// TestService_ApplyProfileSwitch_InstallLoop_DownloadFailureEmitsBlankErrorBlankSequence
+// guards the dual-event sequence (SwitchDownloadFailed then, always,
+// SwitchDownloadDone) that reproduces doProfileSwitch's exact
+// blank-line/error/blank-line console sequence on a failed download - see
+// SwitchDownloadDone's doc comment.
+func TestService_ApplyProfileSwitch_InstallLoop_DownloadFailureEmitsBlankErrorBlankSequence(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	mock := newMockSourceWithDownloads("src") // no AddDownload: the server 404s every file ID
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
+	}
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	requireIncompleteSwitch(t, result, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 0, result.Installed)
+
+	phases, events := phasesOf(*seen)
+	var failIdx, doneIdx = -1, -1
+	for i, ph := range phases {
+		switch ph {
+		case core.SwitchDownloadFailed:
+			failIdx = i
+		case core.SwitchDownloadDone:
+			doneIdx = i
+		}
+	}
+	require.NotEqual(t, -1, failIdx, "expected a SwitchDownloadFailed event")
+	require.NotEqual(t, -1, doneIdx, "expected a SwitchDownloadDone event")
+	assert.Less(t, failIdx, doneIdx, "the loop-done event must fire after the failure event, mirroring the unconditional trailing blank line")
+	assert.Contains(t, events[failIdx].(core.ModEvent).Detail, "download failed")
+}
+
+// TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod
+// guards #95: when a ToInstall ref's FileIDs don't match any file the source
+// currently offers, ApplyProfileSwitch must fail that mod (SwitchInstallError,
+// via selectDeployFiles's allowFallback=false) rather than silently
+// substituting the primary file (the old SwitchFallbackUsed phase, removed
+// entirely in the renderer-cleanup task B2) - and the install loop must
+// continue past it to the next mod.
+func TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	tmpDir := t.TempDir()
+	zipPath := createTestZip(t, tmpDir, map[string]string{"mod2.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload("1", zipContent) // mockSource.GetModFiles always returns file ID "1"
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	mock.AddMod("g1", &domain.Mod{ID: "mod2", SourceID: "src", Name: "Mod Two", Version: "1.0", GameID: "g1"})
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{
+			// "stale-id" does not match the mock source's file ID ("1") - mod1
+			// must fail, not silently fall back to the primary file.
+			{SourceID: "src", ModID: "mod1", Version: "1.0", FileIDs: []string{"stale-id"}},
+			// mod2 has no stored FileIDs, so it installs normally - proving
+			// mod1's failure doesn't stop the loop.
+			{SourceID: "src", ModID: "mod2", Version: "1.0"},
+		},
+	}
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	requireIncompleteSwitch(t, result, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed, "only mod2 should install; mod1 fails")
+
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError && m.ModName == "Mod One" {
+			failEvt = &m
+		}
+	}
+	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
+	assert.Contains(t, failEvt.Detail, "no longer available upstream")
+	assert.Contains(t, failEvt.Detail, "stale-id")
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
+	assert.Error(t, err, "mod1 must not be installed via fallback substitution")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod2", "g1", "target")
+	assert.NoError(t, err, "mod2 must still install, proving the loop continues")
+}
+
+// TestService_ApplyProfileSwitch_InstallLoop_RecordsFileVersion is the #94
+// regression test for ApplyProfileSwitch's install loop: the source's served
+// file ("1") carries its own Version ("1.0"), distinct from the mod-level
+// Version ("1.5") GetMod returns. The saved InstalledMod row and the cache
+// dir must be stamped with the file's version, not the mod's, mirroring
+// flows_install_test.go's TestApplyInstall_ExplicitOldFile_
+// RecordsFileVersionAndCacheKey for this flow.
+//
+// ref.Version is deliberately "" (a legacy/unpinned ref), not "1.5": #96
+// made a non-empty ref.Version authoritative for FileIDs found upstream
+// (selectVersionedDeployFiles' fast path re-resolves by version when the
+// found files' effective version disagrees with the record - the hand-edited
+// -YAML-drift case decision 2 targets). "1.5" here was only ever the
+// mod-level label coincidentally reused for the ref before #96 existed; the
+// mod-vs-file version discrepancy this test actually guards is entirely
+// between mock.AddMod's Version and the served file's Version, independent
+// of ref.Version - so "" (decision 1/4's exempted legacy-ref case) preserves
+// the exact contract under test without asserting a real version pin.
+func TestService_ApplyProfileSwitch_InstallLoop_RecordsFileVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	mock := &versionedFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	tmpDir := t.TempDir()
+	zipPath := createTestZip(t, tmpDir, map[string]string{"mod1.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload("1", zipContent)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"})
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "", FileIDs: []string{"1"}}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version, "DB row must record the selected file's version, not the mod's latest")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"), "cache must be keyed by the installed file's version")
+}
+
+// twoVersionSource serves two versions of the same mod's files: 1.5
+// (current, ID "10", primary) and 1.0 (archived, ID "9") - the #96 fixture
+// used to prove ApplyProfileSwitch's install loop resolves a pinned/recorded
+// version to its matching file instead of always taking the latest/primary.
+type twoVersionSource struct{ *mockSourceWithDownloads }
+
+func (s *twoVersionSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: mod.ID + ".zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Name: "Old", FileName: mod.ID + "-old.zip", Version: "1.0", Category: "ARCHIVED"},
+	}, nil
+}
+
+// newTwoVersionSource wires up a twoVersionSource with both file IDs'
+// downloads registered (distinct payloads so a test can tell which file was
+// actually fetched) and mod1 registered under g1.
+func newTwoVersionSource(t *testing.T) *twoVersionSource {
+	t.Helper()
+	mock := &twoVersionSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	t.Cleanup(mock.Close)
+
+	tmpDir := t.TempDir()
+	newZip := createTestZip(t, tmpDir, map[string]string{"mod1.esp": "new-payload"})
+	newContent, err := os.ReadFile(newZip)
+	require.NoError(t, err)
+	mock.AddDownload("10", newContent)
+
+	oldZip := createTestZip(t, tmpDir, map[string]string{"mod1-old.esp": "old-payload"})
+	oldContent, err := os.ReadFile(oldZip)
+	require.NoError(t, err)
+	mock.AddDownload("9", oldContent)
+
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"})
+	return mock
+}
+
+// TestApplyProfileSwitch_HonorsProfileVersion_Downgrade is the #96 regression
+// guard for selectVersionedDeployFiles' downgrade path: a profile pins mod1
+// at 1.0 (hand-edited - no stored FileIDs to lean on), and the source serves
+// both 1.5 (current/primary) and 1.0 (archived). The install loop must
+// resolve 1.0 -> file "9" and record installed.Version == "1.0" - not fall
+// back to the source's latest/primary file.
+func TestApplyProfileSwitch_HonorsProfileVersion_Downgrade(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version, "must record the pinned version, not the source's latest")
+	assert.Equal(t, []string{"9"}, installed.FileIDs, "must have selected the archived 1.0 file, not the primary 1.5 file")
+}
+
+// TestApplyProfileSwitch_StoredIDsGone_HealsToRecordedVersion is the #96
+// healing guard: the profile's stored FileIDs ("999") no longer match
+// anything upstream, but its recorded Version ("1.0") still resolves to file
+// "9". Pre-#96 this hard-failed with #95's errStoredFilesUnavailable; #96
+// heals it by re-resolving to the SAME version instead of erroring or
+// silently taking latest.
+func TestApplyProfileSwitch_StoredIDsGone_HealsToRecordedVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0", FileIDs: []string{"999"}}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed, "must heal to the recorded version, not hard-fail")
+
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version)
+	assert.Equal(t, []string{"9"}, installed.FileIDs)
+}
+
+// TestApplyProfileSwitch_StoredIDsGone_VersionAlsoGone_HardFails is #96's
+// unresolvable case: neither the stored FileIDs ("999") nor the recorded
+// Version ("0.5") match anything upstream. mod1 must fail with the extended
+// #95 wording naming both the stale IDs and the missing version; mod2 (a
+// normal, resolvable install) must still install, proving the install loop
+// continues past the per-mod failure.
+func TestApplyProfileSwitch_StoredIDsGone_VersionAlsoGone_HardFails(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod2", SourceID: "src", Name: "Mod Two", Version: "1.5", GameID: "g1"})
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{
+			{SourceID: "src", ModID: "mod1", Version: "0.5", FileIDs: []string{"999"}},
+			{SourceID: "src", ModID: "mod2", Version: "1.5"},
+		},
+	}
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	requireIncompleteSwitch(t, result, err, "a per-mod resolution failure leaves the switch incomplete, not aborted")
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed, "mod2 must still install")
+
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError && m.ModName == "Mod One" {
+			failEvt = &m
+		}
+	}
+	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
+	assert.Contains(t, failEvt.Detail, "no longer available upstream")
+	assert.Contains(t, failEvt.Detail, "999")
+	assert.Contains(t, failEvt.Detail, `version "0.5" not available`)
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
+	assert.Error(t, err, "mod1 must not be installed via fallback substitution")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod2", "g1", "stable")
+	assert.NoError(t, err, "mod2 must still install, proving the loop continues")
+}
+
+// TestApplyProfileSwitch_VersionlessSource_KeepsLegacyBehavior pins the #130
+// vacuous-version rule as it interacts with #96: when the source's files
+// carry no Version info at all, selectVersionedDeployFiles must fall straight
+// through to the pre-#96 selectDeployFiles - including its un-extended
+// errStoredFilesUnavailable wording (no "version" mention) - even though the
+// profile ref itself carries a (meaningless, in this context) Version.
+func TestApplyProfileSwitch_VersionlessSource_KeepsLegacyBehavior(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	// mockSourceWithDownloads' embedded mockSource.GetModFiles always returns
+	// a single versionless file with ID "1" - anyFileHasVersion(files) is
+	// false, so version resolution must not engage at all.
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	// Deliberately no AddDownload("1", ...) - selectDeployFiles must fail
+	// before any download is attempted, matching
+	// TestService_DeployProfile_StoredFileIDsGone_SkipsModWithClearError's
+	// idiom.
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0", FileIDs: []string{"999"}}},
+	}
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	requireIncompleteSwitch(t, result, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 0, result.Installed, "a versionless source's stale FileIDs must still hard-fail exactly as before #96")
+
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError && m.ModName == "Mod One" {
+			failEvt = &m
+		}
+	}
+	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
+	assert.Contains(t, failEvt.Detail, "no longer available upstream")
+	assert.Contains(t, failEvt.Detail, "999")
+	assert.NotContains(t, failEvt.Detail, "not available", "a versionless file list must produce the un-extended #95 wording, not the #96 extension")
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
+	assert.Error(t, err)
+}
+
+// TestApplyProfileSwitch_StoredIDsBothAgree_FastPathReturnsWholeSet is the
+// #96 fix-round-1 regression guard for rule 2's fast path (previously
+// untested end to end): when ALL of a mod's stored FileIDs are found
+// upstream AND their combined EffectiveInstalledVersion agrees with the
+// recorded version, selectVersionedDeployFiles must return the WHOLE stored
+// set as-is - not re-resolve to matches(version), which would be the
+// narrower set. Here ref.Version is "1.5" (the primary file10's own
+// version), and the stored pair is [file10 (1.5, primary), file9 (1.0)]:
+// EffectiveInstalledVersion picks file10's version ("1.5", since it's
+// primary) as representative, agreeing with the record, so the fast path
+// fires and keeps file9 riding along even though file9's own version isn't
+// 1.5. Rule 3 (stored ∩ matches) would instead compute matches("1.5") =
+// [file10] only and keep just that one file - the DIFFERENT, narrower
+// outcome that distinguishes "fast path took over" from "matches-based
+// resolution ran instead".
+func TestApplyProfileSwitch_StoredIDsBothAgree_FastPathReturnsWholeSet(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.5", FileIDs: []string{"10", "9"}}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"10", "9"}, installed.FileIDs,
+		"the fast path must keep the whole stored set, not re-resolve to the narrower matches(\"1.5\") set")
+}
+
+// TestApplyProfileSwitch_VersionMatchesNothing_NoStoredIDs_ErrVersionNotFoundWrap
+// is the #96 fix-round-1 regression guard for rule 5 (previously untested):
+// no stored FileIDs at all, and the recorded version matches nothing
+// upstream. Must fail naming the version and pointing at editing the
+// profile or reinstalling - not the #95 "gone upstream"/stored-IDs wording,
+// which doesn't apply when there were never any stored IDs to begin with.
+func TestApplyProfileSwitch_VersionMatchesNothing_NoStoredIDs_ErrVersionNotFoundWrap(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "9.9"}},
+	}
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	requireIncompleteSwitch(t, result, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 0, result.Installed)
+
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError && m.ModName == "Mod One" {
+			failEvt = &m
+		}
+	}
+	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
+	assert.Contains(t, failEvt.Detail, "is not available upstream")
+	assert.Contains(t, failEvt.Detail, "edit the profile's version or reinstall")
+}
+
+// TestApplyProfileSwitch_StoredIDPresentButVersionGone_NewErrorWording is
+// the #96 fix-round-1 regression guard for the FINDING 2 split: when at
+// least one stored FileID IS still present upstream but the recorded
+// version doesn't match anything, that's a wrong version RECORD on a file
+// that's still there - not a gone file - so it must get the distinct
+// ErrVersionNotFound wrap (pointing at 'lmm verify --fix'/'lmm update'),
+// never the #95 "no longer available upstream" wording (which implies the
+// file itself is gone, misleading here). file10 (stored) resolves upstream
+// fine; only the recorded version ("9.9") is bogus.
+func TestApplyProfileSwitch_StoredIDPresentButVersionGone_NewErrorWording(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "9.9", FileIDs: []string{"10"}}},
+	}
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	requireIncompleteSwitch(t, result, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 0, result.Installed)
+
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError && m.ModName == "Mod One" {
+			failEvt = &m
+		}
+	}
+	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
+	assert.NotContains(t, failEvt.Detail, "no longer available upstream", "a present-upstream stored ID must not get the gone-file wording")
+	assert.Contains(t, failEvt.Detail, `installed file(s) (ID(s): 10) do not match recorded version "9.9"`)
+	assert.Contains(t, failEvt.Detail, "run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version")
+}
+
+// TestPlanProfileSwitch_VersionDrift_SchedulesReinstall is the #96
+// convergence guard: mod1 is installed+enabled at 1.5 under "testing" (the
+// current default profile), but the target profile "stable" pins it at 1.0.
+// PlanProfileSwitch must classify this as ToInstall (carrying the ref as-is,
+// version "1.0") rather than leaving it alone as already-satisfied - the
+// version mismatch itself, not cache/enabled state, drives the decision.
+func TestPlanProfileSwitch_VersionDrift_SchedulesReinstall(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "testing")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "testing"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "testing", "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "testing", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "stable")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+
+	assert.False(t, plan.NoChanges)
+	assert.Empty(t, plan.ToEnable)
+	assert.Empty(t, plan.ToDisable)
+	require.Len(t, plan.ToInstall, 1)
+	assert.Equal(t, "mod1", plan.ToInstall[0].ModID)
+	assert.Equal(t, "1.0", plan.ToInstall[0].Version, "must schedule reinstall at the profile's (lower) version")
+}
+
+// TestPlanProfileSwitch_MatchingVersion_RemainsNoop is the regression guard
+// for the new drift case's guard conditions: when the target ref's Version
+// matches the installed mod's (or is empty), the mod must NOT be scheduled
+// for reinstall - no ToInstall entry, exactly as before #96.
+//
+// It stays a whole no-op only when the target profile's own row is already
+// enabled and deployed (#430); the row is seeded here for that reason,
+// where the test previously relied on the outgoing profile's row answering
+// for the target's.
+func TestPlanProfileSwitch_MatchingVersion_RemainsNoop(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "testing")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "testing"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "testing", "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
+	seedDeployedModUnderProfile(t, svc, game, "stable", "src", "mod1", "Mod One", "1.5")
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "testing", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "stable")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+
+	assert.True(t, plan.NoChanges, "matching version must remain a no-op, exactly as before #96")
+	assert.Empty(t, plan.ToInstall)
+	assert.Empty(t, plan.ToEnable)
+	assert.Empty(t, plan.ToDisable)
+}
+
+// TestApplyProfileSwitch_Downgrade_EndToEnd is the #96 convergence
+// end-to-end guard: mod1 installed+DEPLOYED at 1.5 (file "10", live on disk
+// as "mod1.esp"); switching to "stable" (which pins 1.0) must plan AND apply
+// a full reinstall at 1.0 - resolving to the archived file "9" via T5's
+// selectVersionedDeployFiles, caching it, recording the downgrade in the DB,
+// and REPLACING the live 1.5 deployment (not merely installing 1.0
+// alongside it) - review round 1 finding 1: a bare Installer.Install call
+// only adds the new version's files; it never removes files the old,
+// still-live deployment holds that the new version doesn't serve, leaving
+// mod1.esp (1.5) orphaned on disk forever (invisible to later uninstalls,
+// which only ever undeploy the CURRENTLY RECORDED version's files).
+//
+// Run over all THREE link methods (#404, the import re-review's F1 reaching
+// the flow that shares the hole): this convergence is CROSS-PROFILE - the
+// live 1.5 row belongs to "default" and the Replace runs as "stable" - so
+// the obsolete-file loop's ownership check has to be a question about the
+// GAME, not about the acting profile. Asked profile-scoped it left 1.5 live
+// under copy and hardlink and passed only under symlink, where the deployed
+// file is not regular and the check never fires.
+func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
+	for _, lm := range []domain.LinkMethod{domain.LinkSymlink, domain.LinkCopy, domain.LinkHardlink} {
+		t.Run(lm.String(), func(t *testing.T) {
+			applyProfileSwitchDowngradeEndToEnd(t, lm)
+		})
+	}
+}
+
+func applyProfileSwitchDowngradeEndToEnd(t *testing.T, lm domain.LinkMethod) {
+	t.Helper()
+
+	svc := newFlowsTestService(t)
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: t.TempDir(),
+		LinkMethod: lm, LinkMethodExplicit: true,
+	}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		FileIDs:      []string{"10"},
+	}))
+	installer := svc.GetInstallerForTest(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
+
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "stable")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.Len(t, plan.ToInstall, 1, "the version-drifted mod must be scheduled for reinstall")
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version)
+	assert.Equal(t, []string{"9"}, installed.FileIDs, "must have selected the archived 1.0 file, not the primary 1.5 file")
+	assert.True(t, installed.Deployed, "the row must record that files are actually live on disk (review finding 3)")
+
+	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the downgraded version must be cached")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	assert.True(t, os.IsNotExist(err), "the obsolete 1.5 file must be removed by Replace, not left behind by a bare Install (review finding 1)")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the new 1.0 file must be deployed")
+}
+
+// TestApplyProfileSwitch_PartialCacheEntry_StillDownloads is the #96 review
+// round 1 finding 2 guard: a version directory can exist on disk without
+// being fully populated (e.g. a previous download run that broke off before
+// any file was committed, or partway through a multi-file mod). The
+// cache-first guard must not mistake directory presence alone for "already
+// cached" - bare cache.Exists would report true here and silently skip the
+// download forever, leaving the mod stuck without its files.
+func TestApplyProfileSwitch_PartialCacheEntry_StillDownloads(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	// Simulate a version directory left behind by a previously broken-off
+	// download run: the directory exists (bare cache.Exists would report
+	// "cached") but holds none of the expected files.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, os.MkdirAll(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), 0755))
+	require.True(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "precondition: bare Exists must see the empty dir as already cached")
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed, "a partial cache entry must not fool the cache-first guard into skipping the download")
+
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"9"}, installed.FileIDs, "the download must actually have run and selected the 1.0 file")
+
+	// The DB's FileIDs alone don't prove the download actually ran (they're
+	// stamped from the SELECTED files regardless of whether the download
+	// loop executed) - what distinguishes a real download from a
+	// fooled-by-directory-presence skip is whether the byte content is
+	// actually on disk, both in the cache and deployed into the game dir.
+	cached, err := gameCache.ListFiles(game.ID, "src", "mod1", "1.0")
+	require.NoError(t, err)
+	assert.Contains(t, cached, "mod1-old.esp", "the cache entry must actually contain the downloaded file, not just an empty directory")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the file must actually be deployed, not merely a DB row claiming so")
+
+	// The completed download must leave the entry MARKED, so the next
+	// convergence pass over the same profile is a genuine cache hit.
+	assert.True(t, gameCache.HasFileIDs(game.ID, "src", "mod1", "1.0", []string{"9"}),
+		"a successful download must commit the per-file completion marker")
+	assert.Equal(t, 1, mock.DownloadCount(), "exactly one download, not a retry loop")
+}
+
+// TestApplyProfileSwitch_FullyMarkedCache_SkipsDownload is the #96 review
+// round 2 guard: the cache-first guard must actually FIRE for a complete
+// cache entry. Round 1 keyed the check off DownloadableFile.FileName, but the
+// default DeployExtract flow stores an archive's extracted MEMBERS
+// ("mod1-old.esp" here) rather than the archive's own name
+// ("mod1-old.zip") - so the guard read false for essentially every
+// archive-based mod and redownloaded despite a complete cache, hollowing out
+// the "deploy from cache when possible" design decision (which matters most
+// for downgrades, whose archived files can vanish upstream).
+func TestApplyProfileSwitch_FullyMarkedCache_SkipsDownload(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	// A COMPLETE cache entry as a real extract-mode download leaves it: the
+	// archive member on disk under a name that matches nothing about the
+	// DownloadableFile ("mod1-old.zip"), plus file "9"'s completion marker.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.0", "mod1-old.esp", []byte("old-payload")))
+	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), "9"))
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	assert.Equal(t, 0, mock.DownloadCount(),
+		"a fully-marked cache entry must be deployed from cache, not redownloaded")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the cached file must still be deployed")
+
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version)
+	assert.Equal(t, []string{"9"}, installed.FileIDs)
+}
+
+// TestService_ApplyProfileSwitch_InstallLoop_SavesWithNormalizedGameID
+// regression-guards the P3 orphaning bug class (see profile_gameid_test.go's
+// CLI-level counterpart): Service.GetMod may stamp a source-mapped GameID
+// onto the fetched *domain.Mod, but the InstalledMod row ApplyProfileSwitch
+// saves must always be normalized to the lmm game.ID, so every other DB read
+// (which queries by the lmm game ID) can find it again.
+func TestService_ApplyProfileSwitch_InstallLoop_SavesWithNormalizedGameID(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	tmpDir := t.TempDir()
+	zipPath := createTestZip(t, tmpDir, map[string]string{"mod1.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload("1", zipContent)
+	// The mock mod's own GameID deliberately differs from game.ID ("g1"),
+	// mirroring what Service.GetMod stamps on when a source-mapped ID is in
+	// play - the saved row must NOT inherit this value.
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "source-mapped-id"})
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
+	require.NoError(t, err, "the installed row must be visible under the lmm game ID")
+	assert.Equal(t, "g1", installed.GameID, "persisted GameID must be normalized to the lmm game, not the source-mapped value")
+}
+
+// TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnostics_ReturnsPartialResult
+// guards the Task 2/3 error-path convention applied to ApplyProfileSwitch: a
+// fatal error (here, SetDefault) must not discard the SwitchResult
+// accumulated up to that point. Isolated to the simplest possible scenario
+// (no disable/enable buckets) so it stands independently of
+// TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefaultLastAndUnchangedOnFailure,
+// which exercises the same convention but with all three buckets active.
+func TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnostics_ReturnsPartialResult(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	if os.Geteuid() == 0 {
+		t.Skip("root writes a read-only file anyway")
+	}
+	// "target" becomes unwritable once its install has started, so both
+	// UpsertMod and the final SetDefault fail deterministically. It has to
+	// happen DURING the switch: one that already is unwritable is refused
+	// before anything changes (#445 review F5).
+	targetPath := filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles", "target.yaml")
+	t.Cleanup(func() { _ = os.Chmod(targetPath, 0o644) })
+	sink := func(e core.Event) {
+		if p, ok := e.(core.ModEvent); ok && p.Phase == core.SwitchInstallingMod {
+			require.NoError(t, os.Chmod(targetPath, 0o444))
+		}
+	}
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	tmpDir := t.TempDir()
+	zipPath := createTestZip(t, tmpDir, map[string]string{"mod1.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload("1", zipContent)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setting default profile")
+	require.NotNil(t, result, "the result accumulated before the fatal error must not be discarded")
+	assert.Equal(t, 1, result.Installed, "the install itself succeeded before the later fatal SetDefault error")
+	assert.Empty(t, result.Notes, "#294 (Ruling 5's class extension, Task 13b): the install loop's UpsertMod failure is no longer a --verbose-only note")
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "could not update profile")
+}
+
+// TestService_ApplyProfileSwitch_NilProgressCallbackIsSafe guards that
+// progress may be nil per the required API (mirroring
+// TestService_DeployProfile_NilProgressCallbackIsSafe).
+func TestService_ApplyProfileSwitch_NilProgressCallbackIsSafe(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	installer := svc.GetInstallerForTest(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	require.NoError(t, err)
+
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToDisable: []domain.InstalledMod{*disableMod},
+	})
+
+	assert.NotPanics(t, func() {
+		result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, 1, result.Disabled)
+	})
+}
+
+// --- Task 6 item d: cancel-then-drain (ctx checked between loop iterations) ---
+
+// TestService_ApplyProfileSwitch_ContextCancelledBetweenDisableLoopMods_ReturnsPartialResultWithCtxErr
+// guards the disable loop: a cancelled ctx aborts BETWEEN mods, never
+// mid-file-operation, with the partial-result convention. The progress
+// callback cancels the instant the first mod's SwitchDisabled event fires;
+// the second mod must never be touched (still deployed).
+func TestService_ApplyProfileSwitch_ContextCancelledBetweenDisableLoopMods_ReturnsPartialResultWithCtxErr(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{"a.esp": []byte("a")})
+	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "1.0", true, map[string][]byte{"b.esp": []byte("b")})
+	installer := svc.GetInstallerForTest(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "a", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "b", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	modA, err := svc.GetInstalledMod(context.Background(), "src", "a", "g1", "default")
+	require.NoError(t, err)
+	modB, err := svc.GetInstalledMod(context.Background(), "src", "b", "g1", "default")
+	require.NoError(t, err)
+
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToDisable: []domain.InstalledMod{*modA, *modB},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchDisabled && m.ModName == "Mod A" {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Disabled)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
+	assert.NoError(t, err, "Mod B must never have been touched - still deployed")
+}
+
+// TestService_ApplyProfileSwitch_ContextCancelledBetweenEnableLoopMods_ReturnsPartialResultWithCtxErr
+// mirrors the disable-loop test above for the enable loop: the second mod
+// must never be deployed/enabled.
+func TestService_ApplyProfileSwitch_ContextCancelledBetweenEnableLoopMods_ReturnsPartialResultWithCtxErr(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "a", "Mod A", "1.0", false, map[string][]byte{"a.esp": []byte("a")})
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "b", "Mod B", "1.0", false, map[string][]byte{"b.esp": []byte("b")})
+
+	modA, err := svc.GetInstalledMod(context.Background(), "src", "a", "g1", "target")
+	require.NoError(t, err)
+	modB, err := svc.GetInstalledMod(context.Background(), "src", "b", "g1", "target")
+	require.NoError(t, err)
+
+	// Fix-round F9: the freshness precondition now covers the TARGET
+	// profile too, and this plan is hand-built - stamp both halves.
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToEnable: []domain.InstalledMod{*modA, *modB},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchEnabled && m.ModName == "Mod A" {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Enabled)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
+	assert.True(t, os.IsNotExist(err), "Mod B must never have been deployed/enabled")
+}
+
+// TestService_ApplyProfileSwitch_ContextCancelledBetweenInstallLoopMods_ReturnsPartialResultWithCtxErr
+// mirrors the disable/enable-loop tests above for the install loop: the
+// second ModReference must never be fetched/downloaded/installed.
+func TestService_ApplyProfileSwitch_ContextCancelledBetweenInstallLoopMods_ReturnsPartialResultWithCtxErr(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	tmpDir := t.TempDir()
+	firstZip := createTestZip(t, tmpDir, map[string]string{"first.esp": "payload"})
+	firstContent, err := os.ReadFile(firstZip)
+	require.NoError(t, err)
+	mock.AddDownload("1", firstContent)
+	mock.AddMod("g1", &domain.Mod{ID: "first", SourceID: "src", Name: "First Mod", Version: "1.0", GameID: "g1"})
+	secondZip := createTestZip(t, tmpDir, map[string]string{"second.esp": "payload"})
+	secondContent, err := os.ReadFile(secondZip)
+	require.NoError(t, err)
+	mock.AddDownload("2", secondContent)
+	mock.AddMod("g1", &domain.Mod{ID: "second", SourceID: "src", Name: "Second Mod", Version: "1.0", GameID: "g1"})
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{
+			{SourceID: "src", ModID: "first", Version: "1.0"},
+			{SourceID: "src", ModID: "second", Version: "1.0"},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstalled && m.Mod != nil && m.Mod.ModID == "first" {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "second.esp"))
+	assert.True(t, os.IsNotExist(err), "the second ModReference must never have been fetched/installed")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "second", "g1", "target")
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+}
+
+// --- #430 / #431: which profile's row owns "enabled" ---
+
+// TestService_ProfileSwitch_SharedModEndsEnabledUnderTheTargetProfile is
+// #430's regression. Two profiles list the same mod; it is installed and
+// enabled under the outgoing one. PlanProfileSwitch merged the two
+// profiles' installed rows with "current wins on collision", so the target
+// loop was handed the FROM row, its `default:` branch asked "was it enabled
+// under the CURRENT profile?", got yes, and classified the mod as no work
+// at all - leaving the target profile with no row of its own (or a stale
+// disabled one) while the files sat deployed in the game directory.
+//
+// The question the branch has to ask is about the TARGET.
+func TestService_ProfileSwitch_SharedModEndsEnabledUnderTheTargetProfile(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "a"))
+
+	// Installed and enabled under "a"; listed by BOTH profiles.
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "shared", "Shared Mod", "1.0", true, map[string][]byte{"shared.esp": []byte("s")})
+	seedProfileWithMod(t, svc, "g1", "a", "src", "shared", "1.0")
+	seedProfileWithMod(t, svc, "g1", "b", "src", "shared", "1.0")
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "b")
+	require.NoError(t, err)
+	require.Len(t, plan.ToEnable, 1, "the shared mod has no row under the target profile, so the switch must enable it there")
+	assert.Equal(t, "shared", plan.ToEnable[0].ID)
+	assert.Empty(t, plan.ToDisable)
+	assert.Empty(t, plan.ToInstall)
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Enabled)
+
+	row, err := svc.GetInstalledMod(context.Background(), "src", "shared", "g1", "b")
+	require.NoError(t, err, "the target profile must have a row of its own after the switch")
+	assert.True(t, row.Enabled, "a mod both profiles list must come out of the switch ENABLED under the profile switched to")
+	assert.True(t, row.Deployed)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "shared.esp"))
+	assert.NoError(t, err, "and its files must be deployed")
+
+	list, err := svc.ListMods(context.Background(), game, "b")
+	require.NoError(t, err)
+	require.Len(t, list.Mods, 1)
+	assert.True(t, list.Mods[0].Enabled, "`lmm list --profile b` must show it enabled")
+}
+
+// TestService_ProfileSwitch_DisabledModStaysDisabledAcrossSwitchAwayAndBack
+// is #431's regression. Disabling a mod only flipped the installed_mods
+// row; the profile document - the desired state a converge run restores -
+// had nowhere to record the intent, so PlanProfileSwitch read "listed in
+// the target profile" as "should be enabled" and the next switch back
+// deployed it again.
+func TestService_ProfileSwitch_DisabledModStaysDisabledAcrossSwitchAwayAndBack(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+	_, err = pm.Create(ctx, game.ID, "b")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "off", "Off Mod", "1.0", true, map[string][]byte{"off.esp": []byte("o")})
+	seedProfileWithMod(t, svc, "g1", "a", "src", "off", "1.0")
+
+	// Deploy it for real, then switch it off - the user's "off" intent.
+	_, err = svc.DisableMod(ctx, game, "a", "src", "off")
+	require.NoError(t, err)
+
+	profile, err := pm.Get(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	require.True(t, profile.Mods[0].Disabled, "disable must record the intent in the profile document, not only in the DB row")
+
+	deployed := filepath.Join(gameDir, "off.esp")
+	require.NoFileExists(t, deployed)
+
+	switchTo := func(target string) {
+		t.Helper()
+		plan, err := svc.PlanProfileSwitch(ctx, game, target)
+		require.NoError(t, err)
+		_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+		require.NoError(t, err)
+	}
+	switchTo("b")
+	switchTo("a")
+
+	row, err := svc.GetInstalledMod(ctx, "src", "off", "g1", "a")
+	require.NoError(t, err)
+	assert.False(t, row.Enabled, "a mod switched off under a profile must still be off after switching away and back")
+	assert.False(t, row.Deployed)
+	assert.NoFileExists(t, deployed, "and its files must not be back in the game directory")
+
+	// The marker itself survives the round trip, so the next converge run
+	// reads the same intent.
+	profile, err = pm.Get(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.True(t, profile.Mods[0].Disabled)
+}
+
+// --- fix round: which row the switch reads, writes and reports ---
+
+// TestService_ProfileSwitch_EnableLoopRecordsTheTargetRowAsDeployed is the
+// F3 regression. #430 made the plan ask whether the TARGET row says both
+// enabled and deployed, and taught the disable loop to clear the deployed
+// flag - but the enable loop only ever wrote `enabled`, and
+// Installer.Install does not touch the column. A target row that reached
+// "enabled" through a switch therefore kept deployed = false forever: every
+// later switch into that profile re-planned the same enable, so `lmm profile
+// switch` never reported "No mod changes", prompted for confirmation and
+// redeployed on every pass - and `lmm verify`'s loader-layout repair skipped
+// the mod, because that flag is how it decides whether a sibling's files are
+// live.
+func TestService_ProfileSwitch_EnableLoopRecordsTheTargetRowAsDeployed(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x.esp": []byte("x")})
+	// The target's own row says enabled while the game directory does not -
+	// the drift a switch into this profile is exactly the moment to fix.
+	seedInstalledModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "1.0", true, nil)
+	seedProfileWithMod(t, svc, "g1", "a", "src", "x", "1.0")
+	seedProfileWithMod(t, svc, "g1", "b", "src", "x", "1.0")
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	require.Len(t, plan.ToEnable, 1, "an enabled-but-undeployed target row is the switch's work")
+
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Enabled)
+
+	row, err := svc.GetInstalledMod(ctx, "src", "x", "g1", "b")
+	require.NoError(t, err)
+	assert.True(t, row.Deployed, "the enable loop must record the deployment it just made")
+	assert.FileExists(t, filepath.Join(gameDir, "x.esp"))
+
+	// The predicate the plan asks is now satisfied, so the switch converges:
+	// switching away and back reports nothing left to do.
+	back, err := svc.PlanProfileSwitch(ctx, game, "a")
+	require.NoError(t, err)
+	_, err = svc.ApplyProfileSwitch(ctx, game, back, nil)
+	require.NoError(t, err)
+
+	again, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	assert.Empty(t, again.ToEnable, "the switch must converge, not re-plan the same enable forever")
+	assert.True(t, again.NoChanges)
+}
+
+// TestPlanProfileSwitch_DisabledModWithRowsInBothProfilesIsListedOnce is the
+// F5 regression. A mod the target document marks off can have a row under
+// both profiles, and the plan appended both - so the confirmation prompt
+// listed the same mod twice and the summary said "Disabled: 2" for one mod.
+// The undeploy is idempotent (#260) and the second row still has to be
+// cleared, but that is one unit of work, not two.
+func TestPlanProfileSwitch_DisabledModWithRowsInBothProfilesIsListedOnce(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x.esp": []byte("x")})
+	seedDeployedModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "1.0")
+	seedProfileWithMod(t, svc, "g1", "a", "src", "x", "1.0")
+	seedProfileWithMod(t, svc, "g1", "b", "src", "x", "1.0")
+	installer := svc.GetInstallerForTest(game)
+	require.NoError(t, installer.Install(ctx, game, &domain.Mod{ID: "x", SourceID: "src", Version: "1.0", GameID: "g1"}, "a"))
+	// The target document turns it off.
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "b", "src", "x", true))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	require.Len(t, plan.ToDisable, 1, "one mod is one entry, whichever profiles have rows for it")
+	assert.Equal(t, "x", plan.ToDisable[0].ID)
+	assert.Empty(t, plan.ToEnable)
+
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Disabled, "and one mod is one line in the summary")
+
+	assert.NoFileExists(t, filepath.Join(gameDir, "x.esp"))
+	for _, profileName := range []string{"a", "b"} {
+		row, err := svc.GetInstalledMod(ctx, "src", "x", "g1", profileName)
+		require.NoError(t, err)
+		assert.False(t, row.Enabled, "profile %q's row must not claim the mod is on", profileName)
+		assert.False(t, row.Deployed, "profile %q's row must not claim a deployment that was just taken down", profileName)
+	}
+}
+
+// TestPlanProfileSwitch_EnableCarriesTheTargetProfilesOwnRow is the F6
+// regression. ToEnable carried the MERGED row (the outgoing profile wins on
+// a key collision) while ApplyProfileSwitch's enable loop writes the TARGET
+// profile's row, so when both profiles listed one unpinned mod at different
+// installed versions the target row kept its own version while the OUTGOING
+// version's files were deployed: `lmm list --profile b` said one thing, the
+// game directory held another, and `verify` looked for files that were
+// never deployed.
+func TestPlanProfileSwitch_EnableCarriesTheTargetProfilesOwnRow(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+
+	// One mod, two profiles, two installed versions, neither ref pinned.
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x-v1.esp": []byte("v1")})
+	seedInstalledModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "2.0", true, map[string][]byte{"x-v2.esp": []byte("v2")})
+	require.NoError(t, pm.AddMod(ctx, game.ID, "a", domain.ModReference{SourceID: "src", ModID: "x"}))
+	_, err = pm.Create(ctx, game.ID, "b")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(ctx, game.ID, "b", domain.ModReference{SourceID: "src", ModID: "x"}))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	require.Len(t, plan.ToEnable, 1)
+	assert.Equal(t, "2.0", plan.ToEnable[0].Version,
+		"the enable is about the target profile's row, so it must carry that row's version")
+	assert.Equal(t, "b", plan.ToEnable[0].ProfileName)
+
+	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+
+	row, err := svc.GetInstalledMod(ctx, "src", "x", "g1", "b")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", row.Version)
+	assert.True(t, row.Deployed)
+	assert.FileExists(t, filepath.Join(gameDir, "x-v2.esp"),
+		"`lmm list --profile b` and the game directory must agree on the version")
+}
+
+// TestPlanProfileSwitch_ExternalTargetRowIsNeverEnabled is the F8
+// regression: the `default:` branch read the target row's enabled/deployed
+// flags without the `!tr.External` guard its neighbour two lines above has,
+// so a target row flagged external with an outgoing row that is not was
+// scheduled for an ENABLE - which #269 says a switch must never do. External
+// is a fact about the mod (Steam owns its files wherever they sit), so
+// either profile's row saying so is enough.
+func TestPlanProfileSwitch_ExternalTargetRowIsNeverEnabled(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+	_, err = pm.Create(ctx, game.ID, "b")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x.esp": []byte("x")})
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "x", SourceID: "src", Name: "Mod X", Version: "1.0", GameID: game.ID},
+		ProfileName:  "b",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		External:     true,
+		ExternalPath: "/steam/workshop/content/1/222",
+	}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "a", domain.ModReference{SourceID: "src", ModID: "x", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "b", domain.ModReference{SourceID: "src", ModID: "x", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	assert.Empty(t, plan.ToEnable, "#269: a profile switch never enables an external mod")
+	assert.Empty(t, plan.ToInstall)
+}
+
+// TestApplyProfileSwitch_StalePlanWhenTheTargetProfilesRowsMoved is the F9
+// regression: the freshness precondition snapshotted the OUTGOING profile
+// only, which was complete while every entry came from that profile's own
+// set. It no longer is - the disable loop clears target-profile rows and the
+// enable loop writes them - so a plan applied over a target row that moved
+// in between was executed against a world it never saw, using the stale
+// identity.
+func TestApplyProfileSwitch_StalePlanWhenTheTargetProfilesRowsMoved(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "a")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x.esp": []byte("x")})
+	seedDeployedModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "1.0")
+	seedProfileWithMod(t, svc, "g1", "a", "src", "x", "1.0")
+	seedProfileWithMod(t, svc, "g1", "b", "src", "x", "1.0")
+	require.NoError(t, pm.SetModDisabled(ctx, game.ID, "b", "src", "x", true))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	require.Len(t, plan.ToDisable, 1)
+
+	// Something else moves the TARGET profile's row behind the plan's back.
+	require.NoError(t, svc.SetModEnabledForTest(ctx, "src", "x", game.ID, "b", false))
+
+	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.ErrorIs(t, err, core.ErrStalePlan)
+}
+
+// TestRR_F6_OutgoingVersionFilesLeftBehind is fix round 2's R7: two
+// profiles list one unpinned mod, and their rows hold different versions (an
+// `lmm update` run under one profile only is enough). F6 made the enable
+// deploy the TARGET row's version, but as a plain Install over the live
+// outgoing version - so files only the old version had stayed behind, and
+// the outgoing row went on claiming a deployment that was gone, which made
+// switching back a false NoChanges with the wrong version on disk. The enable
+// now replaces the live version, and the row it replaced stops claiming it.
+func TestRR_F6_OutgoingVersionFilesLeftBehind(t *testing.T) {
+	for _, lm := range []domain.LinkMethod{domain.LinkSymlink, domain.LinkCopy, domain.LinkHardlink} {
+		t.Run(lm.String(), func(t *testing.T) {
+			svc := newFlowsTestService(t)
+			gameDir := t.TempDir()
+			game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: lm, LinkMethodExplicit: true}
+			ctx := context.Background()
+			pm := svc.NewProfileManager()
+			for _, name := range []string{"a", "b"} {
+				_, err := pm.Create(ctx, game.ID, name)
+				require.NoError(t, err)
+				require.NoError(t, pm.AddMod(ctx, game.ID, name, domain.ModReference{SourceID: "src", ModID: "x"}))
+			}
+			require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+			seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true,
+				map[string][]byte{"x-v1.esp": []byte("v1"), "shared.esp": []byte("s1")})
+			seedInstalledModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "2.0", true,
+				map[string][]byte{"x-v2.esp": []byte("v2"), "shared.esp": []byte("s2")})
+			// a's 1.0 is what is live, as it is for the active profile.
+			require.NoError(t, svc.GetInstallerForTest(game).Install(ctx, game,
+				&domain.Mod{ID: "x", SourceID: "src", Version: "1.0", GameID: game.ID}, "a"))
+			require.NoError(t, svc.SetModDeployed(ctx, "src", "x", game.ID, "a", true))
+
+			assertLive := func(version string) {
+				t.Helper()
+				gone, live, shared := "x-v2.esp", "x-v1.esp", "s1"
+				if version == "2.0" {
+					gone, live, shared = "x-v1.esp", "x-v2.esp", "s2"
+				}
+				assert.NoFileExists(t, filepath.Join(gameDir, gone), "the version switched away from must leave no file behind")
+				assert.FileExists(t, filepath.Join(gameDir, live))
+				data, err := os.ReadFile(filepath.Join(gameDir, "shared.esp"))
+				require.NoError(t, err)
+				assert.Equal(t, shared, string(data), "a file both versions ship must hold the live version's bytes")
+			}
+			row := func(profile string) *domain.InstalledMod {
+				t.Helper()
+				r, err := svc.GetInstalledMod(ctx, "src", "x", game.ID, profile)
+				require.NoError(t, err)
+				return r
+			}
+
+			toB, err := svc.PlanProfileSwitch(ctx, game, "b")
+			require.NoError(t, err)
+			require.Len(t, toB.ToEnable, 1)
+			assert.Equal(t, "1.0", toB.PriorVersions[domain.ModKey("src", "x")].Version,
+				"the plan names the live version the enable replaces")
+			_, err = svc.ApplyProfileSwitch(ctx, game, toB, nil)
+			require.NoError(t, err)
+			assertLive("2.0")
+			assert.True(t, row("b").Deployed)
+			assert.True(t, row("a").Enabled, "a still wants the mod on")
+			assert.False(t, row("a").Deployed, "but its 1.0 files are gone, so its row must stop saying they are live")
+
+			toA, err := svc.PlanProfileSwitch(ctx, game, "a")
+			require.NoError(t, err)
+			require.False(t, toA.NoChanges, "switching back must put 1.0 back, not report nothing to do")
+			require.Len(t, toA.ToEnable, 1)
+			assert.Equal(t, "1.0", toA.ToEnable[0].Version)
+			_, err = svc.ApplyProfileSwitch(ctx, game, toA, nil)
+			require.NoError(t, err)
+			assertLive("1.0")
+			assert.True(t, row("a").Deployed)
+			assert.False(t, row("b").Deployed)
+		})
+	}
+}
+
+// TestPlanProfileSwitch_BothRowsClaimingADeploymentStillConverge: a pair of
+// rows that both say enabled and deployed at different versions - what the
+// switch left behind before R7 - is not "already live" under the target:
+// only one version can be on disk, and it is the outgoing profile's.
+func TestPlanProfileSwitch_BothRowsClaimingADeploymentStillConverge(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+	for _, name := range []string{"a", "b"} {
+		_, err := pm.Create(ctx, game.ID, name)
+		require.NoError(t, err)
+		require.NoError(t, pm.AddMod(ctx, game.ID, name, domain.ModReference{SourceID: "src", ModID: "x"}))
+	}
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "a"))
+	seedInstalledModUnderProfile(t, svc, game, "a", "src", "x", "Mod X", "1.0", true, map[string][]byte{"x-v1.esp": []byte("v1")})
+	seedInstalledModUnderProfile(t, svc, game, "b", "src", "x", "Mod X", "2.0", true, map[string][]byte{"x-v2.esp": []byte("v2")})
+	require.NoError(t, svc.SetModDeployed(ctx, "src", "x", game.ID, "a", true))
+	require.NoError(t, svc.SetModDeployed(ctx, "src", "x", game.ID, "b", true))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "b")
+	require.NoError(t, err)
+	assert.False(t, plan.NoChanges)
+	require.Len(t, plan.ToEnable, 1)
+	assert.Equal(t, "2.0", plan.ToEnable[0].Version)
+	assert.Equal(t, "1.0", plan.PriorVersions[domain.ModKey("src", "x")].Version)
+}
+
+// TestApplyProfileSwitch_PinnedTargetReplacesTheLiveOutgoingVersion is R7's
+// other half, on the pinned path: the target profile pins a version and has
+// a row of its own at yet another, undeployed one. The install must replace
+// what is LIVE - the outgoing profile's 1.5 - not the target row's claim, so
+// 1.5's file does not survive the downgrade.
+func TestApplyProfileSwitch_PinnedTargetReplacesTheLiveOutgoingVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "default"))
+	_, err = pm.Create(ctx, game.ID, "stable")
+	require.NoError(t, err)
+	svc.RegisterSource(newTwoVersionSource(t))
+
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, Deployed: true, FileIDs: []string{"10"},
+	}))
+	require.NoError(t, svc.GetInstallerForTest(game).Install(ctx, game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
+	// stable's own row: another version, not deployed.
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.2", GameID: game.ID},
+		ProfileName: "stable", UpdatePolicy: domain.UpdateNotify, Enabled: false,
+	}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "stable")
+	require.NoError(t, err)
+	require.Len(t, plan.ToInstall, 1)
+	assert.Equal(t, "1.5", plan.PriorVersions[domain.ModKey("src", "mod1")].Version)
+
+	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "mod1.esp"), "the live 1.5 file must be replaced, not left beside 1.0")
+	assert.FileExists(t, filepath.Join(game.ModPath, "mod1-old.esp"))
+	outgoing, err := svc.GetInstalledMod(ctx, "src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, outgoing.Deployed)
+}
+
+// TestApplyProfileSwitch_ACacheMissReplacesTheLiveOutgoingVersion is R7's
+// third path (fix round 3, a surviving mutant): the target profile's row is
+// at another version than the live one, and that version's bytes are no
+// longer in the cache, so the switch reinstalls it. The reinstall must
+// replace the LIVE outgoing version - recorded in PriorVersions - or the
+// outgoing version's files stay beside it and its row goes on claiming them.
+func TestApplyProfileSwitch_ACacheMissReplacesTheLiveOutgoingVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+	for _, name := range []string{"default", "stable"} {
+		_, err := pm.Create(ctx, game.ID, name)
+		require.NoError(t, err)
+		require.NoError(t, pm.AddMod(ctx, game.ID, name, domain.ModReference{SourceID: "src", ModID: "mod1"}))
+	}
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "default"))
+	svc.RegisterSource(newTwoVersionSource(t))
+
+	// default's 1.0 is live.
+	seedInstalledModUnderProfile(t, svc, game, "default", "src", "mod1", "Test Mod", "1.0", true,
+		map[string][]byte{"mod1-old.esp": []byte("old-payload")})
+	require.NoError(t, svc.GetInstallerForTest(game).Install(ctx, game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+	require.NoError(t, svc.SetModDeployed(ctx, "src", "mod1", game.ID, "default", true))
+	// stable's own row is at 1.5, whose bytes are not in the cache.
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
+		ProfileName: "stable", UpdatePolicy: domain.UpdateNotify, Enabled: true, FileIDs: []string{"10"},
+	}))
+	require.False(t, svc.GetGameCache(game).Exists(game.ID, "src", "mod1", "1.5"))
+
+	plan, err := svc.PlanProfileSwitch(ctx, game, "stable")
+	require.NoError(t, err)
+	require.Len(t, plan.ToInstall, 1, "a cache miss is a reinstall")
+	assert.Equal(t, "1.0", plan.PriorVersions[domain.ModKey("src", "mod1")].Version,
+		"the plan names the live version the reinstall replaces")
+
+	_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "mod1-old.esp"), "the live 1.0 file must be replaced, not left beside 1.5")
+	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
+	outgoing, err := svc.GetInstalledMod(ctx, "src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, outgoing.Deployed, "default's row no longer claims the files that were replaced")
+}

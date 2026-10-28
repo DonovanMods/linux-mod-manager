@@ -1,0 +1,13 @@
+{
+  "source_id": "nexusmods",
+  "identifier": "valheim",
+  "name": "Valheim",
+  "install_path": "/games/valheim",
+  "mod_path": "/games/valheim",
+  "loader": {
+    "kind": "bepinex",
+    "version": "5.4.23.5",
+    "runtime": "mono",
+    "bootstrap": "proton"
+  }
+}

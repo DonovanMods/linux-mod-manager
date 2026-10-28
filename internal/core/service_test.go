@@ -9,10 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -185,11 +186,11 @@ func TestService_SaveSourceToken(t *testing.T) {
 	})
 
 	// Save a token
-	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
 	require.NoError(t, err)
 
 	// Verify it's saved
-	assert.True(t, svc.IsSourceAuthenticated("nexusmods"))
+	assert.True(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
 }
 
 func TestService_DeleteSourceToken(t *testing.T) {
@@ -206,14 +207,14 @@ func TestService_DeleteSourceToken(t *testing.T) {
 	})
 
 	// Save a token
-	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
 	require.NoError(t, err)
-	assert.True(t, svc.IsSourceAuthenticated("nexusmods"))
+	assert.True(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
 
 	// Delete it
-	err = svc.DeleteSourceToken("nexusmods")
+	err = svc.DeleteSourceToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
-	assert.False(t, svc.IsSourceAuthenticated("nexusmods"))
+	assert.False(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
 }
 
 func TestService_IsSourceAuthenticated(t *testing.T) {
@@ -230,14 +231,14 @@ func TestService_IsSourceAuthenticated(t *testing.T) {
 	})
 
 	// Not authenticated initially
-	assert.False(t, svc.IsSourceAuthenticated("nexusmods"))
+	assert.False(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
 
 	// Save a token
-	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
 	require.NoError(t, err)
 
 	// Now authenticated
-	assert.True(t, svc.IsSourceAuthenticated("nexusmods"))
+	assert.True(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
 }
 
 func TestService_GetSourceToken(t *testing.T) {
@@ -254,16 +255,16 @@ func TestService_GetSourceToken(t *testing.T) {
 	})
 
 	// No token initially
-	token, err := svc.GetSourceToken("nexusmods")
+	token, err := svc.GetSourceToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	assert.Nil(t, token)
 
 	// Save a token
-	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
 	require.NoError(t, err)
 
 	// Get the token
-	token, err = svc.GetSourceToken("nexusmods")
+	token, err = svc.GetSourceToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.Equal(t, "test-api-key", token.APIKey)
@@ -354,91 +355,18 @@ func TestService_UpdateModVersion(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}
-	err = svc.SaveInstalledMod(installedMod)
+	err = svc.SaveInstalledMod(context.Background(), installedMod)
 	require.NoError(t, err)
 
 	// Update the version
-	err = svc.UpdateModVersion("test", "123", "skyrim-se", "default", "2.0.0")
+	err = svc.UpdateModVersionForTest(context.Background(), "test", "123", "skyrim-se", "default", "2.0.0")
 	require.NoError(t, err)
 
 	// Verify the update
-	updated, err := svc.GetInstalledMod("test", "123", "skyrim-se", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0.0", updated.Version)
 	assert.Equal(t, "1.0.0", updated.PreviousVersion)
-}
-
-func TestService_RollbackModVersion(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
-
-	// Create an installed mod with previous version
-	installedMod := &domain.InstalledMod{
-		Mod: domain.Mod{
-			ID:       "123",
-			SourceID: "test",
-			Name:     "Test Mod",
-			Version:  "2.0.0",
-			GameID:   "skyrim-se",
-		},
-		ProfileName:     "default",
-		UpdatePolicy:    domain.UpdateNotify,
-		Enabled:         true,
-		PreviousVersion: "1.0.0",
-	}
-	err = svc.SaveInstalledMod(installedMod)
-	require.NoError(t, err)
-
-	// Rollback the version
-	err = svc.RollbackModVersion("test", "123", "skyrim-se", "default")
-	require.NoError(t, err)
-
-	// Verify the rollback
-	rolledBack, err := svc.GetInstalledMod("test", "123", "skyrim-se", "default")
-	require.NoError(t, err)
-	assert.Equal(t, "1.0.0", rolledBack.Version)
-	assert.Equal(t, "2.0.0", rolledBack.PreviousVersion)
-}
-
-func TestService_RollbackModVersion_NoPreviousVersion(t *testing.T) {
-	cfg := core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	}
-
-	svc, err := core.NewService(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
-
-	// Create an installed mod without previous version
-	installedMod := &domain.InstalledMod{
-		Mod: domain.Mod{
-			ID:       "123",
-			SourceID: "test",
-			Name:     "Test Mod",
-			Version:  "1.0.0",
-			GameID:   "skyrim-se",
-		},
-		ProfileName: "default",
-	}
-	err = svc.SaveInstalledMod(installedMod)
-	require.NoError(t, err)
-
-	// Rollback should fail
-	err = svc.RollbackModVersion("test", "123", "skyrim-se", "default")
-	require.Error(t, err)
 }
 
 func TestService_SetModUpdatePolicy(t *testing.T) {
@@ -466,23 +394,23 @@ func TestService_SetModUpdatePolicy(t *testing.T) {
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 	}
-	err = svc.SaveInstalledMod(installedMod)
+	err = svc.SaveInstalledMod(context.Background(), installedMod)
 	require.NoError(t, err)
 
 	// Change policy to auto
-	err = svc.SetModUpdatePolicy("test", "123", "skyrim-se", "default", domain.UpdateAuto)
+	_, err = svc.SetModUpdatePolicy(context.Background(), "test", "123", "skyrim-se", "default", domain.UpdateAuto)
 	require.NoError(t, err)
 
 	// Verify
-	updated, err := svc.GetInstalledMod("test", "123", "skyrim-se", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.UpdateAuto, updated.UpdatePolicy)
 
 	// Change policy to pinned
-	err = svc.SetModUpdatePolicy("test", "123", "skyrim-se", "default", domain.UpdatePinned)
+	_, err = svc.SetModUpdatePolicy(context.Background(), "test", "123", "skyrim-se", "default", domain.UpdatePinned)
 	require.NoError(t, err)
 
-	updated, err = svc.GetInstalledMod("test", "123", "skyrim-se", "default")
+	updated, err = svc.GetInstalledMod(context.Background(), "test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.UpdatePinned, updated.UpdatePolicy)
 }
@@ -515,7 +443,7 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 		Name:    "Test Game",
 		ModPath: gameDir,
 	}
-	err = svc.AddGame(game)
+	err = svc.SaveGame(context.Background(), game)
 	require.NoError(t, err)
 
 	// Create a mod
@@ -556,13 +484,13 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 	ctx := context.Background()
 
 	// Download first file
-	result1, err := svc.DownloadMod(ctx, "test", game, mod, file1, nil)
+	result1, err := svc.DownloadModForTest(ctx, "test", game, mod, file1, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result1.FilesExtracted, "First download should extract 1 file")
 	assert.NotEmpty(t, result1.Checksum, "First download should have checksum")
 
 	// Download second file - previously bugged: returned early because cache dir existed
-	result2, err := svc.DownloadMod(ctx, "test", game, mod, file2, nil)
+	result2, err := svc.DownloadModForTest(ctx, "test", game, mod, file2, nil)
 	require.NoError(t, err)
 	// Returns total files in cache after extraction (1 from first + 1 from second = 2)
 	assert.Equal(t, 2, result2.FilesExtracted, "After second download, cache should have 2 files total")
@@ -620,7 +548,7 @@ func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	zip1, err := os.ReadFile(createTestZip(t, t.TempDir(), map[string]string{"shared.txt": "from file1", "one.txt": "1"}))
@@ -632,11 +560,11 @@ func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
 	mock.AddDownload("file3", []byte("loose plugin bytes"))
 
 	ctx := context.Background()
-	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
+	_, err = svc.DownloadModForTest(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
 	require.NoError(t, err)
-	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file2", FileName: "file2.zip"}, nil)
+	_, err = svc.DownloadModForTest(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file2", FileName: "file2.zip"}, nil)
 	require.NoError(t, err)
-	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file3", FileName: "loose.esp"}, nil)
+	_, err = svc.DownloadModForTest(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file3", FileName: "loose.esp"}, nil)
 	require.NoError(t, err)
 
 	manifests, err := svc.GetGameCache(game).FileManifests("testgame", "test", "123", "1.0.0")
@@ -684,7 +612,7 @@ func TestService_DownloadMod_PrunesUnclaimedStaleFiles(t *testing.T) {
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	gameCache := svc.GetGameCache(game)
@@ -702,7 +630,7 @@ func TestService_DownloadMod_PrunesUnclaimedStaleFiles(t *testing.T) {
 	mock.AddDownload("file1", zip1)
 
 	ctx := context.Background()
-	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
+	_, err = svc.DownloadModForTest(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
 	require.NoError(t, err)
 
 	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -746,10 +674,10 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 
 	mock := &compilerMockSource{mockSourceWithDownloads: newMockSourceWithDownloads("test-compiler")}
 	defer mock.Close()
-	svc.RegisterSource(mock)
+	registerCompileSource(svc, mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	mod := &domain.Mod{ID: "123", SourceID: "test-compiler", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	gameCache := svc.GetGameCache(game)
@@ -758,7 +686,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 	// Generation 1: the honest pre-#197 shape - a real DownloadModToCache
 	// commit that claims a compiled pak for this file ID.
 	mock.AddDownload("file1", []byte("compiled pak bytes"))
-	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod_P.pak"}, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod_P.pak"}, nil)
 	require.NoError(t, err)
 
 	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -773,7 +701,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 	// Generation 2: the SAME source and file ID now serve the
 	// validated/retained .exmodz - #197's shape.
 	mock.AddDownload("file1", []byte("fake-exmodz-bytes"))
-	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod.exmodz"}, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod.exmodz"}, nil)
 	require.NoError(t, err)
 
 	files, err = gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -808,10 +736,10 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 
 	mock := &compilerMockSource{mockSourceWithDownloads: newMockSourceWithDownloads("test-compiler")}
 	defer mock.Close()
-	svc.RegisterSource(mock)
+	registerCompileSource(svc, mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	mod := &domain.Mod{ID: "123", SourceID: "test-compiler", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	gameCache := svc.GetGameCache(game)
@@ -821,7 +749,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 	// a retained source plus a claimed deployable copy (#221's raw-deploy
 	// default state).
 	mock.AddDownload("pak", []byte("prebuilt-pak-bytes"))
-	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "pak", FileName: "Mod_P.pak"}, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "pak", FileName: "Mod_P.pak"}, nil)
 	require.NoError(t, err)
 
 	manifests, err := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -837,7 +765,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 	// afterward (the issue's repro: an optional patch file, a verify --fix
 	// re-download, ...). This commit runs PruneUnclaimed with its gate open.
 	mock.AddDownload("exmodz", []byte("fake-exmodz-bytes"))
-	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "exmodz", FileName: "Mod.exmodz"}, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "exmodz", FileName: "Mod.exmodz"}, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(dir, "Mod_P.pak"))
@@ -872,7 +800,7 @@ func TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected(t *testing.T) 
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Hostile Mod", Version: "1.0.0", GameID: "testgame"}
 	file1 := &domain.DownloadableFile{ID: "file1", Name: "File One", FileName: "file1.zip"}
@@ -885,7 +813,7 @@ func TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected(t *testing.T) 
 	require.NoError(t, err)
 	mock.AddDownload(file1.ID, zipContent)
 
-	_, err = svc.DownloadMod(context.Background(), "test", game, mod, file1, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test", game, mod, file1, nil)
 	require.Error(t, err, "a forged cache marker must fail the download, not land in the cache")
 	assert.Contains(t, err.Error(), ".lmm-")
 
@@ -918,7 +846,7 @@ func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing
 		Name:    "Test Game",
 		ModPath: filepath.Join(t.TempDir(), "mods"),
 	}
-	err = svc.AddGame(game)
+	err = svc.SaveGame(context.Background(), game)
 	require.NoError(t, err)
 
 	mod := &domain.Mod{
@@ -942,7 +870,7 @@ func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing
 
 	mock.AddDownload(file.ID, zipContent)
 
-	result, err := svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	result, err := svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 	assert.NotEmpty(t, result.Checksum)
@@ -983,21 +911,64 @@ func TestService_DownloadMod_RejectsFileURLFromNonDirectorySource(t *testing.T) 
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Sneaky Mod", Version: "1.0.0", GameID: "testgame"}
 	file := &domain.DownloadableFile{ID: "file1", Name: "File", FileName: "file1.zip"}
 
-	_, err = svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	require.Error(t, err)
+	assert.EqualError(t, err, `source "test" returned a local file:// URL but is not a directory source`,
+		"the refusal text is frozen regardless of how the gate itself is implemented (#300: source.LocalFileServer, not a *custom.Directory type assertion)")
 
 	gameCache := svc.GetGameCache(game)
 	assert.False(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version),
 		"a file:// URL from a non-directory source must not be ingested into the cache")
 }
 
+// TestService_DownloadMod_RejectsFileURLFromSourceDenyingLocalFiles covers
+// the other half of the #300 gate: a source that DOES implement
+// source.LocalFileServer but reports ServesLocalFiles() == false must be
+// refused exactly like a source that doesn't implement the interface at all.
+func TestService_DownloadMod_RejectsFileURLFromSourceDenyingLocalFiles(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
+
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	require.NoError(t, os.WriteFile(secret, []byte("do not leak"), 0644))
+
+	mock := &mockSourceWithFileURLDeniedLocal{
+		mockSourceWithFileURL: &mockSourceWithFileURL{mockSource: newMockSource("test"), fileURL: "file://" + secret},
+	}
+	svc.RegisterSource(mock)
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Sneaky Mod", Version: "1.0.0", GameID: "testgame"}
+	file := &domain.DownloadableFile{ID: "file1", Name: "File", FileName: "file1.zip"}
+
+	_, err = svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
+	require.Error(t, err)
+	assert.EqualError(t, err, `source "test" returned a local file:// URL but is not a directory source`)
+
+	gameCache := svc.GetGameCache(game)
+	assert.False(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version),
+		"a file:// URL from a source denying local-file service must not be ingested into the cache")
+}
+
 // mockSourceWithFileURL returns a file:// download URL regardless of source
-// type, simulating a compromised or misbehaving remote source.
+// type, simulating a compromised or misbehaving remote source. It does not
+// implement source.LocalFileServer at all.
 type mockSourceWithFileURL struct {
 	*mockSource
 	fileURL string
@@ -1007,29 +978,61 @@ func (m *mockSourceWithFileURL) GetDownloadURL(ctx context.Context, mod *domain.
 	return m.fileURL, nil
 }
 
+// mockSourceWithFileURLDeniedLocal implements source.LocalFileServer but
+// reports false - the other half of the #300 gate's condition
+// (!servesLocal || !lfs.ServesLocalFiles()), distinct from a source that
+// doesn't implement the interface at all.
+type mockSourceWithFileURLDeniedLocal struct {
+	*mockSourceWithFileURL
+}
+
+func (m *mockSourceWithFileURLDeniedLocal) ServesLocalFiles() bool { return false }
+
 // mockSourceWithDownloads extends mockSource with download URL support
 type mockSourceWithDownloads struct {
 	*mockSource
-	downloads map[string][]byte // fileID -> zip content
-	server    *httptest.Server
+	payloads map[string][]byte // fileID -> zip content
+	server   *httptest.Server
 
 	// served counts download requests the test server actually handled, so a
 	// test can assert a cache-first guard SKIPPED the download rather than
 	// inferring it from side effects (#96 round 2). Atomic because the
 	// handler runs on the server's own goroutine.
 	served atomic.Int64
+
+	// downloads counts requests the test server has fully served; onDownload
+	// (if set) fires right after, once per request - a per-file-cancellation
+	// test hangs a cancel() off it to assert a loop never starts the next
+	// file once ctx is done (e.g. TestService_ApplyInstall_
+	// ContextCancelledBetweenPrimaryFiles). Atomic for the same reason as
+	// served: the handler runs on the server's own goroutine, and nothing
+	// establishes a happens-before edge between the client's read of the
+	// response body and the handler's post-Write statements.
+	downloads  atomic.Int64
+	onDownload func()
+
+	// urlRequests counts GetDownloadURL calls - the FIRST thing
+	// DownloadModToCache does for a file, before the HTTP client (and its
+	// ctx-aware transport) is anywhere in the picture. A per-file
+	// cancellation test asserts on this rather than on served/downloads:
+	// those two only prove the transport refused to fetch file N, which a
+	// cancelled ctx produces whether or not the caller's loop guard stopped
+	// the iteration (final-review Important 2 - both cancellation tests
+	// passed with the guards they pin deleted). A loop that runs an
+	// iteration it should have skipped always bumps this counter.
+	urlRequests atomic.Int64
 }
 
 func newMockSourceWithDownloads(id string) *mockSourceWithDownloads {
 	m := &mockSourceWithDownloads{
 		mockSource: newMockSource(id),
-		downloads:  make(map[string][]byte),
+		payloads:   make(map[string][]byte),
 	}
 	// Create test server that serves our downloads
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.served.Add(1)
 		fileID := filepath.Base(r.URL.Path)
-		if content, ok := m.downloads[fileID]; ok {
+		if content, ok := m.payloads[fileID]; ok {
 			w.Header().Set("Content-Type", "application/zip")
 			if _, err := w.Write(content); err != nil {
 				return
@@ -1037,15 +1040,20 @@ func newMockSourceWithDownloads(id string) *mockSourceWithDownloads {
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
+		m.downloads.Add(1)
+		if m.onDownload != nil {
+			m.onDownload()
+		}
 	}))
 	return m
 }
 
 func (m *mockSourceWithDownloads) AddDownload(fileID string, content []byte) {
-	m.downloads[fileID] = content
+	m.payloads[fileID] = content
 }
 
 func (m *mockSourceWithDownloads) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	m.urlRequests.Add(1)
 	return m.server.URL + "/" + fileID, nil
 }
 
@@ -1056,33 +1064,33 @@ func (m *mockSourceWithDownloads) Close() {
 	m.server.Close()
 }
 
-// compilerMockSource extends mockSourceWithDownloads with source.MergeCompiler
+// compilerMockSource extends mockSourceWithDownloads with adapter.MergeCompiler
 // so a single source instance can serve both of
 // TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzRetain's
 // real generations for the SAME file ID: a plain (non-.exmodz) download that
 // takes DownloadModToCache's ordinary copy path, and a later .exmodz
 // re-download that takes its validate+retain (#197) path.
 type compilerMockSource struct {
-	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+	fakeMergeFormat // #256: the format-vocabulary half of adapter.MergeCompiler
 	*mockSourceWithDownloads
 }
 
-// ValidateSource implements source.MergeCompiler minimally - confirms the
+// ValidateSource implements adapter.MergeCompiler minimally - confirms the
 // staged archive exists, mirroring service_icarus_compile_test.go's
 // fakeCompilerSource. Real .exmodz parsing is covered elsewhere
-// (internal/source/icarus).
+// (internal/adapter/icarus).
 func (s *compilerMockSource) ValidateSource(sourceFilePath string) error {
 	_, err := os.Stat(sourceFilePath)
 	return err
 }
 
 // MergeCompile is never exercised by this file's tests (they only drive
-// ingest, not a merge), but is required to satisfy source.MergeCompiler.
-func (s *compilerMockSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+// ingest, not a merge), but is required to satisfy adapter.MergeCompiler.
+func (s *compilerMockSource) MergeCompile(ctx context.Context, basePakPath string, sources []adapter.MergeSource, outputPath string) ([]string, []adapter.MergeFailure, error) {
 	return nil, nil, os.WriteFile(outputPath, []byte("merged"), 0o644)
 }
 
-var _ source.MergeCompiler = (*compilerMockSource)(nil)
+var _ adapter.MergeCompiler = (*compilerMockSource)(nil)
 
 // TestService_ModLifecycleFacade pins the Phase 3 Service boundary: callers
 // drive the full mod lifecycle via Service methods without ever reaching into
@@ -1097,7 +1105,7 @@ func TestService_ModLifecycleFacade(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:      "g1",
 		Name:    "Game 1",
 		ModPath: t.TempDir(),
@@ -1114,20 +1122,20 @@ func TestService_ModLifecycleFacade(t *testing.T) {
 		Deployed:     false,
 	}
 
-	require.NoError(t, svc.SaveInstalledMod(mod))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), mod))
 
-	require.NoError(t, svc.SetModDeployed("test", "42", "g1", "default", true))
-	got, err := svc.GetInstalledMod("test", "42", "g1", "default")
+	require.NoError(t, svc.SetModDeployed(context.Background(), "test", "42", "g1", "default", true))
+	got, err := svc.GetInstalledMod(context.Background(), "test", "42", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, got.Deployed)
 
-	require.NoError(t, svc.SetModEnabled("test", "42", "g1", "default", false))
-	got, err = svc.GetInstalledMod("test", "42", "g1", "default")
+	require.NoError(t, svc.SetModEnabledForTest(context.Background(), "test", "42", "g1", "default", false))
+	got, err = svc.GetInstalledMod(context.Background(), "test", "42", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, got.Enabled)
 
-	require.NoError(t, svc.DeleteInstalledMod("test", "42", "g1", "default"))
-	_, err = svc.GetInstalledMod("test", "42", "g1", "default")
+	require.NoError(t, svc.DeleteInstalledMod(context.Background(), "test", "42", "g1", "default"))
+	_, err = svc.GetInstalledMod(context.Background(), "test", "42", "g1", "default")
 	assert.Error(t, err, "mod should be gone after delete")
 }
 
@@ -1144,7 +1152,7 @@ func TestService_GetFileOwner_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	sourceID, modID, found, err := svc.GetFileOwner("g1", "default", "missing/path.txt")
+	sourceID, modID, found, err := svc.GetFileOwner(context.Background(), "g1", "default", "missing/path.txt")
 	require.NoError(t, err)
 	assert.False(t, found)
 	assert.Empty(t, sourceID)

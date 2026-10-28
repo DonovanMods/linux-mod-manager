@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +25,7 @@ func TestScanModPath_EmptyDirectory(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	results, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	results, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
 	require.NoError(t, err)
 	assert.Empty(t, results, "empty directory should return no results")
@@ -39,10 +39,13 @@ func TestScanModPath_NonExistentPath(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	_, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	_, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "mod_path does not exist")
+	// #427: the typed refusal, which names the repair.
+	var missing *core.ModPathMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Contains(t, err.Error(), "mod_path /nonexistent/path/that/does/not/exist does not exist")
+	assert.Contains(t, err.Error(), "lmm game edit test-game --mod-path")
 }
 
 func TestScanModPath_NoModPathConfigured(t *testing.T) {
@@ -52,7 +55,7 @@ func TestScanModPath_NoModPathConfigured(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	_, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	_, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no mod_path configured")
@@ -83,7 +86,7 @@ func TestScanModPath_CopyMode_JarFiles(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	results, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	results, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, results, 3, "should find exactly 3 jar files")
@@ -113,7 +116,7 @@ func TestScanModPath_CopyMode_ZipFiles(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	results, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	results, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, results, 2, "should find both zip files")
@@ -137,7 +140,7 @@ func TestScanModPath_CopyMode_IgnoresDirectories(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	results, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	results, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, results, 1, "should only find the jar file, not the directory")
@@ -169,7 +172,7 @@ func TestScanModPath_CopyMode_SymlinksMarkedAsTracked(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	results, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	results, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, results, 2)
@@ -177,9 +180,10 @@ func TestScanModPath_CopyMode_SymlinksMarkedAsTracked(t *testing.T) {
 	// Find results by name
 	var symlinkResult, regularResult *core.ScanResult
 	for i := range results {
-		if results[i].FileName == "CachedMod-1.0.jar" {
+		switch results[i].FileName {
+		case "CachedMod-1.0.jar":
 			symlinkResult = &results[i]
-		} else if results[i].FileName == "ManualMod.jar" {
+		case "ManualMod.jar":
 			regularResult = &results[i]
 		}
 	}
@@ -216,7 +220,7 @@ func TestScanModPath_ExtractMode_Directories(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	results, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	results, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, results, 3, "should find exactly 3 directories")
@@ -247,7 +251,7 @@ func TestScanModPath_ExtractMode_IgnoresFiles(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	results, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	results, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, results, 1, "should only find the directory, not the file")
@@ -275,7 +279,7 @@ func TestScanModPath_AlreadyTrackedMods(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	results, err := importer.ScanModPath(context.Background(), game, installedMods, core.ScanOptions{})
+	results, err := importer.ScanModPathForTest(context.Background(), game, installedMods, core.ScanOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, results, 2)
@@ -316,7 +320,7 @@ func TestScanModPath_VersionDetection(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	results, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	results, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, results, len(testCases))
@@ -352,7 +356,7 @@ func TestScanModPath_TildeExpansion(t *testing.T) {
 	}
 
 	importer := core.NewImporter(nil)
-	results, err := importer.ScanModPath(context.Background(), game, nil, core.ScanOptions{})
+	results, err := importer.ScanModPathForTest(context.Background(), game, nil, core.ScanOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
@@ -384,7 +388,7 @@ func TestImporter_FindDuplicateMod(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := importer.FindDuplicateMod(tt.modName, installedMods)
+			result := importer.FindDuplicateModForTest(tt.modName, installedMods)
 			if tt.wantMatch {
 				if result == nil {
 					t.Errorf("expected to find duplicate, got nil")

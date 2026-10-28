@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -41,19 +41,19 @@ func seedConflictMod(t *testing.T, svc *core.Service, game *domain.Game, modID, 
 	for path, content := range files {
 		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", modID, "1.0", path, content))
 	}
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      enabled,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
 }
 
 // seedTwinConflictFixture seeds two mods ("Mod A" first in profile order,
@@ -138,7 +138,7 @@ func TestDoConflicts_TwinConflict_Stale_Text(t *testing.T) {
 	svc, game := setupConflictsTest(t)
 	seedTwinConflictFixture(t, svc, game)
 
-	require.NoError(t, svc.NewProfileManager().ReorderMods(game.ID, "default", []domain.ModReference{
+	require.NoError(t, svc.NewProfileManager().ReorderMods(context.Background(), game.ID, "default", []domain.ModReference{
 		{SourceID: "src", ModID: "b", Version: "1.0"},
 		{SourceID: "src", ModID: "a", Version: "1.0"},
 	}))
@@ -157,9 +157,10 @@ func TestDoConflicts_TwinConflict_Stale_Text(t *testing.T) {
 		out)
 }
 
-// TestDoConflicts_TwinConflict_JSON pins the full JSON bytes: the
-// pre-extraction fields in their exact positions plus the additive "winner"
-// and "stale" fields.
+// TestDoConflicts_TwinConflict_JSON pins the full JSON bytes of the v2
+// document (#302): core.ProfileConflict's own shape, where owner / each
+// also_in entry / load_order_winner are {key, name} objects rather than
+// bare display names.
 func TestDoConflicts_TwinConflict_JSON(t *testing.T) {
 	svc, game := setupConflictsTest(t)
 	seedTwinConflictFixture(t, svc, game)
@@ -176,11 +177,20 @@ func TestDoConflicts_TwinConflict_JSON(t *testing.T) {
 			"  \"conflicts\": [\n"+
 			"    {\n"+
 			"      \"path\": \"shared.esp\",\n"+
-			"      \"owner\": \"Mod B\",\n"+
+			"      \"owner\": {\n"+
+			"        \"key\": \"src:b\",\n"+
+			"        \"name\": \"Mod B\"\n"+
+			"      },\n"+
 			"      \"also_in\": [\n"+
-			"        \"Mod A\"\n"+
+			"        {\n"+
+			"          \"key\": \"src:a\",\n"+
+			"          \"name\": \"Mod A\"\n"+
+			"        }\n"+
 			"      ],\n"+
-			"      \"winner\": \"Mod B\",\n"+
+			"      \"load_order_winner\": {\n"+
+			"        \"key\": \"src:b\",\n"+
+			"        \"name\": \"Mod B\"\n"+
+			"      },\n"+
 			"      \"stale\": false\n"+
 			"    }\n"+
 			"  ]\n"+

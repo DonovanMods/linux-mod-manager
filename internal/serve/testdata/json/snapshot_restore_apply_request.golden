@@ -1,0 +1,5 @@
+{
+  "skip_hooks": true,
+  "force": true,
+  "no_safety_snapshot": true
+}

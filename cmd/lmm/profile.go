@@ -4,13 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
-	"text/tabwriter"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/spf13/cobra"
 )
@@ -52,10 +51,30 @@ var profileDeleteCmd = &cobra.Command{
 
 Note: This does not remove the installed mods, only the profile configuration.
 
+The active profile cannot be deleted - its mods are the ones in the game
+directory - unless it is the game's only profile and has nothing installed.
+Switch to another profile first ('lmm profile switch').
+
 Examples:
   lmm profile delete old-profile --game skyrim-se`,
 	Args: cobra.ExactArgs(1),
 	RunE: runProfileDelete,
+}
+
+var profileRenameCmd = &cobra.Command{
+	Use:   "rename <old> <new>",
+	Short: "Rename a profile",
+	Long: `Rename a profile, moving its configuration and every record that names it.
+
+The profile's mods, load order, hooks, config overrides and default-profile
+status all move with it; nothing is re-downloaded and nothing already
+deployed to the game directory changes. Renaming onto a name another profile
+already uses is refused.
+
+Examples:
+  lmm profile rename default survival --game skyrim-se`,
+	Args: cobra.ExactArgs(2),
+	RunE: runProfileRename,
 }
 
 var profileSwitchCmd = &cobra.Command{
@@ -64,9 +83,11 @@ var profileSwitchCmd = &cobra.Command{
 	Long: `Switch to a different profile, deploying its mods to the game directory.
 
 This will undeploy mods from the current profile and deploy mods from the new profile.
+Prompts for confirmation before making any changes; pass -y/--yes to skip the prompt.
 
 Examples:
-  lmm profile switch survival --game skyrim-se`,
+  lmm profile switch survival --game skyrim-se
+  lmm profile switch survival --game skyrim-se --yes`,
 	Args: cobra.ExactArgs(1),
 	RunE: runProfileSwitch,
 }
@@ -85,20 +106,38 @@ Examples:
 }
 
 var profileImportCmd = &cobra.Command{
-	Use:   "import <file>",
+	Use:   "import [file]",
 	Short: "Import a profile",
-	Long: `Import a profile from a YAML file.
+	Long: `Import a profile from a YAML file, or from a Steam Workshop collection.
 
 Missing mods are downloaded and installed automatically, after a
-confirmation prompt. Use --no-install to skip that entirely and just
-save the profile, installing nothing. Use --force to overwrite an
-existing profile with the same name instead of failing.
+confirmation prompt; pass -y/--yes to skip the prompt and answer yes. Use
+--no-install to skip that entirely and just save the profile, installing
+nothing. Use --force to overwrite an existing profile with the same name
+instead of failing.
+
+--workshop-collection takes a Steam Workshop collection id or the URL of
+its page, and imports the collection AS a profile: a collection is a mod
+list, which is what a profile is. It needs no API key. The profile RECORDS
+the list: items you are already subscribed to (and have tracked with 'lmm
+import --workshop') are marked as such, and the rest are listed with what
+to do about them - lmm cannot download a Workshop item you are not
+subscribed to. The profile is named after the collection unless you name
+it with --as.
+
+A Workshop item is game-global: Steam has it on disk and the game loads it
+whichever profile is active. So switching to a collection profile deploys
+nothing, and the profile is a record of what the collection contains
+rather than a set you turn on and off.
 
 Examples:
   lmm profile import survival.yaml --game skyrim-se
+  lmm profile import survival.yaml --game skyrim-se --yes
   lmm profile import survival.yaml --game skyrim-se --no-install
-  lmm profile import survival.yaml --game skyrim-se --force`,
-	Args: cobra.ExactArgs(1),
+  lmm profile import survival.yaml --game skyrim-se --force
+  lmm profile import --workshop-collection 2500900001 --game space-engineers-2
+  lmm profile import --workshop-collection https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001 --as ships`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runProfileImport,
 }
 
@@ -107,12 +146,20 @@ var profileSyncCmd = &cobra.Command{
 	Short: "Sync profile to match installed mods",
 	Long: `Update the profile YAML to match currently installed/enabled mods in the database.
 
+Enabled mods the profile does not list are added, and entries for mods not
+installed under the profile at all are removed. An entry for a mod that is
+installed but switched off is always kept, with its load-order position and
+pinned version: on the active profile a warning says when the database and
+the file disagree about it.
+
 Use this if the profile got out of sync, or to migrate from pre-profile installs.
-If no name is given, uses the current/default profile.
+If no name is given, uses the current/default profile. Prompts for
+confirmation before making any changes; pass -y/--yes to skip the prompt.
 
 Examples:
   lmm profile sync --game skyrim-se
-  lmm profile sync survival --game skyrim-se`,
+  lmm profile sync survival --game skyrim-se
+  lmm profile sync survival --game skyrim-se --yes`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runProfileSync,
 }
@@ -127,6 +174,11 @@ With mod IDs as arguments, sets the new order (first ID = lowest priority).
 Mods not listed are appended at the end. A mod ID shared by mods from
 different sources is ambiguous; qualify it as "source:modid" instead.
 
+With -i/--interactive, the load order is printed as a numbered list and you
+type the positions in the order you want them - no mod IDs needed. Ranges
+are accepted ("2-5,1"), positions you leave out keep their current relative
+order at the end, Enter keeps the order as it is, and q cancels.
+
 Use -p/--profile to target a profile other than the active one - this
 flag belongs to 'reorder' itself, distinct from the game's active profile
 used by other 'profile' subcommands.
@@ -134,6 +186,7 @@ used by other 'profile' subcommands.
 Examples:
   lmm profile reorder --game skyrim-se
   lmm profile reorder --game skyrim-se --profile survival
+  lmm profile reorder -i --game skyrim-se
   lmm profile reorder 12345 67890 11111 --game skyrim-se`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runProfileReorder,
@@ -148,6 +201,11 @@ Use this after manually editing a profile YAML to apply those changes.
 If no name is given, uses the current/default profile. Prompts for
 confirmation before making any changes; pass -y/--yes to skip the prompt.
 
+The game directory holds the active profile's mods, so only the active
+profile is applied; for any other, 'lmm profile switch' makes it active
+and deploys it. A game whose profile files do not say which one is active
+is not applied at all; 'lmm profile list' says why.
+
 Examples:
   lmm profile apply --game skyrim-se
   lmm profile apply survival --game skyrim-se
@@ -157,16 +215,26 @@ Examples:
 }
 
 var (
-	profileImportForce     bool
-	profileImportNoInstall bool
-	profileApplyYes        bool
-	profileReorderProfile  string
+	profileImportForce      bool
+	profileImportNoInstall  bool
+	profileImportYes        bool
+	profileImportCollection string
+	profileImportAs         string
+	profileApplyYes         bool
+	profileApplyDryRun      bool
+	profileSwitchYes        bool
+	profileSwitchDryRun     bool
+	profileSyncYes          bool
+	profileSyncDryRun       bool
+	profileReorderProfile   string
+	profileReorderInteract  bool
 )
 
 func init() {
 	profileCmd.AddCommand(profileListCmd)
 	profileCmd.AddCommand(profileCreateCmd)
 	profileCmd.AddCommand(profileDeleteCmd)
+	profileCmd.AddCommand(profileRenameCmd)
 	profileCmd.AddCommand(profileSwitchCmd)
 	profileCmd.AddCommand(profileExportCmd)
 	profileCmd.AddCommand(profileImportCmd)
@@ -174,15 +242,30 @@ func init() {
 	profileCmd.AddCommand(profileReorderCmd)
 	profileCmd.AddCommand(profileApplyCmd)
 
+	// Switch flags
+	profileSwitchCmd.Flags().BoolVarP(&profileSwitchYes, "yes", "y", false, "auto-confirm the switch")
+	profileSwitchCmd.Flags().BoolVar(&profileSwitchDryRun, "dry-run", false, "print what the switch would do without changing anything")
+
 	// Import flags
+	profileImportCmd.Flags().StringVar(&profileImportCollection, "workshop-collection", "",
+		"import a Steam Workshop collection (its id, or the URL of its page) instead of a file")
+	profileImportCmd.Flags().StringVar(&profileImportAs, "as", "",
+		"name the imported profile (--workshop-collection only; a file names its own profile)")
 	profileImportCmd.Flags().BoolVar(&profileImportForce, "force", false, "overwrite existing profile")
 	profileImportCmd.Flags().BoolVar(&profileImportNoInstall, "no-install", false, "skip installing missing mods")
+	profileImportCmd.Flags().BoolVarP(&profileImportYes, "yes", "y", false, "auto-confirm downloading/installing missing mods")
+
+	// Sync flags
+	profileSyncCmd.Flags().BoolVarP(&profileSyncYes, "yes", "y", false, "auto-confirm the sync")
+	profileSyncCmd.Flags().BoolVar(&profileSyncDryRun, "dry-run", false, "print what the sync would do without changing anything")
 
 	// Apply flags
 	profileApplyCmd.Flags().BoolVarP(&profileApplyYes, "yes", "y", false, "auto-confirm changes")
+	profileApplyCmd.Flags().BoolVar(&profileApplyDryRun, "dry-run", false, "print what the apply would do without changing anything")
 
 	// Reorder flags
 	profileReorderCmd.Flags().StringVarP(&profileReorderProfile, "profile", "p", "", "profile (default: active profile)")
+	profileReorderCmd.Flags().BoolVarP(&profileReorderInteract, "interactive", "i", false, "pick the new load order from a numbered list")
 
 	rootCmd.AddCommand(profileCmd)
 }
@@ -193,24 +276,35 @@ func getProfileManager(service *core.Service) *core.ProfileManager {
 
 func runProfileList(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileList(service, game)
+		return doProfileList(ctx, service, game)
 	})
 }
 
-func doProfileList(service *core.Service, game *domain.Game) error {
-	pm := getProfileManager(service)
-
-	profiles, err := pm.List(game.ID)
+// doProfileList renders the ProfileListing query (#309): the plain
+// NAME/MODS/DEFAULT table (and "No profiles found." for an empty one) is
+// rebuilt from the same document --json emits, byte-identically to the
+// pre-#309 table that formatted straight from pm.List.
+func doProfileList(ctx context.Context, service *core.Service, game *domain.Game) error {
+	listing, err := service.ListProfiles(ctx, game.ID)
 	if err != nil {
 		return fmt.Errorf("listing profiles: %w", err)
 	}
 
-	if len(profiles) == 0 {
+	if jsonOutput {
+		return emitJSON(listing)
+	}
+
+	// #446: a game without exactly one active profile is said out loud.
+	for _, w := range listing.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+
+	if len(listing.Profiles) == 0 {
 		fmt.Println("No profiles found.")
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := newDisplayWidthTableWriter(os.Stdout)
 	if _, err := fmt.Fprintln(w, "NAME\tMODS\tDEFAULT"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
@@ -218,12 +312,12 @@ func doProfileList(service *core.Service, game *domain.Game) error {
 		return fmt.Errorf("writing separator: %w", err)
 	}
 
-	for _, p := range profiles {
+	for _, p := range listing.Profiles {
 		defaultMark := ""
 		if p.IsDefault {
 			defaultMark = "*"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%d\t%s\n", p.Name, len(p.Mods), defaultMark); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%d\t%s\n", p.Name, p.ModCount, defaultMark); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}
@@ -236,16 +330,21 @@ func doProfileList(service *core.Service, game *domain.Game) error {
 
 func runProfileCreate(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileCreate(service, game, args[0])
+		return doProfileCreate(ctx, service, game, args[0])
 	})
 }
 
-func doProfileCreate(service *core.Service, game *domain.Game, name string) error {
+func doProfileCreate(ctx context.Context, service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
-	profile, err := pm.Create(game.ID, name)
+	profile, err := pm.Create(ctx, game.ID, name)
 	if err != nil {
 		return fmt.Errorf("creating profile: %w", err)
+	}
+
+	// Ruling 15: the ProfileResult document - the profile as created.
+	if jsonOutput {
+		return emitJSON(&core.ProfileResult{Profile: *profile})
 	}
 
 	fmt.Printf("✓ Created profile: %s\n", profile.Name)
@@ -254,18 +353,63 @@ func doProfileCreate(service *core.Service, game *domain.Game, name string) erro
 
 func runProfileDelete(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileDelete(service, game, args[0])
+		return doProfileDelete(ctx, service, game, args[0])
 	})
 }
 
-func doProfileDelete(service *core.Service, game *domain.Game, name string) error {
+func doProfileDelete(ctx context.Context, service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
-	if err := pm.Delete(game.ID, name); err != nil {
+	// Under --json the document reports WHICH profile was deleted, which
+	// means reading it before it is gone; the read happens only on that
+	// path so the plain path's behaviour (and its single Delete call) is
+	// unchanged. A load failure here is not fatal: Delete below reports a
+	// missing profile authoritatively, and a readable-but-unparseable
+	// profile still deletes - the document then names it and nothing else.
+	var deleted domain.Profile
+	if jsonOutput {
+		if p, err := pm.Get(ctx, game.ID, name); err == nil {
+			deleted = *p
+		} else {
+			deleted = domain.Profile{Name: name, GameID: game.ID}
+		}
+	}
+
+	if err := pm.Delete(ctx, game.ID, name); err != nil {
 		return fmt.Errorf("deleting profile: %w", err)
 	}
 
+	// Ruling 15: the ProfileResult document - the profile as it stood
+	// immediately before the delete (see core.ProfileResult).
+	if jsonOutput {
+		return emitJSON(&core.ProfileResult{Profile: deleted})
+	}
+
 	fmt.Printf("✓ Deleted profile: %s\n", name)
+	return nil
+}
+
+func runProfileRename(cmd *cobra.Command, args []string) error {
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileRename(ctx, service, game, args[0], args[1])
+	})
+}
+
+// doProfileRename renames oldName to newName through the gated core seam
+// (core.Service.RenameProfile), which moves the profile file and every DB
+// row keyed by profile as one completion chain.
+func doProfileRename(ctx context.Context, service *core.Service, game *domain.Game, oldName, newName string) error {
+	result, err := service.RenameProfile(ctx, game.ID, oldName, newName)
+	if err != nil {
+		return fmt.Errorf("renaming profile: %w", err)
+	}
+
+	// Ruling 15: the ProfileResult document - the profile under its new name.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	fmt.Printf("✓ Renamed profile: %s → %s\n", oldName, newName)
 	return nil
 }
 
@@ -286,63 +430,60 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		return err
 	}
 
+	// Ruling 15: --dry-run --json is the Plan document, emitted before any
+	// preview - including the already-active and no-changes readouts, both
+	// of which the plan itself states (AlreadyActive/NoChanges).
+	if profileSwitchDryRun && jsonOutput {
+		return emitJSON(plan)
+	}
+
 	if plan.AlreadyActive {
+		if jsonOutput {
+			// A run that changes nothing still owes a document: the
+			// Result an empty switch produces.
+			return emitJSON(&core.SwitchResult{})
+		}
 		fmt.Printf("Already on profile: %s\n", targetName)
 		return nil
 	}
 
-	fmt.Printf("Switching to profile: %s\n\n", targetName)
-
-	if plan.NoChanges {
-		// No mod changes, just switch the default - ApplyProfileSwitch's
-		// three loops are all empty, so this is exactly a SetDefault call.
-		if _, err := service.ApplyProfileSwitch(ctx, game, plan, nil); err != nil {
-			return err
+	if !jsonOutput {
+		if profileSwitchDryRun {
+			fmt.Printf("Switch plan for profile %q (dry run)\n\n", targetName)
+		} else {
+			fmt.Printf("Switching to profile: %s\n\n", targetName)
 		}
-		fmt.Printf("✓ Switched to profile: %s\n", targetName)
-		return nil
-	}
-
-	if len(plan.ToDisable) > 0 {
-		fmt.Printf("Will disable %d mod(s):\n", len(plan.ToDisable))
-		for _, im := range plan.ToDisable {
-			fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
+		// #445 review F2: a FlagOnly plan says why it can only mark the
+		// target - before the prompt, since that is what is being asked.
+		for _, w := range plan.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
 	}
 
-	if len(plan.ToEnable) > 0 {
-		fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
-		for _, im := range plan.ToEnable {
-			fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
-		}
-	}
-
-	if len(plan.ToInstall) > 0 {
-		fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
-		for _, ref := range plan.ToInstall {
-			fmt.Printf("  ↓ %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
-		}
-	}
-
-	// Confirm
-	fmt.Print("\nProceed? [Y/n]: ")
-	input, err := readPromptLine()
-	if err != nil {
-		return err
-	}
-	if input != "" && input != "y" && input != "yes" {
-		fmt.Println("Cancelled.")
-		return nil
+	if plan.FlagOnly {
+		return applyFlagOnlySwitch(ctx, service, game, plan)
 	}
 
 	// progress prints every diagnostic and per-mod status line at its exact
 	// point of occurrence, driven entirely by core.ApplyProfileSwitch's
-	// progress events - doProfileSwitch never wrote to stderr, so every
-	// printed diagnostic here is --verbose-gated stdout (a Note), matching
-	// the SwitchResult.Notes display contract. result.Notes is never
-	// separately batch-printed below: every entry has a corresponding event
-	// here already.
-	progress := func(p core.DeployProgress) {
+	// events. result.Notes is never separately batch-printed below: every
+	// Notes entry (the disable/enable loops' --verbose-gated warnings, and
+	// #269's profile-scope advisory) has a corresponding event here already.
+	// The install loop's UpsertMod refusal is a SwitchInstallWarning now, not
+	// a Note (#294, Ruling 5's class extension - Task 13b) - it reaches the
+	// user unconditionally through result.Warnings below instead of a case
+	// here.
+	//
+	// Declared HERE, above the no-work branch, rather than beside the Apply
+	// call it usually feeds: a profile holding only Steam Workshop items has
+	// nothing to disable, enable or install, so plan.NoChanges is true - and
+	// that branch used to pass core a nil sink, throwing away the one event
+	// core does emit on that path (#345, N3).
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.SwitchDisableNote:
 			if verbose {
@@ -363,7 +504,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		case core.SwitchInstallError:
 			fmt.Printf("    Error: %s\n", p.Detail)
 		case core.SwitchDownloading:
-			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
+			printProgressLine("\r    Downloading: %.1f%%", p.Percent)
 		case core.SwitchDownloadFailed:
 			fmt.Println()
 			fmt.Printf("    Error: %s\n", p.Detail)
@@ -371,23 +512,127 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 			fmt.Println()
 		case core.SwitchInstalled:
 			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
-		case core.SwitchInstallNote:
-			if verbose {
-				fmt.Printf("    %s\n", p.Detail)
+		case core.DeployExternalSkipped:
+			// #269/#345 N3: design §2's advisory - "N Steam Workshop items
+			// stay active regardless of profile". Unconditional, not
+			// --verbose-gated: it explains a fact about the switch the user
+			// cannot see any other way.
+			fmt.Printf("  %s\n", p.Detail)
+		}
+	}
+
+	if plan.NoChanges {
+		// No mod changes, just switch the default - ApplyProfileSwitch's
+		// three loops are all empty, so this is exactly a SetDefault call.
+		// A dry run must not make even that one write.
+		if profileSwitchDryRun {
+			return nil
+		}
+		result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return emitJSON(result)
+		}
+		fmt.Printf("✓ Switched to profile: %s\n", targetName)
+		return nil
+	}
+
+	// The preview is the plan rendered for the human about to confirm it;
+	// under --json the document is the whole output (Ruling 15).
+	if !jsonOutput {
+		if len(plan.ToDisable) > 0 {
+			fmt.Printf("Will disable %d mod(s):\n", len(plan.ToDisable))
+			for _, im := range plan.ToDisable {
+				fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
+			}
+		}
+
+		if len(plan.ToEnable) > 0 {
+			fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
+			for _, im := range plan.ToEnable {
+				fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
+			}
+		}
+
+		if len(plan.ToInstall) > 0 {
+			fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
+			for _, ref := range plan.ToInstall {
+				fmt.Printf("  ↓ %s\n", planRefLine(ref))
 			}
 		}
 	}
 
-	result, err := service.ApplyProfileSwitch(ctx, game, plan, progress)
-	if err != nil {
-		// Diagnostics accumulated before a fatal error (ApplyProfileSwitch's
-		// error-path convention returns them alongside it) were already
-		// printed above, live, via progress - nothing left to print here.
+	// A dry run stops here: it has shown the plan and must change nothing.
+	if profileSwitchDryRun {
+		return nil
+	}
+
+	// Confirm unless --yes
+	if !profileSwitchYes {
+		if !jsonOutput {
+			fmt.Print("\nProceed? [Y/n]: ")
+		}
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if input != "" && input != "y" && input != "yes" {
+			// #382: exit 2, like every other declined confirmation - this
+			// used to print "Cancelled." and exit 0, so `lmm profile switch
+			// p && echo switched` printed "switched" over a switch that
+			// never happened. Execute prints the notice.
+			return ErrCancelled
+		}
+	}
+
+	result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
+	// #470's twin: a switch that ran to the end with a mod it could not
+	// install or deploy is not "Switched", though the target is now active.
+	// The error names each failed mod and exits non-zero; under --json its
+	// envelope's details are the whole result, warnings and per-mod
+	// outcomes included.
+	var incomplete *core.ProfileSwitchIncompleteError
+	if errors.As(err, &incomplete) {
+		if !jsonOutput {
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+			fmt.Printf("\n✗ Profile %s is now active, but %d mod(s) failed.\n", targetName, len(result.Failed))
+		}
 		return err
 	}
-	// #197 postsmoke fix: SwitchResult.Warnings (unconditional stderr,
-	// unlike .Notes above) - today, only a merged-pak sync failure for the
-	// target profile. Previously this whole result was discarded.
+	if err != nil {
+		// Task 13 review round 1, Important 1: ApplyProfileSwitch's
+		// error-path convention returns diagnostics accumulated before the
+		// failure alongside it, but the #294 install-loop warning below
+		// lives on result.Warnings, not on a live progress event - it was
+		// never printed above, so it must be surfaced here or it is
+		// silently dropped on the fatal path. Unit Q review M3: under
+		// --json stderr is off limits (Ruling 15), so the warnings ride the
+		// error into the envelope's "details" instead of vanishing.
+		if result != nil && len(result.Warnings) > 0 {
+			if jsonOutput {
+				return &core.ProfileWarningsError{Err: err, Warnings: result.Warnings}
+			}
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
+		return err
+	}
+
+	// Ruling 15: the SwitchResult document, which carries Warnings itself.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	// #197 postsmoke fix / #294 Ruling 5's class extension (Task 13b):
+	// SwitchResult.Warnings (unconditional stderr, unlike .Notes above) -
+	// the install loop's refused UpsertMod (a LOCKED profile ref, #143),
+	// then a merged-pak sync failure for the target profile. Previously
+	// this whole result was discarded.
 	for _, w := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
@@ -396,16 +641,62 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	return nil
 }
 
+// applyFlagOnlySwitch is doProfileSwitch for a core.SwitchPlan with
+// FlagOnly set (#445 review F2): there is nothing to preview but the plan's
+// warning, already printed, so it confirms, marks the target and reports
+// the result's warning - that nothing was deployed or removed, and what to
+// run next.
+func applyFlagOnlySwitch(ctx context.Context, service *core.Service, game *domain.Game, plan *core.SwitchPlan) error {
+	if profileSwitchDryRun {
+		return nil
+	}
+	if !profileSwitchYes {
+		if !jsonOutput {
+			fmt.Printf("Mark %s as the active profile? [Y/n]: ", plan.To)
+		}
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if input != "" && input != "y" && input != "yes" {
+			return ErrCancelled
+		}
+	}
+	result, err := service.ApplyProfileSwitch(ctx, game, plan, nil)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(result)
+	}
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+	fmt.Printf("✓ Marked %s as the active profile of %s\n", plan.To, game.ID)
+	return nil
+}
+
 func runProfileExport(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileExport(service, game, args[0])
+		return doProfileExport(ctx, service, game, args[0])
 	})
 }
 
-func doProfileExport(service *core.Service, game *domain.Game, name string) error {
+// doProfileExport honours --json (#309) with the exported profile's JSON
+// form (core.Service.ExportProfile); the plain path is unchanged - it still
+// writes the YAML document ProfileManager.Export produces.
+func doProfileExport(ctx context.Context, service *core.Service, game *domain.Game, name string) error {
+	if jsonOutput {
+		exported, err := service.ExportProfile(ctx, game.ID, name)
+		if err != nil {
+			return fmt.Errorf("exporting profile: %w", err)
+		}
+		return emitJSON(exported)
+	}
+
 	pm := getProfileManager(service)
 
-	data, err := pm.Export(game.ID, name)
+	data, err := pm.Export(ctx, game.ID, name)
 	if err != nil {
 		return fmt.Errorf("exporting profile: %w", err)
 	}
@@ -414,7 +705,48 @@ func doProfileExport(service *core.Service, game *domain.Game, name string) erro
 	return nil
 }
 
+// planRefLine renders one mod reference of a plan document - a core.
+// ImportPlan bucket entry, or a core.ProfileApplyPlan install entry.
+//
+// The version goes through displayModVersion, never raw (#365): a profile
+// document can name a Steam Workshop item, whose Version is the 19-digit
+// content id, and since #365 core stamps the ref's own external /
+// updated_at so this line can say the revision date instead. A ref with
+// neither prints no version at all rather than a bare "v".
+func planRefLine(ref domain.ModReference) string {
+	workshop := ref.DisplayVersion != "" || ref.External
+	shown := displayModVersion(workshop, ref.Version, ref.UpdatedAt)
+	if ref.DisplayVersion != "" {
+		shown = ref.DisplayVersion
+	}
+	if core.VersionText(&domain.Mod{Version: shown}) == "" || shown == core.NoRevisionDate {
+		return fmt.Sprintf("%s:%s", ref.SourceID, ref.ModID)
+	}
+	if workshop {
+		return fmt.Sprintf("%s:%s (%s)", ref.SourceID, ref.ModID, shown)
+	}
+	return fmt.Sprintf("%s:%s v%s", ref.SourceID, ref.ModID, shown)
+}
+
 func runProfileImport(cmd *cobra.Command, args []string) error {
+	// #269 W2: --workshop-collection is a second INPUT to the same flow,
+	// mutually exclusive with a file - a collection is not a document on
+	// disk, and taking both would leave lmm guessing which one the user
+	// meant.
+	if profileImportCollection != "" {
+		if len(args) > 0 {
+			return fmt.Errorf("--workshop-collection imports a Steam Workshop collection; it cannot also take a file path")
+		}
+		return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+			return doProfileImportCollection(ctx, service, game)
+		})
+	}
+	if len(args) == 0 {
+		return fmt.Errorf("a profile file is required (or use --workshop-collection <id|url>)")
+	}
+	if profileImportAs != "" {
+		return fmt.Errorf("--as names a profile imported from a Steam Workshop collection; a profile FILE names its own profile")
+	}
 	filePath := args[0]
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -425,17 +757,99 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doProfileImportCollection renders `lmm profile import
+// --workshop-collection` (#269 W2).
+//
+// The engine is core.PlanWorkshopCollectionImport /
+// ApplyWorkshopCollectionImport - which is the ordinary import flow with the
+// collection resolved into a profile document in front of it. This function
+// only prints: the collection, what each item means for this machine, and
+// the result.
+//
+// There is no "download and install?" prompt, because there is nothing to
+// answer: core forces NoInstall for a collection import (see
+// ApplyWorkshopCollectionImport), and every un-subscribed item already
+// carries the one sentence that resolves it.
+func doProfileImportCollection(ctx context.Context, service *core.Service, game *domain.Game) error {
+	plan, err := service.PlanWorkshopCollectionImport(ctx, game, profileImportAs, profileImportCollection)
+	if err != nil {
+		return err
+	}
+	c := plan.WorkshopCollection
+
+	if !jsonOutput {
+		name := c.Name
+		if name == "" {
+			name = "Collection " + c.CollectionID
+		}
+		fmt.Printf("Importing collection: %s\n", name)
+		if c.URL != "" {
+			fmt.Printf("  %s\n", c.URL)
+		}
+		fmt.Printf("\nFound %d item(s); importing as profile %q.\n", len(c.Items), c.ProfileName)
+		for _, item := range c.Items {
+			label := item.Name
+			if label == "" {
+				label = "Workshop item " + item.FileID
+			}
+			if item.Tracked {
+				fmt.Printf("  ✓ %s\n", label)
+				continue
+			}
+			fmt.Printf("  ↓ %s — %s\n", label, item.Note)
+		}
+		if plan.Exists {
+			fmt.Printf("\nA profile named %q already exists.\n", c.ProfileName)
+		}
+	}
+
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		if p.Phase == core.ImportSaved {
+			fmt.Printf("\n✓ Imported profile: %s\n", p.ModName)
+		}
+	}
+
+	result, err := service.ApplyWorkshopCollectionImport(ctx, game, plan,
+		core.ProfileImportOptions{Force: profileImportForce}, quietSink(progress))
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		// The collection AND the result: the counts alone say nothing about
+		// WHICH items need subscribing, and that per-item remedy is the
+		// only part of this flow a script can act on (#346, W2 Minor 6).
+		return emitJSON(&core.WorkshopCollectionImportResult{Collection: c, Result: result})
+	}
+	for _, note := range result.Notes {
+		fmt.Printf("  %s\n", note)
+	}
+	// Deliberately NOT the file-import path's "switch ... to make it
+	// active": every ref in a collection profile is a game-global Workshop
+	// item, so a switch to it would deploy nothing and change nothing about
+	// what the game loads (W2 review, Important 5).
+	fmt.Printf("\nThe profile records the collection's list. "+
+		"Steam decides what the game loads for these items, so switching to %s deploys nothing.\n",
+		result.ProfileName)
+	return nil
+}
+
 // doProfileImport owns preview-printing, the "Download and install mods?"
 // confirmation prompt, and event-driven console output; the categorization,
 // save, and download/install loop all live in core.PlanImport/
 // core.ApplyImport (Phase 6b Task 8 - see the task report for the full
-// mapping). The prompt is wired as core.ProfileImportOptions.ConfirmInstall,
-// called by ApplyImport at its own restored position (right after the
-// profile is saved) - the same callback-at-the-CLI's-own-prompt-position
-// precedent core.InstallOptions.ConfirmConflicts established; promptErr
-// mirrors confirmInstallConflicts' own seam in install.go for propagating a
-// genuine stdin read failure verbatim instead of collapsing it into a
-// generic error.
+// mapping).
+//
+// Ruling 7 delta (v2 Phase 3): the prompt now runs BEFORE ApplyImport and
+// its answer travels as core.ProfileImportOptions.Install - the decision is
+// fully derivable from the plan (NeedsRedownload/Missing), so core never
+// calls back into the frontend (Ruling 1). The visible consequence is
+// ordering: the prompt (and, on a decline, its "Skipped." line) now precede
+// "✓ Imported profile: <name>" instead of following it - the profile is no
+// longer saved before the question is asked.
 func doProfileImport(ctx context.Context, service *core.Service, game *domain.Game, data []byte) error {
 	plan, err := service.PlanImport(ctx, game, data)
 	if err != nil {
@@ -446,50 +860,83 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	// Show summary - printed purely from the plan, matching the
-	// pre-extraction CLI's preview exactly.
-	fmt.Printf("Importing profile: %s\n\n", plan.Profile.Name)
-	totalMods := len(plan.Installed) + len(plan.NeedsRedownload) + len(plan.Missing)
-	fmt.Printf("Found %d mod(s) in profile.\n", totalMods)
-	if len(plan.Installed) > 0 {
-		fmt.Printf("  ✓ %d already installed\n", len(plan.Installed))
-	}
-	if len(plan.NeedsRedownload) > 0 {
-		fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
-		for _, ref := range plan.NeedsRedownload {
-			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+	// pre-extraction CLI's preview exactly. Not under --json: the document
+	// is the run's whole output (Ruling 15).
+	if !jsonOutput {
+		fmt.Printf("Importing profile: %s\n\n", plan.Profile.Name)
+		totalMods := len(plan.Installed) + len(plan.AlreadyCached) + len(plan.NeedsRedownload) + len(plan.Missing)
+		fmt.Printf("Found %d mod(s) in profile.\n", totalMods)
+		if len(plan.Installed) > 0 {
+			fmt.Printf("  ✓ %d already installed\n", len(plan.Installed))
 		}
-	}
-	if len(plan.Missing) > 0 {
-		fmt.Printf("  ↓ %d need to be downloaded:\n", len(plan.Missing))
-		for _, ref := range plan.Missing {
-			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+		if profileImportNoInstall {
+			// #472: under --no-install every pending mod gets the same one
+			// accurate line - the document names it, nothing installs or
+			// deploys it - instead of a bucket that promised an install.
+			printNoInstallRefs(plan)
+		}
+		// #371: these are installed under ANOTHER profile - the bytes are
+		// here, but this profile still needs its own rows, so they are
+		// pending work, not "already installed".
+		if len(plan.AlreadyCached) > 0 && !profileImportNoInstall {
+			fmt.Printf("  + %d already downloaded, will be added to this profile:\n", len(plan.AlreadyCached))
+			for _, ref := range plan.AlreadyCached {
+				fmt.Printf("    - %s\n", planRefLine(ref))
+			}
+		}
+		if len(plan.NeedsRedownload) > 0 && !profileImportNoInstall {
+			fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
+			for _, ref := range plan.NeedsRedownload {
+				fmt.Printf("    - %s\n", planRefLine(ref))
+			}
+		}
+		if len(plan.Missing) > 0 && !profileImportNoInstall {
+			fmt.Printf("  ↓ %d need to be downloaded:\n", len(plan.Missing))
+			for _, ref := range plan.Missing {
+				fmt.Printf("    - %s\n", planRefLine(ref))
+			}
+		}
+		if plan.RecordedOnly && !profileImportNoInstall && len(plan.AlreadyCached)+len(plan.NeedsRedownload)+len(plan.Missing) > 0 {
+			// #462: the game directory holds the active profile's mods.
+			fmt.Printf("\n%s is not the active profile of %s (%s is), so the import records these mods in it - downloading what the cache lacks - and deploys nothing; `lmm profile switch %s` deploys them.\n",
+				plan.Profile.Name, game.Name, plan.ActiveProfile, plan.Profile.Name)
 		}
 	}
 
-	toDownloadCount := len(plan.NeedsRedownload) + len(plan.Missing)
+	// #371: AlreadyCached counts as pending too - it is installed, just not
+	// downloaded, and declining leaves the profile without those rows.
+	pendingCount := len(plan.AlreadyCached) + len(plan.NeedsRedownload) + len(plan.Missing)
 
-	// promptErr captures a genuine stdin read failure from the "Download and
-	// install mods?" prompt (distinct from an ordinary decline - see
-	// readPromptLine's own doc comment), so it can be propagated verbatim
-	// below instead of collapsing into ApplyImport's generic error.
-	var promptErr error
 	declined := false
 
 	opts := core.ProfileImportOptions{Force: profileImportForce, NoInstall: profileImportNoInstall}
-	if toDownloadCount > 0 && !profileImportNoInstall {
-		opts.ConfirmInstall = func(toDownload []domain.ModReference) bool {
-			fmt.Print("\nDownload and install mods? [Y/n]: ")
+	if pendingCount > 0 && !profileImportNoInstall {
+		if profileImportYes {
+			opts.Install = true
+		} else {
+			if !jsonOutput {
+				if plan.RecordedOnly {
+					fmt.Print("\nRecord mods in the profile (downloading what is missing)? [Y/n]: ")
+				} else {
+					fmt.Print("\nDownload and install mods? [Y/n]: ")
+				}
+			}
 			input, err := readPromptLine()
 			if err != nil {
-				promptErr = err
-				return false
+				// A genuine stdin read failure, not an ordinary decline (see
+				// readPromptLine's own doc comment): propagate it verbatim and
+				// print nothing further - and, now that the prompt precedes
+				// Apply, without saving the profile either.
+				return err
 			}
 			if input != "" && input != "y" && input != "yes" {
 				declined = true
-				fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", plan.Profile.Name)
-				return false
+				fmt.Printf("Skipped. %s\n", installLaterHint(plan.Profile.Name))
+				// Unreachable under --json: readPromptLine above refuses to
+				// read stdin there (Ruling 2), so a decline is impossible.
+			} else {
+				opts.Install = true
 			}
-			return true
 		}
 	}
 
@@ -498,16 +945,29 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	// including the sole diagnostic that also lands in result.Notes (see
 	// core.ProfileImportResult's doc comment). Notes is never separately
 	// batch-printed below: it has a corresponding event here already.
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.ImportSaved:
 			fmt.Printf("\n✓ Imported profile: %s\n", p.ModName)
 		case core.ImportInstalling:
-			fmt.Println("\nDownloading and installing mods...")
+			if plan.RecordedOnly {
+				fmt.Println("\nDownloading and recording mods...")
+			} else {
+				fmt.Println("\nDownloading and installing mods...")
+			}
 		case core.ImportModInstalling:
-			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
+			// #462: a recorded-only import installs nothing.
+			verb := "Installing"
+			if plan.RecordedOnly {
+				verb = "Recording"
+			}
+			fmt.Printf("  %s %s:%s...\n", verb, p.SourceID, p.ModID)
 		case core.ImportDownloading:
-			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
+			printProgressLine("\r    Downloading: %.1f%%", p.Percent)
 		case core.ImportModFailed:
 			if strings.HasPrefix(p.Detail, "download failed:") {
 				fmt.Println()
@@ -516,7 +976,11 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		case core.ImportDownloadDone:
 			fmt.Println()
 		case core.ImportModInstalled:
-			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+			if plan.RecordedOnly {
+				fmt.Printf("    ✓ Recorded: %s\n", p.ModName)
+			} else {
+				fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+			}
 		case core.ImportNote:
 			if verbose {
 				fmt.Printf("    %s\n", p.Detail)
@@ -524,17 +988,18 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 	}
 
-	result, err := service.ApplyImport(ctx, game, plan, opts, progress)
-	// A genuine stdin read failure inside the ConfirmInstall closure must be
-	// checked UNCONDITIONALLY, before anything else: the closure signals it
-	// by returning false, which ApplyImport treats as an ordinary decline
-	// and returns (result, nil) - so an `err != nil`-gated check would
-	// swallow the failure and fall through to a spurious "--- Summary ---"
-	// block. The pre-extraction CLI returned the error immediately after the
-	// prompt, printing nothing further (fix wave 1, Important 1 - pinned by
-	// TestDoProfileImport_PromptReadFailure_PropagatesErrorWithoutSummary).
-	if promptErr != nil {
-		return promptErr
+	result, err := service.ApplyImport(ctx, game, plan, opts, quietSink(progress))
+	// #485: saving the profile and continuing past a failed mod remains a
+	// useful partial outcome, but it is not a successful import. The typed
+	// error carries result for --json; plain output keeps the summary below.
+	var incomplete *core.ProfileImportIncompleteError
+	var incompleteErr error
+	if errors.As(err, &incomplete) {
+		if jsonOutput {
+			return err
+		}
+		incompleteErr = err
+		err = nil
 	}
 	if err != nil {
 		// Diagnostics accumulated before a fatal error were already printed
@@ -542,6 +1007,12 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		// appropriately wrapped (e.g. "importing profile: %w" for a failed
 		// save) or bare (ctx cancellation) - no additional wrapping here.
 		return err
+	}
+
+	// Ruling 15: the ProfileImportResult document, which carries Warnings
+	// and the Installed/Failed/Skipped counters the summary below renders.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	// #197 postsmoke fix: result.Warnings was never read - a merged-pak
@@ -555,23 +1026,27 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	switch {
 	case profileImportNoInstall:
 		if result.Skipped > 0 {
-			fmt.Printf("\nSkipped installing %d mod(s). Use 'lmm profile apply %s' to install them later.\n", result.Skipped, result.ProfileName)
+			fmt.Printf("\nNothing was installed or deployed. %s\n", installLaterHint(result.ProfileName))
 		}
 	case declined:
-		// The decline message was already printed inside the ConfirmInstall
-		// closure above.
-	case toDownloadCount == 0:
+		// The decline message was already printed at the prompt above.
+	case pendingCount == 0:
 		// Nothing to install - the pre-extraction CLI's early-out never
 		// printed anything further in this case either.
 	default:
 		fmt.Printf("\n--- Summary ---\n")
-		fmt.Printf("Installed: %d\n", result.Installed)
+		if result.RecordedOnly {
+			fmt.Printf("Recorded: %d (not deployed: %s is not the active profile - `lmm profile switch %s` deploys them)\n",
+				result.Recorded, result.ProfileName, result.ProfileName)
+		} else {
+			fmt.Printf("Installed: %d\n", result.Installed)
+		}
 		if result.Failed > 0 {
 			fmt.Printf("Failed: %d\n", result.Failed)
 		}
 	}
 
-	return nil
+	return incompleteErr
 }
 
 func runProfileSync(cmd *cobra.Command, args []string) error {
@@ -581,209 +1056,236 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 }
 
 func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
-	pm := getProfileManager(service)
+	profileName := profileSyncTarget(ctx, service, game, args)
 
-	// Determine profile name
-	var profileName string
-	if len(args) > 0 {
-		profileName = args[0]
-	} else {
-		defaultProfile, err := pm.GetDefault(game.ID)
-		if err != nil {
-			profileName = "default"
-		} else {
-			profileName = defaultProfile.Name
-		}
-	}
-
-	// Get current profile
-	profile, err := pm.Get(game.ID, profileName)
+	plan, err := service.PlanProfileSync(ctx, game, profileName)
 	if err != nil {
-		if err == domain.ErrProfileNotFound {
-			// Create profile if it doesn't exist
-			profile, err = pm.Create(game.ID, profileName)
-			if err != nil {
-				return fmt.Errorf("creating profile: %w", err)
-			}
-		} else {
-			return fmt.Errorf("loading profile: %w", err)
-		}
+		return err
 	}
 
-	// Get installed mods from database
-	installedMods, err := service.GetInstalledMods(game.ID, profileName)
-	if err != nil {
-		return fmt.Errorf("getting installed mods: %w", err)
+	// Ruling 15: --dry-run --json is the Plan document, emitted before any
+	// preview - the plan itself states NoChanges/Missing.
+	if profileSyncDryRun && jsonOutput {
+		return emitJSON(plan)
 	}
 
-	// Build set of installed mod references
-	installedRefs := make(map[string]domain.ModReference)
-	for _, im := range installedMods {
-		if im.Enabled {
-			key := im.SourceID + ":" + im.ID
-			installedRefs[key] = domain.ModReference{
-				SourceID: im.SourceID,
-				ModID:    im.ID,
-				Version:  im.Version,
-				FileIDs:  im.FileIDs,
+	if plan.NoChanges {
+		// The pre-lift engine called pm.Create unconditionally before ever
+		// computing the diff, so a missing profile always got a profile.yaml
+		// even with nothing to sync into it. ApplyProfileSync still must be
+		// reached for that side effect - it creates on plan.Missing
+		// regardless of the buckets. A dry run makes no such write.
+		var result *core.ProfileSyncResult
+		if plan.Missing && !profileSyncDryRun {
+			var err error
+			if result, err = service.ApplyProfileSync(ctx, game, plan, nil); err != nil {
+				return err
 			}
 		}
-	}
-
-	// Build set of profile mod references
-	profileRefs := make(map[string]domain.ModReference)
-	for _, mr := range profile.Mods {
-		key := mr.SourceID + ":" + mr.ModID
-		profileRefs[key] = mr
-	}
-
-	// Calculate differences
-	var toAdd []domain.ModReference
-	var toRemove []domain.ModReference
-	var toUpdate []domain.ModReference // Mods that need FileIDs updated
-
-	// Mods in DB but not in profile
-	for key, ref := range installedRefs {
-		if profileRef, exists := profileRefs[key]; !exists {
-			toAdd = append(toAdd, ref)
-		} else if len(ref.FileIDs) > 0 && len(profileRef.FileIDs) == 0 {
-			// Mod exists in both but profile is missing FileIDs
-			toUpdate = append(toUpdate, ref)
+		if jsonOutput {
+			if result == nil {
+				// #444: what the plan kept and why is the result's too.
+				result = &core.ProfileSyncResult{Warnings: plan.Warnings}
+			}
+			return emitJSON(result)
 		}
-	}
-
-	// Mods in profile but not in DB (or disabled)
-	for key, ref := range profileRefs {
-		if _, exists := installedRefs[key]; !exists {
-			toRemove = append(toRemove, ref)
-		}
-	}
-
-	// Show changes
-	if len(toAdd) == 0 && len(toRemove) == 0 && len(toUpdate) == 0 {
+		printSyncWarnings(plan.Warnings)
 		fmt.Printf("Profile %s is already in sync.\n", profileName)
 		return nil
 	}
 
-	fmt.Printf("Syncing profile: %s\n\n", profileName)
+	// The preview is the plan rendered for the human about to confirm it;
+	// under --json the document is the whole output (Ruling 15).
+	if !jsonOutput {
+		if profileSyncDryRun {
+			fmt.Printf("Sync plan for profile %q (dry run)\n\n", profileName)
+		} else {
+			fmt.Printf("Syncing profile: %s\n\n", profileName)
+		}
 
-	if len(toAdd) > 0 {
-		fmt.Println("Will add to profile:")
-		for _, ref := range toAdd {
-			// Try to get mod name from DB
-			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, game.ID, profileName)
-			if mod != nil {
-				fmt.Printf("  + %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
-			} else {
-				fmt.Printf("  + %s:%s\n", ref.SourceID, ref.ModID)
+		if len(plan.ToAdd) > 0 {
+			fmt.Println("Will add to profile:")
+			for _, ref := range plan.ToAdd {
+				if name, ok := plan.Names[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
+					fmt.Printf("  + %s (%s:%s)\n", name, ref.SourceID, ref.ModID)
+				} else {
+					fmt.Printf("  + %s:%s\n", ref.SourceID, ref.ModID)
+				}
+			}
+		}
+
+		if len(plan.ToRemove) > 0 {
+			fmt.Println("Will remove from profile:")
+			for _, ref := range plan.ToRemove {
+				fmt.Printf("  - %s:%s\n", ref.SourceID, ref.ModID)
+			}
+		}
+
+		if len(plan.ToUpdate) > 0 {
+			fmt.Println("Will update FileIDs for:")
+			for _, ref := range plan.ToUpdate {
+				if name, ok := plan.Names[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
+					fmt.Printf("  ~ %s (%s:%s)\n", name, ref.SourceID, ref.ModID)
+				} else {
+					fmt.Printf("  ~ %s:%s\n", ref.SourceID, ref.ModID)
+				}
 			}
 		}
 	}
 
-	if len(toRemove) > 0 {
-		fmt.Println("Will remove from profile:")
-		for _, ref := range toRemove {
-			fmt.Printf("  - %s:%s\n", ref.SourceID, ref.ModID)
-		}
-	}
-
-	if len(toUpdate) > 0 {
-		fmt.Println("Will update FileIDs for:")
-		for _, ref := range toUpdate {
-			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, game.ID, profileName)
-			if mod != nil {
-				fmt.Printf("  ~ %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
-			} else {
-				fmt.Printf("  ~ %s:%s\n", ref.SourceID, ref.ModID)
-			}
-		}
-	}
-
-	// Confirm
-	fmt.Print("\nProceed? [Y/n]: ")
-	input, err := readPromptLine()
-	if err != nil {
-		return err
-	}
-	if input != "" && input != "y" && input != "yes" {
-		fmt.Println("Cancelled.")
+	// A dry run stops here: it has shown the plan and must change nothing.
+	if profileSyncDryRun {
+		printSyncWarnings(plan.Warnings)
 		return nil
 	}
 
-	// Apply changes
-	for _, ref := range toAdd {
-		if err := pm.AddMod(game.ID, profileName, ref); err != nil {
+	// Confirm unless --yes
+	if !profileSyncYes {
+		if !jsonOutput {
+			fmt.Print("\nProceed? [Y/n]: ")
+		}
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if input != "" && input != "y" && input != "yes" {
+			// #382: exit 2, like every other declined confirmation - this
+			// used to print "Cancelled." and exit 0, so `lmm profile switch
+			// p && echo switched` printed "switched" over a switch that
+			// never happened. Execute prints the notice.
+			return ErrCancelled
+		}
+	}
+
+	// progress prints the add/remove loops' --verbose-only diagnostics at
+	// their exact point of occurrence, driven by core.ApplyProfileSync's
+	// events - the same 2-space "  Warning: ..." rendering for both buckets
+	// (see core's profile_sync.go). The toUpdate loop's refusal is a
+	// SyncUpdateWarning since #294 (Ruling 5) and arrives on
+	// result.Warnings instead, alongside the end-of-apply merged-pak
+	// warnings - unconditional, printed below.
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		switch p.Phase {
+		case core.SyncAddNote, core.SyncRemoveNote:
 			if verbose {
-				fmt.Printf("  Warning: %v\n", err)
+				fmt.Printf("  %s\n", p.Detail)
 			}
 		}
 	}
 
-	for _, ref := range toRemove {
-		if err := pm.RemoveMod(game.ID, profileName, ref.SourceID, ref.ModID); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: %v\n", err)
+	result, err := service.ApplyProfileSync(ctx, game, plan, quietSink(progress))
+	if err != nil {
+		// Task 13 review round 1, Important 1: the #294 warning below lives
+		// on result.Warnings, not a live progress event, so it was never
+		// printed live - it must be surfaced here or it is silently dropped
+		// on the fatal path (ctx cancellation is the only reachable fatal
+		// error once a toUpdate entry has already warned). Unit Q review
+		// M3: under --json the envelope's "details" carries them, since
+		// Ruling 15 forbids the stderr line.
+		if result != nil && len(result.Warnings) > 0 {
+			if jsonOutput {
+				return &core.ProfileWarningsError{Err: err, Warnings: result.Warnings}
+			}
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 			}
 		}
+		return err
 	}
 
-	// Update mods with FileIDs
-	for _, ref := range toUpdate {
-		if err := pm.UpsertMod(game.ID, profileName, ref); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: could not update %s:%s: %v\n", ref.SourceID, ref.ModID, err)
-			}
-		}
+	// Ruling 15: the ProfileSyncResult document, which carries Warnings
+	// itself.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
-	// #197 postsmoke seam-audit fix: toAdd/toRemove change profile.Mods
-	// MEMBERSHIP directly (AddMod/RemoveMod) - membership, not just the DB
-	// Enabled flag, is what GetInstalledModsInProfileOrder (and so
-	// enabledMergeSources) requires, so this is a genuine merge-input
-	// change with no other seam to catch it.
-	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
-	} else {
-		for _, w := range syncWarnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
-		}
-	}
+	// #197 postsmoke fix / #294 (Ruling 5): result.Warnings (unconditional
+	// stderr, unlike the --verbose-gated warnings above) - the plan's kept
+	// mods (#444), the toUpdate loop's refused UpsertMod (a LOCKED profile
+	// ref, #143), then a merged-pak sync failure for the profile.
+	printSyncWarnings(result.Warnings)
 
 	fmt.Printf("✓ Synced profile: %s\n", profileName)
 	return nil
 }
 
+// printSyncWarnings writes each of a sync's warnings to stderr.
+func printSyncWarnings(warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+}
+
+// profileSyncTarget resolves which profile `lmm profile sync` acts on: the
+// positional argument when given, else the game's default profile, else the
+// literal "default" (an unreadable default is not an error here - the
+// plan's own profile lookup handles a missing profile via Plan.Missing).
+func profileSyncTarget(ctx context.Context, service *core.Service, game *domain.Game, args []string) string {
+	if len(args) > 0 {
+		return args[0]
+	}
+	defaultProfile, err := getProfileManager(service).GetDefault(ctx, game.ID)
+	if err != nil {
+		return "default"
+	}
+	return defaultProfile.Name
+}
+
 func runProfileReorder(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileReorder(service, game, args)
+		return doProfileReorder(ctx, service, game, args, os.Stdin)
 	})
 }
 
-func doProfileReorder(service *core.Service, game *domain.Game, args []string) error {
+// doProfileReorder renders `lmm profile reorder`'s three forms: the bare
+// readout, the positional-args set, and -i's numbered picker (#254). in is
+// the picker's input, threaded from runProfileReorder as os.Stdin and
+// replaced by a plain io.Reader in tests.
+func doProfileReorder(ctx context.Context, service *core.Service, game *domain.Game, args []string, in io.Reader) error {
 
-	profileName, err := resolveProfile(service, game.ID, profileReorderProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, profileReorderProfile)
 	if err != nil {
 		return err
 	}
-	profile, err := config.LoadProfile(service.ConfigDir(), game.ID, profileName)
-	if err != nil {
-		return fmt.Errorf("loading profile: %w", err)
+
+	if profileReorderInteract {
+		if len(args) > 0 {
+			return errors.New("--interactive takes no mod IDs: pick the order from the numbered list, or pass the IDs without -i")
+		}
+		ids, err := reorderInteractively(ctx, service, game, profileName, in)
+		if err != nil || ids == nil {
+			return err
+		}
+		args = ids
 	}
 
 	if len(args) == 0 {
+		profile, err := getProfileManager(service).Get(ctx, game.ID, profileName)
+		if err != nil {
+			return fmt.Errorf("loading profile: %w", err)
+		}
+		// Ruling 15: the load-order READOUT is the same profile document a
+		// reorder emits - profile.Mods IS the load order, in order.
+		if jsonOutput {
+			return emitJSON(&core.ProfileResult{Profile: *profile})
+		}
 		// Show current load order
 		if len(profile.Mods) == 0 {
 			fmt.Printf("No mods in profile %s.\n", profileName)
 			return nil
 		}
-		installed, _ := service.GetInstalledMods(game.ID, profileName)
+		installed, _ := service.GetInstalledMods(ctx, game.ID, profileName)
 		nameByKey := make(map[string]string)
 		for i := range installed {
 			key := installed[i].SourceID + ":" + installed[i].ID
 			nameByKey[key] = installed[i].Name
 		}
 		fmt.Printf("Load order for %s (first = lowest priority):\n", profileName)
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		w := newDisplayWidthTableWriter(os.Stdout)
 		if _, err := fmt.Fprintln(w, "#\tMOD_ID\tNAME"); err != nil {
 			return fmt.Errorf("writing header: %w", err)
 		}
@@ -803,62 +1305,69 @@ func doProfileReorder(service *core.Service, game *domain.Game, args []string) e
 		return nil
 	}
 
-	// Set new order: args are mod IDs (or "source:modid") in desired order (first = lowest priority).
-	// Key by sourceID:modID so mods from different sources with the same ModID are not overwritten.
-	byKey := make(map[string]domain.ModReference)
-	for _, ref := range profile.Mods {
-		key := ref.SourceID + ":" + ref.ModID
-		byKey[key] = ref
-	}
-	var newRefs []domain.ModReference
-	seen := make(map[string]bool)
-	for _, id := range args {
-		var ref domain.ModReference
-		var key string
-		if strings.Contains(id, ":") {
-			key = id
-			var ok bool
-			ref, ok = byKey[key]
-			if !ok {
-				return fmt.Errorf("mod %s not in profile", id)
-			}
-		} else {
-			// Look up by ModID only; ambiguous if multiple sources have this ModID
-			var matches []string
-			for k, r := range byKey {
-				if r.ModID == id {
-					matches = append(matches, k)
-				}
-			}
-			switch len(matches) {
-			case 0:
-				return fmt.Errorf("mod %s not in profile", id)
-			case 1:
-				key = matches[0]
-				ref = byKey[key]
-			default:
-				return fmt.Errorf("ambiguous mod id %s (use source:modid): %s", id, strings.Join(matches, ", "))
-			}
-		}
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		newRefs = append(newRefs, ref)
-	}
-	// Append mods not mentioned in args (unchanged relative order)
-	for _, ref := range profile.Mods {
-		key := ref.SourceID + ":" + ref.ModID
-		if !seen[key] {
-			newRefs = append(newRefs, ref)
-		}
+	// args are mod IDs (or "source:modid") in desired order (first = lowest priority).
+	newRefs, err := service.ResolveReorder(ctx, game, profileName, args)
+	if err != nil {
+		return err
 	}
 
-	if err := service.ReorderProfileMods(game.ID, profileName, newRefs); err != nil {
+	if err := service.ReorderProfileMods(ctx, game.ID, profileName, newRefs); err != nil {
 		return fmt.Errorf("reordering: %w", err)
 	}
+
+	// Ruling 15: the ProfileResult document - the profile as it now stands,
+	// re-read so the document reports what was persisted rather than what
+	// was requested.
+	if jsonOutput {
+		profile, err := getProfileManager(service).Get(ctx, game.ID, profileName)
+		if err != nil {
+			return fmt.Errorf("loading profile: %w", err)
+		}
+		return emitJSON(&core.ProfileResult{Profile: *profile})
+	}
+
 	fmt.Printf("✓ Load order updated for profile %s.\n", profileName)
 	return nil
+}
+
+// reorderInteractively runs the -i picker and returns the mod keys the user
+// chose, in typed order, for the shared ResolveReorder path below to apply.
+// A nil slice with a nil error means "nothing to do" - an empty profile, or
+// the user pressing Enter to keep the order as it stands - and the caller
+// returns without writing anything.
+//
+// Ruling 2: --json never reads stdin, so -i under --json is refused with
+// core.ErrInteractiveOnly naming the form that does work non-interactively,
+// rather than blocking on a prompt no one will answer.
+func reorderInteractively(ctx context.Context, service *core.Service, game *domain.Game, profileName string, in io.Reader) ([]string, error) {
+	if jsonOutput {
+		return nil, fmt.Errorf("%w: pass the mod IDs as arguments in the order you want them", core.ErrInteractiveOnly)
+	}
+
+	profile, err := getProfileManager(service).Get(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("loading profile: %w", err)
+	}
+	if len(profile.Mods) == 0 {
+		fmt.Printf("No mods in profile %s.\n", profileName)
+		return nil, nil
+	}
+
+	installed, _ := service.GetInstalledMods(ctx, game.ID, profileName)
+	names := make(map[string]string, len(installed))
+	for i := range installed {
+		names[domain.ModKey(installed[i].SourceID, installed[i].ID)] = installed[i].Name
+	}
+
+	ids, err := promptReorderFrom(in, profileName, profile.Mods, names)
+	if err != nil {
+		return nil, err
+	}
+	if ids == nil {
+		fmt.Println("\nLoad order unchanged.")
+		return nil, nil
+	}
+	return ids, nil
 }
 
 func runProfileApply(cmd *cobra.Command, args []string) error {
@@ -867,536 +1376,271 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doProfileApply owns profile-name resolution, plan-printing, the
+// "Proceed?" confirmation prompt and event-driven console output; the diff,
+// the source resolution and the disable/enable/install execution live in
+// core.PlanProfileApply/core.ApplyProfileApply (#290). The prompt
+// deliberately stays here rather than in core: core never blocks on user
+// input.
 func doProfileApply(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
+	profileName := profileApplyTarget(ctx, service, game, args)
 
-	pm := getProfileManager(service)
-
-	// Determine profile name
-	var profileName string
-	if len(args) > 0 {
-		profileName = args[0]
-	} else {
-		defaultProfile, err := pm.GetDefault(game.ID)
-		if err != nil {
-			profileName = "default"
-		} else {
-			profileName = defaultProfile.Name
-		}
-	}
-
-	// Get the profile
-	profile, err := pm.Get(game.ID, profileName)
+	plan, err := service.PlanProfileApply(ctx, game, profileName)
 	if err != nil {
-		return fmt.Errorf("profile not found: %s", profileName)
+		return err
 	}
 
-	// Get installed mods from database
-	installedMods, err := service.GetInstalledMods(game.ID, profileName)
-	if err != nil {
-		return fmt.Errorf("getting installed mods: %w", err)
+	// Ruling 15: --dry-run --json is the Plan document, emitted before any
+	// preview is rendered.
+	if profileApplyDryRun && jsonOutput {
+		return emitJSON(plan)
 	}
 
-	// Build lookup of installed mods
-	installedByKey := make(map[string]*domain.InstalledMod)
-	for i := range installedMods {
-		key := installedMods[i].SourceID + ":" + installedMods[i].ID
-		installedByKey[key] = &installedMods[i]
-	}
-
-	// Build set of profile mod keys
-	profileKeys := make(map[string]domain.ModReference)
-	for _, mr := range profile.Mods {
-		key := mr.SourceID + ":" + mr.ModID
-		profileKeys[key] = mr
-	}
-
-	// Calculate differences
-	var toDisable []*domain.InstalledMod
-	var toEnable []*domain.InstalledMod
-	var toInstall []domain.ModReference
-	needsRedownloadSet := make(map[string]bool) // Track which mods are re-downloads
-	needsReplaceSet := make(map[string]bool)    // #96: mods needing Installer.Replace (already deployed at the wrong version), not a bare Install
-
-	// Check installed mods against profile. Deterministic order: iterate
-	// core.OrderByProfile(profile, installedMods) - not `for key, im :=
-	// range installedByKey`, which iterates map order - keeping installedByKey
-	// only for the membership lookup below.
-	ordered := core.OrderByProfile(profile, installedMods)
-	for i := range ordered {
-		im := &ordered[i]
-		key := im.SourceID + ":" + im.ID
-		if _, inProfile := profileKeys[key]; !inProfile {
-			// Installed but not in profile - disable it
-			if im.Enabled {
-				toDisable = append(toDisable, im)
-			}
-		} else {
-			// In profile - make sure it's enabled and at the profile's version
-			ref := profileKeys[key]
-			if ref.Version != "" && im.Version != ref.Version {
-				// #96 convergence: the profile names a different version
-				// than the installed row - reinstall at the profile's
-				// version (downgrades included), regardless of enabled
-				// state. ref is passed as-is: its own FileIDs (if any)
-				// describe the TARGET version; the installed row's
-				// describe the wrong one.
-				toInstall = append(toInstall, ref)
-				needsRedownloadSet[key] = false // fresh target version: profile FileIDs, not the DB's
-				needsReplaceSet[key] = im.Deployed
-				continue
-			}
-			if !im.Enabled {
-				// Check if cache exists before adding to toEnable
-				if service.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version) {
-					toEnable = append(toEnable, im)
-				} else {
-					// Cache missing - need to re-download
-					toInstall = append(toInstall, domain.ModReference{
-						SourceID: im.SourceID,
-						ModID:    im.ID,
-						Version:  im.Version,
-						FileIDs:  im.FileIDs,
-					})
-					needsRedownloadSet[key] = true
-				}
-			}
+	if plan.NoChanges {
+		if jsonOutput {
+			// Nothing to do is still a run that owes a document: the
+			// Result an apply with no work produces.
+			return emitJSON(&core.ProfileApplyResult{})
 		}
-	}
-
-	// Check profile mods against installed. Deterministic order: iterate
-	// profile.Mods - not `for key, ref := range profileKeys`, which iterates
-	// map order. seen guards the same dedup profileKeys gave for free.
-	seen := make(map[string]bool, len(profile.Mods))
-	for _, ref := range profile.Mods {
-		key := ref.SourceID + ":" + ref.ModID
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		if _, installed := installedByKey[key]; !installed {
-			// In profile but not installed
-			toInstall = append(toInstall, ref)
-		}
-	}
-
-	// Show changes
-	if len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 {
 		fmt.Printf("System already matches profile %s.\n", profileName)
+		// #269/#345 N6: design §2's advisory, on the path core cannot emit
+		// it. ApplyProfileApply's own `if plan.NoChanges { return }` sits
+		// ABOVE its DeployExternalSkipped emit - a deliberate contract, so a
+		// frontend calling Apply unconditionally never gets a sync the CLI
+		// did not perform - and this branch never calls Apply at all. A
+		// profile holding ONLY Workshop items is exactly this case, and it
+		// is the run most likely to leave a user wondering what happened.
+		// Gated on the human path only by position: --json returned its
+		// document above, so stdout stays one document (Ruling 15). That
+		// document is a zero-valued ProfileApplyResult, which - unlike the
+		// with-work path, where core appends the note to Result.Notes
+		// itself - carries no trace of the advisory. Closing THAT half is a
+		// core change (an external_unchanged field on the Result, or the
+		// note in Notes), so it is left to the follow-up issue rather than
+		// synthesized here.
+		if plan.ExternalUnchanged > 0 {
+			fmt.Printf("  %s\n", fmt.Sprintf(core.NoteExternalProfileScope, plan.ExternalUnchanged))
+		}
 		return nil
 	}
 
-	fmt.Printf("Applying profile: %s\n\n", profileName)
+	// The preview is the plan rendered for the human about to confirm it.
+	// Under --json it is not printed at all (the document is the whole
+	// output, Ruling 15); under --dry-run the header names it a dry run,
+	// matching `deploy --dry-run`'s "<verb> plan for profile %q (dry run)".
+	if !jsonOutput {
+		if profileApplyDryRun {
+			fmt.Printf("Apply plan for profile %q (dry run)\n\n", profileName)
+		} else {
+			fmt.Printf("Applying profile: %s\n\n", profileName)
+		}
 
-	if len(toDisable) > 0 {
-		fmt.Printf("Will disable %d mod(s):\n", len(toDisable))
-		for _, im := range toDisable {
-			fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
+		if len(plan.ToDisable) > 0 {
+			fmt.Printf("Will disable %d mod(s):\n", len(plan.ToDisable))
+			for _, im := range plan.ToDisable {
+				fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
+			}
+		}
+
+		if len(plan.ToEnable) > 0 {
+			fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
+			for _, im := range plan.ToEnable {
+				fmt.Printf("  + %s (%s)%s\n", im.Name, im.ID, borrowedFrom(im, profileName))
+			}
+		}
+
+		if len(plan.ToInstall) > 0 {
+			fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
+			for _, entry := range plan.ToInstall {
+				// P1a review F5: an EXTERNAL entry is a Steam Workshop item
+				// lmm already tracks - the apply copies its row and
+				// downloads nothing - so the download arrow would describe
+				// work that never happens, and entry.Ref.Version is Steam's
+				// content id, which no human-facing surface may print
+				// (#365/#269). planRefLine reads the display facts core
+				// stamped.
+				if entry.External {
+					fmt.Printf("  = %s (tracked - Steam already has it)\n", planRefLine(entry.Ref))
+					continue
+				}
+				fmt.Printf("  ↓ %s\n", planRefLine(entry.Ref))
+			}
 		}
 	}
 
-	if len(toEnable) > 0 {
-		fmt.Printf("Will enable %d mod(s):\n", len(toEnable))
-		for _, im := range toEnable {
-			fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
-		}
-	}
-
-	if len(toInstall) > 0 {
-		fmt.Printf("Will install %d mod(s):\n", len(toInstall))
-		for _, ref := range toInstall {
-			fmt.Printf("  ↓ %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
-		}
+	// A dry run stops here: it has shown the plan and must change nothing.
+	if profileApplyDryRun {
+		return nil
 	}
 
 	// Confirm unless --yes
 	if !profileApplyYes {
-		fmt.Print("\nProceed? [Y/n]: ")
+		if !jsonOutput {
+			fmt.Print("\nProceed? [Y/n]: ")
+		}
 		input, err := readPromptLine()
 		if err != nil {
 			return err
 		}
 		if input != "" && input != "y" && input != "yes" {
-			fmt.Println("Cancelled.")
-			return nil
+			// #382: exit 2, like every other declined confirmation - this
+			// used to print "Cancelled." and exit 0, so `lmm profile switch
+			// p && echo switched` printed "switched" over a switch that
+			// never happened. Execute prints the notice.
+			return ErrCancelled
 		}
 	}
 
-	installer, err := service.GetInstallerForProfile(game, profileName)
+	// progress prints every diagnostic and per-mod status line at its exact
+	// point of occurrence, driven entirely by core.ApplyProfileApply's
+	// events - the same Switch* phase vocabulary doProfileSwitch renders,
+	// because the two flows print the same lines (see core's profile_apply.go).
+	// Everything here is stdout; result.Notes is never batch-printed below
+	// since every entry already has an event here. The install loop's
+	// UpsertMod refusal is a SwitchInstallWarning, not the --verbose-only
+	// SwitchInstallNote it used to be (ApplyProfileSwitch's identical
+	// refusal followed suit in Task 13b) - it reaches the user
+	// unconditionally through result.Warnings below instead of a case here
+	// (printing it here as well would duplicate it).
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		switch p.Phase {
+		case core.SwitchDisableNote, core.SwitchEnableNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		case core.SwitchDisabled:
+			fmt.Printf("  ✓ Disabled: %s\n", p.ModName)
+		case core.SwitchEnabled:
+			fmt.Printf("  ✓ Enabled: %s\n", p.ModName)
+		case core.SwitchInstalling:
+			fmt.Println("\nInstalling missing mods...")
+		case core.SwitchInstallingMod:
+			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
+		case core.SwitchInstallError:
+			fmt.Printf("    Error: %s\n", p.Detail)
+		case core.SwitchDownloading:
+			printProgressLine("\r    Downloading: %.1f%%", p.Percent)
+		case core.SwitchDownloadFailed:
+			fmt.Println()
+			fmt.Printf("    Error: %s\n", p.Detail)
+		case core.SwitchDownloadDone:
+			fmt.Println()
+		case core.SwitchInstalled:
+			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+		case core.DeployExternalSkipped:
+			// #269/#345 N3: design §2's advisory - "N Steam Workshop items
+			// stay active regardless of profile". Unconditional, for the
+			// reason doProfileSwitch's identical case states.
+			fmt.Printf("  %s\n", p.Detail)
+		}
+	}
+
+	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, quietSink(progress))
+	// #470: an apply that ran to the end with a mod it could not install or
+	// deploy is not "Applied". The error names each failed mod and exits
+	// non-zero; under --json its envelope's details are the whole result,
+	// warnings and per-mod outcomes included.
+	var incomplete *core.ProfileApplyIncompleteError
+	if errors.As(err, &incomplete) {
+		if !jsonOutput {
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+			fmt.Printf("\n✗ Profile %s was not fully applied: %d mod(s) failed.\n", profileName, len(result.Failed))
+		}
+		return err
+	}
 	if err != nil {
+		// Task 13 review round 1, Important 1: the #294 warning above lives
+		// on result.Warnings, not a live progress event, so it was never
+		// printed live - it must be surfaced here or it is silently dropped
+		// on the fatal path (ctx cancellation is the only reachable fatal
+		// error once a ToInstall entry has already warned). Unit Q review
+		// M3: under --json the envelope's "details" carries them, since
+		// Ruling 15 forbids the stderr line.
+		if result != nil && len(result.Warnings) > 0 {
+			if jsonOutput {
+				return &core.ProfileWarningsError{Err: err, Warnings: result.Warnings}
+			}
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
 		return err
 	}
 
-	// Disable mods
-	for _, im := range toDisable {
-		if err := installer.Uninstall(ctx, game, &im.Mod, profileName); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
-			}
-		}
-		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, profileName, false); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
-			}
-		}
-		fmt.Printf("  ✓ Disabled: %s\n", im.Name)
+	// Ruling 15: the ProfileApplyResult document, which carries Warnings
+	// itself - so the unconditional stderr line below is not printed.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
-	// Enable mods
-	for _, im := range toEnable {
-		if err := installer.Install(ctx, game, &im.Mod, profileName); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to deploy %s: %v\n", im.Name, err)
-			}
-			continue
-		}
-		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, profileName, true); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
-			}
-		}
-		fmt.Printf("  ✓ Enabled: %s\n", im.Name)
-	}
-
-	// Install missing mods
-	if len(toInstall) > 0 {
-		fmt.Println("\nInstalling missing mods...")
-		for _, ref := range toInstall {
-			fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
-
-			// Fetch mod details
-			mod, err := service.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
-			if err != nil {
-				fmt.Printf("    Error: failed to fetch mod: %v\n", err)
-				continue
-			}
-
-			// Get files
-			files, err := service.GetModFiles(ctx, ref.SourceID, mod)
-			if err != nil {
-				fmt.Printf("    Error: failed to get files: %v\n", err)
-				continue
-			}
-
-			if len(files) == 0 {
-				fmt.Printf("    Error: no downloadable files\n")
-				continue
-			}
-
-			// Select files to download - use stored FileIDs for re-downloads, or profile FileIDs for new installs
-			key := ref.SourceID + ":" + ref.ModID
-			var fileIDsToUse []string
-			if needsRedownloadSet[key] {
-				// Re-download: use DB-stored FileIDs (from ref, which was populated from im.FileIDs)
-				fileIDsToUse = ref.FileIDs
-			} else if len(ref.FileIDs) > 0 {
-				// New install: use FileIDs from profile
-				fileIDsToUse = ref.FileIDs
-			}
-			filesToDownload, err := selectFilesToDownload(files, fileIDsToUse, ref.Version)
-			if err != nil {
-				fmt.Printf("    Error: %v\n", err)
-				continue
-			}
-			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
-
-			// #96: cache-first - a convergence entry (or any other
-			// already-cached-at-this-version reinstall) skips the download
-			// step entirely once the stamped version is already cached.
-			// Review finding 2: HasFileIDs (not bare Exists) - a version
-			// directory can exist yet be only PARTIALLY populated by a
-			// previous download run that broke off partway through a
-			// multi-file mod; skipping on directory presence alone would
-			// silently leave it that way forever. Round 2: the check is by
-			// FILE ID (the per-file completion markers
-			// commitStagedCacheWithMarker stamps), never by FileName - a
-			// cache entry for an extracted archive holds member names that
-			// match no DownloadableFile, so a name-based check would miss
-			// every archive-based mod and redownload a complete cache.
-			downloadedFileIDs := make([]string, 0, len(filesToDownload))
-			for _, f := range filesToDownload {
-				downloadedFileIDs = append(downloadedFileIDs, f.ID)
-			}
-			if !service.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
-				// Download each file
-				progressFn := func(p core.DownloadProgress) {
-					if p.TotalBytes > 0 {
-						fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
-					}
-				}
-
-				downloadFailed := false
-				for _, selectedFile := range filesToDownload {
-					_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
-					if err != nil {
-						fmt.Println()
-						fmt.Printf("    Error: download failed: %v\n", err)
-						downloadFailed = true
-						break
-					}
-				}
-				fmt.Println()
-
-				if downloadFailed {
-					continue
-				}
-			}
-
-			// Deploy. #96: a mod already deployed at the wrong version must
-			// be replaced (removing files the new version no longer serves),
-			// not just have new files installed alongside stale ones -
-			// mirrors ApplyUpdate's Installer.Replace semantics
-			// (internal/core/flows.go). Review finding 4: guard the map
-			// lookup with its own ok - needsReplaceSet[key] should never be
-			// true without a corresponding installedByKey[key] row, but a
-			// bare index expression would panic on a nil *InstalledMod if
-			// that invariant were ever violated.
-			//
-			// Round 2: the deployed flag alone isn't enough - Installer.
-			// Replace reads the OLD version's cache entry to work out which
-			// files to retire and hard-fails with "old mod not in cache"
-			// when it's been pruned, which would abort convergence outright
-			// and leave the old deployment on disk. Only Replace when that
-			// entry is still there; otherwise fall back to a bare Install,
-			// exactly as core's ApplyProfileSwitch does. The caveat is the
-			// same in both twins: without the old file list, files the new
-			// version no longer serves stay behind as stale deployments
-			// (`lmm verify` surfaces them) - strictly better than failing to
-			// converge at all.
-			if prev, ok := installedByKey[key]; ok && needsReplaceSet[key] &&
-				service.GetGameCache(game).Exists(game.ID, prev.SourceID, prev.ID, prev.Version) {
-				if err := installer.Replace(ctx, game, &prev.Mod, mod, profileName); err != nil {
-					fmt.Printf("    Error: deploy failed: %v\n", err)
-					continue
-				}
-			} else if err := installer.Install(ctx, game, mod, profileName); err != nil {
-				fmt.Printf("    Error: deploy failed: %v\n", err)
-				continue
-			}
-
-			// Save to DB. Normalize GameID to the lmm game (see comment on
-			// the doProfileSwitch save site for why).
-			installedMod := &domain.InstalledMod{
-				Mod:          *mod,
-				ProfileName:  profileName,
-				UpdatePolicy: domain.UpdateNotify,
-				Enabled:      true,
-				Deployed:     true, // review finding 3: Install/Replace above just succeeded
-				FileIDs:      downloadedFileIDs,
-			}
-			installedMod.Mod.GameID = game.ID
-			if err := service.SaveInstalledMod(installedMod); err != nil {
-				fmt.Printf("    Error: save failed: %v\n", err)
-				continue
-			}
-
-			// Update profile with actual downloaded FileIDs
-			modRef := domain.ModReference{
-				SourceID: mod.SourceID,
-				ModID:    mod.ID,
-				Version:  mod.Version,
-				FileIDs:  downloadedFileIDs,
-			}
-			if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-				if verbose {
-					fmt.Printf("    Warning: could not update profile: %v\n", err)
-				}
-			}
-
-			fmt.Printf("    ✓ Installed: %s\n", mod.Name)
-		}
-	}
-
-	// #197 postsmoke seam-audit fix: doProfileApply is a bespoke
-	// disable/enable/install reimplementation - like batchInstallMods, it
-	// never went through a core seam that syncs the merged pak. Sync
-	// failures are printed unconditionally, matching batchInstallMods'
-	// loud-failure fix.
-	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
-	} else {
-		for _, w := range syncWarnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
-		}
+	// #197 postsmoke fix / #294 (Ruling 5): result.Warnings (unconditional
+	// stderr, unlike the --verbose-gated Notes above) - the install loop's
+	// refused UpsertMod (a LOCKED profile ref, #143), then a merged-pak sync
+	// failure for the profile.
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
 	fmt.Printf("\n✓ Applied profile: %s\n", profileName)
 	return nil
 }
 
-// selectPrimaryFile returns the primary file from a list of downloadable files,
-// or the first file if no primary is marked. Returns nil for empty slice.
-func selectPrimaryFile(files []domain.DownloadableFile) *domain.DownloadableFile {
-	if len(files) == 0 {
-		return nil
+// borrowedFrom is the suffix of a "Will enable" line for a mod the apply
+// deploys from another profile's cache (#445 final gate F-D): the version
+// it picked, and whose cache that is. A mod of the profile's own has none.
+func borrowedFrom(im domain.InstalledMod, profile string) string {
+	if im.ProfileName == profile {
+		return ""
 	}
-	for i := range files {
-		if files[i].IsPrimary {
-			return &files[i]
-		}
+	version := ""
+	if shown := displayModVersion(im.External, im.Version, im.UpdatedAt); shown != "" && shown != "-" {
+		version = " v" + shown
 	}
-	return &files[0]
+	return fmt.Sprintf("%s, from profile %s's cache", version, im.ProfileName)
 }
 
-// errNoDownloadableFiles is returned when selectFilesToDownload is called with no files.
-var errNoDownloadableFiles = fmt.Errorf("no downloadable files")
-
-// errStoredFilesUnavailable mirrors internal/core/flows.go's sentinel of the
-// same name (selectDeployFiles' would-be-fallback rejection, #95): this
-// package can't import internal/core's unexported sentinel, so it's
-// duplicated here for the same documented reason selectFilesToDownload
-// itself duplicates selectDeployFiles - see the cross-reference comment on
-// selectFilesToDownload below and on selectDeployFiles in flows.go.
-var errStoredFilesUnavailable = errors.New("stored file(s) no longer available upstream")
-
-// availableVersions mirrors internal/core/resolve.go's unexported helper of
-// the same name: the distinct non-empty versions in files, in first-seen
-// order - display material for core.ErrVersionNotFound.
-func availableVersions(files []domain.DownloadableFile) []string {
-	seen := make(map[string]bool, len(files))
-	var out []string
-	for _, f := range files {
-		if f.Version == "" || seen[f.Version] {
-			continue
-		}
-		seen[f.Version] = true
-		out = append(out, f.Version)
+// installLaterHint names the commands that install an imported profile's
+// skipped mods later. An apply acts for the active profile only (#462), so
+// a profile that is not active is switched to, which installs them too.
+// printNoInstallRefs is doProfileImport's preview of the mods a
+// --no-install import leaves pending (#472): one line per mod, saying what
+// happens to it - the saved document lists it, and nothing is installed or
+// deployed.
+func printNoInstallRefs(plan *core.ImportPlan) {
+	var pending []domain.ModReference
+	pending = append(pending, plan.AlreadyCached...)
+	pending = append(pending, plan.NeedsRedownload...)
+	pending = append(pending, plan.Missing...)
+	if len(pending) == 0 {
+		return
 	}
-	return out
+	fmt.Printf("  - %d recorded in the profile only (--no-install: not installed or deployed):\n", len(pending))
+	for _, ref := range pending {
+		fmt.Printf("    - %s\n", planRefLine(ref))
+	}
 }
 
-// anyFileHasVersion mirrors internal/core/resolve.go's unexported helper of
-// the same name: reports whether at least one file carries version info -
-// the gate between version-aware and legacy (FileIDs-only) behavior.
-func anyFileHasVersion(files []domain.DownloadableFile) bool {
-	for _, f := range files {
-		if f.Version != "" {
-			return true
-		}
-	}
-	return false
+func installLaterHint(profile string) string {
+	return fmt.Sprintf("Use 'lmm profile switch %s' to install them later, or 'lmm profile apply %s' if it is already the active profile.", profile, profile)
 }
 
-// selectFilesToDownload picks files to download based on the recorded
-// version (#96), stored FileIDs (for re-downloads), or primary file (for
-// fresh installs). Mirrors internal/core/flows.go's selectVersionedDeployFiles
-// with allowFallback=false (doProfileApply's only caller is deploy-class, so
-// no allowFallback parameter is needed here) exactly - same precedence,
-// byte-identical error wording, so callers/tests can't tell which package
-// produced a given error. See the CANONICAL NOTE at
-// internal/tui/service_core.go:254-261 for why this is a hand-duplicated
-// twin rather than a shared helper (cmd/lmm is package main).
-//
-// version == "" (legacy refs) and version-less file lists (the #130 vacuous
-// rule) fall through to the pre-#96 behavior unchanged: storedFileIDs found
-// upstream win, storedFileIDs missing hard-fail via errStoredFilesUnavailable
-// (#95 - no fallback, since silently substituting the primary file would
-// install a file the caller never asked for), and no storedFileIDs at all
-// falls back to the primary file. Otherwise: stored IDs win only while their
-// effective version agrees with the record; drift and gone-IDs heal by
-// exact-match resolution to the SAME version (never latest); unresolvable
-// targets are hard per-mod errors naming the version - the "gone upstream"
-// #95 wording only when the stored IDs themselves match nothing at all
-// upstream, versus a distinct core.ErrVersionNotFound wrap when at least one
-// stored ID IS still present upstream but the recorded version isn't (the
-// classic pre-#94 mis-stamped row, which isn't a "gone" file - it's a wrong
-// version record on a file that's still there).
-func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string, version string) ([]*domain.DownloadableFile, error) {
-	if version == "" || !anyFileHasVersion(files) {
-		return selectFilesToDownloadLegacy(files, storedFileIDs)
+// profileApplyTarget resolves which profile `lmm profile apply` acts on: the
+// positional argument when given, else the game's default profile, else the
+// literal "default" (an unreadable default is not an error here - the plan's
+// own profile lookup reports a missing profile).
+func profileApplyTarget(ctx context.Context, service *core.Service, game *domain.Game, args []string) string {
+	if len(args) > 0 {
+		return args[0]
 	}
-	var idSet map[string]bool
-	if len(storedFileIDs) > 0 {
-		idSet = make(map[string]bool, len(storedFileIDs))
-		for _, id := range storedFileIDs {
-			idSet[id] = true
-		}
+	defaultProfile, err := getProfileManager(service).GetDefault(ctx, game.ID)
+	if err != nil {
+		return "default"
 	}
-	var found []*domain.DownloadableFile
-	for i := range files {
-		if idSet[files[i].ID] {
-			found = append(found, &files[i])
-		}
-	}
-	if len(found) > 0 && domain.EffectiveInstalledVersion(version, found) == version {
-		return found, nil
-	}
-	var matches []*domain.DownloadableFile
-	for i := range files {
-		if files[i].Version == version {
-			matches = append(matches, &files[i])
-		}
-	}
-	if len(matches) == 0 {
-		if len(storedFileIDs) > 0 {
-			if len(found) > 0 {
-				// At least one stored ID is still present upstream - the
-				// files aren't gone, only the recorded version doesn't
-				// match anything. Distinct from the #95 "gone" wording
-				// below: this is a version-record problem, not a
-				// missing-file problem, so it points at verify/update
-				// instead of reinstall.
-				return nil, fmt.Errorf("%w: installed file(s) (ID(s): %s) do not match recorded version %q, which is not available upstream - run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version", core.ErrVersionNotFound, strings.Join(storedFileIDs, ", "), version)
-			}
-			return nil, fmt.Errorf("%w (file ID(s): %s; version %q not available) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "), version)
-		}
-		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", core.ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
-	}
-	// This "stored subset, else primary, else best category priority, else
-	// first" tail is the twin of internal/core/flows.go's pickVersionMatch,
-	// shared there by selectVersionedDeployFiles (#96) and
-	// selectUpdateDeployFiles (#143) - mirror any change to it here, and vice
-	// versa (drift guard: TestSelectFilesToDownload_CategoryPriorityTieBreak
-	// and its core-side parity test).
-	if len(storedFileIDs) > 0 {
-		var stored []*domain.DownloadableFile
-		for _, m := range matches {
-			if idSet[m.ID] {
-				stored = append(stored, m)
-			}
-		}
-		if len(stored) > 0 {
-			return stored, nil
-		}
-	}
-	for _, m := range matches {
-		if m.IsPrimary {
-			return []*domain.DownloadableFile{m}, nil
-		}
-	}
-	best := 0
-	for i := 1; i < len(matches); i++ {
-		if fileCategoryPriority(matches[i].Category) < fileCategoryPriority(matches[best].Category) {
-			best = i
-		}
-	}
-	return []*domain.DownloadableFile{matches[best]}, nil
-}
-
-// selectFilesToDownloadLegacy is selectFilesToDownload's pre-#96 behavior,
-// mirroring internal/core/flows.go's selectDeployFiles with
-// allowFallback=false: when storedFileIDs is non-empty but none of it
-// matches what the source currently offers, silently substituting the
-// primary file would install a file the caller never asked for - exactly
-// the silent-fallback bug #95 tracks - so this returns
-// errStoredFilesUnavailable instead, wrapped with the missing IDs and a
-// remediation hint.
-func selectFilesToDownloadLegacy(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, error) {
-	if len(files) == 0 {
-		return nil, errNoDownloadableFiles
-	}
-	if len(storedFileIDs) > 0 {
-		// Try to use stored file IDs
-		found := findFilesByIDs(files, storedFileIDs)
-		if len(found) > 0 {
-			return found, nil
-		}
-		// No fallback (#95): a would-be primary-file substitution is an error.
-		return nil, fmt.Errorf("%w (file ID(s): %s) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "))
-	}
-	// Fresh install: use primary file
-	p := selectPrimaryFile(files)
-	if p == nil {
-		return nil, errNoDownloadableFiles
-	}
-	return []*domain.DownloadableFile{p}, nil
+	return defaultProfile.Name
 }

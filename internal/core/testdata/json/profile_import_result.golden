@@ -1,0 +1,20 @@
+{
+  "profile_name": "default",
+  "installed": 3,
+  "failed": 1,
+  "skipped": 1,
+  "warnings": [
+    "could not install nexusmods:99"
+  ],
+  "notes": [
+    "created profile default"
+  ],
+  "failures": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "99",
+      "name": "Sample Mod",
+      "reason": "failed to fetch mod: upstream timeout"
+    }
+  ]
+}

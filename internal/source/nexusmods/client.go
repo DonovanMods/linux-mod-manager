@@ -9,8 +9,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/source/httpclient"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 )
 
 const (
@@ -29,6 +32,11 @@ type Client struct {
 	rest       *httpclient.Client
 	apiKey     string
 	graphqlURL string
+
+	// knownGames is the game domains the games endpoint has confirmed, so a
+	// 404 from a mod endpoint is checked against its game once (#540).
+	knownGamesMu sync.Mutex
+	knownGames   map[string]bool
 }
 
 // NewClient creates a new NexusMods API client
@@ -40,11 +48,12 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 	return &Client{
 		httpClient: httpClient,
 		rest: httpclient.New(httpclient.Options{
-			HTTPClient: httpClient,
-			BaseURL:    defaultBaseURL,
-			APIKey:     apiKey,
-			AuthHeader: "apikey",
-			AuthLabel:  "NexusMods",
+			HTTPClient:  httpClient,
+			BaseURL:     defaultBaseURL,
+			APIKey:      apiKey,
+			AuthHeader:  "apikey",
+			AuthLabel:   "NexusMods",
+			ErrorMapper: mapStatusError,
 		}),
 		apiKey:     apiKey,
 		graphqlURL: defaultGraphQLURL,
@@ -111,13 +120,92 @@ func (c *Client) doRequest(ctx context.Context, method, path string, result inte
 	return c.rest.DoJSON(ctx, method, path, result)
 }
 
-// GetMod fetches a mod by ID
+// apiStatusError is a REST endpoint's non-2xx answer with the status kept
+// as data, so a caller can classify it (a mod endpoint's 404) rather than
+// match the message. The message is the shared client's own.
+type apiStatusError struct {
+	status int
+	body   string
+}
+
+func (e *apiStatusError) Error() string {
+	return fmt.Sprintf("API error (status %d): %s", e.status, e.body)
+}
+
+// mapStatusError is the REST client's ErrorMapper: every non-2xx answer but
+// 401 becomes an apiStatusError. 401 is left to the shared client, which
+// maps it to domain.ErrAuthRequired.
+func mapStatusError(status int, body []byte, _ string) error {
+	if status == http.StatusUnauthorized {
+		return nil
+	}
+	return &apiStatusError{status: status, body: string(body)}
+}
+
+// isStatus reports whether err is a REST answer with the given status.
+func isStatus(err error, status int) bool {
+	var se *apiStatusError
+	return errors.As(err, &se) && se.status == status
+}
+
+// modNotFound classifies a mod endpoint's error (#540). A 404 is NexusMods
+// saying it has no such mod - but an unknown game domain answers 404 too, so
+// the game is confirmed first: only then is the miss domain.ErrModNotFound.
+// An unknown game is reported as such, and a game lookup that fails leaves
+// the original error untyped, since a failed read must never mark a mod
+// missing. Any other error is returned unchanged.
+func (c *Client) modNotFound(ctx context.Context, gameDomain string, modID int, err error) error {
+	if !isStatus(err, http.StatusNotFound) {
+		return err
+	}
+	known, gerr := c.gameExists(ctx, gameDomain)
+	switch {
+	case gerr != nil:
+		return err
+	case !known:
+		return fmt.Errorf("%q is not a Nexus Mods game: %w", gameDomain, err)
+	}
+	return fmt.Errorf("mod %d is not on Nexus Mods (HTTP 404): %w", modID, domain.ErrModNotFound)
+}
+
+// gameExists asks the games endpoint whether gameDomain is a Nexus Mods
+// game: true on 200, false on 404, an error for anything else. A confirmed
+// game is remembered for the client's lifetime.
+func (c *Client) gameExists(ctx context.Context, gameDomain string) (bool, error) {
+	c.knownGamesMu.Lock()
+	known := c.knownGames[gameDomain]
+	c.knownGamesMu.Unlock()
+	if known {
+		return true, nil
+	}
+
+	var game struct{}
+	err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/v1/games/%s.json", gameDomain), &game)
+	switch {
+	case isStatus(err, http.StatusNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+
+	c.knownGamesMu.Lock()
+	if c.knownGames == nil {
+		c.knownGames = make(map[string]bool)
+	}
+	c.knownGames[gameDomain] = true
+	c.knownGamesMu.Unlock()
+	return true, nil
+}
+
+// GetMod fetches a mod by ID. A mod NexusMods has no record of is
+// domain.ErrModNotFound (#540); a removed one still answers 200, with its
+// Status saying so.
 func (c *Client) GetMod(ctx context.Context, gameDomain string, modID int) (*ModData, error) {
 	path := fmt.Sprintf("/v1/games/%s/mods/%d.json", gameDomain, modID)
 
 	var mod ModData
 	if err := c.doRequest(ctx, http.MethodGet, path, &mod); err != nil {
-		return nil, fmt.Errorf("getting mod: %w", err)
+		return nil, fmt.Errorf("getting mod: %w", c.modNotFound(ctx, gameDomain, modID, err))
 	}
 
 	return &mod, nil
@@ -161,13 +249,16 @@ func (c *Client) GetTrending(ctx context.Context, gameDomain string) ([]ModData,
 
 // graphqlSearchQuery is the GraphQL query for searching mods
 const graphqlSearchQuery = `
-query SearchMods($filter: ModsFilter, $count: Int, $offset: Int) {
-  mods(filter: $filter, count: $count, offset: $offset) {
+query SearchMods($filter: ModsFilter, $sort: [ModsSort!], $count: Int, $offset: Int) {
+  mods(filter: $filter, sort: $sort, count: $count, offset: $offset) {
     nodes {
       modId
       name
       summary
       version
+      updatedAt
+      downloads
+      endorsements
       uploader { name }
     }
   }
@@ -197,11 +288,21 @@ type graphqlModsResponse struct {
 	Data struct {
 		Mods struct {
 			Nodes []struct {
-				ModID    int    `json:"modId"`
-				Name     string `json:"name"`
-				Summary  string `json:"summary"`
-				Version  string `json:"version"`
-				Uploader struct {
+				ModID   int    `json:"modId"`
+				Name    string `json:"name"`
+				Summary string `json:"summary"`
+				Version string `json:"version"`
+				// UpdatedAt is the Mod type's `updatedAt: DateTime!` (RFC
+				// 3339), requested so a search hit carries the date the
+				// search surfaces show (#433). Zero when absent.
+				UpdatedAt time.Time `json:"updatedAt"`
+				// Downloads and Endorsements are the Mod type's `downloads:
+				// Int!` and `endorsements: Int!`, requested so a search hit
+				// carries the counts the downloads and popular sorts key on
+				// (#503) rather than a fabricated zero.
+				Downloads    int `json:"downloads"`
+				Endorsements int `json:"endorsements"`
+				Uploader     struct {
 					Name string `json:"name"`
 				} `json:"uploader"`
 			} `json:"nodes"`
@@ -230,8 +331,27 @@ type graphqlRequirementsResponse struct {
 }
 
 // SearchMods searches for mods using the NexusMods GraphQL v2 API.
-// category and tags are optional filters (source-specific; NexusMods may support categoryId and tag names).
-func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category string, tags []string, limit, offset int) (mods []ModData, err error) {
+//
+// category and tags are optional filters, and their names are a CONTRACT
+// with NexusMods' ModsFilter input object, not free choices: `categoryName`
+// and `tag`, each a list of {value, op} entries, with the ops drawn from
+// FilterComparisonOperator. testdata/modsfilter-schema.json records that
+// input object and schema_contract_test.go checks this very filter map
+// against it offline - which is what #337/#343 lacked, letting `tagNames`
+// and `categoryId` sit here long after NexusMods removed them, failing
+// every filtered search with "Field is not defined on ModsFilter".
+//
+// category is the category NAME as NexusMods spells it ("Armour"): the
+// schema offers no id-keyed category filter.
+//
+// sort selects the upstream ordering (#503), so the PAGE fetched is the
+// right one rather than the first page re-ordered: updated, downloads and
+// popular map to the ModsSort members updatedAt, downloads and endorsements,
+// each DESCending. Relevance and the empty value send no `sort` variable at
+// all, which leaves the upstream's default ordering untouched.
+// testdata/modssort-schema.json records ModsSort and sort_contract_test.go
+// checks this very variable against it offline.
+func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category string, tags []string, sort domain.SearchSort, limit, offset int) (mods []ModData, err error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -245,26 +365,39 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 		},
 	}
 	if category != "" {
-		filter["categoryId"] = []map[string]interface{}{
+		// categoryNAME, not categoryId (#343): ModsFilter has no id-keyed
+		// category filter at all, so `--category` takes the category's
+		// name as NexusMods spells it ("Armour"). The retired categoryId
+		// made every category-filtered search fail server-side with
+		// "Field is not defined on ModsFilter".
+		filter["categoryName"] = []map[string]interface{}{
 			{"value": category, "op": "EQUALS"},
 		}
 	}
 	if len(tags) > 0 {
-		// Build filter entries for all tags (ANDed - mod must have all specified tags)
+		// Build filter entries for all tags (ANDed - mod must have all specified tags).
+		// `tag`, not the retired tagNames (#337) - same server-side failure.
 		tagFilters := make([]map[string]interface{}, len(tags))
 		for i, tag := range tags {
 			tagFilters[i] = map[string]interface{}{"value": tag, "op": "EQUALS"}
 		}
-		filter["tagNames"] = tagFilters
+		filter["tag"] = tagFilters
+	}
+
+	variables := map[string]interface{}{
+		"filter": filter,
+		"count":  limit,
+		"offset": offset,
+	}
+	if member := modsSortMember(sort); member != "" {
+		variables["sort"] = []map[string]interface{}{
+			{member: map[string]interface{}{"direction": "DESC"}},
+		}
 	}
 
 	reqBody := graphqlRequest{
-		Query: graphqlSearchQuery,
-		Variables: map[string]interface{}{
-			"filter": filter,
-			"count":  limit,
-			"offset": offset,
-		},
+		Query:     graphqlSearchQuery,
+		Variables: variables,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -317,24 +450,43 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 	results := make([]ModData, len(gqlResp.Data.Mods.Nodes))
 	for i, node := range gqlResp.Data.Mods.Nodes {
 		results[i] = ModData{
-			ModID:   node.ModID,
-			Name:    node.Name,
-			Summary: node.Summary,
-			Version: node.Version,
-			Author:  node.Uploader.Name,
+			ModID:       node.ModID,
+			Name:        node.Name,
+			Summary:     node.Summary,
+			Version:     node.Version,
+			Author:      node.Uploader.Name,
+			UpdatedTime: node.UpdatedAt,
+
+			DownloadCount:    node.Downloads,
+			EndorsementCount: node.Endorsements,
 		}
 	}
 
 	return results, nil
 }
 
-// GetModFiles fetches files for a mod
+// modsSortMember names the ModsSort member a search sort orders by, or "" for
+// relevance (and the empty value), which sends no sort at all.
+func modsSortMember(sort domain.SearchSort) string {
+	switch sort {
+	case domain.SortUpdated:
+		return "updatedAt"
+	case domain.SortDownloads:
+		return "downloads"
+	case domain.SortPopular:
+		return "endorsements"
+	}
+	return ""
+}
+
+// GetModFiles fetches files for a mod. A mod NexusMods has no record of is
+// domain.ErrModNotFound, as for GetMod (#540).
 func (c *Client) GetModFiles(ctx context.Context, gameDomain string, modID int) (*ModFileList, error) {
 	path := fmt.Sprintf("/v1/games/%s/mods/%d/files.json", gameDomain, modID)
 
 	var files ModFileList
 	if err := c.doRequest(ctx, http.MethodGet, path, &files); err != nil {
-		return nil, fmt.Errorf("getting mod files: %w", err)
+		return nil, fmt.Errorf("getting mod files: %w", c.modNotFound(ctx, gameDomain, modID, err))
 	}
 
 	return &files, nil

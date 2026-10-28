@@ -1,0 +1,703 @@
+package serve
+
+// JSON contract goldens for internal/serve's OWN wire types
+// (docs/plans/2026-08-30-serve-impl.md Task 7). Everything under
+// /api/v1 that is a frozen core document is already goldened in
+// internal/core; what is pinned HERE is the small set of documents serve
+// itself defines - the job status document, the plan and job-start
+// request/response envelopes, and the error envelope every failure uses.
+// They are wire surface a client parses, so they get the same treatment
+// every other wire type in this repo gets: a recorded golden, plus the
+// go/ast ratchet (json_contract_coverage_test.go) that fails the build if a
+// serve type gains json tags without gaining one.
+
+import (
+	"bytes"
+	"encoding/json/jsontext"
+	"flag"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/stretchr/testify/require"
+)
+
+// updateServeJSONGoldens re-records this package's wire goldens. Run ONCE:
+//
+//	go test ./internal/serve/ -run TestServeJSONGoldens -update-serve-json-goldens
+//
+// After that the files are frozen. Named -update-serve-json-goldens rather
+// than -update for the same reason every other package's flag has its own
+// name (internal/core's -update-json-goldens, cmd/lmm's -update): a
+// re-record must only ever touch the goldens the author meant to change.
+var updateServeJSONGoldens = flag.Bool("update-serve-json-goldens", false, "rewrite internal/serve/testdata/json/*.golden")
+
+// goldenTime is the fixed timestamp every golden with a time field uses, so
+// a golden diff is never just "the clock moved".
+var goldenTime = time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+
+// goldenDeployResult is the core result document the succeeded-job goldens
+// carry. internal/core already pins DeployResult's own shape; it appears
+// here only so jobStatus's "result" member is pinned as carrying the core
+// document verbatim rather than some serve-side re-rendering of it.
+var goldenDeployResult = &core.DeployResult{
+	Deployed:       2,
+	Skipped:        []core.InstalledRef{{SourceID: "fake", ModID: "m2", Name: "Mod Two", Reason: "disabled"}},
+	Warnings:       []string{"could not sync merged pak"},
+	Notes:          []string{"1 mod was already deployed"},
+	MergedArtifact: "zzz-lmm-merged.pak",
+	MergedMods:     3,
+	RawFallbacks:   1,
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestServeJSONGoldens(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{
+			// The succeeded shape: a result document, no error, and the
+			// event counters that let a late viewer say whether the history
+			// it can still replay is complete.
+			"job_status",
+			jobStatus{
+				ID:            "0123456789abcdef0123456789abcdef",
+				Kind:          "deploy",
+				State:         jobSucceeded,
+				StartedAt:     goldenTime,
+				EndedAt:       goldenTime.Add(3 * time.Second),
+				Result:        goldenDeployResult,
+				EventCount:    12,
+				DroppedEvents: 4,
+			},
+		},
+		{
+			// The failed shape: no result, and the same {"error","details"}
+			// envelope /api/v1's synchronous failures use - typed details
+			// included, so a client parses one failure shape everywhere.
+			"job_status_failed",
+			jobStatus{
+				ID:        "fedcba9876543210fedcba9876543210",
+				Kind:      "install",
+				State:     jobFailed,
+				StartedAt: goldenTime,
+				EndedAt:   goldenTime.Add(time.Second),
+				Error: &apiErrorEnvelope{
+					Error: "file conflicts detected",
+					Details: (&core.ConflictError{Conflicts: []core.Conflict{{
+						RelativePath:    "Mods/a.pak",
+						CurrentSourceID: "fake",
+						CurrentModID:    "m9",
+					}}}).Details(),
+				},
+				EventCount: 3,
+			},
+		},
+		{
+			// A running job: no result, no error, no end time.
+			"job_status_running",
+			jobStatus{
+				ID:         "aaaabbbbccccddddeeeeffff00001111",
+				Kind:       "deploy",
+				State:      jobRunning,
+				StartedAt:  goldenTime,
+				EventCount: 1,
+			},
+		},
+		{
+			// The activity tray's index row: jobStatus without the result
+			// document, which is the whole point of the type (activity.go).
+			// The failed shape, because that is the one carrying an
+			// envelope - the fact the tray offers a next step from.
+			"job_summary",
+			jobSummary{
+				ID:        "fedcba9876543210fedcba9876543210",
+				Kind:      "install",
+				State:     jobFailed,
+				StartedAt: goldenTime,
+				EndedAt:   goldenTime.Add(time.Second),
+				Error: &apiErrorEnvelope{
+					Error: "file conflicts detected",
+					Details: (&core.ConflictError{Conflicts: []core.Conflict{{
+						RelativePath:    "Mods/a.pak",
+						CurrentSourceID: "fake",
+						CurrentModID:    "m9",
+					}}}).Details(),
+				},
+				EventCount:    3,
+				DroppedEvents: 1,
+			},
+		},
+		{
+			// GET /api/v1/jobs, newest first: one running job above one
+			// finished one, so the golden pins both row shapes and the
+			// order in the same document.
+			"jobs_index",
+			jobsIndex{Jobs: []jobSummary{
+				{
+					ID:         "aaaabbbbccccddddeeeeffff00001111",
+					Kind:       "deploy",
+					State:      jobRunning,
+					StartedAt:  goldenTime.Add(10 * time.Second),
+					EventCount: 1,
+				},
+				{
+					ID:         "0123456789abcdef0123456789abcdef",
+					Kind:       "deploy",
+					State:      jobSucceeded,
+					StartedAt:  goldenTime,
+					EndedAt:    goldenTime.Add(3 * time.Second),
+					EventCount: 12,
+				},
+			}},
+		},
+		{
+			// One job_progress frame of the multiplexed activity stream: a
+			// SUMMARY of one core event, not core.MarshalEvent's frozen
+			// {"type","data"} envelope, which stays the per-job stream's
+			// contract (activity.go's frame vocabulary). Downloaded and
+			// TotalBytes are the byte-delta fallback's fields
+			// (task-2-review.md Important 1) - pinned here alongside the
+			// step-style fields even though no single core event sets both
+			// halves at once, so one golden covers the whole wire shape.
+			"job_progress_frame",
+			jobProgressFrame{
+				JobID:      "0123456789abcdef0123456789abcdef",
+				Kind:       "install",
+				Type:       "step",
+				Op:         "install",
+				Phase:      core.InstallDeploying.String(),
+				Detail:     "linking files",
+				ModName:    "Mod One",
+				Index:      1,
+				Total:      2,
+				Downloaded: 12582912,
+				TotalBytes: 20971520,
+			},
+		},
+		{
+			"plan_response",
+			planResponse{
+				PlanID: "0123456789abcdef0123456789abcdef",
+				Kind:   "deploy",
+				Plan: &core.DeployPlan{
+					Profile: "default",
+					Mods: []core.DeployPlanMod{{
+						Ref:  domain.ModReference{SourceID: "fake", ModID: "m1", Version: "1.0"},
+						Name: "Mod One",
+						Link: []string{"Mods/one.pak"},
+					}},
+					Purge: []string{},
+					Hooks: []string{},
+				},
+			},
+		},
+		{
+			"plan_kind_details",
+			// A literal, not supportedPlanKinds() - this golden pins the
+			// document's SHAPE, not the registry's live contents, so it
+			// doesn't churn every time a new kind is registered (task-7
+			// review Minor 3). The unknown-kind test separately asserts
+			// the registry's actual generated content.
+			planKindDetails{SupportedKinds: []string{
+				"deploy",
+				"install",
+				"profile_apply",
+				"switch",
+				"uninstall",
+				"updates",
+				"verify_fix",
+			}},
+		},
+		{
+			"job_start_request",
+			jobStartRequest{
+				PlanID:  "0123456789abcdef0123456789abcdef",
+				Options: jsontext.Value(`{"accept_conflicts":true}`),
+			},
+		},
+		{
+			"job_start_response",
+			newJobStartResponse("fedcba9876543210fedcba9876543210"),
+		},
+		{
+			"deploy_plan_request",
+			deployPlanRequest{
+				Purge:      true,
+				All:        true,
+				ModID:      "m1",
+				SourceID:   "fake",
+				LinkMethod: "hardlink",
+				Force:      true,
+				SkipHooks:  true,
+			},
+		},
+		{
+			// #225's install options, both halves: what the PLAN previews
+			// (which version's files the candidate pool is drawn from) and
+			// what the confirm page finally applies - including the
+			// conflict answer v2 Phase 3 Ruling 1 says a caller re-runs
+			// Apply with.
+			"install_plan_request",
+			installPlanRequest{
+				SourceID:     "fake",
+				ModID:        "m2",
+				Version:      "2.0",
+				ShowArchived: true,
+				// #326: `lmm install --no-deps`. Populated here for the same
+				// reason every other optional member is - this golden pins
+				// every key's shape, not one plausible request.
+				NoDeps: true,
+			},
+		},
+		{
+			"install_apply_request",
+			installApplyRequest{
+				Version:         "2.0",
+				FileIDs:         []string{"f1", "f2"},
+				AcceptConflicts: true,
+				Force:           true,
+				SkipHooks:       true,
+				// #326: `lmm install --skip-verify`, the closing wave's
+				// last parity-ledger flag. Populated for the same reason
+				// every other optional member is - this golden pins every
+				// key's shape, not one plausible request.
+				SkipVerify: true,
+			},
+		},
+		{
+			// #226's uninstall options, both halves: what the PLAN is
+			// computed with, and what the confirm page's checkboxes finally
+			// apply.
+			"uninstall_plan_request",
+			uninstallPlanRequest{
+				ModID:     "m1",
+				SourceID:  "fake",
+				KeepCache: true,
+				SkipHooks: true,
+			},
+		},
+		{
+			"uninstall_apply_request",
+			uninstallApplyRequest{KeepCache: true, Force: true, SkipHooks: true},
+		},
+		{
+			// #74's batch, both halves of its options. The batch's own two
+			// documents are NOT here: since #324 they are core's
+			// UpdateBatchPlan/UpdateBatchResult, goldened in
+			// internal/core/testdata/json - this kind only decodes the
+			// request halves now (kind_updates.go).
+			"updates_plan_request",
+			updatesPlanRequest{Mods: []string{"fake:m1", "fake:m2"}},
+		},
+		{
+			"updates_apply_request",
+			updatesApplyRequest{Force: true, SkipHooks: true},
+		},
+		{
+			// api_mod_settings.go's two request bodies: an explicit version
+			// (the full mod page's versions-table "lock this version"
+			// affordance - the slide-over's own lock checkbox sends an
+			// empty one, which carries no json key and pins nothing new).
+			"mod_lock_request",
+			modLockRequest{Version: "1.2.0"},
+		},
+		{
+			// #542: the Updates card's Skip sends the row's own new_version.
+			"mod_skip_update_request",
+			modSkipUpdateRequest{Version: "2.0"},
+		},
+		{
+			"mod_update_policy_request",
+			modUpdatePolicyRequest{Policy: domain.UpdatePinned},
+		},
+		{
+			// #330's new "rollback" plan kind (kind_rollback.go), both
+			// halves: what the PLAN is computed with, and RollbackOptions'
+			// own Force/SkipHooks as the confirm page's apply-time choice -
+			// the same plan/apply split uninstall's own two requests use.
+			"rollback_plan_request",
+			rollbackPlanRequest{ModID: "m1", SourceID: "fake"},
+		},
+		{
+			"rollback_apply_request",
+			rollbackApplyRequest{Force: true, SkipHooks: true},
+		},
+		{
+			// #326's pak-conversion body (epic live review C-3): a REQUIRED
+			// boolean (I-1: enforced by handleAPIModConvert refusing a nil
+			// Enabled, since json/v2 has no "required" tag), so the key is
+			// always present on the wire - `lmm mod convert <mod-id>
+			// <on|off>` makes the caller say which way, and an omitted
+			// member must never silently mean "off".
+			"mod_convert_request",
+			modConvertRequest{Enabled: boolPtr(true)},
+		},
+		{
+			// #326's three parity kinds (epic live review C-3). purge
+			// carries the same three options at plan and apply time for the
+			// reason #226 gives for uninstall's: the plan is computed with
+			// them so the preview tells the truth, and the apply carries
+			// what the confirm modal finally chose.
+			"purge_plan_request",
+			purgePlanRequest{Uninstall: true, SkipHooks: true},
+		},
+		{
+			"purge_apply_request",
+			purgeApplyRequest{Uninstall: true, Force: true, SkipHooks: true},
+		},
+		{
+			// #350's three snapshot request bodies. The create's name is
+			// optional (an empty one gets core's shared default, which is
+			// what the card's "Snapshot now" button relies on); the
+			// restore names its snapshot in the body, like every kind that
+			// acts on something you picked from a list rather than on the
+			// current selection.
+			"snapshot_create_request",
+			snapshotCreateRequest{Name: "before-tweaks"},
+		},
+		{
+			"snapshot_restore_plan_request",
+			snapshotRestorePlanRequest{Snapshot: "before-tweaks"},
+		},
+		{
+			// no_safety_snapshot is named in the NEGATIVE, as the CLI flag
+			// is, because the safety copy is the default: a restore's whole
+			// purpose is to discard the present state, so a caller should
+			// not have to remember to ask for a way back.
+			"snapshot_restore_apply_request",
+			snapshotRestoreApplyRequest{SkipHooks: true, Force: true, NoSafetySnapshot: true},
+		},
+		{
+			// profile_sync names its target profile in the body, like its
+			// two siblings; ApplyProfileSync takes no options, so its apply
+			// struct has no json tags and pins nothing (the same shape
+			// switch and profile_apply have).
+			"profile_sync_plan_request",
+			profileSyncPlanRequest{Profile: "survival"},
+		},
+		{
+			// issue 269's workshop adopt: refresh is the ONE choice it
+			// offers, and it is a plan-time one - the decision itself is
+			// expressed by starting the job or not. Its apply struct has
+			// no json tags and pins nothing, the same shape adopt has.
+			"workshop_adopt_plan_request",
+			workshopAdoptPlanRequest{Refresh: true},
+		},
+		{
+			// mod_relink's split follows core's own: the RE-LINK is plan
+			// time (it is what the plan describes - From, To, the lock
+			// refusal), the metadata overrides are apply time
+			// (core.RelinkOptions is what ApplyRelinkMod reads them from).
+			"mod_relink_plan_request",
+			modRelinkPlanRequest{
+				ModID:       "m1",
+				SourceID:    "fake",
+				NewSourceID: "curseforge",
+				NewModID:    "999",
+			},
+		},
+		{
+			"mod_relink_apply_request",
+			modRelinkApplyRequest{Name: "Renamed", Version: "2.0", Author: "Somebody"},
+		},
+		{
+			// The two profile flows' plan requests. Neither has an apply
+			// request with anything in it - ApplyProfileSwitch and
+			// ProfileApplyOptions both take no options - so their empty
+			// structs carry no json tags and pin nothing.
+			"switch_plan_request",
+			switchPlanRequest{Profile: "modded"},
+		},
+		{
+			"profile_apply_plan_request",
+			profileApplyPlanRequest{Profile: "modded"},
+		},
+		{
+			// #332's profile-import halves: the exported document arrives
+			// as TEXT (the SPA reads the picked file and posts its
+			// contents), and the apply half is core.ProfileImportOptions'
+			// three fields - `lmm profile import`'s own flags.
+			"profile_import_plan_request",
+			profileImportPlanRequest{Data: "name: survival\ngame_id: g1\nmods: []\n"},
+		},
+		{
+			"profile_import_apply_request",
+			profileImportApplyRequest{Install: true, Force: true, NoInstall: true},
+		},
+		{
+			// #332's one-member profile body, shared by POST
+			// /api/v1/profiles (the name to create) and POST
+			// /api/v1/profiles/{name}/rename (the name to rename TO).
+			"profile_name_request",
+			profileNameRequest{Name: "survival"},
+		},
+		{
+			// #332's reorder request: the new load order as the same mod
+			// identifiers `lmm profile reorder` takes, lowest priority
+			// first (api_profiles.go).
+			"profile_reorder_request",
+			profileReorderRequest{IDs: []string{"fake:m2", "fake:m1"}},
+		},
+		{
+			// #332's per-finding Repair: `lmm verify --mod <id>`'s own
+			// filter, set on both halves of the flow from this one request
+			// (kind_verify_fix.go).
+			"verify_fix_plan_request",
+			verifyFixPlanRequest{ModFilter: "42"},
+		},
+		{
+			// #333's adopt plan request. Its apply half is an empty struct
+			// with no json tags - every choice the flow offers is made at
+			// plan time or IS the decision, which a frontend expresses by
+			// starting the job or not - so it pins nothing.
+			"adopt_plan_request",
+			adoptPlanRequest{SkipMatch: true},
+		},
+		{
+			// #333's import_archive halves. The plan request names a STAGED
+			// UPLOAD, never a path; the apply request's accept_conflicts is
+			// the Overwrite affordance, which maps to
+			// ImportArchiveOptions.AcceptConflicts rather than Force (see
+			// kind_import_archive.go for why the two are not the same
+			// question).
+			"import_archive_plan_request",
+			importArchivePlanRequest{
+				UploadID: "0123456789abcdef0123456789abcdef",
+				SourceID: "nexusmods",
+				ModID:    "1234",
+			},
+		},
+		{
+			"import_archive_apply_request",
+			importArchiveApplyRequest{AcceptConflicts: true, Force: true, SkipHooks: true},
+		},
+		{
+			// #535's "Install from file…": the failed install's identity
+			// and the file it tried; version only once a plan has answered
+			// version_required. The apply's accept_mismatch is "Install
+			// anyway".
+			"import_archive_plan_request_install_from_file",
+			importArchivePlanRequest{
+				UploadID:        "0123456789abcdef0123456789abcdef",
+				SourceID:        "curseforge",
+				ModID:           "8939586",
+				InstallFromFile: true,
+				ExpectedFileID:  "5001",
+				Version:         "1.2.3",
+			},
+		},
+		{
+			"import_archive_apply_request_install_from_file",
+			importArchiveApplyRequest{AcceptMismatch: true},
+		},
+		{
+			// #530's update_from_archive halves. The plan request names a
+			// staged upload and the INSTALLED mod it updates; version is
+			// only sent once a plan has answered version_required. The apply
+			// request's accept_mismatch is "Update anyway".
+			"update_from_archive_plan_request",
+			updateFromArchivePlanRequest{
+				UploadID: "0123456789abcdef0123456789abcdef",
+				SourceID: "curseforge",
+				ModID:    "8939586",
+				Version:  "339-1",
+			},
+		},
+		{
+			"update_from_archive_apply_request",
+			updateFromArchiveApplyRequest{AcceptMismatch: true, Force: true, SkipHooks: true},
+		},
+		{
+			// #333's upload receipt: the opaque handle a plan request names
+			// the archive by, and what was actually staged.
+			"upload_response",
+			uploadResponse{
+				UploadID: "0123456789abcdef0123456789abcdef",
+				Filename: "SomeMod-1.2.zip",
+				Size:     418209792,
+			},
+		},
+		{
+			// #333's custom-source editor bodies: the draft a validate
+			// request carries (with `lmm source validate`'s two probe
+			// flags), and the definition text a save carries. The id a save
+			// targets is in the PATH, never here - "save THIS source" must
+			// not be able to retarget another one, the same rule the
+			// profile and auth routes follow.
+			"source_validate_request",
+			sourceValidateRequest{
+				YAML:    "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: ~/mods\n",
+				Probe:   true,
+				ProbeID: "12345",
+			},
+		},
+		{
+			"source_save_request",
+			sourceSaveRequest{YAML: "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: ~/mods\n"},
+		},
+		{
+			// #410: POST /api/v1/sources/{id}/index's body - refresh skips
+			// the index TTL, like `lmm source index --refresh`.
+			"source_index_refresh_request",
+			sourceIndexRefreshRequest{Refresh: true},
+		},
+		{
+			// #410: POST /api/v1/indexes/prune's body. only carries a
+			// preview's "source/community" keys, binding the confirmed run
+			// to exactly what the preview listed.
+			"index_prune_request",
+			indexPruneRequest{All: true, Only: []string{"thunderstore/content-warning", "thunderstore/lethal-company"}},
+		},
+		{
+			"api_error_envelope",
+			apiErrorEnvelope{
+				Error:   "profile switch finished with warnings",
+				Details: (&core.ProfileWarningsError{Warnings: []string{"1 mod could not be undeployed"}}).Details(),
+			},
+		},
+		{
+			// #330's un-orphaning of AvailableModVersions: the wrapper
+			// document the full mod page's versions table renders. The
+			// Supported-false shape (a source with no version metadata) is
+			// covered live by api_mod_files_test.go rather than a second
+			// golden row - it is the same two fields with different values,
+			// not a different wire shape.
+			"mod_versions_document",
+			modVersionsDocument{Versions: []string{"1.0", "2.0"}, Supported: true},
+		},
+		{
+			"selection_error_details",
+			selectionErrorDetails{
+				Games: []core.GameListEntry{{
+					Game: domain.Game{
+						ID: "g1", Name: "Fixture Game",
+						InstallPath: "/games/g1", ModPath: "/games/g1/Mods",
+						LinkMethod: domain.LinkSymlink,
+					},
+					Default: true,
+				}},
+				Profiles: []string{"default", "modded"},
+			},
+		},
+		{
+			// #307/#333's game-add body: core.GameSpec's wire fields, so a
+			// core.GameSpecError's "field" member points straight at the
+			// input that produced it. game_id, mod_path and (#206)
+			// from_steam_app_id are the optional members - all populated
+			// here, since the golden's job is to pin every key's shape, not
+			// one plausible request.
+			"game_add_request",
+			gameAddRequest{
+				SourceID:       "curseforge",
+				Identifier:     "432",
+				Name:           "Minecraft",
+				GameID:         "minecraft",
+				InstallPath:    "/games/minecraft",
+				ModPath:        "/games/minecraft/mods",
+				FromSteamAppID: "526870",
+			},
+		},
+		{
+			// #359's additive loader member on the same body, in its own
+			// golden rather than folded into the one above: the loaderless
+			// add is the overwhelmingly common request and its shape must
+			// stay pinned as the one it always was.
+			"game_add_request_loader",
+			gameAddRequest{
+				SourceID:    "nexusmods",
+				Identifier:  "valheim",
+				Name:        "Valheim",
+				InstallPath: "/games/valheim",
+				ModPath:     "/games/valheim",
+				Loader: &core.LoaderSpec{
+					Kind: "bepinex", Version: "5.4.23.5", Runtime: "mono", Bootstrap: "proton",
+				},
+			},
+		},
+		{
+			// #326's source<->game mapping body (epic live review C-4): the
+			// FULL map the game ends up with, keyed by registered source id.
+			// Two entries with one empty identifier, because both shapes are
+			// real - a NexusMods slug, and a directory source that keys the
+			// game by nothing at all.
+			"game_sources_request",
+			gameSourcesRequest{Sources: map[string]string{
+				"nexusmods":  "skyrimspecialedition",
+				"local-mods": "",
+			}},
+		},
+		{
+			// #359: the loader member. Since #527 it may share a body with
+			// the others (game_edit_request); this golden carries it alone,
+			// and loader_set is what
+			// distinguishes "remove the declaration" (present, null) from
+			// "leave it alone" (absent).
+			"game_loader_request",
+			gameSourcesRequest{
+				Loader:    &core.LoaderSpec{Kind: "bepinex", Version: "5.4.23.5", Bootstrap: "native"},
+				LoaderSet: true,
+			},
+		},
+		{
+			// #427/#456: the mod_path repair, with the adapter edit a BepInEx
+			// game's remedy pairs it with - the mod path is written first.
+			"game_mod_path_request",
+			gameSourcesRequest{ModPath: new("/games/valheim"), Adapter: new("bepinex")},
+		},
+		{
+			// #527: the Setup page's one game editor - every field it
+			// changed, in one body, written once or not at all.
+			"game_edit_request",
+			gameSourcesRequest{
+				Name: new("Valheim (modded)"), InstallPath: new("/mnt/library/valheim"),
+				ModPath: new("BepInEx/plugins"), Sources: map[string]string{"thunderstore": "valheim"},
+				Loader: &core.LoaderSpec{Kind: "bepinex", Version: "5.4.23.5"}, LoaderSet: true,
+			},
+		},
+		{
+			// #528: the install-path edit, with the relative mod_path the
+			// same body may carry - relative to the NEW install path.
+			"game_install_path_request",
+			gameSourcesRequest{InstallPath: new("/mnt/library/valheim"), ModPath: new("BepInEx/plugins")},
+		},
+		{
+			// The detect apply's body: which listing rows to add, named by
+			// 1-based index or slug (core.SelectDetectedGames resolves
+			// both, so the golden carries one of each).
+			"game_detect_select_request",
+			gameDetectSelectRequest{Select: []string{"1", "valheim"}},
+		},
+		{
+			// The credential body (api_auth.go). One member: the source is
+			// named in the PATH, never here, so "authenticate THIS source"
+			// cannot be retargeted by the body. The value is a dummy - a
+			// golden is a committed file, and no real key belongs in one.
+			"auth_key_request",
+			authKeyRequest{APIKey: "example-api-key"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			require.NoError(t, core.EncodeJSON(&buf, tc.value))
+
+			path := filepath.Join("testdata", "json", tc.name+".golden")
+			if *updateServeJSONGoldens {
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+				require.NoError(t, os.WriteFile(path, buf.Bytes(), 0o644))
+				return
+			}
+
+			want, err := os.ReadFile(path)
+			require.NoError(t, err, "missing golden - re-record with -update-serve-json-goldens")
+			require.Equal(t, string(want), buf.String())
+		})
+	}
+}

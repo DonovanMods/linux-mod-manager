@@ -3,39 +3,22 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
-	"text/tabwriter"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/spf13/cobra"
 )
-
-// gameListJSON is the --json row shape for 'game list': Default is an
-// explicit boolean (rather than embedding a marker in ID, as the table view
-// does) so a JSON consumer doesn't need to string-match the ID field.
-type gameListJSON struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	InstallPath string            `json:"install_path"`
-	ModPath     string            `json:"mod_path"`
-	DeployMode  string            `json:"deploy_mode"`
-	ConvertPaks *bool             `json:"convert_paks,omitempty"`
-	Sources     map[string]string `json:"sources"`
-	Default     bool              `json:"default"`
-}
 
 var gameListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List configured games",
 	Long: `List every game configured in games.yaml: ID, name, install path, mod
-path, deploy mode, and configured sources. The default game (see 'lmm game
+path, adapter, deploy mode, and configured sources. The default game (see 'lmm game
 show-default') is marked "(default)" next to its ID.
 
 Examples:
@@ -56,44 +39,17 @@ func runGameList(cmd *cobra.Command, args []string) error {
 }
 
 func doGameList(cmd *cobra.Command, service *core.Service) error {
-	games := service.ListGames()
-	sort.Slice(games, func(i, j int) bool { return games[i].ID < games[j].ID })
-
-	cfg, err := config.Load(service.ConfigDir())
+	// core.ListGameEntries returns the games ordered by ID with the default
+	// one marked; the only error it can report is the default-game lookup's.
+	games, err := service.ListGameEntries(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	defaultGame := cfg.DefaultGame
 
 	if jsonOutput {
-		rows := make([]gameListJSON, len(games))
-		for i, g := range games {
-			sources := g.SourceIDs
-			if sources == nil {
-				sources = map[string]string{}
-			}
-			row := gameListJSON{
-				ID:          g.ID,
-				Name:        g.Name,
-				InstallPath: g.InstallPath,
-				ModPath:     g.ModPath,
-				DeployMode:  g.DeployMode.String(),
-				Sources:     sources,
-				Default:     g.ID == defaultGame,
-			}
-			// Populate convert_paks only for DeployCompile games
-			if g.DeployMode == domain.DeployCompile {
-				v := g.ConvertPaks
-				row.ConvertPaks = &v
-			}
-			rows[i] = row
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(rows); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
+		// A top-level array, as it has always been; emitJSON encodes an empty
+		// registry as [] and a game's absent source map as {}, never null.
+		return emitJSON(games)
 	}
 
 	if len(games) == 0 {
@@ -103,27 +59,31 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 	}
 
 	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "ID\tNAME\tINSTALL PATH\tMOD PATH\tDEPLOY MODE\tCONVERT PAKS\tSOURCES"); err != nil {
+	w := newDisplayWidthTableWriter(&buf)
+	if _, err := fmt.Fprintln(w, "ID\tNAME\tINSTALL PATH\tMOD PATH\tADAPTER\tDEPLOY MODE\tCONVERT PAKS\tSOURCES"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
-	if _, err := fmt.Fprintln(w, "--\t----\t------------\t--------\t-----------\t-----------\t-------"); err != nil {
+	if _, err := fmt.Fprintln(w, "--\t----\t------------\t--------\t-------\t-----------\t-----------\t-------"); err != nil {
 		return fmt.Errorf("writing separator: %w", err)
 	}
 	for _, g := range games {
 		id := g.ID
-		if g.ID == defaultGame {
+		if g.Default {
 			id += " (default)"
 		}
 		convertPaksStr := ""
 		if g.DeployMode == domain.DeployCompile {
 			convertPaksStr = "off"
-			if g.ConvertPaks {
+			if g.Game.ConvertPaks {
 				convertPaksStr = "on"
 			}
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, g.Name, g.InstallPath, g.ModPath, g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
+		modPath := g.ModPath
+		if g.ModPathError != "" {
+			modPath += " (needs repair)"
+		}
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			id, g.Name, g.InstallPath, modPath, formatGameAdapter(g), g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}
@@ -131,7 +91,59 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 		return fmt.Errorf("flushing output: %w", err)
 	}
 
-	return printTable(&buf, 2, nil)
+	if err := printTable(&buf, 2, nil); err != nil {
+		return err
+	}
+	printModPathProblems(games)
+	return nil
+}
+
+// printModPathProblems follows a game table with the repair for each game
+// whose mod_path needs attention (#427): the table cell can only say
+// "(needs repair)", and a flag with no next step is the complaint #427 was
+// filed about. On stderr, in the load-time warnings' format, so the table on
+// stdout stays exactly one table.
+func printModPathProblems(games []core.GameListEntry) {
+	for _, g := range games {
+		warnModPath(g.ID, g.ModPathError)
+	}
+}
+
+// warnModPath prints one game's mod_path problem, if it has one.
+func warnModPath(gameID, problem string) {
+	if problem != "" {
+		fmt.Fprintf(os.Stderr, "warning: %s: %s\n", gameID, problem)
+	}
+}
+
+// formatGameAdapter renders a game's adapter for a table cell or a detail
+// line (#353).
+//
+// It reads EffectiveAdapter, the adapter the game actually resolves to
+// (#426), rather than the configured key: a `deploy_mode: compile` game
+// compiles through icarus and a game with BepInEx lays its archives out
+// through bepinex whether or not games.yaml says so, and this column exists
+// to say which adapter a game uses. An absent one IS the generic-files
+// identity, so the cell names it rather than leaving a blank.
+//
+// The exception is a game every flow refuses (AdapterError, #413 re-review
+// L2): it uses no adapter, so the cell names the configured one and says it
+// is refused, rather than reading generic-files for a game nothing deploys
+// to. `lmm game show` prints the refusal itself.
+func formatGameAdapter(entry core.GameListEntry) string {
+	if entry.AdapterError != "" {
+		return formatAdapterName(entry.Adapter) + " (refused)"
+	}
+	return formatAdapterName(entry.EffectiveAdapter)
+}
+
+// formatAdapterName renders one adapter name, the empty one as the
+// identity it means.
+func formatAdapterName(name string) string {
+	if name == "" {
+		return "generic-files"
+	}
+	return name
 }
 
 // formatGameSources renders a game's SourceIDs map as a compact,

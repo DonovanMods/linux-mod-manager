@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // apiRequestTimeout bounds every request to a declarative REST source.
@@ -74,10 +74,73 @@ func (a *API) ExchangeToken(ctx context.Context, code string) (*source.Token, er
 	return nil, fmt.Errorf("source %q: authentication: %w", a.id, source.ErrNotSupported)
 }
 
-// GetDependencies implements source.ModSource; always unsupported in v1
-// (design §4).
+// GetDependencies implements source.ModSource via the dependencies endpoint
+// (#122). An api source used to hard-disable dependency resolution because
+// the definition had no way to express "ask the API what this mod needs";
+// declaring endpoints.dependencies + mappings.dependency is that way, and a
+// definition that declares neither still answers ErrNotSupported, which
+// core's resolver degrades to "no dependencies" silently.
+//
+// An entry whose source_id is unmapped, or maps to nothing, refers to a mod
+// in THIS source - the self-contained catalogue every custom source is
+// unless it says otherwise (Manifest.GetDependencies makes the same
+// assumption unconditionally).
 func (a *API) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
-	return nil, fmt.Errorf("source %q: dependencies: %w", a.id, source.ErrNotSupported)
+	ep := a.endpoints.Dependencies
+	if ep == nil {
+		return nil, fmt.Errorf("source %q: dependencies: %w", a.id, source.ErrNotSupported)
+	}
+
+	vals := map[string]string{"mod_id": mod.ID, "game_id": mod.GameID}
+	doc, err := a.getJSON(ctx, a.baseURL+buildEndpointURL(ep.Path, vals))
+	if err != nil {
+		return nil, fmt.Errorf("listing dependencies for %s: %w", mod.ID, err)
+	}
+
+	items, err := a.listFromDoc(doc, ep.List, fmt.Sprintf("mod %s", mod.ID))
+	if err != nil {
+		return nil, err
+	}
+
+	refs := make([]domain.ModReference, 0, len(items))
+	for i, item := range items {
+		modID := pathString(item, a.mappings.Dependency, "mod_id")
+		if modID == "" {
+			return nil, fmt.Errorf("source %q: mod %s: %s[%d]: missing required field %q (mapped from %q)",
+				a.id, mod.ID, ep.List, i, "mod_id", a.mappings.Dependency["mod_id"])
+		}
+		sourceID := pathString(item, a.mappings.Dependency, "source_id")
+		if sourceID == "" {
+			sourceID = a.id
+		}
+		refs = append(refs, domain.ModReference{
+			SourceID: sourceID,
+			ModID:    modID,
+			Version:  pathString(item, a.mappings.Dependency, "version"),
+		})
+	}
+	return refs, nil
+}
+
+// listFromDoc resolves an endpoint's list dot-path to a JSON array, with
+// the tolerances every list endpoint shares: a missing path is an error (a
+// silent empty would look like "this mod has none"), an explicit null is an
+// empty list (a Go-backed API's json.Marshal of a nil slice, the standard
+// zero-hits shape for such APIs), and anything that is not an array is an
+// error. subject names what the request was about, for the error message.
+func (a *API) listFromDoc(doc any, listPath, subject string) ([]any, error) {
+	listVal, ok := lookupPath(doc, listPath)
+	if !ok {
+		return nil, fmt.Errorf("source %q: %s: response has no %q array", a.id, subject, listPath)
+	}
+	if listVal == nil {
+		return []any{}, nil
+	}
+	items, ok := listVal.([]any)
+	if !ok {
+		return nil, fmt.Errorf("source %q: %s: %q is not an array", a.id, subject, listPath)
+	}
+	return items, nil
 }
 
 // SetAPIKey provides the API key resolved at startup (env var or token store).
@@ -88,18 +151,52 @@ func (a *API) IsAuthenticated() bool { return a.apiKey != "" }
 
 // Capabilities implements source.CapabilityReporter: an undefined endpoint is
 // an unsupported capability (design §4/§7).
+//
+// Sorts (#503) lists the orderings the definition's mod mapping can fill:
+// updated_at and downloads, when the definition maps them (endorsements has
+// no mapping key). Search is delegated to the user's endpoint and this
+// source never forwards a sort, so these claim only that the hits carry the
+// field; core orders the page that comes back.
 func (a *API) Capabilities() source.Capabilities {
+	var sorts []domain.SearchSort
+	if a.endpoints.Search != nil {
+		if _, ok := a.mappings.Mod["updated_at"]; ok {
+			sorts = append(sorts, domain.SortUpdated)
+		}
+		if _, ok := a.mappings.Mod["downloads"]; ok {
+			sorts = append(sorts, domain.SortDownloads)
+		}
+	}
 	return source.Capabilities{
 		Search:       a.endpoints.Search != nil,
-		Dependencies: false,
+		Dependencies: a.endpoints.Dependencies != nil,
 		Updates:      a.endpoints.GetMod != nil,
 		Auth:         a.auth != nil,
 		Versions:     a.endpoints.ModFiles != nil,
+		Sorts:        sorts,
 	}
 }
 
 // TypeLabel implements source.TypeLabeler.
 func (a *API) TypeLabel() string { return "api" }
+
+// IgnoresGameIdentifier implements source.GameIdentifierIgnorer by reading
+// the definition rather than guessing: {game_id} is substituted into endpoint
+// paths and nowhere else (buildEndpointURL), so a definition that never
+// writes it addresses nothing with the value and an empty mapping is
+// legitimate. One that DOES write it would send a request with an empty
+// game_id, which is the case #387 must keep refusing (P1b review F5).
+func (a *API) IgnoresGameIdentifier() bool {
+	for _, ep := range []*source.EndpointConfig{
+		a.endpoints.Search, a.endpoints.GetMod, a.endpoints.ModFiles,
+		a.endpoints.DownloadURL, a.endpoints.Dependencies,
+	} {
+		if ep != nil && strings.Contains(ep.Path, "{game_id}") {
+			return false
+		}
+	}
+	return true
+}
 
 // DownloadHeaders implements source.DownloadHeaderProvider: header-mode keys
 // go only to downloads on the API's own origin (design §9).
@@ -163,7 +260,7 @@ func (a *API) getJSON(ctx context.Context, rawURL string) (any, error) {
 		return nil, fmt.Errorf("source %q: %w", a.id, domain.ErrAuthRequired)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("source %q: requesting %s: HTTP %d", a.id, redactedURL(rawURL), resp.StatusCode)
+		return nil, &apiStatusError{source: a.id, url: redactedURL(rawURL), code: resp.StatusCode}
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAPIResponseSize+1))
@@ -179,6 +276,27 @@ func (a *API) getJSON(ctx context.Context, rawURL string) (any, error) {
 		return nil, fmt.Errorf("source %q: parsing response from %s: %w", a.id, redactedURL(rawURL), err)
 	}
 	return doc, nil
+}
+
+// apiStatusError is getJSON's answer to any status but 200 and 401: the
+// status as data, so a caller can classify one (GetMod's 404/410), and the
+// already-redacted URL in the message for everything else.
+type apiStatusError struct {
+	source string
+	url    string
+	code   int
+}
+
+func (e *apiStatusError) Error() string {
+	return fmt.Sprintf("source %q: requesting %s: HTTP %d", e.source, e.url, e.code)
+}
+
+// isGoneStatus reports whether err is the API saying the resource does not
+// exist: 404 Not Found, or 410 Gone (withdrawn on purpose). Every other
+// failure says nothing about the mod.
+func isGoneStatus(err error) bool {
+	var status *apiStatusError
+	return errors.As(err, &status) && (status.code == http.StatusNotFound || status.code == http.StatusGone)
 }
 
 // redactedURL strips the query string from a URL for error messages.
@@ -232,19 +350,9 @@ func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.Sear
 		return source.SearchResult{}, fmt.Errorf("searching: %w", err)
 	}
 
-	listVal, ok := lookupPath(doc, ep.List)
-	if !ok {
-		return source.SearchResult{}, fmt.Errorf("source %q: searching: response has no %q array", a.id, ep.List)
-	}
-	if listVal == nil {
-		// A Go-backed API's json.Marshal of a nil slice emits `null`, the
-		// standard zero-hits shape for such APIs — treat it as empty, not
-		// an error.
-		listVal = []any{}
-	}
-	items, ok := listVal.([]any)
-	if !ok {
-		return source.SearchResult{}, fmt.Errorf("source %q: searching: %q is not an array", a.id, ep.List)
+	items, err := a.listFromDoc(doc, ep.List, "searching")
+	if err != nil {
+		return source.SearchResult{}, err
 	}
 
 	mods := make([]domain.Mod, 0, len(items))
@@ -270,6 +378,10 @@ func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.Sear
 // GetMod implements source.ModSource via the get_mod endpoint. gameID feeds
 // the {game_id} placeholder and is echoed onto the returned mod for
 // downstream attribution (the persisted row is normalized by the installer).
+//
+// A 404 or 410 from get_mod is the API's own answer that the mod does not
+// exist (#541), so it is domain.ErrModNotFound - a fact core reports as
+// "not in the catalog" - rather than a failed request.
 func (a *API) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
 	ep := a.endpoints.GetMod
 	if ep == nil {
@@ -279,6 +391,9 @@ func (a *API) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, er
 	vals := map[string]string{"mod_id": modID, "game_id": gameID}
 	doc, err := a.getJSON(ctx, a.baseURL+buildEndpointURL(ep.Path, vals))
 	if err != nil {
+		if isGoneStatus(err) {
+			return nil, fmt.Errorf("fetching mod %s: not in the catalog (%w): %w", modID, err, domain.ErrModNotFound)
+		}
 		return nil, fmt.Errorf("fetching mod %s: %w", modID, err)
 	}
 
@@ -303,19 +418,9 @@ func (a *API) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.Downlo
 		return nil, fmt.Errorf("listing files for %s: %w", mod.ID, err)
 	}
 
-	listVal, ok := lookupPath(doc, ep.List)
-	if !ok {
-		return nil, fmt.Errorf("source %q: mod %s: response has no %q array", a.id, mod.ID, ep.List)
-	}
-	if listVal == nil {
-		// A Go-backed API's json.Marshal of a nil slice emits `null`, the
-		// standard zero-hits shape for such APIs — treat it as empty, not
-		// an error.
-		listVal = []any{}
-	}
-	items, ok := listVal.([]any)
-	if !ok {
-		return nil, fmt.Errorf("source %q: mod %s: %q is not an array", a.id, mod.ID, ep.List)
+	items, err := a.listFromDoc(doc, ep.List, fmt.Sprintf("mod %s", mod.ID))
+	if err != nil {
+		return nil, err
 	}
 
 	files := make([]domain.DownloadableFile, 0, len(items))
@@ -368,7 +473,9 @@ func (a *API) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string
 // CheckUpdates implements source.ModSource generically via get_mod + version
 // comparison (design §4). Per-mod fetch failures are collected and returned
 // alongside partial results so a single flaky mod page doesn't hide the rest
-// — and doesn't get silently skipped either.
+// — and doesn't get silently skipped either. A mod get_mod says does not
+// exist is reported as a *source.ModNotFoundError (#541), which core lists
+// as gone from the catalog rather than as a failed check.
 func (a *API) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	if a.endpoints.GetMod == nil {
 		return nil, fmt.Errorf("source %q: update checks: %w", a.id, source.ErrNotSupported)
@@ -384,6 +491,9 @@ func (a *API) CheckUpdates(ctx context.Context, installed []domain.InstalledMod)
 		}
 		current, err := a.GetMod(ctx, inst.GameID, inst.ID)
 		if err != nil {
+			if errors.Is(err, domain.ErrModNotFound) {
+				err = &source.ModNotFoundError{ModID: inst.ID, Err: err}
+			}
 			errs = append(errs, err)
 			continue
 		}

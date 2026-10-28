@@ -1,0 +1,21 @@
+## stdout
+Importing: <ARCHIVE-DIR>/Bear_Mount.exmodz
+
+Mod: Bear_Mount
+  Source: local
+  ID: <UUID>
+  Files: 0
+
+Would import: Bear_Mount
+  Would install (merged pak updated)
+  Would add to profile: default
+  The profile's merged artifact would be resynced afterwards
+
+Note: Local mods won't receive update notifications.
+
+(dry run - no changes made)
+## stderr
+## error
+<nil>
+## tree
+<empty>

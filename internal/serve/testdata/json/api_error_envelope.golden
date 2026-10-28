@@ -1,0 +1,8 @@
+{
+  "error": "profile switch finished with warnings",
+  "details": {
+    "warnings": [
+      "1 mod could not be undeployed"
+    ]
+  }
+}

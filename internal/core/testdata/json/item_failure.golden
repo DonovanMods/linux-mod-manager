@@ -1,0 +1,6 @@
+{
+  "source_id": "nexusmods",
+  "mod_id": "99",
+  "name": "Sample Mod",
+  "reason": "failed to fetch mod: upstream timeout"
+}

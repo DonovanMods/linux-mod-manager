@@ -1,0 +1,54 @@
+{
+  "archive": "/downloads/Sample-Mod-Classic-1.2.3 (1).zip",
+  "mod": {
+    "id": "42",
+    "source_id": "nexusmods",
+    "name": "Sample Mod",
+    "version": "1.2.3",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "skyrim-se",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "2026-08-27T12:00:00Z"
+  },
+  "linked_source": "curseforge",
+  "auto_detected": false,
+  "files": [
+    "SampleMod/SampleMod.lua"
+  ],
+  "conflicts": [],
+  "hooks": [],
+  "entry_pre_exists": false,
+  "match": "mismatch",
+  "expected": {
+    "id": "5001",
+    "file_name": "Sample-Mod-1.2.3.zip",
+    "version": "1.2.3"
+  },
+  "matched_file": {
+    "id": "5002",
+    "file_name": "Sample-Mod-Classic-1.2.3.zip",
+    "version": "1.2.3c"
+  },
+  "match_normalized": true,
+  "unmet_dependencies": [
+    {
+      "source_id": "curseforge",
+      "mod_id": "77",
+      "name": "Sample Library"
+    },
+    {
+      "source_id": "curseforge",
+      "mod_id": "78"
+    }
+  ],
+  "warnings": [
+    "Sample Mod depends on 2 mods that are not installed, and installing from a file does not install them: Sample Library, curseforge:78"
+  ]
+}

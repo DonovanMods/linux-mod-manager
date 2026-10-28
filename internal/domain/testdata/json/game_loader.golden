@@ -1,0 +1,6 @@
+{
+  "kind": "bepinex",
+  "version": "5.4.23.5",
+  "runtime": "mono",
+  "bootstrap": "proton"
+}

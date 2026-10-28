@@ -8,7 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // redownloadModFile re-downloads a single mod file and extracts it to the
@@ -22,7 +23,7 @@ import (
 // (pre-refactor, doVerify's --fix repair helper), minus the cmd parameter -
 // callers now pass ctx directly, and game/profile come from the run itself
 // rather than being threaded in.
-func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.InstalledMod, fileID string) (persisted bool, err error) {
+func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.InstalledMod, fileID string, ref *domain.ModReference) (persisted bool, err error) {
 	files, err := r.svc.GetModFiles(ctx, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
 	if err != nil {
 		return false, fmt.Errorf("getting mod files: %w", err)
@@ -37,6 +38,18 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 	if downloadFile == nil {
 		return false, fmt.Errorf("file %s not found in mod", fileID)
 	}
+	// #325: every download here lands in the RECORDED version's cache slot
+	// (the cache key is mod.Version), so for a LOCKED ref the bytes must be
+	// that version's own. The version pass already refuses to move a locked
+	// record; without this gate the file repairs quietly wrote the source's
+	// CURRENT content into the locked slot instead - the same slot-mismatch
+	// fixed for unlocked mods, surviving for exactly the mods whose whole
+	// point is version pinning. Refused BEFORE the download, so the slot is
+	// left untouched, and with the unlock-only wording: this gate ignores
+	// the version the lock names, so moving the lock is not a remedy.
+	if ref != nil && ref.Locked && !servesRecordedVersion(downloadFile, mod.Version) {
+		return false, LockedRefUnlockOnlyRefusalError(mod.Mod, r.profile, ref)
+	}
 	// SourceMappedMod on the download too (#228): Service.DownloadMod
 	// forwards its mod straight to src.GetDownloadURL with no translation of
 	// its own, so passing the raw installed row here - whose GameID is the
@@ -44,17 +57,159 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 	// source with a non-identity SourceIDs mapping, while the GetModFiles
 	// lookup directly above was already mapped. The cache side is unaffected
 	// either way: every cache path is keyed off game.ID, not mod.GameID.
-	result, err := r.svc.DownloadMod(ctx, mod.SourceID, r.game, SourceMappedMod(r.game, &mod.Mod), downloadFile, nil)
+	result, err := r.svc.downloadMod(ctx, mod.SourceID, r.game, SourceMappedMod(r.game, &mod.Mod), downloadFile, r.downloadWarningSink())
 	if err != nil {
 		return false, err
 	}
 	if result.Checksum == "" {
 		return false, nil
 	}
-	if err := r.svc.SaveFileChecksum(mod.SourceID, mod.ID, r.game.ID, r.profile, fileID, result.Checksum); err != nil {
+	if err := r.svc.saveFileChecksum(ctx, mod.SourceID, mod.ID, r.game.ID, r.profile, fileID, result.Checksum); err != nil {
 		return false, fmt.Errorf("saving checksum: %w", err)
 	}
 	return true, nil
+}
+
+// populateChecksum is the NO CHECKSUM repair: it fills fileID's empty
+// checksum, reporting whether one was persisted and whether it came from the
+// cache rather than a download.
+//
+// A re-download is the usual way, but a file its source will not serve
+// (source.ErrManualDownload - a CurseForge author's third-party opt-out) can
+// never be re-downloaded, so the warning could never clear (#514). For such
+// a file - a row already flagged ManualDownload, or one whose re-download
+// was just refused that way - the checksum is computed from the mod's own
+// cache entry instead (fillChecksumFromCache). verify only ever checks a
+// checksum's presence, so a cache-derived value is as good as a download's.
+// A flagged row tries the cache FIRST and never asks the source when that
+// works; the flag is not trusted further than that, so an incomplete entry
+// still falls back to the download.
+//
+// Filling from the recorded version's own cache entry moves nothing, so it
+// is allowed for a LOCKED ref too; only the download carries #325's gate.
+func (r *verifyRun) populateChecksum(mod *domain.InstalledMod, fileID string, ref *domain.ModReference) (persisted, fromCache bool, err error) {
+	if mod.ManualDownload {
+		if filled, ferr := r.fillChecksumFromCache(mod, fileID); filled || ferr != nil {
+			return filled, filled, ferr
+		}
+	}
+	persisted, err = r.redownloadModFile(r.ctx, mod, fileID, ref)
+	if mod.ManualDownload || !errors.Is(err, source.ErrManualDownload) {
+		return persisted, false, err
+	}
+	filled, ferr := r.fillChecksumFromCache(mod, fileID)
+	if ferr != nil {
+		return false, false, ferr
+	}
+	if !filled {
+		return false, false, err // nothing to fill from: the refusal stands
+	}
+	return true, true, nil
+}
+
+// fillChecksumFromCache records fileID's checksum from mod's cache entry,
+// without downloading anything (#514), when that entry is complete for the
+// file: its completion marker is present and checksumFromCache can fold its
+// recorded members (or hash its retained original). It reports false, with
+// no error, when there is nothing complete to fill from; the error is only a
+// failure to store what was computed.
+func (r *verifyRun) fillChecksumFromCache(mod *domain.InstalledMod, fileID string) (bool, error) {
+	gameCache := r.svc.GetGameCache(r.game)
+	if !gameCache.HasFileIDs(r.game.ID, mod.SourceID, mod.ID, mod.Version, []string{fileID}) {
+		return false, nil
+	}
+	checksum, err := checksumFromCache(gameCache, r.game.ID, mod.SourceID, mod.ID, mod.Version, fileID)
+	if err != nil {
+		// A recorded member that is gone or unreadable: the entry is not
+		// complete after all, so there is nothing honest to record.
+		r.svc.logger().Debug("cannot fill checksum from cache", "mod", mod.ID, "file", fileID, "err", err)
+		return false, nil
+	}
+	if checksum == "" {
+		return false, nil
+	}
+	if err := r.svc.saveFileChecksum(r.ctx, mod.SourceID, mod.ID, r.game.ID, r.profile, fileID, checksum); err != nil {
+		return false, fmt.Errorf("saving checksum from the cached files: %w", err)
+	}
+	return true, nil
+}
+
+// downloadPage is the page of the mod whose repair download failed - the
+// place to fetch the file by hand - when err carries one (#513's
+// *DownloadError, already limited to http(s)); "" otherwise.
+func downloadPage(err error) string {
+	var dl *DownloadError
+	if errors.As(err, &dl) {
+		return dl.ModURL
+	}
+	return ""
+}
+
+// setDownloadPage records a failed repair download's page on the finding
+// just reported, with the source it is a page of (#517); nothing when err
+// carried none.
+func (r *verifyRun) setDownloadPage(mod *domain.InstalledMod, page string) {
+	if page == "" {
+		return
+	}
+	last := &r.result.Findings[len(r.result.Findings)-1]
+	last.ModURL, last.SourceID = page, mod.SourceID
+}
+
+// emitDownloadPage writes the sub-line naming a failed repair download's
+// page under the failure's own, when there is one (#514). The finding's
+// ModURL carries the same page for --json and the web UI.
+func (r *verifyRun) emitDownloadPage(page string) {
+	if page != "" {
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Download it manually from: " + page})
+	}
+}
+
+// downloadWarningSink carries a re-download's download-time warnings
+// (#425) into verify's own stream twice over: as a sub-line under the
+// repair that fetched it, which is what verify's own renderers read - they
+// read VerifyEvents only - and as the WarningEvent every other flow
+// forwards, under verify's scope, which is what `lmm serve`'s job activity
+// renders (#427 review F8). A consumer that reads both sees the warning
+// once in each vocabulary it reads.
+//
+// The sub-line is held while holdDetails is, for a repair whose row comes
+// after it (#427 review F7).
+func (r *verifyRun) downloadWarningSink() EventSink {
+	return func(e Event) {
+		w, ok := e.(WarningEvent)
+		if !ok || w.Phase != DownloadWarning {
+			return
+		}
+		if r.sink != nil {
+			r.sink(WarningEvent{
+				Scope:   Scope{Op: OpVerify, ModName: w.ModName, Mod: w.Mod},
+				Phase:   DownloadWarning,
+				Message: w.Message,
+			})
+		}
+		detail := VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + w.Message}
+		if r.held != nil {
+			*r.held = append(*r.held, detail)
+			return
+		}
+		r.emitEv(detail)
+	}
+}
+
+// servesRecordedVersion reports whether file is the source's copy of the
+// version a row RECORDS - the precondition #325 puts on any repair that
+// writes into the recorded version's cache slot for a locked ref.
+//
+// It is deliberately conservative. A file the source stamps with a version
+// answers the question outright. A file with NO version (a source that does
+// not version its files at all) cannot answer it: its current bytes are all
+// the source has, and those are exactly what must not be written into a
+// pinned slot on the strength of a guess. So an unstamped file is treated
+// as "cannot serve it" - a locked mod on such a source is repaired by
+// unlocking first, which is the remedy the refusal names.
+func servesRecordedVersion(file *domain.DownloadableFile, recorded string) bool {
+	return file.Version != "" && file.Version == recorded
 }
 
 // cacheDirExists reports whether a cache mod-version directory exists,
@@ -165,8 +320,8 @@ func cacheDirExists(path string) (bool, error) {
 // (pre-refactor) - the cmd/svc/game/profile parameters are replaced by the
 // verifyRun receiver (svc/game/profile come from r), and every inline
 // fmt.Printf (previously gated on !jsonOutput) is now an unconditional
-// VerifyEvRepairDetail emission: the CLI/TUI's own renderer decides
-// whether to print it, same as every other repair site ported in Task 4.
+// VerifyEvRepairDetail emission: the CLI's own renderer decides whether to
+// print it, same as every other repair site ported in Task 4.
 func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledMod, effective string) (note string, siblingFailures int, err error) {
 	recorded := mod.Version
 	gameCache := r.svc.GetGameCache(r.game)
@@ -194,7 +349,7 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 	}
 
 	pm := r.svc.NewProfileManager()
-	if err := pm.UpsertMod(r.game.ID, r.profile, domain.ModReference{
+	if err := pm.UpsertMod(ctx, r.game.ID, r.profile, domain.ModReference{
 		SourceID: mod.SourceID,
 		ModID:    mod.ID,
 		Version:  effective,
@@ -203,7 +358,7 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 		return note, 0, fmt.Errorf("updating profile record: %w", err)
 	}
 
-	if err := r.svc.SetModVersion(mod.SourceID, mod.ID, mod.GameID, r.profile, effective); err != nil {
+	if err := r.svc.setModVersion(ctx, mod.SourceID, mod.ID, mod.GameID, r.profile, effective); err != nil {
 		return note, 0, fmt.Errorf("saving installed mod: %w", err)
 	}
 	mod.Version = effective
@@ -214,7 +369,10 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 	// unvetted pre-existing effective-version dir for no reason.
 	var relinkErr error
 	var relinkNotes []string
-	if note == "" && mod.Deployed && mod.LinkMethod == domain.LinkSymlink {
+	live := r.liveRelinker(ctx)
+	if note == "" && mod.Deployed && mod.LinkMethod == domain.LinkSymlink && !live.allows(r.profile, mod, r.svc.profileDisabledKeys(ctx, r.game.ID, r.profile)) {
+		relinkNotes = append(relinkNotes, live.declined(r.profile, mod))
+	} else if note == "" && mod.Deployed && mod.LinkMethod == domain.LinkSymlink {
 		installErr, recordErr, undeployErr := r.relinkDeployedRow(ctx, r.profile, mod)
 		if undeployErr != nil {
 			// Non-fatal (see relinkDeployedRow's doc) - but surfaced in
@@ -223,11 +381,11 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 			// overwrites note wholesale), so a --json caller sees the
 			// partial cleanup a human would be shown.
 			relinkNotes = append(relinkNotes, fmt.Sprintf("undeploy before re-link: %v", undeployErr))
-			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: undeploy %s: %v", mod.Name, undeployErr)})
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: undeploy %s: %v", mod.Name, undeployErr)})
 		}
 		if installErr != nil {
 			mod.Deployed = false
-			if saveErr := r.svc.SetModDeployed(mod.SourceID, mod.ID, mod.GameID, r.profile, false); saveErr != nil {
+			if saveErr := r.svc.setModDeployed(ctx, mod.SourceID, mod.ID, mod.GameID, r.profile, false); saveErr != nil {
 				relinkErr = fmt.Errorf("relinking deployed files: %w (also failed to clear deployed flag: %v)", installErr, saveErr)
 			} else {
 				relinkErr = fmt.Errorf("relinking deployed files: %w", installErr)
@@ -239,15 +397,16 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 			// warning above.
 			msg := fmt.Sprintf("could not record link method: %v", recordErr)
 			relinkNotes = append(relinkNotes, msg)
-			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
 		}
 	}
 
 	// Sibling repair runs regardless of the primary re-link's own outcome
 	// (above) - a sibling row's orphaning is caused by the cache rename,
 	// not by anything that happens to the primary row's deployment.
+	var siblingCancelErr error
 	if renamed || (!oldExists && newExists && note == "") {
-		note, siblingFailures = r.repairSiblingProfiles(ctx, mod, recorded, effective)
+		note, siblingFailures, siblingCancelErr = r.repairSiblingProfiles(ctx, mod, recorded, effective, live)
 	}
 
 	if len(relinkNotes) > 0 {
@@ -257,6 +416,12 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 		} else {
 			note = joined
 		}
+	}
+
+	// A cancellation outranks the re-link failure: the run is over either
+	// way, and only the cancellation tells the caller why.
+	if siblingCancelErr != nil {
+		return note, siblingFailures, siblingCancelErr
 	}
 
 	if relinkErr != nil {
@@ -354,6 +519,14 @@ func fileIDsEqual(a, b []string) bool {
 // SetModVersion/SetModDeployed (never SaveInstalledMod's full-row upsert,
 // which would wipe stored checksums - audit Finding 1) do the writes.
 //
+// A sibling's links are re-created only when it is the game's ACTIVE
+// profile, enabled and not marked off in its own document (#444, see
+// liveRelinker): any other profile has nothing in the one game directory,
+// whatever its row still claims - a profile switch made before the upgrade
+// left `deployed` set on every row it switched away from - and re-linking it
+// would put that profile's mod live under the active one. Its record is
+// still corrected; the note says it was not re-linked. Not a failure.
+//
 // A sibling Deployed via symlink has its links re-created through the
 // installer exactly like the primary row's would be - built from that
 // sibling's OWN profile-effective link method (relinkDeployedRow, #152),
@@ -394,22 +567,32 @@ func fileIDsEqual(a, b []string) bool {
 // every inline fmt.Printf/fmt.Println (previously gated on !jsonOutput) is
 // now an unconditional VerifyEvRepairDetail emission, matching
 // repairModVersion's own port.
-func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.InstalledMod, recorded, effective string) (note string, failedCount int) {
+//
+// cancelErr is non-nil only when the run was cancelled part-way through the
+// sibling sweep (v2 Phase 3 Ruling 16): a cancelled profile read or write
+// would otherwise repeat identically for every remaining sibling, turning one
+// Ctrl-C into N "could not repair profile X" warnings and a non-zero
+// failedCount. The note and count accumulated up to that point are still
+// returned, so the caller reports the work that really happened.
+func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.InstalledMod, recorded, effective string, live liveRelinker) (note string, failedCount int, cancelErr error) {
 	pm := r.svc.NewProfileManager()
-	profiles, err := pm.List(r.game.ID)
-	if err != nil {
-		msg := fmt.Sprintf("could not enumerate profiles to check for shared-cache siblings: %v", err)
-		r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
-		return "sibling repair check FAILED: " + msg, 1
+	profiles, listErr := pm.List(ctx, r.game.ID)
+	if listErr != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return "", 0, cerr
+		}
+		msg := fmt.Sprintf("could not enumerate profiles to check for shared-cache siblings: %v", listErr)
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
+		return "sibling repair check FAILED: " + msg, 1, nil
 	}
 
-	var repaired, failed, differs, locked, methodNotes, undeployWarns []string
+	var repaired, failed, differs, locked, methodNotes, undeployWarns, notLinked []string
 	for _, p := range profiles {
 		if p.Name == r.profile {
 			continue
 		}
 
-		sibling, err := r.svc.GetInstalledMod(mod.SourceID, mod.ID, r.game.ID, p.Name)
+		sibling, err := r.svc.GetInstalledMod(ctx, mod.SourceID, mod.ID, r.game.ID, p.Name)
 		if err != nil {
 			if !errors.Is(err, domain.ErrModNotFound) {
 				// A genuine lookup failure (DB error, corruption, etc.) is
@@ -420,7 +603,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				// failure rather than looking indistinguishable from "not a
 				// candidate".
 				failed = append(failed, fmt.Sprintf("%s (checking sibling: %v)", p.Name, err))
-				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
 			}
 			continue
 		}
@@ -429,7 +612,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 		}
 		if !fileIDsEqual(sibling.FileIDs, mod.FileIDs) {
 			differs = append(differs, p.Name)
-			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: profile %s records the same version but differs in file selection; run verify --fix -p %s", p.Name, p.Name)})
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: profile %s records the same version but differs in file selection; run verify --fix -p %s", p.Name, p.Name)})
 			continue
 		}
 
@@ -439,7 +622,9 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 		// would silently move what the lock means, just as surely as
 		// rewriting the primary would. Loaded fresh per-sibling since the
 		// lock lives in that sibling's own profile YAML, not the primary's.
-		if siblingProfile, perr := pm.Get(r.game.ID, p.Name); perr == nil {
+		var siblingOff map[string]bool
+		if siblingProfile, perr := pm.Get(ctx, r.game.ID, p.Name); perr == nil {
+			siblingOff = disabledKeysOf(siblingProfile)
 			if ref := siblingProfile.FindRef(sibling.SourceID, sibling.ID); ref != nil && ref.Locked {
 				locked = append(locked, p.Name)
 				// #142 round 5: also name -s (in addition to the -p this
@@ -451,33 +636,62 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				if sibling.Deployed {
 					msg += "; its deployment may be broken until the lock is moved or cleared"
 				}
-				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
 				continue
 			}
+		} else if cerr := ctx.Err(); cerr != nil {
+			// Ruling 16 (C): a lock gate that cannot read the profile
+			// reports "no lock" - correct for a missing or corrupt file,
+			// wrong for a cancellation, which would degrade this gate open
+			// for every remaining sibling.
+			cancelErr = cerr
+			break
 		}
 		// (A missing/unreadable sibling profile falls through - matches
 		// ApplyUpdate/ApplyRollback's own precedent: a lock cannot exist in
 		// an unloadable profile.)
 
-		if err := pm.UpsertMod(r.game.ID, p.Name, domain.ModReference{
+		if err := pm.UpsertMod(ctx, r.game.ID, p.Name, domain.ModReference{
 			SourceID: sibling.SourceID,
 			ModID:    sibling.ID,
 			Version:  effective,
 			FileIDs:  sibling.FileIDs,
 		}); err != nil {
+			// Ruling 16 (B): this write PRECEDES its DB half
+			// (setModVersion below), so UpsertMod itself failing or being
+			// cancelled HERE leaves nothing half-committed - unlike the
+			// completing writes, which finish under context.WithoutCancel.
+			if cerr := ctx.Err(); cerr != nil {
+				cancelErr = cerr
+				break
+			}
 			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
-			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
 			continue
 		}
 
-		if err := r.svc.SetModVersion(sibling.SourceID, sibling.ID, sibling.GameID, p.Name, effective); err != nil {
+		// If UpsertMod above SUCCEEDED and the cancellation instead lands
+		// HERE, the sibling's profile ref is already on the new version
+		// while its DB row still holds the old one - the same drift
+		// completeDBWrite exists to prevent, on the (B) side of the pair.
+		// Pre-existing (UpsertMod was ctx-less and always ran at 1d68cd0,
+		// so this window is not new) and self-healing: `verify --fix` is
+		// convergent, so the next run repairs it (task 18 re-review round
+		// 2, NEW-3).
+		if err := r.svc.setModVersion(ctx, sibling.SourceID, sibling.ID, sibling.GameID, p.Name, effective); err != nil {
 			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
-			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
 			continue
 		}
 		sibling.Version = effective
 
-		if sibling.Deployed && sibling.LinkMethod == domain.LinkSymlink {
+		relink := sibling.Deployed && sibling.LinkMethod == domain.LinkSymlink
+		if relink && !live.allows(p.Name, sibling, siblingOff) {
+			relink = false
+			notLinked = append(notLinked, live.declined(p.Name, sibling))
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Note: " + live.declined(p.Name, sibling)})
+		}
+		if relink {
 			installErr, recordErr, undeployErr := r.relinkDeployedRow(ctx, p.Name, sibling)
 			if undeployErr != nil {
 				// Non-fatal (see relinkDeployedRow's doc), but surfaced in
@@ -487,15 +701,15 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				// failedCount: with a successful install nothing is left
 				// broken, and a failed one already counts itself.
 				undeployWarns = append(undeployWarns, fmt.Sprintf("%s (%v)", p.Name, undeployErr))
-				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: undeploy %s in profile %s: %v", sibling.Name, p.Name, undeployErr)})
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: undeploy %s in profile %s: %v", sibling.Name, p.Name, undeployErr)})
 			}
 			if installErr != nil {
-				if saveErr := r.svc.SetModDeployed(sibling.SourceID, sibling.ID, sibling.GameID, p.Name, false); saveErr != nil {
+				if saveErr := r.svc.setModDeployed(ctx, sibling.SourceID, sibling.ID, sibling.GameID, p.Name, false); saveErr != nil {
 					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v; also failed to clear deployed flag: %v)", p.Name, installErr, saveErr))
 				} else {
 					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v)", p.Name, installErr))
 				}
-				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, installErr)})
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, installErr)})
 				// The version correction (DB + profile, above) stands, but
 				// the deployment itself is still broken - report this as a
 				// failure, not a clean "Repaired" success.
@@ -508,12 +722,12 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				// nothing here is left broken on disk - but still surfaced
 				// in both output modes via its own parts entry below.
 				methodNotes = append(methodNotes, fmt.Sprintf("%s (%v)", p.Name, recordErr))
-				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not record link method for profile %s: %v", p.Name, recordErr)})
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not record link method for profile %s: %v", p.Name, recordErr)})
 			}
 		}
 
 		repaired = append(repaired, p.Name)
-		r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repaired (profile %s): %s → %s", p.Name, recorded, effective), Green: true})
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repaired (profile %s): %s → %s", p.Name, recorded, effective), Fixed: true})
 	}
 
 	var parts []string
@@ -535,7 +749,47 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 	if len(undeployWarns) > 0 {
 		parts = append(parts, fmt.Sprintf("undeploy warning in profile(s): %s", strings.Join(undeployWarns, ", ")))
 	}
-	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked)
+	parts = append(parts, notLinked...)
+	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked), cancelErr
+}
+
+// liveRelinker decides which rows a version repair may re-link (#444). A
+// symlink re-link writes into the game directory, and a game directory
+// holds one profile's deployment - the active one's - so only a row of that
+// profile, enabled and not marked off in its document, has links there to
+// repair. Every other row's `deployed` flag is history: a profile switch
+// made before the upgrade left it set on each row it switched away from,
+// and a disable before #183 left it set too. Re-linking such a row would put
+// a mod live that no active profile asked for.
+type liveRelinker struct {
+	// profile is the active profile, "" when it could not be resolved -
+	// in which case nothing is re-linked (err says why).
+	profile string
+	err     error
+}
+
+// liveRelinker resolves the active profile once for a repair.
+func (r *verifyRun) liveRelinker(ctx context.Context) liveRelinker {
+	profile, err := r.svc.liveProfile(ctx, r.game.ID)
+	return liveRelinker{profile: profile, err: err}
+}
+
+// allows reports whether mod, a row of profileName whose document marks
+// off exactly the keys in off, may be re-linked.
+func (l liveRelinker) allows(profileName string, mod *domain.InstalledMod, off map[string]bool) bool {
+	return l.err == nil && profileName == l.profile && mod.Enabled && !off[domain.ModKey(mod.SourceID, mod.ID)]
+}
+
+// declined says why mod, a row of profileName, was not re-linked.
+func (l liveRelinker) declined(profileName string, mod *domain.InstalledMod) string {
+	switch {
+	case l.err != nil:
+		return fmt.Sprintf("not re-linked in profile %s: %v", profileName, l.err)
+	case profileName != l.profile:
+		return fmt.Sprintf("not re-linked in profile %s: it is not active (%s is), so none of its files are live - `lmm profile switch %s` deploys it", profileName, l.profile, profileName)
+	default:
+		return fmt.Sprintf("not re-linked in profile %s: %s is switched off there - `lmm mod enable -p %s %s` deploys it", profileName, mod.Name, profileName, mod.ID)
+	}
 }
 
 // relinkDeployedRow re-runs the installer for a row recorded as a symlink
@@ -544,7 +798,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 // not the game-level one (#152): a profile-level copy/hardlink override
 // would otherwise be "repaired" back to the game's method, re-introducing
 // exactly the drift verify exists to fix. The method is resolved once (the
-// same single-resolve shape as DeployProfile, internal/core/flows.go) and,
+// same single-resolve shape as DeployProfile, internal/core/deploy.go) and,
 // on a successful install, recorded on the row via SetModLinkMethod exactly
 // like DeployProfile records its own deploys - the row was just re-linked
 // with the effective method, and leaving it claiming the old one would be a
@@ -572,13 +826,13 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 // (redownloadModFile's own precedent), and svc/game come from the
 // verifyRun receiver.
 func (r *verifyRun) relinkDeployedRow(ctx context.Context, profileName string, mod *domain.InstalledMod) (installErr, recordErr, undeployErr error) {
-	method, err := r.svc.GetEffectiveLinkMethod(r.game, profileName)
+	method, err := r.svc.GetEffectiveLinkMethod(ctx, r.game, profileName)
 	if err != nil {
 		return err, nil, nil
 	}
-	installer := r.svc.NewInstallerWithLinker(r.game, r.svc.GetLinker(method))
+	installer := r.svc.newInstallerWithLinker(r.game, r.svc.getLinker(method))
 	// Undeploy-then-install, the same shape DeployProfile uses
-	// (internal/core/flows.go) and for the same reason: dst still holds
+	// (internal/core/deploy.go) and for the same reason: dst still holds
 	// whatever the previous deployment left behind (here, the dangling
 	// symlinks the cache re-key orphaned), and only the symlink and
 	// hardlink linkers' Deploy clear an existing dst themselves - the copy
@@ -589,7 +843,7 @@ func (r *verifyRun) relinkDeployedRow(ctx context.Context, profileName string, m
 		return err, nil, undeployErr
 	}
 	if method != mod.LinkMethod {
-		if err := r.svc.SetModLinkMethod(mod.SourceID, mod.ID, mod.GameID, profileName, method); err != nil {
+		if err := r.svc.setModLinkMethod(ctx, mod.SourceID, mod.ID, mod.GameID, profileName, method); err != nil {
 			return nil, err, undeployErr
 		}
 		mod.LinkMethod = method

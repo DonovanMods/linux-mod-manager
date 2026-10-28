@@ -13,21 +13,71 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
 
+      - name: Extract release notes
+        id: release_notes
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          heading="## [$version]"
+          start_line="$(grep -n -F -m1 "$heading" CHANGELOG.md | cut -d: -f1 || true)"
+          if [ -z "$start_line" ]; then
+            echo "::error::No '$heading' heading found in CHANGELOG.md for tag ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          notes_path="${RUNNER_TEMP}/release-notes.md"
+          # A section that opens with a curated summary ends it with the
+          # marker below: only the summary is published, and the detailed
+          # entries under it stay in CHANGELOG.md, linked at the tag (#547).
+          marker='<!-- release-notes-end -->'
+          summarised="${RUNNER_TEMP}/release-notes.summarised"
+          rm -f "$summarised"
+          # awk reads the file itself: piping `tail` into an awk that exits
+          # at the next heading killed tail with SIGPIPE, failing the step
+          # under pipefail for any section that is not the file's last.
+          awk -v start="$start_line" -v marker="$marker" -v flag="$summarised" '
+            NR <= start {next}
+            /^## \[/ {exit}
+            $0 == marker {printf "" > flag; exit}
+            {print}
+          ' CHANGELOG.md > "$notes_path"
+          if [ -z "$(tr -d '[:space:]' < "$notes_path")" ]; then
+            echo "::error::CHANGELOG.md section for '$heading' is empty" >&2
+            exit 1
+          fi
+          if [ -e "$summarised" ]; then
+            printf '\nThe complete list of changes is in [CHANGELOG.md](%s/%s/blob/%s/CHANGELOG.md).\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" >> "$notes_path"
+          fi
+          # GitHub refuses a release body over 125,000 characters, but only
+          # after every package is built. Bytes are never fewer than
+          # characters, so this limit is conservative.
+          size="$(wc -c < "$notes_path")"
+          if [ "$size" -gt 125000 ]; then
+            echo "::error::Release notes for '$heading' are $size bytes; GitHub's release body limit is 125000 characters. End a curated summary with '$marker'." >&2
+            exit 1
+          fi
+          echo "path=$notes_path" >> "$GITHUB_OUTPUT"
+
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean
+          args: release --clean --release-notes=${{ steps.release_notes.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The AUR deploy key. When the secret is not configured GitHub
+          # substitutes an empty string, which .goreleaser.yaml's
+          # aurs[0].skip_upload reads as "skip": the release still publishes
+          # the tarballs and the deb/rpm/apk, it just does not push to the AUR.
+          AUR_KEY: ${{ secrets.AUR_KEY }}

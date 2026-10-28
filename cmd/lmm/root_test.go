@@ -3,213 +3,23 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"io/fs"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// authChecker matches the IsAuthenticated() method every source that accepts
-// SetAPIKey also exposes (nexusmods.NexusMods, curseforge.CurseForge, and
-// the custom types) — used here to prove a resolved key actually reached the
-// constructed source via the registration pipeline's SetAPIKey seam.
-type authChecker interface{ IsAuthenticated() bool }
-
-// TestRegisterSources_BuiltinStillAuthenticatesWithEnvAndToken pins that a
-// built-in, now constructed keyless (nexusmods.New(nil, "")) and
-// key-resolved post-construction by the unified pipeline, still ends up
-// authenticated when both an env var and a stored DB token are present —
-// the key pipeline must still be reached, not silently dropped now that
-// resolution happens after construction instead of before.
-//
-// NOTE: IsAuthenticated() only reports "some key was applied," not WHICH
-// one — this test alone would still pass even if getSourceAPIKey's
-// env-over-token precedence were inverted (verified live: with the
-// precedence swapped, this test kept passing while
-// TestRegisterSource_KeyResolutionPrecedence below correctly failed — see
-// that test's doc comment). It stays as the integration-level pin that the
-// real built-in pipeline still authenticates at all; precedence itself is
-// now pinned by TestRegisterSource_KeyResolutionPrecedence.
-func TestRegisterSources_BuiltinStillAuthenticatesWithEnvAndToken(t *testing.T) {
-	t.Setenv("NEXUSMODS_API_KEY", "env-key-value")
-
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	require.NoError(t, svc.SaveSourceToken("nexusmods", "stored-db-key"))
-
-	registerSources(svc, t.TempDir())
-
-	src, err := svc.GetSource("nexusmods")
-	require.NoError(t, err)
-	auth, ok := src.(authChecker)
-	require.True(t, ok, "nexusmods must expose IsAuthenticated")
-	assert.True(t, auth.IsAuthenticated(), "env var must be applied via SetAPIKey even though a DB token also exists")
-}
-
-// recordingKeySource is a mockAuthSource that also implements
-// source.EnvKeyProvider with a caller-chosen env var name, so
-// TestRegisterSource_KeyResolutionPrecedence can control exactly which env
-// var getSourceAPIKey consults instead of relying on the derived
-// LMM_<ID>_API_KEY convention. mockAuthSource.apiKey (set via SetAPIKey)
-// records whichever key registerSource actually applied.
-type recordingKeySource struct {
-	mockAuthSource
-	envKey string
-}
-
-func (r *recordingKeySource) EnvKey() string { return r.envKey }
-
-// TestRegisterSource_KeyResolutionPrecedence pins registerSource's
-// env-over-stored-token precedence directly at the unit that implements it,
-// with distinct, observable env and token values recorded via SetAPIKey.
-// registerSources (the full pipeline) only exercises this through the real
-// built-in/custom sources, none of which expose the applied key for
-// assertion — routing through registerSource with a recording mock is the
-// least invasive seam that can actually distinguish "env applied" from
-// "token applied" rather than just "something was applied"
-// (see TestRegisterSources_BuiltinStillAuthenticatesWithEnvAndToken's note).
-func TestRegisterSource_KeyResolutionPrecedence(t *testing.T) {
-	const envVar = "LMM_PRECEDENCE_TEST_API_KEY"
-
-	newService := func(t *testing.T) *core.Service {
-		t.Helper()
-		svc, err := core.NewService(core.ServiceConfig{
-			ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
-		})
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, svc.Close()) })
-		return svc
-	}
-
-	t.Run("env value wins when both env and a stored token are present", func(t *testing.T) {
-		svc := newService(t)
-		require.NoError(t, svc.SaveSourceToken("precedence-src", "token-value"))
-		t.Setenv(envVar, "env-value")
-
-		mock := &recordingKeySource{
-			mockAuthSource: mockAuthSource{id: "precedence-src", name: "Precedence Src"},
-			envKey:         envVar,
-		}
-		registerSource(svc, mock)
-
-		assert.Equal(t, "env-value", mock.apiKey, "env var must take precedence over a stored DB token")
-	})
-
-	t.Run("stored token applies when no env value is present", func(t *testing.T) {
-		svc := newService(t)
-		require.NoError(t, svc.SaveSourceToken("precedence-src", "token-value"))
-		t.Setenv(envVar, "")
-
-		mock := &recordingKeySource{
-			mockAuthSource: mockAuthSource{id: "precedence-src", name: "Precedence Src"},
-			envKey:         envVar,
-		}
-		registerSource(svc, mock)
-
-		assert.Equal(t, "token-value", mock.apiKey, "stored token must apply when no env var is set")
-	})
-}
-
-// TestRegisterSources_DerivedEnvKeyForCustom pins that a custom source with
-// no EnvKeyProvider still resolves its key via the derived LMM_<ID>_API_KEY
-// convention (envKeyFor's fallback to envKeyForSourceID) through the unified
-// pipeline's registerCustomSources path.
-func TestRegisterSources_DerivedEnvKeyForCustom(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-
-	cfgDir := t.TempDir()
-	// The definition declares auth: the key pipeline is gated on
-	// Capabilities().Auth (a key set on an auth-less source would be
-	// stored but never attached to a request), and this test pins the
-	// env-var NAME derivation, which needs the key to actually apply.
-	writeSourceYAML(t, filepath.Join(cfgDir, "sources"), "custom.yaml", `
-id: my-custom
-name: My Custom
-type: manifest
-manifest:
-  url: https://example.invalid/mods.yaml
-  auth:
-    api_key:
-      in: header
-      name: X-API-Key
-`)
-	t.Setenv("LMM_MY_CUSTOM_API_KEY", "custom-env-key")
-
-	registerSources(svc, cfgDir)
-
-	src, err := svc.GetSource("my-custom")
-	require.NoError(t, err)
-	auth, ok := src.(authChecker)
-	require.True(t, ok, "custom manifest source must expose IsAuthenticated")
-	assert.True(t, auth.IsAuthenticated(), "derived LMM_<ID>_API_KEY env var must resolve through envKeyFor's fallback path")
-}
-
-// TestRegisterSources_FirstWinsCollision pins that built-ins register first
-// in the unified pipeline, so a custom definition claiming id "nexusmods"
-// still loses the collision (existing rule) and the warning still fires,
-// even though built-ins are now constructed via the same factory+registerSource
-// path as customs instead of being special-cased ahead of registerCustomSources.
-func TestRegisterSources_FirstWinsCollision(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-
-	cfgDir := t.TempDir()
-	writeSourceYAML(t, filepath.Join(cfgDir, "sources"), "nexusmods.yaml", fmt.Sprintf(`
-id: nexusmods
-name: Shadow NexusMods
-type: directory
-directory:
-  path: %s
-`, t.TempDir()))
-
-	var warnBuf bytes.Buffer
-	customSourceWarnOut = &warnBuf
-	t.Cleanup(func() { customSourceWarnOut = nil })
-
-	registerSources(svc, cfgDir)
-
-	src, err := svc.GetSource("nexusmods")
-	require.NoError(t, err)
-	assert.Equal(t, "Nexus Mods", src.Name(), "built-in nexusmods must win; the custom definition should be skipped")
-	assert.Contains(t, warnBuf.String(), `warning: skipping source "nexusmods": id already in use`)
-}
-
-func TestBuiltinSourceFactories_IncludesIcarus(t *testing.T) {
-	found := false
-	for _, factory := range builtinSourceFactories {
-		if factory().ID() == "icarus" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("builtinSourceFactories should include the icarus source")
-	}
-}
 
 func TestInitService_RegistersSources(t *testing.T) {
 	// Use temp directories to avoid polluting real config
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, svc.Close())
@@ -228,128 +38,22 @@ func TestInitService_RegistersSources(t *testing.T) {
 	assert.Equal(t, "CurseForge", src.Name())
 }
 
-// TestInitService_DataDirIsOwnerOnly pins that the data directory is created 0700.
-// It contains lmm.db, which holds auth tokens in plaintext (#79); an owner-only
-// directory also closes the window between SQLite creating the DB at 0644 and the
-// db package chmod'ing it.
-func TestInitService_DataDirIsOwnerOnly(t *testing.T) {
-	configDir = t.TempDir()
-	// Nest under the temp dir so initService does the creating — t.TempDir() itself
-	// is already 0700, which would make the assertion vacuous.
-	dataDir = filepath.Join(t.TempDir(), "lmm")
-
-	svc, err := initService()
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
-
-	info, err := os.Stat(dataDir)
-	require.NoError(t, err)
-	assert.Equal(t, fs.FileMode(0700), info.Mode().Perm(), "data dir must not be group- or world-readable")
-}
-
-// TestInitService_TightensExistingDataDir covers installs predating the 0700
-// change: MkdirAll is a no-op on an existing directory, so a legacy 0755 data
-// dir stays permissive unless it is explicitly tightened. It now holds the
-// downloads staging root as well as the DB.
-func TestInitService_TightensExistingDataDir(t *testing.T) {
+// TestInitService_UsesFlagsNotEnvironment pins the CLI→app seam: the global
+// --config/--data flag values are what app.Open receives, so XDG variables in
+// the environment must not redirect a run that set the flags.
+func TestInitService_UsesFlagsNotEnvironment(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "should-not-be-used"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "should-not-be-used"))
 	configDir = t.TempDir()
 	dataDir = filepath.Join(t.TempDir(), "lmm")
-	require.NoError(t, os.MkdirAll(dataDir, 0755))
 
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	info, err := os.Stat(dataDir)
-	require.NoError(t, err)
-	assert.Equal(t, fs.FileMode(0700), info.Mode().Perm(), "an existing permissive data dir should be tightened")
-}
-
-// writeSourceYAML writes a source definition file for registerCustomSources tests.
-func writeSourceYAML(t *testing.T, dir, name, content string) {
-	t.Helper()
-	require.NoError(t, os.MkdirAll(dir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0644))
-}
-
-// TestRegisterCustomSources_SkipsInvalidDefinitions exercises all three
-// warn-and-skip branches in registerCustomSources (#52 item 7): a per-file
-// load error, an id already claimed by a previously-registered source, and a
-// definition that parses fine but fails construction. Warnings go straight to
-// os.Stderr (not redirectable in a package-level test), so this asserts the
-// registration outcome via svc.ListSources() instead of captured output.
-func TestRegisterCustomSources_SkipsInvalidDefinitions(t *testing.T) {
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, svc.Close())
-	})
-
-	// Pre-register a source under id "taken" so a definition claiming the
-	// same id hits the id-collision skip branch.
-	taken, err := custom.NewDirectory(custom.SourceDefinition{
-		ID:        "taken",
-		Name:      "Pre-registered",
-		Type:      custom.TypeDirectory,
-		Directory: &custom.DirectoryConfig{Path: t.TempDir()},
-	})
-	require.NoError(t, err)
-	svc.RegisterSource(taken)
-
-	cfgDir := t.TempDir()
-	srcDir := filepath.Join(cfgDir, "sources")
-
-	writeSourceYAML(t, srcDir, "good.yaml", fmt.Sprintf(`
-id: good-src
-name: Good Src
-type: directory
-directory:
-  path: %s
-`, t.TempDir()))
-	writeSourceYAML(t, srcDir, "broken.yaml", "id: [unclosed") // load error branch
-	writeSourceYAML(t, srcDir, "collide.yaml", fmt.Sprintf(`
-id: taken
-name: Collide Src
-type: directory
-directory:
-  path: %s
-`, t.TempDir())) // id-collision branch
-	writeSourceYAML(t, srcDir, "missing-path.yaml", `
-id: missing-path
-name: Missing Path
-type: directory
-directory:
-  path: /this/path/should/not/exist/lmm-test-fixture
-`) // construction-failure branch: Validate passes, NewDirectory's os.Stat fails
-
-	registerCustomSources(svc, cfgDir)
-
-	sources := svc.ListSources()
-	byID := make(map[string]source.ModSource, len(sources))
-	for _, s := range sources {
-		byID[s.ID()] = s
-	}
-
-	goodSrc, ok := byID["good-src"]
-	require.True(t, ok, "good.yaml should have registered its source")
-	assert.Equal(t, "Good Src", goodSrc.Name())
-
-	takenSrc, ok := byID["taken"]
-	require.True(t, ok, "the pre-registered id must still be present")
-	assert.Equal(t, "Pre-registered", takenSrc.Name(), "collide.yaml must not overwrite the pre-existing source")
-
-	_, ok = byID["missing-path"]
-	assert.False(t, ok, "a definition whose directory doesn't exist must fail construction and be skipped")
-
-	assert.Len(t, sources, 2, "only good-src and the pre-registered taken source should be registered")
+	assert.Equal(t, configDir, svc.ConfigDir())
+	_, err = os.Stat(filepath.Join(dataDir, "lmm.db"))
+	assert.NoError(t, err, "the database must live under the --data directory")
 }
 
 // TestRunRoot_PropagatesContextCancellation pins the contract that the root command
@@ -383,4 +87,143 @@ func TestRunRoot_PropagatesContextCancellation(t *testing.T) {
 	err := runRoot(ctx)
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestPrintCancelledNotice_PlainVsJSON pins Minor 3 of the Unit R final
+// review (Ruling 16 addendum): Execute's context.Canceled/ErrCancelled exit
+// path used to print nothing at all - exit code 2 with no line on stdout or
+// stderr naming the cancellation, even though `lmm --help` documents 2 as
+// "cancelled by the user". Plain mode now prints "Cancelled." to stderr;
+// --json stays silent here, matching Ruling 15's "no extra text alongside a
+// JSON contract" convention (the JSON contract itself carries no envelope
+// for a cancellation exit, so --json emits nothing at all).
+func TestPrintCancelledNotice_PlainVsJSON(t *testing.T) {
+	t.Run("plain", func(t *testing.T) {
+		var buf bytes.Buffer
+		printCancelledNotice(&buf, false)
+		assert.Equal(t, "Cancelled.\n", buf.String())
+	})
+
+	t.Run("json", func(t *testing.T) {
+		var buf bytes.Buffer
+		printCancelledNotice(&buf, true)
+		assert.Empty(t, buf.String(), "--json must emit nothing extra on a cancellation exit")
+	})
+}
+
+// TestRoot_LogLevel_InvalidErrorTextIsExactEverywhere pins Important #1 of
+// the Task 1 review: an invalid --log-level must produce exactly
+// newCLILogger's error text - no pflag *InvalidValueError wrapper prefix
+// (`invalid argument %q for %q flag: `) and no `initializing service: `
+// prefix - on every path that can reach flag parsing, whether or not that
+// path would otherwise short-circuit past PersistentPreRunE (--help,
+// --version, completion) or open a Service (game list). Also pins that the
+// failure maps to Execute's exit-1 branch (not the exit-2 cancellation
+// branch), that the printed text is byte-identical in both plain (stderr)
+// and --json (stdout) mode, and - per the whole-branch review's Important #1
+// - that the --json envelope is chosen regardless of whether --json appears
+// before or after the bad --log-level on the command line: pflag's
+// FlagSet.Parse stops at the first Set error, so a --json placed after the
+// bad --log-level is never reached by ParseFlags itself, and
+// logLevelFlagErrorFunc must fall back to scanning rawArgs to find it.
+func TestRoot_LogLevel_InvalidErrorTextIsExactEverywhere(t *testing.T) {
+	const wantErrText = `invalid --log-level "loud": expected off, error, warn, info, or debug`
+	wantPlain := "Error: " + wantErrText + "\n"
+
+	// wantJSON is reportError's actual --json rendering of wantErrText,
+	// captured via the real code path: this test's concern is whether the
+	// same error text reaches --json output regardless of flag order, not
+	// emitJSON's byte-for-byte envelope framing (pinned separately in
+	// jsonout_test.go).
+	oldJSONForCapture := jsonOutput
+	jsonOutput = true
+	wantJSON := captureStdout(t, func() error { reportError(errors.New(wantErrText)); return nil })
+	jsonOutput = oldJSONForCapture
+
+	cases := []struct {
+		name string
+		args []string
+		json bool
+	}{
+		{"game list plain", []string{"--log-level", "loud", "game", "list"}, false},
+		{"game list --json", []string{"--json", "--log-level", "loud", "game", "list"}, true},
+		// --log-level before --json: ParseFlags aborts on --log-level's Set
+		// error before ever reaching --json, so jsonOutput must come from
+		// logLevelFlagErrorFunc's rawArgs scan, not from --json's own Set.
+		{"game list --log-level then --json", []string{"--log-level", "loud", "--json", "game", "list"}, true},
+		// Flags after the subcommand: --json is parsed (and Set) before
+		// --log-level errors, so this order already worked before the fix -
+		// kept here as a regression guard against the fix narrowing scope.
+		{"list --json --log-level (flags after subcommand)", []string{"list", "--json", "--log-level", "loud"}, true},
+		{"--help", []string{"--log-level", "loud", "--help"}, false},
+		{"--version", []string{"--log-level", "loud", "--version"}, false},
+		{"completion bash", []string{"--log-level", "loud", "completion", "bash"}, false},
+		{"game list --help", []string{"--log-level", "loud", "game", "list", "--help"}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, errb bytes.Buffer
+			rootCmd.SetOut(&out)
+			rootCmd.SetErr(&errb)
+			oldJSON := jsonOutput
+			oldRawArgs := rawArgs
+			jsonOutput = false
+			rawArgs = tc.args
+			t.Cleanup(func() {
+				rootCmd.SetOut(nil)
+				rootCmd.SetErr(nil)
+				logLevel = "off"
+				jsonOutput = oldJSON
+				rawArgs = oldRawArgs
+			})
+			rootCmd.SetArgs(tc.args)
+
+			err := runRoot(context.Background())
+			require.Error(t, err)
+			assert.False(t, errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled),
+				"a flag-parse failure must map to Execute's exit-1 branch, not the exit-2 cancellation branch")
+			assert.EqualError(t, err, wantErrText)
+			assert.Equal(t, tc.json, jsonOutput, "jsonOutput must reflect whether --json was parsed before the flag error")
+			assert.NotContains(t, out.String(), "Usage:", "a flag-parse failure must not print cobra's usage/help text")
+
+			if tc.json {
+				printed := captureStdout(t, func() error { reportError(err); return nil })
+				assert.Equal(t, wantJSON, printed)
+			} else {
+				printed, _ := captureStderrErr(t, func() error { reportError(err); return nil })
+				assert.Equal(t, wantPlain, printed)
+			}
+		})
+	}
+}
+
+// TestRoot_FlagErrorFunc_OnlyUnwrapsLogLevel pins that the pflag
+// InvalidValueError unwrap is scoped to --log-level only: an invalid value
+// for a different flag keeps cobra's default wrapped
+// `invalid argument %q for %q flag: ...` text untouched.
+func TestRoot_FlagErrorFunc_OnlyUnwrapsLogLevel(t *testing.T) {
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil) })
+	rootCmd.SetArgs([]string{"--json=notabool", "game", "list"})
+
+	err := runRoot(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid argument "notabool" for "--json" flag:`)
+}
+
+// TestRootDescription_NamesEveryBuiltInSourceAndBothFrontends is #391. The
+// description that `man lmm` and every `--help` header carry named
+// NexusMods, CurseForge and custom sources - but not the Steam Workshop,
+// a built-in source with three shipped tiers and its own README section,
+// and not `lmm serve`, a co-equal frontend the README's opening line
+// names. "terminal-based" was, by v2, only half true.
+func TestRootDescription_NamesEveryBuiltInSourceAndBothFrontends(t *testing.T) {
+	description := rootCmd.Short + "\n" + rootCmd.Long
+
+	for _, want := range []string{"NexusMods", "CurseForge", "Steam Workshop", "lmm serve"} {
+		assert.Contains(t, description, want,
+			"the description man lmm and every --help header carry must name %q", want)
+	}
 }

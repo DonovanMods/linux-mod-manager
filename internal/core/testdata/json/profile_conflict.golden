@@ -1,0 +1,18 @@
+{
+  "path": "Data/textures/armor/mesh.dds",
+  "owner": {
+    "key": "nexusmods:42",
+    "name": "Sample Mod"
+  },
+  "also_in": [
+    {
+      "key": "nexusmods:7",
+      "name": "Other Mod"
+    }
+  ],
+  "load_order_winner": {
+    "key": "nexusmods:7",
+    "name": "Other Mod"
+  },
+  "stale": true
+}

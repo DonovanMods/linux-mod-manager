@@ -3,16 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
-	customsrc "github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/curseforge"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/nexusmods"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,75 +65,6 @@ type mockValidatingAuthSource struct {
 
 func (m *mockValidatingAuthSource) ValidateKey(ctx context.Context, key string) error {
 	return m.validateErr
-}
-
-// TestMaskAPIKey tests the API key masking function
-func TestMaskAPIKey(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "normal key",
-			input:    "abcdefghijklmnop",
-			expected: "abc...nop",
-		},
-		{
-			name:     "exactly 9 chars reveals both ends",
-			input:    "123456789",
-			expected: "123...789",
-		},
-		{
-			name:     "exactly 8 chars fully masked",
-			input:    "12345678",
-			expected: "***",
-		},
-		{
-			name:     "exactly 7 chars fully masked",
-			input:    "1234567",
-			expected: "***",
-		},
-		{
-			name:     "6 chars or less returns ***",
-			input:    "123456",
-			expected: "***",
-		},
-		{
-			name:     "short key",
-			input:    "abc",
-			expected: "***",
-		},
-		{
-			name:     "empty key",
-			input:    "",
-			expected: "***",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := maskAPIKey(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestEnvKeyFor tests envKeyFor's two paths: a source's own EnvKeyProvider
-// (built-ins preserve their legacy env var names) and the derived
-// LMM_<ID>_API_KEY fallback for sources that don't implement it.
-func TestEnvKeyFor(t *testing.T) {
-	assert.Equal(t, "NEXUSMODS_API_KEY", envKeyFor(nexusmods.New(nil, "")))
-	assert.Equal(t, "CURSEFORGE_API_KEY", envKeyFor(curseforge.New(nil, "")))
-
-	dirSrc, err := customsrc.NewDirectory(customsrc.SourceDefinition{
-		ID:        "unknown-source",
-		Name:      "Unknown Source",
-		Type:      customsrc.TypeDirectory,
-		Directory: &customsrc.DirectoryConfig{Path: t.TempDir()},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "LMM_UNKNOWN_SOURCE_API_KEY", envKeyFor(dirSrc))
 }
 
 // TestAuthCmd_Structure tests the auth command structure
@@ -331,9 +264,9 @@ func TestAuthStatusCmd_WithStoredToken(t *testing.T) {
 	})
 
 	// First, save a token
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
-	err = svc.SaveSourceToken("nexusmods", "stored-test-key-12345")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "stored-test-key-12345")
 	require.NoError(t, err)
 	require.NoError(t, svc.Close())
 
@@ -358,13 +291,13 @@ func TestAuthLogoutCmd_WithStoredToken(t *testing.T) {
 	dataDir = t.TempDir()
 
 	// First, save a token
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
-	err = svc.SaveSourceToken("nexusmods", "stored-test-key-12345")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "stored-test-key-12345")
 	require.NoError(t, err)
 
 	// Verify token exists
-	token, err := svc.GetSourceToken("nexusmods")
+	token, err := svc.GetSourceToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	require.NoError(t, svc.Close())
@@ -383,13 +316,13 @@ func TestAuthLogoutCmd_WithStoredToken(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify token is gone
-	svc2, err := initService()
+	svc2, err := initService(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, svc2.Close())
 	})
 
-	token, err = svc2.GetSourceToken("nexusmods")
+	token, err = svc2.GetSourceToken(context.Background(), "nexusmods")
 	assert.NoError(t, err)
 	assert.Nil(t, token)
 }
@@ -408,11 +341,6 @@ func TestAuthLogoutCmd_DefaultSource(t *testing.T) {
 	assert.NotNil(t, authLogoutCmd.Args, "Args validator should be set")
 }
 
-func TestEnvKeyForSourceID(t *testing.T) {
-	assert.Equal(t, "LMM_DONOVAN_MODS_API_KEY", envKeyForSourceID("donovan-mods"))
-	assert.Equal(t, "LMM_MY_REPO_API_KEY", envKeyForSourceID("my-repo"))
-}
-
 // TestPrintLoginResult pins final-review finding 4: sources with no live
 // validator have no generic validation endpoint, so runAuthLogin must not
 // print the "Validating... done" sequence for them — that's a fabricated
@@ -428,13 +356,13 @@ func TestEnvKeyForSourceID(t *testing.T) {
 func TestPrintLoginResult(t *testing.T) {
 	t.Run("validator path prints nothing extra", func(t *testing.T) {
 		var buf bytes.Buffer
-		printLoginResult(&buf, true)
+		require.NoError(t, printLoginResult(&buf, true))
 		assert.Empty(t, buf.String(), "validated sources are reported via the Validating...done sequence above")
 	})
 
 	t.Run("stored path prints an honest message", func(t *testing.T) {
 		var buf bytes.Buffer
-		printLoginResult(&buf, false)
+		require.NoError(t, printLoginResult(&buf, false))
 		assert.Equal(t, "Stored (validated on first use).\n", buf.String())
 		assert.NotContains(t, buf.String(), "Validating", "must not fabricate a validation step that never ran")
 	})
@@ -456,19 +384,19 @@ func TestPrintLoginResult(t *testing.T) {
 func TestPrintAuthLoginSuccess(t *testing.T) {
 	t.Run("validator path keeps the authenticated message (nexusmods)", func(t *testing.T) {
 		var buf bytes.Buffer
-		printAuthLoginSuccess(&buf, nexusmods.New(nil, ""), true)
+		require.NoError(t, printAuthLoginSuccess(&buf, nexusmods.New(nil, ""), true))
 		assert.Equal(t, "Successfully authenticated with Nexus Mods!\n", buf.String())
 	})
 
 	t.Run("validator path keeps the authenticated message (curseforge)", func(t *testing.T) {
 		var buf bytes.Buffer
-		printAuthLoginSuccess(&buf, curseforge.New(nil, ""), true)
+		require.NoError(t, printAuthLoginSuccess(&buf, curseforge.New(nil, ""), true))
 		assert.Equal(t, "Successfully authenticated with CurseForge!\n", buf.String())
 	})
 
 	t.Run("stored path prints an honest stored message keyed by ID", func(t *testing.T) {
 		var buf bytes.Buffer
-		printAuthLoginSuccess(&buf, &mockAuthSource{id: "my-repo", name: "My Repo"}, false)
+		require.NoError(t, printAuthLoginSuccess(&buf, &mockAuthSource{id: "my-repo", name: "My Repo"}, false))
 		assert.Equal(t, "API key stored for my-repo.\n", buf.String())
 		assert.NotContains(t, buf.String(), "Successfully authenticated", "must not fabricate a validation result that never happened")
 	})
@@ -478,8 +406,8 @@ func TestPrintAuthLoginSuccess(t *testing.T) {
 // nexusmods explicitly instead of relying on identity: auth-capability is
 // purely registry-driven post-Task-3 (isAuthCapableSource queries
 // CapabilitiesOf via service.GetSource, no more hardcoded ID list), so a
-// *core.Service built directly via core.NewService — bypassing root.go's
-// registerSources, which is what actually registers built-ins in
+// *core.Service built directly via core.NewService — bypassing app.Open,
+// which is what actually registers built-ins in
 // production — must register nexusmods itself to exercise that path.
 func TestResolveLogoutSource(t *testing.T) {
 	svc, err := core.NewService(core.ServiceConfig{
@@ -491,18 +419,18 @@ func TestResolveLogoutSource(t *testing.T) {
 
 	// A token stored for a source whose definition file has been deleted:
 	// not registered, but logout must still be able to remove it.
-	require.NoError(t, svc.SaveSourceToken("ghost-repo", "leftover-key"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "ghost-repo", "leftover-key"))
 
-	id, err := resolveLogoutSource(svc, []string{"ghost-repo"})
+	id, err := resolveLogoutSource(context.Background(), svc, []string{"ghost-repo"})
 	require.NoError(t, err)
 	assert.Equal(t, "ghost-repo", id)
 
 	// Unknown ID with no token and no registration still errors.
-	_, err = resolveLogoutSource(svc, []string{"never-existed"})
+	_, err = resolveLogoutSource(context.Background(), svc, []string{"never-existed"})
 	assert.Error(t, err)
 
 	// Built-ins keep working.
-	id, err = resolveLogoutSource(svc, []string{"nexusmods"})
+	id, err = resolveLogoutSource(context.Background(), svc, []string{"nexusmods"})
 	require.NoError(t, err)
 	assert.Equal(t, "nexusmods", id)
 }
@@ -516,7 +444,7 @@ func TestResolveLogoutSource(t *testing.T) {
 // package) and captures the menu text via captureStdout (defined in
 // auth_status_test.go) — both established patterns in this package for
 // exercising interactive prompts, so no extra seam-splitting was needed
-// beyond factoring the list-building itself into authCapableSources.
+// beyond factoring the list-building itself into app.AuthCapableSources.
 func TestPromptForSource_ListsAuthCapableRegistered(t *testing.T) {
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
@@ -545,6 +473,199 @@ func TestPromptForSource_ListsAuthCapableRegistered(t *testing.T) {
 	assert.Contains(t, out, "[3] Nexus Mods (nexusmods)")
 }
 
+// resetAuthLoginFlags zeroes #307's cobra flag variables for one test.
+// They are package globals bound by init(), so a test that sets one would
+// otherwise leak it into every test running after it.
+func resetAuthLoginFlags(t *testing.T) {
+	t.Helper()
+	fromEnv, stdin := authKeyFromEnv, authKeyStdin
+	t.Cleanup(func() { authKeyFromEnv, authKeyStdin = fromEnv, stdin })
+	authKeyFromEnv, authKeyStdin = false, false
+}
+
+// newAuthLoginService builds a *core.Service over temp dirs with src
+// registered, for the doAuthLogin tests. No network: every source here is
+// a double.
+func newAuthLoginService(t *testing.T, srcs ...source.ModSource) *core.Service {
+	t.Helper()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	for _, src := range srcs {
+		svc.RegisterSource(src)
+	}
+	resetAuthLoginFlags(t)
+	return svc
+}
+
+// TestDoAuthLogin_JSON_NoKeyFlagRefusesWithoutReadingStdin pins the
+// post-#307 shape of Ruling 2 for `auth login`: it is no longer
+// interactive-only - a --key-from-env or --key-stdin run works under --json
+// - so the refusal narrowed to the one value neither flag supplied. The key
+// prompt is still never reached, and the error names both flags.
+func TestDoAuthLogin_JSON_NoKeyFlagRefusesWithoutReadingStdin(t *testing.T) {
+	svc := newAuthLoginService(t, &mockAuthSource{id: "acme-mods", name: "Acme Mods"})
+	withJSONOutput(t)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doAuthLogin(context.Background(), svc, "acme-mods")
+	})
+
+	require.ErrorIs(t, err, core.ErrInteractiveOnly)
+	assert.Contains(t, err.Error(), "--key-from-env")
+	assert.Contains(t, err.Error(), "--key-stdin")
+}
+
+// TestDoAuthLogin_KeyFromEnv_StoresAndEmitsTheStatusReport pins
+// --key-from-env end to end: the key comes from the source's own
+// environment variable (app.EnvKeyFor), it is stored, and --json emits the
+// app.AuthStatusReport `lmm auth status --json` emits - masked, never the
+// key itself.
+//
+// The variable is set with t.Setenv to a FAKE value on purpose: .envrc
+// exports real NEXUSMODS_API_KEY/CURSEFORGE_API_KEY, and a test that read
+// the ambient value would both leak a live credential into an assertion
+// and pass for the wrong reason.
+func TestDoAuthLogin_KeyFromEnv_StoresAndEmitsTheStatusReport(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	t.Setenv("LMM_ACME_MODS_API_KEY", "fake-env-key-1234567890")
+	withJSONOutput(t)
+	authKeyFromEnv = true
+
+	out := captureStdout(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doAuthLogin(context.Background(), svc, "acme-mods")
+		})
+	})
+
+	var report app.AuthStatusReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report, json.RejectUnknownMembers(true)))
+	require.Len(t, report.Sources, 1)
+	assert.True(t, report.Sources[0].Authenticated)
+	// The key was stored, which is what this command does - but the
+	// variable it came from is still set, so the environment is what lmm
+	// will send from here on and the report says so (#356). The stored row
+	// it just wrote is reported as present and shadowed, by fingerprint
+	// alone, because a stored credential is encrypted at rest (#79).
+	assert.Equal(t, "env", report.Sources[0].Via)
+	assert.Equal(t, "fak...890", report.Sources[0].KeyMasked, "an environment key is one lmm holds in the clear anyway")
+	assert.NotEmpty(t, report.Sources[0].KeyFingerprint)
+	assert.True(t, report.Sources[0].StoredKeyShadowed)
+	assert.Equal(t, report.Sources[0].KeyFingerprint, report.Sources[0].StoredKeyFingerprint,
+		"both fingerprints are over the same key here - which is exactly what the two of them let a user check")
+	assert.NotContains(t, out, "fake-env-key-1234567890", "the document must never carry the key itself")
+
+	token, err := svc.GetSourceToken(context.Background(), "acme-mods")
+	require.NoError(t, err)
+	require.NotNil(t, token)
+	assert.Equal(t, "fake-env-key-1234567890", token.APIKey)
+}
+
+// TestDoAuthLogin_KeyFromEnv_UnsetNamesTheVariable pins the failure a user
+// most likely hits: the error says which variable to export.
+func TestDoAuthLogin_KeyFromEnv_UnsetNamesTheVariable(t *testing.T) {
+	svc := newAuthLoginService(t, &mockAuthSource{id: "acme-mods", name: "Acme Mods"})
+	t.Setenv("LMM_ACME_MODS_API_KEY", "")
+	authKeyFromEnv = true
+
+	err := doAuthLogin(context.Background(), svc, "acme-mods")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "LMM_ACME_MODS_API_KEY")
+}
+
+// TestDoAuthLogin_KeyStdin_ReadsExactlyOneLine pins --key-stdin: one line,
+// no prompt, case preserved (an API key is case-sensitive, which is why
+// this does not go through readPromptLineFrom's lower-casing seam).
+func TestDoAuthLogin_KeyStdin_ReadsExactlyOneLine(t *testing.T) {
+	got, err := readOneLine(strings.NewReader("MixedCaseKey-42\nignored second line\n"))
+	require.NoError(t, err)
+	assert.Equal(t, "MixedCaseKey-42", got)
+
+	// No trailing newline (printf '%s' | ...) is still one whole line.
+	got, err = readOneLine(strings.NewReader("no-trailing-newline"))
+	require.NoError(t, err)
+	assert.Equal(t, "no-trailing-newline", got)
+}
+
+// TestDoAuthLogin_ValidatorRefusalNeverStores pins that the flag paths get
+// the same validator gate the prompt path has always had.
+func TestDoAuthLogin_ValidatorRefusalNeverStores(t *testing.T) {
+	src := &mockValidatingAuthSource{
+		mockAuthSource: mockAuthSource{id: "picky", name: "Picky"},
+		validateErr:    errors.New("key rejected"),
+	}
+	svc := newAuthLoginService(t, src)
+	t.Setenv("LMM_PICKY_API_KEY", "fake-env-key-1234567890")
+	authKeyFromEnv = true
+
+	err := doAuthLogin(context.Background(), svc, "picky")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key rejected")
+
+	token, err := svc.GetSourceToken(context.Background(), "picky")
+	require.NoError(t, err)
+	assert.Nil(t, token, "a key the validator refused must never be stored")
+}
+
+// TestPromptForSource_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule at promptForSource, the site 'auth logout' with no
+// positional source argument reaches under --json: it must fail with
+// core.ErrConfirmationRequired, naming the positional argument as the way
+// out, without ever reading stdin.
+func TestPromptForSource_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(&mockAuthSource{id: "acme-mods", name: "Acme Mods"})
+	withJSONOutput(t)
+
+	promptErr := assertStdinNeverRead(t, func() error {
+		_, err := promptForSource(svc)
+		return err
+	})
+
+	require.ErrorIs(t, promptErr, core.ErrConfirmationRequired)
+	assert.Contains(t, promptErr.Error(), "positional argument")
+}
+
+// TestAuthLogoutCmd_PositionalArgWorksUnderJSON pins that 'auth logout
+// <source>' never hits the interactive picker - and so works fine under
+// --json - since resolveLogoutSource only calls promptForSource when no
+// positional argument is given.
+func TestAuthLogoutCmd_PositionalArgWorksUnderJSON(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+
+	svc, err := initService(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "stored-test-key-12345"))
+	require.NoError(t, svc.Close())
+
+	withJSONOutput(t)
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(authCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(authCmd); rootCmd.AddCommand(authCmd) })
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"auth", "logout", "nexusmods"})
+
+	err = assertStdinNeverRead(t, cmd.Execute)
+	require.NoError(t, err)
+
+	svc2, err := initService(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc2.Close()) })
+	token, err := svc2.GetSourceToken(context.Background(), "nexusmods")
+	require.NoError(t, err)
+	assert.Nil(t, token)
+}
+
 // TestAuthLogin_ValidatorPath pins the login flow for a source implementing
 // source.KeyValidator: the key is validated live ("Validating... done") and
 // the success message claims "Successfully authenticated".
@@ -571,7 +692,7 @@ func TestAuthLogin_ValidatorPath(t *testing.T) {
 	assert.Contains(t, out, "Successfully authenticated with Validated Src!")
 	assert.NotContains(t, out, "validated on first use")
 
-	token, err := svc.GetSourceToken("validated-src")
+	token, err := svc.GetSourceToken(context.Background(), "validated-src")
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.Equal(t, "supersecret-key", token.APIKey)
@@ -603,14 +724,14 @@ func TestAuthLogin_StoredPath(t *testing.T) {
 	assert.Contains(t, out, "Stored (validated on first use).")
 	assert.Contains(t, out, "API key stored for stored-src.")
 
-	token, err := svc.GetSourceToken("stored-src")
+	token, err := svc.GetSourceToken(context.Background(), "stored-src")
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.Equal(t, "supersecret-key", token.APIKey)
 }
 
 // TestAuthStatus_UniformIteration pins doAuthStatus's rewrite: a single pass
-// over authCapableSources instead of a hardcoded built-in tier plus a
+// over app.AuthCapableSources instead of a hardcoded built-in tier plus a
 // separate custom-source tier. Stock setup (both built-ins registered) plus
 // one custom auth source must all be listed exactly once, sorted by ID —
 // never double-listed by both tiers the way the old two-pass logic risked.
@@ -631,7 +752,7 @@ func TestAuthStatus_UniformIteration(t *testing.T) {
 	svc.RegisterSource(curseforge.New(nil, ""))
 	svc.RegisterSource(&mockAuthSource{id: "acme-mods", name: "Acme Mods"})
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
 	for _, want := range []string{"(nexusmods):", "(curseforge):", "(acme-mods):"} {
 		assert.Equal(t, 1, strings.Count(out, want), "%q must be listed exactly once, got:\n%s", want, out)
@@ -659,9 +780,84 @@ func TestAuthStatus_RendersDisplayNameAlongsideID(t *testing.T) {
 	svc.RegisterSource(nexusmods.New(nil, ""))
 	svc.RegisterSource(curseforge.New(nil, ""))
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	assert.Contains(t, lines, "Nexus Mods (nexusmods): authenticated via NEXUSMODS_API_KEY (key: tes...890)")
 	assert.Contains(t, lines, "CurseForge (curseforge): not authenticated (run: lmm auth login curseforge)")
+}
+
+// --- #335: `lmm auth logout --json` ---
+
+// TestDoAuthLogout_JSON_EmitsTheReReadStatusReport is #335: logout used to
+// print prose under --json, breaking the one-document-on-stdout invariant
+// every other --json command holds to, and disagreeing with `lmm serve`'s
+// DELETE /api/v1/auth/{source}, which already answered this document.
+func TestDoAuthLogout_JSON_EmitsTheReReadStatusReport(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	t.Setenv("LMM_ACME_MODS_API_KEY", "")
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "acme-mods", "stored-key-1234567890"))
+	withJSONOutput(t)
+
+	out := captureStdout(t, func() error {
+		return doAuthLogout(context.Background(), svc, []string{"acme-mods"})
+	})
+
+	var report app.AuthStatusReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report),
+		"logout must emit ONE document, not prose: %q", out)
+	assert.NotContains(t, out, "Removed", "the prose line must not travel beside the document")
+
+	require.Len(t, report.Sources, 1)
+	assert.Equal(t, "acme-mods", report.Sources[0].ID)
+	assert.False(t, report.Sources[0].Authenticated,
+		"the report is re-read AFTER the delete, so it describes what the logout left behind")
+	assert.Empty(t, report.Orphaned)
+
+	token, err := svc.GetSourceToken(context.Background(), "acme-mods")
+	require.NoError(t, err)
+	assert.Nil(t, token, "the credential really is gone")
+}
+
+// TestDoAuthLogout_PlainTextUnchanged is the control: #335 changed the
+// --json path only.
+func TestDoAuthLogout_PlainTextUnchanged(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "acme-mods", "stored-key-1234567890"))
+
+	out := captureStdout(t, func() error {
+		return doAuthLogout(context.Background(), svc, []string{"acme-mods"})
+	})
+	assert.Equal(t, "Removed Acme Mods credentials.\n", out)
+}
+
+// TestPromptForSource_EOFNamesTheSameRemedyAsJSON is #385 at the auth
+// picker: a piped `lmm auth logout` (no --json) reported
+// "reading input: EOF", while the --json path for the same prompt already
+// named the positional source argument. Both renderings now carry the
+// remedy.
+func TestPromptForSource_EOFNamesTheSameRemedyAsJSON(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	svc.RegisterSource(curseforge.New(nil, ""))
+
+	var promptErr error
+	captureStdout(t, func() error {
+		withStdin(t, "", func() {
+			_, promptErr = promptForSource(svc)
+		})
+		return nil
+	})
+
+	require.Error(t, promptErr)
+	assert.NotContains(t, promptErr.Error(), "EOF")
+	require.ErrorIs(t, promptErr, core.ErrConfirmationRequired)
+	assert.Contains(t, promptErr.Error(), "lmm auth logout <source>")
 }

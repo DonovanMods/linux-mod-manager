@@ -1,0 +1,733 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"flag"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
+
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// updateJSONCLIGoldens re-records the CLI's --json goldens. Run ONCE per
+// command, in the task that switches that command onto its core type:
+//
+//	go test ./cmd/lmm -run TestJSONGolden_List -update-json-cli
+//
+// After that the files are frozen: they are the v2 JSON contract (Ruling 3 -
+// "JSON shapes change once"), so a later shape drift shows up as a diff here
+// instead of silently reaching a consumer. Named -update-json-cli rather than
+// -update: verify_golden_test.go already registers a package-level "-update"
+// and mod_show_golden_test.go an "-update-modshow", and Go's flag package
+// panics on a duplicate registration within one test binary.
+var updateJSONCLIGoldens = flag.Bool("update-json-cli", false, "re-record cmd/lmm/testdata/json_golden/*.golden")
+
+// volatileTime matches an RFC 3339 timestamp anywhere in a document. Several
+// core types carry real clock values (installed_at, last_deploy, updated_at),
+// so goldens would drift every run without this; the substitution keeps the
+// KEY pinned - what a golden is actually for - while dropping the value.
+var volatileTime = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})`)
+
+// volatileUUID matches a v4 UUID anywhere in a document. `lmm import`
+// mints one per unlinked local mod, so - exactly like volatileTime - the
+// KEY stays pinned while the value, which changes every run, does not.
+var volatileUUID = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+
+// zeroTime is Go's zero time.Time on the wire. It is NOT volatile - it is
+// exactly what a never-set timestamp field must serialize as - so it is
+// parked before the volatileTime pass and restored afterwards, keeping the
+// "unset" signal visible in the goldens.
+const zeroTime = "0001-01-01T00:00:00Z"
+
+// scrubJSON makes a captured document byte-stable: every RFC 3339 timestamp
+// becomes "<TIME>", and each subs pair (old, new) replaces a per-run path
+// (t.TempDir()) with a fixed placeholder. subs is applied first so a path
+// containing digits can never be half-eaten by the timestamp rule.
+func scrubJSON(actual string, subs ...string) string {
+	if len(subs)%2 != 0 {
+		panic("scrubJSON: subs must be (old, new) pairs")
+	}
+	for i := 0; i < len(subs); i += 2 {
+		actual = strings.ReplaceAll(actual, subs[i], subs[i+1])
+	}
+	actual = strings.ReplaceAll(actual, zeroTime, "<ZERO-TIME>")
+	actual = volatileTime.ReplaceAllString(actual, "<TIME>")
+	actual = volatileUUID.ReplaceAllString(actual, "<UUID>")
+	return strings.ReplaceAll(actual, "<ZERO-TIME>", zeroTime)
+}
+
+// assertJSONCLIGolden compares one command's --json document against its
+// recorded golden (or records it under -update-json-cli).
+func assertJSONCLIGolden(t *testing.T, name, actual string, subs ...string) {
+	t.Helper()
+	scrubbed := scrubJSON(actual, subs...)
+
+	path := filepath.Join("testdata", "json_golden", name+".golden")
+	if *updateJSONCLIGoldens {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(scrubbed), 0o644))
+		return
+	}
+	want, err := os.ReadFile(path)
+	require.NoError(t, err, "golden %s missing - record it with -update-json-cli", path)
+	assert.Equal(t, string(want), scrubbed, "--json output drifted from the recorded v2 contract")
+}
+
+// --- list ---
+
+func TestJSONGolden_List(t *testing.T) {
+	t.Run("populated", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
+
+		assertJSONCLIGolden(t, "list_populated", listVerbose(t, svc, game, true))
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+
+		assertJSONCLIGolden(t, "list_empty", listVerbose(t, svc, game, true))
+	})
+
+	// #440: a disabled ref with no installed row.
+	t.Run("disabled_not_installed", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		pm := svc.NewProfileManager()
+		_, err := pm.Create(context.Background(), game.ID, "default")
+		require.NoError(t, err)
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default",
+			domain.ModReference{SourceID: "test", ModID: "off", Version: "2.0", Disabled: true}))
+
+		assertJSONCLIGolden(t, "list_disabled_not_installed", listVerbose(t, svc, game, true))
+	})
+
+	t.Run("profiles", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "survival")
+		require.NoError(t, err)
+
+		old := jsonOutput
+		jsonOutput = true
+		t.Cleanup(func() { jsonOutput = old })
+
+		cmd := &cobra.Command{}
+		out := captureStdout(t, func() error {
+			return runListProfiles(context.Background(), cmd, svc, game.ID, game.Name)
+		})
+		assertJSONCLIGolden(t, "list_profiles", out)
+	})
+}
+
+// --- status ---
+
+// goldenGameRoot is the directory a golden fixture's games are installed
+// under. It is real, because production flags a game whose mod_path does not
+// exist (#427) and a golden must pin an ordinary row, and it is scrubbed back
+// to "/games" (goldenGameSubs) so the recorded documents stay byte-stable.
+func goldenGameRoot(t *testing.T) string {
+	t.Helper()
+	return t.TempDir()
+}
+
+// goldenGameSubs is the scrubJSON pair that turns root back into "/games".
+func goldenGameSubs(root string) []string { return []string{root, "/games"} }
+
+// goldenGameDir creates root/rel and returns it.
+func goldenGameDir(t *testing.T, root, rel string) string {
+	t.Helper()
+	dir := filepath.Join(root, filepath.FromSlash(rel))
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	return dir
+}
+
+// goldenStatusGame is a fully-populated game whose every path is a literal
+// once root is scrubbed, so status goldens are stable across machines.
+func goldenStatusGame(t *testing.T, root, id, name string) *domain.Game {
+	t.Helper()
+	return &domain.Game{
+		ID: id, Name: name,
+		InstallPath: goldenGameDir(t, root, id),
+		ModPath:     goldenGameDir(t, root, id+"/Mods"),
+		CachePath:   "/cache/" + id,
+		LinkMethod:  domain.LinkSymlink,
+		SourceIDs:   map[string]string{"src": id},
+	}
+}
+
+func TestJSONGolden_Status(t *testing.T) {
+	withStatusFlags := func(t *testing.T, id string) {
+		t.Helper()
+		oldGame, oldJSON, oldVerbose := gameID, jsonOutput, verbose
+		gameID, jsonOutput, verbose = id, true, false
+		t.Cleanup(func() { gameID, jsonOutput, verbose = oldGame, oldJSON, oldVerbose })
+	}
+
+	t.Run("summary", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		withStatusFlags(t, "")
+		root := goldenGameRoot(t)
+		for _, g := range []*domain.Game{goldenStatusGame(t, root, "zulu", "Zulu"), goldenStatusGame(t, root, "alpha", "Alpha")} {
+			require.NoError(t, svc.SaveGame(context.Background(), g))
+			_, err := svc.NewProfileManager().Create(context.Background(), g.ID, "default")
+			require.NoError(t, err)
+		}
+
+		out := captureStdout(t, func() error { return doStatus(context.Background(), svc) })
+		assertJSONCLIGolden(t, "status_summary", out, goldenGameSubs(root)...)
+	})
+
+	t.Run("no_games", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		withStatusFlags(t, "")
+
+		out := captureStdout(t, func() error { return doStatus(context.Background(), svc) })
+		assertJSONCLIGolden(t, "status_no_games", out)
+	})
+
+	t.Run("game_detail", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		withStatusFlags(t, "alpha")
+		root := goldenGameRoot(t)
+		game := goldenStatusGame(t, root, "alpha", "Alpha")
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		pm := svc.NewProfileManager()
+		_, err := pm.Create(context.Background(), game.ID, "default")
+		require.NoError(t, err)
+		_, err = pm.Create(context.Background(), game.ID, "survival")
+		require.NoError(t, err)
+
+		out := captureStdout(t, func() error {
+			return showGameStatusJSON(context.Background(), svc, game.ID)
+		})
+		assertJSONCLIGolden(t, "status_game_detail", out, goldenGameSubs(root)...)
+	})
+}
+
+// --- search ---
+
+// goldenSearchSource is a registered, search-capable source returning a
+// fixed two-mod result - fakeInstallSource's Search deliberately returns
+// nothing, and every other test source in this package is built to prove a
+// capability GAP rather than a populated result.
+type goldenSearchSource struct{ mods []domain.Mod }
+
+func (s *goldenSearchSource) ID() string      { return "src" }
+func (s *goldenSearchSource) Name() string    { return "Golden Source" }
+func (s *goldenSearchSource) AuthURL() string { return "" }
+func (s *goldenSearchSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, nil
+}
+func (s *goldenSearchSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{Mods: s.mods, TotalCount: len(s.mods)}, nil
+}
+func (s *goldenSearchSource) GetMod(context.Context, string, string) (*domain.Mod, error) {
+	return nil, domain.ErrModNotFound
+}
+func (s *goldenSearchSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, nil
+}
+func (s *goldenSearchSource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, nil
+}
+func (s *goldenSearchSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", nil
+}
+func (s *goldenSearchSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, nil
+}
+
+func TestJSONGolden_Search(t *testing.T) {
+	t.Run("hits", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		svc.RegisterSource(&goldenSearchSource{mods: []domain.Mod{
+			{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", Author: "Ann", GameID: game.ID, Category: "Utilities"},
+			{ID: "z", SourceID: "src", Name: "Mod Z", Version: "3.1", Author: "Zed", GameID: game.ID, Category: "Gameplay"},
+		}})
+		game.SourceIDs = map[string]string{"src": game.ID}
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		withSearchFlags(t, "", 10)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doSearch(context.Background(), svc, game, []string{"mod"})
+		})
+		assertJSONCLIGolden(t, "search_hits", out)
+	})
+
+	// "capped" pins Important #3 / #302: --limit truncates the RETURNED
+	// Mods while total_results keeps the untruncated hit count - the
+	// document a caller applying --limit and `lmm serve` (no --limit at
+	// all) must NOT be able to tell apart from a caller mutating the result
+	// after the fact.
+	t.Run("capped", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		svc.RegisterSource(&goldenSearchSource{mods: []domain.Mod{
+			{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", Author: "Ann", GameID: game.ID, Category: "Utilities"},
+			{ID: "m", SourceID: "src", Name: "Mod M", Version: "2.0", Author: "Mel", GameID: game.ID, Category: "Gameplay"},
+			{ID: "z", SourceID: "src", Name: "Mod Z", Version: "3.1", Author: "Zed", GameID: game.ID, Category: "Gameplay"},
+		}})
+		game.SourceIDs = map[string]string{"src": game.ID}
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		withSearchFlags(t, "", 2)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doSearch(context.Background(), svc, game, []string{"mod"})
+		})
+		assertJSONCLIGolden(t, "search_capped", out)
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		svc.RegisterSource(&goldenSearchSource{})
+		game.SourceIDs = map[string]string{"src": game.ID}
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		withSearchFlags(t, "", 10)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doSearch(context.Background(), svc, game, []string{"nothing"})
+		})
+		assertJSONCLIGolden(t, "search_empty", out)
+	})
+}
+
+// --- verify ---
+
+func TestJSONGolden_Verify(t *testing.T) {
+	t.Run("version_mismatch", func(t *testing.T) {
+		cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+			{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+		})
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
+		assertJSONCLIGolden(t, "verify_version_mismatch", out, game.ModPath, "<GAME-DIR>")
+	})
+
+	t.Run("clean", func(t *testing.T) {
+		cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.0", []string{"2"}, []domain.DownloadableFile{
+			{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+		})
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
+		assertJSONCLIGolden(t, "verify_clean", out, game.ModPath, "<GAME-DIR>")
+	})
+}
+
+// --- conflicts ---
+
+func TestJSONGolden_Conflicts(t *testing.T) {
+	t.Run("twin", func(t *testing.T) {
+		svc, game := setupConflictsTest(t)
+		seedTwinConflictFixture(t, svc, game)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doConflicts(context.Background(), svc, game) })
+		assertJSONCLIGolden(t, "conflicts_twin", out)
+	})
+
+	t.Run("none", func(t *testing.T) {
+		svc, game := setupConflictsTest(t)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doConflicts(context.Background(), svc, game) })
+		assertJSONCLIGolden(t, "conflicts_none", out)
+	})
+}
+
+// --- mod show ---
+
+func TestJSONGolden_ModShow(t *testing.T) {
+	t.Run("installed", func(t *testing.T) {
+		svc, game, src := setupDoModLockTest(t)
+		seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
+		src.AddMod(richMod(game.ID), nil)
+		src.SetChangelog("a", "Fixed a crash on load.")
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "a")
+		})
+		assertJSONCLIGolden(t, "mod_show_installed", out)
+	})
+
+	t.Run("not_installed", func(t *testing.T) {
+		svc, game, src := setupDoModLockTest(t)
+		src.AddMod(richMod(game.ID), nil)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "a")
+		})
+		assertJSONCLIGolden(t, "mod_show_not_installed", out)
+	})
+}
+
+// --- source list ---
+
+// runGoldenSourceList runs `source list` through cobra WITHOUT redirecting
+// the command's output: the document must be captured off os.Stdout, which
+// is where the one-document invariant puts it.
+func runGoldenSourceList(t *testing.T, all bool) string {
+	t.Helper()
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(sourceCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
+	args := []string{"source", "list"}
+	if all {
+		args = append(args, "--all")
+	}
+	cmd.SetArgs(args)
+
+	oldAll, oldJSON := sourceAll, jsonOutput
+	sourceAll, jsonOutput = all, true
+	t.Cleanup(func() { sourceAll, jsonOutput = oldAll, oldJSON })
+
+	return captureStdout(t, cmd.Execute)
+}
+
+// setupGoldenSourceList pins the two inputs a source-list golden would
+// otherwise inherit from the developer's shell: an empty config/data dir and
+// NO API keys in the environment. The repo's .envrc exports real keys, and a
+// registered source's auth state is read straight off them - without this
+// the goldens would say "authenticated" on one machine and "required" on
+// another (plan Global Constraints: tests touching key resolution t.Setenv).
+func setupGoldenSourceList(t *testing.T) {
+	t.Helper()
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	t.Setenv("NEXUSMODS_API_KEY", "")
+	t.Setenv("CURSEFORGE_API_KEY", "")
+	t.Setenv("LMM_NEXUSMODS_API_KEY", "")
+	t.Setenv("LMM_CURSEFORGE_API_KEY", "")
+	oldGame := gameID
+	gameID = ""
+	t.Cleanup(func() { gameID = oldGame })
+}
+
+func TestJSONGolden_SourceList(t *testing.T) {
+	t.Run("registry", func(t *testing.T) {
+		setupGoldenSourceList(t)
+
+		assertJSONCLIGolden(t, "source_list_registry", runGoldenSourceList(t, false))
+	})
+
+	t.Run("error_row", func(t *testing.T) {
+		setupGoldenSourceList(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(configDir, "sources"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(configDir, "sources", "broken.yaml"), []byte(
+			"id: broken-mods\nname: Broken Mods\ntype: directory\ndirectory:\n  path: /nonexistent/lmm-golden\n"), 0o644))
+
+		assertJSONCLIGolden(t, "source_list_error_row", runGoldenSourceList(t, false))
+	})
+}
+
+// --- game list ---
+
+func TestJSONGolden_GameList(t *testing.T) {
+	t.Run("populated", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		// The adapters app.Open registers, so the compile game's row is the
+		// one production writes - effective_adapter included (#413
+		// re-review L3; the golden pinned a row without it).
+		app.RegisterAdapters(svc)
+		root := goldenGameRoot(t)
+		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame(t, root, "skyrim-se", "Skyrim SE")))
+		require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+			ID: "icarus", Name: "Icarus", InstallPath: goldenGameDir(t, root, "icarus"), ModPath: goldenGameDir(t, root, "icarus/Mods"),
+			DeployMode: domain.DeployCompile, ConvertPaks: true,
+		}))
+		cfg := &config.Config{DefaultGame: "skyrim-se"}
+		require.NoError(t, cfg.Save(svc.ConfigDir()))
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doGameList(commandWithContext(), svc) })
+		assertJSONCLIGolden(t, "game_list_populated", out, goldenGameSubs(root)...)
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doGameList(commandWithContext(), svc) })
+		assertJSONCLIGolden(t, "game_list_empty", out)
+	})
+}
+
+// --- game add (#333 Minor #4) ---
+
+// TestJSONGolden_GameAdd pins `lmm game add --json`'s CLI-facing document.
+// The wire itself is already goldened at the core level
+// (internal/core/testdata/json/game_list_entry*.golden, via
+// core.GameListEntry) - this is the convention gap the review found (Minor
+// #4): nothing pinned that the COMMAND still emits it, only that the type
+// itself round-trips.
+func TestJSONGolden_GameAdd(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+	withJSONOutput(t)
+	installDir, modDir := t.TempDir(), t.TempDir()
+	gameAddSource, gameAddID, gameAddName = "acme-manual", "acme-quest-slug", "Acme Quest"
+	gameAddPath, gameAddModPath = installDir, modDir
+
+	cmd, _ := newGameAddCmd()
+	out := captureStdout(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+	assertJSONCLIGolden(t, "game_add", out, installDir, "/GOLDEN/install", modDir, "/GOLDEN/mods")
+}
+
+// --- auth login (#333 Minor #4) ---
+
+// TestJSONGolden_AuthLogin pins `lmm auth login --key-from-env --json`'s
+// CLI-facing document - the same convention gap TestJSONGolden_GameAdd
+// closes, for #307's other new non-interactive command. The wire itself
+// (app.AuthStatusReport) is already goldened at internal/app/testdata/json/.
+//
+// The row reads via: "env" with the stored copy shadowed (#356): the
+// variable this command COPIED the key out of is still set when the report
+// is re-read, so the environment is what lmm will send. Before #356 the
+// same fixture claimed via: "stored" - a report naming the credential that
+// was not in use is exactly what that issue was about.
+func TestJSONGolden_AuthLogin(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	t.Setenv("LMM_ACME_MODS_API_KEY", "golden-env-key-1234567890")
+	withJSONOutput(t)
+	authKeyFromEnv = true
+	t.Cleanup(func() { authKeyFromEnv = false })
+
+	out := captureStdout(t, func() error {
+		return doAuthLogin(context.Background(), svc, "acme-mods")
+	})
+	assertJSONCLIGolden(t, "auth_login", out)
+}
+
+// --- auth logout (#335) ---
+
+// TestJSONGolden_AuthLogout pins `lmm auth logout --json`'s CLI-facing
+// document (#335): the re-read app.AuthStatusReport, the same shape
+// `lmm auth status --json` and `lmm serve`'s DELETE /api/v1/auth/{source}
+// answer - replacing the prose line that used to break the
+// one-document-on-stdout invariant.
+func TestJSONGolden_AuthLogout(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	t.Setenv("LMM_ACME_MODS_API_KEY", "")
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "acme-mods", "golden-stored-key-1234567890"))
+	withJSONOutput(t)
+
+	out := captureStdout(t, func() error {
+		return doAuthLogout(context.Background(), svc, []string{"acme-mods"})
+	})
+	assertJSONCLIGolden(t, "auth_logout", out)
+}
+
+// --- update ---
+
+func TestJSONGolden_Update(t *testing.T) {
+	t.Run("bulk", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, src := setupDoUpdateTest(t)
+		seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
+		setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
+		src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
+		src.AddDownload("a-new", []byte("new"))
+		seedLocalMod(t, svc, game, "localA", "Local A")
+
+		out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+		assertJSONCLIGolden(t, "update_bulk", out)
+	})
+
+	t.Run("bulk_none", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, _ := setupDoUpdateTest(t)
+		seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
+
+		out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+		assertJSONCLIGolden(t, "update_bulk_none", out)
+	})
+
+	// #324: `--all --json` APPLIES (the flag was silently ignored under
+	// --json before) and its one document is core.UpdateBatchResult - the
+	// applied row, and the locked one core declined with its own refusal
+	// sentence.
+	t.Run("bulk_all_applied", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, src := setupDoUpdateTest(t)
+		seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
+		setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
+		src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
+		src.AddDownload("a-new", []byte("new"))
+		seedInstalledForUpdate(t, svc, game, "test-src", "modB", "Mod B", "1.0", []string{"b-old"}, map[string][]byte{"b-old.esp": []byte("old")})
+		src.AddMod(&domain.Mod{ID: "modB", SourceID: "test-src", Name: "Mod B", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "b-new", FileName: "b-new.esp", IsPrimary: true}})
+		src.AddDownload("b-new", []byte("new"))
+
+		updateAll = true
+		t.Cleanup(func() { updateAll = false })
+
+		out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+		assertJSONCLIGolden(t, "update_bulk_all", out)
+	})
+
+	t.Run("single_updated", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, src := setupDoUpdateTest(t)
+		mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
+		src.AddDownload("new-1", []byte("new-content"))
+		src.changelogs["mod1"] = "<b>Fixed</b> bugs.<br>More &amp; more."
+
+		out := captureStdout(t, func() error {
+			return applySingleUpdate(context.Background(), svc, game, mod, "default")
+		})
+		assertJSONCLIGolden(t, "update_single_updated", out)
+	})
+
+	t.Run("single_locked", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, src := setupDoUpdateTest(t)
+		mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+		setLockedForUpdate(t, svc, game, "test-src", "mod1", "1.0")
+		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
+		src.AddDownload("new-1", []byte("new-content"))
+
+		out := captureStdout(t, func() error {
+			return applySingleUpdate(context.Background(), svc, game, mod, "default")
+		})
+		assertJSONCLIGolden(t, "update_single_locked", out)
+	})
+
+	t.Run("rollback", func(t *testing.T) {
+		svc, game, _ := setupRollbackReadyMod(t)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doUpdateRollback(context.Background(), svc, game, "mod1")
+		})
+		assertJSONCLIGolden(t, "update_rollback", out)
+	})
+}
+
+// --- snapshot (#350) ---
+
+// TestJSONGolden_Snapshot pins the CLI-facing documents of all four
+// `lmm snapshot` subcommands. The types themselves are already goldened at
+// the core level (internal/core/testdata/json/snapshot_*.golden); these
+// pin that the COMMANDS still emit them, which is the convention gap
+// TestJSONGolden_GameAdd's own comment records.
+func TestJSONGolden_Snapshot(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		snapshotName = "before-tweaks"
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotCreate(context.Background(), svc, game) })
+		assertJSONCLIGolden(t, "snapshot_create", scrubSnapshotSize(out), dataDir, "/GOLDEN/data")
+	})
+
+	t.Run("list", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		_, err := svc.CreateSnapshot(context.Background(), game, "default", "before-tweaks")
+		require.NoError(t, err)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotList(context.Background(), svc, game) })
+		assertJSONCLIGolden(t, "snapshot_list", scrubSnapshotSize(out))
+	})
+
+	t.Run("list_empty", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotList(context.Background(), svc, game) })
+		assertJSONCLIGolden(t, "snapshot_list_empty", out)
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		_, err := svc.CreateSnapshot(context.Background(), game, "default", "doomed")
+		require.NoError(t, err)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotDelete(context.Background(), svc, game, "doomed") })
+		assertJSONCLIGolden(t, "snapshot_delete", out)
+	})
+
+	t.Run("restore_dry_run", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		ctx := context.Background()
+		_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+		require.NoError(t, err)
+		seedSnapshotMod(t, svc, game, "wrecker", "Wrecker", "Data/shipped.esp")
+		_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+		require.NoError(t, err)
+		snapshotRestoreDry = true
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotRestore(ctx, svc, game, "known-good") })
+		assertJSONCLIGolden(t, "snapshot_restore_dry_run", out)
+	})
+
+	t.Run("restore", func(t *testing.T) {
+		svc, game := setupSnapshotTest(t)
+		ctx := context.Background()
+		_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+		require.NoError(t, err)
+		seedSnapshotMod(t, svc, game, "wrecker", "Wrecker", "Data/shipped.esp")
+		_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+		require.NoError(t, err)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doSnapshotRestore(ctx, svc, game, "known-good") })
+		// The safety snapshot's name carries a wall-clock stamp, so it is
+		// substituted the way every other volatile value in these goldens
+		// is - the KEY stays pinned, which is what a golden is for.
+		assertJSONCLIGolden(t, "snapshot_restore", volatileAutoName.ReplaceAllString(out, "auto-<OP>-<STAMP>"))
+	})
+}
+
+// volatileAutoName matches an automatic snapshot's generated name, whose
+// stamp changes every run.
+var volatileAutoName = regexp.MustCompile(`auto-[a-z_]+-\d{8}-\d{6}`)
+
+// volatileSize matches a snapshot document's size_bytes.
+//
+// It IS volatile, for a reason worth writing down: size_bytes is the
+// snapshot FILE's own length, and the file embeds real timestamps -
+// installed_at comes back from SQLite with a fractional part whose
+// trailing zeros are trimmed, so the document is a byte or two shorter on
+// some runs than others. Pinning the number would make this golden flake;
+// pinning the KEY is what the golden is for.
+var volatileSize = regexp.MustCompile(`"size_bytes": \d+`)
+
+// scrubSnapshotSize replaces the volatile byte count with a placeholder.
+func scrubSnapshotSize(out string) string {
+	return volatileSize.ReplaceAllString(out, `"size_bytes": <SIZE>`)
+}

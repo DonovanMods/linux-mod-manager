@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,4 +71,31 @@ func TestDoUninstall_KeepCache_LeavesModCacheDirectoryIntact(t *testing.T) {
 	})
 
 	assert.DirExists(t, dir, "--keep-cache must preserve the cache directory entirely")
+}
+
+// TestDoUninstall_SaysWhichRowKeepsTheCacheEntry is #445 gate 2's G2-2 at
+// the CLI: a cache entry another profile's row still uses is kept, and both
+// the dry run and the uninstall say so, naming that profile.
+func TestDoUninstall_SaysWhichRowKeepsTheCacheEntry(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	resetUninstallFlags(t)
+	oldDryRun := uninstallDryRun
+	t.Cleanup(func() { uninstallDryRun = oldDryRun })
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	seedLiveRowUnderProfile(t, svc, game, "other", "a", "Mod A")
+	dir := svc.GetGameCache(game).ModPath(game.ID, "src", "a", "1.0")
+
+	uninstallDryRun = true
+	out := captureStdout(t, func() error {
+		return doUninstall(context.Background(), svc, game, "a")
+	})
+	assert.Contains(t, out, "  Cache entry kept: profile other still uses it\n")
+	assert.NotContains(t, out, "Cache entry would be deleted")
+
+	uninstallDryRun = false
+	out = captureStdout(t, func() error {
+		return doUninstall(context.Background(), svc, game, "a")
+	})
+	assert.Contains(t, out, "✓ Uninstalled: Mod A\n  Removed from profile: default\n  Cache files kept: profile other still uses them\n")
+	assert.DirExists(t, dir)
 }

@@ -1,0 +1,224 @@
+{
+  "_provenance": {
+    "recorded": "2026-10-01",
+    "endpoint": "https://api.nexusmods.com/v2/graphql",
+    "auth": "unauthenticated - no API key, no mod data fetched; schema introspection only",
+    "queries": [
+      "query { __type(name: \"ModsSort\") { name inputFields { name type { kind name ofType { kind name } } } } }",
+      "query { __type(name: \"BaseSortValue\") { name inputFields { name type { kind name ofType { kind name } } } } }",
+      "query { __type(name: \"SortDirection\") { name enumValues { name } } }",
+      "query { __type(name: \"Mod\") { fields { name type { kind name ofType { name } } } } }",
+      "query { __schema { queryType { fields { name args { name type { kind name ofType { kind name ofType { name } } } } } } } }"
+    ],
+    "why": "#503: `lmm search --sort` makes the NexusMods search send a `sort: [ModsSort!]` variable and select the Mod type's downloads and endorsements. This recording is what the offline contract test (sort_contract_test.go) checks those names and types against; NO test may ever call the live API. Re-record by hand, from the queries above, when the schema is next known to have moved.",
+    "keys": "modsSort = ModsSort; baseSort = BaseSortValue; direction = SortDirection; modFields = the Mod fields the search query selects (Mod.modId/name/summary/version/updatedAt/uploader/downloads/endorsements), each as introspected, so a block's \"type\" is the field's own type; modsSortArg = the `sort` argument of the `mods` query, which must be a list of non-null ModsSort."
+  },
+  "modsSort": {
+    "name": "ModsSort",
+    "inputFields": [
+      {
+        "name": "relevance",
+        "type": {
+          "kind": "INPUT_OBJECT",
+          "name": "BaseSortValue",
+          "ofType": null
+        }
+      },
+      {
+        "name": "name",
+        "type": {
+          "kind": "INPUT_OBJECT",
+          "name": "BaseSortValue",
+          "ofType": null
+        }
+      },
+      {
+        "name": "downloads",
+        "type": {
+          "kind": "INPUT_OBJECT",
+          "name": "BaseSortValue",
+          "ofType": null
+        }
+      },
+      {
+        "name": "uniqueDownloads",
+        "type": {
+          "kind": "INPUT_OBJECT",
+          "name": "BaseSortValue",
+          "ofType": null
+        }
+      },
+      {
+        "name": "endorsements",
+        "type": {
+          "kind": "INPUT_OBJECT",
+          "name": "BaseSortValue",
+          "ofType": null
+        }
+      },
+      {
+        "name": "random",
+        "type": {
+          "kind": "INPUT_OBJECT",
+          "name": "RandomSortValue",
+          "ofType": null
+        }
+      },
+      {
+        "name": "createdAt",
+        "type": {
+          "kind": "INPUT_OBJECT",
+          "name": "BaseSortValue",
+          "ofType": null
+        }
+      },
+      {
+        "name": "updatedAt",
+        "type": {
+          "kind": "INPUT_OBJECT",
+          "name": "BaseSortValue",
+          "ofType": null
+        }
+      },
+      {
+        "name": "size",
+        "type": {
+          "kind": "INPUT_OBJECT",
+          "name": "BaseSortValue",
+          "ofType": null
+        }
+      },
+      {
+        "name": "lastComment",
+        "type": {
+          "kind": "INPUT_OBJECT",
+          "name": "BaseSortValue",
+          "ofType": null
+        }
+      }
+    ]
+  },
+  "baseSort": {
+    "name": "BaseSortValue",
+    "inputFields": [
+      {
+        "name": "direction",
+        "type": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+            "kind": "ENUM",
+            "name": "SortDirection"
+          }
+        }
+      }
+    ]
+  },
+  "direction": {
+    "name": "SortDirection",
+    "enumValues": [
+      {
+        "name": "ASC"
+      },
+      {
+        "name": "DESC"
+      }
+    ]
+  },
+  "modFields": [
+    {
+      "name": "downloads",
+      "type": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+          "name": "Int"
+        }
+      }
+    },
+    {
+      "name": "endorsements",
+      "type": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+          "name": "Int"
+        }
+      }
+    },
+    {
+      "name": "modId",
+      "type": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+          "name": "Int"
+        }
+      }
+    },
+    {
+      "name": "name",
+      "type": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+          "name": "String"
+        }
+      }
+    },
+    {
+      "name": "summary",
+      "type": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+          "name": "String"
+        }
+      }
+    },
+    {
+      "name": "updatedAt",
+      "type": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+          "name": "DateTime"
+        }
+      }
+    },
+    {
+      "name": "uploader",
+      "type": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+          "name": "User"
+        }
+      }
+    },
+    {
+      "name": "version",
+      "type": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+          "name": "String"
+        }
+      }
+    }
+  ],
+  "modsSortArg": {
+    "name": "sort",
+    "type": {
+      "kind": "LIST",
+      "name": null,
+      "ofType": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+          "name": "ModsSort"
+        }
+      }
+    }
+  }
+}

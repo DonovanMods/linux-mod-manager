@@ -1,0 +1,33 @@
+{
+  "name": "default",
+  "game_id": "skyrim-se",
+  "mods": [],
+  "link_method": "hardlink",
+  "link_method_explicit": true,
+  "is_default": true,
+  "hooks": {
+    "install": {
+      "before_all": "scripts/before_all.sh",
+      "before_each": "scripts/before_each.sh",
+      "after_each": "scripts/after_each.sh",
+      "after_all": "scripts/after_all.sh"
+    },
+    "uninstall": {
+      "before_all": "scripts/uninstall_before_all.sh"
+    }
+  },
+  "hooks_explicit": {
+    "install": {
+      "before_all": true,
+      "before_each": true,
+      "after_each": true,
+      "after_all": true
+    },
+    "uninstall": {
+      "before_all": true,
+      "before_each": false,
+      "after_each": false,
+      "after_all": false
+    }
+  }
+}

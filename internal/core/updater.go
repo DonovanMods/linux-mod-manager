@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // Updater checks for and applies mod updates
@@ -25,8 +25,23 @@ func NewUpdater(registry *source.Registry) *Updater {
 // the source-ID mapping: installed rows persist the lmm game ID, but sources
 // like NexusMods address games by their own domain, so each source's batch is
 // translated via game.SourceIDs before the call (empty mapping = keep the lmm
-// id, matching the search-side semantics in Service.SearchMods/GetMod).
-func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod) ([]domain.Update, error) {
+// id, matching the search-side semantics in Service.SearchMods/GetMod). sink
+// receives an UpdateCheckEvent per mod from sources that implement
+// source.UpdateProgressReporter (nexusmods, curseforge); a nil sink, or a
+// source without the optional interface, emits nothing.
+//
+// A mod its source's catalog no longer has (#539: the source answered a
+// per-mod source.ModNotFoundError) is neither an update nor a failed check:
+// it is left out of both, and the rest of that source's check stands.
+// checkUpdates is the variant that also names those mods.
+func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, error) {
+	updates, _, err := u.checkUpdates(ctx, game, installed, sink, opts)
+	return updates, err
+}
+
+// checkUpdates is CheckUpdates, also returning the installed mods their
+// source's catalog no longer has, in installed order.
+func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, []CatalogModRef, error) {
 	var checkable []domain.InstalledMod
 	for _, mod := range installed {
 		if UpdateCheckable(mod) {
@@ -35,7 +50,7 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 	}
 
 	if len(checkable) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Group mods by source
@@ -46,14 +61,43 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 
 	var allUpdates []domain.Update
 	var checkErrs []error
+	// catalogMissing is keyed by domain.ModKey: the mods a source answered
+	// "not in my catalog" for (#539), reported in installed order below.
+	catalogMissing := make(map[string]bool)
+
+	// GlobalIndex/GlobalTotal (Ruling 6, #283) span every source's batch, so
+	// a two-source run reports 1/5..5/5 instead of the per-source Index/Total
+	// restarting at 1 for the second source. globalOffset is reserved for
+	// each source's batch up front, before that source's own success/failure
+	// is known, so the running total stays the sum of every batch size
+	// regardless of which sources actually report progress or error out.
+	//
+	// The reservation is unconditional, so a source that emits NO event
+	// leaves its slice of 1..N unpopulated - the printed sequence has a
+	// hole. Two causes, and the second is the common one offline: a source
+	// whose registry lookup or check fails, and a source that simply does
+	// not implement source.UpdateProgressReporter (only nexusmods and
+	// curseforge do, so an all-directory-source run prints no counter line
+	// at all). What IS guaranteed: each source's ticks occupy a fixed,
+	// non-overlapping, ascending slice of 1..N; N is the total checkable
+	// count regardless of failures; and each source's GlobalIndex-Index
+	// offset is constant across its batch. Anything stronger would have to
+	// defer the reservation until a source's first event, which would make
+	// the numbers depend on map-iteration order (unit Q review, parked
+	// item 2).
+	globalTotal := len(checkable)
+	globalOffset := 0
 
 	// Check each source
 	for sourceID, mods := range bySource {
 		select {
 		case <-ctx.Done():
-			return allUpdates, ctx.Err()
+			return allUpdates, nil, ctx.Err()
 		default:
 		}
+
+		batchOffset := globalOffset
+		globalOffset += len(mods)
 
 		src, err := u.registry.Get(sourceID)
 		if err != nil {
@@ -72,17 +116,84 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 			}
 		}
 
-		updates, err := src.CheckUpdates(ctx, mods)
+		var progress source.UpdateProgressFunc
+		if sink != nil {
+			progress = func(n, total int, name string) {
+				sink(UpdateCheckEvent{
+					Scope: Scope{Op: OpUpdateCheck, ModName: name, Index: n, Total: total}, SourceID: sourceID,
+					GlobalIndex: batchOffset + n, GlobalTotal: globalTotal,
+				})
+			}
+		}
+
+		var updates []domain.Update
+		// #269: a source that caches remote metadata gets told whether the
+		// caller asked to bypass that cache. It reports progress the same
+		// way, so this branch replaces (rather than sits beside) the
+		// progress-reporter one for such a source.
+		if refresher, ok := src.(source.RefreshingUpdateChecker); ok {
+			updates, err = refresher.CheckUpdatesRefreshing(ctx, mods, opts.Refresh, progress)
+		} else if rep, ok := src.(source.UpdateProgressReporter); ok && progress != nil {
+			updates, err = rep.CheckUpdatesWithProgress(ctx, mods, progress)
+		} else {
+			updates, err = src.CheckUpdates(ctx, mods)
+		}
 		allUpdates = append(allUpdates, updates...)
+		missing, err := splitCatalogMissing(mods, err)
+		for id := range missing {
+			catalogMissing[domain.ModKey(sourceID, id)] = true
+		}
 		if err != nil {
-			checkErrs = append(checkErrs, fmt.Errorf("source %s: %w", sourceID, err))
+			checkErrs = append(checkErrs, wrapSourceCheckError(sourceID, err))
+		}
+	}
+
+	var missingRefs []CatalogModRef
+	for _, mod := range checkable {
+		if catalogMissing[domain.ModKey(mod.SourceID, mod.ID)] {
+			missingRefs = append(missingRefs, CatalogModRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name})
 		}
 	}
 
 	if len(checkErrs) > 0 {
-		return allUpdates, fmt.Errorf("update check had %d source error(s): %w", len(checkErrs), errors.Join(checkErrs...))
+		return allUpdates, missingRefs, fmt.Errorf("update check had %d source error(s): %w", len(checkErrs), errors.Join(checkErrs...))
 	}
-	return allUpdates, nil
+	return allUpdates, missingRefs, nil
+}
+
+// wrapSourceCheckError attributes a source's check failure to that source.
+// An auth failure keeps the source id as DATA (*SourceAuthError), so a
+// caller can name it in the remedy it prints; everything else is the plain
+// wrap it always was. Both read the same, so nothing that merely prints the
+// error changes - see SourceAuthError's doc comment.
+func wrapSourceCheckError(sourceID string, err error) error {
+	if errors.Is(err, domain.ErrAuthRequired) {
+		return &SourceAuthError{SourceID: sourceID, Err: err}
+	}
+	return fmt.Errorf("source %s: %w", sourceID, err)
+}
+
+// UpdateCheckOptions tunes an update check.
+type UpdateCheckOptions struct {
+	// Refresh asks every source that caches remote metadata on disk to
+	// bypass that cache for this check - `lmm update --refresh`, and the
+	// web UI's refresh action. Sources with nothing to bypass (every source
+	// but Steam Workshop today) never see it; see
+	// source.RefreshingUpdateChecker.
+	Refresh bool
+}
+
+// CountExternalUpdates reports how many of updates belong to EXTERNAL mods
+// (#269), for UpdateCheckReport.External and for a frontend assembling its
+// own summary line.
+func CountExternalUpdates(updates []domain.Update) int {
+	n := 0
+	for _, u := range updates {
+		if u.InstalledMod.External {
+			n++
+		}
+	}
+	return n
 }
 
 // UpdateCheckable reports whether CheckUpdates will query a source for mod.
@@ -102,12 +213,82 @@ func UpdateCheckable(mod domain.InstalledMod) bool {
 // are reported separately because the remedies differ: a pin can be lifted, a
 // local mod can never be checked.
 type UpdateSkips struct {
-	Pinned int
-	Local  int
+	Pinned int `json:"pinned"`
+	Local  int `json:"local"`
+	// Updates counts the updates the check found but left out because the
+	// user skipped that version (#542) - UpdateCheckReport.SkippedUpdates'
+	// length. Those mods WERE checked, so Total does not include them; it is
+	// set by CheckGameUpdateReport, never by CountUpdateSkips, which sees
+	// only the installed rows. omitzero.
+	Updates int `json:"updates,omitzero"`
 }
 
 // Total is the number of mods that will not be checked at all.
 func (s UpdateSkips) Total() int { return s.Pinned + s.Local }
+
+// updateSkippedByUser reports whether upd offers a version the user chose to
+// skip (#542): the installed row's SkippedVersion is set and upd's
+// NewVersion is not newer than it. A recompile row is never skipped - it
+// offers no version, only a rebuild of what is installed.
+func updateSkippedByUser(upd domain.Update) bool {
+	skipped := upd.InstalledMod.SkippedVersion
+	return skipped != "" && !upd.RecompileNeeded && !domain.IsNewerVersion(skipped, upd.NewVersion)
+}
+
+// UpdateCheckReport is everything a bulk `lmm update` check renders: the
+// updates found, the mods that were never checked, and - when the check
+// itself failed partway through - why.
+//
+// Updates is CheckGameUpdates' own result verbatim (each entry carries the
+// whole installed mod, the new version, the changelog and the #196
+// recompile/#289 lock flags), never a projection of it. ErrorMessage is set
+// when the check did not complete: an empty Updates list otherwise means
+// "nothing to update", and with this set it means the answer is unknown -
+// the one distinction a consumer reading stdout alone cannot make
+// otherwise, since the human warning goes to stderr.
+type UpdateCheckReport struct {
+	GameID       string          `json:"game_id"`
+	Profile      string          `json:"profile"`
+	Updates      []domain.Update `json:"updates"`
+	Skipped      UpdateSkips     `json:"skipped"`
+	ErrorMessage string          `json:"error,omitempty"`
+
+	// SkippedUpdates are the updates the check found but left out of
+	// Updates because the user skipped that version (#542, `lmm mod
+	// skip-update`): each entry's InstalledMod.SkippedVersion is the skip,
+	// NewVersion what the source offers. They are reported so a frontend
+	// can keep them findable ("N skipped updates", with an Unskip), and are
+	// never applied by a bulk update. omitempty.
+	SkippedUpdates []domain.Update `json:"skipped_updates,omitempty"`
+
+	// External is how many of Updates belong to EXTERNAL mods (#269) -
+	// Steam Workshop items lmm can report an update for but never apply.
+	// A summary line reads them out separately ("N Steam Workshop items
+	// have updates - Steam applies these itself the next time you launch
+	// the game"), because "run lmm update" is the wrong advice for them.
+	// omitzero.
+	External int `json:"external,omitzero"`
+
+	// ExternalMissing names the EXTERNAL mods lmm tracks that their
+	// installer's bookkeeping, read in full, no longer lists (#538) - a
+	// Steam Workshop item unsubscribed or removed outside lmm. They were not
+	// checked, and are never reported as updates: resubscribing, or `lmm
+	// uninstall` to stop tracking, is the remedy. omitempty.
+	ExternalMissing []ExternalModRef `json:"external_missing,omitempty"`
+	// Warnings carries why some external mods were compared against lmm's
+	// recorded revision instead of their installer's (an unreadable or
+	// absent Steam manifest, #538). The check itself completed; omitempty.
+	Warnings []string `json:"warnings,omitempty"`
+
+	// CatalogMissing names the installed mods their source's catalog no
+	// longer has (#539) - removed, delisted, or republished under a new ID.
+	// Any source answering domain.ErrModNotFound for a mod (per mod, as a
+	// source.ModNotFoundError) lands here. They are not updates and did not
+	// fail the check: `lmm mod edit <id> -s <source> --to-source-id
+	// <new-id>` if the mod moved, or `lmm uninstall`, is the remedy.
+	// omitempty.
+	CatalogMissing []CatalogModRef `json:"catalog_missing,omitempty"`
+}
 
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
 // that is both pinned and local counts once, as pinned, so Total never exceeds
@@ -148,22 +329,128 @@ func IsNewerVersion(currentVersion, newVersion string) bool {
 	return domain.IsNewerVersion(currentVersion, newVersion)
 }
 
-// CheckGameUpdates is the single seam CLI and TUI both check updates
-// through (#196/#197): it combines Updater.CheckUpdates' remote version
+// lockStateFromProfile is lockState's variant for a caller that has already
+// loaded the profile - CheckGameUpdates' stamping loop below uses this to
+// load the profile ONCE for the whole call rather than once per listed mod
+// (#289 review, Minor 2: reloading the same profile from disk N times for a
+// listing of N mods was needless I/O). prof may be nil (a missing/
+// unreadable profile), in which case every ref reports unlocked - matching
+// lockState's own convention.
+func lockStateFromProfile(prof *domain.Profile, sourceID, modID string) (locked bool, lockedVersion string) {
+	if prof == nil {
+		return false, ""
+	}
+	ref := prof.FindRef(sourceID, modID)
+	if ref != nil && ref.Locked {
+		return true, ref.Version
+	}
+	return false, ""
+}
+
+// lockState reports whether (sourceID, modID) is locked in gameID/
+// profileName's profile and, if so, at what version - the "load profile ->
+// FindRef -> check .Locked" pattern PlanUpdate/PlanUpdateFrom/PlanRollback
+// need for a SINGLE mod (each already reads the profile once per call, so
+// there is nothing to batch). A missing/unreadable profile reports unlocked
+// rather than an error - matching every other lock gate's convention (a
+// lock cannot exist in a profile that doesn't load). The one read failure
+// that is NOT reported as unlocked is a cancellation (v2 Phase 3 Ruling 16
+// (C)): it says nothing about the lock, so it is returned as err.
+func (s *Service) lockState(ctx context.Context, gameID, profileName, sourceID, modID string) (locked bool, lockedVersion string, err error) {
+	prof, readErr := s.NewProfileManager().Get(ctx, gameID, profileName)
+	if readErr != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return false, "", cerr
+		}
+	}
+	locked, lockedVersion = lockStateFromProfile(prof, sourceID, modID)
+	return locked, lockedVersion, nil
+}
+
+// CheckGameUpdates is the single seam CLI checks updates through
+// (#196/#197): it combines Updater.CheckUpdates' remote version
 // checks with CheckMergedPakStaleness' local merged-pak staleness scan
 // (#197's generalization of #196's per-mod base-pak check to the merged
-// model), so "does this profile need attention" means the same thing in
-// both interfaces. profileName is required (#197): staleness is scoped to
+// model). profileName is required (#197): staleness is scoped to
 // ONE profile's merged pak, not the whole game.
 //
 // Errors from either half are tolerated the same way CheckUpdates already
 // tolerates a single source failing: whatever updates were found are still
 // returned, with the first non-nil error surfaced (checkErr takes priority
-// as the richer, multi-source diagnostic when both fail).
-func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod) ([]domain.Update, error) {
-	updates, checkErr := s.NewUpdater().CheckUpdates(ctx, game, installed)
+// as the richer, multi-source diagnostic when both fail). sink is passed
+// straight through to Updater.CheckUpdates.
+//
+// An EXTERNAL row is checked at the revision its installer reports, not the
+// one lmm recorded (#538): Steam updates a Workshop item without lmm, so the
+// record goes stale and comparing against it reported updates Steam had
+// already applied. The check reads Steam's manifest and hands the source a
+// COPY of each such row carrying the installed revision - nothing is
+// written; ReconcileExternalMods is the write. A row the manifest no longer
+// lists is not checked at all (CheckGameUpdateReport names it).
+//
+// A mod its source's catalog no longer has (#539) is not an update and does
+// not fail the check (CheckGameUpdateReport names it).
+//
+// An update offering a version the user skipped (#542) is left out too
+// (CheckGameUpdateReport names it in SkippedUpdates); a version newer than
+// the skipped one is reported as normal.
+func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, error) {
+	res, err := s.checkGameUpdates(ctx, game, profileName, installed, sink, opts)
+	return res.updates, err
+}
 
-	staleUpd, staleErr := s.CheckMergedPakStaleness(game, profileName)
+// CheckGameUpdateReport is CheckGameUpdates assembled into the one document
+// both frontends emit for a bulk check (`lmm update --json`, GET
+// /api/v1/updates): the updates, the skip counts derived from installed,
+// the external count, the external mods Steam no longer lists, the mods
+// their source's catalog no longer has (#539), and - when
+// the check did not complete - why, in ErrorMessage. The report is never
+// nil; the error is the check's own, returned as well so a caller can
+// branch on it (an auth failure, the exit code).
+func (s *Service) CheckGameUpdateReport(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) (*UpdateCheckReport, error) {
+	res, checkErr := s.checkGameUpdates(ctx, game, profileName, installed, sink, opts)
+	report := &UpdateCheckReport{
+		GameID:          game.ID,
+		Profile:         profileName,
+		Updates:         res.updates,
+		Skipped:         CountUpdateSkips(installed),
+		External:        CountExternalUpdates(res.updates),
+		ExternalMissing: res.drift.missingRefs(),
+		Warnings:        res.drift.warnings,
+		CatalogMissing:  res.catalogMissing,
+		SkippedUpdates:  res.skipped,
+	}
+	report.Skipped.Updates = len(res.skipped)
+	if checkErr != nil {
+		report.ErrorMessage = checkErr.Error()
+	}
+	return report, checkErr
+}
+
+// gameUpdateCheck is checkGameUpdates' result: the updates, and what the
+// check found besides them for CheckGameUpdateReport to report.
+type gameUpdateCheck struct {
+	updates []domain.Update
+	// drift is the external drift the check was run over (#538).
+	drift externalDrift
+	// catalogMissing is the mods their source's catalog no longer has (#539).
+	catalogMissing []CatalogModRef
+	// skipped is the updates left out of updates because the user skipped
+	// the version they offer (#542).
+	skipped []domain.Update
+}
+
+// checkGameUpdates is CheckGameUpdates' body, also returning what
+// CheckGameUpdateReport reports beside the updates.
+func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) (gameUpdateCheck, error) {
+	drift, err := s.readExternalDrift(ctx, game, installed)
+	if err != nil {
+		return gameUpdateCheck{drift: drift}, err
+	}
+	updates, catalogMissing, checkErr := s.NewUpdater().checkUpdates(ctx, game, drift.overlay(installed), sink, opts)
+	carryManualOnly(updates, installed) // #543
+
+	staleUpd, staleErr := s.CheckMergedPakStaleness(ctx, game, profileName)
 	if staleErr != nil && checkErr == nil {
 		checkErr = staleErr
 	}
@@ -181,5 +468,58 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profi
 		}
 	}
 
-	return updates, checkErr
+	// #289: stamp each entry's lock state via lockStateFromProfile - the
+	// single seam that lets every caller (cmd/lmm's bulk table/JSON,
+	// PlanUpdate/PlanUpdateFrom) drop its own profile scan. The profile is
+	// loaded ONCE here (#289 review, Minor 2), not once per entry - a
+	// missing/unreadable profile leaves every entry unlocked, matching every
+	// other "profile load failure means unlocked" precedent (ApplyUpdate's
+	// own lock gate, applySingleUpdate before this task).
+	prof, profErr := s.NewProfileManager().Get(ctx, game.ID, profileName)
+	if profErr != nil {
+		// Ruling 16 (C): a cancelled read would leave every entry reported
+		// unlocked, which is a lie the caller acts on; the cancellation
+		// outranks checkErr, which under a cancelled ctx is derived from it.
+		if cerr := ctx.Err(); cerr != nil {
+			return gameUpdateCheck{updates: updates, drift: drift, catalogMissing: catalogMissing}, cerr
+		}
+	}
+	for i := range updates {
+		locked, lockedVersion := lockStateFromProfile(prof, updates[i].InstalledMod.SourceID, updates[i].InstalledMod.ID)
+		if locked {
+			updates[i].Locked = true
+			updates[i].LockedVersion = lockedVersion
+		}
+	}
+
+	offered, skipped := splitSkippedUpdates(installed, updates)
+	return gameUpdateCheck{updates: offered, drift: drift, catalogMissing: catalogMissing, skipped: skipped}, checkErr
+}
+
+// splitSkippedUpdates separates the updates offering a version the user
+// skipped (#542) from the rest, keeping the check's order in both. The skip
+// is read from installed, the rows the check was asked about, and stamped on
+// each update's InstalledMod - a source builds its own Update and need not
+// carry the field through.
+func splitSkippedUpdates(installed []domain.InstalledMod, updates []domain.Update) (offered, skipped []domain.Update) {
+	skips := make(map[string]string)
+	for _, mod := range installed {
+		if mod.SkippedVersion != "" {
+			skips[domain.ModKey(mod.SourceID, mod.ID)] = mod.SkippedVersion
+		}
+	}
+	if len(skips) == 0 {
+		return updates, nil
+	}
+	for _, upd := range updates {
+		if v, ok := skips[domain.ModKey(upd.InstalledMod.SourceID, upd.InstalledMod.ID)]; ok {
+			upd.InstalledMod.SkippedVersion = v
+		}
+		if updateSkippedByUser(upd) {
+			skipped = append(skipped, upd)
+		} else {
+			offered = append(offered, upd)
+		}
+	}
+	return offered, skipped
 }

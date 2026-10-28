@@ -27,7 +27,7 @@ release points.
 
 Identical to the previous flow except for the base branch and versioning:
 
-- Copilot review + triage rounds, TUI smoke gate when applicable, merge
+- Copilot review + triage rounds, merge
   commits — all unchanged.
 - **No version bump** in story PRs. The `version` variable in
   `cmd/lmm/root.go` stays at the last released version between releases.

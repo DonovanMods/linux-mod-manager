@@ -2,6 +2,7 @@ package icarus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -10,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // gameID is fixed: the Firestore database this source reads is Icarus-only.
@@ -19,6 +20,12 @@ const gameID = "icarus"
 
 // Icarus is a ModSource backed by the public, unauthenticated Firestore REST
 // API described in docs/plans/2026-07-29-icarus-exmod-pak-research.md.
+//
+// It is ONLY where the bytes come from. What Icarus does with them - the
+// compile, .EXMODZ and merge rules - moved to internal/adapter/icarus in
+// U2 (#412), because compilation is a property of the GAME rather than of
+// the source that served the file: an Icarus .pak downloaded from
+// NexusMods could not compile while the identical file from here could.
 type Icarus struct {
 	firestore *firestoreClient
 }
@@ -34,22 +41,7 @@ func New(httpClient *http.Client, projectID string) *Icarus {
 var (
 	_ source.ModSource          = (*Icarus)(nil)
 	_ source.CapabilityReporter = (*Icarus)(nil)
-	_ source.MergeCompiler      = (*Icarus)(nil)
 )
-
-// ValidateSource implements source.MergeCompiler by delegating to the
-// package-level ValidateSource function.
-func (s *Icarus) ValidateSource(sourceFilePath string) error {
-	return ValidateSource(sourceFilePath)
-}
-
-// MergeCompile implements source.MergeCompiler by delegating to the
-// package-level MergeCompile function. ctx is unused: merging is pure local
-// file I/O against the installed game's own pak (#175/#197), with nothing
-// to cancel.
-func (s *Icarus) MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) ([]string, []source.MergeFailure, error) {
-	return MergeCompile(ctx, basePakPath, sources, outputPakPath)
-}
 
 func (s *Icarus) ID() string   { return "icarus" }
 func (s *Icarus) Name() string { return "Icarus (Project Daedalus)" }
@@ -65,8 +57,11 @@ func (s *Icarus) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain
 	return nil, fmt.Errorf("source %q: dependencies: %w", s.ID(), source.ErrNotSupported)
 }
 
+// Capabilities: Sorts is updated alone (#503) - a catalogue document carries
+// Firestore's updateTime and mapDoc fills no download or endorsement count.
 func (s *Icarus) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: false}
+	return source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: false,
+		Sorts: []domain.SearchSort{domain.SortUpdated}}
 }
 
 func (s *Icarus) TypeLabel() string { return "built-in" }
@@ -103,6 +98,20 @@ func (s *Icarus) Search(ctx context.Context, query source.SearchQuery) (source.S
 		}
 		return mods[i].ID < mods[j].ID
 	})
+
+	// An explicit date sort (#503) reorders the whole match set before it is
+	// paged, so page N is the right page: newest first, a document with no
+	// updateTime last, ties keeping the name/ID order above. Any other sort
+	// is that order - nothing else here has data to sort on.
+	if query.Sort == domain.SortUpdated {
+		sort.SliceStable(mods, func(i, j int) bool {
+			a, b := mods[i].UpdatedAt, mods[j].UpdatedAt
+			if a.IsZero() != b.IsZero() {
+				return !a.IsZero()
+			}
+			return a.After(b)
+		})
+	}
 
 	pageSize := query.PageSize
 	if pageSize <= 0 {
@@ -174,6 +183,7 @@ func (s *Icarus) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.Dow
 			FileName:    fileNameFromURL(rawURL, kind),
 			Category:    strings.ToUpper(kind),
 			Description: description,
+			UploadedAt:  doc.UpdateTime,
 		})
 	}
 	if len(out) == 1 {
@@ -181,7 +191,7 @@ func (s *Icarus) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.Dow
 	} else {
 		// #211: with both variants published, the mergeable exmodz is the
 		// default everywhere IsPrimary is honored (CLI default mark, --yes,
-		// TUI plan, batch, profile apply, selectDeployFiles) - the prebuilt
+		// batch, profile apply, selectDeployFiles) - the prebuilt
 		// pak stays explicitly selectable.
 		for i := range out {
 			if out[i].ID == "exmodz" {
@@ -212,6 +222,11 @@ func (s *Icarus) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID str
 // catalog's current version string (semantic-ish, per modinfo.json's
 // "recommended" versioning note — not guaranteed strictly semver, so this
 // uses domain.IsNewerVersion the same way custom.API does).
+//
+// One mod's failure never hides another's (#539): every mod is checked,
+// and every failure is reported, joined. A mod the catalog no longer has
+// is reported as a *source.ModNotFoundError, which core takes out of the
+// error and reports as gone rather than as a failed check.
 func (s *Icarus) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	var updates []domain.Update
 	var errs []error
@@ -223,6 +238,13 @@ func (s *Icarus) CheckUpdates(ctx context.Context, installed []domain.InstalledM
 		}
 		current, err := s.GetMod(ctx, gameID, inst.ID)
 		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return updates, cerr
+			}
+			err = fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err)
+			if errors.Is(err, domain.ErrModNotFound) {
+				err = &source.ModNotFoundError{ModID: inst.ID, Err: err}
+			}
 			errs = append(errs, err)
 			continue
 		}
@@ -231,7 +253,7 @@ func (s *Icarus) CheckUpdates(ctx context.Context, installed []domain.InstalledM
 		}
 	}
 	if len(errs) > 0 {
-		return updates, fmt.Errorf("source %q: %d update check(s) failed: %v", s.ID(), len(errs), errs[0])
+		return updates, fmt.Errorf("source %q: %d update check(s) failed: %w", s.ID(), len(errs), errors.Join(errs...))
 	}
 	return updates, nil
 }
@@ -254,6 +276,7 @@ func mapDoc(d firestoreDoc) domain.Mod {
 		Description: str("description"),
 		PictureURL:  str("imageURL"),
 		SourceURL:   str("readmeURL"),
+		UpdatedAt:   d.UpdateTime,
 	}
 }
 

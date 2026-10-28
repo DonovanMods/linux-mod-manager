@@ -1,0 +1,392 @@
+package thunderstore_test
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/thunderstore"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// This file is the index INVENTORY (#410): what `lmm source index --all`
+// lists and what `lmm source index prune` may delete. Deletion is held to
+// the project's fail-closed rule - a directory is removable only when it is
+// provably one of this source's indexes and nothing else - and these tests
+// are the cases that rule exists for.
+
+var _ source.IndexInventory = (*thunderstore.Source)(nil)
+
+// builtSource is a Source with the fixture indexed under testCommunity.
+func builtSource(t *testing.T) (*thunderstore.Source, string, *testClock) {
+	t.Helper()
+	srv := newIndexServer(t, fixtureDocument(t))
+	src, cacheDir, clock := newSource(t, srv)
+	_, err := src.RefreshIndex(t.Context(), testCommunity, false, nil)
+	require.NoError(t, err)
+	return src, cacheDir, clock
+}
+
+func findIndex(t *testing.T, list []source.CachedIndex, gameID string) source.CachedIndex {
+	t.Helper()
+	for _, ci := range list {
+		if ci.GameID == gameID {
+			return ci
+		}
+	}
+	require.Failf(t, "not listed", "no cached index for %s in %+v", gameID, list)
+	return source.CachedIndex{}
+}
+
+func TestCachedIndexes_ListsWhatIsOnDisk(t *testing.T) {
+	src, cacheDir, clock := builtSource(t)
+
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	ci := list[0]
+	assert.Equal(t, testCommunity, ci.GameID)
+	assert.True(t, ci.Present)
+	assert.Equal(t, 12, ci.Packages)
+	assert.Equal(t, clock.Now().Unix(), ci.FetchedAt.Unix())
+	assert.True(t, ci.Removable, ci.Reason)
+	assert.Empty(t, ci.Reason)
+
+	var want int64
+	entries, err := os.ReadDir(indexDir(cacheDir, testCommunity))
+	require.NoError(t, err)
+	for _, e := range entries {
+		info, err := e.Info()
+		require.NoError(t, err)
+		want += info.Size()
+	}
+	assert.Equal(t, want, ci.Bytes, "the footprint is everything in the directory")
+}
+
+func TestCachedIndexes_NoCacheRootIsAnEmptyList(t *testing.T) {
+	src := thunderstore.New(thunderstore.Options{CacheDir: filepath.Join(t.TempDir(), "never-made"), BaseURL: "http://127.0.0.1:1"})
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, list)
+}
+
+// TestCachedIndexes_AnOldSchemaIsListedAsAbsentButRemovable: an index a
+// previous lmm wrote is not usable, still costs its bytes, and is exactly
+// what pruning is for.
+func TestCachedIndexes_AnOldSchemaIsListedAsAbsentButRemovable(t *testing.T) {
+	_, cacheDir, _ := builtSource(t)
+	wmPath := filepath.Join(indexDir(cacheDir, testCommunity), "watermark.json")
+	require.NoError(t, os.WriteFile(wmPath, []byte(`{"last_modified":"x","fetched_at":1757505600,"packages":12,"schema":2,"generation":"g"}`), 0o644))
+
+	// A fresh process: nothing resident to vouch for the old bytes.
+	list, err := thunderstore.New(thunderstore.Options{CacheDir: cacheDir, BaseURL: "http://127.0.0.1:1"}).CachedIndexes(t.Context())
+	require.NoError(t, err)
+	ci := findIndex(t, list, testCommunity)
+	assert.False(t, ci.Present)
+	assert.Equal(t, time.Unix(1757505600, 0).UTC(), ci.FetchedAt, "the age is still known")
+	assert.True(t, ci.Removable)
+}
+
+// TestCachedIndexes_IgnoresWhatIsNotACommunityDirectory: a name no
+// community can have, or a plain file, is not this source's, so it is
+// neither listed nor ever a candidate for removal.
+func TestCachedIndexes_IgnoresWhatIsNotACommunityDirectory(t *testing.T) {
+	src, cacheDir, _ := builtSource(t)
+	root := filepath.Join(cacheDir, "_thunderstore")
+	require.NoError(t, os.Mkdir(filepath.Join(root, "Not_A_Slug"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "stray-file"), []byte("x"), 0o644))
+
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, testCommunity, list[0].GameID)
+}
+
+// TestRemoveIndex_RemovesTheWholeIndexAndReportsWhatItFreed is the ordinary
+// case: every file goes, then the directory, and the next search is cold.
+func TestRemoveIndex_RemovesTheWholeIndexAndReportsWhatItFreed(t *testing.T) {
+	src, cacheDir, _ := builtSource(t)
+	// A staging file a crashed build left behind is part of the index too:
+	// the record stream, cut off at a buffer boundary.
+	require.NoError(t, os.WriteFile(filepath.Join(indexDir(cacheDir, testCommunity), ".packages-123"), []byte(`{"full_name":"Owner-Pack","versio`), 0o600))
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	before := findIndex(t, list, testCommunity)
+	require.True(t, before.Removable, before.Reason)
+
+	freed, err := src.RemoveIndex(t.Context(), testCommunity, time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, before.Bytes, freed)
+	assert.NoDirExists(t, indexDir(cacheDir, testCommunity))
+
+	status, err := src.IndexStatus(t.Context(), testCommunity)
+	require.NoError(t, err)
+	assert.False(t, status.Present)
+
+	// Rebuildable on demand, as a cache must be.
+	res, err := src.Search(t.Context(), source.SearchQuery{GameID: testCommunity})
+	require.NoError(t, err)
+	assert.Equal(t, 12, res.TotalCount)
+}
+
+func TestRemoveIndex_AMissingIndexIsNothingToDo(t *testing.T) {
+	src, _, _ := builtSource(t)
+	freed, err := src.RemoveIndex(t.Context(), "content-warning", time.Time{})
+	require.NoError(t, err)
+	assert.Zero(t, freed)
+}
+
+func TestRemoveIndex_RefusesAnInvalidSlug(t *testing.T) {
+	src, _, _ := builtSource(t)
+	for _, slug := range []string{"", "../x", "a/b", "UPPER"} {
+		_, err := src.RemoveIndex(t.Context(), slug, time.Time{})
+		assert.ErrorIs(t, err, thunderstore.ErrCommunityNotConfigured, "slug %q", slug)
+	}
+}
+
+// TestRemoveIndex_KeepsADirectoryHoldingAnythingElse: one file lmm did not
+// write is enough to make the whole directory not provably an index, and
+// NOTHING in it is removed - not even the files that are lmm's.
+func TestRemoveIndex_KeepsADirectoryHoldingAnythingElse(t *testing.T) {
+	src, cacheDir, _ := builtSource(t)
+	dir := indexDir(cacheDir, testCommunity)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("mine"), 0o644))
+
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	ci := findIndex(t, list, testCommunity)
+	assert.False(t, ci.Removable)
+	assert.Contains(t, ci.Reason, "notes.txt")
+	assert.Positive(t, ci.Bytes, "a directory that cannot be removed still reports what it costs")
+
+	_, err = src.RemoveIndex(t.Context(), testCommunity, time.Time{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "notes.txt")
+	for _, name := range []string{"notes.txt", "index.json", "packages.jsonl", "watermark.json"} {
+		assert.FileExists(t, filepath.Join(dir, name))
+	}
+}
+
+// TestRemoveIndex_KeepsASubdirectory: a nested directory is not part of any
+// index lmm writes.
+func TestRemoveIndex_KeepsASubdirectory(t *testing.T) {
+	src, cacheDir, _ := builtSource(t)
+	dir := indexDir(cacheDir, testCommunity)
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0o755))
+
+	_, err := src.RemoveIndex(t.Context(), testCommunity, time.Time{})
+	require.Error(t, err)
+	assert.FileExists(t, filepath.Join(dir, "index.json"))
+}
+
+// TestRemoveIndex_NeverFollowsASymlinkedCommunity: a community entry that
+// is a symbolic link points somewhere lmm did not create. It is listed (it
+// is in lmm's namespace) and never removed, and neither is its target.
+func TestRemoveIndex_NeverFollowsASymlinkedCommunity(t *testing.T) {
+	src, cacheDir, _ := builtSource(t)
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "index.json")
+	require.NoError(t, os.WriteFile(victim, []byte("someone else's"), 0o644))
+	link := indexDir(cacheDir, "content-warning")
+	require.NoError(t, os.Symlink(outside, link))
+
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	ci := findIndex(t, list, "content-warning")
+	assert.False(t, ci.Removable)
+	assert.Contains(t, ci.Reason, "symbolic link")
+
+	_, err = src.RemoveIndex(t.Context(), "content-warning", time.Time{})
+	require.Error(t, err)
+	// The link check itself refuses it (T3 review P4 B16): the "not a
+	// directory" check behind it would too, and a test that accepted either
+	// could not tell the first guard was gone.
+	assert.Contains(t, err.Error(), "symbolic link")
+	assert.FileExists(t, victim)
+	_, err = os.Lstat(link)
+	assert.NoError(t, err, "the link itself is left alone too")
+}
+
+// TestRemoveIndex_NeverFollowsASymlinkedFile: the same rule one level down.
+func TestRemoveIndex_NeverFollowsASymlinkedFile(t *testing.T) {
+	src, cacheDir, _ := builtSource(t)
+	dir := indexDir(cacheDir, testCommunity)
+	outside := filepath.Join(t.TempDir(), "precious")
+	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o644))
+	require.NoError(t, os.Remove(filepath.Join(dir, "watermark.json")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "watermark.json")))
+
+	_, err := src.RemoveIndex(t.Context(), testCommunity, time.Time{})
+	require.Error(t, err)
+	assert.FileExists(t, outside)
+	assert.FileExists(t, filepath.Join(dir, "index.json"))
+}
+
+// TestRemoveIndex_RefusesASymlinkedIndexRoot is the coordinator's named
+// case: when lmm's own _thunderstore root is itself a link, nothing under
+// it is provably lmm's, so nothing is listed as removable and nothing is
+// removed.
+func TestRemoveIndex_RefusesASymlinkedIndexRoot(t *testing.T) {
+	sandboxEnv(t)
+	cacheDir := t.TempDir()
+	real := t.TempDir()
+	community := filepath.Join(real, testCommunity)
+	require.NoError(t, os.Mkdir(community, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(community, "index.json"), []byte("{}"), 0o644))
+	require.NoError(t, os.Symlink(real, filepath.Join(cacheDir, "_thunderstore")))
+	src := thunderstore.New(thunderstore.Options{CacheDir: cacheDir, BaseURL: "http://127.0.0.1:1"})
+
+	// Listed - lmm builds and searches through the link, so hiding what is
+	// there behind "no indexes" was not honest (T3 review F7) - but never
+	// removable, with the reason.
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	ci := findIndex(t, list, testCommunity)
+	assert.False(t, ci.Removable)
+	assert.Contains(t, ci.Reason, "symbolic link")
+	assert.Contains(t, ci.Reason, "builds and searches", "the reason does not claim lmm never follows it")
+	assert.Positive(t, ci.Bytes, "what it costs is still reported")
+
+	_, err = src.RemoveIndex(t.Context(), testCommunity, time.Time{})
+	require.Error(t, err)
+	assert.FileExists(t, filepath.Join(community, "index.json"))
+}
+
+// TestRemoveIndex_ASymlinkedCacheDirIsFine: a user who keeps lmm's whole
+// cache on another disk through a link is the ordinary case, not a hazard -
+// everything below the link is still lmm's own tree.
+func TestRemoveIndex_ASymlinkedCacheDirIsFine(t *testing.T) {
+	sandboxEnv(t)
+	srv := newIndexServer(t, fixtureDocument(t))
+	realCache := t.TempDir()
+	linked := filepath.Join(t.TempDir(), "cache")
+	require.NoError(t, os.Symlink(realCache, linked))
+	src := thunderstore.New(thunderstore.Options{CacheDir: linked, BaseURL: srv.URL})
+	_, err := src.RefreshIndex(t.Context(), testCommunity, false, nil)
+	require.NoError(t, err)
+
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	require.True(t, findIndex(t, list, testCommunity).Removable)
+
+	_, err = src.RemoveIndex(t.Context(), testCommunity, time.Time{})
+	require.NoError(t, err)
+	assert.NoDirExists(t, filepath.Join(realCache, "_thunderstore", testCommunity))
+}
+
+// TestRemoveIndex_RefusesAnIndexRefreshedSinceTheDecision is the prune's
+// age rule held at the moment of removal: a decision made from an index's
+// fetched_at does not survive a refresh that happened in between, so the
+// removal is refused and the fresh index kept.
+func TestRemoveIndex_RefusesAnIndexRefreshedSinceTheDecision(t *testing.T) {
+	src, cacheDir, clock := builtSource(t)
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	decidedOn := findIndex(t, list, testCommunity).FetchedAt
+
+	// A search refreshes it before the prune gets the lock.
+	clock.advance(7 * time.Hour)
+	_, err = src.RefreshIndex(t.Context(), testCommunity, true, nil)
+	require.NoError(t, err)
+
+	_, err = src.RemoveIndex(t.Context(), testCommunity, decidedOn)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refreshed")
+	assert.FileExists(t, filepath.Join(indexDir(cacheDir, testCommunity), "index.json"))
+
+	list, err = src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	current := findIndex(t, list, testCommunity).FetchedAt
+	freed, err := src.RemoveIndex(t.Context(), testCommunity, current)
+	require.NoError(t, err, "the index the decision was made about is removed")
+	assert.Positive(t, freed)
+	assert.NoDirExists(t, indexDir(cacheDir, testCommunity))
+}
+
+// TestRemoveIndex_AnAgePreconditionOnAnIndexWithNoAgeIsRefused: a decision
+// that rested on an age cannot be checked against an index whose age can no
+// longer be read.
+func TestRemoveIndex_AnAgePreconditionOnAnIndexWithNoAgeIsRefused(t *testing.T) {
+	src, cacheDir, clock := builtSource(t)
+	require.NoError(t, os.Remove(filepath.Join(indexDir(cacheDir, testCommunity), "watermark.json")))
+	_, err := src.RemoveIndex(t.Context(), testCommunity, clock.Now())
+	require.Error(t, err)
+	assert.FileExists(t, filepath.Join(indexDir(cacheDir, testCommunity), "index.json"))
+}
+
+// TestRemoveIndex_OnlyFilesLmmWroteAreItsOwn is T3 review F6: any name
+// starting ".index-", ".packages-" or ".stage-" used to count as lmm's
+// staging, so a user's ".index-my-backup.json" went with the index. A file
+// is lmm's only when it has the exact name a build gives it AND the content
+// that build writes first (or is empty, which an interrupted build leaves).
+func TestRemoveIndex_OnlyFilesLmmWroteAreItsOwn(t *testing.T) {
+	for name, tc := range map[string]struct {
+		file, content string
+		ours          bool
+	}{
+		"a backup named like staging":        {".index-my-backup.json", `{"schema":3,"rows":[]}`, false},
+		"staging-shaped name, foreign bytes": {".packages-4242", "my notes", false},
+		"a letter after the digits":          {".stage-12a", "", false},
+		"too many digits for CreateTemp":     {".index-12345678901", "", false},
+		"an interrupted build's index":       {".index-4242", "", true},
+		"an interrupted build's packages":    {".packages-777", `{"full_name":"a-b","versions":[]}`, true},
+		"a watermark being written":          {".stage-31337", `{"last_modified":"x","fetched_at":1}`, true},
+		"a lock file with something in it":   {".lock", "not a lock", false},
+		"an index.json lmm did not write":    {"index.json", "hello", false},
+		"an empty packages.jsonl":            {"packages.jsonl", "", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			src, cacheDir, _ := builtSource(t)
+			dir := indexDir(cacheDir, testCommunity)
+			path := filepath.Join(dir, tc.file)
+			require.NoError(t, os.WriteFile(path, []byte(tc.content), 0o644))
+
+			list, err := src.CachedIndexes(t.Context())
+			require.NoError(t, err)
+			ci := findIndex(t, list, testCommunity)
+			assert.Equal(t, tc.ours, ci.Removable, ci.Reason)
+
+			_, err = src.RemoveIndex(t.Context(), testCommunity, time.Time{})
+			if tc.ours {
+				require.NoError(t, err)
+				assert.NoDirExists(t, dir)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.file)
+			assert.FileExists(t, path, "a file lmm cannot prove it wrote is kept")
+			assert.Equal(t, tc.content, string(mustRead(t, path)))
+		})
+	}
+}
+
+// TestCachedIndexes_AnIndexLmmCannotWriteToIsNotRemovable is T3 review
+// F11: a dry run said "would remove" for a directory lmm had no write
+// permission on, and the real run then reported "failed". The listing
+// says so first.
+func TestCachedIndexes_AnIndexLmmCannotWriteToIsNotRemovable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes through any permission")
+	}
+	src, cacheDir, _ := builtSource(t)
+	dir := indexDir(cacheDir, testCommunity)
+	require.NoError(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	list, err := src.CachedIndexes(t.Context())
+	require.NoError(t, err)
+	ci := findIndex(t, list, testCommunity)
+	assert.False(t, ci.Removable)
+	assert.Contains(t, ci.Reason, "cannot remove")
+	assert.Positive(t, ci.Bytes)
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return data
+}

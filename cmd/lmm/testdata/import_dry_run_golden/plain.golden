@@ -1,0 +1,21 @@
+## stdout
+Importing: <ARCHIVE-DIR>/mymod.zip
+
+Fetching metadata from acme-source...
+
+Mod: Acme Mod
+  Source: acme-source
+  ID: 999
+  Version: 2.0
+  Files: 1
+
+Would import: Acme Mod
+  Would deploy 1 file(s)
+  Would add to profile: default
+
+(dry run - no changes made)
+## stderr
+## error
+<nil>
+## tree
+<empty>

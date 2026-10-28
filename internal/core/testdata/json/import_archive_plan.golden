@@ -1,0 +1,44 @@
+{
+  "archive": "/downloads/sample-mod-1.2.3.zip",
+  "mod": {
+    "id": "42",
+    "source_id": "nexusmods",
+    "name": "Sample Mod",
+    "version": "1.2.3",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "skyrim-se",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "2026-08-27T12:00:00Z"
+  },
+  "linked_source": "nexusmods",
+  "auto_detected": true,
+  "files": [
+    "Data/Sample.esp"
+  ],
+  "conflicts": [
+    {
+      "relative_path": "Data/Sample.esp",
+      "current_source_id": "nexusmods",
+      "current_mod_id": "7"
+    }
+  ],
+  "merged_artifact": {
+    "action": "resync",
+    "path": "zzz_LMM_Merged_P.pak"
+  },
+  "hooks": [
+    "install.before_all",
+    "install.after_all"
+  ],
+  "entry_pre_exists": true,
+  "warnings": [
+    "could not resolve source file for archive: rate limited"
+  ]
+}

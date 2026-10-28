@@ -9,8 +9,8 @@ import (
 	"path"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 func modsListHandler(mods []map[string]any) http.HandlerFunc {

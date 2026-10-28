@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,7 +15,7 @@ import (
 // setupConflictsCmdTest points the package-global configDir/dataDir at temp
 // dirs and opens a *core.Service against them (with a CacheDir matching
 // getServiceConfig's default, dataDir/cache, since no config.yaml is
-// written), then registers a game via svc.AddGame so a later, independently
+// written), then registers a game via svc.SaveGame so a later, independently
 // opened service — the one initService builds inside the real command path —
 // can resolve it. Unlike setupConflictsTest (conflicts_test.go), which hands
 // doConflicts an isolated *core.Service the command path never touches, this
@@ -36,7 +36,7 @@ func setupConflictsCmdTest(t *testing.T) (*core.Service, *domain.Game) {
 	require.NoError(t, err)
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	oldGameID, oldProfile, oldJSON := gameID, conflictsProfile, jsonOutput
 	gameID = "g1"
@@ -98,15 +98,15 @@ func TestRunConflicts_ViaCommand_JSON(t *testing.T) {
 	rootCmd.SetArgs([]string{"conflicts", "--game", game.ID, "--json"})
 	out := captureStdout(t, func() error { return rootCmd.ExecuteContext(context.Background()) })
 
-	var decoded conflictsJSONOutput
+	var decoded core.ConflictReport
 	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
 
 	assert.Equal(t, game.ID, decoded.GameID)
 	assert.Equal(t, "default", decoded.Profile)
 	require.Len(t, decoded.Conflicts, 1)
 	assert.Equal(t, "shared.esp", decoded.Conflicts[0].Path)
-	assert.Equal(t, "Mod B", decoded.Conflicts[0].Owner)
-	assert.Equal(t, []string{"Mod A"}, decoded.Conflicts[0].AlsoIn)
-	assert.Equal(t, "Mod B", decoded.Conflicts[0].Winner)
+	assert.Equal(t, core.ConflictModRef{Key: "src:b", Name: "Mod B"}, decoded.Conflicts[0].Owner)
+	assert.Equal(t, []core.ConflictModRef{{Key: "src:a", Name: "Mod A"}}, decoded.Conflicts[0].AlsoIn)
+	assert.Equal(t, core.ConflictModRef{Key: "src:b", Name: "Mod B"}, decoded.Conflicts[0].LoadOrderWinner)
 	assert.False(t, decoded.Conflicts[0].Stale)
 }

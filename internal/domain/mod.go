@@ -1,20 +1,12 @@
 package domain
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
-
-// UpdateProgressFunc is called during update checks with (current 1-based index, total count, mod name).
-// Set via context when running "lmm -v update" to get per-mod progress.
-type UpdateProgressFunc func(n, total int, modName string)
-
-type updateProgressKey struct{}
-
-// UpdateProgressContextKey is the context key for UpdateProgressFunc. Attach with context.WithValue.
-var UpdateProgressContextKey = &updateProgressKey{}
 
 // SourceLocal is the source ID for mods imported from local files
 const SourceLocal = "local"
@@ -28,30 +20,80 @@ const SourceMerged = "lmm-merged"
 // UpdatePolicy determines how a mod handles updates
 type UpdatePolicy int
 
+// UpdateNotify, UpdateAuto, and UpdatePinned are UpdatePolicy's three
+// values: notify is the default (an available update is reported but
+// requires explicit `lmm update`), auto applies an update as soon as
+// CheckGameUpdates finds one, pinned refuses every update (distinct from a
+// lock - see ModReference.Locked - which pins to a specific version rather
+// than refusing all update checks).
 const (
 	UpdateNotify UpdatePolicy = iota // Default: show available, require approval
 	UpdateAuto                       // Automatically apply updates
 	UpdatePinned                     // Never update
 )
 
+// String returns the policy's wire/config name ("notify", "auto", or
+// "pinned"; "notify" also for an out-of-range value).
+func (p UpdatePolicy) String() string {
+	switch p {
+	case UpdateAuto:
+		return "auto"
+	case UpdatePinned:
+		return "pinned"
+	default:
+		return "notify"
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+//
+// NOTE: yaml.v3 also honours TextMarshaler — a struct that yaml-marshals this
+// type will now emit the name, not the int. The storage/config DTOs use
+// plain strings; keep it that way.
+//
+// Out-of-range values marshal as the default name ("notify"), not an error —
+// this is String()'s pre-existing behaviour, preserved on purpose (unlike
+// LinkMethod/VerifyTier, which reject).
+func (p UpdatePolicy) MarshalText() ([]byte, error) { return []byte(p.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (p *UpdatePolicy) UnmarshalText(b []byte) error {
+	switch string(b) {
+	case "notify":
+		*p = UpdateNotify
+	case "auto":
+		*p = UpdateAuto
+	case "pinned":
+		*p = UpdatePinned
+	default:
+		return fmt.Errorf("unknown update policy %q", b)
+	}
+	return nil
+}
+
 // ModFile represents a single file within a mod archive (after extraction)
 type ModFile struct {
-	Path     string // Relative path within mod archive
-	Size     int64
-	Checksum string // SHA256
+	Path     string `json:"path"` // Relative path within mod archive
+	Size     int64  `json:"size"`
+	Checksum string `json:"checksum"` // SHA256
 }
 
 // DownloadableFile represents a file available for download from a mod source
 type DownloadableFile struct {
-	ID          string // Source-specific file ID
-	Name        string // Display name
-	FileName    string // Actual filename (e.g., "mod-1.0.zip")
-	Version     string // File version
-	Size        int64  // Size in bytes
-	IsPrimary   bool   // Whether this is the primary/main file
-	Category    string // Category: "MAIN", "OPTIONAL", "UPDATE", etc.
-	Description string // File description
-	SHA256      string // Expected SHA-256 of the download (hex); empty = source declares no checksum
+	ID          string `json:"id"`                    // Source-specific file ID
+	Name        string `json:"name"`                  // Display name
+	FileName    string `json:"file_name"`             // Actual filename (e.g., "mod-1.0.zip")
+	Version     string `json:"version"`               // File version
+	Size        int64  `json:"size"`                  // Size in bytes
+	IsPrimary   bool   `json:"is_primary"`            // Whether this is the primary/main file
+	Category    string `json:"category,omitempty"`    // Category: "MAIN", "OPTIONAL", "UPDATE", etc.
+	Description string `json:"description,omitempty"` // File description
+	SHA256      string `json:"sha256,omitempty"`      // Expected SHA-256 of the download (hex); empty = source declares no checksum
+	// UploadedAt is when the source published this file (or, for a source
+	// whose "files" are versions, that version), for the install picker's
+	// date column (#433). Zero when the source reports none; omitzero, so
+	// such a file's document is unchanged.
+	UploadedAt time.Time `json:"uploaded_at,omitzero"`
 }
 
 // EffectiveInstalledVersion resolves the version string that describes what
@@ -77,55 +119,165 @@ func EffectiveInstalledVersion(modVersion string, selected []*DownloadableFile) 
 
 // ModReference is a pointer to a mod (used in profiles, dependencies)
 type ModReference struct {
-	SourceID string   `yaml:"source_id"`          // "nexusmods", "curseforge", etc.
-	ModID    string   `yaml:"mod_id"`             // Source-specific identifier
-	Version  string   `yaml:"version"`            // The installed-version record (#94/#96): always stamped by installs, moved by updates, converged to by deploy. When Locked, also the lock's target.
-	FileIDs  []string `yaml:"file_ids,omitempty"` // Source-specific file IDs that were installed
-	Locked   bool     `yaml:"locked,omitempty"`   // #97 lock marker: lmm update refuses this mod; Version is the lock's target. Set/cleared only by lock/unlock; survives UpsertMod (in-place update) and export/import.
+	SourceID string   `yaml:"source_id" json:"source_id"`                   // "nexusmods", "curseforge", etc.
+	ModID    string   `yaml:"mod_id" json:"mod_id"`                         // Source-specific identifier
+	Version  string   `yaml:"version" json:"version,omitempty"`             // The installed-version record (#94/#96): always stamped by installs, moved by updates, converged to by deploy. When Locked, also the lock's target.
+	FileIDs  []string `yaml:"file_ids,omitempty" json:"file_ids,omitempty"` // Source-specific file IDs that were installed
+	Locked   bool     `yaml:"locked,omitempty" json:"locked,omitempty"`     // #97 lock marker: lmm update refuses this mod; Version is the lock's target. Set/cleared only by lock/unlock; survives UpsertMod (in-place update) and export/import.
+
+	// Disabled is the #431 per-profile "listed here, but switched off"
+	// marker: the profile document is the desired state a converge run
+	// restores, so the intent has to live HERE and not only in the
+	// installed_mods row, which every profile switch overwrote and no
+	// export ever carried. Set/cleared only by DisableMod/EnableMod, the
+	// same rule Locked follows; UpsertMod preserves it, so an
+	// install/update/converge write can never silently switch a mod back on.
+	//
+	// ABSENT MEANS ENABLED. That is the invariant every profile file
+	// written before this field existed already satisfies, and it is why
+	// this is a plain bool named for the OFF state rather than the
+	// `Enabled *bool` the field could also have been: a value type keeps
+	// ModReference copyable and comparable (it is passed by value
+	// everywhere, and a *bool shared between two copies is an aliasing bug
+	// waiting to happen), the zero value already means "enabled" with no
+	// nil-check at any read site, and `omitempty` then guarantees that a
+	// profile file or an export produced before this change stays
+	// byte-identical - nothing is written until someone actually disables
+	// a mod, and nothing rewrites a hand-edited file to add the key.
+	//
+	// The two tags are deliberately different words for the same intent.
+	// yaml.v3's `omitempty` drops a false bool; encoding/json/v2's does
+	// NOT (it omits only empty strings, objects, arrays and null - which
+	// is why Locked, tagged omitempty, still marshals as "locked": false
+	// in every recorded golden). `omitzero` is json/v2's spelling of the
+	// rule this field needs, the same one External already uses, and it is
+	// what keeps every `--json` document that carries a ModReference
+	// byte-identical until a mod is actually disabled.
+	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitzero"`
+
+	// External and UpdatedAt are DISPLAY facts a plan document carries so a
+	// renderer never has to print Version raw (#365, part of #269).
+	//
+	// A Steam Workshop item's Version is Steam's 19-digit content id - its
+	// version IDENTITY, and not a version anybody can read - so no
+	// human-facing surface may print it (issue 269's approval note). The
+	// listing documents solved that with domain.InstalledMod.External plus
+	// the mod's UpdatedAt; the PLAN documents (core.ProfileSyncPlan,
+	// core.ImportPlan, core.SwitchPlan.ToInstall, ...) are bare
+	// ModReferences, which carried neither, so their renderers had no way to
+	// tell an external ref from a managed one and printed the content id.
+	//
+	// They are marked `yaml:"-"`: a profile FILE records what to install,
+	// not how to draw it, so an export is byte-identical to every export
+	// made before this and an import fills them in from the world it is
+	// being imported into. In JSON they are omitzero, so every document that
+	// does not carry one is byte-identical too. Core stamps them (see
+	// Service.stampRefDisplay); nothing else may - a ref a caller built by
+	// hand simply renders as it always did.
+	External  bool      `yaml:"-" json:"external,omitzero"`
+	UpdatedAt time.Time `yaml:"-" json:"updated_at,omitzero"`
+	// DisplayVersion is Mod.DisplayVersion for the ref (#458): set when
+	// Version is a Workshop content id, whether lmm tracks the item or
+	// downloaded it itself.
+	DisplayVersion string `yaml:"-" json:"display_version,omitempty"`
 }
 
 // Mod represents a mod from any source
 type Mod struct {
-	ID           string
-	SourceID     string
-	Name         string
-	Version      string
-	Author       string
-	Summary      string
-	Description  string
-	GameID       string
-	Category     string
-	Downloads    int64
-	Endorsements *int64
-	PictureURL   string // Main image URL (e.g. NexusMods picture_url)
-	SourceURL    string // Web page URL (e.g. CurseForge mod page)
-	Files        []ModFile
-	Dependencies []ModReference
-	UpdatedAt    time.Time
+	ID       string `json:"id"`
+	SourceID string `json:"source_id"`
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	Author   string `json:"author"`
+	// AuthorName is Author as a person reads it, where the source's author
+	// field is an opaque id (#420: a Steam Workshop creator's steamid64
+	// resolves to its persona name). Empty when Author is already a name
+	// or no name resolved - a surface shows AuthorName when set and Author
+	// otherwise. Never stored.
+	AuthorName   string         `json:"author_name,omitempty"`
+	Summary      string         `json:"summary"`
+	Description  string         `json:"description"`
+	GameID       string         `json:"game_id"`
+	Category     string         `json:"category"`
+	Downloads    int64          `json:"downloads"`
+	Endorsements *int64         `json:"endorsements,omitempty"`
+	PictureURL   string         `json:"picture_url"` // Main image URL (e.g. NexusMods picture_url)
+	SourceURL    string         `json:"source_url"`  // Web page URL (e.g. CurseForge mod page)
+	Files        []ModFile      `json:"files"`
+	Dependencies []ModReference `json:"dependencies"`
+	UpdatedAt    time.Time      `json:"updated_at,omitzero"`
+	// DisplayVersion is what a surface shows in a version's place when
+	// Version is not a version a person reads (#458): a Steam Workshop
+	// item's Version is Steam's content id whether lmm tracks the item
+	// (Tier 1) or downloaded it itself (Tier 3), and the item is shown by
+	// its revision date, YYYY-MM-DD - or "-" when lmm has no date for it.
+	// Empty for every other mod, whose Version is its display. Core stamps
+	// it on the documents it returns; it is never stored.
+	DisplayVersion string `json:"display_version,omitempty"`
+	// ManualOnly reports that the source will not serve this mod's files
+	// through its API: they can only be downloaded by hand from its page
+	// and installed with "Update from file" (#543). A source sets it from
+	// its own classification when it has one (CurseForge's
+	// allowModDistribution: false); core sets it on an installed row once
+	// the source has refused a download of the mod (source.ErrManualDownload)
+	// or classified it so, and clears it when the source serves one. Not a
+	// column of the row - core stamps it from its own record of the fact,
+	// which outlives the row so an install the source refused carries it to
+	// the from-file install that follows. omitzero, so every document for a
+	// mod its source serves is byte-identical to what it was before.
+	ManualOnly bool `json:"manual_only,omitzero"`
 }
 
 // InstalledMod tracks a mod installed in a profile
 type InstalledMod struct {
 	Mod
-	ProfileName     string
-	UpdatePolicy    UpdatePolicy
-	InstalledAt     time.Time
-	Enabled         bool       // User intent: wants this mod active
-	Deployed        bool       // Current state: files are in game directory
-	PreviousVersion string     // Version before last update (for rollback)
-	PreviousFileIDs []string   // File IDs before last update (for rollback)
-	LinkMethod      LinkMethod // How the mod was deployed (symlink, hardlink, copy)
-	FileIDs         []string   // Source-specific file IDs that were downloaded
-	ManualDownload  bool       // True if mod requires manual download (CurseForge restricted, etc.)
-	ConvertPaks     bool       // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
+	ProfileName     string       `json:"profile_name"`
+	UpdatePolicy    UpdatePolicy `json:"update_policy"`
+	InstalledAt     time.Time    `json:"installed_at"`
+	Enabled         bool         `json:"enabled"`                     // User intent: wants this mod active
+	Deployed        bool         `json:"deployed"`                    // Current state: files are in game directory
+	PreviousVersion string       `json:"previous_version,omitempty"`  // Version before last update (for rollback)
+	PreviousFileIDs []string     `json:"previous_file_ids,omitempty"` // File IDs before last update (for rollback)
+	LinkMethod      LinkMethod   `json:"link_method"`                 // How the mod was deployed (symlink, hardlink, copy)
+	FileIDs         []string     `json:"file_ids,omitempty"`          // Source-specific file IDs that were downloaded
+	ManualDownload  bool         `json:"manual_download"`             // Adopted in place by `lmm import` scan mode (verify reads it so); the "source will not serve the file" fact is Mod.ManualOnly (#543)
+	ConvertPaks     bool         `json:"convert_paks"`                // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
+
+	// External marks a mod lmm TRACKS but never deploys: another agent
+	// (today, the Steam client for a Workshop item) owns its files where
+	// they sit, and the game loads them from there. lmm never links,
+	// copies, downloads, moves or removes an external mod's content
+	// (#269).
+	//
+	// Enabled keeps its meaning (user intent). Deployed is set true at
+	// adopt and no flow ever mutates it on an external mod - the field
+	// means "its files are where the game reads them", which for a
+	// Workshop item is true the moment Steam finished downloading it; any
+	// other choice makes `lmm status` report a permanent, un-actionable
+	// "not deployed" backlog.
+	//
+	// omitzero, so every document for an ordinary managed mod is
+	// byte-identical to what it was before this field existed.
+	External bool `json:"external,omitzero"`
+	// ExternalPath is the absolute directory that agent owns. Only
+	// meaningful when External; recorded at adopt time so no flow needs to
+	// re-scan Steam's libraries just to report where a mod lives.
+	ExternalPath string `json:"external_path,omitempty"`
+	// SkippedVersion is the pending update the user chose to skip (#542),
+	// without pinning the mod: an update check leaves out any offer that is
+	// not newer than it, so the skip lasts until the source publishes
+	// something newer. It is local UI state, kept on the installed row like
+	// UpdatePolicy and never written to a profile; an applied update clears
+	// it. Empty when nothing is skipped.
+	SkippedVersion string `json:"skipped_version,omitempty"`
 }
 
 // Update represents an available update for an installed mod
 type Update struct {
-	InstalledMod       InstalledMod
-	NewVersion         string
-	Changelog          string
-	FileIDReplacements map[string]string // Old file ID -> new file ID when a file was superseded (e.g. NexusMods FileUpdates)
+	InstalledMod       InstalledMod      `json:"installed_mod"`
+	NewVersion         string            `json:"new_version"`
+	Changelog          string            `json:"changelog,omitempty"`
+	FileIDReplacements map[string]string `json:"file_id_replacements,omitempty"` // Old file ID -> new file ID when a file was superseded (e.g. NexusMods FileUpdates)
 	// RecompileNeeded marks a DeployCompile mod whose deployed compile no
 	// longer matches the game's live base data.pak (#196, "the Friday
 	// problem": a weekly base-pak refresh silently reverts the tables a
@@ -133,14 +285,22 @@ type Update struct {
 	// equals InstalledMod.Version in this case - the mod itself hasn't
 	// changed, only the base pak has - so callers must not treat NewVersion
 	// as a real version bump when this is set.
-	RecompileNeeded bool
+	RecompileNeeded bool `json:"recompile_needed"`
 	// RecompileReason qualifies RecompileNeeded with why a recompile/resync
 	// is needed (#197 postsmoke UX fix): "base pak updated" when the
 	// merged/compiled fingerprint no longer matches current inputs, "not
 	// deployed" when the fingerprint still matches but the artifact is
 	// missing from the game directory (#197 I5's wedge case). Empty when
 	// RecompileNeeded is false.
-	RecompileReason string
+	RecompileReason string `json:"recompile_reason,omitempty"`
+	// Locked/LockedVersion mirror the profile ref's lock state for this
+	// entry (#289): stamped once by Service.CheckGameUpdates from a single
+	// profile read, so callers (cmd/lmm) never need their own scan of the
+	// profile's Mods to find out. LockedVersion is only meaningful (and only
+	// ever set) when Locked is true - the profile ref's own Version, which
+	// may differ from InstalledMod.Version.
+	Locked        bool   `json:"locked,omitempty"`
+	LockedVersion string `json:"locked_version,omitempty"`
 }
 
 // ModKey returns a unique lookup key for a mod: "sourceID:modID".

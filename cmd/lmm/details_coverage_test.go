@@ -1,0 +1,229 @@
+package main
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// detailsCoverage names, for every type in internal/core or cmd/lmm that
+// implements the unnamed `Details() any` extension point (jsonout.go's
+// errorDetails switches on it; it is the --json error envelope's "details"
+// field, Ruling 3), the test function that pins its exact wire shape.
+// Unit P's M7 review finding: a Details() type with no golden/test is
+// undetectable drift in the --json contract - a future change to what it
+// returns, or to its json tags, would pass silently. This is the ratchet:
+// TestDetailsTypesAreCovered walks both packages' go/ast for the method,
+// and a type with no entry here (or an entry naming a test function that no
+// longer exists) fails the build.
+var detailsCoverage = map[string]string{
+	// #353's adapter refusal: the game, the adapter and the remedy reach
+	// the envelope as data, so a frontend can act on the remedy.
+	"core.AdapterPreconditionError": "TestReportError_JSON_AdapterPreconditionError",
+	// #455: a game whose adapter is refused - the game and the adapter
+	// reach the envelope as data.
+	"core.AdapterRefusedError": "TestReportError_JSON_AdapterRefusedError",
+	// #373's ambiguous bare mod ID: the candidate sources reach the
+	// envelope as data, not only as the sentence.
+	"core.AmbiguousModError": "TestReportError_JSON_AmbiguousModError",
+	"core.ConflictError":     "TestReportError_JSON_ConflictError",
+	// #530: update-from-file's two refusals - the advertised and matched
+	// files, and the archive that needs a version - as data.
+	"core.ArchiveMismatchError":        "TestReportError_JSON_ArchiveMismatchError",
+	"core.ArchiveVersionRequiredError": "TestReportError_JSON_ArchiveVersionRequiredError",
+	// #513: a failed download carries the mod's page (and whether the
+	// source refuses automated downloads) as data, for the terminal's
+	// "Download it manually from" line and the web UI's "Open on <source>".
+	"core.DownloadError":          "TestReportError_JSON_DownloadError",
+	"core.ExternalModError":       "TestReportError_JSON_ExternalModError",
+	"core.GameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
+	// #410: a game whose identifier for a source is missing or malformed -
+	// the game and the source reach the envelope so the web UI can open
+	// the sources editor on that row.
+	"core.GameIdentifierError":  "TestReportError_JSON_GameIdentifierError",
+	"core.GameSourceInUseError": "TestReportError_JSON_GameSourceInUseError",
+	"core.GameSpecError":        "TestReportError_JSON_GameSpecError",
+	// #410: no local index and no way to build one - the community, the
+	// reason and, when a host is refusing to be asked, when it will be.
+	"core.IndexUnavailableError": "TestReportError_JSON_IndexUnavailableError",
+	// #427: SetGameModPath's refusal to strand deployed files, and the
+	// missing-mod_path refusal with its repair, reach the envelope as data.
+	"core.GameModPathInUseError": "TestReportError_JSON_GameModPathInUseError",
+	"core.ModPathMissingError":   "TestReportError_JSON_ModPathMissingError",
+	// #528: an install_path change refused because it is not a move of
+	// the whole folder - the counts and the profiles to purge, as data.
+	"core.GameInstallPathInUseError": "TestReportError_JSON_GameInstallPathInUseError",
+	// #529: the folder chooser's refusal - the path and the reason as data.
+	"core.DirectoryListError": "TestReportError_JSON_DirectoryListError",
+	// #359's plan-time loader precondition: the setup steps reach the
+	// envelope as DATA, so the web UI renders the same sentences the
+	// terminal prints instead of carrying its own copy in JavaScript.
+	"core.LoaderRequiredError": "TestReportError_JSON_LoaderRequiredError",
+	// #317's cross-process mutation refusal: the holder's pid/started_at
+	// reach the envelope as data, not only as the sentence.
+	"core.OperationInProgressError": "TestReportError_JSON_OperationInProgressError",
+	// #470: an apply that ran to the end with a failed mod - the whole
+	// result, per-mod outcomes included, reaches the envelope.
+	"core.ProfileApplyIncompleteError": "TestDoProfileApply_JSON_AFailedModIsTheEnvelope",
+	// #485: a profile import that saved its profile but could not install
+	// every requested mod carries the full import result on the error path.
+	"core.ProfileImportIncompleteError": "TestDoProfileImport_JSON_AFailedModIsTheEnvelope",
+	// #470's twin: a switch that ran to the end with a failed mod.
+	"core.ProfileSwitchIncompleteError": "TestDoProfileSwitch_JSON_AFailedModIsTheEnvelope",
+	"core.ProfileWarningsError":         "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
+	"core.SnapshotRestorePartialError":  "TestReportError_JSON_SnapshotRestorePartialError",
+	"core.SourceInUseError":             "TestReportError_JSON_SourceInUseError",
+	"core.TokenKeyError":                "TestReportError_JSON_TokenKeyError",
+	// #505: an update refused because its advertised file is gone upstream.
+	"core.UpdateTargetUnavailableError": "TestReportError_JSON_UpdateTargetUnavailableError",
+	// #269 Tier 3's download failure: the anonymous refusal, the
+	// unavailable item, the missing steamcmd and the unclassified tool
+	// failure all reach --json (and the SPA's failed-job envelope) as one
+	// shape.
+	"core.WorkshopFetchError": "TestReportError_JSON_WorkshopFetchError",
+	"sourceValidationError":   "TestReportError_JSON_SourceValidationError",
+	// #512: `install -y` with several hits and none named like the query -
+	// the candidates and the --id remedy reach the envelope as data.
+	"installNoExactMatchError": "TestReportError_JSON_InstallNoExactMatchError",
+}
+
+// TestDetailsTypesAreCovered enforces detailsCoverage: every type found to
+// implement Details() any must have a map entry, that entry's test
+// function must actually exist, and every map entry must correspond to a
+// type that was actually found (no stale entries once a type is deleted).
+func TestDetailsTypesAreCovered(t *testing.T) {
+	coreTypes, err := detailsTypes("../../internal/core", "core")
+	if err != nil {
+		t.Fatalf("parsing internal/core: %v", err)
+	}
+	cliTypes, err := detailsTypes(".", "")
+	if err != nil {
+		t.Fatalf("parsing cmd/lmm: %v", err)
+	}
+	// internal/serve introduces no Details() types yet (Task 3 is the
+	// skeleton; the JSON error envelope lands with api.go), but the ratchet
+	// covers it from here on per docs/plans/2026-08-30-serve-impl.md §Global
+	// Constraints, same as the doc-comment and boundary ratchets.
+	serveTypes, err := detailsTypes("../../internal/serve", "serve")
+	if err != nil {
+		t.Fatalf("parsing internal/serve: %v", err)
+	}
+	found := map[string]bool{}
+	for _, name := range append(append(coreTypes, cliTypes...), serveTypes...) {
+		found[name] = true
+	}
+
+	testFuncs, err := testFunctionNames(".")
+	if err != nil {
+		t.Fatalf("parsing cmd/lmm test files: %v", err)
+	}
+
+	for name := range found {
+		fn, ok := detailsCoverage[name]
+		if !ok {
+			t.Errorf("%s implements Details() any but has no entry in detailsCoverage (add a named test pinning its wire shape)", name)
+			continue
+		}
+		if !testFuncs[fn] {
+			t.Errorf("%s's covering test %s no longer exists in cmd/lmm's test files", name, fn)
+		}
+	}
+	for name := range detailsCoverage {
+		if !found[name] {
+			t.Errorf("detailsCoverage has a stale entry %q: no type implementing Details() any was found for it - delete the entry", name)
+		}
+	}
+}
+
+// detailsTypes parses every non-test .go file directly under dir and
+// returns the receiver type name (prefixed with "pkg." when prefix is
+// non-empty) of every method named Details with no parameters and a single
+// `any` result.
+func detailsTypes(dir, prefix string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	fset := token.NewFileSet()
+	var found []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+
+		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != "Details" || fn.Recv == nil || len(fn.Recv.List) != 1 {
+				continue
+			}
+			if fn.Type.Params != nil && len(fn.Type.Params.List) != 0 {
+				continue
+			}
+			if fn.Type.Results == nil || len(fn.Type.Results.List) != 1 {
+				continue
+			}
+			resultIdent, ok := fn.Type.Results.List[0].Type.(*ast.Ident)
+			if !ok || resultIdent.Name != "any" {
+				continue
+			}
+
+			recvType := fn.Recv.List[0].Type
+			if star, ok := recvType.(*ast.StarExpr); ok {
+				recvType = star.X
+			}
+			ident, ok := recvType.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			if prefix != "" {
+				found = append(found, prefix+"."+ident.Name)
+			} else {
+				found = append(found, ident.Name)
+			}
+		}
+	}
+	return found, nil
+}
+
+// testFunctionNames parses every _test.go file directly under dir and
+// returns the set of top-level (non-method) func names declared there.
+func testFunctionNames(dir string) (map[string]bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	fset := token.NewFileSet()
+	names := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+
+		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil {
+				continue
+			}
+			names[fn.Name.Name] = true
+		}
+	}
+	return names, nil
+}

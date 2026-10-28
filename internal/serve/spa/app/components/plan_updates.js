@@ -1,0 +1,197 @@
+// plan_updates.js - the confirm modal's renderer for the "updates" batch
+// kind (core.UpdateBatchPlan, served by kind_updates.go), replacing
+// GenericPlanView for this one kind (issue 330 carry-3, issue 332):
+// checkboxes to drop a row, a per-item tally, and NotFound rows named
+// rather than silently absorbed into the count.
+//
+// A batch plan IS a selection (core.UpdateBatchPlan's own doc comment: the
+// items are re-planned one at a time inside the apply, so the batch plan
+// carries the chosen updates rather than N pre-computed single-mod plans),
+// so "dropping a row" can only mean re-planning with a smaller selection:
+// PlanUpdateBatch computes plan.Updates once, at Plan time, and
+// ApplyUpdateBatch just walks it - there is no apply-time filter option to
+// smuggle a drop through (issue 332's review confirmed there is none to
+// add). So unchecking a row calls actions.openPlan again, with the
+// SAME kind/origin/title/confirmLabel modal.js already opened this with
+// (threaded down as `modal`, confirmplan.js's own addition for this file)
+// and a `mods` list one entry shorter - a fresh plan_id, same modal slot,
+// same "confirm redeems a handle" contract every other kind already has.
+// The unstarted `plan_id` this replaces simply expires on the plan store's
+// own TTL, same as a Cancelled plan always has.
+
+import { html } from "../render.js";
+import {
+  EXTERNAL_UPDATE_NOTE,
+  MANUAL_UPDATE_NOTE,
+  isManualOnly,
+  lockedNote,
+  modKey,
+} from "../modrows.js";
+import { displayVersion, displayUpdateTarget } from "../version.js";
+import { PlanAdvanced, ApplyOption } from "./planoptions.js";
+
+/** rowKey identifies one UpdateBatchPlan row - the same "source:id" key
+ * the plan's own request/mods took, and NotFound already reports in. */
+function rowKey(update) {
+  return modKey(update.installed_mod);
+}
+
+export function UpdatesBatchPlanView({ plan, modal, actions }) {
+  const updates = plan.updates ?? [];
+  const notFound = plan.not_found ?? [];
+  // Owner item 3, unit 8 gate review: the confirm step's whole job is to say
+  // what will happen, and a locked row is one ApplyUpdateBatch will REFUSE
+  // (#97) rather than update. Rendering it as "1.0 → 2.0" like every other
+  // row promised an update that could not happen; the count is stated up
+  // front and the row itself says so instead of showing an arrow.
+  const lockedCount = updates.filter((u) => u.locked).length;
+  // issue 269: the same rule for an EXTERNAL row, which ApplyUpdateBatch
+  // declines outright (core.ReasonExternalNoUpdate). Defensive rather than
+  // reachable: neither control that opens this modal offers an external row a
+  // checkbox any more, so no batch this SPA plans should contain one. It is
+  // rendered honestly if one ever arrives - a plan document is whatever the
+  // server sent, and a renderer that only tells the truth about the inputs it
+  // expects is how the deploy dry run went wrong in the first place.
+  const externalCount = updates.filter((u) => u.installed_mod.external).length;
+  // issue 543: a MANUAL-ONLY row, which ApplyUpdateBatch declines with
+  // core.ReasonManualDownload. Like the external case no control here plans
+  // one on purpose, but a selection made before the source's refusal was
+  // recorded can still carry one, and the plan says so honestly. A locked
+  // row is counted under the lock instead, which core names first.
+  const manualCount = updates.filter(
+    (u) => !u.locked && !u.installed_mod.external && isManualOnly(u),
+  ).length;
+
+  /** drop re-plans with every CURRENTLY planned row except `key`. A no-op
+   * when it is the only row left - nothing meaningful for Confirm to apply
+   * to, so the checkbox simply can't be unchecked that far. */
+  function drop(key) {
+    const remaining = updates.map(rowKey).filter((k) => k !== key);
+    if (remaining.length === 0) return;
+    actions.openPlan({
+      kind: "updates",
+      origin: modal.origin,
+      title: modal.title,
+      confirmLabel: modal.confirmLabel,
+      options: { mods: remaining },
+      // Forwarded, not lost: a drop's own re-plan replaces this modal in
+      // place (same slot, fresh plan_id), and the caller's own "clear my
+      // selection once this is actually confirmed" (m4/I2) must survive
+      // that just as it survives every other re-render of this modal.
+      onConfirmed: modal.onConfirmed,
+      // Forwarded for the same reason (issue 334): a re-plan that dropped
+      // the modal's focus-return target would strand focus on the body.
+      openerSelector: modal.openerSelector,
+    });
+  }
+
+  return html`
+    <div class="plan plan--updates">
+      <p class="plan__summary">
+        ${`${updates.length} update${updates.length === 1 ? "" : "s"} selected.`}
+      </p>
+      ${
+        lockedCount > 0 &&
+        html`<h3 class="plan__heading plan__heading--warn">
+          ${`${lockedCount} of them will be skipped — locked.`}
+        </h3>`
+      }
+      ${
+        externalCount > 0 &&
+        html`<h3 class="plan__heading plan__heading--warn">
+          ${`${externalCount} of them will be skipped — Steam applies these itself.`}
+        </h3>`
+      }
+      ${
+        manualCount > 0 &&
+        html`<h3
+          class="plan__heading plan__heading--warn"
+          data-testid="updates-batch-manual"
+        >
+          ${`${manualCount} of them will be skipped — their source will not serve the file to lmm.`}
+        </h3>`
+      }
+      ${
+        updates.length > 0 &&
+        html`
+          <ul class="plan__paths" data-testid="updates-batch-rows">
+            ${updates.map((u) => {
+              const key = rowKey(u);
+              // ONE string per row rather than adjacent interpolations: htm
+              // collapses the whitespace between those, and at this indent
+              // Prettier is free to break the line in the middle of the arrow,
+              // which puts a real newline into the rendered text (the trap
+              // cards.js#conflictLabel documents).
+              //
+              // Locked is tested first because a row can be BOTH, and core
+              // gives the LOCKED wording precedence when it is
+              // (internal/core/update.go#planUpdateBase) - the two surfaces
+              // must agree on which reason they name.
+              const skipped =
+                u.locked ||
+                Boolean(u.installed_mod.external) ||
+                isManualOnly(u);
+              const detail = u.locked
+                ? `will be skipped — ${lockedNote(u)}`
+                : u.installed_mod.external
+                  ? `will be skipped — ${EXTERNAL_UPDATE_NOTE}`
+                  : isManualOnly(u)
+                    ? `will be skipped — ${MANUAL_UPDATE_NOTE}`
+                    : `${displayVersion(u.installed_mod)} → ${displayUpdateTarget(u)}`;
+              return html`
+                <li key=${key} class="plan__mod">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked
+                      disabled=${updates.length === 1}
+                      aria-label=${`Drop ${u.installed_mod.name} from this batch`}
+                      onChange=${() => drop(key)}
+                    />
+                    <span class="plan__mod-name">${u.installed_mod.name}</span
+                    >${" "}
+                    <span class="plan__mod-detail ${skipped ? "" : "mono"}"
+                      >${detail}</span
+                    >
+                  </label>
+                </li>
+              `;
+            })}
+          </ul>
+        `
+      }
+      ${
+        notFound.length > 0 &&
+        html`
+          <section class="plan__section">
+            <h3 class="plan__heading plan__heading--warn">
+              No longer offers an update (${notFound.length})
+            </h3>
+            <ul class="plan__paths">
+              ${notFound.map(
+                (key) => html`<li key=${key} class="mono">${key}</li>`,
+              )}
+            </ul>
+          </section>
+        `
+      }
+
+      <${PlanAdvanced}>
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_hooks"
+          label="Skip hooks"
+          hint="lmm --no-hooks."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="force"
+          label="Force"
+          hint="lmm --force. Carry on past a failure that would otherwise stop the flow."
+        />
+      <//>
+    </div>
+  `;
+}

@@ -1,0 +1,9 @@
+{
+  "profile_name": "cargo-ships",
+  "installed": 0,
+  "failed": 0,
+  "skipped": 1,
+  "notes": [
+    "1 item(s) are not subscribed: subscribe in Steam and re-run `lmm import --workshop`"
+  ]
+}

@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.30.1" "User Commands"
+.TH "LMM" "1" "Oct 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
 lmm-import - Import mods from local files or scan mod_path
@@ -13,15 +13,30 @@ lmm-import - Import mods from local files or scan mod_path
 Import mods from local files or scan for untracked mods.
 
 .PP
-Two distinct modes, chosen by whether an archive path is given:
+Three modes: scan (no arguments), archive (an archive path), and
+--workshop.
+
+.PP
+--workshop brings the Steam Workshop items you are already subscribed to
+under lmm's tracking. lmm reads Steam's own bookkeeping, records each
+item and checks it for updates - it never moves, copies or deletes a
+Workshop item's files: Steam owns them where they sit and the game loads
+them from there. Deploying, enabling, disabling, updating and rolling
+back are all refused for such a mod, and uninstalling one removes lmm's
+tracking only. It is mutually exclusive with an archive argument and with
+--skip-match (there is nothing to match: items are identified by their
+Steam published-file id, exactly).
+
+.PP
+The other two modes, chosen by whether an archive path is given:
 
 .PP
 Scan mode (no arguments): scans the game's mod_path for files not yet
 tracked by lmm, tries to match each one by name against the game's
 configured sources (skip with --skip-match), and imports whatever is
 left after confirmation. Useful for mods that were installed manually -
-e.g. mods whose author has disabled API downloads. --dry-run and
---skip-match only apply to this mode. Every mod imported this way is
+e.g. mods whose author has disabled API downloads. --skip-match only
+applies to this mode. Every mod imported this way is
 marked as requiring manual download (since lmm did not fetch it itself);
 re-link it to a source with 'lmm mod edit --source' to clear that once
 it can be checked for updates normally.
@@ -31,7 +46,21 @@ Archive mode (an archive path given): imports that one specific mod file,
 deploying it and adding it to the profile. Pass --id (with --source, or
 it resolves automatically when the game has exactly one configured
 source, or prompts interactively when it has several) to fetch and
-attach source metadata as part of the import.
+attach source metadata as part of the import. --dry-run previews it -
+the archive is listed, never extracted, so nothing is written.
+
+.PP
+Scan mode scores every candidate the sources return against the scanned
+name (and version, when the filename carries one) and adopts the best
+one, annotating anything short of an exact name match with its
+confidence. A name that nothing matches confidently enough stays local
+rather than being adopted as a similarly-named mod: a differing sequel
+number ("Sim Settlements 2" is never "Sim Settlements 3"), a
+single-letter difference in a short name, and a candidate carrying whole
+extra words ("SkyUI" is never "SkyUI Flashlite") are all refused. A
+catalogue name whose subtitle is set off by punctuation - "Ordinator -
+Perks of Skyrim", "HDT-SMP (Skinned Mesh Physics)" - still matches the
+short name the archive is called, as a probable match.
 
 .PP
 Either way, a mod that ends up unmatched to any remote source is
@@ -40,6 +69,8 @@ has nothing to check it against and will never notify about it.
 
 .PP
 Examples:
+  lmm import --workshop --game space-engineers-2   # Track subscribed Workshop items
+  lmm import --workshop --dry-run --game space-engineers-2
   lmm import --game hytale                    # Scan mod_path for untracked mods
   lmm import --game hytale --dry-run          # Preview what would be imported
   lmm import --game hytale --skip-match       # Scan without source lookup
@@ -69,6 +100,10 @@ Examples:
 	profile to import to (default: active profile)
 
 .PP
+\fB--refresh\fP[=false]
+	bypass cached source metadata (--workshop)
+
+.PP
 \fB--skip-match\fP[=false]
 	skip source lookup for untracked mods
 
@@ -76,14 +111,18 @@ Examples:
 \fB-s\fP, \fB--source\fP=""
 	source for update tracking (default: auto-detect or local)
 
+.PP
+\fB--workshop\fP[=false]
+	track the Steam Workshop items you are subscribed to (lmm never moves their files)
+
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
 \fB--config\fP=""
-	config directory (default: ~/.config/lmm)
+	config directory (default: $XDG_CONFIG_HOME/lmm or ~/.config/lmm)
 
 .PP
 \fB--data\fP=""
-	data directory (default: ~/.local/share/lmm)
+	data directory (default: $XDG_DATA_HOME/lmm or ~/.local/share/lmm)
 
 .PP
 \fB-g\fP, \fB--game\fP=""
@@ -91,7 +130,11 @@ Examples:
 
 .PP
 \fB--json\fP[=false]
-	output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)
+	output JSON instead of text; mutating commands print their result, --dry-run prints the plan; never prompts
+
+.PP
+\fB--log-level\fP="off"
+	diagnostic log level written to stderr (off, error, warn, info, debug)
 
 .PP
 \fB--no-color\fP[=false]
@@ -111,4 +154,4 @@ Examples:
 
 
 .SH HISTORY
-27-Jul-2026 Auto generated by spf13/cobra
+28-Oct-2026 Auto generated by spf13/cobra

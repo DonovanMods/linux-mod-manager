@@ -1,0 +1,9 @@
+{
+  "artifact": "zzz_LMM_Merged_P.pak",
+  "sources": [
+    "Bear Mount"
+  ],
+  "raw_fallbacks": [
+    "Opted Out Pak"
+  ]
+}

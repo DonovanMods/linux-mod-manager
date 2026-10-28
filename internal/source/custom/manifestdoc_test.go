@@ -26,6 +26,7 @@ mods:
         version: 1.2.0
         size: 123456
         url: https://example.com/files/cool-mod-1.2.0.zip
+        updated_at: 2026-07-02T03:04:05Z
         sha256: aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd
         primary: true
   - id: other-mod
@@ -50,6 +51,7 @@ func TestParseManifestYAML(t *testing.T) {
 	assert.Equal(t, "main", m.Files[0].ID)
 	assert.Equal(t, "cool-mod-1.2.0.zip", m.Files[0].Filename)
 	assert.Equal(t, int64(123456), m.Files[0].Size)
+	assert.Equal(t, "2026-07-02T03:04:05Z", m.Files[0].UpdatedAt)
 	assert.Equal(t, "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd", m.Files[0].SHA256)
 	assert.True(t, m.Files[0].Primary)
 }

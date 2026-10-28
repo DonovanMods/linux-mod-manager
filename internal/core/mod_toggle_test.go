@@ -1,0 +1,405 @@
+package core_test
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// --- EnableMod ---
+
+func TestService_EnableMod_DeploysDisabledMod(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, map[string][]byte{
+		"plugin.esp": []byte("data"),
+	})
+
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+	assert.NoError(t, err, "plugin.esp should be deployed to the game dir")
+
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.True(t, mod.Enabled)
+	assert.True(t, mod.Deployed, "#183: enabling a mod must also record it as deployed")
+}
+
+func TestService_EnableMod_AlreadyEnabledIsNoop(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{
+		"plugin.esp": []byte("data"),
+	})
+
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Changed)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+	assert.True(t, os.IsNotExist(err), "no-op enable must not deploy files")
+}
+
+func TestService_EnableMod_MissingCacheErrors(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	// Installed-mod record exists, but nothing was ever stored in the cache.
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, nil)
+
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "not found in cache")
+
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled, "DB must remain untouched when cache is missing")
+}
+
+func TestService_EnableMod_DeployFailurePropagatesAndLeavesDBUntouched(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, map[string][]byte{
+		"blocked/plugin.esp": []byte("data"),
+	})
+
+	// Block deployment deterministically (not permission-based, so this is
+	// stable under both root and non-root test runners): "blocked" already
+	// exists as a regular file, so the linker's os.MkdirAll(filepath.Dir(dst))
+	// fails, exercising the same failure family as
+	// TestInstaller_Install_DeployFailureRollsBackAndClearsDB.
+	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "blocked"), []byte("occupied"), 0644))
+
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to deploy mod")
+
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled, "DB must remain untouched on deploy failure")
+}
+
+func TestService_EnableMod_UnknownModReturnsErrModNotFound(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "missing")
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+}
+
+// --- DisableMod ---
+
+func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{
+		"plugin.esp": []byte("data"),
+	})
+
+	// Deploy the files first so there's something to undeploy (mirrors an
+	// install that happened earlier), and record the DB's deployed flag to
+	// match — seedInstalledMod doesn't set it, so this mirrors the real
+	// precondition DisableMod actually sees for a genuinely-deployed mod.
+	installer := svc.GetInstallerForTest(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", "g1", "default", true))
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	assert.Empty(t, result.Notes, "a clean undeploy must not record a diagnostic")
+
+	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+	assert.True(t, os.IsNotExist(err), "plugin.esp should be removed from the game dir")
+
+	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "1", "1.0"), "cache entry must be preserved")
+
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled)
+	assert.False(t, mod.Deployed, "#183: disabling a mod must also clear the deployed flag")
+}
+
+func TestService_DisableMod_AlreadyDisabledIsNoop(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, map[string][]byte{
+		"plugin.esp": []byte("data"),
+	})
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Changed)
+}
+
+// TestService_DisableMod_AlreadyDisabledSelfHealsStaleDeployedFlag pins
+// #183's self-heal follow-up: a mod disabled before the #183 fix shipped
+// (or otherwise drifted) can be stuck at enabled=false, deployed=true
+// forever, since nothing else clears the flag once a mod is already
+// disabled. Calling DisableMod again on it must converge deployed to
+// false, still succeed, and still report Changed=false (the enabled
+// status itself didn't change).
+func TestService_DisableMod_AlreadyDisabledSelfHealsStaleDeployedFlag(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, map[string][]byte{
+		"plugin.esp": []byte("data"),
+	})
+	require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", "g1", "default", true),
+		"simulate a pre-#183 disable that left the stale deployed=true flag behind")
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err, "self-healing the stale flag must still report success")
+	require.NotNil(t, result)
+	assert.False(t, result.Changed, "enabled status itself didn't change")
+
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Deployed, "#183: re-disabling an already-disabled mod must self-heal a stale deployed=true")
+}
+
+func TestService_DisableMod_UnknownModReturnsErrModNotFound(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "missing")
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+}
+
+// TestService_DisableMod_UndeployFailureIsNonFatal guards a deliberate
+// behavior-preservation decision (documented in the task report): the
+// pre-extraction CLI (doModDisable) treated Uninstall failures as non-fatal
+// ("warn but continue" under --verbose) because files may already have been
+// removed manually. DisableMod preserves the *functional* outcome — DB still
+// flips to disabled — even when undeploying fails, and (Task 6 item a)
+// records the historical diagnostic text in Notes rather than discarding it,
+// so a caller (cmd/lmm's doModDisable) can restore the pre-5a --verbose
+// warning byte-identically.
+func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{
+		"blocked/plugin.esp": []byte("data"),
+	})
+
+	installer := svc.GetInstallerForTest(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", "g1", "default", true),
+		"seed Deployed=true so the post-disable assertion below actually proves a transition")
+
+	// A regular file replacing lmm's symlink is user content under #483, so
+	// block traversal through its parent instead. Lstat/Undeploy then return
+	// ENOTDIR deterministically, which is an ordinary undeploy error.
+	deployedPath := filepath.Join(gameDir, "blocked", "plugin.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("not a directory"), 0644))
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err, "undeploy failures must not fail DisableMod")
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	require.Len(t, result.Notes, 1)
+	assert.Contains(t, result.Notes[0], "Warning: failed to undeploy some files: ",
+		"must carry the pre-5a historical prefix verbatim, matching UninstallResult's own convention")
+
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled, "DB should still flip to disabled even when undeploy is best-effort")
+	assert.False(t, mod.Deployed, "#183: the deployed flag must still clear to record intent, even when the undeploy itself was best-effort")
+}
+
+// TestService_DisableMod_SetModDeployedFailure_NonFatalNote pins the #183
+// fix's own failure-handling decision: a SetModDeployed(false) failure is
+// non-fatal, recorded as a Note, exactly like DisableMod's existing
+// Uninstall-failure handling and like PurgeProfile's own SetModDeployed
+// call (see TestService_PurgeProfile_SetModDeployedFailure_NonFatalNote) —
+// not escalated to a hard error the way SetModEnabled's own failure still
+// is. installBlockingTrigger blocks only the "deployed" column, so
+// SetModEnabled (a different column) still succeeds.
+func TestService_DisableMod_SetModDeployedFailure_NonFatalNote(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	installSeededMod(t, svc, game, "1")
+	installBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err, "a SetModDeployed failure must not fail DisableMod")
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	require.NotEmpty(t, result.Notes)
+	assert.Contains(t, strings.Join(result.Notes, "\n"), "could not mark as not deployed",
+		"Notes = %v, want one mentioning the SetModDeployed failure", result.Notes)
+
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled, "SetModEnabled touches a different column and must still succeed")
+}
+
+// TestService_EnableMod_SetModDeployedFailure_NonFatalNote is
+// TestService_DisableMod_SetModDeployedFailure_NonFatalNote's mirror for
+// the enable path.
+func TestService_EnableMod_SetModDeployedFailure_NonFatalNote(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, map[string][]byte{"plugin.esp": []byte("data")})
+	installBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err, "a SetModDeployed failure must not fail EnableMod")
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	require.NotEmpty(t, result.Notes)
+	assert.Contains(t, strings.Join(result.Notes, "\n"), "could not mark as deployed",
+		"Notes = %v, want one mentioning the SetModDeployed failure", result.Notes)
+
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.True(t, mod.Enabled, "SetModEnabled touches a different column and must still succeed")
+}
+
+// --- #431: the toggle flows write the profile document too ---
+
+// TestService_DisableThenEnable_RoundTripsTheProfileMarker pins the pair of
+// writes #431 rests on: disable records the off intent in the profile
+// document beside the DB row, and enable clears it, leaving a document
+// byte-identical to one that never carried the key.
+func TestService_DisableThenEnable_RoundTripsTheProfileMarker(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	profilePath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
+	before, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+
+	_, err = svc.DisableMod(ctx, game, "default", "src", "1")
+	require.NoError(t, err)
+
+	disabled, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	assert.Contains(t, string(disabled), "disabled: true")
+
+	_, err = svc.EnableMod(ctx, game, "default", "src", "1")
+	require.NoError(t, err)
+
+	after, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after), "enabling again must leave the document exactly as it was")
+}
+
+// TestService_DisableMod_ModNotInProfileIsNotADiagnostic guards the one
+// "nothing to record" case: an installed row whose profile never listed the
+// mod has no desired-state entry to mark, which is not a failure and must
+// not produce a note.
+func TestService_DisableMod_ModNotInProfileIsNotADiagnostic(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	assert.Empty(t, result.Notes)
+}
+
+// TestService_EnableMod_ClearsTheMarkerWhenTheRowAlreadySaysEnabled is the
+// fix-round F1 regression, and the coverage gap F10 named: the round trip
+// above only ever enables a mod whose ROW already says disabled, so
+// enableMod's already-enabled short-circuit - which returned before the
+// marker was cleared - was never reached by a test.
+//
+// "Document off, row on" is the drift `profile import --force`, `snapshot
+// restore`, a hand-edited profile and an explicit `lmm install` all
+// produce, and docs/configuration.md prescribes `lmm mod enable` as the way
+// back from it. That recovery used to run to completion, report success,
+// and leave the marker set - so the next converge run silently took the mod
+// away again, with no note at any step.
+func TestService_EnableMod_ClearsTheMarkerWhenTheRowAlreadySaysEnabled(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+	// The document alone says off - exactly what an imported or restored
+	// document leaves behind over a live enabled row.
+	require.NoError(t, pm.SetModDisabled(ctx, "g1", "default", "src", "1", true))
+
+	result, err := svc.EnableMod(ctx, game, "default", "src", "1")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Empty(t, result.Notes)
+
+	profile, err := pm.Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.False(t, profile.Mods[0].Disabled,
+		"`lmm mod enable` must clear the document's off marker even when the row already says enabled")
+
+	plan, err := svc.PlanProfileApply(ctx, game, "default")
+	require.NoError(t, err)
+	assert.Empty(t, plan.ToDisable, "and the next converge run must not take the mod away again")
+}

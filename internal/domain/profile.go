@@ -3,31 +3,31 @@ package domain
 // HookExplicitFlags tracks which hooks were explicitly set in profile config
 // This allows distinguishing between "not set" (inherit from game) and "set to empty" (disable)
 type HookExplicitFlags struct {
-	BeforeAll  bool
-	BeforeEach bool
-	AfterEach  bool
-	AfterAll   bool
+	BeforeAll  bool `json:"before_all"`
+	BeforeEach bool `json:"before_each"`
+	AfterEach  bool `json:"after_each"`
+	AfterAll   bool `json:"after_all"`
 }
 
 // GameHooksExplicit tracks which hooks were explicitly set
 type GameHooksExplicit struct {
-	Install   HookExplicitFlags
-	Uninstall HookExplicitFlags
+	Install   HookExplicitFlags `json:"install"`
+	Uninstall HookExplicitFlags `json:"uninstall"`
 }
 
 // Profile represents a collection of mods with a specific configuration
 type Profile struct {
-	Name       string            // Profile identifier
-	GameID     string            // Which game this profile is for
-	Mods       []ModReference    // Mods in load order (first = lowest priority)
-	Overrides  map[string][]byte // Config file overrides (path -> content)
-	LinkMethod LinkMethod        // Override game's default link method (optional)
+	Name       string            `json:"name"`        // Profile identifier
+	GameID     string            `json:"game_id"`     // Which game this profile is for
+	Mods       []ModReference    `json:"mods"`        // Mods in load order (first = lowest priority)
+	Overrides  map[string][]byte `json:"-"`           // Config file overrides (path -> content)
+	LinkMethod LinkMethod        `json:"link_method"` // Override game's default link method (optional)
 	// LinkMethodExplicit distinguishes "not set" (inherit from game/global) from an
 	// explicit "symlink", which is LinkMethod's zero value. Mirrors Game.LinkMethodExplicit.
-	LinkMethodExplicit bool
-	IsDefault          bool              // Is this the default profile for the game?
-	Hooks              GameHooks         // Profile-level hook overrides
-	HooksExplicit      GameHooksExplicit // Tracks which hooks were explicitly set
+	LinkMethodExplicit bool              `json:"link_method_explicit"`
+	IsDefault          bool              `json:"is_default"`     // Is this the default profile for the game?
+	Hooks              GameHooks         `json:"hooks"`          // Profile-level hook overrides
+	HooksExplicit      GameHooksExplicit `json:"hooks_explicit"` // Tracks which hooks were explicitly set
 }
 
 // FindRef returns a pointer into p.Mods for the reference matching
@@ -39,7 +39,7 @@ type Profile struct {
 // instead of guarding it separately.
 //
 // Consolidates what used to be five near-identical "scan profile.Mods for
-// one ref" loops (#97 review) spread across internal/core/flows.go,
+// one ref" loops (#97 review) spread across several internal/core files,
 // cmd/lmm/update.go, cmd/lmm/list.go, and cmd/lmm/mod.go, some of which used
 // inconsistent key-separator conventions ("|" vs ":") despite all meaning
 // the same domain.ModKey identity.
@@ -55,11 +55,32 @@ func (p *Profile) FindRef(sourceID, modID string) *ModReference {
 	return nil
 }
 
-// ExportedProfile is the YAML-serializable format for sharing
+// ExportedProfile is the JSON shape emitted by `lmm profile export --json`
+// (core.Service.ExportProfile, #309); the plain path still writes the YAML
+// document. Before #309 nothing emitted this type - its only production
+// role was as the decode intermediate inside config.ImportProfile - so a
+// reader looking for the emitter before this addendum would have found
+// none (unit Q review, M5). The YAML file `lmm profile export` writes is a
+// SEPARATE DTO, internal/storage/config's own exportedProfileYAML,
+// assembled from *Profile via config.ExportProfileValue: the hook pair
+// needs the profile file's *string-pointer encoding to keep "unset (inherit
+// from the game)" and "explicitly disabled" distinguishable (#296), which no
+// yaml tag on a GameHooks/GameHooksExplicit pair can express, so this type
+// carries no yaml tags at all - internal/storage/config owns that encoding
+// (parseProfileHooks/serializeProfileHooks) instead of yaml-marshalling this
+// type.
 type ExportedProfile struct {
-	Name       string            `yaml:"name"`
-	GameID     string            `yaml:"game_id"`
-	Mods       []ModReference    `yaml:"mods"`
-	LinkMethod string            `yaml:"link_method,omitempty"`
-	Overrides  map[string]string `yaml:"overrides,omitempty"` // path (relative to game install) -> file content
+	Name       string            `json:"name"`
+	GameID     string            `json:"game_id"`
+	Mods       []ModReference    `json:"mods"`
+	LinkMethod string            `json:"link_method,omitempty"`
+	Overrides  map[string]string `json:"overrides,omitempty"` // path (relative to game install) -> file content
+
+	// Hooks/HooksExplicit carry the profile's own hook overrides through an
+	// export/import round trip (#296): before this they were silently
+	// dropped, so a shared profile lost every `hooks:` override it had.
+	// HooksExplicit is what distinguishes an explicitly-disabled hook (set,
+	// empty) from an unset one (inherit) - see Profile's own pair.
+	Hooks         GameHooks         `json:"hooks"`
+	HooksExplicit GameHooksExplicit `json:"hooks_explicit"`
 }

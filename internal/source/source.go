@@ -3,9 +3,10 @@ package source
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // Token represents an OAuth token
@@ -21,6 +22,11 @@ type SearchResult struct {
 	TotalCount int // Total results available (0 if unknown)
 	Page       int
 	PageSize   int
+	// Warnings are problems that did NOT stop this source answering - a
+	// local index whose refresh failed, served from the copy on disk
+	// (#360 §2.4). The results are real; a frontend reports these beside
+	// them rather than instead of them. nil for almost every search.
+	Warnings []error
 }
 
 // SearchQuery contains parameters for searching mods.
@@ -31,6 +37,13 @@ type SearchQuery struct {
 	Tags     []string // Optional tag filters (source-specific)
 	Page     int
 	PageSize int
+	// Sort asks the source to order its hits by this key before it pages
+	// (#503), so page N is the right page rather than a reordered one. Empty
+	// or SortRelevance means the source's own order. A source that cannot
+	// sort server-side ignores it: core re-orders whatever page comes back,
+	// so the contract holds either way. Updated/downloads/popular are
+	// always descending.
+	Sort domain.SearchSort
 }
 
 // ModSource is the interface for mod repositories
@@ -56,10 +69,272 @@ type ModSource interface {
 	CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error)
 }
 
+// UpdateProgressFunc reports one per-mod tick during an update check:
+// n is the 1-based index within the batch handed to the source, total the
+// batch size.
+type UpdateProgressFunc func(n, total int, modName string)
+
+// UpdateProgressReporter is implemented by sources that check mods one at
+// a time and can report progress. Core uses it when present and falls
+// back to ModSource.CheckUpdates otherwise.
+type UpdateProgressReporter interface {
+	CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report UpdateProgressFunc) ([]domain.Update, error)
+}
+
+// RefreshingUpdateChecker is implemented by sources that cache remote
+// metadata on disk and can be asked to bypass that cache for one check -
+// what `lmm update --refresh` (and the SPA's refresh action) means for the
+// Steam Workshop source, whose keyless metadata is cached for hours by
+// design (#269).
+//
+// Core prefers it over CheckUpdatesWithProgress / CheckUpdates when a
+// source implements it, passing report through unchanged (nil when the
+// caller wants no progress). A source that does not implement it simply
+// never sees the flag, which is correct: it has no cache to bypass.
+type RefreshingUpdateChecker interface {
+	CheckUpdatesRefreshing(ctx context.Context, installed []domain.InstalledMod, refresh bool, report UpdateProgressFunc) ([]domain.Update, error)
+}
+
+// ChangelogProvider is implemented by sources that can supply a mod's
+// changelog text for a specific version - the same optional-capability
+// pattern as UpdateProgressReporter (#87). Core calls it when present and
+// leaves ModDetail.Changelog empty otherwise; a call error degrades to a
+// Note rather than failing the caller. Unlike Mod.Description (which stays
+// raw source markup all the way to `--json` by existing precedent, #86),
+// an implementation MUST return plain text - strip any markup itself (see
+// nexusmods.stripChangelogHTML) - so ModDetail.Changelog never needs
+// sanitizing by a downstream HTML renderer (e.g. a future `lmm serve` page).
+type ChangelogProvider interface {
+	Changelog(ctx context.Context, sourceGameID, modID, version string) (string, error)
+}
+
+// DescriptionFetcher is implemented by sources whose mod document carries no
+// full description, and that can supply one with a SECOND call (#246:
+// CurseForge's GET /v1/mods/{modId}/description - the mod response has only
+// a Summary, so since #235 Description came back empty).
+//
+// The extra round trip is why this is its own interface rather than
+// something GetMod does for itself: core consumes it from Service.ModDetail
+// and nowhere else, so it is paid once, for the ONE mod a user is looking
+// at, and never once per row in a search or an update check.
+//
+// Unlike ChangelogProvider, an implementation returns the source's own raw
+// markup (typically HTML), because that is what Mod.Description has always
+// carried all the way to `--json` (#86, ModDetail's own doc comment); the
+// terminal display path runs it through core.CleanChangelog. An
+// implementation MUST bound how much it reads, exactly as every other
+// source call does.
+type DescriptionFetcher interface {
+	Description(ctx context.Context, sourceGameID, modID string) (string, error)
+}
+
+// LocalFileServer marks a source that may legitimately return file:// download
+// URLs (a directory source). core refuses file:// URLs from any source that
+// does not implement it or whose ServesLocalFiles returns false: a remote
+// source (NexusMods, CurseForge, a compromised custom API/manifest source,
+// ...) returning file:// must never be trusted to read arbitrary paths off
+// disk into the cache (#300).
+type LocalFileServer interface{ ServesLocalFiles() bool }
+
+// WorkshopScan is one WorkshopScanner answer: the local roots that actually
+// held bookkeeping for the requested game, every item they declare, and the
+// non-fatal diagnostics collected on the way (an unreadable or damaged
+// manifest warns against that one file rather than failing the scan).
+type WorkshopScan struct {
+	Roots    []string
+	Items    []domain.WorkshopItem
+	Warnings []string
+}
+
+// WorkshopScanner is implemented by sources whose content is installed and
+// owned by ANOTHER agent on the user's machine - today, the Steam client
+// for a Workshop item (#269). Such a source discovers what is installed by
+// reading that agent's own on-disk bookkeeping, not by asking a remote API,
+// and core adopts the result as EXTERNAL mods (domain.InstalledMod.External)
+// it tracks but never deploys.
+//
+// It is the same optional-capability pattern as MergeCompiler: core type-
+// asserts for it and does nothing workshop-specific when a source does not
+// implement it, so internal/core never imports the concrete source package.
+// sourceGameID is the source's own game identifier from
+// domain.Game.SourceIDs (for Steam Workshop, the decimal app id).
+type WorkshopScanner interface {
+	ScanWorkshopItems(ctx context.Context, sourceGameID string) (WorkshopScan, error)
+}
+
+// ModDescription is one BatchModDescriber answer. Unavailable marks a mod
+// the source will not describe at all - delisted, deleted or private - with
+// Note explaining it in one sentence; Mod is the zero value in that case.
+// It is a per-item FACT, never an error: one dead item in a batch of thirty
+// must not blind the other twenty-nine.
+type ModDescription struct {
+	ModID       string
+	Mod         domain.Mod
+	Unavailable bool
+	Note        string
+}
+
+// AuthorNameCache is implemented by sources whose Mod.Author is an opaque
+// id with a display name behind it (#420: Steam Workshop). It answers from
+// what the source has already resolved - no request of any kind - so core
+// can name the authors of installed rows on a listing without a network
+// call; ids it has no name for are simply absent from the map.
+type AuthorNameCache interface {
+	CachedAuthorNames(authors []string) map[string]string
+}
+
+// AuthorNameResolver is implemented by sources that can resolve opaque
+// author IDs to display names. Resolution may make network requests, so core
+// uses it only for detail reads; mutations use AuthorNameCache when present.
+// Implementations update the supplied mods in place and never fail their
+// caller solely because a name cannot be resolved.
+type AuthorNameResolver interface {
+	ResolveAuthorNames(ctx context.Context, mods []*domain.Mod)
+}
+
+// BatchModDescriber is implemented by sources that can resolve MANY mods'
+// metadata in one round trip, so a flow with a list of ids in hand does not
+// have to make one GetMod call per id (#269: a workshop adopt routinely has
+// thirty subscribed items to describe, and Valve's endpoint takes a hundred
+// per request).
+//
+// refresh asks the source to bypass any local metadata cache, the same
+// meaning it has on RefreshingUpdateChecker. The result has one entry per
+// requested id, in the order given. An error means the source could not be
+// reached at all.
+type BatchModDescriber interface {
+	DescribeMods(ctx context.Context, sourceGameID string, modIDs []string, refresh bool) ([]ModDescription, error)
+}
+
+// Collection is one CollectionResolver answer: a published list of items
+// on the source, in the order its author sequenced them. Name is
+// best-effort (a source that cannot name a collection still resolves one);
+// URL is the collection's own page, for a frontend that wants to link it.
+type Collection struct {
+	ID      string
+	Name    string
+	URL     string
+	ItemIDs []string
+}
+
+// CollectionResolver is implemented by sources that publish CURATED LISTS
+// of their own items - today, a Steam Workshop collection (#269 Tier 2).
+//
+// A collection is a mod list, which is what an lmm profile is, so core
+// consumes this as an INPUT to the existing profile-import flow rather
+// than as a search result: `lmm profile import --workshop-collection
+// <id|url>` builds an exported-profile document out of the ids and hands
+// it to PlanImport unchanged. ref is whatever the user supplied - an id, a
+// URL - and the source decides what it recognises.
+//
+// Same optional-capability pattern as WorkshopScanner: core type-asserts
+// for it, so internal/core never imports a concrete source package.
+type CollectionResolver interface {
+	ResolveCollection(ctx context.Context, ref string) (Collection, error)
+}
+
+// FetchProgressFunc reports one tick of a Fetcher's progress. phase is one
+// of the FetchPhase* constants below, detail a short human sentence the
+// frontend can print verbatim, and bytes the amount retrieved so far (0
+// when the fetch cannot say). It is always safe to call: core hands
+// Fetchers a non-nil function.
+//
+// Calls are SERIALIZED: a Fetcher must never deliver two ticks
+// concurrently, however many producers it has internally. Core forwards
+// each one straight into a core.EventSink, which is documented as being
+// called synchronously on the operation's goroutine, so a sink is entitled
+// to keep plain state - a spinner frame, a \r-overwrite length - with no
+// lock of its own.
+type FetchProgressFunc func(phase, detail string, bytes int64)
+
+// The FetchPhase* vocabulary a Fetcher reports progress in. It is
+// deliberately generic - a Fetcher describes the shape of its work, not
+// which flow asked for it - and core maps each one onto the DeployPhase
+// its own event stream carries.
+const (
+	// FetchPhaseStarted fires once, before any bytes move.
+	FetchPhaseStarted = "started"
+	// FetchPhaseProgress fires repeatedly while the fetch runs. A Fetcher
+	// whose underlying tool reports nothing must still tick on a timer:
+	// a silent multi-gigabyte download is the worst possible readout.
+	FetchPhaseProgress = "progress"
+	// FetchPhaseDone fires once, after the content is fully on disk.
+	FetchPhaseDone = "done"
+)
+
+// Fetcher is implemented by sources whose files cannot be retrieved by an
+// HTTP GET of a URL - today the Steam Workshop's anonymous steamcmd
+// shell-out (#269 Tier 3), which is a subprocess, not a URL.
+//
+// Core prefers GetDownloadURL and falls back to Fetch ONLY when the source
+// returns ErrNotSupported from it: a Fetcher that also serves URLs (the
+// Workshop's legacy file_url items do) keeps the ordinary download path,
+// with its retries, its progress ticks and its checksum verification.
+//
+// The contract. Core ENFORCES the returned-path rule and guarantees the
+// three it makes to the implementation; writing only inside destDir is the
+// implementation's own obligation, which core does not verify:
+//
+//   - destDir is created by CORE, under its own staging root, and is owned
+//     by core: the implementation writes into it and nothing else. Core
+//     removes it either way, so a failed fetch leaves nothing behind.
+//   - The returned path MUST be inside destDir (a file or a directory).
+//     Core REFUSES anything else, symlinks resolved on both sides, so a
+//     Fetcher never gains the ability to name an arbitrary path on disk -
+//     the same rule LocalFileServer's file:// gate applies to URLs (#300).
+//   - mod.GameID is the SOURCE's own game identifier (domain.Game.SourceIDs;
+//     for Steam Workshop, the decimal app id), already translated by core,
+//     exactly as GetMod receives it.
+//   - progress is never nil, and its calls are serialized - see
+//     FetchProgressFunc.
+type Fetcher interface {
+	Fetch(ctx context.Context, mod *domain.Mod, fileID, destDir string, progress FetchProgressFunc) (string, error)
+}
+
+// ExactFileSizer marks a source whose DownloadableFile.Size is an EXACT
+// byte count of the file that will be served, so core can verify a
+// completed download against it and fail loudly on a short or truncated
+// body (#269 Tier 3: Valve reports a Workshop item's file_size to the
+// byte, and the legacy file_url CDN has no checksum to check instead).
+//
+// Opt-in rather than universal because most sources' declared sizes are
+// advisory - rounded, stale, or absent - and turning those into a hard
+// install failure would break working installs for no gain. Same one-method
+// optional-capability shape as LocalFileServer.
+type ExactFileSizer interface{ ExactFileSizes() bool }
+
+// ErrInvalidReference indicates a source could not make sense of a
+// user-supplied REFERENCE - a collection id or URL, today (#269 W2). It is
+// the caller's input being wrong, not the source failing, so a frontend
+// answers it as bad input (the HTTP 400 shape) rather than as an upstream
+// error, and core classifies it for a frontend that may not import this
+// package (core.IsBadCollectionRef).
+var ErrInvalidReference = errors.New("reference not recognised by this source")
+
 // ErrNotSupported indicates a source does not support the requested operation.
 // Callers should branch with errors.Is(err, ErrNotSupported) and degrade
 // gracefully (hide the action, show a notice) rather than treat it as a failure.
 var ErrNotSupported = errors.New("operation not supported by this source")
+
+// ErrManualDownload classifies a download a source will not serve through
+// its API - a mod author who has opted out of third-party distribution, for
+// one - so the file has to be fetched by hand from the mod's page (#513).
+// Branch with errors.Is; a source returns a *ManualDownloadError so its own
+// sentence survives.
+var ErrManualDownload = errors.New("this mod's file can only be downloaded manually")
+
+// ManualDownloadError is the error a source returns for ErrManualDownload,
+// with its own explanation as the text.
+type ManualDownloadError struct {
+	// Reason is the sentence the user reads.
+	Reason string
+}
+
+// Error is Reason.
+func (e *ManualDownloadError) Error() string { return e.Reason }
+
+// Is makes errors.Is(err, ErrManualDownload) true.
+func (e *ManualDownloadError) Is(target error) bool { return target == ErrManualDownload }
 
 // Capabilities reports which optional operations a source supports.
 type Capabilities struct {
@@ -73,6 +348,25 @@ type Capabilities struct {
 	// version data yields ErrNotSupported even when this is true (see
 	// core.ResolveVersionFiles).
 	Versions bool
+	// Sorts are the orderings other than relevance (domain.SortUpdated,
+	// SortDownloads, SortPopular) that are MEANINGFUL for this source's
+	// hits: the source fills in the field - UpdatedAt, Downloads,
+	// Endorsements - that the sort keys on. A source that also honours
+	// SearchQuery.Sort lists the same value; it needs no separate flag,
+	// because core orders every result list itself either way (#503).
+	// Frontends offer a sort only when some searched source lists it, so a
+	// sort that would order every hit by a field that is always empty is
+	// never shown. Relevance is implicit and never listed.
+	Sorts []domain.SearchSort
+}
+
+// SupportsSort reports whether c lists sort. Relevance (and the empty
+// default) is supported by every source.
+func (c Capabilities) SupportsSort(sort domain.SearchSort) bool {
+	if sort == "" || sort == domain.SortRelevance {
+		return true
+	}
+	return slices.Contains(c.Sorts, sort)
 }
 
 // CapabilityReporter is implemented by sources that support only a subset of
@@ -104,6 +398,32 @@ type GameEntry struct{ ID, Name, Slug string }
 // game-creation flows. Absent: manual identifier entry.
 type GameCatalog interface {
 	ListGames(ctx context.Context) ([]GameEntry, error)
+}
+
+// GameIdentifierIgnorer is implemented by a source whose per-game mapped
+// value (games.yaml's `sources: {<id>: <value>}`) addresses nothing, so an
+// EMPTY mapping is a legitimate configuration rather than a value the user
+// left out - a directory source scans a path and never consults it (the
+// README's "directory sources ignore this value").
+//
+// Absent: the value is required. That is the safe default for a source
+// whose behaviour is unknown, and the one every built-in takes: NexusMods'
+// game slug and Steam Workshop's appid are required even though neither
+// offers a GameCatalog to pick them from.
+type GameIdentifierIgnorer interface{ IgnoresGameIdentifier() bool }
+
+// IgnoresGameIdentifier reports whether src ignores the value a game maps
+// it to, which is what makes an empty mapping legitimate for it (#387, P1b
+// review F5). Mirrors CapabilitiesOf's optional-interface pattern; a source
+// implementing no GameIdentifierIgnorer requires the value.
+//
+// Deliberately NOT "does this source have a GameCatalog": having nothing to
+// look an identifier up IN says nothing about whether the source needs one.
+func IgnoresGameIdentifier(src ModSource) bool {
+	if r, ok := src.(GameIdentifierIgnorer); ok {
+		return r.IgnoresGameIdentifier()
+	}
+	return false
 }
 
 // TypeLabeler names the source's kind for listings (directory/manifest/api/
@@ -143,115 +463,150 @@ type DownloadHeaderProvider interface {
 	DownloadHeaders(fileURL string) map[string]string
 }
 
-// MergeCompiler is implemented by sources whose compile-eligible files must
-// be merged across every enabled mod into ONE profile-level artifact rather
-// than compiled per-mod (#197: Icarus's cross-mod table merge - a whole-pak
-// last-wins deploy would silently drop one mod's table rows whenever two
-// mods patch the same table). Replaces #196's Compiler interface, which
-// this source no longer implements: there is no more per-mod compiled
-// artifact to produce.
+// IndexStatus describes a source's local search index for one game (#360).
+// The zero value means "no index here", which is what a source with nothing
+// on disk reports.
+type IndexStatus struct {
+	GameID    string    // the source's own game id (a Thunderstore community slug)
+	Present   bool      // an index is on disk and usable
+	Packages  int       // how many packages it holds
+	FetchedAt time.Time // when the copy on disk was last confirmed current
+	Bytes     int64     // on-disk footprint
+	Stale     bool      // present, but past its TTL
+}
+
+// IndexProgressFunc reports one tick while an index is being built. phase is
+// one of the FetchPhase* constants above, detail a short human sentence the
+// frontend can print verbatim, and bytes the amount retrieved so far (0 when
+// the source cannot say).
 //
-// This interface is the complete contract a DeployCompile game must
-// implement (#256): the merge operations (ValidateSource, MergeCompile)
-// plus the format vocabulary core needs to orchestrate them without knowing
-// the game's artifact format itself - where the base artifact lives
-// (ResolveBaseArtifact), how to fingerprint it (FingerprintBase), which
-// files are the source's native merge format (IsNativeMergeSource), which
-// are convertible raw artifacts (IsConvertibleArtifact,
-// ClassifyMergeSource), what the merged output is called
-// (MergedArtifactName, MergedArtifactLabel), and what a healed raw-fallback
-// copy is called (RestoredArtifactName). A second compile-mode game is
-// a new source package implementing these methods plus one registration
-// line; internal/core never changes.
-type MergeCompiler interface {
-	// ValidateSource parses/validates sourceFilePath (the retained,
-	// not-yet-merged source archive) without compiling anything - called at
-	// ingest time (download/import) so a malformed archive fails loud
-	// immediately rather than at the next merge.
-	ValidateSource(sourceFilePath string) error
+// Same serialization contract as FetchProgressFunc: an implementation must
+// never deliver two ticks concurrently, because core forwards each one
+// straight into a core.EventSink, which is called synchronously on the
+// operation's goroutine. It is always safe to call - core hands
+// implementations a non-nil function.
+type IndexProgressFunc func(phase, detail string, bytes int64)
 
-	// MergeCompile applies every entry in sources, in order (profile load
-	// order), against the base artifact's tables, and writes the merged
-	// result to outputPath. Returns non-fatal warnings (e.g. same-path
-	// asset collisions - last-applied wins) alongside a nil error; a nil
-	// error with warnings is still a fully-written, deployable artifact.
-	// Convertible-kind sources that cannot be converted are skipped per-mod
-	// and reported in failed (#221) - only native-source errors and I/O
-	// failures are fatal.
-	MergeCompile(ctx context.Context, baseArtifactPath string, sources []MergeSource, outputPath string) (warnings []string, failed []MergeFailure, err error)
-
-	// ResolveBaseArtifact locates the installed game's base artifact - the
-	// input every merge applies against (Icarus: the game's own
-	// Content/Data/data.pak). Errors when the artifact cannot be found
-	// under the game's install path.
-	ResolveBaseArtifact(game *domain.Game) (string, error)
-
-	// FingerprintBase returns an opaque fingerprint of the base artifact at
-	// baseArtifactPath: cheap to compute, changing exactly when the base
-	// content changes. Core stores it in merge fingerprints to detect a
-	// game-update-invalidated merge; it never interprets the value.
-	FingerprintBase(baseArtifactPath string) (string, error)
-
-	// IsNativeMergeSource reports whether fileName names this source's
-	// NATIVE merge-source format (Icarus: a ".exmodz" archive) - the diff
-	// format MergeCompile consumes directly, with no other valid
-	// interpretation at ingest. Pure format test, the mirror of
-	// IsConvertibleArtifact - core owns the DeployCompile policy gates and
-	// routes native files into validate+retain instead of extract/copy.
-	IsNativeMergeSource(fileName string) bool
-
-	// IsConvertibleArtifact reports whether fileName names a raw, prebuilt
-	// game artifact this source can convert into a merge source (#221;
-	// Icarus: a ".pak" file). Pure format test - core owns the
-	// DeployCompile/ConvertPaks policy gates that decide whether such a
-	// file actually enters the merge-convert pipeline.
-	IsConvertibleArtifact(fileName string) bool
-
-	// ClassifyMergeSource maps a retained-source identity - a fileID, an
-	// imported archive's filename, or a Kind string previously recorded on
-	// a merge fingerprint - to the source-defined kind string core
-	// round-trips (MergeSource.Kind, fingerprint entries) and whether that
-	// kind is a convertible raw artifact (subject to the ConvertPaks
-	// opt-out and per-mod conversion outcomes) as opposed to the source's
-	// native mergeable format. Must accept the empty string (legacy
-	// fingerprints recorded no Kind) and classify it as the native kind.
-	ClassifyMergeSource(id string) (kind string, convertible bool)
-
-	// MergedArtifactName names the single merged output artifact core
-	// deploys into the game's mod directory. The name is a deploy contract:
-	// it must stay stable across merges (core stats/replaces it by name),
-	// and any load-order significance it carries (Icarus: sorts last so it
-	// wins) is entirely the source's concern.
-	MergedArtifactName() string
-
-	// MergedArtifactLabel is the user-facing display name for the merged
-	// artifact's synthetic mod row (verify/update output).
-	MergedArtifactLabel() string
-
-	// RestoredArtifactName names the deployable raw-fallback copy core
-	// synthesizes when healing a prune-damaged cache entry whose original
-	// artifact name is unrecoverable (#250; Icarus: "<modID>_P.pak").
-	// Deterministic per mod - the same mod must always restore to the same
-	// name, since the name is on-disk state existing installs depend on.
-	// Core passes a path-safe (Base'd) modID and uses the result as a
-	// filename within the mod's own cache entry.
-	RestoredArtifactName(modID string) string
+// LocalIndexSource is implemented by sources that answer Search from a
+// locally cached index rather than a remote query (#360: Thunderstore
+// publishes one unpaginated document per community and no per-query search
+// endpoint at all, so "search Thunderstore" means "search a local copy").
+//
+// Same optional-capability pattern as WorkshopScanner: core type-asserts for
+// it, so internal/core never imports a concrete source package. sourceGameID
+// is the source's own game identifier from domain.Game.SourceIDs, already
+// translated by core.
+//
+// The index is the source's own business: Search builds and refreshes it as
+// needed, and this seam exists for the two things a frontend wants on top -
+// SHOWING what is cached, and rebuilding it on demand. Both are READS as far
+// as the Service's query/mutation contract is concerned when they happen
+// inside Search: an index build must never take the mutation slot.
+//
+// The one rule a caller cannot guess: RefreshIndex may return a non-nil
+// error ALONGSIDE a Present status. That is a refresh that failed over an
+// index which is still usable - the caller serves the stale copy and reports
+// the failure as a warning, never as a dead source. An error with a status
+// that is not Present is a real failure.
+type LocalIndexSource interface {
+	IndexStatus(ctx context.Context, sourceGameID string) (IndexStatus, error)
+	RefreshIndex(ctx context.Context, sourceGameID string, force bool, progress IndexProgressFunc) (IndexStatus, error)
 }
 
-// MergeSource identifies one mod's contribution to a merge, in the order it
-// must be applied (profile load order).
-type MergeSource struct {
-	ModRef     string // "sourceID:modID" - machine identity (MergeFailure, ownership tracking)
-	ModName    string // display name preferred over ModRef in user-facing warnings; may be empty
-	SourcePath string // the retained source archive to read (native diff, or a convertible raw artifact - #221)
-	Kind       string // source-defined kind from ClassifyMergeSource; empty means the source's native kind (#256)
+// CachedIndex is one index directory a LocalIndexSource keeps on disk,
+// usable or not (#410) - what `lmm source index --all` lists and what
+// `lmm source index prune` may remove.
+type CachedIndex struct {
+	GameID    string    // the source's own game id the directory is named for
+	Present   bool      // a usable index of the current format
+	Packages  int       // what its watermark says it holds (0 when unreadable)
+	FetchedAt time.Time // when it was last confirmed current; zero when unknown
+	Bytes     int64     // everything in the directory
+	// Removable reports whether the directory is PROVABLY this source's
+	// index and nothing else - the only thing a prune may delete. Reason
+	// says why not when it is false.
+	Removable bool
+	Reason    string
 }
 
-// MergeFailure records one source that could not participate in a merge
-// (#221: an irreconcilable pak). The merge itself still succeeds - the
-// failed mod is skipped and falls back to raw deploy; core uses this list
-// to reconcile cache manifests and record outcomes in the fingerprint.
-type MergeFailure struct {
-	ModRef string
-	Reason string
+// IndexInventory is implemented by a LocalIndexSource that can enumerate
+// and delete its own index directories (#410).
+//
+// Deletion is FAIL-CLOSED by contract: RemoveIndex removes a directory only
+// when it can prove, at the moment of removal, that everything in it is
+// this source's own index - never following a symbolic link, never
+// removing anything it did not write - and refuses otherwise with nothing
+// removed. The POLICY of which indexes to remove (unused ones, old ones)
+// is core's; this is only the safe mechanism.
+//
+// ifFetchedAt, when non-zero, is the FetchedAt the caller's decision was
+// made from: a removal decided on an index's age must not survive a refresh
+// that happened in between, so RemoveIndex refuses once the index on disk
+// is no longer that one (#410 review). Zero asks for no such check - the
+// caller is removing the index whatever its age.
+type IndexInventory interface {
+	CachedIndexes(ctx context.Context) ([]CachedIndex, error)
+	RemoveIndex(ctx context.Context, sourceGameID string, ifFetchedAt time.Time) (freed int64, err error)
 }
+
+// LoaderRequirer is implemented by sources whose package metadata SAYS a
+// mod needs a mod LOADER in the game root - today, a Thunderstore package
+// declaring a dependency on a BepInExPack (#360 §3.4).
+//
+// A loader is not a dependency, however a source spells it. It installs
+// into the game root rather than the mod path, its presence is a property
+// of the game INSTALLATION (you do not want it torn out because you
+// switched to a vanilla-ish profile), and the correct BUILD depends on
+// facts about the game rather than about the mod. So a source that
+// recognises one in its own metadata routes it OUT of GetDependencies and
+// reports it here instead, and core turns it into the same plan-time
+// precondition #359 infers from an archive's shape - one refusal, one set
+// of setup steps, whichever half saw it first.
+//
+// kind is domain.LoaderKindBepInEx or another open loader name; version is
+// what the metadata asks for ("5.4.2100"), empty when it says nothing.
+// required false means this mod needs no loader, which is the answer for
+// most mods and for every source that has nothing to read it off.
+//
+// dependency is the metadata the requirement was READ OFF, in the source's
+// own spelling ("BepInEx-BepInExPack-5.4.2100"), so the refusal can show a
+// user why lmm decided this is a loader mod - the package they would go and
+// look at. Empty when the source has nothing quotable to point at, which is
+// what the archive-shape half of the same refusal is in.
+//
+// Same optional-capability pattern as WorkshopScanner: core type-asserts
+// for it, so internal/core never imports a concrete source package.
+//
+// It takes a context and can fail because a source may have to READ
+// something to answer (Thunderstore consults its local index), which the
+// design's bare LoaderRequirement(mod) (kind, version, ok) could not
+// express. An error means "could not tell", and core treats that as no
+// requirement rather than refusing an install over a question it could not
+// ask - the archive-shape rule downstream is the second line of defence.
+type LoaderRequirer interface {
+	LoaderRequirement(ctx context.Context, mod *domain.Mod) (kind, version, dependency string, required bool, err error)
+}
+
+// ErrIndexUnavailable reports that a LocalIndexSource has no usable index on
+// disk and could not build one - the fetch failed, or what is cached is
+// unreadable. Distinct from a search that found nothing: lmm could not ask.
+// Lives here rather than in the concrete source so core can classify it
+// without importing the package (the ErrInvalidReference precedent).
+var ErrIndexUnavailable = errors.New("source index is unavailable")
+
+// GameIdentifierValidator is implemented by a source whose game identifier
+// has a fixed shape (#410) - a Thunderstore community slug - so core can
+// refuse a malformed games.yaml value before it reaches any path or URL,
+// with the game and the value named. The error must wrap
+// ErrGameIdentifierInvalid.
+type GameIdentifierValidator interface {
+	ValidateGameIdentifier(id string) error
+}
+
+// ErrGameIdentifierInvalid reports that a game's per-source mapped value
+// (games.yaml's `sources: {<id>: <value>}`) is missing or malformed for a
+// source that requires one - the counterpart to GameIdentifierIgnorer, which
+// marks the sources for which an empty value is legitimate. It is the user's
+// configuration being wrong, not the source failing, so a frontend answers
+// it as bad input (the HTTP 400 shape).
+var ErrGameIdentifierInvalid = errors.New("the game's identifier for this source is missing or malformed")

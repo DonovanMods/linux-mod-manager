@@ -8,18 +8,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/icarus"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
@@ -39,7 +33,7 @@ var ErrCancelled = errors.New("cancelled")
 var ErrReported = errors.New("already reported")
 
 var (
-	version = "1.30.1"
+	version = "2.0.0"
 
 	// buildDescribe is injected at build time via -ldflags -X (see the
 	// Makefile's `build` target) with `git describe --tags --dirty`.
@@ -55,19 +49,31 @@ var (
 	noHooks    bool
 	jsonOutput bool
 	noColor    bool
+	logLevel   string
+
+	// rawArgs is the argument list Execute is about to hand to runRoot,
+	// captured before ParseFlags can consume it. logLevelFlagErrorFunc
+	// consults it to detect a --json flag that pflag's FlagSet.Parse never
+	// reached because it aborted on an earlier --log-level Set error - see
+	// that function's comment in logging.go. Tests that call runRoot
+	// directly (bypassing Execute) must set this alongside rootCmd.SetArgs
+	// so the two argument lists agree.
+	rawArgs []string
 )
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "lmm",
-	Short: "Linux Mod Manager - Terminal-based mod manager for Linux",
-	Long: `lmm is a terminal-based mod manager for Linux for searching, installing,
-updating, and managing game mods from sources like NexusMods and CurseForge,
-plus user-defined custom sources (directory scans, static manifests, or REST
-APIs — see 'lmm source --help').
+	Short: "Linux Mod Manager - manage game mods from the terminal or a browser",
+	Long: `lmm searches, installs, updates and manages game mods on Linux, from
+NexusMods, CurseForge and the Steam Workshop, plus user-defined custom
+sources (directory scans, static manifests, or REST APIs — see
+'lmm source --help').
 
-Both a CLI (this command tree) and an interactive TUI ('lmm tui') are
-available; run 'lmm COMMAND --help' for details on any subcommand.
+It has two frontends over one engine: this command line, and a local web
+UI — run 'lmm serve' and open the address it prints.
+
+Run 'lmm COMMAND --help' for details on any subcommand.
 
 EXIT CODES
 
@@ -77,16 +83,33 @@ EXIT CODES
 
 FILES
 
-    ~/.config/lmm/        Configuration: games.yaml, config.yaml, per-game
-                          profiles, and sources/*.yaml (custom source
-                          definitions). Override with --config.
-    ~/.local/share/lmm/   Data: lmm.db (mod metadata and auth tokens),
-                          cache/ (downloaded and extracted mod files), and
-                          downloads/ (staging area for in-flight downloads
-                          and archive extraction). Override with --data.`,
+    $XDG_CONFIG_HOME/lmm/   Configuration: games.yaml, config.yaml, per-game
+                            profiles, and sources/*.yaml (custom source
+                            definitions). Defaults to ~/.config/lmm.
+                            Override with --config.
+    $XDG_DATA_HOME/lmm/     Data: lmm.db (mod metadata and auth tokens),
+                            cache/ (downloaded and extracted mod files), and
+                            downloads/ (staging area for in-flight downloads
+                            and archive extraction). Defaults to
+                            ~/.local/share/lmm. Override with --data.
+
+    When an XDG variable is set but its lmm directory does not exist yet and
+    the legacy default does, the legacy directory is used.`,
 	Version:       computeDisplayVersion(version, buildDescribe),
 	SilenceUsage:  true, // Runtime errors should not print usage
 	SilenceErrors: true, // We handle error output in Execute()
+
+	// PersistentPreRunE validates --log-level before any subcommand runs
+	// (including --version and --help), so an invalid level is rejected up
+	// front instead of only surfacing if and when the subcommand happens to
+	// open a Service. No subcommand in this tree defines its own
+	// PersistentPreRun(E), so cobra never skips this one in favor of a
+	// nearer override. newCLILogger's returned logger is discarded here;
+	// initServiceWith re-validates (idempotently) when it builds the real one.
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		_, err := newCLILogger(logLevel, io.Discard)
+		return err
+	},
 }
 
 // computeDisplayVersion returns the version string shown to the user for
@@ -103,15 +126,37 @@ func computeDisplayVersion(ver, describe string) string {
 	return fmt.Sprintf("%s (dev: %s)", ver, describe)
 }
 
+// markDirectoryFlags gives each named flag of cmd (a local one, or a
+// persistent one cmd declares) the shell's directory-only completion (#529):
+// Tab proposes folders and never files. It registers a completion function
+// rather than calling cobra's MarkFlagDirname, which only annotates the flag
+// for bash v1 completion and does nothing for the generated bash/zsh/fish
+// scripts. TestDirectoryFlagsOfferDirectoryOnlyCompletion holds every
+// directory flag to it.
+func markDirectoryFlags(cmd *cobra.Command, names ...string) {
+	for _, name := range names {
+		err := cmd.RegisterFlagCompletionFunc(name, func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveFilterDirs
+		})
+		if err != nil {
+			panic(err) // a programming error: the flag is declared before this call
+		}
+	}
+}
+
 func init() {
 	// Persistent flags available to all commands
-	rootCmd.PersistentFlags().StringVar(&configDir, "config", "", "config directory (default: ~/.config/lmm)")
-	rootCmd.PersistentFlags().StringVar(&dataDir, "data", "", "data directory (default: ~/.local/share/lmm)")
+	rootCmd.PersistentFlags().StringVar(&configDir, "config", "", "config directory (default: $XDG_CONFIG_HOME/lmm or ~/.config/lmm)")
+	rootCmd.PersistentFlags().StringVar(&dataDir, "data", "", "data directory (default: $XDG_DATA_HOME/lmm or ~/.local/share/lmm)")
 	rootCmd.PersistentFlags().StringVarP(&gameID, "game", "g", "", "game ID to operate on")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
-	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output JSON instead of text; mutating commands print their result, --dry-run prints the plan; never prompts")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output (NO_COLOR env is also honored)")
+	markDirectoryFlags(rootCmd, "config", "data")
+	logLevel = "off"
+	rootCmd.PersistentFlags().Var(logLevelFlag{&logLevel}, logLevelFlagName, "diagnostic log level written to stderr (off, error, warn, info, debug)")
+	rootCmd.SetFlagErrorFunc(logLevelFlagErrorFunc)
 }
 
 // stdoutColorCapable reports whether the live os.Stdout is a color-capable
@@ -239,22 +284,22 @@ func modRowColor(enabled, deployed bool) func(string) string {
 	}
 }
 
-// printTable writes a fully-flushed text/tabwriter table (buf) to os.Stdout,
+// printTable writes a fully-flushed display-width table (buf) to os.Stdout,
 // accenting the header line (bold+cyan, via colorHeader) and applying
 // rowColor's per-row wrapper (nil for no tint) when color is enabled.
 // headerLines is the number of leading lines to skip when indexing data
 // rows (2: header + dashed separator).
 //
 // Color is applied ONLY to buf's already-rendered, already-padded text -
-// never to a cell before it reaches the tabwriter. text/tabwriter computes
-// column padding from raw byte length, so an ANSI-wrapped cell fed into it
-// would inflate that cell's measured width and misalign every column after
-// it (verified empirically). Wrapping an already-flushed line's start/end
-// is safe: those bytes are invisible to the terminal and never shift where
-// the real characters land. Do not colorize interior cell values before
-// Fprintf-ing them into a tabwriter.Writer - use whole-row tinting (via
-// rowColor) or, for a table's genuinely last column (nothing pads after it
-// per tabwriter's own behavior), inline coloring of that one column instead.
+// never to a cell before it reaches the display-width table writer. ANSI
+// escape sequences do not occupy terminal cells, but a writer cannot infer
+// that from their bytes, so an ANSI-wrapped interior cell would misalign every
+// column after it. Wrapping an already-flushed line's start/end is safe: those
+// bytes are invisible to the terminal and never shift where the real
+// characters land. Do not colorize interior cell values before Fprintf-ing
+// them into a display-width table writer - use whole-row tinting (via
+// rowColor) or, for a table's genuinely last column (nothing pads after it),
+// inline coloring of that one column instead.
 func printTable(buf *bytes.Buffer, headerLines int, rowColor func(dataRowIndex int) func(string) string) error {
 	return printTableTo(os.Stdout, buf, headerLines, rowColor)
 }
@@ -288,26 +333,191 @@ func printTableTo(out io.Writer, buf *bytes.Buffer, headerLines int, rowColor fu
 func Execute() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Every command's context prints what a source is waiting on, so a
+	// command that hands cmd.Context() to a call rather than the context
+	// withServiceOpts gave it still says why it is slow (T3 review F2).
+	ctx = withSourceNotices(ctx)
 
+	rawArgs = os.Args[1:]
 	if err := runRoot(ctx); err != nil {
-		if errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) {
-			os.Exit(2)
+		switch exitCodeIn(ctx, err) {
+		case exitCancelled:
+			printCancelledNotice(os.Stderr, jsonOutput)
+			os.Exit(exitCancelled)
+		default:
+			reportError(err)
+			os.Exit(exitError)
 		}
-		reportError(err)
-		os.Exit(1)
 	}
 }
 
+// lmm's documented exit codes - `lmm --help`'s EXIT CODES block.
+const (
+	exitOK        = 0
+	exitError     = 1
+	exitCancelled = 2
+)
+
+// exitCodeFor maps a command's returned error onto those codes. Execute is
+// its only production caller; it is a function so the contract `lmm --help`
+// states can be tested directly (#382), where measuring the real process's
+// exit status would mean building a binary per case.
+//
+// A declined confirmation is exit 2 wherever it happens, which is what every
+// prompt site returning ErrCancelled buys: before #382 the same "no" exited
+// 0 from `profile switch`, 1 from `import` and 2 from `purge`.
+func exitCodeFor(err error) int {
+	switch {
+	case err == nil:
+		return exitOK
+	case errors.Is(err, ErrCancelled), errors.Is(err, context.Canceled):
+		return exitCancelled
+	default:
+		return exitError
+	}
+}
+
+// exitCodeIn is exitCodeFor for a command run under ctx, and what Execute
+// applies: a context.Canceled is the USER's cancellation only when ctx -
+// the one SIGINT and SIGTERM cancel - is actually done (T3 review F1).
+//
+// Anything else is lmm cancelling a request of its own - a stall guard
+// giving up on a transfer is the case that shipped - and exit 2 would
+// report that failure as "Cancelled." with, under --json, no document at
+// all. A declined prompt (ErrCancelled) is the user's whatever ctx says.
+func exitCodeIn(ctx context.Context, err error) int {
+	code := exitCodeFor(err)
+	if code == exitCancelled && !errors.Is(err, ErrCancelled) && ctx.Err() == nil {
+		return exitError
+	}
+	return code
+}
+
+// printCancelledNotice names the cancellation on Execute's exit-2 path
+// (Ruling 16 addendum): plain mode alone gets "Cancelled." on stderr, since
+// exit 2 alone was otherwise silent even though `lmm --help` documents it as
+// "cancelled by the user" - Unit R final review Minor 3. --json emits
+// nothing extra here (Ruling 15): the JSON contract carries no envelope for
+// a cancellation exit.
+func printCancelledNotice(out io.Writer, jsonOutput bool) {
+	if jsonOutput {
+		return
+	}
+	_, _ = fmt.Fprintln(out, "Cancelled.") //nolint:errcheck // best-effort notice write
+}
+
 // reportError prints err in the active output format, unless the command
-// already reported it (ErrReported).
+// already reported it (ErrReported). Under --json this is a
+// {"error": "...", "details": {...}} envelope via emitJSON, with "details"
+// present only when errorDetails finds data to attach; otherwise it is
+// "Error: ..." on stderr.
 func reportError(err error) {
 	if errors.Is(err, ErrReported) {
 		return
 	}
 	if jsonOutput {
-		fmt.Printf(`{"error":%q}`+"\n", err.Error())
+		_ = emitJSON(jsonErrorEnvelope{Error: err.Error(), Details: errorDetails(err)})
 	} else {
 		fmt.Fprintf(os.Stderr, "%s %v\n", colorRed("Error:"), err)
+		reportExternalToolOutput(err)
+		reportDownloadPage(err)
+		reportLoaderSetup(err)
+	}
+}
+
+// reportLoaderSetup prints a LoaderRequiredError's setup steps under the
+// error line (#359).
+//
+// The steps ARE the value of that refusal - "install BepInEx, record it,
+// then check it loaded" is what the user needs, and the one-line message can
+// only name the middle step. --json carries them in the envelope's details
+// and the web UI renders them from there, so without this the terminal would
+// be the one surface that dropped them.
+func reportLoaderSetup(err error) {
+	var loaderErr *core.LoaderRequiredError
+	if !errors.As(err, &loaderErr) || len(loaderErr.Setup) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\nTo set up the %s loader for this game:\n", loaderErr.Kind)
+	for i, step := range loaderErr.Setup {
+		fmt.Fprintf(os.Stderr, "  %d. %s\n", i+1, step)
+	}
+}
+
+// downloadHint is the line every download failure ends with when its mod has
+// a page to send the user to (#513): where to get the file by hand. The URL
+// is core's - already limited to http(s) by domain.SafeWebURL.
+func downloadHint(url string) string {
+	return "Download it manually from: " + url
+}
+
+// reportDownloadPage prints, under the error line, the page of the mod whose
+// download failed (#513): the typed data core's *DownloadError carries,
+// rather than a match on the failure's text. A source that refuses automated
+// downloads altogether (CurseForge's third-party opt-out) also gets the
+// command that imports the file once it is fetched.
+//
+// --json carries the same facts in the envelope's details, so this is the
+// terminal half only. A failure with no usable page prints nothing.
+func reportDownloadPage(err error) {
+	var dl *core.DownloadError
+	if !errors.As(err, &dl) || dl.ModURL == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n%s\n", downloadHint(dl.ModURL))
+	if !dl.ManualDownload {
+		return
+	}
+	// #535: the command that failed knows how to finish the job from the
+	// downloaded file (install --from-file, update --from-file); any other
+	// command falls back to the archive import.
+	var remedy *fromFileRemedy
+	if errors.As(err, &remedy) {
+		fmt.Fprintf(os.Stderr, "%s\n", remedy.line)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Then import it: lmm import <downloaded-file> --id %s\n", dl.ModID)
+}
+
+// fromFileRemedy carries, beside a failed manual download, the line naming
+// the command that finishes it from the hand-downloaded file (#535). It
+// wraps the failure transparently: Error, errors.Is/As and the --json
+// envelope's details are all the download failure's own.
+type fromFileRemedy struct {
+	err  error
+	line string
+}
+
+func (r *fromFileRemedy) Error() string { return r.err.Error() }
+func (r *fromFileRemedy) Unwrap() error { return r.err }
+
+// withFromFileRemedy attaches line(dl) to err when err is a download its
+// source refused to serve (DownloadError.ManualDownload), and returns any
+// other err as it came.
+func withFromFileRemedy(err error, line func(*core.DownloadError) string) error {
+	var dl *core.DownloadError
+	if err == nil || !errors.As(err, &dl) || !dl.ManualDownload {
+		return err
+	}
+	return &fromFileRemedy{err: err, line: line(dl)}
+}
+
+// reportExternalToolOutput prints the tail of an external tool's own output
+// under the error line, for a failure lmm could not classify (#269 Tier 3:
+// a steamcmd run that neither succeeded nor printed a marker lmm knows).
+//
+// --json already carries it in the envelope's details; without this the
+// terminal would show a one-line "steamcmd failed" and throw away the only
+// evidence of WHY. A classified failure carries no tail and prints nothing
+// extra: its own sentence is the whole answer.
+func reportExternalToolOutput(err error) {
+	var fetchErr *core.WorkshopFetchError
+	if !errors.As(err, &fetchErr) || fetchErr.OutputTail == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n%s output:\n", fetchErr.Tool)
+	for line := range strings.SplitSeq(strings.TrimRight(fetchErr.OutputTail, "\n"), "\n") {
+		fmt.Fprintf(os.Stderr, "  %s\n", line)
 	}
 }
 
@@ -317,195 +527,33 @@ func runRoot(ctx context.Context) error {
 	return rootCmd.ExecuteContext(ctx)
 }
 
-// initService creates and initializes the core service
-func initService() (*core.Service, error) {
-	cfg, err := getServiceConfig()
+// initService builds the CLI's *core.Service from the global --config/--data
+// flags. See app.Open for what bootstrap involves.
+func initService(ctx context.Context) (*core.Service, error) {
+	return initServiceWith(ctx, app.Options{})
+}
+
+// initServiceWith is initService with additional bootstrap options; ConfigDir
+// and DataDir always come from the flags.
+func initServiceWith(ctx context.Context, opts app.Options) (*core.Service, error) {
+	opts.ConfigDir = configDir
+	opts.DataDir = dataDir
+	logger, err := newCLILogger(logLevel, os.Stderr)
 	if err != nil {
 		return nil, err
 	}
-
-	// Ensure directories exist
-	if err := os.MkdirAll(cfg.ConfigDir, 0755); err != nil {
-		return nil, fmt.Errorf("creating config dir: %w", err)
-	}
-	// Owner-only: this holds lmm.db, whose auth_tokens table stores API keys in
-	// plaintext, plus the downloads staging root. Also closes the window between
-	// SQLite creating the DB at 0644 and the db package tightening it.
-	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
-		return nil, fmt.Errorf("creating data dir: %w", err)
-	}
-	// MkdirAll leaves an existing directory's mode alone, so installs predating
-	// the line above keep a 0755 data dir without this.
-	if err := os.Chmod(cfg.DataDir, 0700); err != nil {
-		return nil, fmt.Errorf("restricting data dir: %w", err)
-	}
-	if err := os.MkdirAll(cfg.CacheDir, 0755); err != nil {
-		return nil, fmt.Errorf("creating cache dir: %w", err)
-	}
-
-	svc, err := core.NewService(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	// Register mod sources
-	registerSources(svc, cfg.ConfigDir)
-
-	return svc, nil
+	opts.Logger = logger
+	return app.Open(ctx, opts)
 }
 
-// icarusFirestoreProjectID is Project Daedalus's Firebase project ID, from
-// the Firebase console. It is public information (Firestore reads are
-// unauthenticated by design, per the research spike) — this constant is the
-// one place it needs to be substituted with the real value.
-const icarusFirestoreProjectID = "projectdaedalus-fb09f"
-
-// builtinSourceFactories constructs each built-in source keyless — the
-// unified pipeline resolves and applies API keys post-construction via
-// registerSource's SetAPIKey seam, the same path custom sources use.
-var builtinSourceFactories = []func() source.ModSource{
-	func() source.ModSource { return nexusmods.New(nil, "") },
-	func() source.ModSource { return curseforge.New(nil, "") },
-	func() source.ModSource { return icarus.New(nil, icarusFirestoreProjectID) },
-}
-
-// registerSources registers all available mod sources with the service
-// through one ordered pipeline: built-ins first (so the collision rule's
-// "first wins" preserves their identity against a same-id custom
-// definition), then user-defined sources from <configDir>/sources/.
-func registerSources(svc *core.Service, cfgDir string) {
-	for _, factory := range builtinSourceFactories {
-		registerSource(svc, factory())
-	}
-
-	registerCustomSources(svc, cfgDir)
-}
-
-// registerSource runs src through the shared registration steps used for
-// both built-in and custom sources: collision check (first registration
-// wins, warning on customSourceWarnWriter) → API-key resolution (env var via
-// envKeyFor, falling back to the stored DB token) → SetAPIKey when the
-// source accepts one → RegisterSource.
-func registerSource(svc *core.Service, src source.ModSource) {
-	id := src.ID()
-	// Custom sources are constructed (custom.New) by the caller before this
-	// runs; a definition that both collides with an existing ID AND fails to
-	// construct reports its construction error instead, since it never
-	// reaches this check — construct-then-check means construction wins.
-	if _, err := svc.GetSource(id); err == nil {
-		fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: id already in use\n", id)
-		return
-	}
-	// Gate the token lookup on the source actually being able to use a key:
-	// skips a pointless per-source SQLite read for auth-incapable sources.
-	// Both halves matter: custom API/manifest sources implement SetAPIKey
-	// even when their definition declares no auth (the key would be unused).
-	if setter, ok := src.(interface{ SetAPIKey(string) }); ok && source.CapabilitiesOf(src).Auth {
-		if key := getSourceAPIKey(svc, id, envKeyFor(src)); key != "" {
-			setter.SetAPIKey(key)
-		}
-	}
-	svc.RegisterSource(src)
-}
-
-// envKeyFor returns the environment variable name consulted for src's API
-// key: src's own EnvKeyProvider when implemented (preserves legacy names
-// like NEXUSMODS_API_KEY), otherwise the derived LMM_<ID>_API_KEY
-// convention.
-func envKeyFor(src source.ModSource) string {
-	if p, ok := src.(source.EnvKeyProvider); ok {
-		return p.EnvKey()
-	}
-	return envKeyForSourceID(src.ID())
-}
-
-// customSourceWarnOut overrides where registerCustomSources sends its
-// per-definition warnings. Nil (the default) means "use the live os.Stderr",
-// resolved fresh on every write rather than captured once — so a test that
-// redirects the real os.Stderr still observes normal warnings. `source list`
-// points this at io.Discard for the duration of its own service init, since
-// it re-derives and renders the very same broken definitions as table rows;
-// without this seam every broken definition would be reported twice per
-// invocation (#52 item 14).
-var customSourceWarnOut io.Writer
-
-// customSourceWarnWriter resolves the writer registerCustomSources should
-// warn to: the override if one is set, otherwise the live os.Stderr.
-func customSourceWarnWriter() io.Writer {
-	if customSourceWarnOut != nil {
-		return customSourceWarnOut
-	}
-	return os.Stderr
-}
-
-// registerCustomSources loads user-defined source definitions and registers
-// the valid ones. Broken definitions warn (via customSourceWarnWriter, normally
-// os.Stderr) and are skipped — a bad file must never prevent lmm from starting.
-func registerCustomSources(svc *core.Service, cfgDir string) {
-	defs, loadErrs, err := config.LoadSourceDefinitions(cfgDir)
-	if err != nil {
-		fmt.Fprintf(customSourceWarnWriter(), "warning: loading custom sources: %v\n", err)
-		return
-	}
-	for _, le := range loadErrs {
-		fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source definition %v\n", le)
-	}
-	for _, def := range defs {
-		src, err := custom.New(def)
-		if err != nil {
-			fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: %v\n", def.ID, err)
-			continue
-		}
-		registerSource(svc, src)
-	}
-}
-
-// getSourceAPIKey retrieves an API key from environment or database
-func getSourceAPIKey(svc *core.Service, sourceID, envVar string) string {
-	// Check environment variable first
-	if key := os.Getenv(envVar); key != "" {
-		return key
-	}
-
-	// Fall back to stored token
-	token, err := svc.GetSourceToken(sourceID)
-	if err != nil || token == nil {
-		return ""
-	}
-
-	return token.APIKey
-}
-
-// getServiceConfig returns the service configuration with defaults.
-// Returns an error if UserHomeDir fails and defaults are needed.
+// getServiceConfig resolves the on-disk layout the CLI flags select, without
+// opening a service.
 func getServiceConfig() (core.ServiceConfig, error) {
-	homeDir, err := os.UserHomeDir()
+	p, err := app.ResolvePaths(app.Options{ConfigDir: configDir, DataDir: dataDir})
 	if err != nil {
-		return core.ServiceConfig{}, fmt.Errorf("home directory: %w", err)
+		return core.ServiceConfig{}, err
 	}
-
-	cfg := core.ServiceConfig{
-		ConfigDir: configDir,
-		DataDir:   dataDir,
-		CacheDir:  "",
-	}
-
-	// Apply defaults
-	if cfg.ConfigDir == "" {
-		cfg.ConfigDir = filepath.Join(homeDir, ".config", "lmm")
-	}
-	if cfg.DataDir == "" {
-		cfg.DataDir = filepath.Join(homeDir, ".local", "share", "lmm")
-	}
-
-	// Check config file for custom cache path
-	if appConfig, err := config.Load(cfg.ConfigDir); err == nil && appConfig.CachePath != "" {
-		cfg.CacheDir = appConfig.CachePath
-	} else {
-		cfg.CacheDir = filepath.Join(cfg.DataDir, "cache")
-	}
-
-	return cfg, nil
+	return core.ServiceConfig{ConfigDir: p.ConfigDir, DataDir: p.DataDir, CacheDir: p.CacheDir}, nil
 }
 
 // requireGame ensures a game is specified, checking config for default if not provided
@@ -518,9 +566,9 @@ func requireGame(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(svcCfg.ConfigDir)
-	if err == nil && cfg.DefaultGame != "" {
-		gameID = cfg.DefaultGame
+	defaultGame, err := svcCfg.DefaultGame(cmd.Context())
+	if err == nil && defaultGame != "" {
+		gameID = defaultGame
 		if verbose {
 			fmt.Printf("Using default game: %s\n", gameID)
 		}
@@ -535,11 +583,11 @@ func requireGame(cmd *cobra.Command) error {
 // resolved by ProfileManager.GetDefault (the IsDefault profile set by
 // `lmm profile switch`, else the first profile). Falls back to "default" when
 // no profiles exist yet so a fresh setup still works.
-func resolveProfile(svc *core.Service, gameID, flagValue string) (string, error) {
+func resolveProfile(ctx context.Context, svc *core.Service, gameID, flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
-	profile, err := svc.NewProfileManager().GetDefault(gameID)
+	profile, err := svc.NewProfileManager().GetDefault(ctx, gameID)
 	if err != nil {
 		if errors.Is(err, domain.ErrProfileNotFound) {
 			return "default", nil

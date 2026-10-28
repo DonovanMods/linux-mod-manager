@@ -4,17 +4,18 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// --- ConvergeDeployedFiles (#168/#212) ---
+// --- convergeDeployedFiles (#168/#212) ---
 //
 // These tests use newFlowsTestService/seedInstalledMod (flows_test.go) to
 // build a real Service (temp config/data/cache dirs, :memory: DB) and the
@@ -31,7 +32,7 @@ func TestConverge_RowDrivenStaleRemoved(t *testing.T) {
 		"a.esp":    []byte("a"),
 		"gone.esp": []byte("g"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// gone.esp is no longer provided by m1: remove it from the cache so
@@ -40,7 +41,7 @@ func TestConverge_RowDrivenStaleRemoved(t *testing.T) {
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "gone.esp")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "gone.esp", result.Removed[0].Path)
@@ -54,7 +55,7 @@ func TestConverge_RowDrivenStaleRemoved(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(gameDir, "a.esp"))
 	assert.NoError(t, err, "a.esp must be untouched")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.esp"}, rows, "gone.esp's row must be deleted")
 }
@@ -72,7 +73,7 @@ func TestConverge_SharedPathProtectedByUnion(t *testing.T) {
 	seedInstalledMod(t, svc, game, "src", "m2", "1.0", true, map[string][]byte{
 		"shared.esp": []byte("m2-copy"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// m1 no longer provides shared.esp itself (its cache copy is gone), but
@@ -80,14 +81,14 @@ func TestConverge_SharedPathProtectedByUnion(t *testing.T) {
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "shared.esp")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	assert.Empty(t, result.Removed, "shared.esp must be protected by m2's still-current claim")
 
 	_, err = os.Lstat(filepath.Join(gameDir, "shared.esp"))
 	assert.NoError(t, err, "shared.esp's game-dir symlink must survive")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"shared.esp"}, rows, "row must survive too")
 }
@@ -103,7 +104,7 @@ func TestConverge_DanglingCacheLinkSwept(t *testing.T) {
 	target := filepath.Join(cacheRoot, "g1", "src-stray", "1.0", "stray.pak")
 	require.NoError(t, os.Symlink(target, filepath.Join(gameDir, "stray.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "stray.pak", result.Removed[0].Path)
@@ -126,7 +127,7 @@ func TestConverge_ForeignSymlinkUntouched(t *testing.T) {
 	target := filepath.Join(outsideDir, "does-not-exist.pak")
 	require.NoError(t, os.Symlink(target, filepath.Join(gameDir, "user.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	assert.Empty(t, result.Removed)
 
@@ -146,7 +147,7 @@ func TestConverge_HealthySymlinkUntouched(t *testing.T) {
 	target := gameCache.GetFilePath("g1", "src", "merged", "1.0", "merged.pak")
 	require.NoError(t, os.Symlink(target, filepath.Join(gameDir, "merged.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	assert.Empty(t, result.Removed)
 
@@ -164,7 +165,7 @@ func TestConverge_DryRunTouchesNothing(t *testing.T) {
 		"a.esp":    []byte("a"),
 		"gone.esp": []byte("g"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "gone.esp")))
@@ -174,7 +175,7 @@ func TestConverge_DryRunTouchesNothing(t *testing.T) {
 	strayTarget := filepath.Join(cacheRoot, "g1", "src-stray", "1.0", "stray.pak")
 	require.NoError(t, os.Symlink(strayTarget, filepath.Join(gameDir, "stray.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", true)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", true)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 2)
 
@@ -191,7 +192,7 @@ func TestConverge_DryRunTouchesNothing(t *testing.T) {
 	}
 
 	// Nothing in the DB changed.
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a.esp", "gone.esp"}, rows, "dry run must not delete rows")
 }
@@ -206,7 +207,7 @@ func TestConverge_RegularFileNeedsRow(t *testing.T) {
 		"a.esp":    []byte("a"),
 		"gone.esp": []byte("g"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	gameCache := svc.GetGameCache(game)
@@ -216,7 +217,7 @@ func TestConverge_RegularFileNeedsRow(t *testing.T) {
 	// the sweep must never touch it (it only ever considers symlinks).
 	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "untracked.txt"), []byte("leave me alone"), 0644))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "gone.esp", result.Removed[0].Path)
@@ -230,7 +231,7 @@ func TestConverge_RegularFileNeedsRow(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(gameDir, "untracked.txt"))
 	assert.NoError(t, err, "an untracked regular file with no row must never be touched")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.esp"}, rows)
 }
@@ -238,42 +239,43 @@ func TestConverge_RegularFileNeedsRow(t *testing.T) {
 // TestConverge_RowPass_UndeployFailureExcludedFromRemoved pins fix round 1
 // (#168): a failed Undeploy must NOT be reported in Result.Removed, since
 // callers (verify --fix's "removed N") treat that list as what actually
-// happened. Mirrors TestService_DisableMod_UndeployFailureIsNonFatal's
-// fixture shape (flows_test.go:304): corrupt a deployed symlink into a
-// plain file so SymlinkLinker.Undeploy fails deterministically with "not a
-// symlink" - exactly the linker-method-mismatch trigger the review flagged.
+// happened. A regular file blocking the deployed path's parent makes the
+// linker's Undeploy fail with ENOTDIR, while preserving genuine error coverage.
 func TestConverge_RowPass_UndeployFailureExcludedFromRemoved(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
 
 	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
-		"gone.esp": []byte("g"),
+		"blocked/gone.esp": []byte("g"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
-	// gone.esp becomes stale: no longer provided by m1.
+	// The recorded path becomes stale: no longer provided by m1.
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "gone.esp")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "blocked/gone.esp")))
 
-	// Corrupt the deployed symlink into a plain file so the symlink linker's
-	// Undeploy fails deterministically ("not a symlink").
-	deployedPath := filepath.Join(gameDir, "gone.esp")
+	// Obstruct the parent after deployment; there is no user replacement at
+	// the recorded leaf, but the linker still cannot undeploy it.
+	deployedPath := filepath.Join(gameDir, "blocked", "gone.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.Error(t, err, "a failed Undeploy must surface as a joined error")
-	assert.Contains(t, err.Error(), "gone.esp")
+	assert.Contains(t, err.Error(), "blocked/gone.esp")
+	assert.ErrorIs(t, err, syscall.ENOTDIR)
 	assert.Empty(t, result.Removed, "a failed Undeploy must not be reported as removed")
 
-	_, statErr := os.Stat(deployedPath)
-	assert.NoError(t, statErr, "the file must survive a failed undeploy")
+	blocker, readErr := os.ReadFile(filepath.Dir(deployedPath))
+	require.NoError(t, readErr)
+	assert.Equal(t, "blocked", string(blocker))
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"gone.esp"}, rows, "the row must survive a failed undeploy")
+	assert.Equal(t, []string{"blocked/gone.esp"}, rows, "the row must survive a failed undeploy")
 }
 
 // TestConverge_SweepPass_RemoveFailureExcludedFromRemoved is the sweep
@@ -304,7 +306,7 @@ func TestConverge_SweepPass_RemoveFailureExcludedFromRemoved(t *testing.T) {
 	require.NoError(t, os.Chmod(subDir, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(subDir, 0o755) })
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.Error(t, err, "a failed sweep os.Remove must surface as a joined error")
 	assert.Contains(t, err.Error(), "stray.pak")
 	assert.Empty(t, result.Removed, "a failed sweep removal must not be reported as removed")
@@ -333,7 +335,7 @@ func TestConverge_SweepPass_ChecksBothCacheRoots(t *testing.T) {
 	target := filepath.Join(globalCacheRoot, "g1", "src-stray", "1.0", "stray.pak")
 	require.NoError(t, os.Symlink(target, filepath.Join(gameDir, "stray.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "stray.pak", result.Removed[0].Path)
@@ -363,7 +365,7 @@ func TestConverge_AbsentCacheEntry_UnknownProvenanceRowSpared(t *testing.T) {
 	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
 		"a.esp": []byte("a"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// The mod's ENTIRE cache entry disappears (unlike TestConverge_RowDrivenStaleRemoved,
@@ -379,7 +381,7 @@ func TestConverge_AbsentCacheEntry_UnknownProvenanceRowSpared(t *testing.T) {
 	strayTarget := filepath.Join(cacheRoot, "g1", "src", "m1", "1.0", "untracked.pak")
 	require.NoError(t, os.Symlink(strayTarget, filepath.Join(gameDir, "untracked.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "untracked.pak", result.Removed[0].Path)
@@ -388,7 +390,7 @@ func TestConverge_AbsentCacheEntry_UnknownProvenanceRowSpared(t *testing.T) {
 	_, err = os.Stat(filepath.Join(gameDir, "a.esp"))
 	assert.NoError(t, err, "a.esp must survive: an absent cache entry is unknown provenance, not grounds for deletion")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.esp"}, rows, "the row must survive too")
 }
@@ -422,7 +424,7 @@ func TestConverge_SweepPass_UnreadableDirSkippedNotAborted(t *testing.T) {
 	linkPath := filepath.Join(siblingDir, "stray.pak")
 	require.NoError(t, os.Symlink(target, linkPath))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.Error(t, err, "the unreadable directory must surface as an error")
 	assert.Contains(t, err.Error(), "locked")
 	require.Len(t, result.Removed, 1, "the sibling directory's dangling link must still be swept")
@@ -452,7 +454,7 @@ func TestConverge_AbsentCacheEntry_SymlinkRowSweptByPhysicalEvidence(t *testing.
 	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
 		"gone.esp": []byte("g"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// The mod's ENTIRE cache entry disappears - deployableFiles now returns
@@ -463,7 +465,7 @@ func TestConverge_AbsentCacheEntry_SymlinkRowSweptByPhysicalEvidence(t *testing.
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, os.RemoveAll(gameCache.ModPath("g1", "src", "m1", "1.0")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "gone.esp", result.Removed[0].Path)
@@ -475,7 +477,7 @@ func TestConverge_AbsentCacheEntry_SymlinkRowSweptByPhysicalEvidence(t *testing.
 	_, err = os.Lstat(filepath.Join(gameDir, "gone.esp"))
 	assert.True(t, os.IsNotExist(err), "the dangling symlink must be swept, even though its row's mod has unknown provenance")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Empty(t, rows, "the sweep's best-effort DeleteDeployedFile should clean up the now-orphaned row")
 }
@@ -513,7 +515,7 @@ func TestConverge_RowPass_RejectsUnsafeDeployedFileRecords(t *testing.T) {
 	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
 		"a.esp": []byte("a"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// A real, precious file genuinely outside game.ModPath at exactly the
@@ -532,11 +534,11 @@ func TestConverge_RowPass_RejectsUnsafeDeployedFileRecords(t *testing.T) {
 
 	rawDB, err := db.New(filepath.Join(dataDir, "lmm.db"))
 	require.NoError(t, err)
-	require.NoError(t, rawDB.SaveDeployedFile("g1", "default", "../outside.pak", "src", "m1"))
-	require.NoError(t, rawDB.SaveDeployedFile("g1", "default", absPath, "src", "m1"))
+	require.NoError(t, rawDB.SaveDeployedFile(context.Background(), "g1", "default", "../outside.pak", "src", "m1"))
+	require.NoError(t, rawDB.SaveDeployedFile(context.Background(), "g1", "default", absPath, "src", "m1"))
 	require.NoError(t, rawDB.Close())
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.Error(t, err, "an unsafe deployed-file record must surface as an error")
 	assert.Contains(t, err.Error(), "unsafe")
 	assert.Contains(t, err.Error(), "../outside.pak")
@@ -554,7 +556,7 @@ func TestConverge_RowPass_RejectsUnsafeDeployedFileRecords(t *testing.T) {
 	assert.NotContains(t, paths, "../outside.pak")
 	assert.NotContains(t, paths, absPath)
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a.esp", "../outside.pak", absPath}, rows, "unsafe rows are left alone - deleting records based on corrupt data is its own hazard")
 }

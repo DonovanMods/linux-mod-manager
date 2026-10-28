@@ -1,0 +1,19 @@
+{
+  "source_id": "curseforge",
+  "mod_id": "4242",
+  "mod_name": "Big Pack",
+  "profile": "default",
+  "target_version": "1.9.0",
+  "missing_file_ids": [
+    "8999930"
+  ],
+  "advertised": true,
+  "candidates": [
+    {
+      "id": "8999990",
+      "name": "bigpack-fabric-1.20.1-1.9.0",
+      "version": "1.9.0",
+      "category": "release"
+    }
+  ]
+}

@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -91,53 +91,78 @@ func TestProfileCreateCmd_NoName(t *testing.T) {
 	assert.Contains(t, err.Error(), "accepts 1 arg")
 }
 
-func TestSelectPrimaryFile(t *testing.T) {
-	tests := []struct {
-		name     string
-		files    []domain.DownloadableFile
-		expected string
-	}{
-		{
-			name: "returns primary file when available",
-			files: []domain.DownloadableFile{
-				{ID: "1", FileName: "optional.zip", IsPrimary: false},
-				{ID: "2", FileName: "main.zip", IsPrimary: true},
-				{ID: "3", FileName: "update.zip", IsPrimary: false},
-			},
-			expected: "2",
-		},
-		{
-			name: "returns first file when no primary",
-			files: []domain.DownloadableFile{
-				{ID: "1", FileName: "first.zip", IsPrimary: false},
-				{ID: "2", FileName: "second.zip", IsPrimary: false},
-			},
-			expected: "1",
-		},
-		{
-			name: "returns first primary when multiple primaries",
-			files: []domain.DownloadableFile{
-				{ID: "1", FileName: "first.zip", IsPrimary: false},
-				{ID: "2", FileName: "primary1.zip", IsPrimary: true},
-				{ID: "3", FileName: "primary2.zip", IsPrimary: true},
-			},
-			expected: "2",
-		},
-	}
+// --- doProfileList (#309: honours --json) ---
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := selectPrimaryFile(tt.files)
-			assert.NotNil(t, result)
-			assert.Equal(t, tt.expected, result.ID)
-		})
-	}
+// TestDoProfileList_Empty pins the pre-#309 "No profiles found." text,
+// rebuilt from core.ProfileListing's empty Profiles slice rather than a raw
+// pm.List call.
+func TestDoProfileList_Empty(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	out := captureStdout(t, func() error {
+		return doProfileList(context.Background(), svc, game)
+	})
+	assert.Equal(t, "No profiles found.\n", out)
 }
 
-func TestSelectPrimaryFile_EmptySlice(t *testing.T) {
-	var files []domain.DownloadableFile
-	result := selectPrimaryFile(files)
-	assert.Nil(t, result)
+// TestDoProfileList_PlainTable pins the pre-#309 NAME/MODS/DEFAULT table
+// byte-for-byte, now rendered from core.ProfileListing instead of pm.List.
+func TestDoProfileList_PlainTable(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "a"}))
+	_, err := pm.Create(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() error {
+		return doProfileList(context.Background(), svc, game)
+	})
+	assert.Equal(t, "NAME      MODS  DEFAULT\n----      ----  -------\ndefault   1     *\nsurvival  0     \n", out)
+}
+
+// TestDoProfileList_WarnsWithoutExactlyOneActiveProfile is #446: a game
+// whose profile files mark none of them active (or several) is reported on
+// stderr, and the table itself is unchanged.
+func TestDoProfileList_WarnsWithoutExactlyOneActiveProfile(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+	path := filepath.Join(configDir, "games", game.ID, "profiles", "survival.yaml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, append(data, []byte("is_default: true\n")...), 0o644))
+
+	stdout, stderr, err := captureStdoutAndStderr(t, func() error {
+		return doProfileList(context.Background(), svc, game)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "NAME      MODS  DEFAULT\n----      ----  -------\ndefault   0     *\nsurvival  0     *\n", stdout)
+	assert.Equal(t, "Warning: profiles default, survival of g1 are all marked active (is_default: true), so lmm will not deploy or purge its files until one is - run `lmm profile switch <name>` to keep one\n", stderr)
+}
+
+// TestDoProfileList_JSON pins the ProfileListing document's framing (one
+// document, empty stderr) and its recorded golden.
+func TestDoProfileList_JSON(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "a"}))
+	_, err := pm.Create(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+
+	out := runJSONCommand(t, func() error {
+		return doProfileList(context.Background(), svc, game)
+	})
+	var got core.ProfileListing
+	decodeStrict(t, out, &got)
+	assertJSONCLIGolden(t, "profile_list", out)
 }
 
 // --- doProfileSwitch (Task 4 CLI refit) ---
@@ -186,9 +211,9 @@ func setupDoProfileSwitchTest(t *testing.T) (*core.Service, *domain.Game) {
 	t.Cleanup(func() { verbose = oldVerbose })
 
 	pm := getProfileManager(svc)
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	return svc, game
 }
@@ -205,18 +230,20 @@ func TestDoProfileSwitch_AlreadyActive_PrintsMessageAndReturnsNil(t *testing.T) 
 
 // TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting guards
 // doProfileSwitch's fast path: when the target profile's mod set already
-// matches, the CLI switches the default without ever prompting (no stdin
-// interaction needed) and prints the plan header immediately followed by
-// the short "✓ Switched" message - no leading blank line, unlike the
-// mutation path's final message (see the happy-path test below).
+// matches AND is already live under the target's own rows (#430), the CLI
+// switches the default without ever prompting (no stdin interaction
+// needed) and prints the plan header immediately followed by the short
+// "✓ Switched" message - no leading blank line, unlike the mutation
+// path's final message (see the happy-path test below).
 func TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "other")
+	_, err := pm.Create(context.Background(), game.ID, "other")
 	require.NoError(t, err)
 
 	seedDeployableMod(t, svc, game, "shared", "Shared Mod", "shared.esp")
-	require.NoError(t, pm.AddMod(game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
+	seedLiveRowUnderProfile(t, svc, game, "other", "shared", "Shared Mod")
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
 
 	out := captureStdout(t, func() error {
 		return doProfileSwitch(context.Background(), svc, game, "other")
@@ -224,7 +251,7 @@ func TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting(t *testing.T)
 
 	assert.Equal(t, "Switching to profile: other\n\n✓ Switched to profile: other\n", out)
 
-	def, err := pm.GetDefault(game.ID)
+	def, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "other", def.Name)
 }
@@ -237,31 +264,130 @@ func TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting(t *testing.T)
 func TestDoProfileSwitch_PrintsPlanAndPrompts_ProceedDeclined_NoMutations(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
 
 	var out string
+	var declineErr error
 	withStdin(t, "n\n", func() {
 		out = captureStdout(t, func() error {
-			return doProfileSwitch(context.Background(), svc, game, "target")
+			declineErr = doProfileSwitch(context.Background(), svc, game, "target")
+			return nil
 		})
 	})
+	// #382: a declined confirmation is the shared cancellation sentinel, so
+	// Execute exits 2 and prints "Cancelled." on stderr - this used to
+	// return nil, i.e. exit 0 over a switch that never happened.
+	require.ErrorIs(t, declineErr, ErrCancelled)
 
 	assert.Contains(t, out, "Switching to profile: target\n\n")
 	assert.Contains(t, out, "Will disable 1 mod(s):\n")
 	assert.Contains(t, out, "  - Disable Me (disable-me)\n")
 	assert.Contains(t, out, "\nProceed? [Y/n]: ")
-	assert.Contains(t, out, "Cancelled.\n")
 
-	def, err := pm.GetDefault(game.ID)
+	def, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "default", def.Name, "declining must not switch the default profile")
 
-	mod, err := svc.GetInstalledMod("src", "disable-me", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, mod.Enabled, "declining must not disable any mod")
+}
+
+// TestDoProfileSwitch_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at doProfileSwitch's "Proceed?"
+// prompt: under --json with no -y, the switch must fail with
+// core.ErrConfirmationRequired before ever reading stdin, and neither the
+// default profile nor any mod's enabled state changes.
+func TestDoProfileSwitch_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
+	withJSONOutput(t)
+
+	err = assertStdinNeverRead(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	def, derr := pm.GetDefault(context.Background(), game.ID)
+	require.NoError(t, derr)
+	assert.Equal(t, "default", def.Name, "must not switch the default profile")
+	mod, merr := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
+	require.NoError(t, merr)
+	assert.True(t, mod.Enabled, "must not disable any mod")
+}
+
+// TestDoProfileSwitch_YesFlagSkipsPromptEntirely pins -y: the prompt text
+// never prints at all (not merely auto-answered) and the switch proceeds
+// without reading stdin, matching every other -y-gated prompt in this
+// package.
+func TestDoProfileSwitch_YesFlagSkipsPromptEntirely(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
+	oldYes := profileSwitchYes
+	profileSwitchYes = true
+	t.Cleanup(func() { profileSwitchYes = oldYes })
+
+	out := captureStdout(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	assert.NotContains(t, out, "Proceed?")
+	assert.Contains(t, out, "\n✓ Switched to profile: target\n")
+
+	def, derr := pm.GetDefault(context.Background(), game.ID)
+	require.NoError(t, derr)
+	assert.Equal(t, "target", def.Name)
+	mod, merr := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
+	require.NoError(t, merr)
+	assert.False(t, mod.Enabled)
+}
+
+// TestDoProfileSwitch_YesFlagUnderJSON_ProceedsWithoutReadingStdin guards
+// the combination the Task 9 review flagged as untested: -y under --json
+// together. The --json guard only fires inside the prompt's own read path,
+// which -y's `if !profileSwitchYes { ... }` branch never reaches at all -
+// this test proves that structural safety holds by actually driving both
+// flags at once, rather than relying on code-shape inspection.
+func TestDoProfileSwitch_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	withJSONOutput(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
+	oldYes := profileSwitchYes
+	profileSwitchYes = true
+	t.Cleanup(func() { profileSwitchYes = oldYes })
+
+	var switchErr error
+	out := captureStdout(t, func() error {
+		switchErr = assertStdinNeverRead(t, func() error {
+			return doProfileSwitch(context.Background(), svc, game, "target")
+		})
+		return nil
+	})
+
+	require.NoError(t, switchErr)
+	assert.NotContains(t, out, "Proceed?")
+	// v2 Phase 3 Ruling 15: under --json the run's whole output is the
+	// SwitchResult document; the "✓ Switched" line is suppressed, so the
+	// switch is asserted from the document and from the active profile.
+	var doc core.SwitchResult
+	decodeSingleDoc(t, out, &doc)
+	assert.Equal(t, 1, doc.Disabled)
+
+	active, err := pm.GetDefault(context.Background(), game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "target", active.Name)
 }
 
 // TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput guards
@@ -276,7 +402,7 @@ func TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput(t *testi
 	svc, game := setupDoProfileSwitchTest(t)
 	game.DeployMode = domain.DeployCopy
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	// disable-me: enabled under "default", absent from "target".
@@ -284,13 +410,13 @@ func TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput(t *testi
 
 	// enable-me: installed (cached) but disabled, under "target" already.
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "enable-me", "1.0", "enable.esp", []byte("e")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "enable-me", SourceID: "src", Name: "Enable Me", Version: "1.0", GameID: game.ID},
 		ProfileName:  "target",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      false,
 	}))
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "enable-me", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "enable-me", Version: "1.0"}))
 
 	// install-me: referenced by "target" only, not installed at all.
 	mux := http.NewServeMux()
@@ -321,7 +447,7 @@ mods:
 	})
 	require.NoError(t, err)
 	svc.RegisterSource(src)
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "e2e-repo", ModID: "install-me", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "e2e-repo", ModID: "install-me", Version: "1.0"}))
 
 	var out string
 	withStdin(t, "y\n", func() {
@@ -342,7 +468,7 @@ mods:
 	assert.Contains(t, out, "    ✓ Installed: Install Me\n")
 	assert.Contains(t, out, "\n✓ Switched to profile: target\n")
 
-	def, err := pm.GetDefault(game.ID)
+	def, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "target", def.Name)
 
@@ -353,7 +479,7 @@ mods:
 	_, err = os.Lstat(filepath.Join(game.ModPath, "disable.esp"))
 	assert.True(t, os.IsNotExist(err), "disable.esp should be undeployed")
 
-	installed, err := svc.GetInstalledMod("e2e-repo", "install-me", "g1", "target")
+	installed, err := svc.GetInstalledMod(context.Background(), "e2e-repo", "install-me", "g1", "target")
 	require.NoError(t, err)
 	assert.Equal(t, "g1", installed.GameID, "persisted GameID must be normalized to the lmm game")
 }
@@ -365,18 +491,18 @@ mods:
 func TestDoProfileSwitch_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
-	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "blocked/plugin.esp")
 	// seedDeployableMod only seeds the cache/DB/profile - actually deploy the
-	// mod first so there is a real symlink to corrupt.
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
-	// Corrupt the deployed symlink so Uninstall fails deterministically.
-	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
+	// mod first so there is a real deployed path to obstruct.
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default")
+	// Blocking the parent makes Uninstall fail with ENOTDIR.
+	deployedPath := filepath.Join(game.ModPath, "blocked", "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
-	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+	require.NoError(t, os.Remove(filepath.Dir(deployedPath)))
+	require.NoError(t, os.WriteFile(filepath.Dir(deployedPath), []byte("blocked"), 0644))
 
 	oldVerbose := verbose
 	verbose = true
@@ -384,13 +510,260 @@ func TestDoProfileSwitch_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *te
 
 	var out string
 	withStdin(t, "y\n", func() {
-		out = captureStdout(t, func() error {
+		out, _, err = captureStdoutAndStderr(t, func() error {
 			return doProfileSwitch(context.Background(), svc, game, "target")
 		})
 	})
 
+	// #471: a failed undeploy is a failed mod, not a disable.
+	var incomplete *core.ProfileSwitchIncompleteError
+	require.ErrorAs(t, err, &incomplete)
+	assert.Contains(t, err.Error(), "src:1): undeploy failed")
 	assert.Contains(t, out, "  Warning: failed to undeploy Test Mod: ")
-	assert.Contains(t, out, "  ✓ Disabled: Test Mod\n")
+	assert.NotContains(t, out, "✓ Disabled: Test Mod")
+}
+
+// switchLockRefusalFixture seeds the one scenario every #294 switch capture
+// needs (mirroring applyLockRefusalFixture, cmd/lmm/profile_apply_test.go):
+// a "target" profile referencing an installable "test-src:mod1" v1.1 whose
+// ref is LOCKED with no recorded version, so the post-install UpsertMod
+// (which records the version actually installed) hits the lock gate (#143).
+func switchLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game, _ := switchLockRefusalFixtureWithSource(t)
+	return svc, game
+}
+
+// switchLockRefusalFixtureWithSource is switchLockRefusalFixture, also
+// returning the source the target's mod is installed from.
+func switchLockRefusalFixtureWithSource(t *testing.T) (*core.Service, *domain.Game, *fakeInstallSource) {
+	t.Helper()
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(context.Background(), game.ID, "target")
+	require.NoError(t, err)
+
+	src := newFakeInstallSource("test-src")
+	t.Cleanup(src.Close)
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"test-src": game.ID}
+
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.1", GameID: game.ID},
+		[]domain.DownloadableFile{
+			{ID: "main", Name: "Main", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.1"},
+		})
+	src.AddDownload("main", []byte("plugin content"))
+
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{
+		SourceID: "test-src", ModID: "mod1", Locked: true,
+	}))
+
+	withProfileSwitchYes(t)
+	return svc, game, src
+}
+
+// switchLockRefusalDetail is the exact SwitchResult.Warnings entry #294
+// (Ruling 5's class extension, Task 13b) records for switchLockRefusalFixture's
+// refusal: core wraps ProfileManager.UpsertMod's own refusal sentence as
+// "could not update profile: <err>", with no "Warning: " prefix baked in.
+// switchLockRefusalWarning is the stderr line the CLI renders from it.
+const switchLockRefusalDetail = "could not update profile: mod is locked: test-src:mod1 is locked at v in profile target - move the lock with 'lmm mod lock -s test-src -p target mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p target mod1' (refusing to record v1.1)"
+
+const switchLockRefusalWarning = "Warning: " + switchLockRefusalDetail + "\n"
+
+// TestDoProfileSwitch_LockedRef_UpsertRefusalWarnsUnconditionally pins #294's
+// class extension (Ruling 5, Task 13b): the install loop's swallowed
+// UpsertMod refusal is now the same unconditional stderr "Warning: ..."
+// line doProfileApply/doProfileSync already print for the identical
+// refusal - identical with and without --verbose, and never on stdout -
+// instead of the --verbose-only stdout note doProfileSwitch used to print
+// it as. Mirrors TestDoProfileApply_LockedRef_UpsertRefusalWarnsUnconditionally
+// exactly. The mod still counts as installed.
+func TestDoProfileSwitch_LockedRef_UpsertRefusalWarnsUnconditionally(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verbose bool
+	}{
+		{"verbose", true},
+		{"quiet", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, game := switchLockRefusalFixture(t)
+			pm := getProfileManager(svc)
+			oldVerbose := verbose
+			verbose = tc.verbose
+			t.Cleanup(func() { verbose = oldVerbose })
+
+			var out, stderr string
+			var err error
+			withStdin(t, "y\n", func() {
+				out, stderr, err = captureStdoutStderrErr(t, func() error {
+					return doProfileSwitch(context.Background(), svc, game, "target")
+				})
+			})
+			require.NoError(t, err)
+
+			assert.Contains(t, out, "    ✓ Installed: Mod One\n", "the lock refusal must not fail the install")
+			assert.Equal(t, switchLockRefusalWarning, stderr,
+				"#294: the refusal is an unconditional stderr warning, identical at both verbosities")
+			assert.NotContains(t, out, "could not update profile",
+				"#294: the refusal left stdout entirely - it is no longer a --verbose-only note")
+
+			installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "target")
+			require.NoError(t, err)
+			assert.Equal(t, "1.1", installed.Version)
+
+			profile, err := pm.Get(context.Background(), game.ID, "target")
+			require.NoError(t, err)
+			require.Len(t, profile.Mods, 1)
+			assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
+		})
+	}
+}
+
+// TestDoProfileSwitch_LockedRef_UpsertRefusal_JSON is #294's --json framing
+// sibling (Ruling 15 / Unit P): the new warning reaches the document via
+// SwitchResult.Warnings and NOT stderr - exactly one document on stdout,
+// nothing on stderr.
+func TestDoProfileSwitch_LockedRef_UpsertRefusal_JSON(t *testing.T) {
+	svc, game := switchLockRefusalFixture(t)
+
+	var doc core.SwitchResult
+	raw := runJSONCommand(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+	decodeSingleDoc(t, raw, &doc)
+
+	assert.Equal(t, 1, doc.Installed)
+	assert.Empty(t, doc.Notes, "#294: the refusal is no longer a note")
+	require.Len(t, doc.Warnings, 1)
+	assert.Equal(t, switchLockRefusalDetail, doc.Warnings[0])
+}
+
+// TestDoProfileSwitch_LockedRefWarningSurvivesFatalSetDefaultError pins Task
+// 13 review round 1's Important 1 fix: the install loop's #294 warning must
+// reach stderr even when ApplyProfileSwitch fails fatally afterward - the
+// core scenario
+// TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnostics_ReturnsPartialResult
+// documents, driven here through doProfileSwitch itself. Before the fix,
+// result.Warnings was only ever printed on the success path, so a refusal
+// followed by a fatal SetDefault error was silently dropped on stderr - the
+// exact failure mode #294 exists to close, just narrowed to the error path.
+func TestDoProfileSwitch_LockedRefWarningSurvivesFatalSetDefaultError(t *testing.T) {
+	svc, game, src := switchLockRefusalFixtureWithSource(t)
+
+	// Force SetDefault's "clearing default on default" step to fail: it
+	// loads "target" (untouched, so the install loop's lock refusal above is
+	// unaffected) then tries to save the OLD default profile ("default") to
+	// clear its flag - making default.yaml unwritable fails SetDefault
+	// deterministically without touching the install loop at all.
+	chmodDefaultProfileReadOnly(t, game, src)
+
+	var out, stderr string
+	var err error
+	withStdin(t, "y\n", func() {
+		out, stderr, err = captureStdoutStderrErr(t, func() error {
+			return doProfileSwitch(context.Background(), svc, game, "target")
+		})
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setting default profile")
+	assert.Equal(t, switchLockRefusalWarning, stderr,
+		"Important 1: the accumulated #294 warning must survive the fatal path, not be silently dropped")
+	assert.Contains(t, out, "    ✓ Installed: Mod One\n", "the install itself succeeded before the later fatal SetDefault error")
+}
+
+// chmodDefaultProfileReadOnly makes doProfileSwitch's final SetDefault step
+// fail deterministically: SetDefault loads "target" (untouched, so an
+// install-loop lock refusal is unaffected) then saves the OLD default
+// profile to clear its flag, which an unwritable default.yaml refuses.
+//
+// The file is made unwritable DURING the switch, as src hands out the
+// install's download: a switch refuses one that already is before it
+// changes anything (#445 review F5), so a late SetDefault failure is a file
+// that changed underneath it.
+func chmodDefaultProfileReadOnly(t *testing.T, game *domain.Game, src *fakeInstallSource) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root writes a read-only file anyway")
+	}
+	defaultPath := filepath.Join(configDir, "games", game.ID, "profiles", "default.yaml")
+	src.beforeDownload = func() { require.NoError(t, os.Chmod(defaultPath, 0o444)) }
+	t.Cleanup(func() { _ = os.Chmod(defaultPath, 0o644) })
+}
+
+// TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings pins the
+// unit Q review's M3 fix. The plain-text sibling above prints the
+// accumulated #294 warnings to stderr before returning the fatal error;
+// under --json that is forbidden (Ruling 15: one document on stdout, nothing
+// on stderr), so before this fix the warnings reached neither stream and the
+// silent DB-vs-profile divergence #294 exists to expose was silent again on
+// exactly this path. They now ride the error into the envelope's "details"
+// as {"warnings": [...]}, the core.ConflictError/core.GameDetectPartialError
+// convention.
+func TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings(t *testing.T) {
+	svc, game, src := switchLockRefusalFixtureWithSource(t)
+	chmodDefaultProfileReadOnly(t, game, src)
+	withJSONOutput(t)
+
+	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setting default profile")
+	assert.Empty(t, stdout, "Ruling 15: the failing --json run emits no Result document of its own")
+	assert.Empty(t, stderr, "Ruling 15: nothing but the one document may reach the streams")
+
+	var warnErr *core.ProfileWarningsError
+	require.ErrorAs(t, err, &warnErr, "the fatal error must carry the accumulated warnings")
+	assert.Equal(t, []string{switchLockRefusalDetail}, warnErr.Warnings)
+
+	envelope, envStderr, _ := captureStdoutStderrErr(t, func() error { reportError(err); return nil })
+	assert.Empty(t, envStderr)
+	assert.Contains(t, envelope, "\"details\": {\n    \"warnings\": [\n",
+		"M3: the envelope's details bucket is keyed \"warnings\"")
+	want := captureStdout(t, func() error {
+		return emitJSON(jsonErrorEnvelope{
+			Error:   err.Error(),
+			Details: warnErr.Details(),
+		})
+	})
+	assert.Equal(t, want, envelope, "M3: stdout is exactly the one error envelope")
+}
+
+// TestDoProfileSwitch_JSON_FatalWithoutWarnings_EnvelopeUnchanged is M3's
+// counterpart: with nothing accumulated, the same fatal path must still
+// produce the bare {"error": ...} envelope - no empty "details" bucket, no
+// new key - so the M3 wrapper is invisible to every run that has nothing to
+// report.
+func TestDoProfileSwitch_JSON_FatalWithoutWarnings_EnvelopeUnchanged(t *testing.T) {
+	svc, game, src := switchLockRefusalFixtureWithSource(t)
+	// The same install, unlocked: it records its ref, so nothing is
+	// accumulated before SetDefault fails.
+	require.NoError(t, getProfileManager(svc).ClearModLock(context.Background(), game.ID, "target", "test-src", "mod1"))
+	chmodDefaultProfileReadOnly(t, game, src)
+	withJSONOutput(t)
+
+	stdout, stderr, callErr := captureStdoutStderrErr(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	require.Error(t, callErr)
+	assert.Contains(t, callErr.Error(), "setting default profile")
+	assert.Empty(t, stdout)
+	assert.Empty(t, stderr)
+
+	var warnErr *core.ProfileWarningsError
+	assert.False(t, errors.As(callErr, &warnErr), "no warnings means no wrapper")
+
+	envelope := captureStdout(t, func() error { reportError(callErr); return nil })
+	assert.NotContains(t, envelope, "\"details\"", "an unwrapped fatal error carries no details bucket")
+	want := captureStdout(t, func() error {
+		return emitJSON(jsonErrorEnvelope{Error: callErr.Error()})
+	})
+	assert.Equal(t, want, envelope)
 }
 
 // seedApplyCandidateMod stores files (if any) in the game's cache and saves
@@ -408,7 +781,7 @@ func seedApplyCandidateMod(t *testing.T, svc *core.Service, game *domain.Game, s
 		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
 	}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -448,14 +821,14 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 	// profile.Mods interleaves enable/install refs in an order matching
 	// neither alphabetical nor insertion order for either sub-sequence.
 	for _, id := range []string{"enC", "insB", "enA", "insC", "enB", "insA"} {
-		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
 	}
 
 	origYes := profileApplyYes
 	profileApplyYes = true
 	t.Cleanup(func() { profileApplyYes = origYes })
 
-	out := captureStdout(t, func() error {
+	out := captureIncompleteApply(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
 
@@ -481,144 +854,6 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 	assert.Less(t, insC, insA, "install-eligible mods must print in profile.Mods order")
 }
 
-// TestSelectFilesToDownload_VersionAuthoritative is the #96 direct unit test
-// for selectFilesToDownload's version parameter: same precedence as
-// internal/core's selectVersionedDeployFiles (drift heals to the recorded
-// version, gone IDs heal to the recorded version, an unresolvable target
-// hard-fails naming the version, and an empty version preserves the exact
-// pre-#96 behavior).
-func TestSelectFilesToDownload_VersionAuthoritative(t *testing.T) {
-	// file11 (another 1.0 file) and file12 (a non-primary file at an
-	// unrelated version, 2.0) extend the base fixture to cover the fast
-	// path and the stored-intersect-matches precedence (rule 3) without
-	// disturbing any of the original four assertions below - each is
-	// re-verified against the larger fixture inline.
-	files := []domain.DownloadableFile{
-		{ID: "10", Version: "1.5", IsPrimary: true, Category: "MAIN"},
-		{ID: "9", Version: "1.0", Category: "ARCHIVED"},
-		{ID: "11", Version: "1.0", Category: "ARCHIVED"},
-		{ID: "12", Version: "2.0", Category: "OPTIONAL"},
-	}
-
-	// Drift: stored ID exists upstream but is the wrong version - version wins.
-	got, err := selectFilesToDownload(files, []string{"10"}, "1.0")
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "9", got[0].ID)
-
-	// Gone IDs heal to the recorded version.
-	got, err = selectFilesToDownload(files, []string{"999"}, "1.0")
-	require.NoError(t, err)
-	assert.Equal(t, "9", got[0].ID)
-
-	// Unresolvable, no stored ID present upstream at all: extended #95
-	// wording (rule 4a).
-	_, err = selectFilesToDownload(files, []string{"999"}, "0.5")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `version "0.5" not available`)
-
-	// Legacy: empty version behaves exactly as before.
-	got, err = selectFilesToDownload(files, nil, "")
-	require.NoError(t, err)
-	assert.Equal(t, "10", got[0].ID)
-
-	// Rule 2 (fast path): both stored IDs are returned as-is, without
-	// re-resolution, once their combined effective version agrees with the
-	// record - file9 (1.0) is the representative (neither stored file is
-	// primary, so the first one carrying a version wins), and file12 (2.0,
-	// an unrelated companion file's own version) rides along BOTH. This is
-	// what distinguishes the fast path from rule 3's stored-intersect-
-	// matches, which would keep only file9 (file12 isn't a 1.0 match).
-	got, err = selectFilesToDownload(files, []string{"9", "12"}, "1.0")
-	require.NoError(t, err)
-	require.Len(t, got, 2, "fast path must return the whole stored set, not just the version-matching subset")
-	gotIDs := []string{got[0].ID, got[1].ID}
-	assert.ElementsMatch(t, []string{"9", "12"}, gotIDs)
-
-	// Rule 3 (stored ∩ matches): stored IDs 10 and 9 disagree in effective
-	// version with the record (file10, the primary, is 1.5) so the fast
-	// path does not fire; among the files that DO match "1.0" (9 and 11),
-	// only the one that was ALSO a stored ID (9) is kept - file11 is
-	// excluded even though it's a 1.0 match, because it was never a stored
-	// ID for this mod.
-	got, err = selectFilesToDownload(files, []string{"10", "9"}, "1.0")
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "9", got[0].ID)
-
-	// Rule 5 (ErrVersionNotFound wrap): no stored IDs at all, and the
-	// requested version matches nothing upstream.
-	_, err = selectFilesToDownload(files, nil, "3.0")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, core.ErrVersionNotFound))
-	assert.Contains(t, err.Error(), "edit the profile's version or reinstall")
-
-	// Rule 4b (new split, #96 fix round 1): a stored ID (12) IS still
-	// present upstream, but the recorded version (3.0) matches nothing -
-	// this is a wrong version record on a file that's still there, not a
-	// gone file, so it must NOT get the #95 "no longer available upstream"
-	// wording; it gets a distinct ErrVersionNotFound wrap pointing at
-	// verify/update instead of reinstall.
-	_, err = selectFilesToDownload(files, []string{"12"}, "3.0")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, core.ErrVersionNotFound))
-	assert.NotContains(t, err.Error(), "no longer available upstream", "a present-upstream stored ID must not get the gone-file wording")
-	assert.Contains(t, err.Error(), `installed file(s) (ID(s): 12) do not match recorded version "3.0"`)
-	assert.Contains(t, err.Error(), "run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version")
-}
-
-// TestSelectFilesToDownload_CategoryPriorityTieBreak covers #144 item 5 for
-// the cmd twin: when the recorded version offers no primary file and no
-// stored ID narrows the choice, the final fallback used to be matches[0] -
-// upstream listing order - ignoring fileCategoryPriority entirely. The
-// category priority (MAIN > OPTIONAL > UPDATE > MISCELLANEOUS > unknown >
-// archived) now breaks that tie, stable: first-listed wins among equal
-// priorities, so category-less listings (custom sources) behave exactly as
-// before.
-//
-// PARITY: internal/core/flows_selection_test.go's
-// TestSelectVersionedDeployFiles_CategoryPriorityTieBreak encodes this SAME
-// fixture table and expected picks through selectVersionedDeployFiles - this
-// tail is the hand-mirrored twin of core's pickVersionMatch (internal/core
-// cannot import cmd/lmm), so the two tests are the drift guard for the
-// twins. Change both together, or not at all.
-func TestSelectFilesToDownload_CategoryPriorityTieBreak(t *testing.T) {
-	files := []domain.DownloadableFile{
-		{ID: "misc20", Version: "2.0", Category: "MISCELLANEOUS"},
-		{ID: "upd20", Version: "2.0", Category: "UPDATE"},
-		{ID: "opt20", Version: "2.0", Category: "OPTIONAL"},
-		{ID: "optA30", Version: "3.0", Category: "OPTIONAL"},
-		{ID: "optB30", Version: "3.0", Category: "OPTIONAL"},
-		{ID: "plain40a", Version: "4.0"},
-		{ID: "plain40b", Version: "4.0"},
-		{ID: "beta50", Version: "5.0", Category: "beta"},
-		{ID: "upd50", Version: "5.0", Category: "update"},
-		{ID: "opt60", Version: "6.0", Category: "OPTIONAL"},
-		{ID: "miscPrim60", Version: "6.0", Category: "MISCELLANEOUS", IsPrimary: true},
-	}
-
-	cases := []struct {
-		name    string
-		version string
-		wantID  string
-	}{
-		{"category priority beats listing order", "2.0", "opt20"},
-		{"equal categories keep first-listed", "3.0", "optA30"},
-		{"category-less files keep first-listed", "4.0", "plain40a"},
-		{"known category beats unknown, case-insensitively", "5.0", "upd50"},
-		{"a primary file still outranks category priority", "6.0", "miscPrim60"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := selectFilesToDownload(files, nil, tc.version)
-			require.NoError(t, err)
-			require.Len(t, got, 1)
-			assert.Equal(t, tc.wantID, got[0].ID)
-		})
-	}
-}
-
 // TestDoProfileApply_StampsSelectedFileVersion guards issue #94 for
 // doProfileApply's "install missing mods" save site: when a mod referenced
 // by the profile (but not yet installed) has a primary file whose version
@@ -631,8 +866,7 @@ func TestSelectFilesToDownload_CategoryPriorityTieBreak(t *testing.T) {
 //
 // The profile ref's Version is deliberately "" (a legacy/unpinned ref), not
 // "1.0": #96 made a non-empty ref.Version an authoritative exact-match pin
-// for selectFilesToDownload (mirroring internal/core's
-// selectVersionedDeployFiles), and "1.0" here was only ever the mod-level
+// for core.selectFilesForVersion, and "1.0" here was only ever the mod-level
 // label coincidentally reused for the ref before #96 existed - the
 // mod-vs-file version discrepancy this test actually guards is entirely
 // between src.AddMod's Version and the served file's Version, independent
@@ -652,7 +886,7 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 	src.AddDownload("main", []byte("plugin content"))
 
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: ""}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: ""}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -660,7 +894,7 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 
 	require.NoError(t, doProfileApply(context.Background(), svc, game, nil))
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.1", installed.Version, "installed mod version must be the selected file's version, not the profile ref's version")
 }
@@ -668,20 +902,20 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 // TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution guards
 // #95 for doProfileApply's "install missing mods" loop: when a profile mod's
 // stored FileIDs no longer match anything the source currently lists,
-// selectFilesToDownload must fail the mod with the upstream-gone error
+// core.selectFilesForVersion must fail the mod with the upstream-gone error
 // instead of silently substituting the primary file (mirrors
 // internal/core's TestService_DeployProfile_StoredFileIDsGone_
 // SkipsModWithClearError from task B1). A second mod with valid FileIDs
 // proves the toInstall loop continues past the failure rather than
 // aborting.
 //
-// The served files carry no Version (unlike TestSelectFilesToDownload_
-// VersionAuthoritative's fixture) so anyFileHasVersion is false and this
-// exercises selectFilesToDownloadLegacy - #96 deliberately changes this
-// exact scenario for a VERSIONED source (gone FileIDs now heal to a
-// version-matched file rather than hard-failing); the un-extended #95
-// no-substitution contract this test guards only still applies vacuously,
-// per decision 1/4.
+// The served files carry no Version (unlike
+// TestSelectFilesForVersion_VersionAuthoritative's fixture, internal/core's
+// selection_test.go) so this exercises selectFilesForVersion's legacy,
+// version-blind fallthrough - #96 deliberately changes this exact scenario
+// for a VERSIONED source (gone FileIDs now heal to a version-matched file
+// rather than hard-failing); the un-extended #95 no-substitution contract
+// this test guards only still applies vacuously, per decision 1/4.
 func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 
@@ -708,14 +942,14 @@ func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing
 	src.AddDownload("main2", []byte("plugin content"))
 
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0", FileIDs: []string{"stale-id"}}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod2", Version: "1.0", FileIDs: []string{"main2"}}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0", FileIDs: []string{"stale-id"}}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod2", Version: "1.0", FileIDs: []string{"main2"}}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
 	t.Cleanup(func() { profileApplyYes = origYes })
 
-	out := captureStdout(t, func() error {
+	out := captureIncompleteApply(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
 	})
 
@@ -723,10 +957,10 @@ func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing
 	assert.Contains(t, out, "stale-id", "the error must name the stale file ID")
 	assert.NotContains(t, out, "using primary", "the old silent-fallback warning must not print")
 
-	_, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	assert.Error(t, err, "mod1 must not be installed - no substitution should occur")
 
-	installed2, err := svc.GetInstalledMod("test-src", "mod2", game.ID, "default")
+	installed2, err := svc.GetInstalledMod(context.Background(), "test-src", "mod2", game.ID, "default")
 	require.NoError(t, err, "mod2 must still install - the toInstall loop must continue past mod1's failure")
 	assert.Equal(t, "1.0", installed2.Version)
 }
@@ -742,12 +976,17 @@ func TestDoProfileApply_VersionDrift_SchedulesReinstall(t *testing.T) {
 	pm := getProfileManager(svc)
 
 	seedApplyCandidateMod(t, svc, game, "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	var out string
 	withStdin(t, "n\n", func() {
 		out = captureStdout(t, func() error {
-			return doProfileApply(context.Background(), svc, game, nil)
+			// #382: a declined prompt is ErrCancelled (exit 2) - the plan
+			// print above it is what this test is about.
+			if err := doProfileApply(context.Background(), svc, game, nil); !errors.Is(err, ErrCancelled) {
+				return err
+			}
+			return nil
 		})
 	})
 
@@ -755,7 +994,7 @@ func TestDoProfileApply_VersionDrift_SchedulesReinstall(t *testing.T) {
 	assert.Contains(t, out, "src:mod1 v1.0")
 	assert.NotContains(t, out, "Will enable", "a version-drifted mod must not be classified as a plain enable")
 
-	installed, err := svc.GetInstalledMod("src", "mod1", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", installed.Version, "declining the prompt must not mutate anything")
 }
@@ -769,7 +1008,7 @@ func TestDoProfileApply_MatchingVersion_RemainsNoop(t *testing.T) {
 	pm := getProfileManager(svc)
 
 	seedApplyCandidateMod(t, svc, game, "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	out := captureStdout(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
@@ -804,7 +1043,7 @@ func TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd(t *testing.T) 
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -812,12 +1051,11 @@ func TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd(t *testing.T) 
 		Deployed:     true,
 		FileIDs:      []string{"new"},
 	}))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.5", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.5", GameID: game.ID}, "default")
 	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -829,7 +1067,7 @@ func TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd(t *testing.T) 
 
 	assert.Contains(t, out, "✓ Installed: Mod One\n")
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version, "must record the pinned version, not the source's latest")
 	assert.Equal(t, []string{"old"}, installed.FileIDs, "must have selected the archived 1.0 file")
@@ -873,7 +1111,7 @@ func TestDoProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
 	require.NoError(t, os.MkdirAll(gameCache.ModPath(game.ID, "test-src", "mod1", "1.0"), 0755))
 	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "precondition: bare Exists must see the empty dir as already cached")
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -925,7 +1163,7 @@ func TestDoProfileApply_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("plugin content")))
 	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "test-src", "mod1", "1.0"), "main"))
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -971,7 +1209,7 @@ func TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *te
 	// mod1 is installed, enabled and genuinely DEPLOYED at 1.5...
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -979,8 +1217,7 @@ func TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *te
 		Deployed:     true,
 		FileIDs:      []string{"new"},
 	}))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.5", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.5", GameID: game.ID}, "default")
 	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
 
@@ -989,7 +1226,7 @@ func TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *te
 	require.NoError(t, gameCache.Delete(game.ID, "test-src", "mod1", "1.5"))
 	require.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "precondition: the old cache entry must be gone")
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -1002,11 +1239,105 @@ func TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *te
 	assert.NotContains(t, out, "deploy failed", "a pruned old cache must not break convergence")
 	assert.Contains(t, out, "✓ Installed: Mod One\n")
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version, "convergence must still reach the profile's pinned version")
 	assert.Equal(t, []string{"old"}, installed.FileIDs)
 
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
 	assert.NoError(t, err, "the new 1.0 file must be deployed via the Install fallback")
+}
+
+// --- doProfileRename (#332) ---
+
+// TestDoProfileRename_PlainOutputAndEffect: the profile really moves, and
+// the plain path prints the one confirmation line.
+func TestDoProfileRename_PlainOutputAndEffect(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "a"}))
+
+	out := captureStdout(t, func() error {
+		return doProfileRename(context.Background(), svc, game, "default", "survival")
+	})
+	assert.Equal(t, "✓ Renamed profile: default → survival\n", out)
+
+	renamed, err := pm.Get(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+	require.Len(t, renamed.Mods, 1)
+	assert.True(t, renamed.IsDefault, "the renamed default profile stays the default")
+
+	_, err = pm.Get(context.Background(), game.ID, "default")
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
+}
+
+// TestDoProfileRename_RefusesAnOccupiedName: the error is wrapped with the
+// command's own context and nothing moves.
+func TestDoProfileRename_RefusesAnOccupiedName(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+
+	err = doProfileRename(context.Background(), svc, game, "default", "survival")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "renaming profile")
+
+	_, err = pm.Get(context.Background(), game.ID, "default")
+	require.NoError(t, err, "a refused rename must leave the source profile in place")
+}
+
+// TestProfileRenameCmd_Structure: the subcommand is wired and takes exactly
+// two names.
+func TestProfileRenameCmd_Structure(t *testing.T) {
+	var subCmds []string
+	for _, cmd := range profileCmd.Commands() {
+		subCmds = append(subCmds, cmd.Name())
+	}
+	assert.Contains(t, subCmds, "rename")
+	assert.Error(t, profileRenameCmd.Args(profileRenameCmd, []string{"only-one"}))
+	assert.NoError(t, profileRenameCmd.Args(profileRenameCmd, []string{"old", "new"}))
+}
+
+// TestDoProfileApply_ExternalEntry_IsNotRenderedAsADownload is P1a review
+// finding F5. #371 gave PlanProfileApply its External branch - a Steam
+// Workshop item lmm already tracks is recorded, never fetched - but the
+// preview went on printing every ToInstall entry as `  ↓ src:id vVERSION`.
+// For an external entry that is wrong twice over: the download arrow
+// describes work the apply will not do (it copies a tracking row), and
+// entry.Ref.Version is Steam's 19-digit CONTENT ID, which #365/#269 rule out
+// of every human-facing surface.
+func TestDoProfileApply_ExternalEntry_IsNotRenderedAsADownload(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	ctx := context.Background()
+	pm := getProfileManager(svc)
+	_, err := pm.Create(ctx, game.ID, "shared")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "111000111", SourceID: "steamworkshop", Name: "Workshop item 111000111", Version: "9876543210", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		External:     true,
+		ExternalPath: "/steam/workshop/content/1/111000111",
+	}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "shared",
+		domain.ModReference{SourceID: "steamworkshop", ModID: "111000111", Version: "9876543210"}))
+	// An apply acts for the active profile only (#462).
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "shared"))
+
+	oldDryRun := profileApplyDryRun
+	profileApplyDryRun = true
+	t.Cleanup(func() { profileApplyDryRun = oldDryRun })
+
+	out := captureStdout(t, func() error {
+		return doProfileApply(ctx, svc, game, []string{"shared"})
+	})
+
+	assert.NotContains(t, out, "9876543210", "a Workshop content id must never be printed as a version")
+	assert.NotContains(t, out, "↓ steamworkshop:111000111", "the apply downloads nothing for a tracked item")
+	assert.Contains(t, out, "steamworkshop:111000111", "the entry must still be listed")
+	assert.Contains(t, out, "tracked", "and named as tracked rather than installed")
 }

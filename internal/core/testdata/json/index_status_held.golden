@@ -1,0 +1,10 @@
+{
+  "source": "thunderstore",
+  "game": "lethal-company",
+  "present": false,
+  "packages": 0,
+  "bytes": 0,
+  "stale": false,
+  "retry_at": "2026-08-27T12:10:00Z",
+  "hold_reason": "rate limited by Thunderstore (HTTP 429), which asked lmm to wait 10m0s"
+}

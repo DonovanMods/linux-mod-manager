@@ -1,0 +1,14 @@
+{
+  "changed": true,
+  "recorded_only": true,
+  "active_profile": "default",
+  "kept": [
+    {
+      "path": "Data/shared.esp",
+      "reason": "recorded",
+      "profiles": [
+        "default"
+      ]
+    }
+  ]
+}

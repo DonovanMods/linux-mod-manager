@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -15,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -203,36 +204,6 @@ func TestProgressBar(t *testing.T) {
 	}
 }
 
-// TestFilterAndSortFiles tests file filtering and sorting
-func TestFilterAndSortFiles(t *testing.T) {
-	files := []domain.DownloadableFile{
-		{ID: "1", FileName: "optional.zip", Category: "OPTIONAL"},
-		{ID: "2", FileName: "main.zip", Category: "MAIN"},
-		{ID: "3", FileName: "archived.zip", Category: "ARCHIVED"},
-		{ID: "4", FileName: "update.zip", Category: "UPDATE"},
-		{ID: "5", FileName: "main2.zip", Category: "MAIN"},
-		{ID: "6", FileName: "old.zip", Category: "OLD_VERSION"},
-	}
-
-	// Without archived
-	filtered := filterAndSortFiles(files, false)
-	assert.Len(t, filtered, 4) // excludes ARCHIVED and OLD_VERSION
-
-	// Check order: MAIN, MAIN, OPTIONAL, UPDATE
-	assert.Equal(t, "MAIN", filtered[0].Category)
-	assert.Equal(t, "MAIN", filtered[1].Category)
-	assert.Equal(t, "OPTIONAL", filtered[2].Category)
-	assert.Equal(t, "UPDATE", filtered[3].Category)
-
-	// With archived
-	withArchived := filterAndSortFiles(files, true)
-	assert.Len(t, withArchived, 6) // includes all
-
-	// ARCHIVED should be at the end
-	assert.Equal(t, "ARCHIVED", withArchived[4].Category)
-	assert.Equal(t, "OLD_VERSION", withArchived[5].Category)
-}
-
 func TestDisplayFileLabel(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -280,16 +251,20 @@ func TestInstallFileRow(t *testing.T) {
 	assert.Equal(t, "  [1] Mod_P.pak (PAK, 0 B)", installFileRow(0, noDesc))
 }
 
-// TestFileCategoryPriority tests category priority ordering
-func TestFileCategoryPriority(t *testing.T) {
-	assert.Less(t, fileCategoryPriority("MAIN"), fileCategoryPriority("OPTIONAL"))
-	assert.Less(t, fileCategoryPriority("OPTIONAL"), fileCategoryPriority("UPDATE"))
-	assert.Less(t, fileCategoryPriority("UPDATE"), fileCategoryPriority("MISCELLANEOUS"))
-	assert.Less(t, fileCategoryPriority("MISCELLANEOUS"), fileCategoryPriority("ARCHIVED"))
+// TestInstallFileRow_ShowsTheFilesDate is #433's install-picker half: a
+// file the source dates carries its date after the size, and an undated
+// one reads exactly as before.
+func TestInstallFileRow_ShowsTheFilesDate(t *testing.T) {
+	orig := cliNow
+	cliNow = func() time.Time { return time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { cliNow = orig })
 
-	// Case insensitive
-	assert.Equal(t, fileCategoryPriority("main"), fileCategoryPriority("MAIN"))
-	assert.Equal(t, fileCategoryPriority("Main"), fileCategoryPriority("MAIN"))
+	dated := domain.DownloadableFile{FileName: "m-1.1.zip", Category: "MAIN", IsPrimary: true, UploadedAt: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)}
+	assert.Equal(t, "  [1] m-1.1.zip (MAIN, 0 B, 2024-01-15) <- default", installFileRow(0, dated))
+	recent := domain.DownloadableFile{FileName: "m-1.2.zip", Category: "MAIN", UploadedAt: time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)}
+	assert.Equal(t, "  [2] m-1.2.zip (MAIN, 0 B, 1d ago)", installFileRow(1, recent))
+	undated := domain.DownloadableFile{FileName: "m-1.0.zip", Category: "MAIN"}
+	assert.Equal(t, "  [3] m-1.0.zip (MAIN, 0 B)", installFileRow(2, undated))
 }
 
 // TestInstallCmd_ShowArchivedFlag tests the show-archived flag exists
@@ -495,6 +470,89 @@ func TestSelectInstallFiles_ValidateRunsOnFastPaths(t *testing.T) {
 	})
 }
 
+// TestReadMultiSelectionLine_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule at readMultiSelectionLine, the choke point behind
+// both selectInstallFilesFrom's file-selection prompt and
+// promptMultiSelectionFrom: under --json it must return
+// core.ErrConfirmationRequired without ever calling reader.ReadString.
+func TestReadMultiSelectionLine_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	withJSONOutput(t)
+
+	selections, retry, err := readMultiSelectionLine(bufio.NewReader(poisonReader{t}), "Select file(s)", 1, 3)
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Nil(t, selections)
+	assert.False(t, retry)
+}
+
+// TestSelectInstallFilesFrom_JSONOutputRequiresYesOrFile pins the
+// non-interactive rule at the file-selection prompt: with multiple files and
+// no --file/-y, --json must fail with core.ErrConfirmationRequired without
+// ever reading the (poisoned) reader - the fast paths (--file, single file,
+// -y) are unaffected, exercised by TestSelectInstallFiles_ValidateRunsOnFastPaths
+// above with jsonOutput left at its default false.
+func TestSelectInstallFilesFrom_JSONOutputRequiresYesOrFile(t *testing.T) {
+	oldFileID, oldYes := installFileID, installYes
+	installFileID = ""
+	installYes = false
+	t.Cleanup(func() { installFileID, installYes = oldFileID, oldYes })
+	withJSONOutput(t)
+
+	files := []domain.DownloadableFile{
+		{ID: "pak", FileName: "Mod_P.pak", Category: "PAK", IsPrimary: true},
+		{ID: "exmodz", FileName: "Mod.exmodz", Category: "EXMODZ"},
+	}
+	selected, err := selectInstallFilesFrom(poisonReader{t}, files, nil)
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Nil(t, selected)
+}
+
+// TestSearchAndSelectMods_JSONOutputRequiresYesOrID pins the non-interactive
+// rule at searchAndSelectMods' multi-match prompt: with more than one search
+// result and no -y/--yes, --json must fail with core.ErrConfirmationRequired
+// without ever blocking on stdin (searchAndSelectMods hard-codes os.Stdin,
+// with no injectable reader seam, hence assertStdinNeverRead rather than a
+// poison reader).
+func TestSearchAndSelectMods_JSONOutputRequiresYesOrID(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false
+	withJSONOutput(t)
+	src.searchResults = []domain.Mod{
+		{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		{ID: "mod2", SourceID: "test-src", Name: "Mod Two", Version: "1.0", GameID: "g1"},
+	}
+
+	var mods []*domain.Mod
+	err := assertStdinNeverRead(t, func() error {
+		var err error
+		mods, err = searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "query", "default", domain.SortRelevance)
+		return err
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Nil(t, mods)
+}
+
+// TestSearchAndSelectMods_JSONOutputSingleMatchNeedsNoFlag pins that a
+// SINGLE unambiguous match is never gated by --json - nothing to confirm
+// non-interactively when there is only one possible answer, matching the
+// interactive path's own trivial-selection shortcut.
+func TestSearchAndSelectMods_JSONOutputSingleMatchNeedsNoFlag(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false
+	withJSONOutput(t)
+	src.searchResults = []domain.Mod{
+		{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+	}
+
+	mods, err := searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "query", "default", domain.SortRelevance)
+
+	require.NoError(t, err)
+	require.Len(t, mods, 1)
+	assert.Equal(t, "mod1", mods[0].ID)
+}
+
 // --- doInstall (Phase 5b Task 2 CLI refit) ---
 //
 // fakeInstallSource is a minimal source.ModSource for doInstall's refit
@@ -536,14 +594,49 @@ type fakeInstallSource struct {
 	// handler runs on the server's own goroutine. Mirrors
 	// internal/core/service_test.go's mockSourceWithDownloads.served.
 	served atomic.Int64
+
+	// searchResults, when non-nil, is what Search returns verbatim - for
+	// tests exercising searchAndSelectMods' multi-match path. nil (the
+	// default) reproduces the original always-empty behavior every other
+	// test in this file relies on.
+	searchResults []domain.Mod
+
+	// searchSorts records the Sort each Search call was asked for, in call
+	// order (#512): the observable form of "install forwarded --sort".
+	searchSorts []domain.SearchSort
+
+	// changelogs is keyed by mod ID; SetChangelog populates it. Every
+	// fakeInstallSource implements source.ChangelogProvider unconditionally
+	// (#87) - a mod ID with no entry returns "", the ordinary "nothing to
+	// report" case (omitzero on the wire), so every existing test that never
+	// calls SetChangelog is unaffected.
+	changelogs   map[string]string
+	changelogErr error
+
+	// beforeDownload, when set, runs as a download URL is handed out - a
+	// test's way to change the world in the middle of a flow.
+	beforeDownload func()
+
+	// searchWarnings is what Search reports beside its results.
+	searchWarnings []error
+
+	// notice, when set, is raised on the call's context by GetDownloadURL -
+	// the observable form of "this command handed the
+	// source the context it was given" (T3 review F2).
+	notice *source.Notice
+
+	// downloadURLErr, when set, is GetDownloadURL's answer for every file -
+	// a source.ManualDownloadError is a CurseForge author's opt-out (#535).
+	downloadURLErr error
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
 	s := &fakeInstallSource{
-		id:        id,
-		mods:      make(map[string]*domain.Mod),
-		files:     make(map[string][]domain.DownloadableFile),
-		downloads: make(map[string][]byte),
+		id:         id,
+		mods:       make(map[string]*domain.Mod),
+		files:      make(map[string][]domain.DownloadableFile),
+		downloads:  make(map[string][]byte),
+		changelogs: make(map[string]string),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -567,7 +660,11 @@ func (s *fakeInstallSource) ExchangeToken(ctx context.Context, code string) (*so
 	return nil, nil
 }
 func (s *fakeInstallSource) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
-	return source.SearchResult{}, nil
+	s.searchSorts = append(s.searchSorts, query.Sort)
+	if s.searchResults != nil {
+		return source.SearchResult{Mods: s.searchResults, TotalCount: len(s.searchResults), Warnings: s.searchWarnings}, nil
+	}
+	return source.SearchResult{Warnings: s.searchWarnings}, nil
 }
 func (s *fakeInstallSource) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
 	if mod, ok := s.mods[modID]; ok {
@@ -589,7 +686,16 @@ func (s *fakeInstallSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([
 	return s.files[mod.ID], nil
 }
 func (s *fakeInstallSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	if s.beforeDownload != nil {
+		s.beforeDownload()
+	}
 	s.receivedGameDownloadIDs = append(s.receivedGameDownloadIDs, mod.GameID)
+	if s.notice != nil {
+		source.Notify(ctx, *s.notice)
+	}
+	if s.downloadURLErr != nil {
+		return "", s.downloadURLErr
+	}
 	return s.srv.URL + "/" + fileID, nil
 }
 func (s *fakeInstallSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
@@ -614,6 +720,21 @@ func (s *fakeInstallSource) AddDownload(fileID string, content []byte) {
 
 // DownloadCount reports how many download requests the fake actually served.
 func (s *fakeInstallSource) DownloadCount() int { return int(s.served.Load()) }
+
+// Changelog implements source.ChangelogProvider (#87): returns the text
+// staged for modID via SetChangelog, or changelogErr when set (version is
+// ignored - no test here needs per-version fixtures).
+func (s *fakeInstallSource) Changelog(ctx context.Context, sourceGameID, modID, version string) (string, error) {
+	if s.changelogErr != nil {
+		return "", s.changelogErr
+	}
+	return s.changelogs[modID], nil
+}
+
+// SetChangelog stages modID's changelog text for the next Changelog call.
+func (s *fakeInstallSource) SetChangelog(modID, text string) {
+	s.changelogs[modID] = text
+}
 
 // setupDoInstallTest builds a *core.Service, a game configured for
 // fakeInstallSource, and resets install's package-level flag globals to
@@ -715,7 +836,7 @@ func TestDoInstall_Verbose_HappyPath_PrintsExpectedOutput(t *testing.T) {
 	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	assert.NoError(t, err, "file should be deployed to the game directory")
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, installed.Enabled)
 	assert.True(t, installed.Deployed)
@@ -747,16 +868,43 @@ func TestDoInstall_DependencyConfirmPrompt_DeclinedYieldsZeroMutations(t *testin
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "installation cancelled")
+	assert.ErrorIs(t, err, ErrCancelled, "a declined prompt returns the one cancellation sentinel (#382)")
 	assert.Contains(t, out, "Dependency tree (install order):\n")
 	assert.Contains(t, out, "1. Dep One v1.0 (ID: dep1) [dependency]\n")
 	assert.Contains(t, out, "2. Mod One v1.0 (ID: mod1) [target]\n")
 	assert.Contains(t, out, "Install 2 mod(s)? [Y/n]: ")
 
-	_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.Error(t, dbErr, "declining must result in zero mutations")
-	_, dbErr = svc.GetInstalledMod("test-src", "dep1", "g1", "default")
+	_, dbErr = svc.GetInstalledMod(context.Background(), "test-src", "dep1", "g1", "default")
 	assert.Error(t, dbErr, "declining must result in zero mutations")
+}
+
+// TestDoInstall_DependencyConfirmPrompt_JSONOutputReturnsConfirmationRequired
+// pins the non-interactive rule (v2 Phase 3 Ruling 2) at the dependency
+// confirm site: under --json with no -y, doInstall must fail with
+// core.ErrConfirmationRequired before ever reading stdin or installing
+// anything - never the blocking "Install N mod(s)?" prompt.
+func TestDoInstall_DependencyConfirmPrompt_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false
+	withJSONOutput(t)
+
+	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "dep1"}}}
+	src.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", FileName: "dep1.esp", IsPrimary: true}})
+	src.AddMod(root, []domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+
+	err := assertStdinNeverRead(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	assert.Error(t, dbErr, "must result in zero mutations")
+	_, dbErr = svc.GetInstalledMod(context.Background(), "test-src", "dep1", "g1", "default")
+	assert.Error(t, dbErr, "must result in zero mutations")
 }
 
 // TestDoInstall_DependencyPath_AcceptedInstallsDependencyThenPrimary guards
@@ -809,9 +957,9 @@ func TestDoInstall_DependencyPath_AcceptedInstallsDependencyThenPrimary(t *testi
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	assert.NoError(t, err, "primary file must be deployed")
 
-	_, dbErr := svc.GetInstalledMod("test-src", "dep1", "g1", "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "dep1", "g1", "default")
 	assert.NoError(t, dbErr, "dependency must be installed")
-	_, dbErr = svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	_, dbErr = svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.NoError(t, dbErr, "primary must be installed")
 }
 
@@ -825,15 +973,14 @@ func TestDoInstall_DependencyPath_ReinstallPrintsRemovingPreviousInstallation(t 
 	svc, game, src := setupDoInstallTest(t)
 	installYes = true
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	installer := svc.GetInstaller(game)
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "mod1-old.esp", []byte("old")))
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
 
 	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"}
 	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1",
@@ -881,9 +1028,9 @@ func TestDoInstall_DependencyPath_DownloadFailureUsesErrorNotSkippedWording(t *t
 	assert.NotContains(t, out, "Skipped: download failed")
 	assert.Contains(t, out, "\n--- Summary ---\nInstalled: 1\nFailed: 1 (Dep One)\n")
 
-	_, dbErr := svc.GetInstalledMod("test-src", "dep1", "g1", "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "dep1", "g1", "default")
 	assert.Error(t, dbErr, "the failed dependency must not be saved")
-	_, dbErr = svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	_, dbErr = svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.NoError(t, dbErr, "the primary must still install despite the dependency's failure")
 }
 
@@ -912,15 +1059,14 @@ func TestDoInstall_DependencyPath_ConflictsNeverBlockStdin(t *testing.T) {
 
 	// The primary's own file ("mod1.esp") conflicts with an already
 	// installed and deployed, unrelated mod ("other").
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "mod1.esp", []byte("o")))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
 
 	oldStdin := os.Stdin
 	stdinR, stdinW, perr := os.Pipe()
@@ -961,7 +1107,7 @@ func TestDoInstall_DependencyPath_ConflictsNeverBlockStdin(t *testing.T) {
 	assert.NotContains(t, out, "Continue? [y/N]", "the BATCH path must never show the blocking conflict prompt")
 	assert.Contains(t, out, "⚠ 1 file conflict(s) - will overwrite", "the conflict must still surface as a non-blocking inline warning")
 
-	_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.NoError(t, dbErr, "the primary must still install despite the conflict")
 }
 
@@ -974,25 +1120,24 @@ func TestDoInstall_DependencyPath_ConflictsNeverBlockStdin(t *testing.T) {
 func seedConflictingMod(t *testing.T, svc *core.Service, game *domain.Game) {
 	t.Helper()
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "shared.esp", []byte("o")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "shared.esp", []byte("n")))
 }
 
 // TestDoInstall_ConflictPrompt_ForceSkipsPrompt guards the conflict prompt
-// path - restored (C1 review finding) to fire at its ORIGINAL, byte-exact
-// position: AFTER the mod is downloaded/extracted to cache and BEFORE it is
-// deployed (see core.InstallOptions.ConfirmConflicts' doc comment), sourced
-// from a FRESH GetConflicts call inside core.ApplyInstall - never
-// plan.Conflicts, which this scenario also happens to populate (mod1's
-// cache already exists pre-download here - see seedConflictingMod), but is
-// no longer what gates the prompt - and --force's skip.
+// path - fired at its ORIGINAL, byte-exact position: AFTER the mod is
+// downloaded/extracted to cache and BEFORE it is deployed (see
+// core.InstallOptions.AcceptConflicts' doc comment), sourced from a FRESH
+// GetConflicts call inside core.ApplyInstall - never plan.Conflicts, which
+// this scenario also happens to populate (mod1's cache already exists
+// pre-download here - see seedConflictingMod), but is not what gates the
+// prompt - and --force's skip.
 func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 	t.Run("prompts (after download, before deploy) and aborts on decline", func(t *testing.T) {
 		svc, game, src := setupDoInstallTest(t)
@@ -1011,7 +1156,7 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 		})
 
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "installation cancelled")
+		assert.ErrorIs(t, err, ErrCancelled, "a declined prompt returns the one cancellation sentinel (#382)")
 		assert.Contains(t, out, "File conflicts detected:")
 		assert.Contains(t, out, "will be overwritten. Continue? [y/N]: ")
 
@@ -1024,10 +1169,10 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 		// Decline-state fidelity: hooks already ran (none configured here),
 		// the download is already cached (a fresh/upgrade install has no
 		// reinstall-cache-transaction to roll back - see
-		// InstallOptions.ConfirmConflicts' doc comment), but nothing
+		// InstallOptions.AcceptConflicts' doc comment), but nothing
 		// deployed or saved.
 		assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "the download must remain cached on decline, matching base's exact decline state")
-		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.Error(t, dbErr, "declining must leave zero DB mutations")
 	})
 
@@ -1046,9 +1191,44 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 		assert.NotContains(t, out, "File conflicts detected")
 		assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
 
-		_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.NoError(t, err)
 	})
+}
+
+// TestDoInstall_ConflictPrompt_JSONOutputSurfacesConflictError pins the
+// non-interactive rule at the conflict-confirm site
+// (confirmInstallConflicts): under --json with no --force, doInstall must
+// fail before ever reading stdin, and the primary must not be recorded in
+// the DB - only the cache fill (not a mutation of managed state, per Ruling
+// 1) survives the refused Apply.
+//
+// v2 Phase 3 Task 11 (Ruling 15) refined WHICH error: doInstall no longer
+// enters the prompt under --json at all, so core's own *core.ConflictError
+// comes straight back instead of the generic ErrConfirmationRequired the
+// prompt's stdin guard used to produce. That is strictly more information -
+// reportError renders it as the envelope with details.conflicts, naming the
+// files - and --force is the deciding flag (core reads it as
+// AcceptConflicts). See TestDoInstall_JSON_ConflictWithoutForce_*.
+func TestDoInstall_ConflictPrompt_JSONOutputSurfacesConflictError(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false
+	installForce = false
+	withJSONOutput(t)
+	seedConflictingMod(t, svc, game)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("mod1 content"))
+
+	err := assertStdinNeverRead(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	var conflictErr *core.ConflictError
+	require.ErrorAs(t, err, &conflictErr)
+	assert.NotEmpty(t, conflictErr.Conflicts, "the envelope's details must name the conflicting files")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	assert.Error(t, dbErr, "must result in zero DB mutations")
 }
 
 // TestDoInstall_ConflictPrompt_FreshUncachedInstall is the MANDATORY C1
@@ -1065,14 +1245,13 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 	seedOtherOwningSharedFile := func(t *testing.T, svc *core.Service, game *domain.Game) {
 		t.Helper()
 		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "shared.esp", []byte("original-other-content")))
-		require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 			Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: "g1"},
 			ProfileName:  "default",
 			UpdatePolicy: domain.UpdateNotify,
 			Enabled:      true,
 		}))
-		installer := svc.GetInstaller(game)
-		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+		deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
 	}
 
 	t.Run("decline preserves the other mod's file untouched", func(t *testing.T) {
@@ -1093,7 +1272,7 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 		})
 
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "installation cancelled")
+		assert.ErrorIs(t, err, ErrCancelled, "a declined prompt returns the one cancellation sentinel (#382)")
 		assert.Contains(t, out, "File conflicts detected:", "an UNCACHED mod's conflict must now be detected - silently missed before this fix")
 
 		extractIdx := strings.Index(out, "Extracting to cache...")
@@ -1103,7 +1282,7 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 		assert.NotContains(t, out, "Deploying to game directory...")
 
 		assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "the download must remain cached on decline")
-		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.Error(t, dbErr)
 
 		content, readErr := os.ReadFile(filepath.Join(game.ModPath, "shared.esp"))
@@ -1131,11 +1310,38 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 		assert.Contains(t, out, "File conflicts detected:")
 		assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
 
+		// Ruled Apply order (2026-08-29): accepting re-runs ApplyInstall
+		// with AcceptConflicts set (core returns *core.ConflictError
+		// instead of calling back into the prompt), and that re-run finds
+		// the cache WARM - the refused run's own fill is what made the
+		// conflict computable - so it downloads nothing and prints no
+		// download lines. Pinned exactly, since this and the hook/download
+		// ordering are the plain-text changes this task makes to
+		// `lmm install`. (The pre-fix capture repeated the whole download
+		// block here: "Downloading shared.esp...", its progress bar and
+		// "  Checksum: 9ded751c2570..." between the prompt and
+		// "Extracting to cache...".)
+		promptIdx := strings.Index(out, "1 file(s) will be overwritten. Continue? [y/N]: ")
+		require.GreaterOrEqual(t, promptIdx, 0)
+		afterPrompt := stripDownloadProgress(out[promptIdx:])
+		assert.Equal(t,
+			"1 file(s) will be overwritten. Continue? [y/N]: \n"+
+				"Extracting to cache...\n"+
+				"Deploying to game directory...\n"+
+				"\n"+
+				"✓ Installed: Mod One v1.0\n"+
+				"  Files deployed: 1\n"+
+				"  Added to profile: default\n",
+			afterPrompt,
+			"the accept re-run reuses the warm cache: no second download, and the file count still prints")
+		assert.Equal(t, 1, strings.Count(out, "Downloading shared.esp..."),
+			"one user-level install, one download - the accept re-run adds none")
+
 		content, readErr := os.ReadFile(filepath.Join(game.ModPath, "shared.esp"))
 		require.NoError(t, readErr)
 		assert.Equal(t, "new-mod1-content", string(content))
 
-		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.NoError(t, dbErr)
 	})
 }
@@ -1164,7 +1370,7 @@ func TestDoInstall_ShowArchivedFlag_ThreadsThroughRefit(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no downloadable files available for this mod")
 
-		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.Error(t, dbErr)
 	})
 
@@ -1181,7 +1387,7 @@ func TestDoInstall_ShowArchivedFlag_ThreadsThroughRefit(t *testing.T) {
 		_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 		assert.NoError(t, err, "the archived file must actually be deployed")
 
-		installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		require.NoError(t, err)
 		assert.Equal(t, []string{"old"}, installed.FileIDs)
 	})
@@ -1210,7 +1416,7 @@ func TestDoInstall_VersionFlag_InstallsRequestedVersion(t *testing.T) {
 
 	require.NoError(t, doInstall(context.Background(), svc, game, nil))
 
-	im, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	im, err := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", im.Version, "recorded version must be the requested one (#94 invariant)")
 	assert.Equal(t, []string{"9"}, im.FileIDs)
@@ -1292,12 +1498,12 @@ func TestDoInstall_VersionFlag_WithDependency_NamedModRecordedAtRequestedVersion
 
 	require.NoError(t, doInstall(context.Background(), svc, game, nil))
 
-	primary, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	primary, err := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", primary.Version, "the named mod must install the REQUESTED version, not the mod's latest")
 	assert.Equal(t, []string{"9"}, primary.FileIDs)
 
-	depInstalled, err := svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	depInstalled, err := svc.GetInstalledMod(context.Background(), fake.id, "dep1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", depInstalled.Version, "a dependency is untouched by --version - it installs at its own latest (#96 decision 6)")
 }
@@ -1335,12 +1541,12 @@ func TestDoInstall_FileFlag_WithDependency_HonoredForNamedMod(t *testing.T) {
 
 	require.NoError(t, doInstall(context.Background(), svc, game, nil))
 
-	primary, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	primary, err := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"9"}, primary.FileIDs, "--file must pin the named mod's file even on the dependency (batch) path")
 	assert.Equal(t, "1.0", primary.Version)
 
-	depInstalled, err := svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	depInstalled, err := svc.GetInstalledMod(context.Background(), fake.id, "dep1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dep-file"}, depInstalled.FileIDs, "a dependency is untouched by --file")
 }
@@ -1367,7 +1573,7 @@ func TestDoInstall_FileFlag_OnlyCommasOrWhitespace_FailsFast(t *testing.T) {
 	assert.Contains(t, err.Error(), "--file")
 	assert.Contains(t, err.Error(), "no file IDs")
 
-	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	assert.Error(t, dbErr, "nothing may be installed off a no-op --file")
 }
 
@@ -1399,9 +1605,9 @@ func TestDoInstall_FileFlag_WithDependency_UnknownFileAbortsWholeInstall(t *test
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "file ID 10 not found")
 
-	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	assert.Error(t, dbErr, "the named mod must not be installed")
-	_, dbErr = svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	_, dbErr = svc.GetInstalledMod(context.Background(), fake.id, "dep1", game.ID, "default")
 	assert.Error(t, dbErr, "no dependency may be installed - the file pin aborts before any mod is touched")
 }
 
@@ -1433,39 +1639,101 @@ func TestDoInstall_VersionFlag_WithDependency_UnknownVersionAbortsWholeInstall(t
 	assert.Contains(t, err.Error(), `version "2.0"`)
 	assert.Contains(t, err.Error(), "available: 1.5")
 
-	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	assert.Error(t, dbErr, "the named mod must not be installed")
-	_, dbErr = svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	_, dbErr = svc.GetInstalledMod(context.Background(), fake.id, "dep1", game.ID, "default")
 	assert.Error(t, dbErr, "no dependency should be installed either - the version check aborts before any mod is touched")
 }
 
 // TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError guards
 // the failure-path convention: diagnostics accumulated before a later fatal
-// error (here, a forced install.before_all warning, followed by a download
+// error (here, a forced install.before_all warning, followed by a deploy
 // failure) must still reach stderr - ApplyInstall's progress events fire
 // live, so doInstall's progress handler has already printed them by the
 // time the fatal error is returned.
+//
+// The fatal step used to be the DOWNLOAD (no AddDownload, so it 404s). The
+// 2026-08-29 Apply-order ruling moved the cache fill AHEAD of
+// install.before_all, so a failing download now aborts before the hook runs
+// at all and there is no accumulated diagnostic left to guard. The deploy is
+// the nearest later step: a read-only game directory makes linker.Deploy's
+// os.Symlink fail, which keeps the pairing this test exists for.
 func TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
 	svc, game, src := setupDoInstallTest(t)
 	installForce = true
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
-	// Deliberately no AddDownload - the download 404s deterministically.
+	src.AddDownload("main", []byte("mod content"))
 
 	scriptsDir := t.TempDir()
 	failScript := filepath.Join(scriptsDir, "before_all.sh")
 	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\necho boom >&2\nexit 1\n"), 0755))
 	game.Hooks = domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}}
 
+	require.NoError(t, os.Chmod(game.ModPath, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) }) // restore before TempDir's own cleanup removes it
+
 	stderr, err := captureStderrErr(t, func() error {
 		return doInstall(context.Background(), svc, game, nil)
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "download failed")
+	assert.Contains(t, err.Error(), "deployment failed")
 	assert.Contains(t, stderr, "Warning: install.before_all hook failed (forced): ")
 
-	_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.Error(t, dbErr)
+}
+
+// TestDoInstall_BeforeAllHookFails_AbortsWithoutForce characterizes the
+// pre-lift STRICT install path's hook-refusal semantics (Task 2, #286):
+// without --force, a failing install.before_all hook aborts the whole
+// install before anything is downloaded, deployed, or recorded - the
+// non-forced counterpart to TestDoInstall_FailurePath_
+// PrintsAccumulatedDiagnosticsBeforeError's forced case, added because
+// nothing else in this file pinned the refusal path before hook resolution
+// moves into core.
+func TestDoInstall_BeforeAllHookFails_AbortsWithoutForce(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("plugin content"))
+
+	scriptsDir := t.TempDir()
+	failScript := filepath.Join(scriptsDir, "before_all.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\nexit 1\n"), 0755))
+	game.Hooks = domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}}
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "install.before_all hook failed")
+
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	assert.Error(t, dbErr, "a fatal before_all hook must leave nothing installed")
+}
+
+// TestDoInstall_NoHooks_SkipsConfiguredHook characterizes --no-hooks for the
+// STRICT install path (Task 2, #286): a configured install.before_all hook
+// that would otherwise abort the install (it exits 1) never runs at all
+// when noHooks is set, so the install proceeds and succeeds.
+func TestDoInstall_NoHooks_SkipsConfiguredHook(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	noHooks = true
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("plugin content"))
+
+	scriptsDir := t.TempDir()
+	failScript := filepath.Join(scriptsDir, "before_all.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\nexit 1\n"), 0755))
+	game.Hooks = domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}}
+
+	require.NoError(t, doInstall(context.Background(), svc, game, nil))
+
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	require.NoError(t, dbErr, "--no-hooks must skip the hook entirely, letting the install succeed")
 }
 
 // TestBatchInstallMods_StampsSelectedFileVersion guards issue #94 for
@@ -1483,17 +1751,18 @@ func TestBatchInstallMods_StampsSelectedFileVersion(t *testing.T) {
 	})
 	src.AddDownload("main", []byte("plugin content"))
 
-	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.NoError(t, installMultipleMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.1", installed.Version, "installed mod version must be the selected file's version, not the mod's latest version")
 }
 
 // TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall is
-// #143's guard for the CLI's OWN batch path (multi-select `lmm install`
-// results and resolved dependency lists route through batchInstallMods, not
-// core.ApplyInstall): re-installing a mod whose profile ref is LOCKED at a
+// #143's guard for the multi-select batch path (`lmm install <query>` with
+// several results selected; it had its own hand-rolled engine,
+// batchInstallMods, until #288 routed it through core.ApplyInstall's batch
+// branch like the dependency path): re-installing a mod whose profile ref is LOCKED at a
 // version other than what the source would now serve must skip the mod
 // BEFORE its remove-previous-installation step - previously it uninstalled
 // the deployed lock target, deployed the new latest, and swallowed
@@ -1508,11 +1777,11 @@ func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *te
 		{ID: "f1", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
 	})
 	src.AddDownload("f1", []byte("v1 content"))
-	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.NoError(t, installMultipleMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
 	require.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
 
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock("g1", "default", "test-src", "mod1", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), "g1", "default", "test-src", "mod1", ""))
 
 	// The source now serves v2.0 as its latest.
 	latest := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", Author: "Someone", GameID: "g1"}
@@ -1523,7 +1792,7 @@ func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *te
 
 	servedBefore := src.served.Load()
 	stdout, err := captureStdoutErr(t, func() error {
-		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
+		return installMultipleMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
 	})
 	require.NoError(t, err, "batch semantics: a locked mod skips, the run itself succeeds")
 	assert.Contains(t, stdout, "locked at v1.0", "the skip line must name the lock")
@@ -1534,10 +1803,10 @@ func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *te
 	// Zero side effects: still deployed, no new download, DB and ref intact.
 	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
 	assert.Equal(t, servedBefore, src.served.Load(), "no download may be served for the refused install")
-	installed, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	installed, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, dbErr)
 	assert.Equal(t, "1.0", installed.Version, "the DB row must stay at the locked version")
-	profile, pErr := pm.Get("g1", "default")
+	profile, pErr := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, pErr)
 	ref := profile.FindRef("test-src", "mod1")
 	require.NotNil(t, ref)
@@ -1565,11 +1834,11 @@ func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
 		{ID: "f1", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
 	})
 	src.AddDownload("f1", []byte("v1 content"))
-	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.NoError(t, installMultipleMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
 	require.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
 
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock("g1", "default", "test-src", "mod1", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), "g1", "default", "test-src", "mod1", ""))
 
 	// The files endpoint now fails (transiently, as far as the user knows).
 	src.getModFilesErr = errBoomInstall
@@ -1577,7 +1846,7 @@ func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
 
 	latest := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", Author: "Someone", GameID: "g1"}
 	stdout, err := captureStdoutErr(t, func() error {
-		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
+		return installMultipleMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
 	})
 	require.NoError(t, err, "batch semantics: a per-mod fetch failure skips, the run itself succeeds")
 	assert.Contains(t, stdout, "failed to get mod files", "the fetch failure must be reported")
@@ -1588,7 +1857,7 @@ func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
 	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
 	assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"),
 		"the lock target's cache entry must survive a fetch failure")
-	installed, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	installed, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, dbErr)
 	assert.Equal(t, "1.0", installed.Version)
 }
@@ -1606,4 +1875,86 @@ func TestInstallFileIDList_DedupesPreservingOrder(t *testing.T) {
 	installFileID = " 9, 8 ,9,8"
 	t.Cleanup(func() { installFileID = "" })
 	assert.Equal(t, []string{"9", "8"}, installFileIDList())
+}
+
+// TestDoInstall_EmptyVersionAndAuthor_OmitsTheLabels is #398: a mod whose
+// source reports no version and no author rendered as
+// "Selected: StockOverride v by " and "✓ Installed: alpha v" - a dangling
+// "v" and a dangling "by" that read as a truncated line rather than as
+// "this mod has no version". The labels belong to the values, so they go
+// when the values are absent.
+func TestDoInstall_EmptyVersionAndAuthor_OmitsTheLabels(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "StockOverride", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN"}})
+	src.AddDownload("main", []byte("plugin content"))
+
+	out := captureStdout(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "Selected: StockOverride\n")
+	assert.Contains(t, out, "✓ Installed: StockOverride\n")
+	assert.NotContains(t, out, "StockOverride v\n")
+	assert.NotContains(t, out, " by \n")
+}
+
+// TestDoInstall_VersionAndAuthorPresent_KeepsTheLabels is the other half:
+// #398 must not strip a version or author that is actually there.
+func TestDoInstall_VersionAndAuthorPresent_KeepsTheLabels(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN"}})
+	src.AddDownload("main", []byte("plugin content"))
+
+	out := captureStdout(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "Selected: Mod One v1.0 by Someone\n")
+	assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
+}
+
+// TestSearchAndSelectMods_EOFNamesTheSameRemedyAsJSON is #385 at the third
+// prompt that has a --json remedy of its own: a piped `lmm install <query>`
+// matching more than one mod reported "reading input: EOF" instead of
+// naming -y/--yes or --id.
+func TestSearchAndSelectMods_EOFNamesTheSameRemedyAsJSON(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false // the flag whose absence is what makes this a prompt
+	src.searchResults = []domain.Mod{
+		{ID: "mod1", SourceID: "test-src", Name: "Alpha", Version: "1.0", GameID: "g1"},
+		{ID: "mod2", SourceID: "test-src", Name: "Alpha Two", Version: "1.0", GameID: "g1"},
+	}
+
+	var selErr error
+	captureStdout(t, func() error {
+		withStdin(t, "", func() {
+			_, selErr = searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "Alpha", "default", domain.SortRelevance)
+		})
+		return nil
+	})
+
+	require.Error(t, selErr)
+	assert.NotContains(t, selErr.Error(), "EOF")
+	require.ErrorIs(t, selErr, core.ErrConfirmationRequired)
+	assert.Contains(t, selErr.Error(), "--id")
+}
+
+// TestDoInstall_ASearchThatFoundNothingSaysWhatWasHidden is T3 review F12:
+// `lmm install <an NSFW package's id>` said "no mods found" with nothing
+// about the filter that hid it.
+func TestDoInstall_ASearchThatFoundNothingSaysWhatWasHidden(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installModID = ""
+	src.searchWarnings = []error{errors.New("1 package marked NSFW matches this search and is hidden")}
+
+	var err error
+	_ = captureStdout(t, func() error {
+		err = doInstall(context.Background(), svc, game, []string{"Umlaut-Cafe_Mod"})
+		return nil
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `no mods found matching "Umlaut-Cafe_Mod"`)
+	assert.Contains(t, err.Error(), "1 package marked NSFW matches this search and is hidden")
 }

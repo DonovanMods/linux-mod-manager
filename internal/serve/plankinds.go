@@ -1,0 +1,233 @@
+// plankinds.go holds the CLOSED table of mutation kinds the job API
+// accepts. `POST /api/v1/plans/{kind}` is not an open dispatcher over
+// core: {kind} must name a registered entry, and anything else is bad
+// input (a 400 envelope whose details list what IS registered, generated
+// from the table so the two can never drift apart).
+//
+// One entry describes one mutation flow end to end - how its request body
+// decodes, how its Plan is computed, what is stored server-side between
+// Plan and Apply, and how its Apply runs. Nineteen kinds are registered
+// today: the seventeen plan kinds - deploy, install, uninstall, updates,
+// rollback, switch, profile_apply, profile_import, profile_sync, purge,
+// mod_relink, verify_fix, import_archive, update_from_archive, adopt,
+// workshop_adopt and snapshot_restore - here, plus the two plan-free
+// toggles in kind_toggle.go.
+//
+// The table used to carry a browser-form half as well (planKind.Form, the
+// confirm-page decoders and display types). That went with the
+// server-rendered page layer the SPA replaced
+// (docs/plans/2026-08-31-serve-spa-design.md): a plan is now previewed by
+// the SPA from the plan DOCUMENT this table already returns, so the only
+// halves left are the ones /api/v1 itself needs.
+package serve
+
+import (
+	"bytes"
+	"context"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"net/http"
+	"sort"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+)
+
+// planKind is one mutation flow's registration. Every field is required;
+// a kind registered without one panics the first time a request reaches
+// the missing half, which is a wiring bug, not a runtime condition.
+type planKind struct {
+	// Name is the {kind} path segment - "deploy", "install", ... - and the
+	// value stored alongside the plan, so the job endpoint can find this
+	// entry again from nothing but a plan_id.
+	Name string
+
+	// PlanOptions decodes the POST /api/v1/plans/{kind} request body into
+	// this kind's own plan-time options value. An empty body decodes to the
+	// zero value, so a caller with nothing to say may send none. Use
+	// decodeKindOptions[T]; a T with a validate() error method has it
+	// called, so bad input is refused at the boundary rather than inside a
+	// core call.
+	PlanOptions func(body []byte) (any, error)
+
+	// ApplyOptions decodes the "options" member of POST /api/v1/jobs into
+	// this kind's own apply-time options value - the mid-flight decisions
+	// v2 Phase 3 Ruling 1 answers by re-running Apply with a different
+	// option (install's AcceptConflicts, say), never by calling back into
+	// the frontend.
+	ApplyOptions func(body []byte) (any, error)
+
+	// Plan computes the mutation's plan for the resolved game/profile
+	// selection and returns two things: the DOCUMENT that goes on the wire
+	// (the frozen core plan type) and the PENDING value the plan store
+	// holds until Apply. They are separate because the pending value keeps
+	// what the wire cannot carry - the plan object's own pointer identity,
+	// with the unexported json:"-" freshness snapshot Apply re-checks, plus
+	// whatever else that Apply needs (the game, the options the plan was
+	// computed from). See plans.go.
+	Plan func(ctx context.Context, s *Server, sel selection, opts any) (document, pending any, err error)
+
+	// Apply runs the mutation against the pending value the plan store
+	// returned, reporting progress to sink and returning the core result
+	// document the equivalent CLI command emits under --json. It runs on
+	// the job's goroutine under the registry's root context (jobs.go), so
+	// it must never touch the request.
+	Apply func(ctx context.Context, s *Server, pending, opts any, sink core.EventSink) (result any, err error)
+}
+
+// planKinds is the registry itself. It is written only from the init
+// functions of the files that define each kind, and read-only from every
+// request, so it needs no lock.
+var planKinds = map[string]planKind{}
+
+// registerPlanKind adds k to the closed table. Registering the same name
+// twice panics: a duplicate is a wiring mistake that would silently make
+// one of the two entries unreachable, and it can only ever happen at
+// program start, where a panic is the cheapest possible failure.
+func registerPlanKind(k planKind) {
+	if _, dup := planKinds[k.Name]; dup {
+		panic(fmt.Sprintf("serve: plan kind %q is registered twice", k.Name))
+	}
+	planKinds[k.Name] = k
+}
+
+// lookupPlanKind returns the entry registered under name.
+func lookupPlanKind(name string) (planKind, bool) {
+	k, ok := planKinds[name]
+	return k, ok
+}
+
+// supportedPlanKinds returns every registered kind's name, sorted, for the
+// unknown-kind envelope's details. It is generated from the registry
+// rather than hand-maintained so a kind added in a later task shows up in
+// the error message for free.
+func supportedPlanKinds() []string {
+	names := make([]string, 0, len(planKinds))
+	for name := range planKinds {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// errBadPlanRequest marks a plan failure that is the CALLER's fault rather
+// than the server's: input a kind could only reject once it had looked at
+// it, which no amount of retrying will fix. handleAPIPlan answers it 400
+// instead of the default 500.
+//
+// It exists because some input cannot be judged by the options decoder
+// alone. profile_import's document is the case in point: whether the text
+// the caller posted is a parseable exported profile is not a question the
+// JSON shape can answer, and a frontend that gets a 500 for a file the user
+// picked cannot tell them what is actually wrong with it. Kinds opt in by
+// wrapping - fmt.Errorf("%w: %w", errBadPlanRequest, err) - so the
+// underlying error still reaches the envelope verbatim.
+var errBadPlanRequest = errors.New("invalid plan request")
+
+// planErrorStatus classifies a kind.Plan failure for handleAPIPlan (M3/M4):
+// a plan failure is the server's problem by default, a kind that can tell
+// the caller's input is at fault says so with errBadPlanRequest (400), and
+// a plan that failed because the thing it was asked to plan against does
+// not exist - a domain not-found sentinel, reached either straight from a
+// core call (PlanRelinkMod's mod lookup) or from a kind's own pre-check
+// (profile_sync's profile existence check) - answers 404, the same
+// not-found treatment every other resource lookup in this package gives.
+// A deploy asked for a profile that is not the game's active one, or a
+// purge --uninstall of one (#445), answers 409: the request is well-formed
+// and the profile exists, but the game's state - which profile is live -
+// refuses it until a switch. So does any deploy, purge or switch in a game
+// whose profile files do not say which profile is active (#445 review F2):
+// the files have to be fixed first.
+//
+// Three refusals are the user's game or configuration rather than the
+// server (#423, #410). A mod that needs a loader the game does not declare
+// is 409: the request is fine, the game's current state refuses it, and
+// the user resolves that and asks again - the envelope's details carry the
+// setup steps that say how. A game whose identifier for the source is
+// missing or malformed is 400, and an index that could not be had is 502,
+// exactly as the search and the index routes answer them.
+//
+// A game whose adapter core refuses (#461) - an adapter this build does not
+// ship, a compile game whose adapter cannot compile, bepinex off the game
+// root - and an adapter that refuses a flow's preconditions are the same
+// class: 409, the typed refusal in the envelope, exactly as GET
+// /api/v1/conflicts answers since #455. The sentence names the remedy.
+func planErrorStatus(err error) int {
+	var (
+		loader       *core.LoaderRequiredError
+		refused      *core.AdapterRefusedError
+		precondition *core.AdapterPreconditionError
+		moved        *core.ModPathMissingError
+		needVersion  *core.ArchiveVersionRequiredError
+	)
+
+	switch {
+	case errors.As(err, &loader), errors.As(err, &refused), errors.As(err, &precondition):
+		return http.StatusConflict
+	// #451: a mod_path hand-edited out from under recorded deployments is
+	// the same kind of refusal as the three below - the request is fine,
+	// the game's current state refuses it until the user resolves it (`lmm
+	// game edit --mod-path` back, or a purge) - so it gets the same 409
+	// rather than the default 500.
+	case errors.As(err, &moved):
+		return http.StatusConflict
+	case core.IsGameIdentifierInvalid(err):
+		return http.StatusBadRequest
+	// #530: an archive whose version nothing names is answered by sending
+	// the version; one that is the installed version, by another archive.
+	case errors.As(err, &needVersion):
+		return http.StatusBadRequest
+	case errors.Is(err, core.ErrArchiveIsInstalledVersion):
+		return http.StatusConflict
+	// #535: an install from a file of a mod already installed is answered
+	// by updating it from the file instead.
+	case errors.Is(err, core.ErrArchiveModInstalled):
+		return http.StatusConflict
+	case core.IsIndexUnavailable(err):
+		return http.StatusBadGateway
+	case errors.Is(err, errBadPlanRequest):
+		return http.StatusBadRequest
+	case errors.Is(err, core.ErrProfileNotActive), errors.Is(err, core.ErrActiveProfileUnknown):
+		return http.StatusConflict
+	case errors.Is(err, domain.ErrModNotFound),
+		errors.Is(err, domain.ErrGameNotFound),
+		errors.Is(err, domain.ErrProfileNotFound),
+		// #350: a snapshot the caller named that does not exist. It has
+		// its own sentinel rather than being wrapped in one of the three
+		// above, because "profile not found" is not what happened and an
+		// envelope a user reads should not say it did.
+		errors.Is(err, core.ErrSnapshotNotFound):
+		return http.StatusNotFound
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// validatingOptions is implemented by a kind's options type that needs
+// checking beyond "it was valid JSON of the right shape" - an enum that
+// must parse, a required field that must be present. decodeKindOptions
+// calls it, so every such failure is reported as bad input at the request
+// boundary instead of surfacing later as a core error.
+type validatingOptions interface {
+	validate() error
+}
+
+// decodeKindOptions is the options decoder every kind registers: it
+// decodes body into T with unknown members REJECTED (a misspelled option
+// must fail loudly rather than be silently ignored), treats an empty body
+// as T's zero value, and runs T's validate method when it has one.
+func decodeKindOptions[T any](body []byte) (any, error) {
+	var opts T
+	if len(bytes.TrimSpace(body)) > 0 {
+		if err := json.Unmarshal(body, &opts, json.RejectUnknownMembers(true)); err != nil {
+			return nil, fmt.Errorf("decoding options: %w", err)
+		}
+	}
+	if v, ok := any(&opts).(validatingOptions); ok {
+		if err := v.validate(); err != nil {
+			return nil, fmt.Errorf("invalid options: %w", err)
+		}
+	}
+	return opts, nil
+}

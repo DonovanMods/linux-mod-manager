@@ -1,0 +1,12 @@
+{
+  "path": "/config/sources/my-mods.yaml",
+  "id": "my-mods",
+  "type": "directory",
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "probe": {
+    "ok": true,
+    "summary": "ok — 3 mod(s) visible"
+  }
+}

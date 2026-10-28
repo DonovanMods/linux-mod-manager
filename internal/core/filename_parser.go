@@ -1,10 +1,12 @@
 package core
 
 import (
-	"os"
+	"io/fs"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // ParsedFilename contains extracted info from a NexusMods-style filename
@@ -52,28 +54,44 @@ func ParseNexusModsFilename(filename string) *ParsedFilename {
 	}
 }
 
-// DetectModName determines a display name for an imported mod.
+// DetectModName determines a display name for an imported mod. game
+// answers modNameFromMembers' "is this a BepInEx game" question for the
+// bare plugins/config/core-style loader-structure shapes (#450) - nil for a
+// caller with no game in hand.
 // It checks for a single top-level directory in the extracted content,
 // falling back to the archive basename if not found.
-func DetectModName(extractedPath, archiveFilename string) string {
+//
+// The rule itself lives in modNameFromMembers (#314): PlanImportArchive has
+// to answer the same question from an archive LISTING, before anything is
+// extracted, so this reads the tree and hands the entries to the one
+// implementation both sides share.
+func DetectModName(game *domain.Game, extractedPath, archiveFilename string) string {
 	// If no extracted path provided, use archive basename
 	if extractedPath == "" {
 		return stripExtension(archiveFilename)
 	}
 
-	// Try to find a single top-level directory
-	entries, err := os.ReadDir(extractedPath)
-	if err != nil || len(entries) == 0 {
+	// The whole tree, as the listing would give it: the rule looks beneath
+	// a loader's own top-level directory (#450), not only at the top.
+	var members []archiveMember
+	err := filepath.WalkDir(extractedPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == extractedPath {
+			return nil
+		}
+		rel, err := filepath.Rel(extractedPath, path)
+		if err != nil {
+			return err
+		}
+		members = append(members, archiveMember{Path: rel, Dir: d.IsDir()})
+		return nil
+	})
+	if err != nil {
 		return stripExtension(archiveFilename)
 	}
-
-	// If there's exactly one entry and it's a directory, use its name
-	if len(entries) == 1 && entries[0].IsDir() {
-		return entries[0].Name()
-	}
-
-	// Fallback to archive basename
-	return stripExtension(archiveFilename)
+	return modNameFromMembers(game, members, archiveFilename)
 }
 
 // stripExtension removes the file extension from a filename

@@ -1,0 +1,21 @@
+"AppWorkshop"
+{
+	"appid"		"244850"
+	"SizeOnDisk"		"4096"
+	"WorkshopItemsInstalled"
+	{
+		"1000000001"
+		{
+			"size"		"4096"
+			"timeupdated"		"1712345678"
+		}
+	}
+	"WorkshopItemDetails"
+	{
+		"1000000001"
+		{
+			"timeupdated"		"1712345678"
+			"timetouched"		"1712345700"
+		}
+	}
+}

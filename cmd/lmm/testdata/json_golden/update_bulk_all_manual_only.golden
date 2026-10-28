@@ -1,0 +1,38 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "applied": [
+    {
+      "mod": {
+        "source_id": "test-src",
+        "mod_id": "modB",
+        "version": "2.0",
+        "file_ids": [
+          "b-new"
+        ],
+        "locked": false
+      },
+      "name": "Mod B",
+      "from_version": "1.0",
+      "to_version": "2.0",
+      "status": "updated"
+    }
+  ],
+  "skipped": [
+    {
+      "mod": {
+        "source_id": "test-src",
+        "mod_id": "modA",
+        "version": "1.0",
+        "locked": false
+      },
+      "name": "Mod A",
+      "from_version": "1.0",
+      "to_version": "2.0",
+      "status": "skipped",
+      "reason": "its source will not serve this file through its API, so lmm never downloads it automatically - download it by hand from the mod's page and update from that file",
+      "manual_only": true,
+      "mod_url": "https://example.test/mods/mod-a"
+    }
+  ]
+}

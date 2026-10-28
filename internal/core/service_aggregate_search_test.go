@@ -6,30 +6,41 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // searchStubSource is a minimal ModSource whose Search returns canned data.
+//
+// It IGNORES the per-game mapped identifier, which is both true of it - the
+// canned result does not depend on the game id, only gotGame records it -
+// and what lets every fixture below map it with an empty value the way a
+// directory source is mapped. A source that does NOT say so requires the
+// value (source.IgnoresGameIdentifier, #387 / T1 review #3), and core
+// refuses an empty mapping for one rather than substituting lmm's own game
+// id; these stubs are not that kind of source.
 type searchStubSource struct {
 	id      string
 	caps    *source.Capabilities // nil = no CapabilityReporter (assumed fully capable)
 	result  source.SearchResult
 	err     error
-	gotGame string // records the GameID the source was queried with
+	gotGame string            // records the GameID the source was queried with
+	gotSort domain.SearchSort // records the Sort the source was queried with (#503)
 }
 
-func (s *searchStubSource) ID() string      { return s.id }
-func (s *searchStubSource) Name() string    { return s.id }
-func (s *searchStubSource) AuthURL() string { return "" }
+func (s *searchStubSource) ID() string                  { return s.id }
+func (s *searchStubSource) IgnoresGameIdentifier() bool { return true }
+func (s *searchStubSource) Name() string                { return s.id }
+func (s *searchStubSource) AuthURL() string             { return "" }
 func (s *searchStubSource) ExchangeToken(context.Context, string) (*source.Token, error) {
 	return nil, nil
 }
 func (s *searchStubSource) Search(ctx context.Context, q source.SearchQuery) (source.SearchResult, error) {
 	s.gotGame = q.GameID
+	s.gotSort = q.Sort
 	if s.err != nil {
 		return source.SearchResult{}, s.err
 	}
@@ -67,7 +78,7 @@ func newAggregateTestService(t *testing.T, sources map[string]string, srcs ...so
 		svc.RegisterSource(s)
 	}
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), SourceIDs: sources}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	return svc, game
 }
 
@@ -93,7 +104,7 @@ func TestSearchAllSourcesMergesAndTags(t *testing.T) {
 	}}
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": "", "beta": "mapped-beta"}, a, b)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "cool", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "cool", "", nil, 0, 10, 0)
 	require.NoError(t, err)
 	assert.Empty(t, res.Warnings)
 	assert.Equal(t, 9, res.TotalCount)
@@ -117,12 +128,14 @@ func TestSearchAllSourcesFailureIsWarning(t *testing.T) {
 	flaky := &searchStubSource{id: "remote", err: fmt.Errorf("dial tcp: connection refused")}
 	svc, game := newAggregateTestService(t, map[string]string{"local": "", "remote": ""}, ok, flaky)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "mod", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "mod", "", nil, 0, 10, 0)
 	require.NoError(t, err, "one flaky source must not fail the aggregate")
 	require.Len(t, res.Mods, 1)
 	assert.Equal(t, "local", res.Mods[0].SourceID)
 	require.Len(t, res.Warnings, 1)
 	assert.Equal(t, "remote", res.Warnings[0].SourceID)
+	assert.Equal(t, res.Warnings[0].Err.Error(), res.Warnings[0].ErrorMessage,
+		"ErrorMessage must mirror Err.Error() (newSourceWarning pairs them)")
 }
 
 func TestSearchAllSourcesSkipsNonSearching(t *testing.T) {
@@ -132,7 +145,7 @@ func TestSearchAllSourcesSkipsNonSearching(t *testing.T) {
 		err: fmt.Errorf("should never be called")}}
 	svc, game := newAggregateTestService(t, map[string]string{"manifest": "", "id-only-api": ""}, searcher, idOnly)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "m", "", nil, 0, 10, 0)
 	require.NoError(t, err)
 	assert.Empty(t, res.Warnings, "non-searching sources are skipped silently, not warned")
 	require.Len(t, res.Mods, 1)
@@ -142,7 +155,7 @@ func TestSearchAllSourcesUnregisteredMappedSourceWarns(t *testing.T) {
 	ok := &searchStubSource{id: "real", result: source.SearchResult{Mods: mods("real", "x"), TotalCount: 1}}
 	svc, game := newAggregateTestService(t, map[string]string{"real": "", "ghost": ""}, ok)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "x", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "x", "", nil, 0, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, res.Warnings, 1)
 	assert.Equal(t, "ghost", res.Warnings[0].SourceID)
@@ -154,7 +167,7 @@ func TestSearchAllSourcesAllFailedIsError(t *testing.T) {
 	f2 := &searchStubSource{id: "s2", err: errors.New("boom2")}
 	svc, game := newAggregateTestService(t, map[string]string{"s1": "", "s2": ""}, f1, f2)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "x", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "x", "", nil, 0, 10, 0)
 	require.Error(t, err)
 	assert.Len(t, res.Warnings, 2)
 	assert.Empty(t, res.Mods)
@@ -162,7 +175,7 @@ func TestSearchAllSourcesAllFailedIsError(t *testing.T) {
 
 func TestSearchAllSourcesUnknownGame(t *testing.T) {
 	svc, _ := newAggregateTestService(t, map[string]string{})
-	_, err := svc.SearchAllSources(context.Background(), "nope", "x", "", nil, 0, 10)
+	_, err := svc.SearchAllSourcesForTest(context.Background(), "nope", "x", "", nil, 0, 10, 0)
 	assert.Error(t, err)
 }
 
@@ -186,7 +199,7 @@ func TestSearchAllSourcesExhaustedWhenEveryCatalogFitsOnPageOne(t *testing.T) {
 	a, b, c := newTenModSource("alpha"), newTenModSource("beta"), newTenModSource("gamma")
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": "", "beta": "", "gamma": ""}, a, b, c)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "m", "", nil, 0, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 30, res.TotalCount, "summed across sources, per AggregateSearchResult.TotalCount's contract")
 	assert.True(t, res.Exhausted, "every source's own TotalCount says page 0 was its last page")
@@ -203,20 +216,20 @@ func TestSearchAllSourcesNotExhaustedWhenASourceHasMore(t *testing.T) {
 	}}
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": "", "beta": ""}, exhausted, hasMore)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "m", "", nil, 0, 10, 0)
 	require.NoError(t, err)
 	assert.False(t, res.Exhausted, "beta has 25 total and only returned page 0's 10, so more remain")
 }
 
 // TestSearchAllSourcesExhaustedFallsBackToShortPageWhenTotalUnknown mirrors
-// the single-source hasNextPage fallback (internal/tui/search.go) for a
-// source that reports no TotalCount at all: a short (partial) page is the
-// only available "no more" signal.
+// the single-source sourceHasMore fallback for a source that reports no
+// TotalCount at all: a short (partial) page is the only available "no more"
+// signal.
 func TestSearchAllSourcesExhaustedFallsBackToShortPageWhenTotalUnknown(t *testing.T) {
 	shortPage := &searchStubSource{id: "alpha", result: source.SearchResult{Mods: mods("alpha", "m1"), TotalCount: 0}}
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, shortPage)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "m", "", nil, 0, 10, 0)
 	require.NoError(t, err)
 	assert.True(t, res.Exhausted, "a short page (1 < pageSize 10) with no reported total means no more")
 }
@@ -235,7 +248,7 @@ func TestSearchAllSourcesAttemptedCountZeroWhenNoCapableSources(t *testing.T) {
 	idOnly := &capsStubSource{&searchStubSource{id: "id-only-api", caps: &caps, err: fmt.Errorf("should never be called")}}
 	svc, game := newAggregateTestService(t, map[string]string{"id-only-api": ""}, idOnly)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "m", "", nil, 0, 10, 0)
 	require.NoError(t, err, "zero capable sources is not itself a failure")
 	assert.Equal(t, 0, res.AttemptedCount)
 	assert.Empty(t, res.Mods)
@@ -248,8 +261,148 @@ func TestSearchAllSourcesAttemptedCountReflectsRealAttempts(t *testing.T) {
 	empty := &searchStubSource{id: "alpha", result: source.SearchResult{}}
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, empty)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "nothing-matches", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "nothing-matches", "", nil, 0, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.AttemptedCount)
 	assert.Empty(t, res.Mods)
+}
+
+// TestSearchAllSources_UnauthenticatedSourceIsSkippedSilently is #383.
+// `lmm init` maps steamworkshop from the ACF prefill, which is correct -
+// #269's Tier 1 needs no key at all - but Tier 2 SEARCH does, so every
+// `lmm search` against that game printed
+// "warning: source steamworkshop: authentication required: …". A capability
+// the user has not opted into is not a failure of this search, and the
+// warning appeared on the single most-used command, forever. It is skipped
+// the way a source with no Search capability already is; `lmm source list`'s
+// AUTH column and the Setup page still say the capability exists.
+func TestSearchAllSources_UnauthenticatedSourceIsSkippedSilently(t *testing.T) {
+	needsKey := &searchStubSource{id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired)}
+	open := &searchStubSource{id: "repo", result: source.SearchResult{
+		Mods: mods("repo", "alpha"), TotalCount: 1,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": "", "repo": ""}, needsKey, open)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, res.Warnings, "a source the user never signed in to is a silent skip")
+	require.Len(t, res.Mods, 1)
+	assert.Equal(t, "alpha", res.Mods[0].ID)
+	assert.Equal(t, 1, res.AttemptedCount, "the skipped source was never really attempted")
+}
+
+// TestSearchAllSources_AuthenticatedSourceStillWarnsOnAuthFailure is the
+// other half of #383: once the user HAS stored a credential, an
+// authentication failure is a real problem with their key - an expired or
+// revoked one - and stays a warning. Silence there would hide it.
+func TestSearchAllSources_AuthenticatedSourceStillWarnsOnAuthFailure(t *testing.T) {
+	needsKey := &searchStubSource{id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired)}
+	open := &searchStubSource{id: "repo", result: source.SearchResult{
+		Mods: mods("repo", "alpha"), TotalCount: 1,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": "", "repo": ""}, needsKey, open)
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "needskey", "a-stored-key"))
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, res.Warnings, 1)
+	assert.Equal(t, "needskey", res.Warnings[0].SourceID)
+	assert.ErrorIs(t, res.Warnings[0].Err, domain.ErrAuthRequired)
+}
+
+// TestSearchAllSources_OnlyUnauthenticatedSource_IsReportedAsSkipped is the
+// one-source half of #383, and the case `lmm init` actually builds: a Steam
+// game whose ONLY mapped source is steamworkshop, with no key stored. The
+// first cut of the skip cleared the attempted flag outright, so
+// AttemptedCount fell to 0 and both frontends read that as "this game has no
+// search-capable source at all" - a false capability claim that replaced the
+// one line telling the user what to do. The skip is recorded instead: no
+// warning, no error, and the source id surfaced so a frontend can name it.
+func TestSearchAllSources_OnlyUnauthenticatedSource_IsReportedAsSkipped(t *testing.T) {
+	needsKey := &searchStubSource{id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired)}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": ""}, needsKey)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.NoError(t, err, "a skipped source is not an all-sources failure")
+	assert.Empty(t, res.Warnings, "a source the user never signed in to is a silent skip")
+	assert.Empty(t, res.Mods)
+	assert.Equal(t, 0, res.AttemptedCount, "the skipped source was never really attempted")
+	assert.Equal(t, []string{"needskey"}, res.SkippedUnauthenticated,
+		"but the skip itself must be reported, or the frontends claim nothing here can search")
+}
+
+// TestSearchAllSources_SkippedSourceIsReportedAlongsideAWorkingOne is the
+// two-source companion: the skip list is populated even when a sibling
+// source succeeded, so a frontend can explain a thin result set.
+func TestSearchAllSources_SkippedSourceIsReportedAlongsideAWorkingOne(t *testing.T) {
+	needsKey := &searchStubSource{id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired)}
+	open := &searchStubSource{id: "repo", result: source.SearchResult{
+		Mods: mods("repo", "alpha"), TotalCount: 1,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": "", "repo": ""}, needsKey, open)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.AttemptedCount)
+	assert.Equal(t, []string{"needskey"}, res.SkippedUnauthenticated)
+}
+
+// TestSearchAllSources_CapabilityLessSourceIsNotAnAuthSkip keeps the two
+// silent skips apart: a source with no Search capability at all is not a
+// sign-in problem, and naming it in the skip list would send the user off to
+// store a key that changes nothing.
+func TestSearchAllSources_CapabilityLessSourceIsNotAnAuthSkip(t *testing.T) {
+	caps := source.Capabilities{Search: false}
+	noSearch := &capsStubSource{&searchStubSource{id: "idonly", caps: &caps}}
+	svc, game := newAggregateTestService(t, map[string]string{"idonly": ""}, noSearch)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.AttemptedCount)
+	assert.Empty(t, res.SkippedUnauthenticated)
+}
+
+// envKeyedStubSource is a source holding a key it was handed at
+// registration - app.ResolveAPIKey wires LMM_<ID>_API_KEY into the source
+// itself and stores nothing in the database - so its own IsAuthenticated is
+// the only place that credential exists.
+type envKeyedStubSource struct{ *searchStubSource }
+
+func (e *envKeyedStubSource) IsAuthenticated() bool { return true }
+
+// TestSearchAllSources_EnvironmentKeyedSourceStillWarnsOnAuthFailure is
+// P1b review F2: the skip's own rule is "once a key IS stored, a refusal
+// means THAT key is expired or revoked", but the check asked the token
+// database only. A user whose key comes from the environment has supplied
+// one - it is just held by the source rather than by lmm - and a refusal
+// there is the same real problem, not a capability they never opted into.
+func TestSearchAllSources_EnvironmentKeyedSourceStillWarnsOnAuthFailure(t *testing.T) {
+	needsKey := &envKeyedStubSource{&searchStubSource{
+		id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired),
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": ""}, needsKey)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.Error(t, err, "the only source failed, and it was a real attempt")
+	require.Len(t, res.Warnings, 1)
+	assert.Equal(t, "needskey", res.Warnings[0].SourceID)
+	assert.ErrorIs(t, res.Warnings[0].Err, domain.ErrAuthRequired)
+	assert.Empty(t, res.SkippedUnauthenticated, "a key WAS supplied - this is not a sign-in skip")
+}
+
+// TestSearchAllSources_StoredKeyOutranksASourceThatHasNotSeenItYet keeps the
+// database half of F2's answer: `lmm serve` re-keys a source live but the
+// running instance only picks the key up on restart (api_auth.go's
+// restart_required), so a source can report itself unauthenticated moments
+// after the user stored a credential. Either signal means "a key was
+// supplied", so the refusal stays a warning rather than vanishing.
+func TestSearchAllSources_StoredKeyOutranksASourceThatHasNotSeenItYet(t *testing.T) {
+	needsKey := &searchStubSource{id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired)}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": ""}, needsKey)
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "needskey", "just-stored"))
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.Error(t, err)
+	require.Len(t, res.Warnings, 1)
+	assert.Empty(t, res.SkippedUnauthenticated)
 }

@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // VerifyTier selects how much of the verify engine's work runs: VerifyLocal
@@ -16,16 +21,58 @@ import (
 // checks). Later tasks gate the network-touching phases on this.
 type VerifyTier int
 
+// VerifyLocal and VerifyFull are VerifyTier's two values, in strictness
+// order: VerifyLocal is the default (offline) tier, VerifyFull the
+// network-touching one VerifyOptions.Tier opts into (`lmm verify --full`).
 const (
 	VerifyLocal VerifyTier = iota
 	VerifyFull
 )
 
-// VerifyOptions configures a Verify run.
+// verifyTierNames maps each VerifyTier to its wire name. Keep in declaration
+// order.
+var verifyTierNames = [...]string{
+	VerifyLocal: "local",
+	VerifyFull:  "full",
+}
+
+// String returns the tier's wire name.
+func (t VerifyTier) String() string {
+	if t >= 0 && int(t) < len(verifyTierNames) && verifyTierNames[t] != "" {
+		return verifyTierNames[t]
+	}
+	return fmt.Sprintf("verify_tier(%d)", int(t))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (t VerifyTier) MarshalText() ([]byte, error) { return []byte(t.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (t *VerifyTier) UnmarshalText(b []byte) error {
+	for i, n := range verifyTierNames {
+		if n == string(b) {
+			*t = VerifyTier(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown verify tier %q", b)
+}
+
+// VerifyOptions configures a verify run.
 type VerifyOptions struct {
-	Tier      VerifyTier
-	Fix       bool
-	ModFilter string
+	Tier      VerifyTier `json:"tier"`
+	Fix       bool       `json:"fix"`
+	ModFilter string     `json:"mod_filter,omitempty"`
+	// Force runs the tier even when an unchanged installation could be
+	// answered from the last run's memo (#336), and replaces that memo with
+	// the fresh answer.
+	//
+	// `lmm verify` always sets it: a user who types the command is asking
+	// for a real look at the disk, and the memo's fingerprint cannot see a
+	// file rewritten at the same size and mtime. The web UI's Health card
+	// sets it for Re-verify and leaves it off for a plain hydrate, which is
+	// the case the memo exists for.
+	Force bool `json:"force,omitempty"`
 }
 
 // VerifyFinding is one reported row - a per-file or per-mod outcome from a
@@ -34,72 +81,429 @@ type VerifyOptions struct {
 //
 // Recorded/Effective/Version mirror the identically-named VerifyEvent extras
 // (Recorded/Effective for version_mismatch, Version for missing) - additive
-// fields (TUI layout rework, #224 follow-up) so a caller that only has the
-// final VerifyResult (not a progress listener) can still render them, e.g.
-// the Health screen's VERSION column. resolveLast clears them whenever a
+// fields (#224 follow-up) so a caller that only has the final VerifyResult
+// (not a progress listener) can still render the recorded/effective
+// versions. resolveLast clears them whenever a
 // row's Status resolves away from missing/version_mismatch, so a repaired
 // row never carries a stale pre-repair value. The CLI's own text/JSON
 // rendering is untouched by these fields - it still reads the VerifyEvent
 // extras (text mode) or copies VerifyFinding by named field (JSON mode, see
 // verifyFileJSON in cmd/lmm/verify.go), never a bare struct copy.
 type VerifyFinding struct {
-	ModID, ModName, FileID, Status, Note string
-	Recorded, Effective, Version         string
+	ModID     string `json:"mod_id,omitempty"`
+	ModName   string `json:"mod_name,omitempty"`
+	FileID    string `json:"file_id,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Note      string `json:"note,omitempty"`
+	Recorded  string `json:"recorded,omitempty"`
+	Effective string `json:"effective,omitempty"`
+	Version   string `json:"version,omitempty"`
+	// DisplayVersion is Version as a person reads it when it is a Workshop
+	// content id (domain.Mod.DisplayVersion, #458).
+	DisplayVersion string `json:"display_version,omitempty"`
+
+	// Fixable reports whether a `verify --fix` run would ATTEMPT a repair
+	// for this row as it stands (#332). It is set from the same decision
+	// points the repairs themselves are gated on - not from a second,
+	// drifting table - so a frontend offering a per-finding "Repair"
+	// affordance never has to guess, and never has to reimplement the
+	// question in JavaScript.
+	//
+	// The full table, derived from the engine (this file and
+	// verify_repair.go):
+	//
+	//	stale_deployment      always: convergePass removes it under --fix
+	//	stale_compile         always, on a plain run: --fix's merged-pak
+	//	                      resync (syncMergedPakPass) regenerates it
+	//	missing               a non-local source: redownloadModFile
+	//	no_checksum           a non-local source: redownload-to-populate,
+	//	                      or, for a file the source won't serve, a fill
+	//	                      from the mod's own complete cache entry (#514)
+	//	needs_reingest        a non-local source: redownload re-ingests
+	//	external_stale        always, on a plain run: --fix records the
+	//	                      revision Steam's manifest names for the
+	//	                      item (#538) - a record write, no files
+	//	version_mismatch      a non-local source AND an UNLOCKED ref - a
+	//	                      locked ref's Version is the lock's target, and
+	//	                      --fix refuses to rewrite it (#97)
+	//	loader_plugin_unlinked
+	//	                      always, on a plain run: --fix re-deploys the
+	//	                      mod through the ordinary installer (#359)
+	//	loader_deployed_outside_loader
+	//	                      only when the mod's CACHE entry is a layout
+	//	                      the BepInEx normaliser rewrites under
+	//	                      BepInEx/ - otherwise a re-deploy would put
+	//	                      the files straight back (#424)
+	//	loader_nested_tree    on a plain run not scoped to one mod: --fix
+	//	                      removes the untracked links into the game's
+	//	                      own cache that make up the nested BepInEx/
+	//	                      tree (#413); a ModFilter run leaves every
+	//	                      nested tree alone, since none belongs to one
+	//	                      mod
+	//	deployed_modified     never: a copy or hardlink the user changed is
+	//	                      theirs, and --fix leaves it (#466)
+	//	orphaned_record       only on the game's active profile: --fix drops
+	//	                      deployed-file records no installed mod owns,
+	//	                      removing nothing (#469); another profile's
+	//	                      purge judges its own
+	//	everything else       never - ok, skipped, file_count_mismatch,
+	//	                      missing_cache (no recorded file to download
+	//	                      again, #469),
+	//	                      loader_foreign_nested_tree (lmm cannot prove
+	//	                      the files are its own),
+	//	                      version_unverifiable (nothing to repair it
+	//	                      with) and conversion_failed (a conversion is
+	//	                      retried only when a merge INPUT changes, which
+	//	                      --fix does not itself decide)
+	//
+	// The four whose repair DEPLOYS - stale_compile, version_mismatch (its
+	// re-link), loader_plugin_unlinked and loader_deployed_outside_loader -
+	// are additionally never fixable on a game whose adapter refuses
+	// (deployRefusal, #413): --fix leaves them as they are, and their
+	// FixableReason is the refusal, remedy included.
+	//
+	// A row produced BY a --fix run always reports false: its repair has
+	// already been attempted, refused, or completed, so "a --fix run would
+	// act on this" is no longer true of it. That is what makes the field
+	// useful on the verify_fix PLAN document (a Fix=false run), which is
+	// where the web UI reads it.
+	Fixable bool `json:"fixable,omitzero"`
+
+	// FixableReason is the ENGINE's own reason this finding will not be
+	// repaired, or empty when Fixable is true (or when the row is not a
+	// problem at all - an "ok" or "skipped" row has nothing to explain).
+	// #334: it exists so a frontend offering a per-finding "Repair"
+	// affordance can say WHY the button is absent without reimplementing
+	// the question - the web UI carried a hand-maintained status->sentence
+	// table plus a locked/unlocked guess read off a separate library fetch,
+	// which could not see the local-source case at all and had no honest
+	// word for it.
+	//
+	// It is derived at the same decision points Fixable is, from the same
+	// inputs, so the two can never disagree about a row. The wordings are
+	// sentence fragments in the engine's own voice, meant to be rendered
+	// after a lead-in like "Not fixable: ".
+	//
+	// One deliberate hedge (#325, review M2). A LOCKED ref's missing /
+	// no_checksum / needs_reingest rows still report Fixable true with no
+	// reason, even though the repair may refuse at attempt time: whether
+	// the source can still serve the recorded version's own file is a
+	// question only a network call answers, and a reporting-only run must
+	// not pay for one. Fixable's own wording is what stays true here ("a
+	// --fix run would ATTEMPT a repair" - it does attempt, then declines),
+	// and Fixable must NOT be set false on the strength of the lock alone:
+	// that would suppress the affordance for a source that CAN serve the
+	// version, which is the common case. So the same locked mod can carry a
+	// version_mismatch row that says "Not fixable: the ref is locked ..."
+	// beside a missing row that offers Repair; the refusal for the second
+	// one arrives on the repaired document, as note "locked".
+	FixableReason string `json:"fixable_reason,omitzero"`
+
+	// ModURL is the mod's page on its source, set on a row whose --fix
+	// re-download failed (#514): the place to fetch the file by hand. Taken
+	// from the failure's *DownloadError, so it is already limited to http(s)
+	// by domain.SafeWebURL; empty when the source gave no usable page.
+	ModURL string `json:"mod_url,omitzero"`
+
+	// SourceID names the source ModURL is a page of (#517), set whenever
+	// ModURL is: a frontend names the link "Open on <source>", and the row
+	// carries no other source to name. Same key as DownloadError's details.
+	SourceID string `json:"source_id,omitzero"`
+
+	// Repair is what a --fix run did to make this row healthy, in the
+	// words of the repair's own sub-line (#517): "Re-downloaded OK",
+	// "Checksum filled from the cached files (...)". It is set only on a
+	// row a repair resolved to "ok", because that is the one outcome the
+	// row cannot tell on its own - a repaired "ok" and an untouched "ok"
+	// are otherwise the same document, and a run's repair sub-lines are
+	// events, which a long run's bounded ring drops long before a person
+	// opens the finished job. The "fixed_*" statuses are self-describing
+	// (their Note says what was done) and leave it empty.
+	Repair string `json:"repair,omitzero"`
+
+	// External marks a row about a Steam Workshop item lmm tracks but never
+	// deployed (#429): an "ok" row naming a present item, which the
+	// presence check is ALL lmm can verify about it, or its
+	// "external_missing" row. omitzero, so every other row is unchanged.
+	External bool `json:"external,omitzero"`
 }
 
-// VerifyResult is the accumulated outcome of a Verify run.
+// notFixableLocal is the reason shared by every repair gated on
+// redownloadRepairs: a locally imported mod has no source to fetch from, so
+// the missing / no_checksum / needs_reingest repairs have nothing to do.
+const notFixableLocal = "the mod was imported locally, so there is no source to re-download from"
+
+// redownloadRefusal is redownloadRepairs' reason half: empty when the
+// repair applies, the local-source sentence when it does not. Declared
+// beside it so VerifyFinding.Fixable and .FixableReason are computed from
+// the same expression rather than from two that can drift.
+func redownloadRefusal(mod *domain.InstalledMod) string {
+	if redownloadRepairs(mod) {
+		return ""
+	}
+	return notFixableLocal
+}
+
+// versionMismatchRefusal is versionMismatchRepairs' reason half, on the same
+// terms: the two ways the version repair is refused get their own sentence,
+// because "there is no source" and "the lock owns this version" are
+// different problems with different remedies.
+//
+// The lock sentence carries no issue number (M2, unit 8 gate review): it is
+// rendered verbatim in the web UI's Health card and by `lmm verify --json`,
+// and "(#97)" means nothing to the person reading it. The issue behind the
+// rule is #97, and this comment is where that belongs.
+func versionMismatchRefusal(mod *domain.InstalledMod, ref *domain.ModReference) string {
+	if !redownloadRepairs(mod) {
+		return notFixableLocal
+	}
+	if ref != nil && ref.Locked {
+		return fmt.Sprintf("the ref is locked at v%s, and --fix will not rewrite what a lock means - unlock it first", ref.Version)
+	}
+	return ""
+}
+
+// VerifyResult is the accumulated outcome of a verify run.
 type VerifyResult struct {
-	Findings         []VerifyFinding
-	Issues, Warnings int
-	Checked          int  // feeds the CLI's "No files found for mod X" gate
-	HasFiles         bool // false = the #217 empty-profile path ran
+	Findings []VerifyFinding `json:"findings"`
+	Issues   int             `json:"issues"`
+	Warnings int             `json:"warnings"`
+	Checked  int             `json:"checked"`   // feeds the CLI's "No files found for mod X" gate
+	HasFiles bool            `json:"has_files"` // false = no installed mod has recorded files (the #217 path)
+
+	// Mods is how many installed mods the run covered - every installed mod
+	// of the profile, or the one ModFilter names (#429). HasFiles says
+	// whether any of them has files to checksum; this says whether there
+	// was anything to verify at all, which is what "no installed mods"
+	// means. External counts the Steam Workshop items among them, each
+	// checked for presence and named by a row; Unverified counts the others
+	// with no recorded files - a mod imported from disk, typically - which
+	// lmm has nothing to compare against. All three are omitzero: an empty
+	// profile's document is unchanged.
+	Mods       int `json:"mods,omitzero"`
+	External   int `json:"external,omitzero"`
+	Unverified int `json:"unverified,omitzero"`
+
+	// CheckedAt is when the run began, in UTC (#334) - so a surface that
+	// renders a stored or cached result ("last verified 2 hours ago") reads
+	// it off the document rather than guessing from when it happened to
+	// fetch it. Stamped at the START rather than the end because every
+	// partial result a cancelled run returns carries it too; a run that
+	// stops halfway still checked what it checked, at that moment.
+	//
+	// omitzero, so a VerifyResult built by hand (a test, a caller
+	// assembling one) carries no key at all rather than a zero time.
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+
+	// Cached reports that this answer came from #336's memo rather than
+	// from a run just now: nothing the memo fingerprints has changed since
+	// CheckedAt, so the previous verdict still stands. A surface renders it
+	// as "unchanged since <checked_at>" and offers a forced re-run
+	// (VerifyOptions.Force) beside it.
+	//
+	// omitzero: a real run carries no key at all, so every document
+	// produced before this field existed is byte-identical to what it is
+	// now.
+	Cached bool `json:"cached,omitzero"`
 }
 
 // VerifyEventKind identifies what a VerifyEvent carries.
 type VerifyEventKind int
 
+// The VerifyEventKind values, in emission order within a run: VerifyEvBegin
+// opens it, VerifyEvFinding/VerifyEvProgress are the per-mod/per-file ticks,
+// VerifyEvRepairDetail is a --fix sub-line under a finding,
+// VerifyEvSyncWarning/VerifyEvVerbose are diagnostics (stderr-bound and
+// -v-gated respectively). The trailing comment on each names which
+// VerifyEvent field the kind's extra data lives in.
 const (
-	VerifyEvBegin        VerifyEventKind = iota // HasFiles
+	VerifyEvBegin        VerifyEventKind = iota // HasFiles, Mods
 	VerifyEvFinding                             // Finding + extras; row was appended to Findings
-	VerifyEvRepairDetail                        // indented sub-line; Detail pre-formatted, Green tone flag
+	VerifyEvRepairDetail                        // indented sub-line; Detail pre-formatted, Fixed tone flag
 	VerifyEvSyncWarning                         // stderr-bound merged-pak sync warning (Detail)
 	VerifyEvVerbose                             // verbose-gated diagnostic (Detail)
-	VerifyEvProgress                            // Full-tier network tick (Index/Total/ModName)
+	VerifyEvProgress                            // Full-tier network tick (Scope.Index/Total/ModName)
 )
 
-// VerifyEvent is emitted via a Verify run's progress callback as the engine
-// works, so a caller (the CLI, later the TUI) can render incrementally
-// instead of waiting for the final VerifyResult.
-type VerifyEvent struct {
-	Kind     VerifyEventKind
-	HasFiles bool
-	Finding  VerifyFinding // valid for VerifyEvFinding
-
-	// Main-line extras the CLI needs beyond the finding row itself:
-	Recorded, Effective, Version string // version_mismatch / missing
-	ExpectedCount                int    // file_count_mismatch
-	Variant                      string // "" | "checksum_populated" (ok main line) | "fixed_green" (fixed_stale_deployment whole-line green - Task 6)
-
-	// Sub-line / progress payload:
-	Detail       string
-	Green        bool
-	Index, Total int
-	ModName      string
+// verifyEventKindNames maps each VerifyEventKind to its wire name. Keep in
+// declaration order.
+var verifyEventKindNames = [...]string{
+	VerifyEvBegin: "begin", VerifyEvFinding: "finding", VerifyEvRepairDetail: "repair_detail",
+	VerifyEvSyncWarning: "sync_warning", VerifyEvVerbose: "verbose", VerifyEvProgress: "progress",
 }
 
-// verifyRun carries the state threaded through Verify's phase methods: the
-// service/game/profile/options being verified, the (nil-safe) progress
-// sink, and the result being built up. Every phase method appends to
-// result via finding/resolveLast so there's a single place that keeps
-// Findings and the emitted events in sync.
+// String returns k's wire name.
+func (k VerifyEventKind) String() string {
+	if k >= 0 && int(k) < len(verifyEventKindNames) && verifyEventKindNames[k] != "" {
+		return verifyEventKindNames[k]
+	}
+	return fmt.Sprintf("verify_event_kind(%d)", int(k))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (k VerifyEventKind) MarshalText() ([]byte, error) { return []byte(k.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (k *VerifyEventKind) UnmarshalText(b []byte) error {
+	for i, n := range verifyEventKindNames {
+		if n == string(b) {
+			*k = VerifyEventKind(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown verify event kind %q", b)
+}
+
+// VerifyEvent is emitted via a verify run's EventSink as the engine works,
+// so a caller can render incrementally instead of waiting for the final
+// VerifyResult. Scope.Op is always OpVerify; Scope.Index/Total/ModName carry
+// a VerifyEvProgress tick's position (verifyRun.emitEv fills Op, callers
+// fill the rest of Scope where relevant).
+type VerifyEvent struct {
+	Scope
+	Kind     VerifyEventKind `json:"kind"`
+	HasFiles bool            `json:"has_files,omitempty"`
+	Mods     int             `json:"mods,omitempty"` // VerifyEvBegin: VerifyResult.Mods (#429)
+	Finding  VerifyFinding   `json:"finding"`        // valid for VerifyEvFinding
+
+	// Main-line extras the CLI needs beyond the finding row itself:
+	Recorded          string `json:"recorded,omitempty"`           // version_mismatch / missing
+	Effective         string `json:"effective,omitempty"`          // version_mismatch
+	Version           string `json:"version,omitempty"`            // missing
+	ExpectedCount     int    `json:"expected_count,omitempty"`     // file_count_mismatch
+	ChecksumPopulated bool   `json:"checksum_populated,omitempty"` // ok main line: a --fix redownload populated a previously-missing checksum (#164)
+
+	// Sub-line payload (VerifyEvRepairDetail):
+	Detail string `json:"detail,omitempty"`
+	Fixed  bool   `json:"fixed,omitempty"` // this sub-line reports a completed repair
+}
+
+// EventType implements Event.
+func (VerifyEvent) EventType() string { return "verify" }
+
+// verifyRun carries the state threaded through verify's phase methods: the
+// service/game/profile/options being verified, the (nil-safe) event sink,
+// and the result being built up. Every phase method appends to result via
+// finding/resolveLast so there's a single place that keeps Findings and the
+// emitted events in sync.
 type verifyRun struct {
 	ctx     context.Context
 	svc     *Service
 	game    *domain.Game
 	profile string
 	opts    VerifyOptions
-	emit    func(VerifyEvent)
+	sink    EventSink
 	result  *VerifyResult
+
+	// refusalAsked and refusal memoise repairRefusal: whether the game's
+	// adapter lets a --fix repair deploy, asked at most once per run.
+	refusalAsked bool
+	refusal      error
+	// liveAsked and liveRefusal memoise liveRepairRefusal's own half.
+	liveAsked   bool
+	liveRefusal error
+
+	// held, while set, collects the repair sub-lines downloadWarningSink
+	// would emit, for an arm whose row is not out yet (holdDetails).
+	held *[]VerifyEvent
+}
+
+// holdDetails makes the repair sub-lines downloadWarningSink emits wait
+// until the returned func is called, which stops holding and returns them -
+// for a repair that runs BEFORE the row it belongs to is emitted, so its
+// sub-lines can follow the row as they do everywhere else (#427 review F7).
+func (r *verifyRun) holdDetails() func() []VerifyEvent {
+	var held []VerifyEvent
+	r.held = &held
+	return func() []VerifyEvent {
+		r.held = nil
+		return held
+	}
+}
+
+// repairRefusal reports why no --fix repair that DEPLOYS may run on this
+// game, or nil when the adapter consents (#413): deployRefusal, the check
+// every Plan makes, asked once per run. A plain run reads it to say, on the
+// rows those repairs would act on, that --fix will not; the repairs
+// themselves ask refuseDeploy.
+func (r *verifyRun) repairRefusal() error {
+	if !r.refusalAsked {
+		r.refusalAsked = true
+		r.refusal = r.svc.deployRefusal(r.ctx, r.game, r.profile)
+	}
+	return r.refusal
+}
+
+// liveRepairRefusal is repairRefusal for a repair that deploys the verified
+// profile's own mods - the loader re-deploy and re-layout, the merged-pak
+// resync (#462): the game directory holds the active profile's mods, so
+// such a repair runs for that profile alone, and a run on another profile
+// is told `lmm profile switch`. The version repair is not one: it re-links
+// only the live profile's rows, whichever profile runs it (liveRelinker).
+func (r *verifyRun) liveRepairRefusal() error {
+	if err := r.repairRefusal(); err != nil {
+		return err
+	}
+	if !r.liveAsked {
+		r.liveAsked = true
+		r.liveRefusal = r.svc.refuseInactive(r.ctx, r.game.ID, r.profile, "repair")
+	}
+	return r.liveRefusal
+}
+
+// refuseDeploy is the gate a verify repair that deploys passes before it
+// changes anything - repairRefusal, under the name the I4 ratchet
+// (adapter_precondition_ratchet_test.go) accepts as a gate, so a repair
+// that stops asking it fails the build rather than deploying on a refused
+// game. Removals (convergence, the nested-tree repair) do not ask it.
+func (r *verifyRun) refuseDeploy() error { return r.repairRefusal() }
+
+// refuseLiveDeploy is refuseDeploy for a repair that deploys the verified
+// profile's own mods: liveRepairRefusal, under the name both gate ratchets
+// accept.
+func (r *verifyRun) refuseLiveDeploy() error { return r.liveRepairRefusal() }
+
+// deployRefusedReason is the FixableReason of a row whose repair would
+// deploy, on a game whose adapter refuses: the refusal itself, which
+// carries its remedy.
+func deployRefusedReason(err error) string {
+	if errors.Is(err, ErrProfileNotActive) || errors.Is(err, ErrActiveProfileUnknown) {
+		return "--fix deploys only for the game's active profile, so it leaves this as it is: " + err.Error()
+	}
+	return "lmm deploys nothing for this game while its adapter refuses, so --fix leaves this as it is: " + err.Error()
+}
+
+// deployRowFixability folds the adapter's say into the Fixable and
+// FixableReason of a row a deploying repair acts on. fixable and reason are
+// the row's own answer; attempts says whether this run would attempt the
+// repair (a --fix run, on a row the repair applies to). On a refused game
+// neither a plain run's offer nor a --fix run's attempt holds, so the row is
+// not fixable and its reason is the refusal - never a claim that the
+// repair ran.
+//
+// live says the repair deploys the verified profile's own mods, so the
+// profile has to be the active one too (liveRepairRefusal).
+func (r *verifyRun) deployRowFixability(fixable bool, reason string, attempts, live bool) (bool, string) {
+	if !fixable && !attempts {
+		return fixable, reason
+	}
+	refusal := r.repairRefusal
+	if live {
+		refusal = r.liveRepairRefusal
+	}
+	if err := refusal(); err != nil {
+		return false, deployRefusedReason(err)
+	}
+	return fixable, reason
+}
+
+// emitEv stamps e's Scope.Op as OpVerify and forwards it to the sink, if
+// any (a nil sink discards, matching EventSink's own contract).
+func (r *verifyRun) emitEv(e VerifyEvent) {
+	e.Op = OpVerify
+	if r.sink != nil {
+		r.sink(e)
+	}
 }
 
 // finding appends f to the result and emits the matching VerifyEvFinding
@@ -109,7 +513,7 @@ type verifyRun struct {
 func (r *verifyRun) finding(f VerifyFinding, extras VerifyEvent) {
 	r.result.Findings = append(r.result.Findings, f)
 	extras.Kind, extras.Finding = VerifyEvFinding, f
-	r.emit(extras)
+	r.emitEv(extras)
 }
 
 // resolveLast rewrites the most recently appended finding's Status/Note in
@@ -123,38 +527,226 @@ func (r *verifyRun) finding(f VerifyFinding, extras VerifyEvent) {
 // extras, since it's still the same unresolved condition.
 func (r *verifyRun) resolveLast(status, note string) {
 	last := &r.result.Findings[len(r.result.Findings)-1]
+	// Read BEFORE the two fields are cleared below. A row this run never
+	// considered fixable in the first place was REFUSED, not attempted - a
+	// locked ref is the case in practice - and its existing reason is the
+	// accurate one (M4, unit 8 gate review: "this --fix run already
+	// attempted a repair for it" is simply untrue of a refusal, and it
+	// replaced the sentence naming the lock and how to lift it. The plain
+	// run - what the web UI's Health card reads - kept the good sentence,
+	// so the two runs disagreed about the same row).
+	refused, refusalReason := !last.Fixable, last.FixableReason
 	last.Status, last.Note = status, note
+	// Every resolveLast call happens inside a --fix run, AFTER that row's
+	// repair was attempted, refused or completed - so whatever the row now
+	// says, "a --fix run would act on this" has stopped being true of it
+	// (VerifyFinding.Fixable).
+	last.Fixable = false
+	last.FixableReason = ""
+	switch {
+	case status != "missing" && status != "version_mismatch":
+		// Resolved (or demoted): no reason to give.
+	case refused && refusalReason != "":
+		last.FixableReason = refusalReason
+	default:
+		// Still unresolved after a repair was actually attempted: say so,
+		// rather than leaving a not-fixable row with no reason at all.
+		last.FixableReason = "this --fix run already attempted a repair for it"
+	}
 	if status != "missing" && status != "version_mismatch" {
 		last.Recorded, last.Effective, last.Version = "", "", ""
 	}
 }
 
-// Verify runs the verify engine for game/profile per opts, reporting
-// incremental progress via progress (nil-safe: pass nil to skip progress
-// events entirely).
+// lockedSkipDetail renders a repair-refusal error as --fix's sub-line: the
+// refusal sentence behind a "--fix skipped: " lead-in, with the ErrModLocked
+// sentinel trimmed back off. All three file repairs (missing, no_checksum,
+// needs_reingest) refuse through the SAME gate (verify_repair.go's #325
+// check), so they render it the same way rather than three times over -
+// leaving the sentinel on would read "mod is locked: <Name> is locked at
+// v1.0 ...", the stutter lockedRefUnlockOnlyMessage exists to avoid.
+func lockedSkipDetail(err error) string {
+	return "--fix skipped: " + strings.TrimPrefix(err.Error(), ErrModLocked.Error()+": ")
+}
+
+// redownloadRepairs reports whether --fix's redownload repair applies to
+// mod - the ONE gate the missing / no_checksum / needs_reingest repairs
+// share (`r.opts.Fix && mod.SourceID != domain.SourceLocal` at each site):
+// a locally imported mod has no source to fetch from, so there is nothing
+// to redownload. Declared here so VerifyFinding.Fixable is computed from
+// the same expression the repair is gated on rather than a copy of it.
+func redownloadRepairs(mod *domain.InstalledMod) bool {
+	return mod.SourceID != domain.SourceLocal
+}
+
+// versionMismatchRepairs reports whether --fix's version repair
+// (repairModVersion) applies to mod with profile ref ref: a non-local
+// source, AND an unlocked ref. #97: a locked ref's Version IS the lock's
+// target, so rewriting it would silently move what the lock means instead
+// of fixing anything - the mismatch stays reported, only the repair is
+// refused (versionPass).
+func versionMismatchRepairs(mod *domain.InstalledMod, ref *domain.ModReference) bool {
+	if !redownloadRepairs(mod) {
+		return false
+	}
+	return ref == nil || !ref.Locked
+}
+
+// staleCompileRefusal is the stale_compile row's reason half. Its Fixable
+// is !opts.Fix - a plain run reports the staleness that --fix's own
+// merged-pak resync (syncMergedPakPass) would regenerate - so on a --fix
+// run the row is already past being actionable.
+func staleCompileRefusal(fixing bool) string {
+	if !fixing {
+		return ""
+	}
+	return "this --fix run already resynced the merged artifact"
+}
+
+// verifyGated is the beginOp-gated entry point for a verify run: a --fix run
+// mutates (repairs, redownloads, removes stale deployments) so it takes the
+// same one-slot mutation semaphore every other mutating flow does; a plain
+// (non-Fix) run is read-only and skips the gate entirely, matching every
+// other query's freedom to run concurrently with a mutation.
 //
-// #224 Task 6 completes the engine: the fix-mode merged-pak resync and the
-// deploy-convergence sweep (ConvergeDeployedFiles) that close out every run,
-// including the #217 empty-profile path, which now runs nothing BUT that
-// sweep. The CLI does not call this yet - it still runs its own doVerify; a
-// later task (#224 Task 7) swaps it onto Verify.
-func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, progress func(VerifyEvent)) (*VerifyResult, error) {
-	if progress == nil {
-		progress = func(VerifyEvent) {}
+// Unexported (final review, Important #3 / #301): VerifyReport is the only
+// production entry point (cmd/lmm/verify.go calls it, not this), and core's
+// own tests drive verify through it too.
+func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
+	if opts.Fix {
+		release, err := s.beginOp(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
+	result, err := s.verifyMemoized(ctx, game, profile, opts, sink)
+	if opts.Fix {
+		// A --fix repair removes and deploys through the Installer, which
+		// reports a file it left as the user's (#466) - and a path another
+		// game holds - on the flow's pending list. Those are this run's, so
+		// they are said here as repair details rather than left for
+		// whichever flow drains the list next.
+		if store := s.originalsStoreFor(game.ID); store != nil {
+			for _, msg := range store.takeFailures() {
+				if sink != nil {
+					sink(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: msg})
+				}
+			}
+		}
+	}
+	return result, err
+}
+
+// verifyMemoized is verify plus #336's memo: an installation whose
+// fingerprint has not moved since the last run is answered from that run
+// instead of walking it again.
+//
+// Mission Control hydrates on every route change, every job completion and
+// every profile switch, and each hydrate ran the full tier - a source query
+// per mod and a cache stat per file, for state that had not changed. It was
+// honest and it was the one place a big install felt slow.
+//
+// FOUR shapes always run, and none of them is a cache-busting nicety:
+//
+//   - Force: `lmm verify` typed by a user, and the Health card's Re-verify.
+//     A forced run also REPLACES the memo, so the next hydrate is handed
+//     the fresh answer rather than re-running.
+//   - Fix: a repair changes state; answering it from a memo would report a
+//     repair that never happened.
+//   - ModFilter: a single-mod run is not the whole-profile answer, and
+//     storing it under the same key would let it stand in for one.
+//   - A non-nil sink: a memo hit has no run, so it has no progress events
+//     to emit. A caller that asked to watch gets something to watch.
+//
+// A fingerprint that cannot be computed (an unreadable directory, a failed
+// DB read) is not a match and not an error: the run simply happens, which
+// is the behaviour that existed before the memo.
+func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
+	if opts.Fix || opts.ModFilter != "" || sink != nil {
+		return s.verify(ctx, game, profile, opts, sink)
 	}
 
-	result := &VerifyResult{}
-	r := &verifyRun{ctx: ctx, svc: s, game: game, profile: profile, opts: opts, emit: progress, result: result}
+	key := verifyMemoKey(game.ID, profile, opts.Tier)
+	fingerprint, err := s.verifyFingerprint(ctx, game, profile)
+	if err != nil {
+		s.logger().Debug("verify memo disabled for this run", "game", game.ID, "profile", profile, "err", err)
+		return s.verify(ctx, game, profile, opts, sink)
+	}
 
-	files, err := s.GetFilesWithChecksums(game.ID, profile)
+	if !opts.Force {
+		if hit := s.verifyMemoLookup(key, fingerprint); hit != nil {
+			// A copy, with the ORIGINAL CheckedAt: the answer really was
+			// computed then, and a surface saying "unchanged since ..."
+			// needs that moment, not this one. It is a DEEP copy (the same
+			// cloneVerifyResult the store side uses since #366): without
+			// it every hit would hand out the stored entry's own backing
+			// array. Nothing outside core writes to it today, but "nobody
+			// appends to this slice" is a comment, and one allocation per
+			// hit removes the class instead (review N6).
+			cached := cloneVerifyResult(hit)
+			cached.Cached = true
+			return cached, nil
+		}
+	}
+
+	result, err := s.verify(ctx, game, profile, opts, sink)
+	if err != nil {
+		return result, err // a partial (e.g. cancelled) result is never memoised
+	}
+	s.verifyMemoStore(key, fingerprint, result)
+	return result, nil
+}
+
+// verify runs the verify engine for game/profile per opts, reporting
+// incremental progress via sink (nil-safe: pass nil to skip events
+// entirely). Called only through verifyGated, which applies the --fix
+// mutation gate above.
+//
+// CONTRACT: verify never compares checksum VALUES; it only checks presence.
+// A recorded checksum is reported "ok" whatever it says, and only an EMPTY
+// one is "no_checksum" (perFileWalk's `f.Checksum == ""` test is the sole
+// reader of the column here). That is load-bearing, not incidental: the
+// values stored for one file are not all the same fingerprint - a fresh
+// download records the archive-level md5, while a cache-warm install records
+// checksumFromCache's fold over the entry's members for anything with no
+// retained original to re-hash (see its doc comment). A future deep tier
+// that compares values must re-ingest or re-derive first, or it will flag
+// every cache-warm install; TestService_ApplyInstall_KeepCacheReinstall_-
+// VerifyReportsOk pins the contract from the install side.
+//
+// #224 Task 6 completes the engine: the fix-mode merged-pak resync and the
+// deploy-convergence sweep (convergeDeployedFiles) that close out every run,
+// including the #217 empty-profile path, which now runs nothing BUT that
+// sweep.
+func (s *Service) verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
+	result := &VerifyResult{CheckedAt: time.Now().UTC()}
+	r := &verifyRun{ctx: ctx, svc: s, game: game, profile: profile, opts: opts, sink: sink, result: result}
+
+	files, err := s.GetFilesWithChecksums(ctx, game.ID, profile)
 	if err != nil {
 		return nil, fmt.Errorf("getting files: %w", err)
 	}
+	installedMods, err := s.GetInstalledMods(ctx, game.ID, profile)
+	if err != nil {
+		return nil, fmt.Errorf("getting installed mods: %w", err)
+	}
 
 	result.HasFiles = len(files) > 0
-	progress(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles})
+	result.Mods, result.Unverified = verifyScope(installedMods, files, opts.ModFilter)
+	r.emitEv(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles, Mods: result.Mods})
+	if err := r.modPathPass(); err != nil {
+		return result, err
+	}
 
 	if !result.HasFiles {
+		// #269: an all-external profile has no checksummed files at all, so
+		// its presence tier has to run on this branch too - otherwise a
+		// profile of nothing but Steam Workshop items would verify as
+		// "nothing to check" and never notice an unsubscribed one.
+		if err := r.externalPresencePass(installedMods); err != nil {
+			return result, err
+		}
 		// #217: doVerify still runs a deploy-convergence sweep here even
 		// with no checksummed files at all (a game dir can hold stray
 		// lmm-deployed files after everything is uninstalled). The
@@ -162,11 +754,29 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 		// this path is entirely the convergence pass - no sync phase (that
 		// only ever reacts to a --fix repair that just ran, and nothing
 		// ran here to react to).
+		//
+		// #353's adapter tier and #359's loader tier both run here too,
+		// for externalPresencePass's reason: an adapter's checks and a
+		// loader are properties of the GAME, not of its mods, so an empty
+		// profile's loader can still be missing, the wrong version, or
+		// never have run - and finding that out before installing anything
+		// is exactly when it helps most. Same order as the file-bearing
+		// path below.
+		r.adapterPass(installedMods)
+		r.loaderPass(installedMods)
+		if err := r.deployedContentPass(installedMods); err != nil {
+			return result, err
+		}
+		r.recordsPassTolerant(installedMods, files)
 		r.convergencePass()
 		return result, nil
 	}
 
-	r.fileCountPrePass(files)
+	if err := r.fileCountPrePass(files); err != nil {
+		// Cancelled mid-pass: return the partial result already
+		// accumulated, same contract Task 3's brief specifies.
+		return result, err
+	}
 
 	// #97 (Task 8 of the original CLI): load the profile once, up front, so
 	// the version pass below can look up each ref's lock state
@@ -176,13 +786,18 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 	// without an extra guard.
 	prof, _ := config.LoadProfile(s.ConfigDir(), game.ID, profile)
 
-	installedMods, err := s.GetInstalledMods(game.ID, profile)
-	if err != nil {
-		return nil, fmt.Errorf("getting installed mods: %w", err)
+	if err := r.externalPresencePass(installedMods); err != nil {
+		// Cancelled mid-pass: return the partial result already
+		// accumulated, same contract Task 3's brief specifies.
+		return result, err
 	}
 
 	r.mergedPakStalenessPass()
-	r.conversionOutcomesPass(installedMods)
+	if err := r.conversionOutcomesPass(installedMods); err != nil {
+		// Cancelled mid-pass: return the partial result already
+		// accumulated, same contract Task 3's brief specifies.
+		return result, err
+	}
 
 	if err := r.versionPass(installedMods, prof); err != nil {
 		// Cancelled mid-pass: return the partial result already
@@ -190,7 +805,11 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 		return result, err
 	}
 
-	r.perFileWalk(files)
+	if err := r.perFileWalk(files, prof); err != nil {
+		// Cancelled mid-pass: return the partial result already
+		// accumulated, same contract Task 3's brief specifies.
+		return result, err
+	}
 
 	// #224 Task 6: --fix's merged-pak resync and the deploy-convergence
 	// sweep both close out the run, in that order - ported verbatim from
@@ -199,12 +818,379 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 	// version-mismatch repair or a redownload can change a merge's inputs);
 	// convergence then reconciles the game dir against the resulting
 	// reality, so it always runs AFTER the sync, in both modes.
+	// #353: the adapter's own checks close out the pass list - the set core
+	// cannot see (a loader's preloader present, declared-version drift).
+	// Adapters report; core repairs, and no adapter finding is fixable in
+	// 2.0. An adapter with no Verifier - every adapter U1 ships - appends
+	// nothing.
+	r.adapterPass(installedMods)
+
 	if r.opts.Fix {
 		r.syncMergedPakPass()
 	}
+	// #359: after the per-file walk, so the loader's "did it run?" question
+	// is asked about the deployment the passes above have just described.
+	r.loaderPass(installedMods)
+	if err := r.deployedContentPass(installedMods); err != nil {
+		return result, err
+	}
+	r.recordsPassTolerant(installedMods, files)
 	r.convergencePass()
 
 	return result, nil
+}
+
+// VerifyStatusDeployedModified is the status of a verify row for a copy or
+// hardlink the profile deployed whose content is no longer what lmm wrote
+// there (#466), or for a symlink deployment whose path now holds a non-link
+// (#483) - the user replaced or edited it. Every removal keeps such a file and
+// every deploy leaves it, so --fix does too: the row is never fixable, and its
+// note says how to take the mod's version back.
+const VerifyStatusDeployedModified = "deployed_modified"
+
+// deployedModifiedRemedy is VerifyStatusDeployedModified's remedy: delete
+// the file and redeploy, or - for a hard link that is still the mod's
+// cached copy, which the edit changed too - reinstall (#466 review D8).
+func deployedModifiedRemedy(sharesCache bool) string {
+	if sharesCache {
+		return "it is a hard link to the mod's cached copy, so that copy changed too; run `lmm install --force` for the mod to extract its own version again"
+	}
+	return "delete it, then run `lmm deploy`, to take the mod's version"
+}
+
+// deployedContentPass reports every file this profile deployed, under the
+// game's current mod_path, that is no longer provably lmm's (#466/#483):
+// VerifyStatusDeployedModified. A file that is missing is not this pass's
+// row. A fingerprintless regular file is normally unverified, except when
+// every owning installed row proves it replaced a symlink deployment. A file
+// that could not be read to compare is reported the same way, since it is
+// left alone the same way. Only a cancellation ends the run; a listing that
+// fails is a skipped row.
+func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) error {
+	rows, err := r.svc.db.ListDeployedFiles(r.ctx, r.game.ID, r.profile)
+	if err != nil {
+		// Tolerated like every other pass's read failure: a skipped row,
+		// not a verify that reports nothing.
+		if cerr := r.ctx.Err(); cerr != nil {
+			return cerr
+		}
+		r.result.Warnings++
+		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("deployed content: listing deployed files: %v", err)}, VerifyEvent{})
+		return nil
+	}
+	names := make(map[string]string, len(installedMods))
+	byKey := make(map[string]*cachedMod, len(installedMods))
+	gameCache := r.svc.GetGameCache(r.game)
+	for i, m := range installedMods {
+		names[domain.ModKey(m.SourceID, m.ID)] = m.Name
+		byKey[domain.ModKey(m.SourceID, m.ID)] = &cachedMod{cache: gameCache, game: r.game, mod: &installedMods[i].Mod, method: m.LinkMethod}
+	}
+	jd := deployedJudge{
+		db: r.svc.db, game: r.game, profile: r.profile, cacheRoots: r.svc.cacheRoots(r.game),
+		cached: func(st db.DeployedFileState, rel string) string {
+			return byKey[domain.ModKey(st.SourceID, st.ModID)].fileFor(st, rel)
+		},
+	}
+	for _, row := range rows {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		if r.opts.ModFilter != "" && row.ModID != r.opts.ModFilter {
+			continue
+		}
+		if !underCurrentRoot(r.game, row.ModPath) || !filepath.IsLocal(filepath.FromSlash(row.RelativePath)) {
+			continue
+		}
+		dst := filepath.Join(r.game.ModPath, filepath.FromSlash(row.RelativePath))
+		j := jd.judge(r.ctx, row.RelativePath, dst)
+		if j.verdict != deployedUsers {
+			continue
+		}
+		r.result.Warnings++
+		r.finding(VerifyFinding{
+			ModID:         row.ModID,
+			ModName:       names[domain.ModKey(row.SourceID, row.ModID)],
+			FileID:        row.RelativePath,
+			Status:        VerifyStatusDeployedModified,
+			Note:          fmt.Sprintf("%s: %s, so lmm leaves it as yours", row.RelativePath, j.reason),
+			FixableReason: "--fix never writes over a file you changed - " + deployedModifiedRemedy(j.sharesCache),
+		}, VerifyEvent{})
+	}
+	return r.blockedPathsPass(installedMods, rows)
+}
+
+// VerifyStatusDeployedBlocked is the status of a verify row for a path a
+// deployed mod ships that lmm did not deploy because something it could
+// not preserve is there (#466 review D6): a file whose original the
+// originals store already holds, a link or directory lmm did not make, or
+// a file it could not copy. The deploy left it and recorded nothing, so no
+// other pass sees it. Never fixable: --fix writes over nothing it cannot
+// preserve either.
+const VerifyStatusDeployedBlocked = "deployed_blocked"
+
+// blockedPathsPass reports VerifyStatusDeployedBlocked for every path a
+// deployed, enabled mod of the profile ships - one it has recorded others
+// of, so its deployment is lmm's to describe - that no profile of the game
+// records under its current mod_path and that holds something. A mod whose
+// cache entry cannot be listed says nothing here; the other passes report
+// it.
+func (r *verifyRun) blockedPathsPass(installedMods []domain.InstalledMod, rows []db.DeployedPath) error {
+	a, err := r.svc.AdapterFor(r.game)
+	if err != nil {
+		return nil //nolint:nilerr // adapterPass reports the refusal
+	}
+	records, err := r.svc.db.DeployedPathRecords(r.ctx, r.game.ID)
+	if err != nil {
+		if cerr := r.ctx.Err(); cerr != nil {
+			return cerr
+		}
+		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("deployed content: listing deployed files: %v", err)}, VerifyEvent{})
+		return nil
+	}
+	recordedHere := func(rel string) bool {
+		for _, rec := range records[rel] {
+			if underCurrentRoot(r.game, rec.ModPath) {
+				return true
+			}
+		}
+		return false
+	}
+	withRows := make(map[string]bool)
+	for _, row := range rows {
+		withRows[domain.ModKey(row.SourceID, row.ModID)] = true
+	}
+	gameCache := r.svc.GetGameCache(r.game)
+	installer := r.svc.getInstaller(r.game)
+	for _, m := range installedMods {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		if !m.Enabled || !m.Deployed || !withRows[domain.ModKey(m.SourceID, m.ID)] {
+			continue
+		}
+		if r.opts.ModFilter != "" && m.ID != r.opts.ModFilter {
+			continue
+		}
+		files, err := deployableFiles(gameCache, a, r.game, m.SourceID, m.ID, m.Version)
+		if err != nil {
+			continue
+		}
+		for _, file := range files {
+			rel := filepath.ToSlash(file)
+			if installer.notLinkerOwned(r.game, rel) || recordedHere(rel) {
+				continue
+			}
+			if _, err := os.Lstat(filepath.Join(r.game.ModPath, file)); err != nil {
+				continue
+			}
+			r.result.Warnings++
+			r.finding(VerifyFinding{
+				ModID:         m.ID,
+				ModName:       m.Name,
+				FileID:        rel,
+				Status:        VerifyStatusDeployedBlocked,
+				Note:          fmt.Sprintf("%s: not deployed - lmm did not put what is there, and could not preserve it to put the mod's file in its place", rel),
+				FixableReason: "--fix never writes over what it cannot preserve - move it aside, then run `lmm deploy`, to take the mod's version",
+			}, VerifyEvent{})
+		}
+	}
+	return nil
+}
+
+// adapterPass appends the game adapter's read-only findings to the result.
+//
+// A failure to resolve or run the adapter is reported as a "skipped" row
+// rather than failing the whole verify, matching every other pass's
+// tolerance: a verify that reports nothing because one tier could not run
+// is worse than one that says which tier did not. A "skipped" row is core's
+// own and counts towards neither tally, exactly as the other passes' skips
+// do.
+func (r *verifyRun) adapterPass(installedMods []domain.InstalledMod) {
+	a, err := r.svc.AdapterFor(r.game)
+	if err != nil {
+		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("adapter: %v", err)}, VerifyEvent{})
+		return
+	}
+	findings, err := adapter.Verify(r.ctx, a, adapter.VerifyRequest{Game: r.game, Mods: installedMods})
+	if err != nil {
+		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("adapter %s: %v", a.ID(), err)}, VerifyEvent{})
+		return
+	}
+	for _, f := range findings {
+		// The tally is core's, on the adapter's say-so: Issues and Warnings
+		// decide `lmm verify`'s exit code, and only the adapter knows
+		// whether "the loader has never run" is a problem or a remark
+		// (#413). adapter.SeverityIssue is the zero value, so an adapter
+		// that says nothing reports a problem.
+		switch f.Severity {
+		case adapter.SeverityIssue:
+			r.result.Issues++
+		case adapter.SeverityWarning:
+			r.result.Warnings++
+		case adapter.SeverityNote:
+		}
+		r.finding(VerifyFinding{
+			Status:        f.Status,
+			Note:          f.Note,
+			Recorded:      f.Recorded,
+			Effective:     f.Effective,
+			Fixable:       f.Fixable,
+			FixableReason: f.FixableReason,
+		}, VerifyEvent{Recorded: f.Recorded, Effective: f.Effective})
+	}
+}
+
+// externalPresencePass is #269's verify tier for EXTERNAL mods: the only
+// thing lmm can honestly check about a Steam Workshop item's FILES is that
+// the directory Steam owns is still there and still has something in it.
+//
+// There is no checksum tier for these (lmm never downloaded the bytes, so
+// it has nothing recorded to compare against - which is why versionPass
+// skips them too), and a missing directory has no --fix: both file repairs
+// verify offers, redownload and checksum backfill, presuppose an lmm-owned
+// cache entry. It is reported and left for the user to resolve in the
+// Steam client, which is the only place it CAN be resolved.
+//
+// What lmm CAN check is its own RECORD (#538): Steam updates an item
+// without lmm, so the revision stamped at adopt goes stale. A present item
+// whose record disagrees with Steam's manifest is an "external_stale" row,
+// and --fix records Steam's revision through reconcileExternalMods - the
+// same write ReconcileExternalMods makes, under the slot this --fix run
+// already holds.
+func (r *verifyRun) externalPresencePass(installedMods []domain.InstalledMod) error {
+	drift, err := r.svc.readExternalDrift(r.ctx, r.game, installedMods)
+	if err != nil {
+		return err
+	}
+	reconciled := map[string]ExternalRevisionChange{}
+	if r.opts.Fix && len(drift.revised) > 0 {
+		res, err := r.svc.reconcileExternalMods(r.ctx, r.game, r.profile, r.opts.ModFilter)
+		if res != nil {
+			for _, c := range res.Reconciled {
+				reconciled[domain.ModKey(c.SourceID, c.ModID)] = c
+			}
+		}
+		if err != nil {
+			return err // a cancellation: the only error it returns
+		}
+	}
+
+	for i := range installedMods {
+		mod := &installedMods[i]
+		if !mod.External {
+			continue
+		}
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		if r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter {
+			continue
+		}
+		r.result.External++
+		if !externalContentPresent(mod.ExternalPath) {
+			r.result.Issues++
+			r.finding(VerifyFinding{
+				ModID: mod.ID, ModName: mod.Name, Status: "external_missing", External: true,
+				Note:          "Steam no longer has this item on disk - it may have been unsubscribed",
+				FixableReason: "lmm does not own this item's files, so there is nothing for --fix to redownload - resubscribe in the Steam client, or uninstall it from lmm",
+			}, VerifyEvent{})
+			continue
+		}
+		key := domain.ModKey(mod.SourceID, mod.ID)
+		if c, ok := reconciled[key]; ok {
+			r.finding(VerifyFinding{
+				ModID: mod.ID, ModName: mod.Name, Status: "fixed_external_stale", External: true,
+				Note: "recorded the revision Steam has installed" + revisionDateSuffix(c.UpdatedAt),
+			}, VerifyEvent{})
+			continue
+		}
+		if rev, ok := drift.revised[key]; ok {
+			r.result.Warnings++
+			r.finding(VerifyFinding{
+				ModID: mod.ID, ModName: mod.Name, Status: "external_stale", External: true,
+				Note:     "Steam has updated this item since lmm recorded it" + revisionDateSuffix(rev.updatedAt) + " - lmm's record still names the earlier revision",
+				Recorded: mod.Version, Effective: rev.version,
+				Fixable: !r.opts.Fix,
+			}, VerifyEvent{})
+			continue
+		}
+		// #429: named, not skipped - "tracked, present, and not lmm's
+		// to verify" is the whole report for this item, and silence
+		// read as "not checked at all". An "ok" row, so no surface
+		// counts it as a problem.
+		r.finding(VerifyFinding{
+			ModID: mod.ID, ModName: mod.Name, Status: "ok", External: true,
+			Note: "tracked from Steam - present on disk; Steam owns its files, so lmm checks only that they are there",
+		}, VerifyEvent{})
+	}
+	return nil
+}
+
+// revisionDateSuffix renders an external revision's date for a verify note
+// - " (Steam's revision of 2026-10-05)" - or nothing when the installer gave
+// none. The content id itself is never printed: it means nothing to a
+// person (#458).
+func revisionDateSuffix(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return " (Steam's revision of " + t.UTC().Format("2006-01-02") + ")"
+}
+
+// modPathPass reports a mod_path that needs attention (#427): the rows that
+// missing directory causes do not say what is wrong, and ModPathProblem's
+// sentence names the repair. ModPathProblem is also what decides it, so the
+// row and every game document agree - an absent directory nobody has
+// deployed into is where a new game starts, and a deploy creates it. --fix
+// does not move a mod_path, so the row is never fixable.
+func (r *verifyRun) modPathPass() error {
+	problem, err := r.svc.ModPathProblem(r.ctx, r.game)
+	if err != nil || problem == nil {
+		return err
+	}
+	r.result.Warnings++
+	r.finding(VerifyFinding{
+		Status:        "mod_path_missing",
+		Note:          problem.Error(),
+		FixableReason: "--fix does not move a mod_path - the note names the command that does",
+	}, VerifyEvent{})
+	return nil
+}
+
+// verifyScope counts the installed mods a run covers (those ModFilter
+// names, or all of them) and, of those, the ones that are neither external
+// nor have a single recorded file - what VerifyResult.Mods and .Unverified
+// report (#429).
+func verifyScope(installedMods []domain.InstalledMod, files []DeployedFile, modFilter string) (mods, unverified int) {
+	withFiles := make(map[string]bool, len(files))
+	for _, f := range files {
+		withFiles[domain.ModKey(f.SourceID, f.ModID)] = true
+	}
+	for _, mod := range installedMods {
+		if modFilter != "" && mod.ID != modFilter {
+			continue
+		}
+		mods++
+		if !mod.External && !withFiles[domain.ModKey(mod.SourceID, mod.ID)] {
+			unverified++
+		}
+	}
+	return mods, unverified
+}
+
+// externalContentPresent reports whether path is a directory with at least
+// one entry. An empty directory counts as absent: Steam leaves one behind
+// after an unsubscribe, and reporting it as present would hide exactly the
+// case this pass exists to catch.
+func externalContentPresent(path string) bool {
+	if path == "" {
+		return false
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false
+	}
+	return len(entries) > 0
 }
 
 // syncMergedPakPass ports cmd/lmm/verify.go's fix-mode merged-pak resync
@@ -217,51 +1203,52 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 // Only called when opts.Fix - a plain verify pass makes no changes for a
 // sync to react to.
 func (r *verifyRun) syncMergedPakPass() {
-	syncWarnings, err := r.svc.SyncMergedPak(r.ctx, r.game, r.profile)
+	syncWarnings, err := r.svc.syncMergedPak(r.ctx, r.game, r.profile)
 	if err != nil {
-		r.emit(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: fmt.Sprintf("could not sync merged pak: %v", err)})
+		r.emitEv(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: fmt.Sprintf("could not sync merged pak: %v", err)})
 		return
 	}
 	for _, w := range syncWarnings {
-		r.emit(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: w})
+		r.emitEv(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: w})
 	}
 }
 
 // convergencePass ports cmd/lmm/verify.go's reportConvergencePass verbatim
 // (originally cmd/lmm/verify.go:865-916): reconciles the game dir against
-// current reality (ConvergeDeployedFiles) - deployed_files rows no longer
+// current reality (convergeDeployedFiles) - deployed_files rows no longer
 // provided by any installed mod, and dangling cache-rooted symlinks with no
 // row at all - and reports every stale/dangling path found. dryRun mirrors
 // !opts.Fix: a plain verify pass reports candidates without mutating
 // anything (each becomes a stale_deployment warning); --fix acts, and each
-// path ConvergeDeployedFiles actually removed becomes a fixed_stale_
+// path convergeDeployedFiles actually removed becomes a fixed_stale_
 // deployment row instead - resolved, not outstanding, the same convention
 // every other successful --fix repair in this engine follows (it does NOT
 // add to Warnings). Runs both in the main flow (after perFileWalk/the
 // fix-mode sync above) and, for the #217 empty-profile path (HasFiles
-// false), as the entirety of that run beyond the Begin event - see Verify's
+// false), as the entirety of that run beyond the Begin event - see verify's
 // own doc comment.
 //
-// A fixed_stale_deployment row's Variant is "fixed_green": the CLI/TUI
-// render the WHOLE main line green for it (unlike, say, a version repair,
-// which prints a plain finding line with a separate green sub-line) - Task
-// 7 wires that rendering contract up on the CLI side.
+// A fixed_stale_deployment row needs no event field of its own for this: the
+// CLI renders the WHOLE main line green for it purely by keying on
+// Finding.Status (unlike, say, a version repair, which prints a plain
+// finding line with a separate green sub-line) - Task 7 wires that
+// rendering contract up on the CLI side.
 //
 // Per-item convergence failures (an Undeploy or sweep os.Remove that
-// failed) are joined into one error by ConvergeDeployedFiles rather than
+// failed) are joined into one error by convergeDeployedFiles rather than
 // aborting the whole pass (ConvergeResult's own doc comment) - surfaced
 // here the same way every other per-item problem in this engine is: a
-// skipped row plus a warning, not a fatal Verify failure.
+// skipped row plus a warning, not a fatal verify failure.
 func (r *verifyRun) convergencePass() {
-	convResult, convErr := r.svc.ConvergeDeployedFiles(r.ctx, r.game, r.profile, !r.opts.Fix)
+	convResult, convErr := r.svc.convergeDeployedFiles(r.ctx, r.game, r.profile, !r.opts.Fix)
 	if convResult != nil {
 		for _, cf := range convResult.Removed {
 			if r.opts.Fix {
-				r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "fixed_stale_deployment", Note: cf.Reason}, VerifyEvent{Variant: "fixed_green"})
+				r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "fixed_stale_deployment", Note: cf.Reason}, VerifyEvent{})
 				continue
 			}
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "stale_deployment", Note: cf.Reason}, VerifyEvent{})
+			r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "stale_deployment", Note: cf.Reason, Fixable: true}, VerifyEvent{})
 		}
 	}
 	if convErr != nil {
@@ -277,7 +1264,7 @@ func (r *verifyRun) convergencePass() {
 // cache entry exists but is empty (0 files) despite the DB recording more
 // than zero expected files. Runs before perFileWalk, matching the CLI's
 // current phase order.
-func (r *verifyRun) fileCountPrePass(files []DeployedFile) {
+func (r *verifyRun) fileCountPrePass(files []DeployedFile) error {
 	fileCountByMod := make(map[string]int)
 	for _, f := range files {
 		key := domain.ModKey(f.SourceID, f.ModID)
@@ -290,11 +1277,14 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) {
 	gameCache := r.svc.GetGameCache(r.game)
 	reportedMismatch := make(map[string]bool)
 	for key, expectedCount := range fileCountByMod {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
 		if expectedCount == 0 {
 			continue
 		}
 		sourceID, modID, _ := strings.Cut(key, ":")
-		mod, err := r.svc.GetInstalledMod(sourceID, modID, r.game.ID, r.profile)
+		mod, err := r.svc.GetInstalledMod(r.ctx, sourceID, modID, r.game.ID, r.profile)
 		if err != nil {
 			// A not-installed mod (an orphaned checksum row - perFileWalk
 			// below reports this exact case itself, as "skipped") is a
@@ -340,11 +1330,13 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) {
 		if expectedCount > 0 && actualCount == 0 {
 			if !reportedMismatch[key] {
 				r.result.Warnings++
-				r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "file_count_mismatch"}, VerifyEvent{ExpectedCount: expectedCount})
+				r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "file_count_mismatch",
+					FixableReason: "there is nothing to repair a file-count mismatch with"}, VerifyEvent{ExpectedCount: expectedCount})
 				reportedMismatch[key] = true
 			}
 		}
 	}
+	return nil
 }
 
 // perFileWalk ports cmd/lmm/verify.go's main per-file loop verbatim
@@ -356,20 +1348,26 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) {
 // CHECKSUM/NEEDS REINGEST --fix redownload repairs inline at each site;
 // Task 5 adds the one repair this walk does NOT own (version_mismatch's,
 // in versionPass below).
-func (r *verifyRun) perFileWalk(files []DeployedFile) {
+func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) error {
 	gameCache := r.svc.GetGameCache(r.game)
 	for _, f := range files {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
 		if r.opts.ModFilter != "" && f.ModID != r.opts.ModFilter {
 			continue
 		}
 		r.result.Checked++
 
-		mod, err := r.svc.GetInstalledMod(f.SourceID, f.ModID, r.game.ID, r.profile)
+		mod, err := r.svc.GetInstalledMod(r.ctx, f.SourceID, f.ModID, r.game.ID, r.profile)
 		if err != nil {
 			r.result.Warnings++
 			r.finding(VerifyFinding{ModID: f.ModID, FileID: f.FileID, Status: "skipped"}, VerifyEvent{})
 			continue
 		}
+		// #325: every repair below redownloads into the RECORDED version's
+		// cache slot, so each one has to know whether that record is a lock.
+		ref := prof.FindRef(f.SourceID, f.ModID)
 
 		// #221 lazy migration: a convert-eligible pak whose cache entry
 		// predates pak retention (deployable pak present, no retained
@@ -378,7 +1376,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 		// detection lives (verify must not reimplement it). Ported from
 		// cmd/lmm/verify.go's doVerify (originally lines 696-753), including
 		// the --fix re-ingest block below (#224 Task 4).
-		need, nerr := r.svc.PakNeedsReingest(r.game, mod, f.FileID)
+		need, nerr := r.svc.PakNeedsReingest(r.ctx, r.game, mod, f.FileID)
 		if nerr != nil {
 			// A real check failure (a Stat/ListFiles error, not "nothing
 			// ingested yet") - not counted as a warning and not fatal to
@@ -387,14 +1385,15 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 			// as every other soft diagnostic in this codebase. The exact
 			// text (sans the CLI's own "  (verbose) " prefix) is a frozen
 			// contract - the CLI renderer depends on it verbatim.
-			r.emit(VerifyEvent{Kind: VerifyEvVerbose, Detail: fmt.Sprintf("could not check pak-reingest status for %s (%s): %v", mod.Name, f.FileID, nerr)})
+			r.emitEv(VerifyEvent{Kind: VerifyEvVerbose, Detail: fmt.Sprintf("could not check pak-reingest status for %s (%s): %v", mod.Name, f.FileID, nerr)})
 		} else if need {
 			note := "pak predates conversion support - run 'lmm verify --fix' to re-ingest"
 			if mod.SourceID == domain.SourceLocal {
 				note = "re-import the archive to enable conversion"
 			}
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "needs_reingest", Note: note}, VerifyEvent{})
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "needs_reingest", Note: note,
+				Fixable: redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{})
 			// #224 Task 4: --fix re-ingests through the same redownload path
 			// as MISSING/NO CHECKSUM below - the widened ingest predicate
 			// retains the source this time, and a later sync picks it up.
@@ -404,9 +1403,25 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 			// re-ingest either retains the source or it doesn't reach this
 			// far).
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
-				if _, rerr := r.redownloadModFile(r.ctx, mod, f.FileID); rerr != nil {
-					r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
+				if _, rerr := r.redownloadModFile(r.ctx, mod, f.FileID, ref); rerr != nil {
+					if errors.Is(rerr, ErrModLocked) {
+						// #325 (review I2): the SAME distinction the
+						// missing branch below makes. The lock gate
+						// declined before the download, so nothing failed
+						// and a retry declines identically forever -
+						// calling it a failure tells the user to retry,
+						// and rendering the raw error stutters the
+						// ErrModLocked sentinel against the sentence's own
+						// "<Name> is locked at ..." head.
+						r.resolveLast("needs_reingest", "locked")
+						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(rerr)})
+					} else {
+						r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
+						page := downloadPage(rerr)
+						r.setDownloadPage(mod, page)
+						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
+						r.emitDownloadPage(page)
+					}
 				} else {
 					// Same convention as MISSING/NO CHECKSUM's own --fix
 					// success path below, and stale_deployment's
@@ -416,7 +1431,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 					// status/note and back the count out.
 					r.resolveLast("fixed_needs_reingest", "re-ingested with retained source for pak conversion")
 					r.result.Warnings--
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-ingested for pak conversion", Green: true})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-ingested for pak conversion", Fixed: true})
 				}
 			}
 			continue
@@ -425,19 +1440,33 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 		cacheExists := gameCache.Exists(r.game.ID, mod.SourceID, mod.ID, mod.Version)
 		if !cacheExists {
 			r.result.Issues++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing", Version: mod.Version}, VerifyEvent{Version: mod.Version})
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing", Version: mod.Version,
+				DisplayVersion: mod.DisplayVersion,
+				Fixable:        redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{Version: mod.Version})
 			// #224 Task 4: ported verbatim from doVerify (originally lines
 			// 765-799).
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
-				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID)
+				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
 				switch {
+				case errors.Is(err, ErrModLocked):
+					// #325: refused, not failed - the slot is untouched and
+					// the row keeps reporting MISSING. Note is the short,
+					// machine-checkable reason versionPass's own lock
+					// refusal already uses; the sentence is the text
+					// surface (VerifyEvRepairDetail).
+					r.resolveLast("missing", "locked")
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(err)})
 				case err != nil:
 					r.resolveLast("missing", err.Error())
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
+					page := downloadPage(err)
+					r.setDownloadPage(mod, page)
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
+					r.emitDownloadPage(page)
 				case persisted:
 					r.resolveLast("ok", "")
+					r.result.Findings[len(r.result.Findings)-1].Repair = "Re-downloaded OK"
 					r.result.Issues--
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded OK", Green: true})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded OK", Fixed: true})
 				default:
 					// The re-download restored the cache - the MISSING
 					// issue is genuinely repaired - but no checksum was
@@ -447,7 +1476,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 					r.resolveLast("no_checksum", "re-downloaded, but no checksum was available to store")
 					r.result.Issues--
 					r.result.Warnings++
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store - NO CHECKSUM remains"})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store - NO CHECKSUM remains"})
 				}
 			}
 			continue
@@ -457,36 +1486,72 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 			// #224 Task 4: --fix's redownload-to-populate-checksum repair
 			// REPLACES the plain no_checksum row emission below - ported
 			// verbatim from doVerify (originally lines 804-846), including
-			// the "ok"+Variant:"checksum_populated" main-line emission on
-			// success.
+			// the "ok"+ChecksumPopulated main-line emission on success.
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
-				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID)
+				// The row waits for the re-download's outcome, so the
+				// re-download's own sub-lines wait for the row.
+				release := r.holdDetails()
+				persisted, fromCache, err := r.populateChecksum(mod, f.FileID, ref)
+				held := release()
+
+				row := VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"}
+				var extras VerifyEvent
+				var detail, page string
+				var fixed bool
 				switch {
+				case errors.Is(err, ErrModLocked):
+					// #325 (review I2): refused, not failed - see the
+					// needs_reingest arm above. The warning stands (the
+					// checksum is still unpopulated) with the short,
+					// machine-checkable note; the sentence is the text
+					// surface.
+					r.result.Warnings++
+					row.Note, detail = "locked", lockedSkipDetail(err)
 				case err != nil:
 					r.result.Warnings++
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: err.Error()}, VerifyEvent{})
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download to populate checksum failed: %v", err)})
+					row.Note, detail = err.Error(), fmt.Sprintf("Re-download to populate checksum failed: %v", err)
+					page = downloadPage(err)
+					row.ModURL = page
+					if page != "" {
+						row.SourceID = mod.SourceID
+					}
+				case fromCache:
+					// #514: populated, but not by the re-download the
+					// plain "checksum populated" line implies - say how.
+					row.Status, extras.ChecksumPopulated = "ok", true
+					detail, fixed = "Checksum filled from the cached files (the source won't serve this file)", true
+					row.Repair = detail
 				case persisted:
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"}, VerifyEvent{Variant: "checksum_populated"})
+					row.Status, extras.ChecksumPopulated = "ok", true
+					row.Repair = "Checksum recorded from a fresh download"
 				default:
 					// The download succeeded but produced no checksum to
 					// store - nothing was written, so the warning stands
 					// with an honest reason (#164: "checksum populated" was
 					// a lie here, and the summary lied with it).
 					r.result.Warnings++
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: "re-downloaded, but no checksum was available to store"}, VerifyEvent{})
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store"})
+					row.Note, detail = "re-downloaded, but no checksum was available to store", "Re-downloaded, but no checksum was available to store"
 				}
+				r.finding(row, extras)
+				for _, ev := range held {
+					r.emitEv(ev)
+				}
+				if detail != "" {
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: detail, Fixed: fixed})
+				}
+				r.emitDownloadPage(page)
 				continue
 			}
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"}, VerifyEvent{})
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum",
+				Fixable: redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{})
 			continue
 		}
 
 		// Cache exists and checksum stored - consider OK.
 		r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"}, VerifyEvent{})
 	}
+	return nil
 }
 
 // mergedPakStalenessPass ports cmd/lmm/verify.go's merged-pak staleness
@@ -501,7 +1566,7 @@ func (r *verifyRun) mergedPakStalenessPass() {
 		return
 	}
 
-	staleUpd, serr := r.svc.CheckMergedPakStaleness(r.game, r.profile)
+	staleUpd, serr := r.svc.CheckMergedPakStaleness(r.ctx, r.game, r.profile)
 	if serr != nil {
 		r.result.Warnings++
 		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("could not check merged pak staleness: %v", serr)}, VerifyEvent{})
@@ -509,22 +1574,26 @@ func (r *verifyRun) mergedPakStalenessPass() {
 	r.result.Checked++
 	if staleUpd != nil {
 		r.result.Warnings++
-		r.finding(VerifyFinding{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile", Note: staleUpd.RecompileReason}, VerifyEvent{})
+		// The resync rebuilds and deploys the artifact, so the adapter has
+		// its say (syncMergedPak asks it again before deploying).
+		fixable, reason := r.deployRowFixability(!r.opts.Fix, staleCompileRefusal(r.opts.Fix), r.opts.Fix, true)
+		r.finding(VerifyFinding{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile",
+			Note: staleUpd.RecompileReason, Fixable: fixable, FixableReason: reason}, VerifyEvent{})
 	}
 }
 
 // conversionOutcomesPass ports cmd/lmm/verify.go's per-mod pak-conversion
 // outcome report verbatim (originally doVerify lines 484-514): reports
 // every non-Converted entry recorded on the merged pak's own fingerprint
-// (MergedPakOutcomes) - a mod whose pak failed to convert stays
+// (mergedPakOutcomes) - a mod whose pak failed to convert stays
 // raw-deployed, and the user needs to know why. Independent of the
 // staleness check above: a merge can be perfectly up to date while still
 // recording a PRIOR conversion failure for one of its contributing mods. A
 // warning, not an issue - deploying raw is a documented, working fallback,
 // not corruption.
-func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) {
+func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) error {
 	if r.game.DeployMode != domain.DeployCompile {
-		return
+		return nil
 	}
 
 	modNames := make(map[string]string, len(installedMods))
@@ -532,11 +1601,18 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 		modNames[domain.ModKey(m.SourceID, m.ID)] = m.Name
 	}
 
-	outcomes, ok := r.svc.MergedPakOutcomes(r.game, r.profile)
+	outcomes, ok := r.svc.mergedPakOutcomes(r.ctx, r.game, r.profile)
 	if !ok {
-		return
+		return nil
 	}
 	for _, entry := range outcomes {
+		// The check belongs to the loop that EMITS findings, not to the
+		// in-memory name-map build above (final-review Minor 2): a pass with
+		// no installed mods still walks the outcomes, and this is the loop a
+		// reader expects the cancellation guard to protect.
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
 		if entry.Converted {
 			continue
 		}
@@ -551,8 +1627,10 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 			name = entry.ModID
 		}
 		r.result.Warnings++
-		r.finding(VerifyFinding{ModID: entry.ModID, ModName: name, Status: "conversion_failed", Note: entry.FailReason}, VerifyEvent{})
+		r.finding(VerifyFinding{ModID: entry.ModID, ModName: name, Status: "conversion_failed", Note: entry.FailReason,
+			FixableReason: "a conversion is only retried when a merge input changes - reinstall the mod to retry it"}, VerifyEvent{})
 	}
+	return nil
 }
 
 // versionPass ports cmd/lmm/verify.go's per-mod version-record check
@@ -564,9 +1642,9 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 // phase, and the only one skipped entirely under VerifyLocal.
 //
 // Emits VerifyEvProgress at the top of every mod's iteration (a new event
-// the CLI ignores and the TUI's status line consumes) and honors ctx
-// cancellation between mods: on cancellation the loop stops and returns
-// ctx.Err(), leaving the caller (Verify) to return the partial result
+// not currently rendered by the CLI) and honors ctx cancellation between
+// mods: on cancellation the loop stops and returns
+// ctx.Err(), leaving the caller (verify) to return the partial result
 // already accumulated rather than a phantom "everything checked out"
 // result.
 func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domain.Profile) error {
@@ -576,7 +1654,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 
 	for i := range installedMods {
 		mod := &installedMods[i]
-		r.emit(VerifyEvent{Kind: VerifyEvProgress, Index: i + 1, Total: len(installedMods), ModName: mod.Name})
+		r.emitEv(VerifyEvent{Kind: VerifyEvProgress, Scope: Scope{Index: i + 1, Total: len(installedMods), ModName: mod.Name}})
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}
@@ -587,7 +1665,10 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		// Nothing to check against: local imports and manual downloads have
 		// no source to query, and a mod with no recorded file IDs predates
 		// even the buggy stamping this check exists to catch.
-		if mod.SourceID == domain.SourceLocal || mod.ManualDownload || len(mod.FileIDs) == 0 {
+		// #269: an external mod has no source file list to check a recorded
+		// version against - and no lmm-owned cache entry a repair could act
+		// on. Its own check is externalPresencePass.
+		if mod.SourceID == domain.SourceLocal || mod.ManualDownload || mod.External || len(mod.FileIDs) == 0 {
 			continue
 		}
 
@@ -612,7 +1693,8 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 
 		if len(matched) == 0 {
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_unverifiable"}, VerifyEvent{})
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_unverifiable",
+				FixableReason: "there is nothing to check the recorded version against"}, VerifyEvent{})
 			continue
 		}
 
@@ -627,7 +1709,16 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		if effective != mod.Version {
 			recorded := mod.Version
 			r.result.Issues++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_mismatch", Recorded: recorded, Effective: effective}, VerifyEvent{Recorded: recorded, Effective: effective})
+			// The repair re-links a symlink deployment into the renamed
+			// cache entry - a deploy, so the adapter has its say.
+			repairs := versionMismatchRepairs(mod, ref)
+			fixable, reason := r.deployRowFixability(repairs, versionMismatchRefusal(mod, ref), r.opts.Fix && repairs, false)
+			r.finding(VerifyFinding{
+				ModID: mod.ID, ModName: mod.Name, Status: "version_mismatch",
+				Recorded: recorded, Effective: effective,
+				Fixable:       fixable,
+				FixableReason: reason,
+			}, VerifyEvent{Recorded: recorded, Effective: effective})
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
 				// #97 (Task 8): a locked ref's Version is the lock's
 				// TARGET, not a repairable mistake - rewriting it here
@@ -638,13 +1729,24 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 				if ref != nil && ref.Locked {
 					// #142 round 5: name the source/profile in both remedies -
 					// same "copy-paste acts on the wrong target" fix already
-					// applied to the core gates (internal/core/flows.go's
+					// applied to the core gates (internal/core/update.go's
 					// LockedRefRefusalError) and the sibling-repair warning
 					// below - a bare 'lmm mod lock <id> <version>' would
 					// resolve against the active profile/an ambiguous source
 					// if this mod's lock lives elsewhere.
-					refusal := fmt.Sprintf("--fix skipped: %s is locked at v%s in profile %s — the record is the lock's target; move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s' instead of rewriting it.", mod.Name, ref.Version, r.profile, mod.SourceID, r.profile, mod.ID, mod.SourceID, r.profile, mod.ID)
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: refusal})
+					// #311 (review I1): the sixth site the issue's own
+					// comment names. It was hand-worded and had drifted
+					// from the canonical sentence in three ways the
+					// unification exists to prevent (an em-dash, an
+					// interposed clause, a trailing full stop). It is
+					// LockedRefRefusalError's KIND - this gate refuses
+					// because the RECORD differs from what the lock names,
+					// so moving the lock genuinely unblocks it - and
+					// lockedRefRefusalMessage is that constructor's
+					// sentence half, i.e. the same builder without an
+					// ErrModLocked prefix to trim back off.
+					refusal := "--fix skipped: " + lockedRefRefusalMessage(mod.Mod, r.profile, ref)
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: refusal})
 					// The Note field already exists on this contract
 					// (repair-failure/rename-blocked detail) - this is an
 					// additive use of it, not a new field. Kept short
@@ -654,6 +1756,16 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 					// text-mode surface. Status stays version_mismatch -
 					// the repair was refused, not performed.
 					r.resolveLast("version_mismatch", "locked")
+					continue
+				}
+				// #413: the repair renames the cache entry and then re-links
+				// the deployment into it, so on a refused game none of it
+				// runs - half of it would leave every link dangling. The row
+				// already names the refusal (deployRepairable); resolveLast
+				// keeps that reason, as it does the lock's.
+				if err := r.refuseDeploy(); err != nil {
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "--fix skipped: " + deployRefusedReason(err)})
+					r.resolveLast("version_mismatch", "adapter refused")
 					continue
 				}
 				note, siblingFailures, repairErr := r.repairModVersion(r.ctx, mod, effective)
@@ -676,18 +1788,19 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 					// doc comment - and dropping either here would make
 					// them invisible to a --json caller even though they
 					// genuinely happened.
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repair failed: %v", repairErr)})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repair failed: %v", repairErr)})
 					repairNote := "repair failed: " + repairErr.Error()
 					if note != "" {
 						repairNote += "; " + note
 					}
 					r.resolveLast("version_mismatch", repairNote)
 				} else {
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repaired: %s → %s", recorded, effective), Green: true})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repaired: %s → %s", recorded, effective), Fixed: true})
 					if note != "" {
-						r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Note: " + note})
+						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Note: " + note})
 					}
 					r.resolveLast("ok", note)
+					r.result.Findings[len(r.result.Findings)-1].Repair = fmt.Sprintf("Repaired: %s → %s", recorded, effective)
 					r.result.Issues--
 				}
 			}
@@ -708,5 +1821,13 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		r.result.Checked++
 	}
 
+	// The LAST mod's own iteration (its repair included) can cancel without
+	// ever reaching the head-of-loop check above - without this, that
+	// cancellation would render as an ordinary "repair failed: context
+	// canceled" finding and versionPass would still return nil (task 18
+	// re-review round 2, NEW-3).
+	if err := r.ctx.Err(); err != nil {
+		return err
+	}
 	return nil
 }

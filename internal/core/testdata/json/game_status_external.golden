@@ -1,0 +1,32 @@
+{
+  "id": "skyrim-se",
+  "name": "Skyrim Special Edition",
+  "install_path": "/games/skyrim-se",
+  "mod_path": "/games/skyrim-se/Data",
+  "source_ids": {
+    "nexusmods": "skyrimspecialedition"
+  },
+  "link_method_explicit": false,
+  "hooks": {
+    "install": {},
+    "uninstall": {}
+  },
+  "deploy_mode": "extract",
+  "convert_paks_explicit": false,
+  "link_method": "symlink",
+  "effective_link_method": "symlink",
+  "link_method_source": "game",
+  "resolved_cache_path": "/home/user/.local/share/lmm",
+  "profiles": [
+    {
+      "name": "default",
+      "mod_count": 3,
+      "is_default": true
+    }
+  ],
+  "active_profile": "default",
+  "installed_mod_count": 3,
+  "enabled_mod_count": 3,
+  "external_count": 2,
+  "conversion_failures": 0
+}

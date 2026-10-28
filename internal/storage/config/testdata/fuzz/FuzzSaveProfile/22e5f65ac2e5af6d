@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("mods:\n- mod_id: >\n\n   0")
+uint64(82)

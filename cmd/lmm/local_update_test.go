@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,19 +20,19 @@ import (
 func seedLocalMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name string) {
 	t.Helper()
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, domain.SourceLocal, modID, "1.0", name+".esp", []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: domain.SourceLocal, Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: domain.SourceLocal, ModID: modID, Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: domain.SourceLocal, ModID: modID, Version: "1.0"}))
 }
 
 func localUpdateGame(t *testing.T) (*core.Service, *domain.Game) {
@@ -154,7 +154,7 @@ func TestDoUpdate_CheckFailed_DoesNotClaimUpToDate(t *testing.T) {
 func TestDoUpdate_SingleMod_AmbiguousAcrossSources(t *testing.T) {
 	svc, game := localUpdateGame(t)
 	seedLocalMod(t, svc, game, "12345", "Local Twin")
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "12345", SourceID: "curseforge", Name: "Remote Twin", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -174,7 +174,7 @@ func TestDoUpdate_SingleMod_AmbiguousAcrossSources(t *testing.T) {
 func TestDoUpdate_AmbiguousRemoteOnly_OmitsLocalCaveat(t *testing.T) {
 	svc, game := localUpdateGame(t)
 	for _, src := range []string{"nexusmods", "curseforge"} {
-		require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 			Mod:          domain.Mod{ID: "12345", SourceID: src, Name: "Twin " + src, Version: "1.0", GameID: game.ID},
 			ProfileName:  "default",
 			UpdatePolicy: domain.UpdateNotify,
@@ -281,4 +281,68 @@ func TestReportError_SuppressesAlreadyReported(t *testing.T) {
 		return nil
 	})
 	assert.Contains(t, out, "some other failure", "unreported errors still print")
+}
+
+// --- #375: a bulk update never needs -s/--source ---
+
+// TestDoUpdate_Bulk_MultiSourceGame_NeedsNoSourceFlag is #375's
+// reproduction. doUpdate resolved the source at the very top, so a game with
+// more than one configured source prompted (or, under --json, refused with
+// "confirmation required") before it did anything - even though the bulk
+// check walks every installed mod against ITS OWN recorded source and never
+// reads the answer. A cron job running `lmm update --json` on any
+// Workshop-bearing game (which `lmm init` produces by default) was blocked
+// for nothing.
+func TestDoUpdate_Bulk_MultiSourceGame_NeedsNoSourceFlag(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	game.SourceIDs = map[string]string{"src": "src", "other": "other", "steamworkshop": "1133870"}
+	seedLocalMod(t, svc, game, "localA", "Local A")
+
+	updateSource = "" // as an unflagged invocation leaves it
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.NotContains(t, out, "Select one:", "a bulk check must not ask which source to use")
+	assert.NotContains(t, out, "multiple mod sources configured")
+}
+
+// TestDoUpdate_BulkJSON_MultiSourceGame_DoesNotDemandASource is the same
+// check non-interactively - the shape a script or cron job actually hits.
+func TestDoUpdate_BulkJSON_MultiSourceGame_DoesNotDemandASource(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	game.SourceIDs = map[string]string{"src": "src", "other": "other"}
+	seedLocalMod(t, svc, game, "localA", "Local A")
+	withJSONOutput(t)
+
+	updateSource = ""
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.NotContains(t, out, "confirmation required")
+	assert.Contains(t, out, "\"skipped\"", "the check ran and produced its report")
+}
+
+// TestDoUpdate_SingleMod_MultiSourceGame_StillRefusesWithoutASource pins the
+// other half of #375: the single-mod path DOES read the resolved source (it
+// is how `lmm update <id> -s <src>` picks between two mods sharing an ID), so
+// that path keeps the prompt - and, under --json, names only the flag that
+// answers it rather than --yes/--force, which this command does not have.
+func TestDoUpdate_SingleMod_MultiSourceGame_StillRefusesWithoutASource(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	game.SourceIDs = map[string]string{"src": "src", "other": "other"}
+	seedLocalMod(t, svc, game, "localA", "Local A")
+	withJSONOutput(t)
+
+	updateSource = ""
+
+	err := doUpdate(context.Background(), svc, game, []string{"localA"})
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Equal(t, "confirmation required: pass -s/--source to select a mod source", err.Error(),
+		"only the specific remedy is true here - `lmm update` has no --yes")
 }

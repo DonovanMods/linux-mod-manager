@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -16,9 +16,27 @@ import (
 // --- #224 Task 1: pre-refactor golden capture ---
 //
 // These golden transcripts freeze doVerify's CURRENT byte-for-byte stdout
-// output across the scenarios that matter for the TUI verify surface work:
+// output across the scenarios that matter for the verify renderer work:
 // they are the safety net the later renderer-refactor tasks diff against, so
 // they must never be regenerated once recorded on this pre-refactor tree.
+//
+// One exception, taken once: the *_json goldens were re-recorded in v2
+// Phase 3 Task 6 (#302), when --json switched from the cmd-local
+// verifyJSONOutput view struct to core.VerifyReport - the single deliberate
+// JSON shape change Ruling 3 reserves for the v2.0.0 window. The *_plain and
+// *_fix (text) goldens were NOT touched by that re-record and are still the
+// pre-refactor bytes.
+//
+// A second, additive re-record of the *_json goldens only: #334 added
+// core.VerifyResult.checked_at, an omitzero timestamp. The text goldens
+// were again untouched (nothing prints it).
+//
+// A third, deliberate re-record, of version_mismatch_locked_fix ONLY (#311,
+// review I1): the sixth hand-worded lock refusal was folded through the
+// canonical lockedRefSentence builder, which is a user-visible wording
+// change to that one transcript's --fix sub-line and to nothing else.
+// Re-recorded with `-run '^TestVerifyGolden/version_mismatch_locked_fix$'
+// -update` so no other transcript could be rewritten by the same run.
 
 var updateGolden = flag.Bool("update", false, "rewrite verify golden files from current output")
 
@@ -34,7 +52,15 @@ func runVerifyGolden(t *testing.T, name string, fixture func(*testing.T) (*cobra
 	verifyFix, jsonOutput = fix, json
 	t.Cleanup(func() { verifyFix, jsonOutput = oldFix, oldJSON })
 
-	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	out := captureStdout(t, func() error { return doVerify(cmd.Context(), svc, game, nil) })
+	if json {
+		// #334: core.VerifyResult now carries checked_at, which is a real
+		// clock reading and so would make every --json golden here churn on
+		// every run. scrubJSON is the same normaliser the CLI's other JSON
+		// goldens already use. The *_plain and *_fix (text) transcripts do
+		// not print it and are untouched by this.
+		out = scrubJSON(out)
+	}
 
 	path := filepath.Join("testdata", "verify_golden", name+".golden")
 	if *updateGolden {
@@ -65,7 +91,7 @@ func versionMismatchLockedGoldenFixture(t *testing.T) (*cobra.Command, *core.Ser
 	t.Helper()
 	cmd, svc, game := setupDoVerifyFixTest(t, false)
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "1.5"))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "test-src", "mod1", "1.5"))
 	return cmd, svc, game
 }
 
@@ -111,7 +137,7 @@ func conversionFailedGoldenFixture(t *testing.T) (*cobra.Command, *core.Service,
 		compilerInstallSource: compiler,
 		failRefs:              map[string]string{"fake-compiler:" + modID: "table X not present in current base"},
 	}
-	svc.RegisterSource(outcome)
+	registerCompileSource(svc, outcome)
 
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)

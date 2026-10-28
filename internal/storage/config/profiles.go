@@ -7,9 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ProfileHookConfigYAML uses pointers to distinguish "not set" from "set to empty"
@@ -37,13 +38,20 @@ type ProfileConfig struct {
 	Overrides  map[string]string    `yaml:"overrides,omitempty"` // path (relative to game install) -> file content (INI tweaks, etc.)
 }
 
-// ModReferenceConfig is the YAML representation of a mod reference
+// ModReferenceConfig is the YAML representation of a mod reference.
+//
+// Disabled carries #431's per-mod off marker; like Locked it is
+// `omitempty`, so a profile file written before the marker existed - and
+// every profile whose mods are all enabled - is byte-identical to what
+// SaveProfile wrote before, and an older file simply decodes to false
+// ("absent means enabled") with no migration step.
 type ModReferenceConfig struct {
 	SourceID string   `yaml:"source_id"`
 	ModID    string   `yaml:"mod_id"`
 	Version  string   `yaml:"version,omitempty"`
 	FileIDs  []string `yaml:"file_ids,omitempty"`
 	Locked   bool     `yaml:"locked,omitempty"`
+	Disabled bool     `yaml:"disabled,omitempty"`
 }
 
 // parseProfileHooks converts YAML hooks to domain types, tracking which were explicitly set
@@ -90,6 +98,38 @@ func parseProfileHooks(yaml ProfileHooksYAML) (domain.GameHooks, domain.GameHook
 	return hooks, explicit
 }
 
+// stringPtrIfExplicit returns a pointer to value when explicit is true (the
+// *string-pointer encoding parseProfileHooks decodes: present-but-empty
+// means "explicitly disabled", absent means "inherit from game"), or nil
+// otherwise - the reverse of parseProfileHooks's per-field decoding.
+func stringPtrIfExplicit(value string, explicit bool) *string {
+	if !explicit {
+		return nil
+	}
+	return &value
+}
+
+// serializeProfileHooks converts domain hooks/explicit-flags back to their
+// YAML representation - the reverse of parseProfileHooks, used by
+// SaveProfile so a profile's hooks: overrides survive a load/mutate/save
+// cycle (#295).
+func serializeProfileHooks(hooks domain.GameHooks, explicit domain.GameHooksExplicit) ProfileHooksYAML {
+	return ProfileHooksYAML{
+		Install: ProfileHookConfigYAML{
+			BeforeAll:  stringPtrIfExplicit(hooks.Install.BeforeAll, explicit.Install.BeforeAll),
+			BeforeEach: stringPtrIfExplicit(hooks.Install.BeforeEach, explicit.Install.BeforeEach),
+			AfterEach:  stringPtrIfExplicit(hooks.Install.AfterEach, explicit.Install.AfterEach),
+			AfterAll:   stringPtrIfExplicit(hooks.Install.AfterAll, explicit.Install.AfterAll),
+		},
+		Uninstall: ProfileHookConfigYAML{
+			BeforeAll:  stringPtrIfExplicit(hooks.Uninstall.BeforeAll, explicit.Uninstall.BeforeAll),
+			BeforeEach: stringPtrIfExplicit(hooks.Uninstall.BeforeEach, explicit.Uninstall.BeforeEach),
+			AfterEach:  stringPtrIfExplicit(hooks.Uninstall.AfterEach, explicit.Uninstall.AfterEach),
+			AfterAll:   stringPtrIfExplicit(hooks.Uninstall.AfterAll, explicit.Uninstall.AfterAll),
+		},
+	}
+}
+
 // validateSegment enforces that value is usable as a single path segment:
 // non-empty (after trimming whitespace), no path separators ("/" or "\"),
 // and no ".." substring. The rule is deliberately conservative — harmless
@@ -116,12 +156,21 @@ func validateProfilePath(gameID, profileName string) error {
 	return validateSegment(profileName, domain.ErrInvalidProfileName)
 }
 
-// LoadProfile reads a profile from disk
+// LoadProfile reads gameID's profile profileName from
+// <configDir>/games/<gameID>/profiles/<profileName>.yaml.
+//
+// The profile's identity is where its file is, not what the file says
+// (#441): Name is profileName and GameID is gameID, whatever the file's own
+// `name:` and `game_id:` hold. Every lmm command finds a profile by its file
+// name, and SaveProfile writes back to the file Name and GameID name - so a
+// hand-copied profile whose `name:` still says the original's is read, and
+// written, as the copy, never as the file it was copied from.
+// DeclaredProfileName reports a `name:` that disagrees.
 func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error) {
-	if err := validateProfilePath(gameID, profileName); err != nil {
+	profilePath, err := ProfilePath(configDir, gameID, profileName)
+	if err != nil {
 		return nil, err
 	}
-	profilePath := filepath.Join(configDir, "games", gameID, "profiles", profileName+".yaml")
 	data, err := os.ReadFile(profilePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -131,10 +180,40 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 	}
 
 	var cfg ProfileConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := safeyaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing profile: %w", err)
 	}
+	return profileFromConfig(cfg, gameID, profileName)
+}
 
+// DeclaredProfileName returns the `name:` gameID's profile profileName's
+// file declares - "" when it declares none. It differs from profileName
+// only in a hand-copied or hand-renamed file, which LoadProfile reads under
+// its file name anyway; a frontend reports the difference (#441).
+func DeclaredProfileName(configDir, gameID, profileName string) (string, error) {
+	profilePath, err := ProfilePath(configDir, gameID, profileName)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", domain.ErrProfileNotFound
+		}
+		return "", fmt.Errorf("reading profile: %w", err)
+	}
+	var cfg struct {
+		Name string `yaml:"name"`
+	}
+	if err := safeyaml.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("parsing profile: %w", err)
+	}
+	return cfg.Name, nil
+}
+
+// profileFromConfig is the domain profile cfg, the document of gameID's
+// profile file profileName, describes - named for the file (LoadProfile).
+func profileFromConfig(cfg ProfileConfig, gameID, profileName string) (*domain.Profile, error) {
 	linkMethod, ok := domain.ParseLinkMethod(cfg.LinkMethod)
 	if !ok {
 		return nil, fmt.Errorf("%w: profile %q (game %q): link_method %q (valid: %s)",
@@ -142,8 +221,8 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 	}
 
 	profile := &domain.Profile{
-		Name:               cfg.Name,
-		GameID:             cfg.GameID,
+		Name:               profileName,
+		GameID:             gameID,
 		LinkMethod:         linkMethod,
 		LinkMethodExplicit: cfg.LinkMethod != "",
 		IsDefault:          cfg.IsDefault,
@@ -157,6 +236,7 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 			Version:  m.Version,
 			FileIDs:  m.FileIDs,
 			Locked:   m.Locked,
+			Disabled: m.Disabled,
 		}
 	}
 
@@ -170,59 +250,6 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 	}
 
 	return profile, nil
-}
-
-// SaveProfile writes a profile to disk
-func SaveProfile(configDir string, profile *domain.Profile) error {
-	if err := validateProfilePath(profile.GameID, profile.Name); err != nil {
-		return err
-	}
-	cfg := ProfileConfig{
-		Name:      profile.Name,
-		GameID:    profile.GameID,
-		IsDefault: profile.IsDefault,
-		Mods:      make([]ModReferenceConfig, len(profile.Mods)),
-	}
-	// Only write link_method if explicitly set: String() never returns "", so
-	// assigning it unconditionally defeats `omitempty` and bakes a phantom
-	// symlink override into every profile file.
-	if profile.LinkMethodExplicit {
-		cfg.LinkMethod = profile.LinkMethod.String()
-	}
-
-	for i, m := range profile.Mods {
-		cfg.Mods[i] = ModReferenceConfig{
-			SourceID: m.SourceID,
-			ModID:    m.ModID,
-			Version:  m.Version,
-			FileIDs:  m.FileIDs,
-			Locked:   m.Locked,
-		}
-	}
-
-	if len(profile.Overrides) > 0 {
-		cfg.Overrides = make(map[string]string)
-		for path, content := range profile.Overrides {
-			cfg.Overrides[path] = string(content)
-		}
-	}
-
-	data, err := yaml.Marshal(&cfg)
-	if err != nil {
-		return fmt.Errorf("marshaling profile: %w", err)
-	}
-
-	profileDir := filepath.Join(configDir, "games", profile.GameID, "profiles")
-	if err := os.MkdirAll(profileDir, 0755); err != nil {
-		return fmt.Errorf("creating profiles dir: %w", err)
-	}
-
-	profilePath := filepath.Join(profileDir, profile.Name+".yaml")
-	if err := os.WriteFile(profilePath, data, 0644); err != nil {
-		return fmt.Errorf("writing profile: %w", err)
-	}
-
-	return nil
 }
 
 // ListProfiles returns all profile names for a game
@@ -268,24 +295,74 @@ func DeleteProfile(configDir, gameID, profileName string) error {
 	return nil
 }
 
-// ExportProfile exports a profile to a portable format
-func ExportProfile(profile *domain.Profile) ([]byte, error) {
-	exported := domain.ExportedProfile{
-		Name:   profile.Name,
-		GameID: profile.GameID,
-		Mods:   profile.Mods,
-	}
+// exportedProfileYAML is the exported profile's wire shape - the YAML DTO
+// ExportProfile/ImportProfile marshal, so the hooks block uses the SAME
+// *string-pointer encoding a profile file does (#296). domain.
+// ExportedProfile carries the hooks as domain types; only their "unset vs
+// explicitly disabled" distinction needs the pointer form, which no yaml tag
+// on domain.GameHooks could express - hence a DTO here rather than tags
+// there. Field order is the file's key order, matching ProfileConfig's:
+// hooks sits between link_method and overrides.
+//
+// Mods stays []domain.ModReference (ModReference's own yaml tags), exactly
+// as the pre-#296 export marshaled it - the bytes must not move.
+type exportedProfileYAML struct {
+	Name       string                `yaml:"name"`
+	GameID     string                `yaml:"game_id"`
+	Mods       []domain.ModReference `yaml:"mods"`
+	LinkMethod string                `yaml:"link_method,omitempty"`
+	Hooks      ProfileHooksYAML      `yaml:"hooks,omitempty"`
+	Overrides  map[string]string     `yaml:"overrides,omitempty"`
+}
+
+// ExportProfileValue builds profile's portable domain.ExportedProfile
+// value: exactly the fields ExportProfile marshals to YAML (LinkMethod only
+// when explicit, Overrides as strings), but with Hooks/HooksExplicit left
+// as domain.GameHooks/GameHooksExplicit rather than run through the YAML
+// DTO's *string-pointer encoding - domain.ExportedProfile's own pair
+// already carries the "unset vs explicitly disabled" tri-state, so no
+// round trip through the pointer form is needed here. Shared by
+// ExportProfile (YAML) and core.Service.ExportProfile (`lmm profile export
+// --json`, #309) so the two document formats cannot drift apart on what
+// counts as "the exported profile".
+func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
+	var linkMethod string
 	if profile.LinkMethodExplicit {
-		exported.LinkMethod = profile.LinkMethod.String()
+		linkMethod = profile.LinkMethod.String()
 	}
+	var overrides map[string]string
 	if len(profile.Overrides) > 0 {
-		exported.Overrides = make(map[string]string)
+		overrides = make(map[string]string, len(profile.Overrides))
 		for path, content := range profile.Overrides {
-			exported.Overrides[path] = string(content)
+			overrides[path] = string(content)
 		}
 	}
+	return &domain.ExportedProfile{
+		Name:          profile.Name,
+		GameID:        profile.GameID,
+		Mods:          profile.Mods,
+		LinkMethod:    linkMethod,
+		Overrides:     overrides,
+		Hooks:         profile.Hooks,
+		HooksExplicit: profile.HooksExplicit,
+	}
+}
 
-	data, err := yaml.Marshal(&exported)
+// ExportProfile exports a profile to a portable format
+func ExportProfile(profile *domain.Profile) ([]byte, error) {
+	exported := ExportProfileValue(profile)
+
+	// yaml.v3 omits a zero struct under omitempty, so a profile with no
+	// explicit override writes no hooks: key at all and its export stays
+	// byte-identical to every export made before #296.
+	data, err := yaml.Marshal(&exportedProfileYAML{
+		Name:       exported.Name,
+		GameID:     exported.GameID,
+		Mods:       exported.Mods,
+		LinkMethod: exported.LinkMethod,
+		Hooks:      serializeProfileHooks(exported.Hooks, exported.HooksExplicit),
+		Overrides:  exported.Overrides,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling exported profile: %w", err)
 	}
@@ -295,10 +372,22 @@ func ExportProfile(profile *domain.Profile) ([]byte, error) {
 
 // ImportProfile imports a profile from portable format
 func ImportProfile(data []byte) (*domain.Profile, error) {
-	var exported domain.ExportedProfile
-	if err := yaml.Unmarshal(data, &exported); err != nil {
+	var wire exportedProfileYAML
+	if err := safeyaml.Unmarshal(data, &wire); err != nil {
 		return nil, fmt.Errorf("parsing exported profile: %w", err)
 	}
+
+	exported := domain.ExportedProfile{
+		Name:       wire.Name,
+		GameID:     wire.GameID,
+		Mods:       wire.Mods,
+		LinkMethod: wire.LinkMethod,
+		Overrides:  wire.Overrides,
+	}
+	// An export with no hooks: key (every export made before #296 included)
+	// decodes to all-nil pointers, so nothing is marked explicit and the
+	// profile keeps inheriting the game's hooks - the pre-#296 behaviour.
+	exported.Hooks, exported.HooksExplicit = parseProfileHooks(wire.Hooks)
 
 	linkMethod, ok := domain.ParseLinkMethod(exported.LinkMethod)
 	if !ok {
@@ -312,6 +401,8 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 		Mods:               exported.Mods,
 		LinkMethod:         linkMethod,
 		LinkMethodExplicit: exported.LinkMethod != "",
+		Hooks:              exported.Hooks,
+		HooksExplicit:      exported.HooksExplicit,
 	}
 	if len(exported.Overrides) > 0 {
 		p.Overrides = make(map[string][]byte)
@@ -320,4 +411,47 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 		}
 	}
 	return p, nil
+}
+
+// ProfileFromExported is ExportProfileValue's inverse: the *domain.Profile
+// an exported document describes.
+//
+// It exists for `lmm snapshot restore` (#350), which has to put a recorded
+// profile document back on disk without going through the YAML round trip
+// ImportProfile performs - the snapshot stores the document as JSON, and
+// re-serialising it to YAML just to parse it again would make a snapshot's
+// fidelity depend on the YAML DTO's own lossiness. Keeping the two
+// functions adjacent is what stops them drifting: a field added to one
+// must be answered in the other, and profiles_test.go round-trips them.
+//
+// IsDefault is NOT part of the exported document (it never was - an export
+// is portable, and "is this game's default" is local state), so it is left
+// zero here and the caller preserves the live profile's own value.
+func ProfileFromExported(exported *domain.ExportedProfile) *domain.Profile {
+	if exported == nil {
+		return nil
+	}
+	profile := &domain.Profile{
+		Name:          exported.Name,
+		GameID:        exported.GameID,
+		Mods:          exported.Mods,
+		Hooks:         exported.Hooks,
+		HooksExplicit: exported.HooksExplicit,
+	}
+	// LinkMethod is only carried when it was EXPLICIT: ExportProfileValue
+	// writes it as "" otherwise, and turning "" into a phantom symlink
+	// override is exactly what SaveProfile's own LinkMethodExplicit guard
+	// exists to prevent.
+	if exported.LinkMethod != "" {
+		if method, ok := domain.ParseLinkMethod(exported.LinkMethod); ok {
+			profile.LinkMethod, profile.LinkMethodExplicit = method, true
+		}
+	}
+	if len(exported.Overrides) > 0 {
+		profile.Overrides = make(map[string][]byte, len(exported.Overrides))
+		for path, content := range exported.Overrides {
+			profile.Overrides[path] = []byte(content)
+		}
+	}
+	return profile
 }

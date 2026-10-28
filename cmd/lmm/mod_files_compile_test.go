@@ -1,11 +1,12 @@
 package main
 
 import (
+	"context"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,30 +31,30 @@ func TestDoModFiles_DeployCompile_ExmodzModExplainsMergedPak(t *testing.T) {
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := getProfileManager(svc)
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	const modID, version, fileID = "bear-mount", "1.0", "exmodz-file"
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID), []byte("bear-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: "Bear Mount", Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
 		FileIDs:      []string{fileID},
 		UpdatePolicy: domain.UpdateNotify,
 	}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: version, FileIDs: []string{fileID}}))
 
 	oldSource, oldProfile := modSource, modProfile
 	modSource, modProfile = "fake-compiler", "default"
 	t.Cleanup(func() { modSource, modProfile = oldSource, oldProfile })
 
 	out := captureStdout(t, func() error {
-		return doModFiles(svc, game, modID)
+		return doModFiles(context.Background(), svc, game, modID)
 	})
 
 	assert.Contains(t, out, "merged pak")
@@ -79,27 +80,27 @@ func TestDoModFiles_NonCompile_ZeroFiles_KeepsOriginalMessage(t *testing.T) {
 		DeployMode: domain.DeployExtract, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-source": "external-other-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := getProfileManager(svc)
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	const modID, version = "broken-mod", "1.0"
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-source", Name: "Broken Mod", Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
 		UpdatePolicy: domain.UpdateNotify,
 	}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-source", ModID: modID, Version: version}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-source", ModID: modID, Version: version}))
 
 	oldSource, oldProfile := modSource, modProfile
 	modSource, modProfile = "fake-source", "default"
 	t.Cleanup(func() { modSource, modProfile = oldSource, oldProfile })
 
 	out := captureStdout(t, func() error {
-		return doModFiles(svc, game, modID)
+		return doModFiles(context.Background(), svc, game, modID)
 	})
 
 	assert.Contains(t, out, "No deployed files tracked")

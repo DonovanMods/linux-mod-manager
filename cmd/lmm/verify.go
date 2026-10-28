@@ -1,14 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/spf13/cobra"
 )
@@ -17,22 +17,6 @@ var (
 	verifyFix     bool
 	verifyProfile string
 )
-
-type verifyJSONOutput struct {
-	GameID   string           `json:"game_id"`
-	Profile  string           `json:"profile"`
-	Files    []verifyFileJSON `json:"files"`
-	Issues   int              `json:"issues"`
-	Warnings int              `json:"warnings"`
-}
-
-type verifyFileJSON struct {
-	ModID   string `json:"mod_id"`
-	ModName string `json:"mod_name"`
-	FileID  string `json:"file_id"`
-	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile, stale_deployment, fixed_stale_deployment, conversion_failed, needs_reingest, fixed_needs_reingest
-	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, a file-count-check lookup failure, a stale-deployment reason ("no longer provided by <source>/<mod>" | "dangling link into lmm cache"), a convergence per-item error (e.g. an unsafe deployed-file record skipped), a pak-conversion failure reason (conversion_failed), or why/whether a pak needed re-ingesting (needs_reingest / fixed_needs_reingest) - omitted when there's nothing extra to add
-}
 
 var verifyCmd = &cobra.Command{
 	Use:   "verify [mod-id]",
@@ -164,18 +148,65 @@ it - rewriting a locked record would silently move what the lock means
 instead of fixing anything. The refusal names the mod and the lock's
 target version, and points at the remedy: 'lmm mod lock' to move the
 lock, or 'lmm mod unlock' to release it; in --json the row keeps
-"version_mismatch" and gains note "locked". Separately, a locked mod whose
-recorded version hasn't yet caught up to the lock's target (pending a
-"lmm profile apply", not corruption) prints its own "~ NAME - lock pending
-convergence" informational line instead of being silently folded into the
-OK case - this is never counted in issues or warnings.
+"version_mismatch" and gains note "locked". A locked mod's MISSING, NO
+CHECKSUM and NEEDS REINGEST repairs are refused on the same grounds
+whenever the source cannot identify the recorded version's own file: each
+of them downloads into the RECORDED version's cache slot, and a source
+that does not stamp a version on its files can never identify it, so
+unlock first to repair such a mod. Those refusals print as
+"--fix skipped: ..." naming the unlock remedy - not as a repair that
+failed - and their --json rows keep their status with note "locked" too.
+Separately, a locked mod whose recorded version hasn't yet caught up to
+the lock's target (pending a "lmm profile apply", not corruption) prints
+its own "~ NAME - lock pending convergence" informational line instead of
+being silently folded into the OK case - this is never counted in issues
+or warnings.
 
---json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
-status, note}], issues, warnings}; status is one of "ok", "missing",
-"no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
+--json emits {game_id, profile, result: {findings: [{mod_id, mod_name,
+file_id, status, note, recorded, effective, version, external}], issues,
+warnings, checked, has_files, mods, external, unverified}}; each finding
+key is omitted when unset (a row only carries the fields its status needs -
+e.g. "version_mismatch" carries recorded/effective, "missing" carries
+version, most statuses carry neither). checked is the number of files/mods
+verify walked (feeds the "No files found for mod X" text-mode message
+alongside mods, since a mod-filter run that matched an external or
+otherwise-unverified mod leaves checked at 0 too but did find that mod, #429);
+has_files is false when no installed mod has recorded files, so no
+per-file checks run - the game-level checks (Steam Workshop presence, the
+adapter's, the loader's) and the deploy-convergence sweep still do. mods
+counts the installed mods the run covered (absent for an empty profile -
+the only case text mode says "No installed mods to verify."), external the
+Steam Workshop items among them - each checked for presence and named by
+a row: "ok" with external true while Steam still has it, "external_missing"
+once it does not - and unverified the others lmm has no recorded files for
+(a mod imported from disk), which it cannot compare against anything.
+status is one of "ok", "missing", "no_checksum",
+"file_count_mismatch", "skipped", "version_mismatch",
 "version_unverifiable", "stale_compile", "stale_deployment",
-"fixed_stale_deployment", "conversion_failed", "needs_reingest", or
-"fixed_needs_reingest"; note adds detail where there's something extra to
+"fixed_stale_deployment", "conversion_failed", "needs_reingest",
+"fixed_needs_reingest", "external_missing", "external_stale" (Steam has
+updated a tracked Workshop item since lmm recorded its revision - recorded
+and effective carry the two content ids, and --fix records Steam's) and
+"fixed_external_stale", "mod_path_missing" (the
+game's mod_path is not a directory while it has mods to deploy, or is not
+the one lmm deployed files under - a warning whose note names the repair),
+"deployed_modified" (a copied or hard-linked file whose content changed
+after lmm deployed it - a warning --fix leaves alone, since the file is
+yours), "orphaned_record" and "fixed_orphaned_record" (deployed-file records
+of a mod the profile has no installed row for; --fix drops the active
+profile's, leaving the files), "missing_cache" (an installed mod with no
+recorded file whose cache entry is gone), or one of the loader tier's own rows -
+"loader_missing", "loader_version_mismatch", "loader_bootstrap_incomplete",
+"loader_never_ran", "loader_stale_log", "loader_plugin_unlinked",
+"fixed_loader_plugin_unlinked", "loader_deployed_outside_loader",
+"fixed_loader_deployed_outside_loader", "loader_adapter_ignored" (a game
+with BepInEx whose adapter is another one), "loader_nested_tree" and
+"fixed_loader_nested_tree" (a BepInEx/ directory inside BepInEx/plugins/
+holding links into the game's own cache that no game records, which --fix
+removes unless the run names a mod) and "loader_foreign_nested_tree" (one
+holding anything lmm cannot prove it left there for this game, a warning
+--fix leaves alone), each of which carries its
+whole sentence in note; note adds detail where there's something extra to
 say - a blocked cache rename, sibling-repair results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
@@ -184,11 +215,11 @@ stale-deployment row's reason (populated on both "stale_deployment" and
 "fixed_stale_deployment"), a pak's conversion-failure reason
 ("conversion_failed"), or why/whether a pak needed re-ingesting
 (populated on both "needs_reingest" and "fixed_needs_reingest") - and is
-omitted otherwise. issues counts MISSING files and VERSION MISMATCH rows
-(a successful --fix repair of either decrements it back out; a locked
-VERSION MISMATCH stays counted since --fix refuses it); warnings counts
-everything else that isn't OK, including "stale_deployment",
-"conversion_failed", and "needs_reingest" rows (never
+omitted otherwise. result.issues counts MISSING files and VERSION
+MISMATCH rows (a successful --fix repair of either decrements it back
+out; a locked VERSION MISMATCH stays counted since --fix refuses it);
+result.warnings counts everything else that isn't OK, including
+"stale_deployment", "conversion_failed", and "needs_reingest" rows (never
 "fixed_stale_deployment" or "fixed_needs_reingest" - a successful --fix
 removal/re-ingest is a resolved problem, not an outstanding one, the same
 convention as a successful re-download or version repair). Lock-pending-convergence rows
@@ -210,8 +241,8 @@ func init() {
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
-	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
-		return doVerify(cmd, svc, game, args)
+	return withGameReportService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
+		return doVerify(ctx, svc, game, args)
 	})
 }
 
@@ -224,8 +255,11 @@ func runVerify(cmd *cobra.Command, args []string) error {
 // repairs, the deploy-convergence sweep - now lives in
 // internal/core/verify.go, verify_repair.go, and verify_helpers.go
 // (#224 Tasks 2-6); this function owns none of it anymore.
-func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []string) error {
-	profile, err := resolveProfile(svc, game.ID, verifyProfile)
+//
+// ctx is the one withServiceOpts hands the command, which prints what a
+// --fix re-download is waiting on (T3 review F2) - never cmd.Context().
+func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []string) error {
+	profile, err := resolveProfile(ctx, svc, game.ID, verifyProfile)
 	if err != nil {
 		return err
 	}
@@ -235,8 +269,16 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		modFilter = args[0]
 	}
 
-	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter}
-	result, err := svc.Verify(cmd.Context(), game, profile, opts, func(ev core.VerifyEvent) {
+	// Force: `lmm verify` is a user asking for a real look at the disk, so
+	// it never answers from core's unchanged-installation memo (#336) - not
+	// even for the shape that would otherwise qualify. The memo exists for
+	// the web UI's repeated hydrates, not for a typed command.
+	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter, Force: true}
+	report, err := svc.VerifyReport(ctx, game, profile, opts, func(e core.Event) {
+		ev, ok := e.(core.VerifyEvent)
+		if !ok {
+			return
+		}
 		if jsonOutput {
 			if ev.Kind == core.VerifyEvSyncWarning {
 				fmt.Fprintf(os.Stderr, "Warning: %s\n", ev.Detail) // stderr never corrupts the JSON document
@@ -248,55 +290,131 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	if err != nil {
 		return err
 	}
+	result := report.Result
 
 	if jsonOutput {
-		// Always a non-nil slice (even with zero findings, e.g. an
-		// empty-profile run with nothing stale to report) so --json's
-		// "files" key encodes as [] rather than null.
-		jsonFiles := make([]verifyFileJSON, 0, len(result.Findings))
-		for _, f := range result.Findings {
-			jsonFiles = append(jsonFiles, verifyFileJSON{ModID: f.ModID, ModName: f.ModName, FileID: f.FileID, Status: f.Status, Note: f.Note})
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(verifyJSONOutput{GameID: game.ID, Profile: profile, Files: jsonFiles, Issues: result.Issues, Warnings: result.Warnings}); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
+		// emitJSON encodes a nil Findings slice as [], so a zero-finding run
+		// (e.g. #217's empty profile with nothing stale) still emits an
+		// array rather than null.
+		return emitJSON(report)
 	}
 
 	if !result.HasFiles {
-		// #217: the empty-profile path ran nothing but the deploy-
-		// convergence sweep - no checksummed files means no issues are
-		// possible, only whatever stale-deployment candidates (plain) or
-		// fixes (--fix) that sweep found.
-		if result.Warnings > 0 {
+		// #217: the no-files path runs no per-file checks, but the
+		// game-level tiers (external presence, adapter, loader) and the
+		// deploy-convergence sweep still can find something - an issue
+		// as much as a warning (#413 re-review P-a) - so the tally is the
+		// result's own. A truly empty profile stays quiet; one whose mods
+		// lmm simply has no checksums for says what it checked (#429).
+		if result.Mods > 0 {
 			fmt.Println()
-			fmt.Printf("0 issue(s), %d warning(s) found.\n", result.Warnings)
-			if !verifyFix {
-				fmt.Println("Run with --fix to remove stale lmm-deployed files.")
+			printUnverified(result)
+		}
+		if result.Issues > 0 || result.Warnings > 0 {
+			if result.Mods == 0 {
+				fmt.Println()
 			}
+			printVerifyTally(result, fixHintFor(result))
+		} else if result.Mods > 0 {
+			fmt.Println(colorGreen("Nothing to report."))
 		}
 		return nil
 	}
 
 	fmt.Println()
+	printUnverified(result)
 
-	if result.Checked == 0 && modFilter != "" {
+	if result.Checked == 0 && modFilter != "" && result.Mods == 0 {
+		// #429: Checked stays 0 for a filter that matched an external
+		// (Steam Workshop) or otherwise-unverified mod too - neither
+		// externalPresencePass nor the unverified case increments it - but
+		// the filter DID match a mod, and its own row (the "tracked from
+		// Steam" line, or printUnverified's count above) already said so.
+		// "No files found" is reserved for a filter that matched nothing at
+		// all installed (Mods == 0).
 		fmt.Printf("No files found for mod %s\n", modFilter)
 		return nil
 	}
 
 	if result.Issues > 0 || result.Warnings > 0 {
-		fmt.Printf("%d issue(s), %d warning(s) found.\n", result.Issues, result.Warnings)
-		if !verifyFix {
-			fmt.Println("Run with --fix to re-download missing files, populate missing checksums, repair version-record mismatches, and remove stale lmm-deployed files.")
-		}
+		printVerifyTally(result, "Run with --fix to re-download missing files, populate missing checksums, repair version-record mismatches, and remove stale lmm-deployed files.")
 	} else {
 		fmt.Println(colorGreen("All files verified OK."))
 	}
 
 	return nil
+}
+
+// printUnverified says how many of the run's mods lmm had nothing recorded
+// to compare against (#429) - a mod imported from disk, typically - so a
+// clean run is not read as "every mod was checked".
+func printUnverified(result *core.VerifyResult) {
+	if result.Unverified > 0 {
+		fmt.Printf("%d mod(s) have no recorded files for lmm to check (imported from disk, or installed before lmm recorded them)\n", result.Unverified)
+	}
+}
+
+// printVerifyTally prints a run's issue/warning counts, then fixHint when a
+// plain run found something --fix would repair.
+//
+// The hint turns on the findings' own Fixable flag - the engine's answer to
+// "would --fix act on this row" - rather than on the counts: a loader that
+// never ran, or a game whose adapter ignores its loader, is counted but has
+// no repair, and telling that user to run --fix sends them to a command that
+// changes nothing (#413 re-review P-a).
+func printVerifyTally(result *core.VerifyResult, fixHint string) {
+	fmt.Printf("%d issue(s), %d warning(s) found.\n", result.Issues, result.Warnings)
+	if verifyFix {
+		return
+	}
+	for _, f := range result.Findings {
+		if f.Fixable {
+			fmt.Println(fixHint)
+			return
+		}
+	}
+}
+
+// fixRepairs is what --fix does about each status it repairs, in the words
+// the empty-profile branch's hint strings together. The branch with files
+// keeps its historical fixed sentence (its golden pins it); this one used to
+// name a single repair - removing stale files - whatever the fixable row
+// was (#413 final review F6).
+var fixRepairs = map[string]string{
+	"stale_deployment":               "remove stale lmm-deployed files",
+	"orphaned_record":                "drop deployed-file records no installed mod owns",
+	"loader_plugin_unlinked":         "re-deploy plugins missing from the game directory",
+	"loader_deployed_outside_loader": "move plugins deployed outside BepInEx/ under it",
+	"loader_nested_tree":             "remove the links lmm left in a nested BepInEx/ directory",
+}
+
+// fixHintFor names what --fix would do about result's fixable rows, each
+// repair once, in the order the rows came. A fixable status the table does
+// not know still gets a hint, in general terms.
+func fixHintFor(result *core.VerifyResult) string {
+	var repairs []string
+	seen := map[string]bool{}
+	for _, f := range result.Findings {
+		if !f.Fixable {
+			continue
+		}
+		repair, known := fixRepairs[f.Status]
+		if !known {
+			repair = "repair the other rows it can"
+		}
+		if !seen[repair] {
+			seen[repair] = true
+			repairs = append(repairs, repair)
+		}
+	}
+	switch len(repairs) {
+	case 0:
+		return ""
+	case 1:
+		return "Run with --fix to " + repairs[0] + "."
+	default:
+		return "Run with --fix to " + strings.Join(repairs[:len(repairs)-1], ", ") + " and " + repairs[len(repairs)-1] + "."
+	}
 }
 
 // renderVerifyEvent prints ev's text-mode line(s), reproducing every format
@@ -308,10 +426,17 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 func renderVerifyEvent(ev core.VerifyEvent) {
 	switch ev.Kind {
 	case core.VerifyEvBegin:
-		if ev.HasFiles {
+		switch {
+		case ev.HasFiles:
 			fmt.Println("Verifying cached mods...")
 			fmt.Println()
-		} else {
+		case ev.Mods > 0:
+			// #429: installed mods with nothing checksummed - Workshop
+			// items, checksum-less imports - are still verified for what
+			// can be verified about them, and the game's loader with them.
+			fmt.Printf("Verifying %d installed mod(s)...\n", ev.Mods)
+			fmt.Println()
+		default:
 			fmt.Println("No installed mods to verify.")
 		}
 
@@ -319,7 +444,7 @@ func renderVerifyEvent(ev core.VerifyEvent) {
 		renderVerifyFinding(ev)
 
 	case core.VerifyEvRepairDetail:
-		if ev.Green {
+		if ev.Fixed {
 			fmt.Printf("  %s\n", colorGreen(ev.Detail))
 		} else {
 			fmt.Printf("  %s\n", ev.Detail)
@@ -341,15 +466,15 @@ func renderVerifyEvent(ev core.VerifyEvent) {
 		}
 
 	case core.VerifyEvProgress:
-		// No CLI rendering - a TUI-only status-line signal (#224).
+		// Not rendered by the CLI (#224).
 	}
 }
 
 // renderVerifyFinding prints ev.Finding's main line, keyed on
 // Finding.Status plus whatever extras that status's site relies on
-// (Recorded/Effective/Version/ExpectedCount/Variant - see VerifyEvent's own
-// doc comment). Every branch is copied verbatim from the deleted CLI's
-// inline fmt.Printf calls.
+// (Recorded/Effective/Version/ExpectedCount/ChecksumPopulated - see
+// VerifyEvent's own doc comment). Every branch is copied verbatim from the
+// deleted CLI's inline fmt.Printf calls.
 func renderVerifyFinding(ev core.VerifyEvent) {
 	f := ev.Finding
 	switch f.Status {
@@ -363,6 +488,11 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		fmt.Printf("%s %s (%s) - NEEDS REINGEST (%s)\n", colorYellow("?"), f.ModName, f.FileID, f.Note)
 
 	case "missing":
+		if f.DisplayVersion != "" {
+			// #458: a Workshop item's version is its revision date.
+			fmt.Printf("%s %s (%s) - MISSING (revision of %s not in cache)\n", colorRed("X"), f.ModName, f.FileID, f.DisplayVersion)
+			break
+		}
 		fmt.Printf("%s %s (%s) - MISSING (version %s not in cache)\n", colorRed("X"), f.ModName, f.FileID, ev.Version)
 
 	case "no_checksum":
@@ -370,7 +500,12 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 
 	case "ok":
 		switch {
-		case ev.Variant == "checksum_populated":
+		case f.External:
+			// #429: a Workshop item lmm tracks - present, and not lmm's to
+			// checksum. Before the lock-pending arm below, which would
+			// otherwise claim a Note-bearing row with no FileID.
+			fmt.Printf("%s %s - %s\n", colorGreen("+"), f.ModName, f.Note)
+		case ev.ChecksumPopulated:
 			// #164: only printed when a checksum was actually written by a
 			// --fix redownload.
 			fmt.Printf("%s %s (%s) - %s (checksum populated)\n", colorGreen("+"), f.ModName, f.FileID, colorGreen("OK"))
@@ -401,26 +536,134 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		fmt.Printf("  %s %s - CONVERSION FAILED (%s) - deploying raw; fix the mod or run 'lmm mod convert %s off' to silence\n", colorYellow("?"), f.ModName, f.Note, f.ModID)
 
 	case "stale_deployment":
-		// #168/#212 - FileID carries the deployed path (ConvergeDeployedFiles
+		// #168/#212 - FileID carries the deployed path (convergeDeployedFiles
 		// reports per-path, not per-mod-file).
 		fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("?"), f.FileID, f.Note)
 
+	case "mod_path_missing":
+		// #427: the game's mod_path is gone; the note names the repair.
+		fmt.Printf("%s mod_path - %s\n", colorYellow("?"), f.Note)
+
+	case core.VerifyStatusDeployedModified:
+		// #466: a copy or hardlink the user changed; the note names it and
+		// the fixable reason says how to take the mod's version back.
+		fmt.Printf("%s %s - CHANGED SINCE DEPLOY (%s)\n", colorYellow("?"), f.ModName, f.Note)
+		fmt.Printf("  %s\n", f.FixableReason)
+
+	case core.VerifyStatusDeployedBlocked:
+		// #466: a path the mod ships that lmm left, because what is there
+		// could not be preserved first.
+		fmt.Printf("%s %s - NOT DEPLOYED (%s)\n", colorYellow("?"), f.ModName, f.Note)
+		fmt.Printf("  %s\n", f.FixableReason)
+
+	case "external_missing":
+		// #269/#429: counted as an issue, and until this arm printed
+		// nothing - "1 issue(s)" with no line saying which item.
+		fmt.Printf("%s %s - %s\n", colorRed("X"), f.ModName, f.Note)
+		if f.FixableReason != "" {
+			fmt.Printf("  %s\n", f.FixableReason)
+		}
+
+	case "external_stale":
+		// #538: a record problem, not a file one - the note says what
+		// Steam did, and --fix records it.
+		fmt.Printf("%s %s - %s\n", colorYellow("?"), f.ModName, f.Note)
+		if f.Fixable {
+			fmt.Println("  Run 'lmm verify --fix' (or 'lmm update') to record Steam's revision.")
+		}
+
+	case "fixed_external_stale":
+		fmt.Println(colorGreen(fmt.Sprintf("Fixed: %s - %s", f.ModName, f.Note)))
+
+	case "orphaned_record", "missing_cache":
+		// #469: a complete sentence in Note, and the way out in
+		// FixableReason when --fix is not it.
+		marker := colorYellow("?")
+		if f.Status == "missing_cache" {
+			marker = colorRed("X")
+		}
+		fmt.Printf("%s %s - %s\n", marker, cmp.Or(f.ModName, f.ModID), f.Note)
+		if f.FixableReason != "" {
+			fmt.Printf("  %s\n", f.FixableReason)
+		}
+
+	case "fixed_orphaned_record":
+		fmt.Println(colorGreen("Fixed: " + f.Note))
+
 	case "fixed_stale_deployment":
-		// The WHOLE line is green (Variant "fixed_green") - unlike a
-		// version repair, which prints a plain main line and a separate
-		// green sub-line, a --fix stale-deployment removal has no main
-		// line of its own to have printed first.
+		// The WHOLE line is green, keyed on this Status alone (no event
+		// field involved) - unlike a version repair, which prints a plain
+		// main line and a separate green sub-line, a --fix stale-deployment
+		// removal has no main line of its own to have printed first.
 		fmt.Println(colorGreen(fmt.Sprintf("Fixed: removed %s (%s)", f.FileID, f.Note)))
+
+	default:
+		renderVerifyLoaderFinding(f)
+	}
+}
+
+// loaderFindingStatuses are the loader tier's own statuses (#359, #424, #413) -
+// the rows renderVerifyLoaderFinding prints, mapped to the marker each one
+// deserves. A row NOT in this table prints nothing, which is the switch's
+// pre-existing behaviour for a status the CLI does not know.
+//
+// The tier's rows reach text mode through one generic arm rather than a
+// branch each, because unlike every other status above them they carry no
+// per-status extras: each is a complete, already-formatted sentence in
+// Note, written by the check that raised it precisely so a frontend does
+// not have to reword it. That is exactly how the web UI renders them
+// (spa/app/verify.js), so this is the CLI catching up to it rather than a
+// second vocabulary.
+var loaderFindingStatuses = map[string]string{
+	"loader_missing":                       "X",
+	"loader_version_mismatch":              "X",
+	"loader_bootstrap_incomplete":          "X",
+	"loader_never_ran":                     "X",
+	"loader_plugin_unlinked":               "X",
+	"loader_deployed_outside_loader":       "X",
+	"loader_stale_log":                     "?",
+	"loader_adapter_ignored":               "?",
+	"loader_nested_tree":                   "X",
+	"loader_foreign_nested_tree":           "?",
+	"fixed_loader_plugin_unlinked":         "+",
+	"fixed_loader_deployed_outside_loader": "+",
+	"fixed_loader_nested_tree":             "+",
+}
+
+// renderVerifyLoaderFinding prints one loader-tier row: its marker, the mod
+// it is about when it is about one, and the check's own sentence.
+//
+// Before this the whole tier was INVISIBLE in text mode - `lmm verify`
+// counted the issues in its summary and printed no line for any of them,
+// so a user was told "1 issue(s)" with nothing to read. The web UI has
+// always rendered them.
+func renderVerifyLoaderFinding(f core.VerifyFinding) {
+	marker, known := loaderFindingStatuses[f.Status]
+	if !known {
+		return
+	}
+	subject := "loader"
+	if f.ModName != "" {
+		subject = f.ModName
+	}
+	switch marker {
+	case "+":
+		fmt.Println(colorGreen(fmt.Sprintf("Fixed: %s - %s", subject, f.Note)))
+	case "?":
+		fmt.Printf("%s %s - %s\n", colorYellow("?"), subject, f.Note)
+	default:
+		fmt.Printf("%s %s - %s\n", colorRed("X"), subject, f.Note)
 	}
 }
 
 // renderVerifySkipped disambiguates the several distinct "skipped" finding
 // sites the verify engine emits (fileCountPrePass's two lookup failures,
 // perFileWalk's unknown-mod row, versionPass's source-unreachable row,
-// mergedPakStalenessPass's own check failure, and convergencePass's
-// per-item failures) - all share one Status string but the pre-#224
-// doVerify printed each with different wording. The dispatch is structural
-// (which Finding fields are populated) except for three Note prefixes,
+// mergedPakStalenessPass's own check failure, convergencePass's per-item
+// failures, and adapterPass's resolution or Verify failure) - all share one
+// Status string but the pre-#224 doVerify printed each with different
+// wording. The dispatch is structural (which Finding fields are populated)
+// except for four Note prefixes,
 // which the emitting passes format deliberately for exactly this purpose:
 // their text-mode line drops the prefix for a friendlier phrase (or reuses
 // it verbatim), while their --json Note keeps the full formatted string.
@@ -439,7 +682,7 @@ func renderVerifySkipped(f core.VerifyFinding) {
 	case strings.HasPrefix(f.Note, "could not check version: "):
 		fmt.Printf("%s %s - could not check version (source unreachable)\n", colorYellow("?"), f.ModName)
 
-	// convergencePass: a per-item ConvergeDeployedFiles failure - Note is
+	// convergencePass: a per-item convergeDeployedFiles failure - Note is
 	// already the full "convergence: <err>" text.
 	case strings.HasPrefix(f.Note, "convergence: "):
 		fmt.Printf("%s %s\n", colorYellow("?"), f.Note)
@@ -447,6 +690,13 @@ func renderVerifySkipped(f core.VerifyFinding) {
 	// mergedPakStalenessPass: CheckMergedPakStaleness itself failed - Note
 	// is already the full message.
 	case strings.HasPrefix(f.Note, "could not check merged pak staleness: "):
+		fmt.Printf("%s %s\n", colorYellow("?"), f.Note)
+
+	// adapterPass: the game's adapter would not resolve, or its Verify
+	// failed - Note is already "adapter: <err>" or "adapter <id>: <err>",
+	// and the row names no mod. Before the file-count arm below, which
+	// would otherwise claim it (#413 final review).
+	case f.ModID == "" && strings.HasPrefix(f.Note, "adapter"):
 		fmt.Printf("%s %s\n", colorYellow("?"), f.Note)
 
 	// fileCountPrePass: the installed-mod lookup itself failed (a genuine

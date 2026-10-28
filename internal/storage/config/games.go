@@ -8,9 +8,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/safeyaml"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // gamesMu serializes read-modify-write of games.yaml to avoid lost updates
@@ -33,6 +34,46 @@ func ExpandPath(path string) string {
 	return path
 }
 
+// ResolveModPath makes a game's mod_path absolute the way #313 settled it:
+// a RELATIVE value is joined onto the game's install path, because that is
+// what a hand-written "mod_path: Data" means to everybody who writes one.
+// Before this it was used verbatim, so every deploy resolved it against
+// whatever directory lmm happened to be run from. An absolute value (and
+// an empty one, which is not a path at all) passes through untouched.
+//
+// Callers pass the ALREADY-EXPANDED install path; expansion is the caller's
+// job so "~" is handled once, at the same place, for both fields.
+//
+// A relative mod_path with NO install path to resolve it against is
+// refused with ErrRelativeModPath (review M6). Returning it verbatim would
+// be exactly the pre-#313 behaviour this function exists to end - a path
+// resolved against whatever directory lmm was run from - and silently, in
+// the one case #313 is for: a hand-written games.yaml. install_path is
+// documented as required; this is what enforces it where it matters.
+func ResolveModPath(installPath, modPath string) (string, error) {
+	if modPath == "" || filepath.IsAbs(modPath) {
+		return modPath, nil
+	}
+	if installPath == "" {
+		return "", fmt.Errorf("%w: %q is relative and there is no install_path to resolve it against", ErrRelativeModPath, modPath)
+	}
+	return filepath.Join(installPath, modPath), nil
+}
+
+// ErrRelativeModPath is the refusal SaveGame makes for a game whose
+// ModPath is relative, and the one ResolveModPath makes for a relative
+// value with no install_path behind it.
+//
+// The two are not the same rule. LOADING tolerates a relative value and
+// joins it onto install_path; SAVING requires an already-resolved absolute
+// one, because the value lmm writes is the value every later run - from any
+// working directory - reads back. What #363 changed is where the
+// resolution happens on the write path: core.GameSpec.game() now runs
+// ResolveModPath itself, so a frontend may accept "Data" from a user and
+// still hand SaveGame an absolute path. SaveGame's own refusal stays as
+// the backstop for a caller that skipped that step.
+var ErrRelativeModPath = errors.New("mod_path must be an absolute path")
+
 // HookConfigYAML is the YAML representation of hook configuration
 type HookConfigYAML struct {
 	BeforeAll  string `yaml:"before_all"`
@@ -47,6 +88,22 @@ type GameHooksYAML struct {
 	Uninstall HookConfigYAML `yaml:"uninstall"`
 }
 
+// GameLoaderYAML is the YAML representation of a game's mod-loader
+// declaration (#359) - games.yaml's `loader:` block.
+//
+// Every member is a plain string, like every other enum-valued key in this
+// file: domain.LoaderRuntime and domain.LoaderBootstrap both implement
+// TextMarshaler, and yaml.v3 honours it, so typing them here would emit the
+// name but ALSO decode a typo into the zero value without an error. Strings
+// keep the fail-loud parse where the rest of this file does it - in
+// loadGamesLocked, naming the game and the valid set.
+type GameLoaderYAML struct {
+	Kind      string `yaml:"kind"`
+	Version   string `yaml:"version,omitempty"`
+	Runtime   string `yaml:"runtime,omitempty"`
+	Bootstrap string `yaml:"bootstrap,omitempty"`
+}
+
 // GameConfig is the YAML representation of a game
 type GameConfig struct {
 	Name        string            `yaml:"name"`
@@ -57,7 +114,16 @@ type GameConfig struct {
 	CachePath   string            `yaml:"cache_path,omitempty"`
 	Hooks       GameHooksYAML     `yaml:"hooks,omitempty"`
 	DeployMode  string            `yaml:"deploy_mode,omitempty"`
-	ConvertPaks *bool             `yaml:"convert_paks,omitempty"`
+	// Adapter selects the game adapter (#353). Omitted means the
+	// generic-files identity, and the writer emits the key only when the
+	// user set one - so a games.yaml written before the seam existed
+	// round-trips byte-identically.
+	Adapter     string `yaml:"adapter,omitempty"`
+	ConvertPaks *bool  `yaml:"convert_paks,omitempty"`
+	// Loader is #359's optional block. A POINTER, so a game that declares
+	// no loader gains no `loader:` key when an unrelated write re-marshals
+	// the whole file.
+	Loader *GameLoaderYAML `yaml:"loader,omitempty"`
 }
 
 // GamesFile is the top-level games.yaml structure
@@ -83,8 +149,8 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 		return nil, fmt.Errorf("reading games.yaml: %w", err)
 	}
 	var gamesFile GamesFile
-	if err := yaml.Unmarshal(data, &gamesFile); err != nil {
-		return nil, fmt.Errorf("parsing games.yaml: %w", err)
+	if err := safeyaml.Unmarshal(data, &gamesFile); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", gamesPath, err)
 	}
 	games := make(map[string]*domain.Game)
 	for id, cfg := range gamesFile.Games {
@@ -98,24 +164,45 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 			return nil, fmt.Errorf("%w: games.yaml: game %q: deploy_mode %q (valid: %s)",
 				domain.ErrInvalidDeployMode, id, cfg.DeployMode, domain.ValidDeployModes)
 		}
+		// Syntax only, deliberately: this layer must not learn the adapter
+		// registry (design §2, "validation splits by layer"). Whether the
+		// named adapter EXISTS is core's question, asked when it resolves
+		// the game, so a games.yaml naming an adapter a future build ships
+		// fails with the registered set in front of the user rather than
+		// with a parse error here.
+		if cfg.Adapter != "" && !domain.ValidAdapterName(cfg.Adapter) {
+			return nil, fmt.Errorf("%w: games.yaml: game %q: adapter %q is not a valid adapter name (lowercase letters, digits and single interior hyphens)",
+				domain.ErrInvalidAdapter, id, cfg.Adapter)
+		}
 		convertPaks := true // default: paks convert (only meaningful for DeployCompile games)
 		convertExplicit := false
 		if cfg.ConvertPaks != nil {
 			convertPaks = *cfg.ConvertPaks
 			convertExplicit = true
 		}
+		installPath := ExpandPath(cfg.InstallPath)
+		modPath, err := ResolveModPath(installPath, ExpandPath(cfg.ModPath))
+		if err != nil {
+			return nil, fmt.Errorf("games.yaml: game %q: %w", id, err)
+		}
+		loader, err := parseGameLoader(id, cfg.Loader)
+		if err != nil {
+			return nil, err
+		}
 		games[id] = &domain.Game{
 			ID:                  id,
 			Name:                cfg.Name,
-			InstallPath:         ExpandPath(cfg.InstallPath),
-			ModPath:             ExpandPath(cfg.ModPath),
+			InstallPath:         installPath,
+			ModPath:             modPath,
 			SourceIDs:           cfg.Sources,
 			LinkMethod:          linkMethod,
 			LinkMethodExplicit:  cfg.LinkMethod != "",
 			CachePath:           ExpandPath(cfg.CachePath),
 			DeployMode:          deployMode,
+			Adapter:             cfg.Adapter,
 			ConvertPaks:         convertPaks,
 			ConvertPaksExplicit: convertExplicit,
+			Loader:              loader,
 			Hooks: domain.GameHooks{
 				Install: domain.HookConfig{
 					BeforeAll:  ExpandPath(cfg.Hooks.Install.BeforeAll),
@@ -137,6 +224,9 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 
 // SaveGame adds or updates a game in games.yaml
 func SaveGame(configDir string, game *domain.Game) error {
+	if game.ModPath != "" && !filepath.IsAbs(game.ModPath) {
+		return fmt.Errorf("%w: game %q: got %q", ErrRelativeModPath, game.ID, game.ModPath)
+	}
 	gamesMu.Lock()
 	defer gamesMu.Unlock()
 	games, err := loadGamesLocked(configDir)
@@ -147,7 +237,24 @@ func SaveGame(configDir string, game *domain.Game) error {
 	return saveGamesLocked(configDir, games)
 }
 
-// saveGamesLocked writes games; caller must hold gamesMu
+// saveGamesLocked writes games; caller must hold gamesMu.
+//
+// It re-marshals the WHOLE file from the loaded map, whose paths have
+// already been ExpandPath-ed and (since #313) ResolveModPath-ed - so any
+// write, from any command, normalises every OTHER game's entry too: a
+// hand-written "~" becomes the expanded path and a relative mod_path
+// becomes the absolute one it already resolved to. Recorded here (review
+// M9) so it is a decision rather than a surprise. It is the intended
+// direction - what lmm writes is what every later run reads, with no
+// working directory in the answer - and SaveGame's OWN guard cannot fail an
+// unrelated write, since the values in the map are already absolute by the
+// time it sees them. A games.yaml that no longer LOADS does fail every
+// write - an invalid link_method/deploy_mode, or (review M6) a relative
+// mod_path with no install_path to resolve it against - because SaveGame
+// reaches this through loadGamesLocked and returns that error; it has
+// always behaved that way for the first two. Preserving hand-written
+// relative/tilde values verbatim would be a separate change to this
+// function.
 func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 	gamesFile := GamesFile{Games: make(map[string]GameConfig)}
 
@@ -181,10 +288,25 @@ func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 		if game.DeployMode != domain.DeployExtract {
 			cfg.DeployMode = game.DeployMode.String()
 		}
+		// Only write adapter if the game carries one. Empty is the
+		// generic-files default and stays absent, which is what keeps a
+		// pre-#353 games.yaml byte-identical across any write.
+		cfg.Adapter = game.Adapter
 		// Only write convert_paks if explicitly set
 		if game.ConvertPaksExplicit {
 			v := game.ConvertPaks
 			cfg.ConvertPaks = &v
+		}
+		// Only write loader: for a game that declares one. The enums emit
+		// "" for "not answered yet", which omitempty drops, so lmm never
+		// writes back a runtime or bootstrap nobody chose.
+		if game.Loader != nil {
+			cfg.Loader = &GameLoaderYAML{
+				Kind:      game.Loader.Kind,
+				Version:   game.Loader.Version,
+				Runtime:   game.Loader.Runtime.String(),
+				Bootstrap: game.Loader.Bootstrap.String(),
+			}
 		}
 		gamesFile.Games[id] = cfg
 	}
@@ -198,6 +320,20 @@ func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
+	// NOT atomic: os.WriteFile truncates in place, so a reader in another
+	// process can see a partial document (#403). `lmm serve` re-reads this
+	// file on every request it serves (freshGames, #376), which makes it the
+	// likeliest such reader.
+	//
+	// Accepted for v2.0.0 rather than fixed. A partial read normally fails
+	// to parse, and that path is already correct - core.ReloadGames keeps
+	// the last good set and does NOT advance its stat fingerprint, so the
+	// next request retries instead of caching the failure. The residual is a
+	// truncation landing on a game boundary, which parses as a valid subset
+	// and is served until the writer's completion moves the file again: a
+	// window measured in microseconds, self-healing on the very next
+	// request. #403 carries the durable fix (temp file + os.Rename), which
+	// also stops an interrupted `lmm game add` leaving a truncated file.
 	gamesPath := filepath.Join(configDir, "games.yaml")
 	if err := os.WriteFile(gamesPath, data, 0644); err != nil {
 		return fmt.Errorf("writing games.yaml: %w", err)
@@ -219,4 +355,45 @@ func DeleteGame(configDir string, gameID string) error {
 	}
 	delete(games, gameID)
 	return saveGamesLocked(configDir, games)
+}
+
+// parseGameLoader turns games.yaml's `loader:` block into the domain type,
+// or nil when the game declares none. A nil block is "this game needs no
+// loader", which is not the same as a zero-valued declaration - Game.
+// DeclaresBepInEx must never answer from a struct nobody wrote.
+//
+// The two closed values fail loud the way link_method and deploy_mode do,
+// naming the game, the offending value and the valid set (domain.
+// ErrInvalidLoaderRuntime / ErrInvalidLoaderBootstrap). An unrecognised
+// KIND is not an error: kind is deliberately an open string so a second
+// loader costs nothing, and lmm's own rules simply do not fire for a kind
+// they do not know. An EMPTY kind is: it declares nothing while looking
+// like it should, and core.LoaderSpec.loader - the same field's other door,
+// from `lmm game edit --loader` and POST /api/v1/games - already refuses
+// the identical input naming loader.kind.
+func parseGameLoader(gameID string, cfg *GameLoaderYAML) (*domain.GameLoader, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	kind := strings.ToLower(strings.TrimSpace(cfg.Kind))
+	if kind == "" {
+		return nil, fmt.Errorf("%w: games.yaml: game %q: loader.kind %q (a loader kind is required; today lmm knows %s)",
+			domain.ErrInvalidLoaderKind, gameID, cfg.Kind, domain.LoaderKindBepInEx)
+	}
+	runtime, ok := domain.ParseLoaderRuntime(cfg.Runtime)
+	if !ok {
+		return nil, fmt.Errorf("%w: games.yaml: game %q: loader.runtime %q (valid: %s)",
+			domain.ErrInvalidLoaderRuntime, gameID, cfg.Runtime, domain.ValidLoaderRuntimes)
+	}
+	bootstrap, ok := domain.ParseLoaderBootstrap(cfg.Bootstrap)
+	if !ok {
+		return nil, fmt.Errorf("%w: games.yaml: game %q: loader.bootstrap %q (valid: %s)",
+			domain.ErrInvalidLoaderBootstrap, gameID, cfg.Bootstrap, domain.ValidLoaderBootstraps)
+	}
+	return &domain.GameLoader{
+		Kind:      kind,
+		Version:   strings.TrimSpace(cfg.Version),
+		Runtime:   runtime,
+		Bootstrap: bootstrap,
+	}, nil
 }

@@ -1,0 +1,394 @@
+package core
+
+import (
+	"context"
+	"database/sql"
+	"net/http"
+	"path/filepath"
+	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
+)
+
+// Test-only accessors for package core_test. This file is compiled only into
+// the test binary, so none of these are part of the production API.
+
+// DownloadModForTest exposes downloadMod behind the same beginOp gate the
+// exported DownloadMod that Phase 3 Ruling 10 removed used to take:
+// production reaches downloadMod directly through PlanInstall/ApplyInstall
+// and the other Apply* flows, but core's own fixtures need a genuine
+// download round-trip into the cache without the rest of an install's side
+// effects (deploy, DB writes, hooks).
+func (s *Service) DownloadModForTest(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*DownloadModResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return s.downloadMod(ctx, sourceID, game, mod, file, sink)
+}
+
+// GetInstallerForTest exposes getInstaller, unexported by Phase 3 Ruling 10:
+// every production flow builds its own installer internally, but core's own
+// fixtures hand-drive an *Installer to deploy a mod without going through a
+// full PlanDeploy/ApplyDeploy round-trip.
+func (s *Service) GetInstallerForTest(game *domain.Game) *Installer {
+	return s.getInstaller(game)
+}
+
+// EnabledMergeSourcesForTest exposes enabledMergeSources.
+func (s *Service) EnabledMergeSourcesForTest(ctx context.Context, game *domain.Game, profileName string) ([]adapter.MergeSource, error) {
+	return s.enabledMergeSources(ctx, game, profileName)
+}
+
+// ReconcilePakManifestsForTest exposes reconcilePakManifests.
+func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) ([]string, error) {
+	return s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
+}
+
+// ClassifyCompileDeployModsForTest exposes classifyCompileDeployMods.
+func (s *Service) ClassifyCompileDeployModsForTest(ctx context.Context, game *domain.Game, profileName string, mods []*domain.InstalledMod) map[string]DeployModClass {
+	return s.classifyCompileDeployMods(ctx, game, profileName, mods)
+}
+
+// SetBeforeSaveInstalledForTest arms the install flow's pre-SaveInstalledMod
+// hook so a test can make that DB write fail (e.g. by cancelling the ctx)
+// after the deploy has already succeeded.
+func (s *Service) SetBeforeSaveInstalledForTest(fn func()) {
+	s.beforeSaveInstalled = fn
+}
+
+// SetBeforeInstallReplaceForTest injects a failure after a reinstall publishes
+// its cache repair but before the replacement begins.
+func (s *Service) SetBeforeInstallReplaceForTest(fn func()) {
+	s.beforeInstallReplace = fn
+}
+
+// SetRelayoutPlaceFileForTest arms the verify re-layout's per-file
+// placement seam, so a test can make the rewrite fail PARTWAY and prove the
+// live cache entry is byte-identical afterwards (#424 review, finding 3).
+// The I/O failure the atomicity contract is about has no other deterministic
+// trigger: the destination tree is one the re-layout creates itself.
+func (s *Service) SetRelayoutPlaceFileForTest(fn func(src, dst string) error) {
+	s.relayoutPlaceFile = fn
+}
+
+// LinkOrCopyFileForTest is the real placement, exported so an injected seam
+// can fall through to it for the members it does not mean to fail.
+func LinkOrCopyFileForTest(src, dst string) error {
+	return linkOrCopyFile(src, dst)
+}
+
+// SetAfterInstallSaveForTest arms the BATCH install engine's
+// post-SaveInstalledMod hook so a test can cancel the ctx after the DB row
+// lands but before ensureProfileExists's own read (the NEW-6 race).
+func (s *Service) SetAfterInstallSaveForTest(fn func()) {
+	s.afterInstallSave = fn
+}
+
+// SetDownloadClientForTest replaces the Service's download HTTP client. A
+// cancellation test uses it to install a transport that IGNORES ctx, so the
+// only thing that can stop a per-file download loop is the loop's own guard
+// - with the stock ctx-aware transport, a cancelled ctx aborts the next
+// request by itself and the test cannot tell the two apart (final-review
+// Important 2).
+func (s *Service) SetDownloadClientForTest(c *http.Client) {
+	s.downloader = NewDownloader(c)
+}
+
+// SetModEnabledForTest exposes the enabled-flag write behind the same
+// beginOp gate the production flows take. The exported SetModEnabled it
+// replaced was ratcheted away with doProfileApply's lift (#290) - core's own
+// tests are its only remaining callers, and they are setting up state, not
+// exercising a frontend API.
+func (s *Service) SetModEnabledForTest(ctx context.Context, sourceID, modID, gameID, profileName string, enabled bool) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModEnabled(ctx, sourceID, modID, gameID, profileName, enabled)
+}
+
+// GetInstallerForProfileForTest exposes getInstallerForProfile, which the
+// same lift unexported: an Installer is a core primitive no frontend
+// touches, but core's own tests deploy through one to build fixtures.
+func (s *Service) GetInstallerForProfileForTest(ctx context.Context, game *domain.Game, profileName string) (*Installer, error) {
+	return s.getInstallerForProfile(ctx, game, profileName)
+}
+
+// ScanModPathForTest exposes scanModPath, which the scan-import lift (#291)
+// unexported: ScanLocal is production's only caller, but the scan's own
+// classification rules (copy vs extract mode, symlink detection, tilde
+// expansion) are pinned directly by importer_test.go.
+func (i *Importer) ScanModPathForTest(ctx context.Context, game *domain.Game, installedMods []domain.InstalledMod, opts ScanOptions) ([]ScanResult, error) {
+	return i.scanModPath(ctx, game, installedMods, opts)
+}
+
+// FindDuplicateModForTest exposes findDuplicateMod, unexported by the same
+// lift; its name-normalization table is pinned by importer_test.go.
+func (i *Importer) FindDuplicateModForTest(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
+	return i.findDuplicateMod(modName, installedMods)
+}
+
+// NewImporterForTest exposes newImporter, which the archive-import lift
+// (#291) unexported: the scan/adopt/import flows are production's only
+// callers, but core's own tests drive a real Import round-trip through the
+// service-backed importer (the standalone core.NewImporter cannot resolve a
+// DeployCompile game's merge compiler).
+func (s *Service) NewImporterForTest(game *domain.Game) *Importer {
+	return s.newImporter(game)
+}
+
+// MarkImportedFileCompleteForTest exposes markImportedFileComplete behind the
+// same beginOp gate the exported wrapper the lift removed used to take.
+func (s *Service) MarkImportedFileCompleteForTest(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.markImportedFileComplete(ctx, game, mod, fileID)
+}
+
+// NewInstallerWithLinkerForTest exposes newInstallerWithLinker + getLinker,
+// both unexported by the same lift, as the one call core's tests actually
+// make: an Installer that deploys with an explicitly chosen link method.
+func (s *Service) NewInstallerWithLinkerForTest(game *domain.Game, method domain.LinkMethod) *Installer {
+	return s.newInstallerWithLinker(game, s.getLinker(method))
+}
+
+// FreshSwitchPlanForTest stamps plan.From's current installed-mod snapshot
+// (Ruling 5, phase-2-close review Important #1) onto a hand-built SwitchPlan
+// and returns it, for tests that construct one directly - bypassing
+// PlanProfileSwitch to isolate ApplyProfileSwitch's own execution logic -
+// so ApplyProfileSwitch's checkPlanFresh call doesn't refuse it as stale.
+// Call AFTER seeding whatever installed-mod state the test wants
+// ApplyProfileSwitch to see.
+func (s *Service) FreshSwitchPlanForTest(ctx context.Context, plan *SwitchPlan) *SwitchPlan {
+	plan.snapshot, _ = s.currentInstalledSnapshot(ctx, plan.GameID, plan.From)
+	// Both halves, since the freshness check covers the target profile too
+	// (fix-round F9) - with its markers, as PlanProfileSwitch records it.
+	plan.targetSnapshot, _ = s.currentMarkedSnapshot(ctx, plan.GameID, plan.To)
+	return plan
+}
+
+// UpdateModVersionForTest exposes updateModVersion behind the same beginOp
+// gate the exported wrapper (phase-2-close review Important #3) removed:
+// zero production callers, and core's own rollback-fixture tests are its
+// only remaining callers.
+func (s *Service) UpdateModVersionForTest(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.updateModVersion(ctx, sourceID, modID, gameID, profileName, newVersion)
+}
+
+// ApplyModUpdateForTest is UpdateModVersionForTest's ApplyModUpdate twin.
+func (s *Service) ApplyModUpdateForTest(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.applyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, fileIDs)
+}
+
+// ConvergeDeployedFilesForTest exposes convergeDeployedFiles behind the same
+// beginOp gate the exported wrapper the deploy lift (#293) removed used to
+// take: verify's --fix pass is production's only caller, but convergence's
+// own row/sweep rules are pinned directly by converge_test.go.
+func (s *Service) ConvergeDeployedFilesForTest(ctx context.Context, game *domain.Game, profileName string, dryRun bool) (*ConvergeResult, error) {
+	if !dryRun {
+		release, err := s.beginOp(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
+	return s.convergeDeployedFiles(ctx, game, profileName, dryRun)
+}
+
+// OrderByProfileForTest exposes orderByProfile, unexported by the task-3
+// review (final review, Important #3 / #301): every remaining caller
+// (deploy, conflicts, profile_apply, the switch flow, ListMods) is
+// core-internal, but flows_test.go table-drives the ordering contract
+// directly.
+func OrderByProfileForTest(profile *domain.Profile, mods []domain.InstalledMod) []domain.InstalledMod {
+	return orderByProfile(profile, mods)
+}
+
+// MergedPakOutcomesForTest exposes mergedPakOutcomes, unexported by the same
+// review: GameStatus and verify's conversionOutcomesPass are production's
+// only remaining callers, but core's own pak-conversion/Icarus-compile tests
+// read the stored fingerprint directly to assert on it.
+func (s *Service) MergedPakOutcomesForTest(ctx context.Context, game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
+	return s.mergedPakOutcomes(ctx, game, profileName)
+}
+
+// SearchAllSourcesForTest exposes searchAllSources, unexported by the same
+// review: Search (via core.SearchReport) is production's only remaining
+// caller, but core's own aggregate-search tests drive it directly to assert
+// on AggregateSearchResult's warnings/counts.
+func (s *Service) SearchAllSourcesForTest(ctx context.Context, gameID, query, category string, tags []string, page, pageSize, limit int) (AggregateSearchResult, error) {
+	return s.searchAllSources(ctx, gameID, query, category, tags, page, pageSize, limit, domain.SortRelevance)
+}
+
+// MaxSearchPagesPerSourceForTest exposes maxSearchPagesPerSource so #109's
+// guard test pins the real constant rather than a copy of its value.
+const MaxSearchPagesPerSourceForTest = maxSearchPagesPerSource
+
+// VerifyForTest exposes verifyGated, unexported by the same review:
+// VerifyReport (via core.VerifyReport) is production's only remaining
+// caller - cmd/lmm/verify.go calls that, not this - but core's own verify
+// tests drive a run directly to inspect its VerifyResult, without
+// VerifyReport's GameID/Profile wrapping.
+func (s *Service) VerifyForTest(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
+	return s.verifyGated(ctx, game, profile, opts, sink)
+}
+
+// DataDirForTest exposes the Service's data dir (the DB and the download
+// staging root live under it), so a side-effect-free test can snapshot every
+// tree a flow is forbidden to touch.
+func (s *Service) DataDirForTest() string {
+	return s.dataDir
+}
+
+// ImportForTest reproduces exactly what the exported Importer.Import did
+// before #314 review M6 removed it as having no production caller left
+// (importWithIdentity's own doc comment explains why): resolve archivePath's
+// identity from its filename and opts, then import under it. Core's own
+// import tests drive a plain round-trip through this rather than through
+// importWithIdentity directly, since resolving the identity themselves would
+// just re-duplicate resolveImportIdentity's logic in every test.
+func (i *Importer) ImportForTest(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions) (*ImportResult, error) {
+	return i.importWithIdentity(ctx, archivePath, game, opts, resolveImportIdentity(filepath.Base(archivePath), opts))
+}
+
+// NewLoaderRequirementForTest builds #359's refusal exactly as the flows
+// build it, so the JSON goldens pin the sentences a USER actually reads
+// rather than a hand-typed stand-in that only happens to have the same
+// shape (review F12). It is the ONE constructor both halves call: an
+// adapter's archive claim (no version - a shape cannot know one) and a
+// SOURCE's own report (#409), whose kind and version come from the
+// package's metadata.
+func NewLoaderRequirementForTest(game *domain.Game, modName, kind, version, evidence string) *LoaderRequiredError {
+	return newLoaderRequirement(game, modName, kind, version, evidence)
+}
+
+// OweProfileDisabledBackfillForTest puts the Service in the state
+// migrateV17 leaves a database an older lmm wrote: the one-time
+// profile-document backfill (#431) is owed. Every test database is created
+// fresh, so the migration itself never finds a row to owe it for - a test
+// seeds the rows an older lmm would have left FIRST, then calls this.
+func (s *Service) OweProfileDisabledBackfillForTest(ctx context.Context) error {
+	if err := s.db.SetMeta(ctx, db.MetaProfileDisabledBackfill, "test"); err != nil {
+		return err
+	}
+	s.backfillPending.Store(true)
+	return nil
+}
+
+// ProfileDisabledBackfillOwedForTest reports every db_meta key the backfill
+// still holds: the whole obligation, and any per-profile remainder.
+func (s *Service) ProfileDisabledBackfillOwedForTest(ctx context.Context) (map[string]string, error) {
+	return s.db.MetaWithPrefix(ctx, db.MetaProfileDisabledBackfill)
+}
+
+// SetBeforeProfileBackfillScanForTest arms a hook that runs once the
+// backfill holds the mutation slot, immediately before it reads the rows it
+// works from - the point a concurrent writer's committed change must
+// already be visible from (fix round 2, R4).
+func (s *Service) SetBeforeProfileBackfillScanForTest(fn func()) {
+	s.beforeProfileBackfillScan = fn
+}
+
+// SetProfileMarkerForTest replaces the profile editor the backfill calls
+// (config.MarkModsDisabled) - so a test can make it panic, the way F1's
+// did - or restores it when fn is nil.
+func (s *Service) SetProfileMarkerForTest(fn func(path string, mods []domain.ModReference) ([]domain.ModReference, error)) {
+	s.profileMarker = fn
+}
+
+// SetNestedTreeHookForTest arms verify's nested-BepInEx-tree seam: fn runs
+// with "classify" just before the trees are classified and with "remove"
+// just before a tree's leftovers are removed, so a test can change the
+// world in the window a concurrent process would (#413 fix round 4).
+func (s *Service) SetNestedTreeHookForTest(fn func(stage string)) {
+	s.nestedTreeHook = fn
+}
+
+// ExecForTest runs one statement against the Service's own database, for a
+// test that has to make a lookup fail or a row appear mid-run.
+func (s *Service) ExecForTest(ctx context.Context, query string, args ...any) error {
+	_, err := s.db.ExecContext(ctx, query, args...)
+	return err
+}
+
+// QueryForTest runs a read against the Service's database and returns each
+// row's columns as text.
+func (s *Service) QueryForTest(ctx context.Context, query string, args ...any) ([][]string, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck // read-only
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	var out [][]string
+	for rows.Next() {
+		vals := make([]sql.NullString, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		row := make([]string, len(cols))
+		for i, v := range vals {
+			row[i] = v.String
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// GetFileChecksumForTest reads one file's stored checksum for a row.
+func (s *Service) GetFileChecksumForTest(ctx context.Context, sourceID, modID, gameID, profileName, fileID string) (string, error) {
+	return s.db.GetFileChecksum(ctx, sourceID, modID, gameID, profileName, fileID)
+}
+
+// NoticeTextAtForTest exposes noticeText with a fixed clock, so the
+// suspension sentence's "in 4m30s" is asserted rather than approximated.
+func NoticeTextAtForTest(n source.Notice, now time.Time) string {
+	return noticeText(n, now)
+}
+
+// RestoreOriginalsForTest writes every original game's store holds back to
+// where it goes under game's CURRENT paths (originalDestination) - a
+// snapshot restore's originals stage, without the snapshot (#528).
+func (s *Service) RestoreOriginalsForTest(game *domain.Game) error {
+	store := s.originalsStoreFor(game.ID)
+	rows, err := store.list()
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		dest, err := originalDestination(game, row)
+		if err != nil {
+			return err
+		}
+		if err := store.restore(row, dest); err != nil {
+			return err
+		}
+	}
+	return nil
+}

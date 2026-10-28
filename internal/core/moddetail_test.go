@@ -2,12 +2,15 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,7 +30,7 @@ func newModDetailTestService(t *testing.T) (*core.Service, *domain.Game, *mockSo
 		SourceIDs: map[string]string{"fake-compiler": "testgame"}}
 	src := newMockSource("src")
 	svc.RegisterSource(src)
-	svc.RegisterSource(&fakeCompilerSource{})
+	registerCompileSource(svc, &fakeCompilerSource{})
 	return svc, game, src
 }
 
@@ -39,7 +42,7 @@ func newModDetailTestService(t *testing.T) (*core.Service, *domain.Game, *mockSo
 func seedModDetailInstalled(t *testing.T, svc *core.Service, game *domain.Game, modID, version string) {
 	t.Helper()
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID:       modID,
 			SourceID: "src",
@@ -53,9 +56,9 @@ func seedModDetailInstalled(t *testing.T, svc *core.Service, game *domain.Game, 
 	}))
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "src",
 		ModID:    modID,
 		Version:  version,
@@ -101,7 +104,7 @@ func TestModDetail_LockJoinedFromProfileYAML(t *testing.T) {
 	svc, game, src := newModDetailTestService(t)
 	src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
 	seedModDetailInstalled(t, svc, game, "a", "1.5")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", "1.2.3"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", "1.2.3"))
 
 	detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
 	require.NoError(t, err)
@@ -120,7 +123,7 @@ func TestModDetail_LockJoinedFromProfileYAML(t *testing.T) {
 func seedModDetailInstalledPak(t *testing.T, svc *core.Service, game *domain.Game, modID, version string, fileIDs []string, convertPaks bool) {
 	t.Helper()
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID:       modID,
 			SourceID: "src",
@@ -133,12 +136,13 @@ func seedModDetailInstalledPak(t *testing.T, svc *core.Service, game *domain.Gam
 		Enabled:      true,
 		FileIDs:      fileIDs,
 	}))
-	require.NoError(t, svc.SetModConvertPaks("src", modID, game.ID, "default", convertPaks))
+	_, settingErr23 := svc.SetModConvertPaks(context.Background(), "src", modID, game.ID, "default", convertPaks)
+	require.NoError(t, settingErr23)
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "src",
 		ModID:    modID,
 		Version:  version,
@@ -147,13 +151,11 @@ func seedModDetailInstalledPak(t *testing.T, svc *core.Service, game *domain.Gam
 }
 
 // TestModDetail_ConvertPaks covers the three-state ConvertPaks distinction
-// at the core seam both mod show and the TUI now share: nil means "does not
-// apply to this mod at all" (not a DeployCompile game, or the mod has no
-// pak-kind merge source per ModHasPakMergeSource), while a non-nil pointer
-// distinguishes "applies, and is off" from "applies, and is on" -
-// conflating any of these three would mislead either interface's render
-// (mirrors the TUI-side internal/tui.TestModDetailsFromItem_ConvertPaks,
-// which only covers the ModItem->ModDetails leg, not this DB-join leg).
+// at the core seam mod show uses: nil means "does not apply to this mod at
+// all" (not a DeployCompile game, or the mod has no pak-kind merge source
+// per ModHasPakMergeSource), while a non-nil pointer distinguishes
+// "applies, and is off" from "applies, and is on" - conflating any of
+// these three would mislead the render.
 func TestModDetail_ConvertPaks(t *testing.T) {
 	t.Run("not applicable when not a compile-deploy game", func(t *testing.T) {
 		svc, game, src := newModDetailTestService(t)
@@ -205,13 +207,79 @@ func TestModDetail_ConvertPaks(t *testing.T) {
 	})
 }
 
+// changelogMockSource embeds mockSource and adds source.ChangelogProvider -
+// mirrors updater_test.go's reportingMockSource embedding pattern for
+// UpdateProgressReporter. changelog/err are read by every call; set exactly
+// one per test.
+type changelogMockSource struct {
+	*mockSource
+	changelog string
+	err       error
+}
+
+func newChangelogMockSource(id string) *changelogMockSource {
+	return &changelogMockSource{mockSource: newMockSource(id)}
+}
+
+func (c *changelogMockSource) Changelog(ctx context.Context, sourceGameID, modID, version string) (string, error) {
+	if c.err != nil {
+		return "", c.err
+	}
+	return c.changelog, nil
+}
+
+// TestModDetail_Changelog (#87): ModDetail.Changelog is populated
+// best-effort from a source's optional source.ChangelogProvider - present
+// and non-erroring carries the text, absent leaves the field empty (never
+// an error), and a provider error degrades to a Note rather than failing
+// the whole call.
+func TestModDetail_Changelog(t *testing.T) {
+	t.Run("provider supplies a changelog", func(t *testing.T) {
+		svc, game, _ := newModDetailTestService(t)
+		src := newChangelogMockSource("src")
+		src.changelog = "Fixed a crash on load."
+		svc.RegisterSource(src)
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err)
+		assert.Equal(t, "Fixed a crash on load.", detail.Changelog)
+		assert.Empty(t, detail.Notes)
+	})
+
+	t.Run("non-provider source leaves the field absent", func(t *testing.T) {
+		svc, game, src := newModDetailTestService(t)
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err)
+		assert.Empty(t, detail.Changelog)
+		assert.Empty(t, detail.Notes)
+	})
+
+	t.Run("provider error becomes a Note, never a failure", func(t *testing.T) {
+		svc, game, _ := newModDetailTestService(t)
+		src := newChangelogMockSource("src")
+		src.err = errors.New("upstream timeout")
+		svc.RegisterSource(src)
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err, "a changelog provider failure must not fail ModDetail")
+		assert.Empty(t, detail.Changelog)
+		require.Len(t, detail.Notes, 1)
+		assert.Contains(t, detail.Notes[0], "upstream timeout")
+	})
+}
+
 // TestModDetail_UnknownModErrors: a source lookup failure is a real error.
 func TestModDetail_UnknownModErrors(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
 
 	_, err := svc.ModDetail(context.Background(), game, "default", "src", "nope")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mod not found")
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+	assert.Contains(t, err.Error(), "is not in Mock Source's catalog", "#539: named as a fact about the catalog")
 }
 
 // TestModDetail_DBErrorPropagates (#236): only a genuine "not installed"
@@ -237,7 +305,7 @@ func TestModDetail_DBErrorPropagates(t *testing.T) {
 	svc.RegisterSource(src)
 	src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID:       "a",
 			SourceID: "src",
@@ -259,7 +327,7 @@ func TestModDetail_DBErrorPropagates(t *testing.T) {
 	// Guard: the corruption must actually yield a real (non-not-found) error
 	// from the underlying lookup - otherwise a schema change could silently
 	// turn this into a passing-for-the-wrong-reason test.
-	_, gerr := svc.GetInstalledMod("src", "a", game.ID, "default")
+	_, gerr := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.Error(t, gerr)
 	require.NotErrorIs(t, gerr, domain.ErrModNotFound)
 
@@ -267,4 +335,113 @@ func TestModDetail_DBErrorPropagates(t *testing.T) {
 	require.Error(t, err, "a real DB failure must surface, not read as \"not installed\"")
 	assert.NotErrorIs(t, err, domain.ErrModNotFound)
 	assert.Nil(t, detail)
+}
+
+// TestModDetail_DescriptionTextIsPlainProse is #342: domain.Mod.Description
+// deliberately carries a source's RAW markup all the way to the wire (#86),
+// which the CLI has always cleaned before printing and the web UI showed
+// verbatim - "<p>Adds bigger backpacks.</p>", angle brackets and all.
+// ModDetail now carries the cleaned sibling alongside the raw field, so
+// every frontend has something safe to render without duplicating core's
+// cleaner or reaching for dangerouslySetInnerHTML.
+func TestModDetail_DescriptionTextIsPlainProse(t *testing.T) {
+	svc, game, src := newModDetailTestService(t)
+	src.AddMod(game.ID, &domain.Mod{
+		ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5",
+		Description: "<p>Adds <b>bigger</b> backpacks.</p><p>Requires SKSE &amp; SkyUI.</p>",
+	})
+
+	detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+	require.NoError(t, err)
+	require.NotNil(t, detail.Mod)
+	assert.Equal(t, "<p>Adds <b>bigger</b> backpacks.</p><p>Requires SKSE &amp; SkyUI.</p>",
+		detail.Mod.Description, "the raw markup stays on the wire for --json consumers")
+	assert.Equal(t, "Adds bigger backpacks.\n\nRequires SKSE & SkyUI.", detail.DescriptionText,
+		"the sibling is plain prose, with paragraph breaks preserved as newlines")
+	assert.NotContains(t, detail.DescriptionText, "<")
+}
+
+// TestModDetail_DescriptionTextAbsentWithoutADescription: the field is
+// omitzero, so a mod whose source carries no description adds no key.
+func TestModDetail_DescriptionTextAbsentWithoutADescription(t *testing.T) {
+	svc, game, src := newModDetailTestService(t)
+	src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+
+	detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+	require.NoError(t, err)
+	assert.Empty(t, detail.DescriptionText)
+}
+
+// TestModDetail_AnImportedModIsDescribedFromItsRow (#447): no registry
+// source answers for `local`, so an imported mod's detail is its installed
+// row - where it used to fail with "source not found: local".
+func TestModDetail_AnImportedModIsDescribedFromItsRow(t *testing.T) {
+	svc, game, _ := newModDetailTestService(t)
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "imp", SourceID: domain.SourceLocal, Name: "Imported", Version: "1.0", GameID: game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdatePinned, Enabled: true,
+	}))
+
+	detail, err := svc.ModDetail(context.Background(), game, "default", domain.SourceLocal, "imp")
+	require.NoError(t, err)
+	assert.Equal(t, "Imported", detail.Mod.Name)
+	require.NotNil(t, detail.Installed)
+	assert.Equal(t, "1.0", detail.Installed.Version)
+	assert.Equal(t, domain.UpdatePinned, detail.Installed.UpdatePolicy)
+
+	_, err = svc.ModDetail(context.Background(), game, "default", domain.SourceLocal, "never-imported")
+	assert.Error(t, err, "a local id with no installed row is still not found")
+}
+
+// TestModDetail_ARegisteredSourcesFailureStillFails: the installed-row
+// fallback is for a source nothing can serve, never a way to hide a real
+// source's error behind stale data.
+func TestModDetail_ARegisteredSourcesFailureStillFails(t *testing.T) {
+	svc, game, _ := newModDetailTestService(t)
+	seedModDetailInstalled(t, svc, game, "gone", "1.0") // installed, but src has no such mod
+
+	_, err := svc.ModDetail(context.Background(), game, "default", "src", "gone")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+	assert.Contains(t, err.Error(), "is not in Mock Source's catalog", "#539: named as a fact about the catalog")
+}
+
+// workshopDetailSource is a mockSource the service treats as the Steam
+// Workshop source (it implements source.WorkshopScanner), so a mod of it is
+// a Tier-3 download when its installed row is not External.
+type workshopDetailSource struct{ *mockSource }
+
+func (workshopDetailSource) ScanWorkshopItems(context.Context, string) (source.WorkshopScan, error) {
+	return source.WorkshopScan{}, nil
+}
+
+// TestModDetail_ATier3WorkshopRowCarriesItsRevisionDate (#458): an item lmm
+// downloaded from the Workshop itself is not External, and its Version is
+// the content id; both the source document and the Installed block carry
+// the revision date `lmm mod show` and the web UI print instead.
+func TestModDetail_ATier3WorkshopRowCarriesItsRevisionDate(t *testing.T) {
+	ctx := context.Background()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"steamworkshop": "g1"}}
+	src := workshopDetailSource{newMockSource("steamworkshop")}
+	svc.RegisterSource(src)
+	updated := time.Date(2025, 12, 3, 13, 18, 55, 0, time.UTC)
+	const contentID = "7987119735124793734"
+	src.AddMod(game.ID, &domain.Mod{ID: "3000000001", SourceID: "steamworkshop", GameID: game.ID,
+		Name: "Workshop Item", Version: contentID, UpdatedAt: updated})
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod: domain.Mod{ID: "3000000001", SourceID: "steamworkshop", GameID: game.ID,
+			Name: "Workshop Item", Version: contentID, UpdatedAt: updated},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
+	}))
+
+	detail, err := svc.ModDetail(ctx, game, "default", "steamworkshop", "3000000001")
+
+	require.NoError(t, err)
+	assert.Equal(t, "2025-12-03", detail.Mod.DisplayVersion)
+	require.NotNil(t, detail.Installed)
+	assert.False(t, detail.Installed.External, "the row is a Tier-3 download, not Steam's own")
+	assert.Equal(t, contentID, detail.Installed.Version)
+	assert.Equal(t, "2025-12-03", detail.Installed.DisplayVersion)
 }

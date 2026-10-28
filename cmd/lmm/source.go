@@ -2,47 +2,44 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
-	"text/tabwriter"
+	"os"
+	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/spf13/cobra"
 )
 
 var sourceCmd = &cobra.Command{
 	Use:   "source",
 	Short: "Manage mod sources",
-	Long: `List registered mod sources and validate user-defined source definitions.
+	Long: `List registered mod sources; add, validate and remove user-defined source definitions.
 
 Custom sources (directory scans, static manifests, or REST APIs) are
 defined as YAML files in the sources/ directory under the config dir
-(~/.config/lmm/sources/*.yaml by default) - see the Custom Sources
-section of the project README for the file format.`,
+(see the FILES section of 'lmm --help' for the config directory) - see
+the Custom Sources section of the project README for the file format.`,
 }
 
-// sourceInfo is one row of `lmm source list` output.
-type sourceInfo struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Type         string `json:"type"` // "built-in", "directory", "manifest", "api", or "error"
-	Auth         string `json:"auth"` // "yes", "no", "n/a"
-	Capabilities string `json:"capabilities"`
-	// InUse marks a row as one of the active game's configured sources.
-	// Only ever set (and only ever rendered as a column, in both --json and
-	// the text table) in the --all-with-game-resolvable combination (design
-	// §5) - additive per the repo's JSON-contract-additions-are-MINOR
-	// precedent: omitempty means a scoped or no-game-context response never
-	// gains an "in_use" key at all, exactly the pre-Task-4 shape those
-	// callers already depend on.
-	InUse bool   `json:"in_use,omitempty"`
-	Error string `json:"error,omitempty"`
+// authDisplay rebuilds the pre-#301 "yes"/"no"/"n/a" display string from
+// app.AuthState (final review, Important #1 / #301: source list --json and
+// the text table both stay byte-identical by formatting from the data, not
+// carrying pre-formatted text on the wire anymore).
+func authDisplay(a app.AuthState) string {
+	switch a {
+	case app.AuthNone:
+		return "n/a"
+	case app.AuthRequired:
+		return "no"
+	case app.AuthAuthenticated:
+		return "yes"
+	default:
+		return ""
+	}
 }
 
 var sourceAll bool
@@ -67,47 +64,9 @@ Examples:
 		// registerCustomSources' init-time stderr warnings would double up on
 		// the error rows rendered below (#52 item 14): the same broken
 		// definition would otherwise be reported once on stderr and once as a
-		// row. Silence the warnings for the duration of this command's own
-		// service init; the rows below are the canonical report here.
-		prevWarnOut := customSourceWarnOut
-		customSourceWarnOut = io.Discard
-		defer func() { customSourceWarnOut = prevWarnOut }()
-
-		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
-			cfg, err := getServiceConfig()
-			if err != nil {
-				return err
-			}
-			defs, loadErrs, err := config.LoadSourceDefinitions(cfg.ConfigDir)
-			if err != nil {
-				return fmt.Errorf("loading source definitions: %w", err)
-			}
-
-			// Reclassify each definition against what actually ended up registered
-			// (registerCustomSources may have skipped it on ID collision or
-			// construction failure) so the list reflects reality rather than just
-			// "a definition with this ID exists".
-			var errRows []sourceInfo
-			for _, d := range defs {
-				registered, err := svc.GetSource(d.ID)
-				switch {
-				case err == nil && isCustomSource(registered):
-					// Registered successfully as this definition's own custom
-					// source; its row (built below from svc.ListSources()) will
-					// carry the correct TypeLabel() on its own — nothing to
-					// record here.
-				case err == nil:
-					// Something else (a built-in, or another def) already held this ID.
-					errRows = append(errRows, sourceInfo{ID: d.ID, Type: "error", Error: "id already in use"})
-				default:
-					// Nothing registered under this ID: construction must have failed.
-					// Re-run it to recover the actual error for display.
-					if _, cerr := custom.New(d); cerr != nil {
-						errRows = append(errRows, sourceInfo{ID: d.ID, Type: "error", Error: cerr.Error()})
-					}
-				}
-			}
-
+		// row. Silence the warnings for this command's own service init; the
+		// rows below are the canonical report here.
+		return withServiceOpts(cmd, app.Options{WarnWriter: io.Discard}, func(ctx context.Context, svc *core.Service) error {
 			// Resolve a game context WITHOUT erroring when absent (design §5:
 			// "the command must keep working with zero games configured").
 			// requireGame's own error is deliberately swallowed here — and
@@ -120,99 +79,108 @@ Examples:
 			// "fix" this into an error for the config-load case; an explicit,
 			// invalid -g still surfaces via GetGame below, same as every
 			// other command's game resolution.
+			//
+			// Error precedence, restored (task-3 review, undisclosed
+			// deviation): pre-#301 this command loaded the source
+			// definitions before resolving the game, so an unreadable
+			// sources/ directory was reported ahead of an invalid explicit
+			// -g. app.SourceInfos now does both internally, in that same
+			// order, but only once gameCtx is already resolved - so with
+			// BOTH broken, the game error would win instead. This
+			// precedence-only pre-check restores the old winner; the real
+			// row assembly below still comes from app.SourceInfos.
+			if _, _, err := app.LoadSourceDefinitions(svc.ConfigDir()); err != nil {
+				return fmt.Errorf("loading source definitions: %w", err)
+			}
+
 			var gameCtx *domain.Game
 			if requireErr := requireGame(cmd); requireErr == nil {
-				gameCtx, err = svc.GetGame(gameID)
+				g, err := svc.GetGame(gameID)
 				if err != nil {
 					return err
 				}
+				gameCtx = g
 			}
 
-			// srcs is the base row set: every registered source (built-in +
-			// custom) by default, or - with a resolvable game and no --all -
-			// just that game's configured+registered subset (SourcesForGame).
-			// inUseIDs stays nil except in the --all-with-game combination,
-			// which is the one case that needs to mark a subset of the FULL
-			// list rather than simply restricting to it.
-			// ListSources is registry-map order (nondeterministic, and a
-			// pre-existing quirk of this command); sort so the full-registry
-			// views are stable and consistent with SourcesForGame's sorted
-			// scoped view.
-			srcs := svc.ListSources()
-			sort.Slice(srcs, func(i, j int) bool { return srcs[i].ID() < srcs[j].ID() })
-			var inUseIDs map[string]bool
-			switch {
-			case gameCtx != nil && !sourceAll:
-				srcs, err = svc.SourcesForGame(gameCtx.ID)
-				if err != nil {
-					return err
-				}
-			case gameCtx != nil:
-				scoped, err := svc.SourcesForGame(gameCtx.ID)
-				if err != nil {
-					return err
-				}
-				inUseIDs = make(map[string]bool, len(scoped))
-				for _, s := range scoped {
-					inUseIDs[s.ID()] = true
-				}
+			// app.SourceInfos owns the row assembly: the registry, the
+			// game scoping, and the definitions-vs-reality reclassification
+			// that only app can do (it alone sees the definitions on disk and
+			// can re-run a failed construction). The IN USE column belongs to
+			// the one combination that marks a subset of the FULL list rather
+			// than restricting to it.
+			infos, err := app.SourceInfos(ctx, svc, gameCtx, sourceAll)
+			if err != nil {
+				return err
 			}
-			showInUseColumn := inUseIDs != nil
-
-			// make(...,0,...), not `var rows []sourceInfo`: a nil slice encodes
-			// to JSON `null`, but `source list --json` should always emit an
-			// array — empty when there is nothing to report (#52 item 13).
-			rows := make([]sourceInfo, 0, len(srcs)+len(errRows)+len(loadErrs))
-			for _, src := range srcs {
-				rows = append(rows, sourceInfo{
-					ID:           src.ID(),
-					Name:         src.Name(),
-					Type:         source.TypeLabelOf(src),
-					Auth:         authState(src),
-					Capabilities: capabilitySummary(source.CapabilitiesOf(src)),
-					InUse:        inUseIDs[src.ID()],
-				})
-			}
-			// Broken-definition error rows stay visible in every view (design
-			// §5): they never registered, so they have no game association to
-			// scope by, and hiding them would bury exactly the diagnostics a
-			// user debugging their YAML needs.
-			rows = append(rows, errRows...)
-			for _, le := range loadErrs {
-				rows = append(rows, sourceInfo{
-					ID:    le.File,
-					Type:  "error",
-					Error: le.Err.Error(),
-				})
-			}
+			showInUseColumn := gameCtx != nil && sourceAll
 
 			if jsonOutput {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
+				// A top-level array, as it has always been (#52 item 13: an
+				// empty registry emits [], never null - emitJSON encodes a
+				// nil slice as []). Indented like every other document since
+				// v2 (Ruling 3); this was the one command emitting compact
+				// JSON.
+				return emitJSON(infos)
 			}
 
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			w := newDisplayWidthTableWriter(cmd.OutOrStdout())
 			header := "ID\tNAME\tTYPE\tAUTH\tCAPABILITIES"
 			if showInUseColumn {
 				header += "\tIN USE"
 			}
-			fmt.Fprintln(w, header+"\tERROR")
-			for _, r := range rows {
-				line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s", r.ID, r.Name, r.Type, r.Auth, r.Capabilities)
+			if _, err := fmt.Fprintln(w, header+"\tERROR"); err != nil {
+				return fmt.Errorf("writing source table header: %w", err)
+			}
+			for _, info := range infos {
+				// An error row carries no auth/capability data (it never
+				// registered), so both columns stay blank here - the display
+				// strings are derived from the wire-typed data, never carried
+				// on the wire (final review, Important #1 / #301).
+				var auth, caps string
+				if info.Type != "error" {
+					auth = authDisplay(info.Auth)
+					caps = strings.Join(info.Capabilities, ",")
+				}
+				line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s", info.ID, info.Name, info.Type, auth, caps)
 				if showInUseColumn {
-					// Error rows have no game association (see the append
-					// above) — leave the column blank rather than claim "no".
+					// Error rows have no game association - leave the column
+					// blank rather than claim "no".
 					inUse := ""
-					if r.Type != "error" {
+					if info.Type != "error" {
 						inUse = "no"
-						if r.InUse {
+						if info.InUse {
 							inUse = "yes"
 						}
 					}
 					line += "\t" + inUse
 				}
-				fmt.Fprintln(w, line+"\t"+r.Error)
+				// Deliberately unchecked: the table writer buffers row writes,
+				// so any write failure surfaces at Flush
+				// below, which IS checked.
+				_, _ = fmt.Fprintln(w, line+"\t"+info.ErrorMessage)
 			}
-			return w.Flush()
+			if err := w.Flush(); err != nil {
+				return err
+			}
+
+			// #395: the scoped view is silent about everything it left out,
+			// so a user who has just written their first sources/*.yaml
+			// sees a list their new definition is missing from with nothing
+			// to say why. One line, only when there IS something more, and
+			// only in the human view - the --json document is the rows.
+			if gameCtx != nil && !sourceAll {
+				full, err := app.SourceInfos(ctx, svc, gameCtx, true)
+				if err != nil {
+					return err
+				}
+				if more := len(full) - len(infos); more > 0 {
+					//nolint:errcheck // best-effort console write
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+						"\n%d more registered source(s) not mapped to %s — lmm source list --all\n",
+						more, gameCtx.ID)
+				}
+			}
+			return nil
 		})
 	},
 }
@@ -237,117 +205,181 @@ Examples:
   lmm source validate ~/.config/lmm/sources/my-source.yaml --probe --id 12345`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		def, err := config.LoadSourceDefinitionFile(args[0])
+		// #309: an invalid definition keeps failing the command (non-zero
+		// exit) under both plain and --json output - --json wraps the
+		// failure in sourceValidationError so the envelope's "details"
+		// carries the report (id/type empty: there was no definition to
+		// read them from).
+		report, def, err := app.ValidateSourceFile(args[0])
 		if err != nil {
-			return err
+			return &sourceValidationError{err: err, report: report}
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%s: valid (%s source %q)\n", args[0], def.Type, def.ID)
+
+		if !jsonOutput {
+			//nolint:errcheck // best-effort console write
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: valid (%s source %q)\n", report.Path, report.Type, report.ID)
+		}
 		if !sourceProbe {
+			if jsonOutput {
+				return emitJSON(report)
+			}
 			return nil
 		}
 		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
-			return probeSource(ctx, cmd, svc, def)
+			return probeSource(ctx, cmd, svc, def, report)
 		})
 	},
 }
 
 // probeSource constructs the definition's source and performs one live
 // operation against it, so users can smoke-test a definition before relying
-// on it (design §8).
-func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def custom.SourceDefinition) error {
-	src, err := custom.New(def)
+// on it (design §8). report already carries the definition's own
+// validation result (Valid true - a probe never runs against an invalid
+// one); this fills in report.Probe and, under --json, emits the whole
+// report as either the single success document or (a live-check failure)
+// the error envelope's details.
+func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def source.SourceDefinition, report *app.SourceValidationReport) error {
+	summary, err := app.ProbeSource(ctx, svc, def, sourceProbeID)
 	if err != nil {
-		return fmt.Errorf("probe: constructing source: %w", err)
+		wrapped := fmt.Errorf("probe: %w", err)
+		report.Probe = &app.SourceProbeResult{Error: err.Error()}
+		if jsonOutput {
+			return &sourceValidationError{err: wrapped, report: report}
+		}
+		return wrapped
 	}
-	if a, ok := src.(interface{ SetAPIKey(string) }); ok {
-		// envKeyFor(src) rather than envKeyForSourceID(def.ID) directly: today
-		// no custom type implements EnvKeyProvider, so both resolve to the
-		// same derived LMM_<ID>_API_KEY name and behavior is unchanged - but
-		// routing through envKeyFor keeps this call from silently diverging
-		// from every other env-key lookup in the codebase if a custom source
-		// ever does implement EnvKeyProvider.
-		if key := getSourceAPIKey(svc, def.ID, envKeyFor(src)); key != "" {
-			a.SetAPIKey(key)
-		}
+	report.Probe = &app.SourceProbeResult{OK: true, Summary: summary}
+	if jsonOutput {
+		return emitJSON(report)
 	}
-
-	switch def.Type {
-	case custom.TypeDirectory, custom.TypeManifest:
-		res, err := src.Search(ctx, source.SearchQuery{PageSize: 1})
-		if err != nil {
-			return fmt.Errorf("probe: %w", err)
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "probe: ok — %d mod(s) visible\n", res.TotalCount)
-	case custom.TypeAPI:
-		if def.API.Endpoints.Search != nil {
-			res, err := src.Search(ctx, source.SearchQuery{PageSize: 1})
-			if err != nil {
-				return fmt.Errorf("probe: %w", err)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "probe: ok — search responded (%d total reported)\n", res.TotalCount)
-			return nil
-		}
-		if sourceProbeID == "" {
-			return fmt.Errorf("probe: this definition has no search endpoint; provide a known mod id with --id to probe get_mod")
-		}
-		mod, err := src.GetMod(ctx, "", sourceProbeID)
-		if err != nil {
-			return fmt.Errorf("probe: %w", err)
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "probe: ok — get_mod %s returned %q\n", sourceProbeID, mod.Name)
-	}
+	//nolint:errcheck // best-effort console write
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "probe: %s\n", report.Probe.Summary)
 	return nil
 }
 
-// isCustomSource reports whether src is a user-defined source (as opposed to
-// a built-in like NexusMods/CurseForge): a self-reported type of exactly
-// "directory", "manifest", or "api". "built-in" and the "unknown" fallback
-// both answer false — conservative on the unknown side so the definitions
-// reclassify loop (the only call site) reports a collision/error row rather
-// than assuming an unlabeled source is the definition's own. Unreachable in
-// practice: LoadSourceDefinitions guarantees ID uniqueness within a load, so
-// a registered source matching a definition's ID is either a built-in or
-// that definition's own constructed source — never an unrelated third party.
-func isCustomSource(src source.ModSource) bool {
-	switch source.TypeLabelOf(src) {
-	case "directory", "manifest", "api":
-		return true
-	}
-	return false
+// sourceValidationError reports a `lmm source validate --json` failure - an
+// invalid definition, or (with --probe) a live probe failure against an
+// otherwise-valid one - for the --json error envelope: Details() is the
+// SourceValidationReport itself, so a caller sees exactly which part
+// failed instead of a bare message. Follows the core.ConflictError /
+// core.GameDetectPartialError pattern (jsonout.go).
+type sourceValidationError struct {
+	err    error
+	report *app.SourceValidationReport
 }
 
-// authState reports a source's authentication status for display.
-func authState(src source.ModSource) string {
-	if !source.CapabilitiesOf(src).Auth {
-		return "n/a"
-	}
-	if a, ok := src.(interface{ IsAuthenticated() bool }); ok {
-		if a.IsAuthenticated() {
-			return "yes"
+// Error returns the wrapped failure's own message - the definition's
+// load/validate error, or "probe: <cause>" - identical to what the plain
+// path prints via Execute's "Error: %v".
+func (e *sourceValidationError) Error() string { return e.err.Error() }
+
+// Unwrap exposes the wrapped failure for errors.Is/errors.As.
+func (e *sourceValidationError) Unwrap() error { return e.err }
+
+// Details returns the SourceValidationReport for the --json error
+// envelope's "details" field.
+func (e *sourceValidationError) Details() any { return e.report }
+
+var sourceAddCmd = &cobra.Command{
+	Use:   "add <file>",
+	Short: "Add a user-defined source from a definition file",
+	Long: `Validate a source definition file and install it under the config
+directory's sources/ folder, where it is loaded at every start.
+
+The definition's own id names the file it is written as. An id already
+taken by a built-in source is refused (a definition reusing one would
+lose the collision at startup and never take effect), as is a definition
+that validates but cannot be constructed - a directory source pointing
+at a path that does not exist, say.
+
+Examples:
+  lmm source add ./my-mods.yaml
+  lmm source add ./my-mods.yaml --json`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		data, err := os.ReadFile(args[0])
+		if err != nil {
+			return fmt.Errorf("reading definition: %w", err)
 		}
-		return "no"
-	}
-	return "yes"
+		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
+			// Peeked BEFORE the write: SaveSourceDefinition is an upsert
+			// (#333 Minor #5 - a definition whose id already exists
+			// overwrites that definition's file, correctly, but the
+			// message always said "added"), and by the time it returns the
+			// file exists either way, so there is no "did this replace
+			// something" bit left to ask for afterwards. A parse failure
+			// here is not reported here; SaveSourceDefinition below
+			// re-validates and is the one whose error the caller sees.
+			replacing := false
+			if _, def, err := app.ValidateSourceContent(data); err == nil {
+				if _, err := app.SourceDefinitionFile(svc.ConfigDir(), def.ID); err == nil {
+					replacing = true
+				}
+			}
+
+			// expectID "" - the id comes FROM the document here; it is the
+			// web UI's route, which names a source in its path, that has an
+			// id to hold the definition to.
+			report, err := app.SaveSourceDefinition(ctx, svc, "", data)
+			if err != nil {
+				// The same envelope `source validate --json` fails with, so
+				// a client parses one shape for "this definition is bad"
+				// wherever it hit it. report is never nil.
+				return &sourceValidationError{err: err, report: report}
+			}
+			if jsonOutput {
+				return emitSourceList(ctx, svc)
+			}
+			verb := "added"
+			if replacing {
+				verb = "replaced"
+			}
+			//nolint:errcheck // best-effort console write
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s source %q\n", verb, report.Type, report.ID)
+			return nil
+		})
+	},
 }
 
-// capabilitySummary renders capabilities as a compact list, e.g. "search,updates".
-func capabilitySummary(c source.Capabilities) string {
-	out := ""
-	add := func(enabled bool, name string) {
-		if !enabled {
-			return
-		}
-		if out != "" {
-			out += ","
-		}
-		out += name
+var sourceRemoveCmd = &cobra.Command{
+	Use:   "remove <id>",
+	Short: "Remove a user-defined source",
+	Long: `Delete a user-defined source's definition file and stop using it.
+
+Built-in sources cannot be removed. A source any configured game still
+maps is refused with the list of those games - remove it from their
+sources first, otherwise they would be left naming a source that no
+longer resolves.
+
+Examples:
+  lmm source remove my-mods
+  lmm source remove my-mods --json`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
+			if err := app.DeleteSourceDefinition(ctx, svc, args[0]); err != nil {
+				return err
+			}
+			if jsonOutput {
+				return emitSourceList(ctx, svc)
+			}
+			//nolint:errcheck // best-effort console write
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed: source %q\n", args[0])
+			return nil
+		})
+	},
+}
+
+// emitSourceList emits the FULL registry as the `lmm source list --json`
+// document - what `source add`/`source remove` answer with under --json.
+// Full rather than game-scoped: the command just changed the registry, and
+// what it changed is what the caller wants to see.
+func emitSourceList(ctx context.Context, svc *core.Service) error {
+	infos, err := app.SourceInfos(ctx, svc, nil, false)
+	if err != nil {
+		return err
 	}
-	add(c.Search, "search")
-	add(c.Dependencies, "deps")
-	add(c.Updates, "updates")
-	add(c.Auth, "auth")
-	add(c.Versions, "versions")
-	return out
+	return emitJSON(infos)
 }
 
 func init() {
@@ -358,5 +390,7 @@ func init() {
 
 	sourceCmd.AddCommand(sourceListCmd)
 	sourceCmd.AddCommand(sourceValidateCmd)
+	sourceCmd.AddCommand(sourceAddCmd)
+	sourceCmd.AddCommand(sourceRemoveCmd)
 	rootCmd.AddCommand(sourceCmd)
 }

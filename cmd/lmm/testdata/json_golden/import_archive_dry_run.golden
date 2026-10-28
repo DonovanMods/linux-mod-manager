@@ -1,0 +1,28 @@
+{
+  "archive": "<ARCHIVE-DIR>/mymod.zip",
+  "mod": {
+    "id": "999",
+    "source_id": "acme-source",
+    "name": "Acme Mod",
+    "version": "2.0",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "g1",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": []
+  },
+  "linked_source": "acme-source",
+  "auto_detected": false,
+  "files": [
+    "mymod.esp"
+  ],
+  "conflicts": [],
+  "hooks": [],
+  "entry_pre_exists": false,
+  "warnings": []
+}

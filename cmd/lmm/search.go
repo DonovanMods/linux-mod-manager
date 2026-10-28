@@ -2,16 +2,17 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"text/tabwriter"
+	"sort"
+	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/spf13/cobra"
 )
@@ -22,23 +23,9 @@ var (
 	searchProfile  string
 	searchCategory string
 	searchTags     []string
+	searchRefresh  bool
+	searchSort     string
 )
-
-type searchJSONOutput struct {
-	GameID   string          `json:"game_id"`
-	Query    string          `json:"query"`
-	Mods     []searchModJSON `json:"mods"`
-	Warnings []string        `json:"warnings,omitempty"`
-}
-
-type searchModJSON struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Author    string `json:"author"`
-	Version   string `json:"version"`
-	Source    string `json:"source"`
-	Installed bool   `json:"installed"`
-}
 
 var searchCmd = &cobra.Command{
 	Use:   "search <query>",
@@ -50,16 +37,42 @@ searched concurrently and the results are merged. Results already
 installed in the target profile (-p/--profile, default: active profile)
 are marked [installed].
 
+A source that searches a LOCAL copy of its catalogue (Thunderstore) builds
+that copy on the first search - a one-time wait of a few seconds, announced
+on stderr - and refreshes it every six hours. --refresh rebuilds it before
+searching, for a package published in the last few hours. Thunderstore
+packages flagged NSFW are left out unless you ask for them with
+--tag NSFW (or --category NSFW); --tag Deprecated finds deprecated ones.
+
+Hits whose name is exactly the query (ignoring case, spaces and punctuation:
+"Leatrix Plus" is "leatrix-plus") always come first. The rest follow in the
+order --sort names: relevance (the default; each source's own order), updated
+(last updated, newest first), downloads (most downloaded first) or popular
+(most endorsed or liked first, where a source reports it). Sources that can
+sort server-side do, so --limit gets you the top of THAT order rather than a
+reshuffled first page; a source with nothing to sort by is left in its own
+order for that sort.
+
 Use --category and --tag to filter results; support varies by source.
 --category is honored by NexusMods and CurseForge; --tag is currently
 NexusMods only. Custom sources (directory/manifest/API) ignore both.
-The values each source accepts are source-specific.
+The values each source accepts are source-specific: NexusMods takes the
+category NAME as it spells it ("Armour") and a tag name; CurseForge takes
+a numeric category id. Steam Workshop treats both as REQUIRED TAGS - the
+Workshop has no category concept distinct from tags - and needs your own
+Steam Web API key ('lmm auth login steamworkshop'). A source you have not
+signed in to is left out of an all-sources search rather than warned about
+on every query ('lmm source list' shows which sources need a key); a search
+that finds nothing names what it skipped and the login command, and
+searching it directly with '-s' still reports that authentication is
+required.
 
 Examples:
   lmm search skyui --game skyrim-se
   lmm search "immersive armor" --game skyrim-se --source nexusmods
-  lmm search "armor" --game skyrim-se --category armor --tag lore-friendly
-  lmm search "armor" --game skyrim-se --profile survival`,
+  lmm search "armor" --game skyrim-se --category Armour --tag lore-friendly
+  lmm search "armor" --game skyrim-se --profile survival
+  lmm search "armor" --game skyrim-se --sort updated`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runSearch,
 }
@@ -68,10 +81,43 @@ func init() {
 	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "", "mod source to search (default: all configured sources)")
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "l", 10, "maximum number of results")
 	searchCmd.Flags().StringVarP(&searchProfile, "profile", "p", "", "profile to check for installed mods (default: active profile)")
-	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (source-specific ID or name)")
+	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (NexusMods: the category name; CurseForge: its numeric id)")
 	searchCmd.Flags().StringSliceVar(&searchTags, "tag", nil, "filter by tag (repeatable; source-specific)")
+	addSearchSortFlag(searchCmd, &searchSort)
+	searchCmd.Flags().BoolVar(&searchRefresh, "refresh", false, "rebuild a locally cached source index (Thunderstore) before searching")
 
 	rootCmd.AddCommand(searchCmd)
+}
+
+// addSearchSortFlag declares --sort on a command that lists search results -
+// `lmm search` and `lmm install <query>` (#512) - with the one wording and the
+// one completion, so the two cannot drift. The value is validated where it is
+// used (domain.ParseSearchSort), so a bad one is the same error everywhere.
+func addSearchSortFlag(cmd *cobra.Command, dest *string) {
+	cmd.Flags().StringVar(dest, "sort", string(domain.SortRelevance), "order results by relevance, updated (newest first), downloads (most first) or popular (most endorsed first); an exact name match always leads")
+	if err := cmd.RegisterFlagCompletionFunc("sort", completeSearchSort); err != nil {
+		panic(err) // a programming error: --sort is declared on the line above
+	}
+}
+
+// searchSortDescriptions is what shell completion says beside each --sort
+// value (#503).
+var searchSortDescriptions = map[domain.SearchSort]string{
+	domain.SortRelevance: "each source's own order (default)",
+	domain.SortUpdated:   "last updated, newest first",
+	domain.SortDownloads: "most downloaded first",
+	domain.SortPopular:   "most endorsed first, where a source reports it",
+}
+
+// completeSearchSort completes --sort from domain.SearchSorts, so a new sort
+// shows up in completion the moment it exists.
+func completeSearchSort(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+	sorts := domain.SearchSorts()
+	out := make([]string, len(sorts))
+	for i, s := range sorts {
+		out[i] = string(s) + "\t" + searchSortDescriptions[s]
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -98,10 +144,24 @@ func noSourcesConfiguredErr(game *domain.Game) error {
 // a capable source genuinely finding nothing, leaving the user with no hint
 // that searching isn't possible here at all.
 func noSearchableSourcesNotice(game *domain.Game) string {
-	// Sentence-cased with terminal punctuation to match the TUI's rendering
-	// of the same notice (searchView's zero-results branch) — this is a
-	// printed user-facing notice, not a lowercase Go error value.
+	// Sentence-cased with terminal punctuation - this is a printed
+	// user-facing notice, not a lowercase Go error value.
 	return fmt.Sprintf("None of %s's sources support searching; install by ID instead.", game.Name)
+}
+
+// skippedUnauthenticatedNotice renders the one line an all-sources search
+// owes the user when a searchable source was left out for want of a
+// credential (#383): the source's own name and the command that fixes it.
+// The skip itself stays silent on a search that DID find something - this
+// is the empty-result path's explanation, not a standing notice on every
+// query, which is the whole point of #383.
+func skippedUnauthenticatedNotice(sourceIDs []string) string {
+	verb, login := "was", "lmm auth login "+sourceIDs[0]
+	if len(sourceIDs) > 1 {
+		verb, login = "were", "lmm auth login <source>"
+	}
+	return fmt.Sprintf("%s %s skipped: not signed in (run: %s).",
+		strings.Join(sourceIDs, ", "), verb, login)
 }
 
 // capabilityGapNotice turns an ErrNotSupported search failure into a clean
@@ -112,17 +172,6 @@ func capabilityGapNotice(sourceID string, err error) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("source %q does not support searching; install by ID instead: lmm install --source %s --id <mod-id>", sourceID, sourceID), true
-}
-
-// limitResults truncates mods to at most limit entries for display. A
-// non-positive limit (e.g. --limit 0 or a negative value) leaves mods
-// untouched instead of truncating to nothing or panicking on a negative
-// slice bound (mods[:-1]).
-func limitResults(mods []domain.Mod, limit int) []domain.Mod {
-	if limit > 0 && len(mods) > limit {
-		mods = mods[:limit]
-	}
-	return mods
 }
 
 // searchPageSize turns --limit into the page size requested from sources. A
@@ -149,64 +198,72 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 	}
 
-	var mods []domain.Mod
-	var warnings []core.SourceWarning
-	var totalResults int
-	// attemptedCount is only meaningful for the aggregate (searchSource == "")
-	// path below - it stays -1 ("not applicable") for a single named
-	// --source, which either resolves to exactly one attempted source or
-	// fails outright via resolveSource, with no "zero capable sources"
-	// case of its own to distinguish (#58 item 3).
-	attemptedCount := -1
+	// Resolved up front so core.Search can mark already-installed hits; it
+	// only reads the profile when there is something to mark.
+	profileName, err := resolveProfile(ctx, service, game.ID, searchProfile)
+	if err != nil {
+		return err
+	}
 
+	opts := core.SearchOptions{
+		Category: searchCategory,
+		Tags:     searchTags,
+		PageSize: searchPageSize(searchLimit),
+		Limit:    searchLimit,
+		Sort:     domain.SearchSort(searchSort),
+	}
 	if searchSource == "" {
 		// Guard: game must have at least one configured source
 		if err := noSourcesConfiguredErr(game); err != nil {
 			return err
 		}
-
 		if verbose {
 			fmt.Printf("Searching for %q in %s (all sources)...\n", query, game.Name)
-		}
-		agg, err := service.SearchAllSources(ctx, game.ID, query, searchCategory, searchTags, 0, searchPageSize(searchLimit))
-		if err != nil {
-			// No ErrAuthRequired special-case here: an all-sources failure's
-			// joined error already names each source and its reason (including
-			// auth), and a per-source auth hint lives in the warnings path.
-			return fmt.Errorf("search failed: %w", err)
-		}
-		mods, warnings = agg.Mods, agg.Warnings
-		totalResults = len(mods)
-		attemptedCount = agg.AttemptedCount
-		for _, w := range warnings {
-			fmt.Fprintf(os.Stderr, "warning: source %s: %v\n", w.SourceID, w.Err)
 		}
 	} else {
 		sourceToUse, err := resolveSource(service, game, searchSource, false)
 		if err != nil {
 			return err
 		}
+		opts.SourceID = sourceToUse
 		if verbose {
 			fmt.Printf("Searching for %q in %s (%s)...\n", query, game.Name, sourceToUse)
 		}
-		searchResult, err := service.SearchMods(ctx, sourceToUse, game.ID, query, searchCategory, searchTags, 0, searchPageSize(searchLimit))
-		if err != nil {
-			if notice, ok := capabilityGapNotice(sourceToUse, err); ok {
-				return errors.New(notice)
-			}
-			if errors.Is(err, domain.ErrAuthRequired) {
-				return authPromptError(sourceToUse)
-			}
-			return fmt.Errorf("search failed: %w", err)
-		}
-		mods = searchResult.Mods
-		totalResults = len(mods)
 	}
 
-	warningStrs := make([]string, len(warnings))
-	for i, w := range warnings {
-		warningStrs[i] = fmt.Sprintf("source %s: %v", w.SourceID, w.Err)
+	// A source that answers Search from a LOCAL index builds that index on
+	// the first search and announces it itself, through the notices
+	// withServiceOpts prints to stderr (#360 §2.7, #436). --refresh asks
+	// for the rebuild up front instead.
+	if searchRefresh {
+		refreshSearchedIndexes(ctx, service, game, opts.SourceID)
 	}
+
+	// core.Search owns the search itself, the merge across sources and the
+	// installed-mod join; this command only classifies the failure and
+	// renders what came back.
+	report, err := service.Search(ctx, game, profileName, query, opts)
+	if err != nil {
+		if opts.SourceID == "" {
+			// No ErrAuthRequired special-case here: an all-sources failure's
+			// joined error already names each source and its reason (including
+			// auth), and a per-source auth hint lives in the warnings path.
+			return fmt.Errorf("search failed: %w", err)
+		}
+		if notice, ok := capabilityGapNotice(opts.SourceID, err); ok {
+			return errors.New(notice)
+		}
+		if errors.Is(err, domain.ErrAuthRequired) {
+			return authPromptError(opts.SourceID)
+		}
+		return fmt.Errorf("search failed: %w", err)
+	}
+
+	for _, w := range report.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: source %s: %v\n", w.SourceID, w.Err)
+	}
+
+	mods, totalResults := report.Mods, report.TotalResults
 
 	if len(mods) == 0 {
 		// #58 item 3: attemptedCount == 0 means NONE of the game's configured
@@ -216,8 +273,18 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		// both. honestNotice is "" for every other case (single-source
 		// search, or an aggregate search that genuinely attempted and came
 		// up empty), preserving the original message there.
+		//
+		// A source SKIPPED for want of a credential (#383) takes
+		// precedence over both: it is searchable, so the notice above
+		// would be a false capability claim, and it is the one actionable
+		// fact about this empty result. It also covers the AttemptedCount
+		// 0 case that skip produces on a game whose only searchable source
+		// is that one - the shape `lmm init` builds for a Steam game.
 		honestNotice := ""
-		if attemptedCount == 0 {
+		switch {
+		case len(report.SkippedUnauthenticated) > 0:
+			honestNotice = skippedUnauthenticatedNotice(report.SkippedUnauthenticated)
+		case report.AttemptedCount == 0:
 			honestNotice = noSearchableSourcesNotice(game)
 		}
 
@@ -228,13 +295,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 			if honestNotice != "" {
 				fmt.Fprintln(os.Stderr, honestNotice)
 			}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			out := searchJSONOutput{GameID: game.ID, Query: query, Mods: []searchModJSON{}, Warnings: warningStrs}
-			if err := enc.Encode(out); err != nil {
-				return fmt.Errorf("encoding json: %w", err)
-			}
-			return nil
+			return emitJSON(report)
 		}
 
 		if honestNotice != "" {
@@ -245,73 +306,70 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return nil
 	}
 
-	// Get installed mods to mark already-installed ones (source-aware: a mod
-	// ID is only unique within its source, so key on both).
-	profileName, err := resolveProfile(service, game.ID, searchProfile)
-	if err != nil {
-		return err
-	}
-	installedMods, _ := service.GetInstalledMods(game.ID, profileName)
-	installedKeys := make(map[string]bool)
-	for _, im := range installedMods {
-		installedKeys[domain.ModKey(im.SourceID, im.ID)] = true
-	}
-
-	// Apply result limit for display (totalResults captured earlier per-branch for "Showing X of Y")
-	mods = limitResults(mods, searchLimit)
-
 	if jsonOutput {
-		out := searchJSONOutput{GameID: game.ID, Query: query, Mods: make([]searchModJSON, len(mods)), Warnings: warningStrs}
-		for i, mod := range mods {
-			out.Mods[i] = searchModJSON{
-				ID:        mod.ID,
-				Name:      mod.Name,
-				Author:    mod.Author,
-				Version:   mod.Version,
-				Source:    mod.SourceID,
-				Installed: installedKeys[domain.ModKey(mod.SourceID, mod.ID)],
-			}
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
+		// report.Mods already carries service.Search's own --limit-capped
+		// slice; TotalResults stays the untruncated count (SearchReport's
+		// doc comment). Final review, Important #3 / #302: the cap moved
+		// into core so this command and `lmm serve` render the identical
+		// document for the same call, instead of mutating the result after
+		// the fact.
+		return emitJSON(report)
 	}
 
-	// Print results
+	// Print results. The UPDATED column (#433) appears only when at least
+	// one hit carries a date: a source that reports none (and a search
+	// over only such sources) adds no column of dashes.
+	showUpdated := false
+	for _, mod := range mods {
+		if displayAge(mod.UpdatedAt, cliNow()) != "" {
+			showUpdated = true
+			break
+		}
+	}
+	header, separator := "ID\tNAME\tAUTHOR\tVERSION\t", "--\t----\t------\t-------\t"
+	if showUpdated {
+		header, separator = header+"UPDATED\t", separator+"-------\t"
+	}
 	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION\tSOURCE\t"); err != nil {
+	w := newDisplayWidthTableWriter(&buf)
+	if _, err := fmt.Fprintln(w, header+"SOURCE\t"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
-	if _, err := fmt.Fprintln(w, "--\t----\t------\t-------\t------\t"); err != nil {
+	if _, err := fmt.Fprintln(w, separator+"------\t"); err != nil {
 		return fmt.Errorf("writing separator: %w", err)
 	}
 
 	// installedRows tracks each row's installed state in iteration order, so
 	// the whole row (not just the marker) can be green-tinted post-Flush -
 	// #193's richer palette (a cell-only accent read as too subtle in smoke
-	// feedback). Plain "[installed]" text is fed into the tabwriter; the
+	// feedback). Plain "[installed]" text is fed into the table writer; the
 	// row-level color wraps the already-padded line, matching printTable's
 	// "color only after Flush" contract.
 	var installedRows []bool
 	for _, mod := range mods {
 		installedMark := ""
-		installed := installedKeys[domain.ModKey(mod.SourceID, mod.ID)]
+		installed := mod.Installed
 		if installed {
 			installedMark = "[installed]"
 		}
 		installedRows = append(installedRows, installed)
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		// displayModVersion, never the raw field: since Tier 2 (#269 W2) a
+		// hit can be a Steam Workshop item, whose Version is the 19-digit
+		// content id. core.SearchHit.External is stamped for exactly this -
+		// a catalog document has no installed row to read the fact from.
+		cells := []string{
 			mod.ID,
 			truncate(mod.Name, 40),
-			truncate(mod.Author, 20),
-			mod.Version,
-			mod.SourceID,
-			installedMark,
-		); err != nil {
+			truncate(core.AuthorText(&mod.Mod), 20), // #420: the persona name where one resolved
+			displayModVersion(mod.External, mod.Version, mod.UpdatedAt),
+		}
+		if showUpdated {
+			// "-", not a blank cell, for an undated hit beside dated ones:
+			// the column says this source reported no date.
+			cells = append(cells, cmp.Or(displayAge(mod.UpdatedAt, cliNow()), "-"))
+		}
+		cells = append(cells, mod.SourceID, installedMark)
+		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}
@@ -335,13 +393,69 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	return nil
 }
 
-// truncate shortens a string to maxLen, adding "..." if truncated
+// truncate shortens a string to maxLen characters, adding "..." if
+// truncated. It counts runes, not bytes, so a non-ASCII name (a Steam
+// persona name, #420) is never cut through the middle of a character.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	r := []rune(s)
+	if len(r) <= maxLen {
 		return s
 	}
 	if maxLen <= 3 {
-		return s[:maxLen]
+		return string(r[:maxLen])
 	}
-	return s[:maxLen-3] + "..."
+	return string(r[:maxLen-3]) + "..."
+}
+
+// refreshSearchedIndexes rebuilds the local index of every source this
+// search will ask that keeps one (`lmm search --refresh`). Progress and the
+// outcome go to STDERR, like every other index notice, so `--json` keeps
+// its single document; a refresh that fails is reported and the search
+// goes ahead on whatever is cached, where the search's own error or
+// warning says the rest.
+func refreshSearchedIndexes(ctx context.Context, service *core.Service, game *domain.Game, sourceID string) {
+	for _, id := range searchedSourceIDs(game, sourceID) {
+		status, err := service.SourceIndexStatus(ctx, id, game.ID)
+		if err != nil || status == nil {
+			continue // no index to refresh; the search reports the rest
+		}
+		report, err := service.RefreshSourceIndex(ctx, id, game.ID, true, printIndexStep)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: refreshing the %s index for %s failed: %v\n", sourceName(service, id), status.Game, err)
+			continue
+		}
+		fmt.Fprintln(os.Stderr, indexReportLine(sourceName(service, id), report))
+	}
+}
+
+// printIndexStep prints an explicit refresh's start line to stderr; the
+// per-thousand progress ticks and the done tick are left to the summary
+// line the caller prints from the report.
+func printIndexStep(e core.Event) {
+	if step, ok := e.(core.StepEvent); ok && step.Phase == core.IndexRefreshStarted {
+		fmt.Fprintf(os.Stderr, "%s...\n", capitalize(step.Detail))
+	}
+}
+
+// searchedSourceIDs names the sources this search will actually ask, in a
+// stable order: the one named by --source, or every source the game maps.
+func searchedSourceIDs(game *domain.Game, sourceID string) []string {
+	if sourceID != "" {
+		return []string{sourceID}
+	}
+	ids := make([]string, 0, len(game.SourceIDs))
+	for id := range game.SourceIDs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// sourceName is a source's display name, falling back to its id - this is
+// notice text, not a place to fail.
+func sourceName(service *core.Service, id string) string {
+	if src, err := service.GetSource(id); err == nil {
+		return src.Name()
+	}
+	return id
 }

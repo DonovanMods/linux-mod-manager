@@ -1,0 +1,573 @@
+// Package core provides business logic orchestration for lmm.
+// uninstall.go holds the single-mod uninstall flow: UninstallOptions/
+// UninstallResult and UninstallMod. Moved verbatim out of flows.go by v2
+// Phase 2 Unit M (#293); runHook, which UninstallMod shares with
+// DeployProfile, lives in hooks.go.
+package core
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+)
+
+// UninstallPlan is PlanUninstall's side-effect-free description of what
+// `lmm uninstall <mod-id>` would do: which installed mod the arguments
+// actually resolve to (the cross-source disambiguation the CLI used to do
+// inline), which game-directory paths would disappear, whether the cache
+// entry survives, and which hooks would run. ApplyUninstall refuses a plan
+// whose installed-mod set has changed since (Ruling 5).
+type UninstallPlan struct {
+	// Mod is the resolved target - the whole installed record, not just a
+	// reference, because it is also what ApplyUninstall reads the profile,
+	// source and ID back off. With an explicit source it is that source's
+	// copy; with a bare ID it is the FIRST installed mod carrying that ID,
+	// preserving the pre-lift CLI's disambiguation exactly (see
+	// PlanUninstall's doc comment).
+	Mod domain.InstalledMod `json:"mod"`
+
+	// Files lists the game-dir-relative paths the undeploy step would
+	// remove: Installer.Uninstall's own removal set (the cache entry's
+	// ListFiles union, falling back to the DB's tracked deployed paths for
+	// an absent entry - #260), narrowed to the paths actually present under
+	// game.ModPath right now. Empty for a mod that is installed but not
+	// currently deployed.
+	Files []string `json:"files"`
+
+	// KeepCache echoes UninstallOptions.KeepCache: false means the mod's
+	// cache entry is deleted too, so a later reinstall re-downloads.
+	KeepCache bool `json:"keep_cache"`
+
+	// CacheUsedBy names the installed rows, other than this one, that still
+	// use the mod's cache entry at its version (#445 gate 2, G2-2): the
+	// entry is kept for them even though KeepCache is false. Empty when the
+	// entry goes (or KeepCache keeps it anyway).
+	CacheUsedBy []string `json:"cache_used_by,omitempty"`
+
+	// External reports that this uninstall removes lmm's TRACKING and
+	// nothing else (#269): no files are touched, there is no cache entry to
+	// delete, and KeepCache is a no-op. A frontend's confirmation must say
+	// so - see UninstallExternalNote for the wording - because "uninstall"
+	// otherwise reads as "remove the mod", and the item stays subscribed in
+	// Steam either way.
+	External bool `json:"external,omitzero"`
+
+	// Hooks names the uninstall.* hooks that would actually run, in run
+	// order. Only configured hooks are listed, and none at all under
+	// SkipHooks.
+	Hooks []string `json:"hooks"`
+
+	// MergedArtifact is what the post-uninstall merged-pak sync would do to
+	// the profile's merged artifact on a DeployCompile game - an effect
+	// Files cannot express, since the artifact belongs to the profile
+	// rather than to any one mod. Nil when the game does not deploy by
+	// compilation, and nil when the sync would leave the artifact exactly
+	// as it is (Ruling 8). See mergedArtifactEffectForUninstall. omitzero
+	// (phase-end review Minor 7): a non-compile game's plan omits the key
+	// entirely instead of carrying merged_artifact: null, matching this
+	// phase's own not-applicable-is-absent convention (convert_paks,
+	// auth, cache_path, updated_at).
+	MergedArtifact *MergedArtifactEffect `json:"merged_artifact,omitzero"`
+
+	// RecordedOnly is set when the mod's profile is not the game's active
+	// profile (#462). The game directory holds the active profile's mods,
+	// so such an uninstall removes only the files that profile recorded
+	// deploying for the mod and nothing else still claims - the rule a
+	// recorded-only purge follows (PurgePlan.RecordedOnly). Files is then
+	// those paths, Kept the ones it leaves and why; it runs no hooks and
+	// leaves a merged artifact alone. The mod's record and profile entry go
+	// as usual.
+	RecordedOnly bool `json:"recorded_only,omitzero"`
+	// ActiveProfile names the game's active profile when RecordedOnly is
+	// set.
+	ActiveProfile string `json:"active_profile,omitempty"`
+	// Kept is the recorded paths a RecordedOnly uninstall leaves, and why.
+	Kept []PurgeKeptPath `json:"kept,omitempty"`
+	// Stranded is the target mod's records under an earlier mod_path. A
+	// one-mod uninstall intentionally leaves them for PurgeProfile, which
+	// removes them under the directory where lmm deployed them (#451, #488).
+	Stranded []PurgeStrandedPath `json:"stranded,omitempty"`
+
+	// snapshot is Ruling 5's precondition: the installed-mod set this plan
+	// was computed from, re-derived and compared by ApplyUninstall.
+	snapshot installedSnapshot `json:"-"`
+	// remove is every recorded path a RecordedOnly plan approved removing,
+	// the ones already gone included; untrack is the kept paths whose
+	// record it approved dropping.
+	remove, untrack map[string]bool
+}
+
+// uninstallModNotFoundError preserves PlanUninstall's established sentence
+// while exposing the not-found sentinel that frontends use to answer 404.
+type uninstallModNotFoundError struct{ message string }
+
+func (e *uninstallModNotFoundError) Error() string { return e.message }
+
+func (e *uninstallModNotFoundError) Unwrap() error { return domain.ErrModNotFound }
+
+// PlanUninstall resolves sourceID/modID against profileName's installed mods
+// and computes what UninstallMod would then do, without touching anything.
+//
+// Resolution mirrors the pre-lift cmd/lmm/uninstall.go exactly, including
+// both of its error texts: with sourceID set, that source's copy is looked
+// up directly ("mod X not found in profile P (source: S)", typed as
+// domain.ErrModNotFound); with sourceID empty, every installed mod is scanned
+// by ID and the FIRST hit wins ("mod X not found in profile P"), which is how
+// `lmm uninstall <id>` has always disambiguated an ID installed from more
+// than one source. The scan's own read failure keeps its pre-lift wording too
+// ("listing installed mods: …").
+//
+// The returned plan is a snapshot: pass it to ApplyUninstall promptly, and
+// be ready for ErrStalePlan if the installed set moved underneath it.
+func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts UninstallOptions) (*UninstallPlan, error) {
+	// Resolution runs FIRST, in the pre-lift order, so a failing DB still
+	// produces the historical message rather than the snapshot read's.
+	var mod *domain.InstalledMod
+	var installed []domain.InstalledMod
+	if sourceID != "" {
+		found, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
+		if err != nil {
+			if errors.Is(err, domain.ErrModNotFound) {
+				return nil, &uninstallModNotFoundError{message: fmt.Sprintf("mod %s not found in profile %s (source: %s)", modID, profileName, sourceID)}
+			}
+			return nil, fmt.Errorf("getting installed mod: %w", err)
+		}
+		mod = found
+		if installed, err = s.GetInstalledMods(ctx, game.ID, profileName); err != nil {
+			return nil, fmt.Errorf("listing installed mods: %w", err)
+		}
+	} else {
+		all, err := s.GetInstalledMods(ctx, game.ID, profileName)
+		if err != nil {
+			return nil, fmt.Errorf("listing installed mods: %w", err)
+		}
+		installed = all
+		// #373: refuse a bare ID that matches more than one source rather
+		// than taking the first match - an uninstall DELETES files and a
+		// cache entry, so guessing wrong is not recoverable by re-running it
+		// with the flag.
+		if mod, err = ResolveInstalledByID(all, modID, profileName, "-s/--source"); err != nil {
+			return nil, err
+		}
+	}
+
+	live, recordedOnly, err := s.profileScope(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	plan := &UninstallPlan{
+		Mod:       *mod,
+		External:  mod.External,
+		KeepCache: opts.KeepCache,
+		// A removal: the adapter has no say (removalSnapshotOf).
+		snapshot: removalSnapshotOf(installed),
+	}
+	if !mod.External {
+		if plan.Stranded, err = s.strandedUninstallPaths(ctx, game, profileName, mod.SourceID, mod.ID); err != nil {
+			return nil, err
+		}
+	}
+	switch {
+	case recordedOnly:
+		plan.RecordedOnly, plan.ActiveProfile = true, live
+		plan.Files, plan.Hooks = []string{}, []string{}
+		if !mod.External {
+			if err := s.planRecordedUninstall(ctx, game, plan, live); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		plan.Hooks = uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)
+		plan.MergedArtifact = s.mergedArtifactEffectForUninstall(ctx, game, profileName, mod)
+		for _, f := range s.deployedPathsFor(ctx, s.getInstaller(game), game, profileName, mod) {
+			if isDeployedNow(game, f) {
+				plan.Files = append(plan.Files, f)
+			}
+		}
+	}
+	if !opts.KeepCache && !mod.External {
+		usedBy, err := s.cacheEntryUsers(ctx, game, profileName, mod.SourceID, mod.ID, mod.Version)
+		if err != nil {
+			return nil, err
+		}
+		plan.CacheUsedBy = usedBy
+	}
+	return plan, nil
+}
+
+// planRecordedUninstall fills a RecordedOnly plan's Files and Kept from
+// what the mod's profile recorded deploying for it (#462): the paths a
+// recorded-only purge of that profile would remove or keep, narrowed to the
+// mod.
+func (s *Service) planRecordedUninstall(ctx context.Context, game *domain.Game, plan *UninstallPlan, live string) error {
+	mod := plan.Mod
+	others, err := s.otherGamesRecording(ctx, game)
+	if err != nil {
+		return err
+	}
+	remove, kept, err := s.recordedPaths(ctx, game, mod.ProfileName, live, others, modKeySet(mod.SourceID, mod.ID), false)
+	if err != nil {
+		return err
+	}
+	plan.remove = make(map[string]bool, len(remove))
+	plan.untrack = make(map[string]bool, len(kept))
+	for _, row := range remove {
+		plan.remove[row.RelativePath] = true
+		if isDeployedNow(game, row.RelativePath) {
+			plan.Files = append(plan.Files, row.RelativePath)
+		}
+	}
+	for _, k := range kept {
+		plan.Kept = append(plan.Kept, k.PurgeKeptPath)
+		if k.Reason.DropsRecord() {
+			plan.untrack[k.Path] = true
+		}
+	}
+	return nil
+}
+
+// modKeySet is the one-mod filter clearRecorded and recordedPaths take.
+func modKeySet(sourceID, modID string) map[string]bool {
+	return map[string]bool{domain.ModKey(sourceID, modID): true}
+}
+
+// ApplyUninstall carries out plan under the mutation lock. Ruling 5: the
+// plan's recorded installed-mod set is re-derived first and a mismatch is
+// refused with ErrStalePlan rather than applied.
+//
+// The plan supplies the target (profile, source and ID) and the freshness
+// precondition; everything else comes from opts, so a frontend that showed
+// the plan and then let the user toggle --keep-cache still applies what the
+// user finally chose.
+func (s *Service) ApplyUninstall(ctx context.Context, game *domain.Game, plan *UninstallPlan, opts UninstallOptions) (*UninstallResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if plan == nil {
+		return nil, errors.New("uninstall plan is nil: call PlanUninstall first")
+	}
+	live, recordedOnly, err := s.profileScope(ctx, game.ID, plan.Mod.ProfileName)
+	if err != nil {
+		return nil, err
+	}
+	if recordedOnly != plan.RecordedOnly {
+		return nil, fmt.Errorf("%w: the active profile of %s is %s now, not what it was when this uninstall was planned", ErrStalePlan, game.ID, live)
+	}
+	if err := s.checkRemovalPlanFresh(ctx, game.ID, plan.Mod.ProfileName, plan.snapshot); err != nil {
+		return nil, err
+	}
+	if recordedOnly {
+		return s.uninstallRecorded(ctx, game, plan.Mod.ProfileName, plan.Mod.SourceID, plan.Mod.ID, live, opts,
+			func(path string) bool { return plan.remove[path] },
+			func(path string) bool { return plan.untrack[path] })
+	}
+	return s.uninstallMod(ctx, game, plan.Mod.ProfileName, plan.Mod.SourceID, plan.Mod.ID, opts)
+}
+
+// UninstallOptions configures UninstallMod.
+type UninstallOptions struct {
+	KeepCache bool // --keep-cache: skip deleting the mod's cache entry
+
+	// Hook plumbing: UninstallMod resolves the game/profile hooks and a
+	// HookRunner itself (Service.resolvedHooks/hookRunner, hooks_resolve.go)
+	// rather than taking them from the caller. SkipHooks (the CLI's
+	// --no-hooks) still skips execution entirely even though the hooks were
+	// resolved.
+	Force     bool // continue past a failing uninstall.before_* hook (warn instead of fail)
+	SkipHooks bool // run no hooks even when hooks are configured (the CLI's --no-hooks)
+
+	// No verbosity concept lives here: core never gates or prints
+	// diagnostics. UninstallResult.Notes and .Warnings are always fully
+	// populated; it is the caller's job to decide what to display and
+	// under what conditions. See UninstallResult's doc comment.
+}
+
+// UninstallResult reports the outcome of UninstallMod. Every entry in both
+// slices below is always recorded — UninstallMod has no verbosity concept —
+// but the two slices carry different display contracts for callers to honor
+// (this is the convention Tasks 3-4 should follow too):
+//
+//   - Warnings holds diagnostics the pre-extraction CLI printed
+//     unconditionally to stderr regardless of --verbose (hook failures:
+//     uninstall.before_* when Force is set, and uninstall.after_*, which is
+//     always non-fatal). Callers should print each entry to stderr,
+//     unconditionally, e.g. `fmt.Fprintf(os.Stderr, "Warning: %v\n", w)`.
+//   - Notes holds operational diagnostics the pre-extraction CLI only
+//     printed under --verbose (undeploy failure, cache-delete failure, and
+//     a failure to remove the mod from the profile). Each entry already
+//     carries its historical prefix word baked into the text ("Warning: "
+//     for undeploy/cache-delete, "Note: " for the profile-removal message,
+//     matching the pre-extraction CLI's exact wording for each), so a
+//     caller that wants byte-identical pre-extraction output should print
+//     each entry to stdout ONLY under --verbose, verbatim, e.g.
+//     `fmt.Printf("  %s\n", n)`.
+//
+// On error, the returned result carries any diagnostics accumulated before
+// the failure; callers should surface them alongside the error.
+type UninstallResult struct {
+	Warnings []string `json:"warnings,omitempty"` // unconditional, stderr, audience: operator/always-visible
+	Notes    []string `json:"notes,omitempty"`    // --verbose-gated, stdout, audience: diagnostic detail
+
+	// CacheUsedBy names the installed rows that still use the mod's cache
+	// entry at its version, which the uninstall therefore kept (#445 gate 2,
+	// G2-2) - see UninstallPlan.CacheUsedBy.
+	CacheUsedBy []string `json:"cache_used_by,omitempty"`
+
+	// RecordedOnly, ActiveProfile and Kept say that the uninstall acted for
+	// a profile that is not the game's active one (#462,
+	// UninstallPlan.RecordedOnly): it removed only Removed, of the files that
+	// profile recorded, and left Kept.
+	RecordedOnly  bool            `json:"recorded_only,omitzero"`
+	ActiveProfile string          `json:"active_profile,omitempty"`
+	Removed       []string        `json:"removed,omitempty"`
+	Kept          []PurgeKeptPath `json:"kept,omitempty"`
+	// Stranded is the target mod's deployed-file records left under an
+	// earlier mod_path. They require `lmm purge -p <profile>` to clear.
+	Stranded []PurgeStrandedPath `json:"stranded,omitempty"`
+}
+
+// UninstallMod removes a mod from the profile: runs uninstall hooks,
+// undeploys files, deletes the cache entry (unless KeepCache, or another
+// row still uses it - UninstallResult.CacheUsedBy), removes the DB row, and
+// removes the mod from the profile YAML.
+//
+// Hook failure semantics (matching the pre-extraction CLI's doUninstall):
+//   - uninstall.before_all / uninstall.before_each: a failure aborts the
+//     operation with an error, unless Force is set, in which case it is
+//     recorded in Warnings and the uninstall proceeds.
+//   - uninstall.after_each / uninstall.after_all: always non-fatal; a
+//     failure is recorded in Warnings after every other step has already
+//     committed.
+//
+// Undeploy failures, cache-delete failures, and a failure to remove the mod
+// from the profile (e.g. the DB and profile have drifted out of sync) are
+// all non-fatal and always recorded in Notes; the operation still
+// completes. See UninstallResult's doc comment for the Warnings/Notes
+// display contract.
+//
+// It is PlanUninstall + ApplyUninstall in one call, under a single mutation
+// slot, for callers with nothing to show between the two (core's own tests);
+// it takes the resolved sourceID directly rather than re-running the plan's
+// bare-ID disambiguation. Frontends plan first, render, then apply.
+//
+// Convenience = PlanUninstall + ApplyUninstall; kept exported for core tests
+// and for frontends that want one call, even though it has no non-test
+// caller today (Task 25 review Important #1; ruling recorded in the
+// 2026-08-29 decisions-log row of docs/plans/2026-08-27-v2-core-refactor-design.md).
+// No freshness check: with no plan, there is nothing for ApplyUninstall's
+// checkPlanFresh to compare against, so a profile mutated between resolution
+// and this call is not caught the way the Plan+Apply pair catches it
+// (Task 25 review Minor #5).
+func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts UninstallOptions) (*UninstallResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	live, recordedOnly, err := s.profileScope(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	if recordedOnly {
+		all := func(string) bool { return true }
+		return s.uninstallRecorded(ctx, game, profileName, sourceID, modID, live, opts, all, all)
+	}
+	return s.uninstallMod(ctx, game, profileName, sourceID, modID, opts)
+}
+
+// uninstallRecorded is uninstallMod for a profile that is not the game's
+// active one, live (#462, UninstallPlan.RecordedOnly): the mod's recorded
+// files go only as clearRecorded allows - approve and untrack are the
+// plan's say - and no hook runs. The record and the profile entry go as
+// they always do; a recorded path that is kept with its record stays with
+// that profile, for `lmm purge -p <profile>`.
+func (s *Service) uninstallRecorded(ctx context.Context, game *domain.Game, profileName, sourceID, modID, live string, opts UninstallOptions, approve, untrack func(string) bool) (*UninstallResult, error) {
+	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
+	}
+	result := &UninstallResult{RecordedOnly: true, ActiveProfile: live}
+	if mod.External {
+		result.Notes = append(result.Notes, "Note: "+UninstallExternalNote)
+	} else {
+		if result.Stranded, err = s.strandedUninstallPaths(ctx, game, profileName, mod.SourceID, mod.ID); err != nil {
+			return result, err
+		}
+		cleared, err := s.clearRecorded(ctx, game, profileName, live, recordedClearOptions{
+			only:    modKeySet(mod.SourceID, mod.ID),
+			approve: approve,
+			untrack: untrack,
+			note:    func(msg string) { result.Notes = append(result.Notes, msg) },
+			warn:    func(msg string) { result.Warnings = append(result.Warnings, msg) },
+		})
+		if cleared != nil {
+			result.Removed = cleared.removed
+			result.Kept = append(result.Kept, cleared.kept...)
+		}
+		if err != nil {
+			return result, err
+		}
+		if !opts.KeepCache {
+			usedBy, err := s.removeCacheEntry(ctx, game, profileName, mod.SourceID, modID, mod.Version)
+			if err != nil {
+				result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to clean cache: %v", err))
+			}
+			result.CacheUsedBy = usedBy
+		}
+	}
+
+	if err := s.deleteInstalledMod(ctx, mod.SourceID, modID, game.ID, profileName); err != nil {
+		return result, fmt.Errorf("failed to remove mod record: %w", err)
+	}
+	// Ruling 16 (A), as in uninstallMod.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return s.NewProfileManager().RemoveMod(ctx, game.ID, profileName, mod.SourceID, modID)
+	}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return result, cerr
+		}
+		result.Notes = append(result.Notes, fmt.Sprintf("Note: %v", err))
+	}
+	s.takeCaptureWarnings(game.ID, OpPurge, PurgeWarning, &result.Warnings, nil)
+	return result, nil
+}
+
+func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts UninstallOptions) (*UninstallResult, error) {
+	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
+	}
+
+	result := &UninstallResult{}
+
+	hooks, err := s.resolvedHooks(ctx, game, profileName)
+	if err != nil {
+		return result, err
+	}
+	runner, err := s.hookRunner(ctx)
+	if err != nil {
+		return result, err
+	}
+	hookCtx := hookContextFor(game)
+
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.before_all", hooks.GetUninstallBeforeAll()); err != nil {
+		if !opts.Force {
+			return result, fmt.Errorf("uninstall.before_all hook failed: %w", err)
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_all hook failed (forced): %v", err))
+	}
+
+	hookCtx.ModID = mod.ID
+	hookCtx.ModName = mod.Name
+	hookCtx.ModVersion = mod.Version
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.before_each", hooks.GetUninstallBeforeEach()); err != nil {
+		if !opts.Force {
+			return result, fmt.Errorf("uninstall.before_each hook failed: %w", err)
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err))
+	}
+
+	// #269: an external mod's uninstall is tracking-only. lmm deployed
+	// nothing to undeploy and cached nothing to delete, and reaching for
+	// either would be reaching into a directory the Steam client owns.
+	if !mod.External {
+		if result.Stranded, err = s.strandedUninstallPaths(ctx, game, profileName, mod.SourceID, mod.ID); err != nil {
+			return result, err
+		}
+		installer, err := s.getInstallerForProfile(ctx, game, profileName)
+		if err != nil {
+			return result, err
+		}
+		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
+			// Non-fatal - files may have been manually removed. Always
+			// recorded; the historical "Warning: " prefix is baked into the
+			// text itself (see UninstallResult's doc comment).
+			result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to undeploy some files: %v", err))
+		}
+
+		if !opts.KeepCache {
+			// #445 gate 2, G2-2: not while another row still uses it.
+			usedBy, err := s.removeCacheEntry(ctx, game, profileName, mod.SourceID, modID, mod.Version)
+			if err != nil {
+				result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to clean cache: %v", err))
+			}
+			result.CacheUsedBy = usedBy
+		}
+	} else {
+		result.Notes = append(result.Notes, "Note: "+UninstallExternalNote)
+	}
+
+	if err := s.deleteInstalledMod(ctx, mod.SourceID, modID, game.ID, profileName); err != nil {
+		return result, fmt.Errorf("failed to remove mod record: %w", err)
+	}
+
+	// Ruling 16 (A): the DB row is already gone, so the ref removal that
+	// completes it runs to the end even under a cancelled ctx; the
+	// cancellation is then reported, never absorbed into the Note below.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return s.NewProfileManager().RemoveMod(ctx, game.ID, profileName, mod.SourceID, modID)
+	}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return result, cerr
+		}
+		// Don't fail if not in profile. Always recorded, historical "Note: "
+		// prefix baked into the text (see UninstallResult's doc comment).
+		result.Notes = append(result.Notes, fmt.Sprintf("Note: %v", err))
+	}
+
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.after_each", hooks.GetUninstallAfterEach()); err != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_each hook failed: %v", err))
+	}
+
+	hookCtx.ModID = ""
+	hookCtx.ModName = ""
+	hookCtx.ModVersion = ""
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.after_all", hooks.GetUninstallAfterAll()); err != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_all hook failed: %v", err))
+	}
+
+	// #197 postsmoke fix: UninstallResult.Warnings (unconditional stderr)
+	// already exists for exactly this - Notes is --verbose-gated
+	// (printUninstallDiagnostics), so a sync failure here used to be
+	// silent by default.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not sync merged pak: %v", syncErr))
+	} else {
+		result.Warnings = append(result.Warnings, syncWarnings...)
+	}
+
+	// #350 re-review finding N2, the uninstall half: an uninstall puts
+	// originals back (ruling (a)), so a failed put-back has to reach the
+	// result, not just WarnWriter - which under `lmm serve` is the server's
+	// stderr, invisible to the browser, and would otherwise surface late on
+	// the next deploy/install/update. There is no event sink on this flow
+	// (an uninstall has no live stream), so neither the op nor the phase
+	// ever reaches a wire; OpPurge/PurgeWarning is the family a removal's
+	// diagnostics belong to.
+	s.takeCaptureWarnings(game.ID, OpPurge, PurgeWarning, &result.Warnings, nil)
+
+	return result, nil
+}
+
+// strandedUninstallPaths returns the target mod's records under a former
+// mod_path. They are intentionally outside a one-mod uninstall's removal
+// scope: PurgeProfile is the operation that can safely clear such paths at
+// their recorded roots (#451). Keeping them in both plan and result lets every
+// frontend name that remedy without rediscovering storage state (#488).
+func (s *Service) strandedUninstallPaths(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) ([]PurgeStrandedPath, error) {
+	rows, err := s.db.ListDeployedFiles(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("listing deployed files: %w", err)
+	}
+	var stranded []PurgeStrandedPath
+	for _, row := range rows {
+		if row.SourceID == sourceID && row.ModID == modID && !underCurrentRoot(game, row.ModPath) {
+			stranded = append(stranded, PurgeStrandedPath{Path: row.RelativePath, ModPath: row.ModPath})
+		}
+	}
+	return stranded, nil
+}

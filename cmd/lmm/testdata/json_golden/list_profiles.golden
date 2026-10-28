@@ -1,0 +1,7 @@
+{
+  "game_id": "g1",
+  "profiles": [
+    "default",
+    "survival"
+  ]
+}

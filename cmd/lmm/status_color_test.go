@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,12 +16,12 @@ import (
 func TestShowGameStatus_EnabledDisabledCounts_PlainWhenColorDisabled(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	resetColorFlags(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Enabled Mod", "a.esp")
 	seedModWithState(t, svc, game, "2", "Disabled Mod", false, false)
 
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.NotContains(t, out, "\x1b[")
@@ -30,13 +31,13 @@ func TestShowGameStatus_EnabledDisabledCounts_PlainWhenColorDisabled(t *testing.
 func TestShowGameStatus_EnabledDisabledCounts_ColoredWhenTTY(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	resetColorFlags(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Enabled Mod", "a.esp")
 	seedModWithState(t, svc, game, "2", "Disabled Mod", false, false)
 
 	withColorCapableStdout(t, true)
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.Contains(t, out, ansiGreen+"1"+ansiReset, "enabled count should be accented green")
@@ -45,22 +46,22 @@ func TestShowGameStatus_EnabledDisabledCounts_ColoredWhenTTY(t *testing.T) {
 
 // TestDoStatus_TableHeader_BoldedWhenTTY_AlignmentUnaffected guards the
 // "Configured Games:" summary table: header accenting (#193: bold+cyan, not
-// bold-only) must not perturb the tabwriter-computed column alignment (see
+// bold-only) must not perturb display-width column alignment (see
 // printTable's doc comment).
 func TestDoStatus_TableHeader_BoldedWhenTTY_AlignmentUnaffected(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
 
 	resetColorFlags(t)
 	withColorCapableStdout(t, false)
 	plain := captureStdout(t, func() error {
-		return doStatus(svc)
+		return doStatus(context.Background(), svc)
 	})
 
 	withColorCapableStdout(t, true)
 	colored := captureStdout(t, func() error {
-		return doStatus(svc)
+		return doStatus(context.Background(), svc)
 	})
 
 	assert.Contains(t, colored, ansiBold, "table header should be accented when color is enabled")
@@ -71,21 +72,21 @@ func TestDoStatus_TableHeader_BoldedWhenTTY_AlignmentUnaffected(t *testing.T) {
 // TestDoStatus_LastColumnCount_CyanWhenTTY_AlignmentUnaffected guards #193's
 // richer palette for the "Configured Games:" table: its last column (a mod
 // or profile count, depending on --verbose) is safe to color inline since
-// tabwriter never pads after the final cell (see printTable's doc comment).
+// the table writer never pads after the final cell (see printTable's doc comment).
 func TestDoStatus_LastColumnCount_CyanWhenTTY_AlignmentUnaffected(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
 
 	resetColorFlags(t)
 	withColorCapableStdout(t, false)
 	plain := captureStdout(t, func() error {
-		return doStatus(svc)
+		return doStatus(context.Background(), svc)
 	})
 
 	withColorCapableStdout(t, true)
 	colored := captureStdout(t, func() error {
-		return doStatus(svc)
+		return doStatus(context.Background(), svc)
 	})
 
 	assert.Contains(t, colored, ansiCyan+"1"+ansiReset, "the last column's count should be a cyan accent")
@@ -99,13 +100,13 @@ func TestDoStatus_LastColumnCount_CyanWhenTTY_AlignmentUnaffected(t *testing.T) 
 func TestShowGameStatus_RicherValues_ColoredWhenTTY(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	resetColorFlags(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
-	require.NoError(t, svc.NewProfileManager().SetDefault(game.ID, "default"))
+	require.NoError(t, svc.NewProfileManager().SetDefault(context.Background(), game.ID, "default"))
 
 	withColorCapableStdout(t, true)
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.Contains(t, out, ansiGreen+"default"+ansiReset, "the active profile name should be accented green")
@@ -120,12 +121,12 @@ func TestShowGameStatus_RicherValues_ColoredWhenTTY(t *testing.T) {
 func TestShowGameStatus_RicherValues_PlainWhenColorDisabled(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	resetColorFlags(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
-	require.NoError(t, svc.NewProfileManager().SetDefault(game.ID, "default"))
+	require.NoError(t, svc.NewProfileManager().SetDefault(context.Background(), game.ID, "default"))
 
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.NotContains(t, out, "\x1b[")

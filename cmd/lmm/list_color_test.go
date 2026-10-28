@@ -1,11 +1,12 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,7 +23,7 @@ func listNonVerbose(t *testing.T, svc *core.Service, game *domain.Game) string {
 	t.Cleanup(func() { verbose, jsonOutput = oldVerbose, oldJSON })
 
 	return captureStdout(t, func() error {
-		return doList(&cobra.Command{}, svc, game)
+		return doList(context.Background(), &cobra.Command{}, svc, game)
 	})
 }
 
@@ -32,7 +33,7 @@ func listNonVerbose(t *testing.T, svc *core.Service, game *domain.Game) string {
 func seedModWithState(t *testing.T, svc *core.Service, game *domain.Game, modID, name string, enabled, deployed bool) {
 	t.Helper()
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -40,12 +41,12 @@ func seedModWithState(t *testing.T, svc *core.Service, game *domain.Game, modID,
 		Deployed:     deployed,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
 }
 
 func rowFor(out, name string) string {
@@ -116,8 +117,8 @@ func TestList_Verbose_RowTinting(t *testing.T) {
 
 // TestList_Verbose_ColorNeverBreaksAlignment: stripping ANSI from a
 // color-enabled run must reproduce the color-disabled run byte-for-byte -
-// text/tabwriter pads by raw byte length, so this is the guard against a
-// silent column-alignment regression (see printTable's doc comment).
+// ANSI must be applied only after display-width padding, so this guards
+// against a silent column-alignment regression (see printTable's doc comment).
 func TestList_Verbose_ColorNeverBreaksAlignment(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	resetColorFlags(t)
