@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 )
 
 const (
@@ -18,6 +19,8 @@ const (
 	// release body.
 	releaseWorkflow = "../../.github/workflows/release.yml"
 	repoChangelog   = "../../CHANGELOG.md"
+	// goreleaserConfig is what the workflow's GoReleaser step runs.
+	goreleaserConfig = "../../.goreleaser.yaml"
 )
 
 // releaseNotesScript is the release_notes step's `run: |` block, dedented:
@@ -177,4 +180,26 @@ func TestReleaseNotes_TheUnreleasedSectionFitsARelease(t *testing.T) {
 	notes, err := runReleaseNotes(t, "vUnreleased", changelog)
 	require.NoError(t, err)
 	assert.NotContains(t, notes, "\n## [")
+}
+
+// TestReleaseNotes_GoreleaserPublishesThem: GoReleaser reads --release-notes
+// inside its changelog pipe, and `changelog: disable: true` skips that pipe,
+// so the extracted notes were dropped and v2.0.0's draft had an empty body
+// (#551). A snapshot build skips the pipe too, so only this test sees it.
+func TestReleaseNotes_GoreleaserPublishesThem(t *testing.T) {
+	workflow, err := os.ReadFile(releaseWorkflow)
+	require.NoError(t, err)
+	require.Contains(t, string(workflow), "--release-notes=",
+		"the release workflow passes the extracted notes to GoReleaser")
+
+	raw, err := os.ReadFile(goreleaserConfig)
+	require.NoError(t, err)
+	var cfg struct {
+		Changelog struct {
+			Disable string `yaml:"disable"`
+		} `yaml:"changelog"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &cfg))
+	assert.Empty(t, cfg.Changelog.Disable,
+		"changelog.disable skips the pipe that applies --release-notes, so the release body would be empty")
 }

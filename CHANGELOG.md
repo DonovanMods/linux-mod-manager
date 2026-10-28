@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A release's GitHub body is no longer empty (#551).** `.goreleaser.yaml`
+  set `changelog: disable: true`, which skips the GoReleaser pipe that
+  applies `--release-notes`, so the notes the release workflow extracts from
+  this file were dropped and v2.0.0's draft came out with an empty body.
+  That draft was fixed by hand. The setting is gone, and a test fails if it
+  comes back while the workflow relies on `--release-notes`.
+
 ## [2.0.0] - 2026-10-28
 
 lmm 2.0 adds a local web UI, `lmm serve`, alongside the CLI. Both run on
