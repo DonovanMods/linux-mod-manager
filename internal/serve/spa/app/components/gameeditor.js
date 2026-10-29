@@ -286,17 +286,16 @@ function CurseForgeTypesPicker({
                           ),
                         })}
                     />
-                    ${
-                      row.name
-                        ? html`${row.name}${" "}<span
-                              class="mono version-types__slug"
-                              >${row.slug}</span
-                            >`
-                        : html`<span class="mono">${row.id}</span>${" "}<span
-                              class="version-types__slug"
-                              >(not in CurseForge's list)</span
-                            >`
-                    }
+                    <span>
+                      ${
+                        row.name
+                          ? row.name
+                          : html`<span class="mono">${row.id}</span>${" "}<span
+                                class="version-types__note"
+                                >(not in CurseForge's list)</span
+                              >`
+                      }
+                    </span>
                   </label>
                 `,
               )}
