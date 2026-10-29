@@ -107,6 +107,25 @@ func (c *CurseForge) ListGames(ctx context.Context) ([]source.GameEntry, error) 
 	return entries, nil
 }
 
+// ListGameVersionTypes implements source.GameVersionTypeLister (#563): the
+// gameVersionTypeIds a game's curseforge.game_version_types can name, with
+// CurseForge's name and slug for each.
+func (c *CurseForge) ListGameVersionTypes(ctx context.Context, sourceGameID string) ([]source.GameVersionType, error) {
+	gameID, err := c.resolveGameID(ctx, sourceGameID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := c.client.GetGameVersionTypes(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	types := make([]source.GameVersionType, len(rows))
+	for i, r := range rows {
+		types[i] = source.GameVersionType{ID: r.ID, Name: r.Name, Slug: r.Slug}
+	}
+	return types, nil
+}
+
 // TypeLabel implements source.TypeLabeler.
 func (c *CurseForge) TypeLabel() string {
 	return "built-in"

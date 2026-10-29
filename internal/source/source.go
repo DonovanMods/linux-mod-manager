@@ -408,6 +408,25 @@ type GameCatalog interface {
 	ListGames(ctx context.Context) ([]GameEntry, error)
 }
 
+// GameVersionType is one of the version types a source sorts a game's files
+// by (#563): CurseForge's gameVersionTypeId, which is what tells World of
+// Warcraft Retail files from Classic ones under one CurseForge game. ID is
+// the value a game's settings store; Name and Slug are the source's own
+// labels for it, for a person to pick by.
+type GameVersionType struct {
+	ID   int
+	Name string
+	Slug string
+}
+
+// GameVersionTypeLister lists the version types a source publishes for a
+// game, in the source's own order (#563), so a frontend can offer them by
+// name instead of asking for raw ids. Absent: the source has no such
+// classification, and a game's version-type setting is entered by id.
+type GameVersionTypeLister interface {
+	ListGameVersionTypes(ctx context.Context, sourceGameID string) ([]GameVersionType, error)
+}
+
 // GameIdentifierIgnorer is implemented by a source whose per-game mapped
 // value (games.yaml's `sources: {<id>: <value>}`) addresses nothing, so an
 // EMPTY mapping is a legitimate configuration rather than a value the user
