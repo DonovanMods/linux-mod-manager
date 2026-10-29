@@ -11,6 +11,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// defaultServeAddr is where `lmm serve` listens without --addr.
+const defaultServeAddr = "127.0.0.1:7420"
+
 var (
 	serveAddr   string
 	serveNoOpen bool
@@ -37,7 +40,7 @@ Examples:
 }
 
 func init() {
-	serveCmd.Flags().StringVar(&serveAddr, "addr", "127.0.0.1:7420", "address to listen on (host:port)")
+	serveCmd.Flags().StringVar(&serveAddr, "addr", defaultServeAddr, "address to listen on (host:port)")
 	serveCmd.Flags().BoolVar(&serveNoOpen, "no-open", false, "don't open a browser automatically")
 	rootCmd.AddCommand(serveCmd)
 }
