@@ -68,11 +68,13 @@ type pendingReleaseCheck struct {
 var pendingRelease *pendingReleaseCheck
 
 // releaseNoticeSkip names the top-level commands that never get the notice:
-// `lmm version` reports the same facts itself, `lmm serve`'s output is a
+// `lmm version` and `lmm self-update` report the same facts themselves (and
+// self-update may just have installed the release), `lmm serve`'s output is a
 // server's log and its own banner covers the web UI, and the rest are
 // shell plumbing or help.
 var releaseNoticeSkip = map[string]bool{
 	"version":          true,
+	"self-update":      true,
 	"serve":            true,
 	"completion":       true,
 	"help":             true,

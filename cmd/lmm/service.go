@@ -16,7 +16,10 @@ import (
 // touches the real user manager.
 var newUserUnits = core.NewUserUnits
 
-var serviceAddr string
+var (
+	serviceAddr       string
+	serviceAutoUpdate bool
+)
 
 // serviceCmd groups the systemd user-service commands (#567). None of them
 // opens the mod database: a unit file and the user manager are all they
@@ -57,20 +60,29 @@ service. If a package already installed the unit, nothing is written: lmm
 tells you the systemctl command that turns it on. A unit file lmm did not
 write is left alone.
 
+--auto-update also installs lmm-update.timer, which runs 'lmm self-update
+--auto' once a day. That installs a new lmm release only while config.yaml
+says 'auto_update: true', so the setting turns updates on and off without
+touching the units. Later installs keep the timer; 'lmm service uninstall'
+removes it. It is refused for an lmm a package manager installed, which
+'lmm self-update' never replaces.
+
 Examples:
   lmm service install
-  lmm service install --addr 127.0.0.1:8080`,
+  lmm service install --addr 127.0.0.1:8080
+  lmm service install --auto-update`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		return doServiceInstall(cmd.Context(), cmd, serviceAddr)
+		return doServiceInstallWith(cmd.Context(), cmd, serviceAddr, serviceAutoUpdate)
 	},
 }
 
 var serviceUninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Stop, disable and remove the lmm-serve.service that 'lmm service install' wrote",
-	Long: `Stop and disable lmm-serve.service, remove the unit file 'lmm service
-install' wrote, and reload the user manager. A unit a package installed is
+	Short: "Stop, disable and remove the units that 'lmm service install' wrote",
+	Long: `Stop and disable lmm-serve.service, and lmm-update.timer and
+lmm-update.service when --auto-update installed them, remove the unit files
+'lmm service install' wrote, and reload the user manager. A unit a package installed is
 left alone; lmm tells you the systemctl command that turns it off.
 
 Disabling removes the enablement link in ~/.config/systemd/user, which a
@@ -103,13 +115,22 @@ Examples:
 
 func init() {
 	serviceInstallCmd.Flags().StringVar(&serviceAddr, "addr", "", "address 'lmm serve' listens on (host:port; default "+defaultServeAddr+")")
+	serviceInstallCmd.Flags().BoolVar(&serviceAutoUpdate, "auto-update", false, "also install lmm-update.timer, which runs 'lmm self-update' daily while auto_update is true in config.yaml")
 	serviceCmd.AddCommand(serviceInstallCmd, serviceUninstallCmd, serviceStatusCmd)
 	rootCmd.AddCommand(serviceCmd)
 }
 
-// doServiceInstall installs the unit for this binary and prints where it
-// went, the address it serves and, without lingering, the boot-time hint.
+// doServiceInstall installs lmm-serve.service alone, as before
+// --auto-update existed.
 func doServiceInstall(ctx context.Context, cmd *cobra.Command, addr string) error {
+	return doServiceInstallWith(ctx, cmd, addr, false)
+}
+
+// doServiceInstallWith installs the units for this binary and prints where
+// they went, the address it serves and, without lingering, the boot-time
+// hint. autoUpdate adds the self-update timer (#569), refused first for a
+// binary `lmm self-update` cannot replace.
+func doServiceInstallWith(ctx context.Context, cmd *cobra.Command, addr string, autoUpdate bool) error {
 	if addr != "" {
 		if err := core.ValidateServeAddr(addr); err != nil {
 			return err
@@ -124,7 +145,16 @@ func doServiceInstall(ctx context.Context, cmd *cobra.Command, addr string) erro
 	}
 	// The service does not start in this directory, so a relative
 	// --config or --data is made absolute here.
-	opts := core.ServiceInstallOptions{Addr: addr}
+	if autoUpdate {
+		probe := core.DefaultInstallProbe()
+		if releaseInstallProbe != nil {
+			probe = *releaseInstallProbe
+		}
+		if err := core.CheckSelfUpdatable(core.DetectInstallMethod(ctx, probe, isDevBuild())); err != nil {
+			return err
+		}
+	}
+	opts := core.ServiceInstallOptions{Addr: addr, AutoUpdate: autoUpdate}
 	for _, d := range []struct {
 		from string
 		to   *string
@@ -158,6 +188,13 @@ func doServiceInstall(ctx context.Context, cmd *cobra.Command, addr string) erro
 			verb = "Already installed"
 		}
 		fmt.Printf("%s %s at %s\n", verb, colorBold(u.Name), u.Path)
+		switch u.Name {
+		case core.UpdateServiceName:
+			continue
+		case core.UpdateTimerName:
+			printAutoUpdateState()
+			continue
+		}
 		if u.Active {
 			fmt.Printf("  The web UI is running at %s\n", colorBold("http://"+addr+"/"))
 		} else {
@@ -235,6 +272,21 @@ func doServiceStatus(ctx context.Context) error {
 	fmt.Println("lingering:    off - your user services start when you log in")
 	printLingerHint(false, units.User)
 	return nil
+}
+
+// printAutoUpdateState says whether the timer will install anything: it
+// does only while config.yaml says auto_update: true.
+func printAutoUpdateState() {
+	cfgDir := configDir
+	if cfg, err := getServiceConfig(); err == nil {
+		cfgDir = cfg.ConfigDir
+	}
+	u, err := newSelfUpdater()
+	if err == nil && u.AutoUpdateEnabled() {
+		fmt.Println("  lmm updates itself daily: auto_update is on.")
+		return
+	}
+	fmt.Printf("  It checks daily, but installs nothing until you add 'auto_update: true' to %s\n", filepath.Join(cfgDir, "config.yaml"))
 }
 
 // printLingerHint tells a user without lingering how to start at boot. It
