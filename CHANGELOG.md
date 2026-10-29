@@ -27,6 +27,17 @@ lmm-serve` turns it on. For a tarball, `go install` or `make install`,
   clear error. The user guide has a new page, "Run the web UI in the
   background".
 
+### Fixed
+
+- **A tooltip raised by keyboard focus stays up when the page scrolls to
+  the control (#572).** In a window narrow enough that a table runs past
+  its edge, tabbing to a control off to the right (the Setup Games table's
+  pencils at 700px) scrolls it into view, and the scroll took its tooltip
+  straight back down a frame after showing it. A focus-raised tooltip now
+  follows its control when the page scrolls, and hides only once the
+  control has scrolled out of view, on blur, on Escape or on a click.
+  A hovered tooltip still hides on scroll.
+
 ## [2.1.0] - 2026-10-29
 
 Profiles can be duplicated and mods copied between them, a CurseForge game

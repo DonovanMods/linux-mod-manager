@@ -19,9 +19,19 @@
 // one, so the right-most column's tooltip never runs off the page.
 //
 // Events are delegated from the document, so a trigger the render loop
-// replaces needs nothing re-attached. Anything that moves the trigger
-// (scroll, resize) or acts on it (click) hides the tooltip rather than
-// leaving it pointing at the wrong place.
+// replaces needs nothing re-attached. Anything that acts on the trigger
+// (click) or moves it (resize, and a scroll under a hovered one) hides the
+// tooltip rather than leaving it pointing at the wrong place.
+//
+// A tooltip keyboard focus raised belongs to the focus, not the pointer
+// (issue 572). Focusing a control the page has to scroll to - a narrow
+// window's right-hand column - scrolls it into view, and that scroll's
+// event arrives a frame AFTER the focusin that showed the tooltip; hiding
+// on it took the tooltip down the moment it went up. So a scroll re-places a focus-raised
+// tooltip beside its trigger (hiding it only once the trigger has left the
+// viewport), and the pointer events that same scroll provokes - the browser
+// re-targets a pointer the content moved under - leave it alone. Blur,
+// Escape and a click still dismiss it.
 
 import { gutterPx } from "./menuplacement.js";
 
@@ -29,6 +39,8 @@ const GAP_PX = 6;
 
 let tip = null;
 let trigger = null;
+// via is what raised the tooltip: "pointer" or "focus".
+let via = null;
 
 function element() {
   if (!tip) {
@@ -64,11 +76,12 @@ function placeTooltip(el, anchor) {
   el.style.top = `${top}px`;
 }
 
-function show(anchor) {
+function show(anchor, how) {
   const text = anchor.getAttribute("data-tooltip");
   if (!text) return hide();
   const el = element();
   trigger = anchor;
+  via = how;
   el.textContent = text;
   el.dataset.visible = "true";
   placeTooltip(el, anchor);
@@ -76,7 +89,25 @@ function show(anchor) {
 
 function hide() {
   trigger = null;
+  via = null;
   if (tip) tip.dataset.visible = "false";
+}
+
+/** onScroll follows a focus-raised tooltip's trigger and hides a hovered
+ * one's. */
+function onScroll() {
+  if (via !== "focus") return hide();
+  const a = trigger.getBoundingClientRect();
+  const viewW = document.documentElement.clientWidth;
+  if (
+    a.bottom <= 0 ||
+    a.top >= window.innerHeight ||
+    a.right <= 0 ||
+    a.left >= viewW
+  ) {
+    return hide();
+  }
+  placeTooltip(tip, trigger);
 }
 
 /** installTooltips wires the delegated listeners once. It returns a function
@@ -92,24 +123,24 @@ export function installTooltips() {
   const offs = [
     on("mouseover", (event) => {
       const anchor = owner(event.target);
-      if (anchor) show(anchor);
-      else if (trigger) hide();
+      if (anchor) show(anchor, "pointer");
+      else if (via === "pointer") hide();
     }),
     on("mouseout", (event) => {
-      if (trigger && !trigger.contains(event.relatedTarget)) hide();
+      if (via === "pointer" && !trigger.contains(event.relatedTarget)) hide();
     }),
     on("focusin", (event) => {
       const anchor = owner(event.target);
       // :focus-visible is what separates a keyboard arrival from a click,
       // which already has the pointer's own hover to show it.
-      if (anchor?.matches(":focus-visible")) show(anchor);
+      if (anchor?.matches(":focus-visible")) show(anchor, "focus");
     }),
     on("focusout", () => hide()),
     on("keydown", (event) => {
       if (event.key === "Escape" && trigger) hide();
     }),
     on("click", () => hide()),
-    on("scroll", () => hide(), true),
+    on("scroll", onScroll, true),
   ];
   window.addEventListener("resize", hide);
   return () => {
@@ -118,5 +149,6 @@ export function installTooltips() {
     tip?.remove();
     tip = null;
     trigger = null;
+    via = null;
   };
 }
