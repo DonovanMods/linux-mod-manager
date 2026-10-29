@@ -2682,15 +2682,19 @@ one-line notice on stderr after an interactive command, and a dismissible
 banner in `lmm serve`'s web UI. The notice names the upgrade command when a
 package manager owns the binary (`sudo apt install --only-upgrade lmm`,
 `sudo pacman -Syu`, ...) and the release page otherwise. The first time it
-runs it says that it checks, and how to stop it.
+runs it says that it checks, and how to stop it — after the command, or in
+`lmm serve`'s output when the server makes the first check.
 
 - The only request is `GET https://api.github.com/repos/DonovanMods/linux-mod-manager/releases/latest`,
   sending an `lmm/<version>` User-Agent and nothing else. Drafts and
   prereleases are ignored; a development build never reports an update.
 - The answer, and a failed check, are cached in `<data dir>/release-check.json`,
-  so a broken network is asked once a day and never fails or slows a command.
-  The after-command check runs beside the command and is abandoned if it has
-  not answered within moments of the command finishing.
+  so a broken network is asked once a day. The check never fails a command
+  and adds at most a fraction of a second to one: it runs beside the
+  command, and is abandoned if it has not answered within moments of the
+  command finishing. An abandoned check is tried again a few minutes later,
+  not the next day. How lmm was installed is cached there too, so the
+  notice does not ask the package manager every time.
 - No notice is printed with `--json`, when stderr is not a terminal, or for
   `lmm serve` and `lmm version` themselves.
 - `update_check: false` in `config.yaml` turns the automatic check off.

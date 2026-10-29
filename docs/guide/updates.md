@@ -30,7 +30,8 @@ to update that mod. `lmm list` shows each mod's id.
 ## Updating lmm itself
 
 Once a day, lmm asks GitHub whether a newer version of lmm is out. The first
-time it does, it tells you so. When there is one:
+time it does, it tells you so in the terminal: after the command you ran, or
+in the window running `lmm serve`. When there is one:
 
 - the browser shows a notice across the top of the page with a link to the
   release notes. Close it with its **✕** button: that hides the notice for

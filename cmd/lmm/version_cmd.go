@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -63,11 +62,11 @@ func isDevBuild() bool {
 }
 
 // newReleaseChecker builds the checker for the --config/--data the flags
-// select, and returns config.yaml's path for the messages that name it.
-func newReleaseChecker() (*core.ReleaseChecker, string, error) {
+// select.
+func newReleaseChecker() (*core.ReleaseChecker, error) {
 	cfg, err := getServiceConfig()
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	return core.NewReleaseChecker(core.ReleaseCheckOptions{
 		ConfigDir: cfg.ConfigDir,
@@ -76,11 +75,11 @@ func newReleaseChecker() (*core.ReleaseChecker, string, error) {
 		Dev:       isDevBuild(),
 		APIBase:   releaseAPIBase,
 		Probe:     releaseInstallProbe,
-	}), filepath.Join(cfg.ConfigDir, "config.yaml"), nil
+	}), nil
 }
 
 func runVersion(cmd *cobra.Command, _ []string) error {
-	rc, _, err := newReleaseChecker()
+	rc, err := newReleaseChecker()
 	if err != nil {
 		return err
 	}

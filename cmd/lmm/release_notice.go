@@ -18,15 +18,17 @@ import (
 //
 // The check runs BESIDE the command, not after it: PersistentPreRunE starts
 // it in a goroutine and Execute collects it once the command is done,
-// waiting at most releaseNoticeGrace for an answer still in flight. Almost
-// every command outlasts the request, so the usual cost is nothing; the
-// worst case, once a day, is releaseNoticeGrace. A check that has not
-// answered by then is abandoned - core records the attempt before it asks,
-// so an abandoned check still counts as the day's one request rather than
-// being retried by every following command. The alternative, refreshing
-// only from `lmm serve` and `lmm version --check`, would leave a CLI-only
-// user never hearing about a release, which is the case the notice exists
-// for.
+// waiting at most releaseNoticeGrace for an answer still in flight, and
+// spending at most releaseNoticeBudget on the whole exit path - the wait
+// and the notice's install-method lookup, which core normally answers from
+// its cache without running a package manager. Almost every command
+// outlasts the request, so the usual cost is nothing; the worst case is
+// releaseNoticeBudget. A check that has not answered by then is abandoned -
+// core records the attempt before it asks, so an abandoned check holds off
+// the following commands' attempts for a few minutes rather than each one
+// asking. The alternative, refreshing only from `lmm serve` and `lmm
+// version --check`, would leave a CLI-only user never hearing about a
+// release, which is the case the notice exists for.
 
 // releaseCheckArmed is set by Execute alone, so the release check - the
 // after-command one here and `lmm serve`'s background refresh - runs only
@@ -48,13 +50,16 @@ const (
 	releaseNoticeDeadline = 3 * time.Second
 	// releaseNoticeGrace is the most a finished command waits for it.
 	releaseNoticeGrace = 300 * time.Millisecond
+	// releaseNoticeBudget bounds the whole exit path: the grace, then the
+	// notice itself.
+	releaseNoticeBudget = 500 * time.Millisecond
 )
 
 // pendingReleaseCheck is a started after-command check.
 type pendingReleaseCheck struct {
-	rc         *core.ReleaseChecker
-	configPath string
-	done       chan struct{}
+	rc     *core.ReleaseChecker
+	done   chan struct{}
+	cancel context.CancelFunc
 }
 
 // pendingRelease is the check startReleaseCheck began, if any.
@@ -94,38 +99,49 @@ func startReleaseCheck(cmd *cobra.Command) {
 	if !releaseCheckArmed || jsonOutput || !stderrIsTerminal() || isDevBuild() || !releaseNoticeWanted(cmd) {
 		return
 	}
-	rc, configPath, err := newReleaseChecker()
+	rc, err := newReleaseChecker()
 	if err != nil || !rc.Enabled() {
 		return
 	}
-	p := &pendingReleaseCheck{rc: rc, configPath: configPath, done: make(chan struct{})}
+	parent := cmd.Context()
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, releaseNoticeDeadline)
+	p := &pendingReleaseCheck{rc: rc, done: make(chan struct{}), cancel: cancel}
 	pendingRelease = p
 	go func() {
 		defer close(p.done)
-		ctx, cancel := context.WithTimeout(context.Background(), releaseNoticeDeadline)
-		defer cancel()
 		_ = rc.Refresh(ctx) // a failure is cached; a notice never fails a command
 	}()
 }
 
 // finishReleaseCheck collects the check startReleaseCheck began and writes
 // the notice to w: the one-time "lmm checks GitHub" line the first time,
-// then the update line whenever the cache knows of a newer release.
-func finishReleaseCheck(w io.Writer) {
+// then the update line whenever the cache knows of a newer release. ctx is
+// the command's, so an interrupt ends the wait; releaseNoticeBudget bounds
+// it otherwise.
+func finishReleaseCheck(ctx context.Context, w io.Writer) {
 	p := pendingRelease
 	if p == nil {
 		return
 	}
 	pendingRelease = nil
+	ctx, cancel := context.WithTimeout(ctx, releaseNoticeBudget)
+	defer cancel()
+	grace := time.NewTimer(releaseNoticeGrace)
+	defer grace.Stop()
 	select {
 	case <-p.done:
-	case <-time.After(releaseNoticeGrace):
+	case <-grace.C:
+	case <-ctx.Done():
 	}
+	p.cancel() // a request still out is abandoned, which core records as such
 	if p.rc.FirstRunNoticeDue() {
-		_, _ = fmt.Fprintf(w, "lmm checks GitHub for a new release once a day; to turn this off, set update_check: false in %s\n", p.configPath)
+		_, _ = fmt.Fprintln(w, p.rc.FirstRunNotice())
 		_ = p.rc.RecordFirstRunNotice()
 	}
-	if st, ok := p.rc.PendingUpdate(context.Background()); ok {
+	if st, ok := p.rc.PendingUpdate(ctx); ok {
 		_, _ = fmt.Fprintln(w, releaseNoticeLine(st))
 	}
 }

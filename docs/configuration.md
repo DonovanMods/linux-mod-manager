@@ -125,8 +125,9 @@ lmm checks GitHub for a newer lmm release at most once a day — after an
 interactive command, and while `lmm serve` runs — and prints a one-line
 notice (or shows a banner in the web UI) when one is out. The request sends
 only an `lmm/<version>` User-Agent; its answer is cached in
-`<data dir>/release-check.json`. Set `update_check: false` to turn the
-automatic check off; `lmm version --check` still asks when you run it.
+`<data dir>/release-check.json`. The check adds at most a fraction of a
+second to a command, and never fails one. Set `update_check: false` to turn
+the automatic check off; `lmm version --check` still asks when you run it.
 
 ## games.yaml
 

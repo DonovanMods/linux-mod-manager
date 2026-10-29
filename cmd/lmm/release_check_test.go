@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/testutil"
@@ -72,7 +74,7 @@ func afterCommand(t *testing.T, args ...string) string {
 	t.Helper()
 	runLMM(t, args...)
 	var notice bytes.Buffer
-	finishReleaseCheck(&notice)
+	finishReleaseCheck(context.Background(), &notice)
 	return notice.String()
 }
 
@@ -223,4 +225,78 @@ func TestServeReleaseChecker_OnlyInTheArmedBinary(t *testing.T) {
 	assert.Nil(t, serveReleaseChecker())
 	armReleaseNotice(t, false)
 	assert.NotNil(t, serveReleaseChecker())
+}
+
+// hangGitHub points the checker at a server that never answers, for the
+// length of the test.
+func hangGitHub(t *testing.T) {
+	t.Helper()
+	stop := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-stop:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(stop); srv.Close() })
+	releaseAPIBase = srv.URL
+}
+
+// TestReleaseNotice_AnAbandonedCheckIsNotAFailure: a check still out when
+// the command finishes is abandoned, which `lmm version` does not report
+// as a failed check - nothing was learned either way.
+func TestReleaseNotice_AnAbandonedCheckIsNotAFailure(t *testing.T) {
+	cliReleaseServer(t, "v2.1.0")
+	hangGitHub(t)
+	armReleaseNotice(t, true)
+	afterCommand(t, "game", "list")
+
+	releaseCheckArmed = false
+	out, _ := runLMM(t, "version")
+	assert.NotContains(t, out, "Last check failed")
+	assert.Contains(t, out, "Latest release: unknown")
+}
+
+// TestReleaseNotice_TheExitPathIsBounded: a package manager that never
+// answers cannot hold a finished command - the notice falls back to the
+// release page within the exit budget.
+func TestReleaseNotice_TheExitPathIsBounded(t *testing.T) {
+	cliReleaseServer(t, "v2.1.0")
+	_, _ = runLMM(t, "version", "--check")
+	releaseInstallProbe = &core.InstallProbe{
+		Executable: func() (string, error) { return "/usr/bin/lmm", nil },
+		LookPath:   func(name string) (string, error) { return "/usr/bin/" + name, nil },
+		Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(30 * time.Second):
+				return []byte("lmm\n"), nil
+			}
+		},
+	}
+	armReleaseNotice(t, true)
+	runLMM(t, "game", "list")
+
+	var notice bytes.Buffer
+	start := time.Now()
+	finishReleaseCheck(context.Background(), &notice)
+	assert.Less(t, time.Since(start), 3*time.Second)
+	assert.Contains(t, notice.String(),
+		"lmm 2.1.0 is available (you have 2.0.0): https://github.com/DonovanMods/linux-mod-manager/releases/tag/v2.1.0\n")
+}
+
+// TestReleaseNotice_CtrlCEndsTheWait: the exit path waits on the command's
+// own context, so an interrupt ends the wait for a check still out.
+func TestReleaseNotice_CtrlCEndsTheWait(t *testing.T) {
+	cliReleaseServer(t, "v2.1.0")
+	hangGitHub(t)
+	armReleaseNotice(t, true)
+	runLMM(t, "game", "list")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	finishReleaseCheck(ctx, io.Discard)
+	assert.Less(t, time.Since(start), releaseNoticeGrace)
 }

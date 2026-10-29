@@ -67,6 +67,7 @@ func doServe(ctx context.Context, cmd *cobra.Command, svc *core.Service) error {
 		Addr:           serveAddr,
 		Version:        computeDisplayVersion(version, buildDescribe),
 		ReleaseChecker: serveReleaseChecker(),
+		Notices:        cmd.OutOrStdout(),
 	})
 	addr, err := srv.Listen()
 	if err != nil {
@@ -94,7 +95,7 @@ func serveReleaseChecker() *core.ReleaseChecker {
 	if !releaseCheckArmed {
 		return nil
 	}
-	rc, _, err := newReleaseChecker()
+	rc, err := newReleaseChecker()
 	if err != nil {
 		return nil
 	}

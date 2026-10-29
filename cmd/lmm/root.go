@@ -353,11 +353,11 @@ func Execute() {
 			os.Exit(exitCancelled)
 		default:
 			reportError(err)
-			finishReleaseCheck(os.Stderr)
+			finishReleaseCheck(ctx, os.Stderr)
 			os.Exit(exitError)
 		}
 	}
-	finishReleaseCheck(os.Stderr)
+	finishReleaseCheck(ctx, os.Stderr)
 }
 
 // lmm's documented exit codes - `lmm --help`'s EXIT CODES block.
