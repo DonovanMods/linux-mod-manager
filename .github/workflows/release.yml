@@ -5,12 +5,44 @@ on:
     tags:
       - v*
 
-permissions:
-  contents: write
+# Nothing by default: each job names the access it needs (#569).
+permissions: {}
 
 jobs:
-  release:
+  # A release is tagged on main's merge commit, never on a branch, so the
+  # signing key only ever signs reviewed code. This job holds no secret and
+  # needs no approval; the release job, which does, waits for it. A tag runs
+  # the workflow file at its own commit, which is why the tag ruleset and
+  # the release environment's reviewer, not this check alone, are what keep
+  # an unreviewed commit from being signed (docs/release-signing.md).
+  on-main:
+    name: Require the tagged commit on main
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Require the tagged commit on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} (${GITHUB_SHA}) is not on main; tag a release on main's merge commit (docs/release-signing.md)" >&2
+            exit 1
+          fi
+
+  release:
+    needs: on-main
+    runs-on: ubuntu-latest
+    # LMM_RELEASE_SIGNING_KEY is an environment secret, released to a v* tag
+    # once a reviewer approves the run (docs/release-signing.md).
+    environment: release
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

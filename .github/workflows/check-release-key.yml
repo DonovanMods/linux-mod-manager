@@ -1,19 +1,40 @@
 # Proves the LMM_RELEASE_SIGNING_KEY secret is the private half of a public
 # key compiled into lmm (#569): it signs a throwaway file with the secret and
 # verifies the signature against each key `releasekey trusted` prints. Run it
-# by hand after setting or rotating the secret; docs/release-signing.md has
-# the procedure. It prints OK or FAIL and nothing else - never the key.
+# by hand, from main, after setting or rotating the secret;
+# docs/release-signing.md has the procedure. It prints OK or FAIL and nothing
+# else - never the key.
 name: Check release signing key
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
+# Nothing by default: each job names the access it needs.
+permissions: {}
 
 jobs:
-  check:
+  # Dispatched from any other ref, the run fails here and the keyed job
+  # never starts. A branch can edit this file, so the release environment's
+  # deployment policy, which admits main and v* tags only, is what actually
+  # keeps the key from a branch; this makes a wrong ref fail loudly.
+  refuse:
+    name: Refuse a run from any ref but main
+    if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Refuse
+        run: |
+          echo "::error::Run this workflow from main, not ${GITHUB_REF}; see docs/release-signing.md" >&2
+          exit 1
+
+  check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The secret lives in the release environment (docs/release-signing.md).
+    environment: release
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
