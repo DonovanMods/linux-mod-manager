@@ -96,6 +96,9 @@ func (c *Client) DoStream(ctx context.Context, method, path string, header map[s
 		return nil, c.requestError("creating request", path, err)
 	}
 	c.applyAuthHeader(req)
+	if c.userAgent != "" {
+		req.Header.Set("User-Agent", c.userAgent)
+	}
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}

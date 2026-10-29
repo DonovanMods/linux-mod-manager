@@ -1,0 +1,6 @@
+{
+  "method": "package",
+  "manager": "pacman",
+  "package": "lmm",
+  "upgrade_command": "sudo pacman -Syu"
+}

@@ -46,6 +46,15 @@ type Options struct {
 	// neither and New panics; set both and AuthHeader wins, since that is
 	// what every existing source uses.
 	AuthQueryParam string
+	// Anonymous marks an API that takes no key at all - GitHub's public
+	// release listing, which the release check reads (#568). It stands in
+	// for AuthHeader/AuthQueryParam in New's validation, and a client built
+	// with it never sends a credential: APIKey must stay empty.
+	Anonymous bool
+	// UserAgent, when set, replaces Go's default User-Agent on every
+	// request. Empty keeps net/http's default, which every source but the
+	// release check uses.
+	UserAgent string
 	// AuthLabel is the human-readable source name interpolated into the
 	// "<label> API key required" error returned on 401.
 	AuthLabel string
@@ -70,19 +79,25 @@ type Client struct {
 	authHeader       string
 	authQueryParam   string
 	authLabel        string
+	userAgent        string
 	errorMapper      func(int, []byte, string) error
 	maxResponseBytes int64
 }
 
 // New returns a Client configured with opts. Panics when a required field
-// (BaseURL, AuthLabel, and one of AuthHeader / AuthQueryParam) is empty —
-// the package is internal and only ever constructed at startup, so a
-// missing required field is a programming error worth catching loudly.
+// (BaseURL, AuthLabel, and one of AuthHeader / AuthQueryParam unless the
+// client is Anonymous) is empty — the package is internal and only ever
+// constructed at startup, so a missing required field is a programming
+// error worth catching loudly.
 func New(opts Options) *Client {
 	if opts.BaseURL == "" {
 		panic("httpclient.New: BaseURL is required")
 	}
-	if opts.AuthHeader == "" && opts.AuthQueryParam == "" {
+	if opts.Anonymous {
+		if opts.AuthHeader != "" || opts.AuthQueryParam != "" || opts.APIKey != "" {
+			panic("httpclient.New: an Anonymous client takes no auth configuration")
+		}
+	} else if opts.AuthHeader == "" && opts.AuthQueryParam == "" {
 		panic("httpclient.New: AuthHeader or AuthQueryParam is required")
 	}
 	if opts.AuthLabel == "" {
@@ -99,6 +114,7 @@ func New(opts Options) *Client {
 		authHeader:       opts.AuthHeader,
 		authQueryParam:   opts.AuthQueryParam,
 		authLabel:        opts.AuthLabel,
+		userAgent:        opts.UserAgent,
 		errorMapper:      opts.ErrorMapper,
 		maxResponseBytes: opts.MaxResponseBytes,
 	}
@@ -290,6 +306,9 @@ func (c *Client) applyAuthHeader(req *http.Request) {
 // resolved URL) so an ErrorMapper never sees a key that auth injection
 // appended.
 func (c *Client) do(req *http.Request, requestPath string, result any) (err error) {
+	if c.userAgent != "" {
+		req.Header.Set("User-Agent", c.userAgent)
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return c.requestError("executing request", requestPath, err)
