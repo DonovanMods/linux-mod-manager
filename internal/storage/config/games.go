@@ -140,14 +140,31 @@ func LoadGames(configDir string) (map[string]*domain.Game, error) {
 
 // loadGamesLocked reads games; caller must hold gamesMu
 func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
+	_, games, err := readGamesLocked(configDir)
+	return games, err
+}
+
+// readGamesLocked reads games and also returns the file's own bytes (nil
+// for a games.yaml that does not exist), which a save patches; caller must
+// hold gamesMu.
+func readGamesLocked(configDir string) ([]byte, map[string]*domain.Game, error) {
 	gamesPath := filepath.Join(configDir, "games.yaml")
 	data, err := os.ReadFile(gamesPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return make(map[string]*domain.Game), nil
+			return nil, make(map[string]*domain.Game), nil
 		}
-		return nil, fmt.Errorf("reading games.yaml: %w", err)
+		return nil, nil, fmt.Errorf("reading games.yaml: %w", err)
 	}
+	games, err := parseGames(gamesPath, data)
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, games, nil
+}
+
+// parseGames turns games.yaml's bytes, read from gamesPath, into games.
+func parseGames(gamesPath string, data []byte) (map[string]*domain.Game, error) {
 	var gamesFile GamesFile
 	if err := safeyaml.Unmarshal(data, &gamesFile); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", gamesPath, err)
@@ -222,131 +239,33 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 	return games, nil
 }
 
-// SaveGame adds or updates a game in games.yaml
+// SaveGame adds or updates a game in games.yaml.
+//
+// Only that game's entry is written (#362): every other game keeps its own
+// text - a hand-written `~/` path, a relative mod_path, comments and
+// indentation included - and the file is replaced atomically (#403). See
+// saveGamesLocked.
 func SaveGame(configDir string, game *domain.Game) error {
 	if game.ModPath != "" && !filepath.IsAbs(game.ModPath) {
 		return fmt.Errorf("%w: game %q: got %q", ErrRelativeModPath, game.ID, game.ModPath)
 	}
 	gamesMu.Lock()
 	defer gamesMu.Unlock()
-	games, err := loadGamesLocked(configDir)
+	data, games, err := readGamesLocked(configDir)
 	if err != nil {
 		return err
 	}
 	games[game.ID] = game
-	return saveGamesLocked(configDir, games)
+	cfg := gameConfigOf(game)
+	return saveGamesLocked(configDir, data, games, game.ID, &cfg)
 }
 
-// saveGamesLocked writes games; caller must hold gamesMu.
-//
-// It re-marshals the WHOLE file from the loaded map, whose paths have
-// already been ExpandPath-ed and (since #313) ResolveModPath-ed - so any
-// write, from any command, normalises every OTHER game's entry too: a
-// hand-written "~" becomes the expanded path and a relative mod_path
-// becomes the absolute one it already resolved to. Recorded here (review
-// M9) so it is a decision rather than a surprise. It is the intended
-// direction - what lmm writes is what every later run reads, with no
-// working directory in the answer - and SaveGame's OWN guard cannot fail an
-// unrelated write, since the values in the map are already absolute by the
-// time it sees them. A games.yaml that no longer LOADS does fail every
-// write - an invalid link_method/deploy_mode, or (review M6) a relative
-// mod_path with no install_path to resolve it against - because SaveGame
-// reaches this through loadGamesLocked and returns that error; it has
-// always behaved that way for the first two. Preserving hand-written
-// relative/tilde values verbatim would be a separate change to this
-// function.
-func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
-	gamesFile := GamesFile{Games: make(map[string]GameConfig)}
-
-	for id, game := range games {
-		cfg := GameConfig{
-			Name:        game.Name,
-			InstallPath: game.InstallPath,
-			ModPath:     game.ModPath,
-			Sources:     game.SourceIDs,
-			CachePath:   game.CachePath,
-			Hooks: GameHooksYAML{
-				Install: HookConfigYAML{
-					BeforeAll:  game.Hooks.Install.BeforeAll,
-					BeforeEach: game.Hooks.Install.BeforeEach,
-					AfterEach:  game.Hooks.Install.AfterEach,
-					AfterAll:   game.Hooks.Install.AfterAll,
-				},
-				Uninstall: HookConfigYAML{
-					BeforeAll:  game.Hooks.Uninstall.BeforeAll,
-					BeforeEach: game.Hooks.Uninstall.BeforeEach,
-					AfterEach:  game.Hooks.Uninstall.AfterEach,
-					AfterAll:   game.Hooks.Uninstall.AfterAll,
-				},
-			},
-		}
-		// Only write link_method if explicitly set
-		if game.LinkMethodExplicit {
-			cfg.LinkMethod = game.LinkMethod.String()
-		}
-		// Only write deploy_mode if not the default (extract)
-		if game.DeployMode != domain.DeployExtract {
-			cfg.DeployMode = game.DeployMode.String()
-		}
-		// Only write adapter if the game carries one. Empty is the
-		// generic-files default and stays absent, which is what keeps a
-		// pre-#353 games.yaml byte-identical across any write.
-		cfg.Adapter = game.Adapter
-		// Only write convert_paks if explicitly set
-		if game.ConvertPaksExplicit {
-			v := game.ConvertPaks
-			cfg.ConvertPaks = &v
-		}
-		// Only write loader: for a game that declares one. The enums emit
-		// "" for "not answered yet", which omitempty drops, so lmm never
-		// writes back a runtime or bootstrap nobody chose.
-		if game.Loader != nil {
-			cfg.Loader = &GameLoaderYAML{
-				Kind:      game.Loader.Kind,
-				Version:   game.Loader.Version,
-				Runtime:   game.Loader.Runtime.String(),
-				Bootstrap: game.Loader.Bootstrap.String(),
-			}
-		}
-		gamesFile.Games[id] = cfg
-	}
-
-	data, err := yaml.Marshal(&gamesFile)
-	if err != nil {
-		return fmt.Errorf("marshaling games: %w", err)
-	}
-
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-
-	// NOT atomic: os.WriteFile truncates in place, so a reader in another
-	// process can see a partial document (#403). `lmm serve` re-reads this
-	// file on every request it serves (freshGames, #376), which makes it the
-	// likeliest such reader.
-	//
-	// Accepted for v2.0.0 rather than fixed. A partial read normally fails
-	// to parse, and that path is already correct - core.ReloadGames keeps
-	// the last good set and does NOT advance its stat fingerprint, so the
-	// next request retries instead of caching the failure. The residual is a
-	// truncation landing on a game boundary, which parses as a valid subset
-	// and is served until the writer's completion moves the file again: a
-	// window measured in microseconds, self-healing on the very next
-	// request. #403 carries the durable fix (temp file + os.Rename), which
-	// also stops an interrupted `lmm game add` leaving a truncated file.
-	gamesPath := filepath.Join(configDir, "games.yaml")
-	if err := os.WriteFile(gamesPath, data, 0644); err != nil {
-		return fmt.Errorf("writing games.yaml: %w", err)
-	}
-
-	return nil
-}
-
-// DeleteGame removes a game from games.yaml
+// DeleteGame removes a game from games.yaml, leaving every other game's
+// text as it was (#362).
 func DeleteGame(configDir string, gameID string) error {
 	gamesMu.Lock()
 	defer gamesMu.Unlock()
-	games, err := loadGamesLocked(configDir)
+	data, games, err := readGamesLocked(configDir)
 	if err != nil {
 		return err
 	}
@@ -354,7 +273,114 @@ func DeleteGame(configDir string, gameID string) error {
 		return domain.ErrGameNotFound
 	}
 	delete(games, gameID)
-	return saveGamesLocked(configDir, games)
+	return saveGamesLocked(configDir, data, games, gameID, nil)
+}
+
+// saveGamesLocked writes games.yaml with game id set to cfg - or removed,
+// for a nil cfg - where data is the file as it was read and games is every
+// game after the change; caller must hold gamesMu.
+//
+// It edits data rather than re-marshalling games (#362): games' paths have
+// been ExpandPath-ed and ResolveModPath-ed, so writing them back would turn
+// every OTHER game's hand-written "~" and relative mod_path into the
+// absolute values they resolve to. patchGames replaces only id's entry, and
+// checks its result reads back as the file it read with exactly that change
+// before it is used. A file it cannot patch - and one with no game in it,
+// where there is nothing to keep - is written whole from games, as every
+// save did before #362; that is never wrong, only less faithful to the
+// file's own spelling. The game being saved is always written from its
+// resolved values.
+//
+// A games.yaml that no longer LOADS fails every write - an invalid
+// link_method/deploy_mode, or (review M6) a relative mod_path with no
+// install_path to resolve it against - because SaveGame and DeleteGame
+// read it first and return that error.
+//
+// The write is atomic (#403): a temporary file beside games.yaml is renamed
+// over it, so a reader in another process - `lmm serve` re-reads this file
+// on every request it serves (freshGames, #376) - sees the old file or the
+// new one, never a partial one, and an interrupted write leaves the old
+// file in place.
+func saveGamesLocked(configDir string, data []byte, games map[string]*domain.Game, id string, cfg *GameConfig) error {
+	out, ok := patchGames(data, id, cfg)
+	if !ok {
+		var err error
+		if out, err = marshalGames(games); err != nil {
+			return err
+		}
+	}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("creating config dir: %w", err)
+	}
+	return replaceFile(filepath.Join(configDir, "games.yaml"), out, 0644, "games.yaml")
+}
+
+// marshalGames is games.yaml written whole from games.
+func marshalGames(games map[string]*domain.Game) ([]byte, error) {
+	gamesFile := GamesFile{Games: make(map[string]GameConfig, len(games))}
+	for id, game := range games {
+		gamesFile.Games[id] = gameConfigOf(game)
+	}
+	data, err := yaml.Marshal(&gamesFile)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling games: %w", err)
+	}
+	return data, nil
+}
+
+// gameConfigOf is game as games.yaml writes it.
+func gameConfigOf(game *domain.Game) GameConfig {
+	cfg := GameConfig{
+		Name:        game.Name,
+		InstallPath: game.InstallPath,
+		ModPath:     game.ModPath,
+		Sources:     game.SourceIDs,
+		CachePath:   game.CachePath,
+		Hooks: GameHooksYAML{
+			Install: HookConfigYAML{
+				BeforeAll:  game.Hooks.Install.BeforeAll,
+				BeforeEach: game.Hooks.Install.BeforeEach,
+				AfterEach:  game.Hooks.Install.AfterEach,
+				AfterAll:   game.Hooks.Install.AfterAll,
+			},
+			Uninstall: HookConfigYAML{
+				BeforeAll:  game.Hooks.Uninstall.BeforeAll,
+				BeforeEach: game.Hooks.Uninstall.BeforeEach,
+				AfterEach:  game.Hooks.Uninstall.AfterEach,
+				AfterAll:   game.Hooks.Uninstall.AfterAll,
+			},
+		},
+	}
+	// Only write link_method if explicitly set
+	if game.LinkMethodExplicit {
+		cfg.LinkMethod = game.LinkMethod.String()
+	}
+	// Only write deploy_mode if not the default (extract)
+	if game.DeployMode != domain.DeployExtract {
+		cfg.DeployMode = game.DeployMode.String()
+	}
+	// Only write adapter if the game carries one. Empty is the
+	// generic-files default and stays absent, which is what keeps a
+	// pre-#353 games.yaml byte-identical across any write.
+	cfg.Adapter = game.Adapter
+	// Only write convert_paks if explicitly set
+	if game.ConvertPaksExplicit {
+		v := game.ConvertPaks
+		cfg.ConvertPaks = &v
+	}
+	// Only write loader: for a game that declares one. The enums emit
+	// "" for "not answered yet", which omitempty drops, so lmm never
+	// writes back a runtime or bootstrap nobody chose.
+	if game.Loader != nil {
+		cfg.Loader = &GameLoaderYAML{
+			Kind:      game.Loader.Kind,
+			Version:   game.Loader.Version,
+			Runtime:   game.Loader.Runtime.String(),
+			Bootstrap: game.Loader.Bootstrap.String(),
+		}
+	}
+	return cfg
 }
 
 // parseGameLoader turns games.yaml's `loader:` block into the domain type,
