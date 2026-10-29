@@ -12,5 +12,6 @@
     "manager": "dpkg",
     "package": "lmm",
     "upgrade_command": "sudo apt install --only-upgrade lmm"
-  }
+  },
+  "installed": "2.1.0"
 }

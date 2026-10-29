@@ -58,6 +58,12 @@ type Config struct {
 	// `update_check: false` is the opt-out and survives every save. Read
 	// it through UpdateCheckEnabled.
 	UpdateCheck *bool `yaml:"update_check,omitempty"`
+
+	// AutoUpdate lets lmm-update.timer (`lmm service install
+	// --auto-update`) install a new lmm release unattended (#569). OFF by
+	// default, and the timer's run does nothing while it is off, so
+	// turning it off stops updates without touching a unit.
+	AutoUpdate bool `yaml:"auto_update,omitempty"`
 }
 
 // UpdateCheckEnabled reports whether lmm may check GitHub for a newer

@@ -2976,6 +2976,7 @@ func TestJSONGoldens(t *testing.T) {
 					Package:        "lmm",
 					UpgradeCommand: "sudo apt install --only-upgrade lmm",
 				},
+				Installed: "2.1.0",
 			},
 		},
 		{
@@ -2984,6 +2985,34 @@ func TestJSONGoldens(t *testing.T) {
 			core.ReleaseStatus{
 				Current: "2.0.1",
 				Install: core.InstallMethod{Method: core.InstallSelfManaged},
+			},
+		},
+		{
+			// `lmm self-update --check --json` (#569): an update to install.
+			"self_update_plan",
+			core.SelfUpdatePlan{
+				Current:    "2.1.0",
+				Latest:     "2.2.0",
+				Executable: "/home/u/.local/bin/lmm",
+				Asset:      "lmm_2.2.0_linux_amd64.tar.gz",
+				ReleaseURL: "https://github.com/DonovanMods/linux-mod-manager/releases/tag/v2.2.0",
+			},
+		},
+		{
+			// Already up to date: the omitted fields.
+			"self_update_plan_up_to_date",
+			core.SelfUpdatePlan{Current: "2.2.0", Latest: "2.2.0", UpToDate: true, Executable: "/home/u/.local/bin/lmm"},
+		},
+		{
+			// `lmm self-update --yes --json`: installed, with the service
+			// restart that failed after it, so every field is on the wire.
+			"self_update_result",
+			core.SelfUpdateResult{
+				Updated:           true,
+				Previous:          "2.1.0",
+				Version:           "2.2.0",
+				Executable:        "/home/u/.local/bin/lmm",
+				ServeRestartError: "systemctl --user try-restart lmm-serve.service: exit status 1",
 			},
 		},
 		{
