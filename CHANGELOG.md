@@ -65,7 +65,7 @@ lmm-serve` turns it on. For a tarball, `go install` or `make install`,
   (`GET /api/v1/updates/lmm` gains `installed`). Releases now publish
   `checksums.txt.sig`, signed in the release workflow;
   `docs/release-signing.md` covers the key and its rotation.
-  Hardened after a security review: an install method lmm cannot settle
+  An install method lmm cannot settle
   (a package database that is locked or times out) is refused rather than
   read as self-managed, by `lmm self-update` and by
   `lmm service install --auto-update`; a release tag that is not exactly
@@ -78,6 +78,17 @@ lmm-serve` turns it on. For a tarball, `go install` or `make install`,
   concurrent requests and backs off five minutes after a failure. Signing
   runs only in the `release` environment, for a tag whose commit is on
   `main`.
+
+### Fixed
+
+- **A tooltip raised by keyboard focus stays up when the page scrolls to
+  the control (#572).** In a window narrow enough that a table runs past
+  its edge, tabbing to a control off to the right (the Setup Games table's
+  pencils at 700px) scrolls it into view, and the scroll took its tooltip
+  straight back down a frame after showing it. A focus-raised tooltip now
+  follows its control when the page scrolls, and hides only once the
+  control has scrolled out of view, on blur, on Escape or on a click.
+  A hovered tooltip still hides on scroll.
 
 ## [2.1.0] - 2026-10-29
 
