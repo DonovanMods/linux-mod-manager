@@ -3,6 +3,12 @@
 // Shown only when the server's cached release check says an update exists and
 // the check is enabled. Dismissal is remembered PER VERSION in localStorage:
 // dismissing 2.1.0 hides this notice until a newer release is announced.
+//
+// Its second state (issue 569) comes first: a newer lmm is installed on disk
+// than this server runs - `lmm self-update` replaced the binary under an
+// `lmm serve` started by hand - so the notice asks for a restart instead.
+// That one is local, so it shows whether or not the GitHub check is on, and
+// its dismissal is remembered as "installed:<version>".
 // Every failure (the fetch, unreadable storage) degrades to showing nothing
 // or to a dismissal that lasts only this page view.
 
@@ -44,7 +50,37 @@ export function ReleaseBanner() {
     };
   }, []);
 
-  if (!status || !status.update_available || !status.check_enabled) return null;
+  if (!status) return null;
+  if (status.installed) {
+    const key = `installed:${status.installed}`;
+    if (dismissed === key) return null;
+    return html`
+      <section
+        class="release-banner"
+        aria-label="lmm restart needed"
+        data-testid="release-banner"
+        data-state="installed"
+      >
+        <p class="release-banner__text">
+          lmm v${status.installed} is installed; restart${" "}
+          <code>lmm serve</code> to use it.
+        </p>
+        <button
+          type="button"
+          class="button button--quiet button--icon release-banner__dismiss"
+          aria-label=${`Dismiss the lmm ${status.installed} restart notice`}
+          data-action="dismiss-release-banner"
+          onClick=${() => {
+            writeDismissed(key);
+            setDismissed(key);
+          }}
+        >
+          ✕
+        </button>
+      </section>
+    `;
+  }
+  if (!status.update_available || !status.check_enabled) return null;
   if (!status.latest || dismissed === status.latest) return null;
 
   const install = status.install ?? {};
@@ -53,6 +89,7 @@ export function ReleaseBanner() {
       class="release-banner"
       aria-label="lmm update available"
       data-testid="release-banner"
+      data-state="available"
     >
       <p class="release-banner__text">
         lmm ${status.latest} is available — you have ${status.current}.
