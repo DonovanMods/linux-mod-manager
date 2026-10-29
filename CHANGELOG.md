@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Saving one game no longer rewrites every other game in `games.yaml`
+  (#362).** `lmm game add`, `game edit`, `game detect` and the web UI's game
+  forms re-marshalled the whole file from its loaded, resolved form, so every
+  other game's hand-written `~/` paths and relative `mod_path` came back
+  expanded to absolute paths, and comments and indentation were lost. Only
+  the saved game's entry is written now; every other game's lines stay
+  byte-identical. A layout that cannot be edited line by line (a flow-style
+  `games: {...}`) is edited as a YAML document instead, which keeps other
+  games' values as written.
+- **`games.yaml` and `config.yaml` are written atomically (#403).** Both were
+  truncated and rewritten in place, so `lmm serve` (which re-reads
+  `games.yaml` on every request) could read a partial file while the CLI was
+  saving, and an interrupted save left a truncated file behind. They are now
+  written to a temporary file in the same directory, synced, and renamed over
+  the original, keeping its mode; a symlink's target is what changes, and a
+  read-only file is still refused. Profiles were already written this way;
+  their writes now also sync the directory after the rename.
+
 ## [2.0.1] - 2026-10-28
 
 lmm now has a [user guide](https://donovanmods.github.io/linux-mod-manager/)
