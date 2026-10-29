@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Duplicate a profile (#438).** `lmm profile duplicate <source> <new>`,
+  and **Duplicate** in the web UI's Profiles window, clone a profile without
+  the export/import round trip: every mod in load order with its version,
+  file ids, lock and disabled marker, the link method (an explicit one stays
+  explicit), hooks and config overrides. The duplicate is never made the
+  active profile; its mods are recorded as installed under it and deployed
+  when you switch to it.
+- **Copy a mod to another profile (#437).** `lmm mod copy <mod> --to
+<profile>` (`--all` for every mod of the profile, `--replace` to
+  overwrite one the destination already lists, `--dry-run` to preview), and
+  **Copy to profile…** in the web UI's mod menu and mod panel, copy an
+  installed mod into another profile of the same game without re-installing
+  it: nothing is fetched, the copy keeps the source's version and lock, and
+  an active destination gets the files deployed by its own link method.
+  Steam Workshop items are refused: every profile already has them.
+
+### Fixed
+
+- **A web-UI plan refused for a Steam Workshop item answers 409, not 500
+  (#437).** `lmm serve` classified the typed external-mod refusal as an
+  unexpected server error; it is a conflict with the mod's state.
+
 ## [2.0.1] - 2026-10-28
 
 lmm now has a [user guide](https://donovanmods.github.io/linux-mod-manager/)
