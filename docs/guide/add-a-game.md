@@ -109,7 +109,9 @@ Repeat the flag to accept more than one, and run
 `lmm game edit wow-classic --curseforge-version-type ""` to go back to every
 file. A value that matches no version type fails, and the error lists the
 ones that do. Both the list and slugs need your CurseForge API key; ids
-don't.
+don't. A slug is looked up in the CurseForge game the same command maps, so
+`lmm game edit wow-classic --source curseforge=1 --curseforge-version-type wow-classic`
+adds the mapping and picks the flavor in one go.
 
 For World of Warcraft, the common ones are:
 
