@@ -160,6 +160,16 @@ type ReleaseChecker struct {
 	startedAs   time.Time  // the executable's mod time at RememberRunningBinary; zero when unknown
 	diskModTime time.Time  // the mod time diskVersion was read at
 	diskVersion string     // InstalledNewer's answer for diskModTime
+	diskFailMod time.Time  // the mod time whose `--version` last failed
+	diskFailAt  time.Time  // when it failed, which holds off another run for installedVersionBackoff
+	diskRun     *diskRun   // the `--version` run under way; nil when none is
+}
+
+// diskRun is one `<exe> --version` run InstalledNewer's callers share.
+type diskRun struct {
+	modTime time.Time
+	done    chan struct{} // closed once version is set
+	version string
 }
 
 // releaseCheckState is the cache file's document.
@@ -279,6 +289,11 @@ func (r *ReleaseChecker) executableModTime() (time.Time, string) {
 // installedVersionTimeout bounds `<exe> --version`.
 const installedVersionTimeout = 5 * time.Second
 
+// installedVersionBackoff is how long a failed `<exe> --version` is
+// remembered for the file it was about, so a binary that hangs or fails is
+// not run again on every page load.
+const installedVersionBackoff = 5 * time.Minute
+
 // InstalledNewer is the version of the lmm binary now at the running
 // executable's path when it is newer than the running one, and "" otherwise
 // - what tells a `lmm serve` started by hand that `lmm self-update` (or a
@@ -286,6 +301,11 @@ const installedVersionTimeout = 5 * time.Second
 // runs `<exe> --version` only once the file's modification time differs
 // from RememberRunningBinary's, and once per such change; until then it
 // runs nothing. A dev build, on either side, never answers.
+//
+// The run holds no lock: concurrent callers share the one under way, each
+// returning "" once its own ctx ends, and the run itself is bounded only by
+// installedVersionTimeout. A run that fails is not repeated for the same
+// file until installedVersionBackoff has passed.
 //
 // The file is asked rather than a marker `lmm self-update` leaves behind,
 // because every way of replacing the binary changes the file and only one
@@ -296,26 +316,60 @@ func (r *ReleaseChecker) InstalledNewer(ctx context.Context) string {
 	}
 	mtime, exe := r.executableModTime()
 	r.diskMu.Lock()
-	defer r.diskMu.Unlock()
 	if r.startedAs.IsZero() || mtime.IsZero() || mtime.Equal(r.startedAs) {
+		r.diskMu.Unlock()
 		return ""
 	}
 	if mtime.Equal(r.diskModTime) {
-		return r.diskVersion
+		v := r.diskVersion
+		r.diskMu.Unlock()
+		return v
 	}
+	if mtime.Equal(r.diskFailMod) && r.opts.Now().Sub(r.diskFailAt) < installedVersionBackoff {
+		r.diskMu.Unlock()
+		return ""
+	}
+	run := r.diskRun
+	if run == nil || !run.modTime.Equal(mtime) {
+		run = &diskRun{modTime: mtime, done: make(chan struct{})}
+		r.diskRun = run
+		go r.runInstalledVersion(ctx, run, exe)
+	}
+	r.diskMu.Unlock()
+
+	select {
+	case <-run.done:
+		return run.version
+	case <-ctx.Done():
+		return ""
+	}
+}
+
+// runInstalledVersion runs `<exe> --version` for run and records its
+// answer, or its failure. It is detached from the caller's ctx that
+// started it - the other callers waiting on it have their own - and is
+// bounded by installedVersionTimeout.
+func (r *ReleaseChecker) runInstalledVersion(ctx context.Context, run *diskRun, exe string) {
 	probe := DefaultInstallProbe()
 	if r.opts.Probe != nil {
 		probe = *r.opts.Probe
 	}
-	ctx, cancel := context.WithTimeout(ctx, installedVersionTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), installedVersionTimeout)
 	defer cancel()
 	out, err := probe.Run(ctx, exe, "--version")
+
+	r.diskMu.Lock()
+	defer r.diskMu.Unlock()
 	if err != nil {
-		// Not remembered: a run ctx cut short says nothing about the file.
-		return ""
+		r.diskFailMod, r.diskFailAt = run.modTime, r.opts.Now()
+	} else {
+		run.version = newerVersionLine(string(out), r.opts.Version)
+		r.diskModTime, r.diskVersion = run.modTime, run.version
 	}
-	r.diskModTime, r.diskVersion = mtime, newerVersionLine(string(out), r.opts.Version)
-	return r.diskVersion
+	if r.diskRun == run {
+		r.diskRun = nil
+	}
+	close(run.done)
 }
 
 // newerVersionLine reads `lmm --version`'s "lmm version X" and returns X
