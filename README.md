@@ -935,9 +935,10 @@ check consider only files of those types, and a mod with none is reported
 as having no installable file for this game rather than given another
 flavor's. Absent or empty means every file, as before; an id that is not a
 positive integer fails the load naming the game. Set it with `lmm game edit
-<id> --curseforge-version-type <type-id>` (repeatable; `""` clears it) or in
-the web UI's game editor; the [user guide](docs/guide/add-a-game.md#pick-a-curseforge-game-flavor)
-says how to find the ids.
+<id> --curseforge-version-type <slug-or-id>` (repeatable; `""` clears it;
+`lmm game version-types <id>` lists the game's types by name, slug and id)
+or by ticking the game's types by name in the web UI's game editor; see the
+[user guide](docs/guide/add-a-game.md#pick-a-curseforge-game-flavor).
 
 `mod_path` may be **absolute, or relative to `install_path` — everywhere**. A relative value — `mod_path: Data` — is resolved against that game's `install_path`, never against your current working directory (`~` expands first, so `~/mods` is absolute, not relative). That rule is the same on every path that writes a game, not just for a hand-written `games.yaml`: `lmm game add`, `lmm game add --from-detected`, `lmm game detect`, `POST /api/v1/games` and the web UI's add-game form all accept `Data` and store the resolved absolute path, so what lmm writes reads back identically from any shell. A relative `mod_path` with no `install_path` to resolve it against is refused — naming the game and the field when `games.yaml` is read, and naming `install_path` (the value that is actually missing) at the prompt, the form and the API.
 

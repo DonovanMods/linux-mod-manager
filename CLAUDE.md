@@ -127,6 +127,7 @@ internal/
     ├── import_archive.go  # archive-import flow: PlanImportArchive/ApplyImportArchive (`lmm import <archive>`)
     ├── archive_listing.go # archive listing + the member normalisation the plan and the ingest share
     ├── game_detect.go     # game-detect flow: GameFromDetected/GameSpecFromDetected/ApplyGameDetect (`lmm game detect`, `game add --from-detected`, #206)
+    ├── game_version_types.go # GameVersionTypes/ResolveGameVersionTypes: a source's version types for a game, by slug or id (`lmm game version-types`, #563)
     ├── game_edit.go       # UpdateGameSources: the source<->game mapping (`lmm game edit`, PUT /api/v1/games/{id}, #326)
     ├── mod_toggle.go      # mod enable/disable flow: EnableMod/DisableMod
     ├── mod_edit.go        # mod-edit flow: PlanRelinkMod/ApplyRelinkMod (`lmm mod edit`)
@@ -176,6 +177,7 @@ internal/
     ├── api_games.go       # game add/detect/set-default (#307/#333) + PUT /api/v1/games/{id} sources (#326)
     ├── api_auth.go        # per-source credential store + the live re-key (restart_required)
     ├── api_sources.go     # the custom-source editor: list/definition/validate/save/delete
+    ├── api_version_types.go # GET /api/v1/sources/{id}/version-types?game=: the game editor's CurseForge picker (#563)
     ├── api_source_index.go # the local-index routes (#410): GET/POST /api/v1/sources/{id}/index, GET /api/v1/indexes, POST /api/v1/indexes/prune
     ├── api_mod_settings.go # mod lock/unlock/update-policy/convert - single DB writes, no job
     ├── api_mod_files.go   # GET /api/v1/mods/{source}/{id}/{files,versions}

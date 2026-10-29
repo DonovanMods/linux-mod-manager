@@ -1,0 +1,18 @@
+{
+  "game_id": "wow-classic",
+  "source_id": "curseforge",
+  "value": "classic",
+  "reason": "unknown",
+  "types": [
+    {
+      "id": 67408,
+      "name": "WoW Classic",
+      "slug": "wow-classic"
+    },
+    {
+      "id": 517,
+      "name": "WoW Retail",
+      "slug": "game"
+    }
+  ]
+}

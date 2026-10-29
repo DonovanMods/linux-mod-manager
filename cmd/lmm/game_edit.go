@@ -82,13 +82,15 @@ refusal names the purge each profile needs first. Profile override files
 are not tracked; the next deploy writes them into the new folder.
 
 --curseforge-version-type limits the CurseForge files this game is offered
-to those of one game version type (a CurseForge gameVersionTypeId) - how a
+to those of one game version type, given by CurseForge's slug for it
+(e.g. wow-classic) or its id (a gameVersionTypeId, e.g. 67408) - how a
 World of Warcraft Classic game, which shares CurseForge game 1 with Retail,
 is never offered, installed or updated to a Retail addon file. Repeat it to
 accept several; each run replaces the list, and '--curseforge-version-type
 ""' clears it, so the game accepts every file again. A mod with no file of
-those types is reported as having no installable file for this game. The
-guide's "Pick a CurseForge game flavor" section says how to find the ids.
+those types is reported as having no installable file for this game.
+'lmm game version-types <game-id>' lists the game's types; a value that
+names none fails with that list.
 
 --source, --remove-source, --adapter, --mod-path, --install-path and
 --curseforge-version-type are one edit: every change is checked before any is written, so a run applies
@@ -107,6 +109,7 @@ Examples:
   lmm game edit valheim --adapter generic-files --mod-path BepInEx/plugins
   lmm game edit valheim --loader bepinex --loader-version 5.4.23.5 --loader-bootstrap proton
   lmm game edit valheim --loader ""
+  lmm game edit wow-classic --curseforge-version-type wow-classic
   lmm game edit wow-classic --curseforge-version-type 67408
   lmm game edit skyrim-se --source nexusmods=skyrimspecialedition --json`,
 	Args: cobra.ExactArgs(1),
@@ -159,7 +162,7 @@ func init() {
 	gameEditCmd.Flags().StringVar(&gameEditLoaderBootstrap, "loader-bootstrap", "",
 		"how the loader is injected: native or proton (default: read from the install directory)")
 	gameEditCmd.Flags().StringArrayVar(&gameEditCurseForgeTypes, "curseforge-version-type", nil,
-		`accept only CurseForge files of this game version type id, e.g. 67408 for WoW Classic (repeatable; replaces the list; "" clears it)`)
+		`accept only CurseForge files of this game version type, by slug or id, e.g. wow-classic or 67408 (repeatable; replaces the list; "" clears it; see 'lmm game version-types')`)
 	markDirectoryFlags(gameEditCmd, "install-path", "mod-path")
 }
 
@@ -268,10 +271,19 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 	if gameEditInstallPathSet {
 		edit.InstallPath = &gameEditInstallPath
 	}
-	// #544: core validates the ids and owns replace/clear.
+	// #544: core validates the ids and owns replace/clear. #563: a slug
+	// is resolved against CurseForge's list for the game this edit maps
+	// (edit.Sources, nil when the sources are untouched); ids need no call.
 	if gameEditCurseForgeTypesSet {
-		ids, err := curseForgeTypesFromFlags(gameEditCurseForgeTypes)
+		values, err := curseForgeTypesFromFlags(gameEditCurseForgeTypes)
 		if err != nil {
+			return err
+		}
+		ids, err := service.ResolveGameVersionTypes(ctx, gameID, curseForgeSourceID, edit.Sources, values)
+		if err != nil {
+			if errors.Is(err, domain.ErrAuthRequired) {
+				return fmt.Errorf("--curseforge-version-type: a slug needs CurseForge's list of the game's version types: %w", authPromptError(curseForgeSourceID))
+			}
 			return err
 		}
 		edit.CurseForgeVersionTypes = &ids
@@ -334,23 +346,22 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 	return nil
 }
 
-// curseForgeTypesFromFlags parses --curseforge-version-type's values: each a
-// number, and a lone "" (or no value at all) the empty list that clears the
-// setting. Whether a number is a usable id is core's question.
-func curseForgeTypesFromFlags(values []string) ([]int, error) {
-	ids := []int{}
+// curseForgeTypesFromFlags reads --curseforge-version-type's values: each
+// an id or a slug, and a lone "" (or no value at all) the empty list that
+// clears the setting. Which type a value names is core's question.
+func curseForgeTypesFromFlags(values []string) ([]string, error) {
+	out := []string{}
 	for _, v := range values {
 		v = strings.TrimSpace(v)
-		if v == "" && len(values) == 1 {
-			break
+		if v == "" {
+			if len(values) == 1 {
+				break
+			}
+			return nil, fmt.Errorf(`--curseforge-version-type "" clears the list, so it cannot be repeated alongside other values`)
 		}
-		id, err := strconv.Atoi(v)
-		if err != nil {
-			return nil, fmt.Errorf("--curseforge-version-type %q is not a CurseForge game version type id (a number, e.g. 67408)", v)
-		}
-		ids = append(ids, id)
+		out = append(out, v)
 	}
-	return ids, nil
+	return out, nil
 }
 
 // joinInts is ids as "1, 2, 3".

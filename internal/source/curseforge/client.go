@@ -430,6 +430,24 @@ func (c *Client) GetDownloadURL(ctx context.Context, modID, fileID int) (string,
 	return resp.Data, nil
 }
 
+// GetGameVersionTypes fetches the version types CurseForge sorts a game's
+// files by (#563), in the API's order. A 404 here means CurseForge has no
+// game with that id - the game's mapping is wrong - so it is
+// source.ErrGameIdentifierInvalid naming the id, not mapError's "mod not
+// found".
+func (c *Client) GetGameVersionTypes(ctx context.Context, gameID int) ([]GameVersionType, error) {
+	path := fmt.Sprintf("/v1/games/%d/version-types", gameID)
+
+	var resp APIResponse[[]GameVersionType]
+	if err := c.doRequest(ctx, http.MethodGet, path, &resp); err != nil {
+		if errors.Is(err, domain.ErrModNotFound) {
+			return nil, fmt.Errorf("CurseForge has no game with id %d: %w", gameID, source.ErrGameIdentifierInvalid)
+		}
+		return nil, fmt.Errorf("getting game version types: %w", err)
+	}
+	return resp.Data, nil
+}
+
 // GetCategories fetches categories for a game
 func (c *Client) GetCategories(ctx context.Context, gameID int) ([]Category, error) {
 	path := fmt.Sprintf("/v1/categories?gameId=%d", gameID)

@@ -414,6 +414,15 @@ export const updateGame = (gameID, body) =>
 export const getGameDetail = (gameID) =>
   get(`/api/v1/games/${encodeURIComponent(gameID)}`);
 
+/** Reads the version types sourceID publishes for one game (issue 563):
+ * core.GameVersionTypesReport, each type by id, name and slug. A source
+ * that publishes none is a 404, a game that does not map it a 400, and a
+ * missing key a 401. */
+export const getSourceVersionTypes = (sourceID, gameID) =>
+  get(
+    `/api/v1/sources/${encodeURIComponent(sourceID)}/version-types?game=${encodeURIComponent(gameID)}`,
+  );
+
 /** Reads the Steam detect scan's pre-selection listing: core.GameDetectListing.
  * all=true (issue 206) widens it with every OTHER installed Steam game
  * (?all=1) - no `known` member at all (never a literal false), no index,

@@ -107,6 +107,29 @@ func (c *CurseForge) ListGames(ctx context.Context) ([]source.GameEntry, error) 
 	return entries, nil
 }
 
+// ListGameVersionTypes implements source.GameVersionTypeLister (#563): the
+// gameVersionTypeIds a game's curseforge.game_version_types can name, with
+// CurseForge's name and slug for each.
+func (c *CurseForge) ListGameVersionTypes(ctx context.Context, sourceGameID string) ([]source.GameVersionType, error) {
+	gameID, err := c.resolveGameID(ctx, sourceGameID)
+	if err != nil {
+		var unresolved *unresolvedGameError
+		if errors.As(err, &unresolved) {
+			return nil, fmt.Errorf("%w: %w", err, source.ErrGameIdentifierInvalid)
+		}
+		return nil, err
+	}
+	rows, err := c.client.GetGameVersionTypes(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	types := make([]source.GameVersionType, len(rows))
+	for i, r := range rows {
+		types[i] = source.GameVersionType{ID: r.ID, Name: r.Name, Slug: r.Slug}
+	}
+	return types, nil
+}
+
 // TypeLabel implements source.TypeLabeler.
 func (c *CurseForge) TypeLabel() string {
 	return "built-in"
@@ -155,7 +178,16 @@ func (c *CurseForge) resolveGameID(ctx context.Context, gameIDOrSlug string) (in
 		}
 	}
 
-	return 0, fmt.Errorf("game not found: %q (tried as numeric ID and slug)", gameIDOrSlug)
+	return 0, &unresolvedGameError{value: gameIDOrSlug}
+}
+
+// unresolvedGameError is resolveGameID finding no CurseForge game by the
+// value's slug or name. ListGameVersionTypes reports it as the game's
+// identifier being wrong (#563); every other caller keeps the sentence.
+type unresolvedGameError struct{ value string }
+
+func (e *unresolvedGameError) Error() string {
+	return fmt.Sprintf("game not found: %q (tried as numeric ID and slug)", e.value)
 }
 
 // Search finds mods matching the query.

@@ -154,6 +154,15 @@ type FileIndex struct {
 	ModLoader         int    `json:"modLoader"` // 0=Any, 1=Forge, 2=Cauldron, 3=LiteLoader, 4=Fabric, 5=Quilt, 6=NeoForge
 }
 
+// GameVersionType is one row of GET /v1/games/{gameId}/version-types
+// (#563): a gameVersionTypeId with CurseForge's name and slug for it.
+type GameVersionType struct {
+	ID     int    `json:"id"`
+	GameID int    `json:"gameId"`
+	Name   string `json:"name"`
+	Slug   string `json:"slug"`
+}
+
 // Game represents a game from the CurseForge API
 type Game struct {
 	ID           int        `json:"id"`
