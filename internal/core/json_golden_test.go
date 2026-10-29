@@ -2150,6 +2150,46 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Every optional key at once (a Skipped entry, an AlreadyListed
+			// mod, a link-method difference), same convention as
+			// relink_plan above (#437).
+			"copy_mod_plan",
+			core.CopyModPlan{
+				GameID: "skyrim-se", From: "default", To: "survival", All: true,
+				Mods: []core.CopyModEntry{
+					{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", FileIDs: []string{"file-0"}, Locked: true},
+					{SourceID: "nexusmods", ModID: "43", Name: "Other Mod", Version: "2.0", Disabled: true, AlreadyListed: true, ExistingVersion: "1.9"},
+				},
+				Skipped:           []core.CopyModSkip{{SourceID: "steamworkshop", ModID: "7", Name: "Workshop Item", Reason: core.ReasonExternalNoCopy}},
+				DestinationActive: true,
+				LinkMethod:        domain.LinkHardlink, SourceLinkMethod: domain.LinkSymlink, LinkMethodDiffers: true,
+			},
+		},
+		{
+			"copy_mod_entry",
+			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", FileIDs: []string{"file-0"},
+				Locked: true, Disabled: true, AlreadyListed: true, ExistingVersion: "1.2.2"},
+		},
+		{
+			"copy_mod_skip",
+			core.CopyModSkip{SourceID: "steamworkshop", ModID: "7", Name: "Workshop Item", Reason: core.ReasonExternalNoCopy},
+		},
+		{
+			"copy_mod_outcome",
+			core.CopyModOutcome{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", Deployed: true, Replaced: true},
+		},
+		{
+			"copy_mod_result",
+			core.CopyModResult{
+				From: "default", To: "survival",
+				Copied: []core.CopyModOutcome{
+					{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", Deployed: true, Replaced: true},
+				},
+				Skipped:  []core.CopyModSkip{{SourceID: "nexusmods", ModID: "43", Name: "Other Mod", Reason: "already in profile survival (version 1.9)"}},
+				Warnings: []string{"could not sync merged pak: base pak missing"},
+			},
+		},
+		{
 			"mod_setting_result",
 			core.ModSettingResult{
 				Mod: domain.InstalledMod{

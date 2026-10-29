@@ -1,0 +1,25 @@
+{
+  "from": "default",
+  "to": "survival",
+  "copied": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "42",
+      "name": "Sample Mod",
+      "version": "1.2.3",
+      "deployed": true,
+      "replaced": true
+    }
+  ],
+  "skipped": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "43",
+      "name": "Other Mod",
+      "reason": "already in profile survival (version 1.9)"
+    }
+  ],
+  "warnings": [
+    "could not sync merged pak: base pak missing"
+  ]
+}

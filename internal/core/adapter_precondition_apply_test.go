@@ -72,6 +72,14 @@ var checkedApplies = map[string]planThenApply{
 			return err
 		}
 	},
+	"ApplyCopyMod": func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) func() error {
+		plan, err := svc.PlanCopyMod(context.Background(), g, core.CopyModRequest{From: "default", To: "other", SourceID: "acme", ModID: "m1"})
+		require.NoError(t, err)
+		return func() error {
+			_, err := svc.ApplyCopyMod(context.Background(), g, plan, core.CopyModOptions{}, nil)
+			return err
+		}
+	},
 	"ApplyRelinkMod": func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) func() error {
 		plan, err := svc.PlanRelinkMod(context.Background(), g, "default", "acme", "m1", "acme", "m2")
 		require.NoError(t, err)

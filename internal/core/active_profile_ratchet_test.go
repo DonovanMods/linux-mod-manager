@@ -72,6 +72,8 @@ var recordedOnlyFlows = map[string]string{
 	"ApplySnapshotRestore": "a restore makes the snapshot's profile active, purging the one active now (#462 G2-4)",
 	"PlanProfileSync":      "a sync edits another profile's document only (#444)",
 	"ApplyRelinkMod":       "a relink of another profile's mod rewrites its records; the merged-artifact resync is skipped (#462)",
+	"PlanCopyMod":          "a copy into another profile records it and deploys nothing (#437)",
+	"ApplyCopyMod":         "a copy into another profile records it and deploys nothing (#437)",
 	"VerifyReport":         "verify --fix on another profile converges only its records, and deploys nothing (#462)",
 }
 

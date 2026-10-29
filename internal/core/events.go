@@ -61,6 +61,9 @@ const (
 	// search index (#360). It writes under the cache root and nothing else:
 	// no game directory, no database, no profile.
 	OpSourceIndex Op = "source_index"
+	// OpModCopy is `lmm mod copy` - ApplyCopyMod's copy of a mod one
+	// profile has into another, without re-installing it (#437).
+	OpModCopy Op = "mod_copy"
 )
 
 // Scope is embedded in every event: which operation, which mod (if any),

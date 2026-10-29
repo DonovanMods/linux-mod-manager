@@ -927,6 +927,21 @@ const (
 	// a stated time - a circuit breaker after repeated failures, or a
 	// throttle that asked for a longer wait than lmm sits through.
 	SourceSuspended
+
+	// --- ApplyCopyMod progress events (#437). Each carries Scope.Mod/
+	// ModName and a 1-based Index/Total within the copy. ---
+
+	// ModCopyCopied fires once a mod is copied: its row and ref are
+	// written, and, for an active destination, its files deployed.
+	ModCopyCopied
+	// ModCopySkipped fires for a mod the copy left out - an All copy's
+	// already-listed mod without Replace. Detail is the reason.
+	ModCopySkipped
+	// ModCopyWarning is ApplyCopyMod's unconditional diagnostic - a failed
+	// deploy, a checksum the copy could not carry, a merged-pak sync
+	// problem. Detail is the raw text (no prefix), mirrored on
+	// CopyModResult.Warnings.
+	ModCopyWarning
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -986,6 +1001,8 @@ var deployPhaseNames = [...]string{
 	SwitchFlagOnly: "switch_flag_only",
 
 	SourceRetrying: "source_retrying", SourceSuspended: "source_suspended",
+
+	ModCopyCopied: "mod_copy_copied", ModCopySkipped: "mod_copy_skipped", ModCopyWarning: "mod_copy_warning",
 }
 
 // String returns the phase's wire name.

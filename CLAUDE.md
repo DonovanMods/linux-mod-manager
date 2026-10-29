@@ -121,6 +121,8 @@ internal/
     ├── profile_import.go  # profile-import flow: ImportPlan/PlanImport/ApplyImport (`lmm profile import`)
     ├── profile_reorder.go # profile-reorder flow: ReorderProfileMods/ResolveReorder (`lmm profile reorder`)
     ├── profile.go         # ProfileManager: ctx-threaded profile CRUD (Ruling 11) + ProfileResult
+    ├── profile_duplicate.go # DuplicateProfile: a faithful profile clone with its rows (`lmm profile duplicate`, #438)
+    ├── row_copy.go        # copyRowToProfile: the one per-profile installed-row mint (switch/apply/import/duplicate/copy)
     ├── adopt.go           # adopt flow: ScanLocal/PlanAdopt/ApplyAdopt (`lmm import` scan mode)
     ├── import_archive.go  # archive-import flow: PlanImportArchive/ApplyImportArchive (`lmm import <archive>`)
     ├── archive_listing.go # archive listing + the member normalisation the plan and the ingest share
@@ -128,6 +130,7 @@ internal/
     ├── game_edit.go       # UpdateGameSources: the source<->game mapping (`lmm game edit`, PUT /api/v1/games/{id}, #326)
     ├── mod_toggle.go      # mod enable/disable flow: EnableMod/DisableMod
     ├── mod_edit.go        # mod-edit flow: PlanRelinkMod/ApplyRelinkMod (`lmm mod edit`)
+    ├── mod_copy.go        # mod-copy flow: PlanCopyMod/ApplyCopyMod (`lmm mod copy`, #437)
     ├── mod_settings.go    # mod lock/unlock/set-update/convert flows -> ModSettingResult
     ├── mod_files.go       # `lmm mod files`: ModFileEntry/ModFilesReport
     ├── verify.go          # verify engine: VerifyTier/VerifyResult (`lmm verify`)
