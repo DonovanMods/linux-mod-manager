@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-29
+
+Profiles can be duplicated and mods copied between them, a CurseForge game
+can be limited to its own flavor (World of Warcraft Classic or Retail),
+picked by name, and saving a game no longer rewrites the rest of
+`games.yaml`.
+
+### Added
+
+- **Duplicate a profile (#438).** `lmm profile duplicate <source> <new>`,
+  and **Duplicate** in the web UI's Profiles window, clone a profile without
+  the export/import round trip: every mod in load order with its version,
+  file ids, lock and disabled marker, the link method (an explicit one stays
+  explicit), hooks and config overrides. The duplicate is never made the
+  active profile; its mods are recorded as installed under it and deployed
+  when you switch to it.
+- **Copy a mod to another profile (#437).** `lmm mod copy <mod> --to
+<profile>` (`--all` for every mod of the profile, `--replace` to
+  overwrite one the destination already lists, `--dry-run` to preview), and
+  **Copy to profile…** in the web UI's mod menu and mod panel, copy an
+  installed mod into another profile of the same game without re-installing
+  it: nothing is fetched, the copy keeps the source's version and lock, and
+  an active destination gets the files deployed by its own link method.
+  Steam Workshop items are refused: every profile already has them.
+- **A CurseForge game can name the flavor it is (#544).** CurseForge serves
+  every World of Warcraft flavor as one game, so a Classic install could be
+  offered, installed or updated to an addon's Retail file. A game's
+  `games.yaml` entry may now carry a `curseforge: game_version_types:` list
+  of the CurseForge game version type ids it accepts (`67408` for Classic Era,
+  `517` for Retail); set it with `lmm game edit <id>
+--curseforge-version-type <type-id>` (repeatable, `""` clears it) or the
+  web UI's game editor. With it, search hides addons with no file of those
+  types, and version resolution, the file an install picks and the update
+  check consider only files of those types; an addon with none is reported
+  as having no installable file for this game. A game without the setting
+  behaves exactly as before. The user guide's "Pick a CurseForge game
+  flavor" says how to find the ids.
+- **Pick a CurseForge game's version types by name (#563).** lmm now reads
+  a game's version types (name, slug and id) from CurseForge itself, so
+  nobody has to look up #544's ids. The web UI's game editor lists them as
+  a checklist by name, the stored ones ticked; it falls back to the id
+  field, with a link to the guide, when the list cannot load.
+  `lmm game edit --curseforge-version-type` takes a slug (`wow-classic`) as
+  well as an id, and a value that names no version type fails listing the
+  game's valid ones. `lmm game version-types <game>` (and `--json`) lists
+  them, and `GET /api/v1/sources/{id}/version-types?game=<game>` serves the
+  list to the web UI. `games.yaml` still stores ids.
+
+### Fixed
+
+- **A game with no install path no longer writes profile overrides into the
+  working directory.** A deploy resolved the empty path to wherever lmm was
+  run from and wrote the profile's config overrides there; it now refuses
+  with an error naming the game.
+- **A web-UI plan refused for a Steam Workshop item answers 409, not 500
+  (#437).** `lmm serve` classified the typed external-mod refusal as an
+  unexpected server error; it is a conflict with the mod's state.
+- **Saving one game no longer rewrites every other game in `games.yaml`
+  (#362).** `lmm game add`, `game edit`, `game detect` and the web UI's game
+  forms re-marshalled the whole file from its loaded, resolved form, so every
+  other game's hand-written `~/` paths and relative `mod_path` came back
+  expanded to absolute paths, and comments and indentation were lost. Only
+  the saved game's entry is written now; every other game's lines stay
+  byte-identical. A layout that cannot be edited line by line (a flow-style
+  `games: {...}`) is edited as a YAML document instead, which keeps other
+  games' values as written.
+- **`games.yaml` and `config.yaml` are written atomically (#403).** Both were
+  truncated and rewritten in place, so `lmm serve` (which re-reads
+  `games.yaml` on every request) could read a partial file while the CLI was
+  saving, and an interrupted save left a truncated file behind. They are now
+  written to a temporary file in the same directory, synced, and renamed over
+  the original, keeping its mode; a symlink's target is what changes, and a
+  read-only file is still refused. Profiles were already written this way;
+  their writes now also sync the directory after the rename.
+
 ## [2.0.1] - 2026-10-28
 
 lmm now has a [user guide](https://donovanmods.github.io/linux-mod-manager/)
@@ -6178,7 +6253,8 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.1...v2.0.0
 [1.30.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.0...v1.30.1

@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -62,6 +63,11 @@ type GameEdit struct {
 	// UpdateGameLoader.
 	Loader    *LoaderSpec
 	LoaderSet bool
+	// CurseForgeVersionTypes, when non-nil, REPLACES the game's
+	// curseforge.game_version_types (#544): the CurseForge gameVersionTypeIds
+	// the game accepts, duplicates dropped. An empty list clears the
+	// setting, so the game accepts every file again.
+	CurseForgeVersionTypes *[]int
 }
 
 // EditGame applies edit to gameID's games.yaml entry and returns the game's
@@ -89,7 +95,8 @@ type GameEdit struct {
 //     game-scoped route already answers with.
 //   - GameSpecError, whose Field is the wire key PUT /api/v1/games/{id}
 //     takes ("name", "install_path", "sources", "adapter", "mod_path",
-//     "loader.kind", "loader.runtime", "loader.bootstrap"), so an SPA marks the
+//     "loader.kind", "loader.runtime", "loader.bootstrap",
+//     "curseforge.game_version_types"), so an SPA marks the
 //     offending input rather than parsing a sentence. See validatedSourceMap
 //     for the source map's rules. An adapter must be registered, and must
 //     compose with the rest of the entry the edit leaves (AdapterFor: a
@@ -171,6 +178,14 @@ func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEd
 		updated.Loader, changed = declared, true
 	}
 
+	if edit.CurseForgeVersionTypes != nil {
+		block, err := curseForgeBlock(*edit.CurseForgeVersionTypes)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		updated.CurseForge, changed = block, true
+	}
+
 	if edit.Sources != nil {
 		cleaned, err := s.validatedSourceMap(edit.Sources)
 		if err != nil {
@@ -239,6 +254,26 @@ func (s *Service) editedGame(ctx context.Context, game *domain.Game, edit GameEd
 		}
 	}
 	return &updated, changed, nil, nil
+}
+
+// curseForgeBlock is the curseforge: block an edit of the version types
+// leaves (#544): nil for none, or a GameSpecError naming the first id that
+// is not positive.
+func curseForgeBlock(ids []int) (*domain.GameCurseForge, error) {
+	block, err := domain.NewGameCurseForge(ids)
+	if err != nil {
+		bad := ""
+		for _, id := range ids {
+			if id <= 0 {
+				bad = strconv.Itoa(id)
+				break
+			}
+		}
+		spec := newGameSpecError("curseforge.game_version_types", bad, "a CurseForge game version type id is a positive integer")
+		spec.Err = domain.ErrInvalidCurseForgeVersionType
+		return nil, spec
+	}
+	return block, nil
 }
 
 // installPathValue is the install_path an edit writes (#528): trimmed and

@@ -1,0 +1,21 @@
+{
+  "game_id": "wow-classic",
+  "source_id": "curseforge",
+  "types": [
+    {
+      "id": 67408,
+      "name": "WoW Classic",
+      "slug": "wow-classic"
+    },
+    {
+      "id": 79434,
+      "name": "WoW Mists of Pandaria Classic",
+      "slug": "wow-mists-of-pandaria-classic"
+    },
+    {
+      "id": 517,
+      "name": "WoW Retail",
+      "slug": "game"
+    }
+  ]
+}

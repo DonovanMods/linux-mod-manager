@@ -727,7 +727,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		}
 		scope.ModName = mod.Name
 
-		files, err := s.GetModFiles(ctx, ref.SourceID, mod)
+		files, err := s.GetModFiles(ctx, game, ref.SourceID, mod)
 		if err != nil {
 			fail(fmt.Sprintf("failed to get files: %v", err))
 			continue
@@ -950,26 +950,13 @@ func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profil
 		}
 	}
 
-	// Read the source row's checksums BEFORE the save below: saveInstalledMod
-	// rewrites installed_mod_files, and recordFileChecksums must run after
-	// it - the same ordering rule every downloading flow follows.
-	checksums, msgs := s.rowChecksums(ctx, game, row)
-
-	installedMod := &domain.InstalledMod{
-		Mod:          mod,
-		ProfileName:  profileName,
-		UpdatePolicy: domain.UpdateNotify,
-		Enabled:      true,
-		FileIDs:      row.FileIDs,
-		Deployed:     deploy || row.External, // installer.Install just succeeded, or Steam has it
-		External:     row.External,
-		ExternalPath: row.ExternalPath,
-	}
-	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
+	// The shared per-profile mint (#437/#438): a fresh row - this profile's
+	// own update policy and history, not row's - deployed when
+	// installer.Install just succeeded, or when Steam has it.
+	msgs, err := s.copyRowToProfile(ctx, game, row, profileName, rowCopy{enabled: true, deployed: deploy || row.External})
+	if err != nil {
 		return domain.ModReference{}, nil, fmt.Errorf("save failed: %v", err)
 	}
-
-	msgs = append(msgs, s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profileName, checksums)...)
 
 	return domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: row.FileIDs}, msgs, nil
 }

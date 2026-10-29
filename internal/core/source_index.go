@@ -267,11 +267,17 @@ func (s *Service) indexGameID(src source.ModSource, gameID string) (string, erro
 // has a mapped value checked here too, so a malformed one is refused with
 // the game named before it reaches any path or URL.
 func (s *Service) sourceGameID(src source.ModSource, gameID string) (string, error) {
-	sourceID := src.ID()
 	game, ok := s.game(gameID)
 	if !ok {
 		return gameID, nil
 	}
+	return gameSourceID(src, game)
+}
+
+// gameSourceID is sourceGameID for a game already in hand - the saved one,
+// or one an edit is about to save.
+func gameSourceID(src source.ModSource, game *domain.Game) (string, error) {
+	sourceID, gameID := src.ID(), game.ID
 	id, mapped := game.SourceIDs[sourceID]
 	switch {
 	case !mapped:

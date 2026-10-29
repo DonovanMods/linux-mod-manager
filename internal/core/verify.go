@@ -1674,7 +1674,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 
 		ref := prof.FindRef(mod.SourceID, mod.ID)
 
-		sourceFiles, err := r.svc.GetModFiles(r.ctx, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
+		sourceFiles, err := r.svc.GetModFiles(r.ctx, r.game, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
 		if err != nil {
 			r.result.Warnings++
 			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)}, VerifyEvent{})

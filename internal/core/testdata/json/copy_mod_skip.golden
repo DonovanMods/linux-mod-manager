@@ -1,0 +1,6 @@
+{
+  "source_id": "steamworkshop",
+  "mod_id": "7",
+  "name": "Workshop Item",
+  "reason": "a Steam Workshop item is game-global, not per-profile - every profile already has it while Steam keeps it subscribed"
+}

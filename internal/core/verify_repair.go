@@ -24,7 +24,7 @@ import (
 // callers now pass ctx directly, and game/profile come from the run itself
 // rather than being threaded in.
 func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.InstalledMod, fileID string, ref *domain.ModReference) (persisted bool, err error) {
-	files, err := r.svc.GetModFiles(ctx, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
+	files, err := r.svc.GetModFiles(ctx, r.game, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
 	if err != nil {
 		return false, fmt.Errorf("getting mod files: %w", err)
 	}

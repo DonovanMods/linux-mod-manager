@@ -114,12 +114,12 @@ func TestServiceResolveModVersion(t *testing.T) {
 	svc.RegisterSource(mock)
 	mod := &domain.Mod{ID: "mod1", SourceID: "src", GameID: "testgame", Name: "Mod One", Version: "1.5"}
 
-	files, err := svc.ResolveModVersion(context.Background(), "src", mod, "1.0")
+	files, err := svc.ResolveModVersion(context.Background(), nil, "src", mod, "1.0")
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	assert.Equal(t, "9", files[0].ID)
 
-	_, err = svc.ResolveModVersion(context.Background(), "src", mod, "9.9")
+	_, err = svc.ResolveModVersion(context.Background(), nil, "src", mod, "9.9")
 	assert.ErrorIs(t, err, core.ErrVersionNotFound)
 }
 
@@ -133,7 +133,7 @@ func TestService_AvailableModVersions(t *testing.T) {
 	svc.RegisterSource(mock)
 	mod := &domain.Mod{ID: "mod1", SourceID: "src", GameID: "testgame", Name: "Mod One", Version: "1.5"}
 
-	versions, err := svc.AvailableModVersions(context.Background(), "src", mod)
+	versions, err := svc.AvailableModVersions(context.Background(), nil, "src", mod)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1.5", "1.0"}, versions)
 }
@@ -144,7 +144,7 @@ func TestService_AvailableModVersions_NoVersionInfo(t *testing.T) {
 	svc.RegisterSource(mock)
 	mod := &domain.Mod{ID: "mod1", SourceID: "src", GameID: "testgame", Name: "Mod One"}
 
-	_, err := svc.AvailableModVersions(context.Background(), "src", mod)
+	_, err := svc.AvailableModVersions(context.Background(), nil, "src", mod)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, source.ErrNotSupported)
 }

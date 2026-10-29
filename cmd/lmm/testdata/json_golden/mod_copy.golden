@@ -1,0 +1,20 @@
+{
+  "from": "default",
+  "to": "exp",
+  "copied": [
+    {
+      "source_id": "src",
+      "mod_id": "a",
+      "name": "Mod A",
+      "version": "1.0",
+      "deployed": false
+    },
+    {
+      "source_id": "src",
+      "mod_id": "b",
+      "name": "Mod B",
+      "version": "1.0",
+      "deployed": false
+    }
+  ]
+}

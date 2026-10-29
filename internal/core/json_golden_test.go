@@ -2150,6 +2150,46 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Every optional key at once (a Skipped entry, an AlreadyListed
+			// mod, a link-method difference), same convention as
+			// relink_plan above (#437).
+			"copy_mod_plan",
+			core.CopyModPlan{
+				GameID: "skyrim-se", From: "default", To: "survival", All: true,
+				Mods: []core.CopyModEntry{
+					{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", FileIDs: []string{"file-0"}, Locked: true},
+					{SourceID: "nexusmods", ModID: "43", Name: "Other Mod", Version: "2.0", Disabled: true, AlreadyListed: true, ExistingVersion: "1.9"},
+				},
+				Skipped:           []core.CopyModSkip{{SourceID: "steamworkshop", ModID: "7", Name: "Workshop Item", Reason: core.ReasonExternalNoCopy}},
+				DestinationActive: true,
+				LinkMethod:        domain.LinkHardlink, SourceLinkMethod: domain.LinkSymlink, LinkMethodDiffers: true,
+			},
+		},
+		{
+			"copy_mod_entry",
+			core.CopyModEntry{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", FileIDs: []string{"file-0"},
+				Locked: true, Disabled: true, AlreadyListed: true, ExistingVersion: "1.2.2"},
+		},
+		{
+			"copy_mod_skip",
+			core.CopyModSkip{SourceID: "steamworkshop", ModID: "7", Name: "Workshop Item", Reason: core.ReasonExternalNoCopy},
+		},
+		{
+			"copy_mod_outcome",
+			core.CopyModOutcome{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", Deployed: true, Replaced: true},
+		},
+		{
+			"copy_mod_result",
+			core.CopyModResult{
+				From: "default", To: "survival",
+				Copied: []core.CopyModOutcome{
+					{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.2.3", Deployed: true, Replaced: true},
+				},
+				Skipped:  []core.CopyModSkip{{SourceID: "nexusmods", ModID: "43", Name: "Other Mod", Reason: "already in profile survival (version 1.9)"}},
+				Warnings: []string{"could not sync merged pak: base pak missing"},
+			},
+		},
+		{
 			"mod_setting_result",
 			core.ModSettingResult{
 				Mod: domain.InstalledMod{
@@ -2230,6 +2270,36 @@ func TestJSONGoldens(t *testing.T) {
 				Query:    "mine",
 				Matches: []core.GameCatalogMatch{
 					{Identifier: "432", Name: "Minecraft", Slug: "minecraft", GameID: "minecraft"},
+				},
+			},
+		},
+		{
+			// #563: one version type, the row both documents below carry.
+			"game_version_type",
+			core.GameVersionType{ID: 67408, Name: "WoW Classic", Slug: "wow-classic"},
+		},
+		{
+			// #563: `lmm game version-types --json` - a source's version
+			// types for one game, sorted by name, each by id, name and slug.
+			"game_version_types_report",
+			core.GameVersionTypesReport{
+				GameID: "wow-classic", SourceID: "curseforge",
+				Types: []core.GameVersionType{
+					{ID: 67408, Name: "WoW Classic", Slug: "wow-classic"},
+					{ID: 517, Name: "WoW Retail", Slug: "game"},
+				},
+			},
+		},
+		{
+			// #563: a --curseforge-version-type naming no type, with every
+			// valid type in the envelope's details.
+			"game_version_type_error",
+			core.GameVersionTypeError{
+				GameID: "wow-classic", SourceID: "curseforge", Value: "classic",
+				Reason: core.GameVersionTypeUnknown,
+				Types: []core.GameVersionType{
+					{ID: 67408, Name: "WoW Classic", Slug: "wow-classic"},
+					{ID: 517, Name: "WoW Retail", Slug: "game"},
 				},
 			},
 		},

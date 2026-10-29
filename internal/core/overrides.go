@@ -38,6 +38,10 @@ func applyProfileOverrides(game *domain.Game, profile *domain.Profile, originals
 	if len(profile.Overrides) == 0 {
 		return nil
 	}
+	// filepath.Abs("") is the working directory: never write there.
+	if game.InstallPath == "" {
+		return fmt.Errorf("game %q has no install path to write profile overrides into", game.ID)
+	}
 	base, err := filepath.Abs(game.InstallPath)
 	if err != nil {
 		return fmt.Errorf("resolving game path: %w", err)

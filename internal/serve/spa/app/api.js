@@ -278,6 +278,12 @@ export const deleteProfile = (name, context) =>
 export const renameProfile = (name, newName, context) =>
   post(scoped(`${profilePath(name)}/rename`, context), { name: newName });
 
+/** Duplicates a profile as newName (issue 438): the copy's document and a
+ * twin of every installed row, none deployed. Returns core.ProfileResult
+ * for the new profile; 409 if newName is taken. */
+export const duplicateProfile = (name, newName, context) =>
+  post(scoped(`${profilePath(name)}/duplicate`, context), { name: newName });
+
 /** Marks a profile as the game's default. Returns core.ProfileResult,
  * re-read after the write - callers should refetch listProfiles too, since
  * SetDefault clears the flag on every OTHER profile server-side. */
@@ -407,6 +413,15 @@ export const updateGame = (gameID, body) =>
  * deliberately does not write that string into Steam's own configuration. */
 export const getGameDetail = (gameID) =>
   get(`/api/v1/games/${encodeURIComponent(gameID)}`);
+
+/** Reads the version types sourceID publishes for one game (issue 563):
+ * core.GameVersionTypesReport, each type by id, name and slug. A source
+ * that publishes none is a 404, a game that does not map it a 400, and a
+ * missing key a 401. */
+export const getSourceVersionTypes = (sourceID, gameID) =>
+  get(
+    `/api/v1/sources/${encodeURIComponent(sourceID)}/version-types?game=${encodeURIComponent(gameID)}`,
+  );
 
 /** Reads the Steam detect scan's pre-selection listing: core.GameDetectListing.
  * all=true (issue 206) widens it with every OTHER installed Steam game

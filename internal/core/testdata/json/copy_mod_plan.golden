@@ -1,0 +1,43 @@
+{
+  "game_id": "skyrim-se",
+  "from": "default",
+  "to": "survival",
+  "all": true,
+  "mods": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "42",
+      "name": "Sample Mod",
+      "version": "1.2.3",
+      "file_ids": [
+        "file-0"
+      ],
+      "locked": true,
+      "disabled": false,
+      "already_listed": false
+    },
+    {
+      "source_id": "nexusmods",
+      "mod_id": "43",
+      "name": "Other Mod",
+      "version": "2.0",
+      "locked": false,
+      "disabled": true,
+      "already_listed": true,
+      "existing_version": "1.9"
+    }
+  ],
+  "skipped": [
+    {
+      "source_id": "steamworkshop",
+      "mod_id": "7",
+      "name": "Workshop Item",
+      "reason": "a Steam Workshop item is game-global, not per-profile - every profile already has it while Steam keeps it subscribed"
+    }
+  ],
+  "destination_active": true,
+  "link_method": "hardlink",
+  "source_link_method": "symlink",
+  "link_method_differs": true,
+  "no_changes": false
+}

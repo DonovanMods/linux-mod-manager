@@ -1,0 +1,37 @@
+{
+  "data": [
+    {
+      "id": 79434,
+      "gameId": 1,
+      "name": "WoW Mists of Pandaria Classic",
+      "slug": "wow-mists-of-pandaria-classic"
+    },
+    { "id": 67408, "gameId": 1, "name": "WoW Classic", "slug": "wow-classic" },
+    { "id": 517, "gameId": 1, "name": "WoW Retail", "slug": "game" },
+    {
+      "id": 77522,
+      "gameId": 1,
+      "name": "WoW Cataclysm Classic",
+      "slug": "wow-cataclysm-classic"
+    },
+    {
+      "id": 73713,
+      "gameId": 1,
+      "name": "WoW Wrath of the Lich King Classic",
+      "slug": "wow-wrath-classic"
+    },
+    {
+      "id": 81212,
+      "gameId": 1,
+      "name": "WoW Wrath Titan Reforged",
+      "slug": "wow-wrath-titan"
+    },
+    {
+      "id": 73246,
+      "gameId": 1,
+      "name": "WoW Burning Crusade Classic",
+      "slug": "wow-burning-crusade-classic"
+    },
+    { "id": 88568, "gameId": 1, "name": "WoW Forever", "slug": "wow-forever" }
+  ]
+}

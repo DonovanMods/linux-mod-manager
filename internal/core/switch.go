@@ -750,18 +750,14 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				// admits such mods into ToEnable), so the UPDATE-only
 				// SetModEnabled matched nothing; create the target-profile row
 				// so the deployment we just made isn't orphaned (#60).
-				row := im
-				row.ProfileName = plan.To
-				row.Enabled = true
-				row.Deployed = true
-				// #514: the copy describes the same cached bytes, so it
-				// carries the source row's checksums (#372's rule,
-				// importCachedMod) instead of reading NO CHECKSUM.
-				checksums, msgs := s.rowChecksums(ctx, game, im)
-				err = s.saveInstalledMod(ctx, &row)
+				// The copy keeps the row's own settings - it is the same
+				// mod the user installed, enabled under another profile -
+				// and its checksums (#514, via copyRowToProfile).
+				var msgs []string
+				msgs, err = s.copyRowToProfile(ctx, game, im, plan.To, rowCopy{enabled: true, deployed: true, carrySettings: true})
 				if err == nil {
-					for _, msg := range append(msgs, s.recordFileChecksums(ctx, row.SourceID, row.ID, game.ID, plan.To, checksums)...) {
-						msg = "Warning: " + strings.TrimPrefix(msg, "Warning: ")
+					for _, msg := range msgs {
+						msg = "Warning: " + msg
 						result.Notes = append(result.Notes, msg)
 						emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
 					}
@@ -833,7 +829,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			scope.ModName = mod.Name
 			failed.Name = mod.Name
 
-			files, err := s.GetModFiles(ctx, ref.SourceID, mod)
+			files, err := s.GetModFiles(ctx, game, ref.SourceID, mod)
 			if err != nil {
 				fail(fmt.Sprintf("failed to get files: %v", err))
 				continue

@@ -419,7 +419,7 @@ func createProfileFile(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating profiles dir: %w", err)
 	}
-	return renameIntoPlace(path, data, mode)
+	return renameIntoPlace(path, data, mode, "writing profile")
 }
 
 // createProfileFileLike is createProfileFile with the mode of the file at

@@ -25,6 +25,7 @@ import { pendingToggleLabel, toggleRequestFor } from "../toggleack.js";
 import { displayVersion } from "../version.js";
 import { authorTitle, displayAuthor } from "../author.js";
 import { InlineJob } from "./jobprogress.js";
+import { copyTargets, openCopyToProfile } from "./plan_mod_copy.js";
 import { ModPageLink } from "./modpagelink.js";
 import {
   MANUAL_DOWNLOAD_NOTE,
@@ -522,6 +523,34 @@ export function ModPanel({
                 actions=${actions}
                 locked=${row.locked}
               />
+            <//>`
+          }
+          ${
+            // issue 437: the library row menu's "Copy to profile…", here
+            // too - the same plan, the same origin, so either surface shows
+            // the job.
+            !row.external &&
+            copyTargets(state.status, route.profile).length > 0 &&
+            html`<${InlineJob}
+              origin=${origin("copy")}
+              state=${state}
+              actions=${actions}
+            >
+              <button
+                type="button"
+                class="button"
+                data-action="copy-to-profile"
+                onClick=${() =>
+                  openCopyToProfile({
+                    actions,
+                    status: state.status,
+                    from: route.profile,
+                    mod: row,
+                    origin: origin("copy"),
+                  })}
+              >
+                Copy to profile…
+              </button>
             <//>`
           }
           <${InlineJob}

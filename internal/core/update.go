@@ -962,7 +962,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 		return result, fmt.Errorf("fetching new version: %w", err)
 	}
 
-	files, err := s.GetModFiles(ctx, mod.SourceID, newMod)
+	files, err := s.GetModFiles(ctx, game, mod.SourceID, newMod)
 	if err != nil {
 		return result, fmt.Errorf("getting mod files: %w", err)
 	}

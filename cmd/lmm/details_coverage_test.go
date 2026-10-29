@@ -47,6 +47,9 @@ var detailsCoverage = map[string]string{
 	"core.GameIdentifierError":  "TestReportError_JSON_GameIdentifierError",
 	"core.GameSourceInUseError": "TestReportError_JSON_GameSourceInUseError",
 	"core.GameSpecError":        "TestReportError_JSON_GameSpecError",
+	// #563: a version-type value naming no single type, with the valid
+	// types (or the ambiguous ones) by name, slug and id.
+	"core.GameVersionTypeError": "TestReportError_JSON_GameVersionTypeError",
 	// #410: no local index and no way to build one - the community, the
 	// reason and, when a host is refusing to be asked, when it will be.
 	"core.IndexUnavailableError": "TestReportError_JSON_IndexUnavailableError",

@@ -6,12 +6,12 @@
 //
 // One entry describes one mutation flow end to end - how its request body
 // decodes, how its Plan is computed, what is stored server-side between
-// Plan and Apply, and how its Apply runs. Nineteen kinds are registered
-// today: the seventeen plan kinds - deploy, install, uninstall, updates,
+// Plan and Apply, and how its Apply runs. Twenty kinds are registered
+// today: the eighteen plan kinds - deploy, install, uninstall, updates,
 // rollback, switch, profile_apply, profile_import, profile_sync, purge,
-// mod_relink, verify_fix, import_archive, update_from_archive, adopt,
-// workshop_adopt and snapshot_restore - here, plus the two plan-free
-// toggles in kind_toggle.go.
+// mod_relink, mod_copy, verify_fix, import_archive, update_from_archive,
+// adopt, workshop_adopt and snapshot_restore - here, plus the two
+// plan-free toggles in kind_toggle.go.
 //
 // The table used to carry a browser-form half as well (planKind.Form, the
 // confirm-page decoders and display types). That went with the
@@ -153,6 +153,11 @@ var errBadPlanRequest = errors.New("invalid plan request")
 // root - and an adapter that refuses a flow's preconditions are the same
 // class: 409, the typed refusal in the envelope, exactly as GET
 // /api/v1/conflicts answers since #455. The sentence names the remedy.
+//
+// So is a flow core refuses for a Steam Workshop item (domain.
+// ErrExternalMod, under core.ExternalModError) - a mod copy's, #437, or a
+// re-link's: the request is well-formed, but Steam, not lmm, owns the
+// item, and the sentence says why.
 func planErrorStatus(err error) int {
 	var (
 		loader       *core.LoaderRequiredError
@@ -164,6 +169,8 @@ func planErrorStatus(err error) int {
 
 	switch {
 	case errors.As(err, &loader), errors.As(err, &refused), errors.As(err, &precondition):
+		return http.StatusConflict
+	case errors.Is(err, domain.ErrExternalMod):
 		return http.StatusConflict
 	// #451: a mod_path hand-edited out from under recorded deployments is
 	// the same kind of refusal as the three below - the request is fine,

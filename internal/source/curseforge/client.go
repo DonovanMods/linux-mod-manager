@@ -223,8 +223,9 @@ func requestSortField(sort domain.SearchSort) (int, bool) {
 
 // SearchMods searches for mods with the given parameters. Every known sort
 // is sent as sortField plus sortOrder=desc so the API pages by it; relevance
-// asks for Popularity (requestSortField).
-func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categoryID int, pageSize, index int, sort domain.SearchSort) ([]Mod, *Pagination, error) {
+// asks for Popularity (requestSortField). A positive gameVersionTypeID keeps
+// only mods with files of that game version type (#544).
+func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categoryID, gameVersionTypeID int, pageSize, index int, sort domain.SearchSort) ([]Mod, *Pagination, error) {
 	pageSize = clampSearchPageSize(pageSize)
 
 	params := url.Values{}
@@ -234,6 +235,9 @@ func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categ
 	}
 	if categoryID > 0 {
 		params.Set("categoryId", strconv.Itoa(categoryID))
+	}
+	if gameVersionTypeID > 0 {
+		params.Set("gameVersionTypeId", strconv.Itoa(gameVersionTypeID))
 	}
 	if field, ok := requestSortField(sort); ok {
 		params.Set("sortField", strconv.Itoa(field))
@@ -422,6 +426,24 @@ func (c *Client) GetDownloadURL(ctx context.Context, modID, fileID int) (string,
 	var resp StringDownloadURL
 	if err := c.doRequest(ctx, http.MethodGet, path, &resp); err != nil {
 		return "", err
+	}
+	return resp.Data, nil
+}
+
+// GetGameVersionTypes fetches the version types CurseForge sorts a game's
+// files by (#563), in the API's order. A 404 here means CurseForge has no
+// game with that id - the game's mapping is wrong - so it is
+// source.ErrGameIdentifierInvalid naming the id, not mapError's "mod not
+// found".
+func (c *Client) GetGameVersionTypes(ctx context.Context, gameID int) ([]GameVersionType, error) {
+	path := fmt.Sprintf("/v1/games/%d/version-types", gameID)
+
+	var resp APIResponse[[]GameVersionType]
+	if err := c.doRequest(ctx, http.MethodGet, path, &resp); err != nil {
+		if errors.Is(err, domain.ErrModNotFound) {
+			return nil, fmt.Errorf("CurseForge has no game with id %d: %w", gameID, source.ErrGameIdentifierInvalid)
+		}
+		return nil, fmt.Errorf("getting game version types: %w", err)
 	}
 	return resp.Data, nil
 }

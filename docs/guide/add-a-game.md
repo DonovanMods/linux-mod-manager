@@ -75,6 +75,63 @@ from under them. It tells you what to do first: take the mods out of the
 game folder, change the folder, then put them back. The message lists each
 step.
 
+## Pick a CurseForge game flavor
+
+Some games come in several flavors that CurseForge files under one game.
+World of Warcraft is the common case: Retail, Classic and the other Classic
+versions are all CurseForge game `1`, and an addon can have a different
+file for each. Tell lmm which flavor a game is, or it may offer a Classic
+install the Retail file.
+
+CurseForge marks every file with a *game version type*. Tell lmm which ones
+the game accepts.
+
+In the browser, open the game's editor: once the game uses CurseForge, the
+**CurseForge game version types** section lists the game's version types by
+name. Tick the ones this game is, and save. If lmm can't load the list (no
+CurseForge API key yet, or you're offline), the section is a text box for
+the ids instead.
+
+On the command line, list the game's version types with their slugs:
+
+```bash
+lmm game version-types wow-classic
+```
+
+Then give the slug (or the id) to `lmm game edit`. For a Classic Era
+install:
+
+```bash
+lmm game edit wow-classic --curseforge-version-type wow-classic
+```
+
+Repeat the flag to accept more than one, and run
+`lmm game edit wow-classic --curseforge-version-type ""` to go back to every
+file. A value that matches no version type fails, and the error lists the
+ones that do. Both the list and slugs need your CurseForge API key; ids
+don't. A slug is looked up in the CurseForge game the same command maps, so
+`lmm game edit wow-classic --source curseforge=1 --curseforge-version-type wow-classic`
+adds the mapping and picks the flavor in one go.
+
+For World of Warcraft, the common ones are:
+
+| Flavor                    | Install folder  | Slug                            | Id      |
+| ------------------------- | --------------- | ------------------------------- | ------- |
+| Retail                    | `_retail_`      | `game`                          | `517`   |
+| Classic Era               | `_classic_era_` | `wow-classic`                   | `67408` |
+| Mists of Pandaria Classic | `_classic_`     | `wow-mists-of-pandaria-classic` | `79434` |
+
+From then on, search only shows addons that have a file for that flavor,
+and installs and updates only use those files. An addon with no file for the
+flavor is reported as having no installable file for this game.
+
+{: .note }
+lmm reads the list from CurseForge's
+`GET /v1/games/{gameId}/version-types`. If you'd rather look it up yourself,
+ask for it with your API key (the game id is the one in the game's
+`curseforge` source, `1` for World of Warcraft):
+`curl -s -H "x-api-key: $CURSEFORGE_API_KEY" https://api.curseforge.com/v1/games/1/version-types`
+
 ## Games from other stores
 
 Automatic detection for Battle.net games is planned. Until then, and for

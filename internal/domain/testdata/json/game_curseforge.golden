@@ -1,0 +1,23 @@
+{
+  "id": "wow-classic",
+  "name": "World of Warcraft Classic",
+  "install_path": "/home/user/Games/wow/_classic_era_",
+  "mod_path": "/home/user/Games/wow/_classic_era_/Interface/AddOns",
+  "source_ids": {
+    "curseforge": "1"
+  },
+  "link_method": "symlink",
+  "link_method_explicit": false,
+  "hooks": {
+    "install": {},
+    "uninstall": {}
+  },
+  "deploy_mode": "extract",
+  "convert_paks": false,
+  "convert_paks_explicit": false,
+  "curseforge": {
+    "game_version_types": [
+      67408
+    ]
+  }
+}

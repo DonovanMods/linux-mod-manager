@@ -40,6 +40,7 @@ import {
   NoAnswerError,
 } from "./api.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
+import { copyReplaces } from "./components/plan_mod_copy.js";
 import { fetchJobResult, readoutHasNextStep } from "./jobresult.js";
 import { resultTallyLabel, resultTallyTone } from "./progress.js";
 import { resolveGamePath } from "./navigation.js";
@@ -1621,10 +1622,15 @@ async function confirmPlan() {
   // to its one question - confirmplan.js labels that click "Update anyway";
   // issue 535's install from a file (an import_archive plan) the same, as
   // "Install anyway".
+  //
+  // Issue 437: confirming a copy into a profile that already lists the mod
+  // is the replace - confirmplan.js labels that click "Replace".
   const applyOptions =
     fromFileKinds.has(modal.kind) && modal.plan?.match === "mismatch"
       ? { ...(modal.applyOptions ?? {}), accept_mismatch: true }
-      : modal.applyOptions;
+      : modal.kind === "mod_copy" && copyReplaces(modal.plan)
+        ? { ...(modal.applyOptions ?? {}), replace: true }
+        : modal.applyOptions;
   await startBinding(modal.origin, async () => {
     try {
       const { id: jobID } = await startJob(modal.planID, applyOptions);

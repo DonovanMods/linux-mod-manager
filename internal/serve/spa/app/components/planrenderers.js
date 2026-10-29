@@ -38,6 +38,7 @@ import { ProfileApplyPlanView } from "./plan_profile_apply.js";
 import { PurgePlanView } from "./plan_purge.js";
 import { ProfileSyncPlanView } from "./plan_profile_sync.js";
 import { RelinkPlanView } from "./plan_mod_relink.js";
+import { CopyModPlanView } from "./plan_mod_copy.js";
 import { SnapshotRestorePlanView } from "./plan_snapshot_restore.js";
 
 // issue 332 (issue 330 carry-2's own promise kept): "updates", "verify_fix" and
@@ -71,6 +72,8 @@ const renderers = {
   purge: PurgePlanView,
   profile_sync: ProfileSyncPlanView,
   mod_relink: RelinkPlanView,
+  // issue 437: "Copy to profile…" on a library row and the mod panel.
+  mod_copy: CopyModPlanView,
   // issue 350's one job-shaped snapshot operation. Create and delete are
   // single-step writes with nothing to preview (api_snapshots.go), so
   // they have no plan kind and need no renderer.

@@ -60,3 +60,12 @@ func TestCapabilitiesSupportsSort(t *testing.T) {
 	assert.False(t, caps.SupportsSort(domain.SortPopular))
 	assert.False(t, Capabilities{}.SupportsSort(domain.SortUpdated))
 }
+
+// WithGame carries the game a call is made for; without it there is none.
+func TestWithGameRoundTrips(t *testing.T) {
+	assert.Nil(t, GameFromContext(context.Background()))
+	assert.Nil(t, GameFromContext(WithGame(context.Background(), nil)))
+
+	game := &domain.Game{ID: "wow-classic"}
+	assert.Same(t, game, GameFromContext(WithGame(context.Background(), game)))
+}

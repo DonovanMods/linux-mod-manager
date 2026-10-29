@@ -110,6 +110,11 @@ type Game struct {
 	// absent from every document a loaderless game produces, and every
 	// golden recorded before this field existed is byte-identical.
 	Loader *GameLoader `json:"loader,omitempty"`
+	// CurseForge is #544's optional games.yaml `curseforge:` block: the
+	// CurseForge game version types (WoW Retail, Classic, ...) the game
+	// accepts. nil for every game that sets none, so the member is absent
+	// from every document such a game produces, as Loader's is.
+	CurseForge *GameCurseForge `json:"curseforge,omitempty"`
 }
 
 // DeployMode determines how downloaded mod archives are handled

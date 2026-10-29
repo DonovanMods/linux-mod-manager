@@ -17,10 +17,10 @@ import (
 
 func TestModToDomain_AllowModDistribution(t *testing.T) {
 	no, yes := false, true
-	assert.True(t, modToDomain(Mod{ID: 1, AllowModDistribution: &no}, "432").ManualOnly,
+	assert.True(t, modToDomain(Mod{ID: 1, AllowModDistribution: &no}, "432", nil).ManualOnly,
 		"an author's opt-out is manual-only")
-	assert.False(t, modToDomain(Mod{ID: 1, AllowModDistribution: &yes}, "432").ManualOnly)
-	assert.False(t, modToDomain(Mod{ID: 1}, "432").ManualOnly,
+	assert.False(t, modToDomain(Mod{ID: 1, AllowModDistribution: &yes}, "432", nil).ManualOnly)
+	assert.False(t, modToDomain(Mod{ID: 1}, "432", nil).ManualOnly,
 		"an absent field says nothing, so the mod is not marked")
 }
 

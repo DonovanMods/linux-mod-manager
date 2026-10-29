@@ -77,6 +77,24 @@ Examples:
 	RunE: runProfileRename,
 }
 
+var profileDuplicateCmd = &cobra.Command{
+	Use:   "duplicate <source> <new>",
+	Short: "Duplicate a profile under a new name",
+	Long: `Duplicate a profile as a new one.
+
+The copy is faithful: load order, versions, locks, disabled marks, link
+method, hooks and config overrides all carry over. The new profile is not
+made the active profile, and nothing is downloaded. Its mods are recorded as
+installed but are deployed to the game directory only when you switch to it
+('lmm profile switch'). Duplicating onto a name another profile already uses
+is refused.
+
+Examples:
+  lmm profile duplicate default experiment --game skyrim-se`,
+	Args: cobra.ExactArgs(2),
+	RunE: runProfileDuplicate,
+}
+
 var profileSwitchCmd = &cobra.Command{
 	Use:   "switch <name>",
 	Short: "Switch to a different profile",
@@ -235,6 +253,7 @@ func init() {
 	profileCmd.AddCommand(profileCreateCmd)
 	profileCmd.AddCommand(profileDeleteCmd)
 	profileCmd.AddCommand(profileRenameCmd)
+	profileCmd.AddCommand(profileDuplicateCmd)
 	profileCmd.AddCommand(profileSwitchCmd)
 	profileCmd.AddCommand(profileExportCmd)
 	profileCmd.AddCommand(profileImportCmd)
@@ -410,6 +429,29 @@ func doProfileRename(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	fmt.Printf("✓ Renamed profile: %s → %s\n", oldName, newName)
+	return nil
+}
+
+func runProfileDuplicate(cmd *cobra.Command, args []string) error {
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileDuplicate(ctx, service, game, args[0], args[1])
+	})
+}
+
+// doProfileDuplicate clones source as newName through the gated core seam
+// (core.Service.DuplicateProfile).
+func doProfileDuplicate(ctx context.Context, service *core.Service, game *domain.Game, source, newName string) error {
+	result, err := service.DuplicateProfile(ctx, game.ID, source, newName)
+	if err != nil {
+		return fmt.Errorf("duplicating profile: %w", err)
+	}
+
+	// Ruling 15: the ProfileResult document - the new profile.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	fmt.Printf("✓ Duplicated profile: %s → %s\n", source, newName)
 	return nil
 }
 

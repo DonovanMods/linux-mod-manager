@@ -50,6 +50,7 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/profiles/{name}", s.wrap(s.handleAPIProfileDelete))
 	s.mux.Handle("GET /api/v1/profiles/{name}/export", s.wrap(s.handleAPIProfileExport))
 	s.mux.Handle("POST /api/v1/profiles/{name}/rename", s.wrap(s.handleAPIProfileRename))
+	s.mux.Handle("POST /api/v1/profiles/{name}/duplicate", s.wrap(s.handleAPIProfileDuplicate))
 	s.mux.Handle("POST /api/v1/profiles/{name}/set-default", s.wrap(s.handleAPIProfileSetDefault))
 	s.mux.Handle("POST /api/v1/profiles/{name}/reorder", s.wrap(s.handleAPIProfileReorder))
 	// The Setup surface's game half (api_games.go): the chooser's listing,
@@ -94,6 +95,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/sources/{id}/index", s.wrap(s.handleAPISourceIndexRefresh))
 	s.mux.Handle("GET /api/v1/indexes", s.wrap(s.handleAPIIndexes))
 	s.mux.Handle("POST /api/v1/indexes/prune", s.wrap(s.handleAPIIndexesPrune))
+	// #563: a source's version types for one game, for the game editor's
+	// CurseForge picker (api_version_types.go).
+	s.mux.Handle("GET /api/v1/sources/{id}/version-types", s.wrap(s.handleAPISourceVersionTypes))
 	// The Setup surface's credential half (api_auth.go). All three answer
 	// the same app.AuthStatusReport document `lmm auth status --json`
 	// emits - the writes with it RE-READ, so a mutation never needs a

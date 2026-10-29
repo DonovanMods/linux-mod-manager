@@ -332,7 +332,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		// like NexusMods address games by their own domain, so an unmapped
 		// GameID would silently query the wrong upstream game whenever this
 		// game's per-source mapping differs from its LMM ID.
-		if _, err := service.ResolveModVersion(ctx, modSource, core.SourceMappedMod(game, &mod.Mod), version); err != nil {
+		if _, err := service.ResolveModVersion(ctx, game, modSource, core.SourceMappedMod(game, &mod.Mod), version); err != nil {
 			return err
 		}
 	} else {

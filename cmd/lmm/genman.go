@@ -22,7 +22,7 @@ import (
 // convention anyone has to remember: TestGenManDateIsNotOlderThanTheNewestRelease
 // fails whenever the newest dated CHANGELOG section is later than this,
 // which is what stopped 2.0.0's pages from shipping dated "Jul 2026" (#401).
-var genManDate = time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
+var genManDate = time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
 
 // defaultManDir is where `make man` and the goreleaser build expect the
 // generated pages to live.

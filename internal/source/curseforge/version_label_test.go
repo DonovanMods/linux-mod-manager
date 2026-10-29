@@ -108,7 +108,7 @@ func TestModToDomain_NonDottedVersionIsShown(t *testing.T) {
 	old := wowFile(2956486, "8.3.1.0", ReleaseTypeRelease, "2020-01-01T00:00:00Z", typeRetail)
 	v339g := wowFile(8960001, "339-1-g23f0261", ReleaseTypeRelease, "2026-09-26T00:00:00Z", typeRetail)
 
-	got := modToDomain(Mod{ID: 6124, Name: "Auctionator", LatestFiles: []File{old, v339g}}, "1")
+	got := modToDomain(Mod{ID: 6124, Name: "Auctionator", LatestFiles: []File{old, v339g}}, "1", nil)
 	assert.Equal(t, "339-1-g23f0261", got.Version)
 }
 

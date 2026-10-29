@@ -69,6 +69,10 @@ var gatedPlans = []gatedPlan{
 		_, err := svc.PlanRelinkMod(context.Background(), g, "default", "acme", "m1", "acme", "m2")
 		return err
 	}},
+	{"PlanCopyMod", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		_, err := svc.PlanCopyMod(context.Background(), g, core.CopyModRequest{From: "default", To: "other", SourceID: "acme", ModID: "m1"})
+		return err
+	}},
 	{"PlanImportArchive", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 		_, err := svc.PlanImportArchive(context.Background(), g, "default", fx.archive, core.ImportArchiveOptions{})
 		return err

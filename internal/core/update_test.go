@@ -1211,7 +1211,7 @@ func TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion(t *testing.
 	// (Before this fix, the record and the stored IDs disagreed, which is
 	// what made verify --fix knock these very mods back down - see
 	// cmd/lmm/verify.go's EffectiveInstalledVersion comparison.)
-	sourceFiles, err := svc.GetModFiles(context.Background(), "src", &updated.Mod)
+	sourceFiles, err := svc.GetModFiles(context.Background(), nil, "src", &updated.Mod)
 	require.NoError(t, err)
 	var matched []*domain.DownloadableFile
 	for _, id := range updated.FileIDs {

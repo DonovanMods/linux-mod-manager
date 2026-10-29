@@ -1027,7 +1027,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		return skip(fmt.Sprintf("failed to fetch: %v", err))
 	}
 
-	files, err := s.GetModFiles(ctx, mod.SourceID, fetchedMod)
+	files, err := s.GetModFiles(ctx, game, mod.SourceID, fetchedMod)
 	if err != nil || len(files) == 0 {
 		return skip("no files available")
 	}
