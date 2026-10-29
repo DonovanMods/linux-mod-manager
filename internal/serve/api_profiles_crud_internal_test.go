@@ -247,6 +247,85 @@ func TestAPIProfileRename_Refusals(t *testing.T) {
 	}
 }
 
+// TestAPIProfileDuplicate_CopiesTheProfileAndItsRows is #438's end state:
+// the duplicate's document lists the source's mods in order, every
+// installed row has a twin under the new name - none deployed, since the
+// game directory is the active profile's - the duplicate is not the
+// default, and the source is untouched.
+func TestAPIProfileDuplicate_CopiesTheProfileAndItsRows(t *testing.T) {
+	s, svc, game := newProfilesFixtureServer(t)
+
+	rec := doAPI(s, http.MethodPost, scoped("/api/v1/profiles/"+activeProfile+"/duplicate", game), `{"name":"survival"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	got := decodeProfileResult(t, rec.Body.Bytes())
+	assert.Equal(t, "survival", got.Profile.Name)
+	assert.False(t, got.Profile.IsDefault)
+	require.Len(t, got.Profile.Mods, 2)
+
+	ctx := t.Context()
+	pm := svc.NewProfileManager()
+	source, err := pm.Get(ctx, game.ID, activeProfile)
+	require.NoError(t, err)
+	dup, err := pm.Get(ctx, game.ID, "survival")
+	require.NoError(t, err)
+	assert.False(t, dup.IsDefault, "a duplicate is never the active profile")
+	assert.True(t, source.IsDefault, "the source stays the default")
+	require.Len(t, dup.Mods, len(source.Mods))
+	for i := range source.Mods {
+		assert.Equal(t, source.Mods[i].ModID, dup.Mods[i].ModID, "load order is kept")
+	}
+
+	rows, err := svc.GetInstalledMods(ctx, game.ID, "survival")
+	require.NoError(t, err)
+	assert.Len(t, rows, 2, "every installed row has a twin")
+	for _, r := range rows {
+		assert.False(t, r.Deployed, "%s: the duplicate's rows are not deployed", r.ID)
+	}
+	srcRows, err := svc.GetInstalledMods(ctx, game.ID, activeProfile)
+	require.NoError(t, err)
+	assert.Len(t, srcRows, 2, "the source keeps its rows")
+	for _, r := range srcRows {
+		assert.True(t, r.Deployed, "%s: the source's rows stay deployed", r.ID)
+	}
+}
+
+// TestAPIProfileDuplicate_Refusals: a taken name is 409, an unknown source
+// is 404, a missing or unusable name is 400 - and none of them writes a
+// profile.
+func TestAPIProfileDuplicate_Refusals(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		body   string
+		status int
+	}{
+		{"name taken", activeProfile, `{"name":"` + switchTargetProfile + `"}`, http.StatusConflict},
+		{"unknown source", "ghost", `{"name":"survival"}`, http.StatusNotFound},
+		{"missing name", activeProfile, `{}`, http.StatusBadRequest},
+		{"invalid name", activeProfile, `{"name":"../escape"}`, http.StatusBadRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, svc, game := newProfilesFixtureServer(t)
+			rec := doAPI(s, http.MethodPost, scoped("/api/v1/profiles/"+tc.target+"/duplicate", game), tc.body)
+			require.Equal(t, tc.status, rec.Code, rec.Body.String())
+
+			var env apiErrorEnvelope
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+			assert.NotEmpty(t, env.Error)
+
+			names, err := svc.NewProfileManager().ListNames(t.Context(), game.ID)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, []string{activeProfile, switchTargetProfile, applyTargetProfile}, names,
+				"a refused duplicate must not have added a profile")
+			modded, err := svc.GetInstalledMods(t.Context(), game.ID, switchTargetProfile)
+			require.NoError(t, err)
+			assert.Empty(t, modded, "a refused duplicate must not write rows into the taken name")
+		})
+	}
+}
+
 // TestAPIProfileExport_ServesTheExportedDocumentAsAnAttachment
 func TestAPIProfileExport_ServesTheExportedDocumentAsAnAttachment(t *testing.T) {
 	s, svc, game := newProfilesFixtureServer(t)
@@ -288,6 +367,7 @@ func TestAPIProfileCRUD_RefusesWithoutCSRF(t *testing.T) {
 		{http.MethodDelete, "/api/v1/profiles/" + switchTargetProfile, ""},
 		{http.MethodPost, "/api/v1/profiles/" + switchTargetProfile + "/set-default", ""},
 		{http.MethodPost, "/api/v1/profiles/" + activeProfile + "/rename", `{"name":"survival"}`},
+		{http.MethodPost, "/api/v1/profiles/" + activeProfile + "/duplicate", `{"name":"survival"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.method+" "+tc.target, func(t *testing.T) {

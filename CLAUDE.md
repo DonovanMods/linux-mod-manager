@@ -144,7 +144,7 @@ internal/
     ├── middleware.go      # Host allow-list (DNS-rebinding guard), Origin/CSRF checks, security headers, request logging
     ├── routes.go          # Registers the SPA routes (spa.go) and every /api/v1 route on the mux
     ├── spa.go             # The SPA shell (a template: it carries the CSRF token), its embedded asset trees, the CSP hash, the legacy 301s
-    ├── spa/               # index.html shell (+ skip link, the one inline theme script) + app.css (Launcher tokens dark+light, motion tokens, prefers-reduced-motion) + app/*.js (ES modules: render/router/store/api/sse/theme/main, activity+progress+failures+jobhistory+jobresult for the job layer, modrows/navigation/verify/conflicts/shortcuts/relativetime/motion/focustrap/dismiss/slicefence/version/indexnotice, + components/: app, missioncontrol, topbar, awaybar, arrow, cards, library, gamechooser, modpanel, fullmodpage, searchpage, omnibarresults, searchresults, tray, modal, confirmplan, errordetails, planrenderers, planoptions, plan_{deploy,install,uninstall,rollback,updates,verify_fix,profile_import,import_archive,update_from_archive,adopt,switch,profile_apply,purge,profile_sync,mod_relink}, updatefromfile, reordermodal, profilesmodal, shortcutsmodal, uninstallbatchmodal, setup{,adopt,auth,games,import,sources}, sourceindexes, sourcesmap, gameadd, documentview, jobprogress, toasts)
+    ├── spa/               # index.html shell (+ skip link, the one inline theme script) + app.css (Launcher tokens dark+light, motion tokens, prefers-reduced-motion) + app/*.js (ES modules: render/router/store/api/sse/theme/main, activity+progress+failures+jobhistory+jobresult for the job layer, modrows/navigation/verify/conflicts/shortcuts/relativetime/motion/focustrap/dismiss/slicefence/version/indexnotice, + components/: app, missioncontrol, topbar, awaybar, arrow, cards, library, gamechooser, modpanel, fullmodpage, searchpage, omnibarresults, searchresults, tray, modal, confirmplan, errordetails, planrenderers, planoptions, plan_{deploy,install,uninstall,rollback,updates,verify_fix,profile_import,import_archive,update_from_archive,adopt,switch,profile_apply,purge,profile_sync,mod_relink,mod_copy}, updatefromfile, reordermodal, profilesmodal, shortcutsmodal, uninstallbatchmodal, setup{,adopt,auth,games,import,sources}, sourceindexes, sourcesmap, gameadd, documentview, jobprogress, toasts)
     ├── vendor/            # preact.module.js, hooks.module.js, htm.module.js - pinned, doc-commented, NEVER fetched by any build
     ├── selection.go       # ?game/?profile resolution shared by every scoped /api/v1 endpoint and the 301s
     ├── api.go             # GET /api/v1/{status,mods,updates,profiles,health,conflicts,search,mods/{source}/{id}}
@@ -164,6 +164,7 @@ internal/
     ├── kind_profile_sync.go # `lmm profile sync` as a job (#326)
     ├── kind_purge.go      # `lmm purge` as a job (#326)
     ├── kind_mod_relink.go # `lmm mod edit` as a job - core's PlanRelinkMod/ApplyRelinkMod (#326)
+    ├── kind_mod_copy.go   # `lmm mod copy` as a job (SPA: "Copy to profile…" in the row menu and mod panel, #437)
     ├── kind_profile_import.go # `lmm profile import` as a job (SPA: the profiles modal)
     ├── kind_rollback.go   # `lmm update rollback` as a job (SPA: the full mod page's versions table)
     ├── kind_import_archive.go # `lmm import <archive>` as a job, over an upload (#333)
@@ -171,7 +172,7 @@ internal/
     ├── kind_adopt.go      # `lmm import` scan mode as a job (#333)
     ├── kind_deploy.go     # deploy with live SSE phases (#257)
     ├── kind_verify_fix.go # `lmm verify --fix` as a job
-    ├── api_profiles.go    # profile CRUD/reorder/export - the sanctioned single-step writes
+    ├── api_profiles.go    # profile CRUD/duplicate/reorder/export - the sanctioned single-step writes
     ├── api_games.go       # game add/detect/set-default (#307/#333) + PUT /api/v1/games/{id} sources (#326)
     ├── api_auth.go        # per-source credential store + the live re-key (restart_required)
     ├── api_sources.go     # the custom-source editor: list/definition/validate/save/delete

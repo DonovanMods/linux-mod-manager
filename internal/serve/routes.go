@@ -50,6 +50,7 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/profiles/{name}", s.wrap(s.handleAPIProfileDelete))
 	s.mux.Handle("GET /api/v1/profiles/{name}/export", s.wrap(s.handleAPIProfileExport))
 	s.mux.Handle("POST /api/v1/profiles/{name}/rename", s.wrap(s.handleAPIProfileRename))
+	s.mux.Handle("POST /api/v1/profiles/{name}/duplicate", s.wrap(s.handleAPIProfileDuplicate))
 	s.mux.Handle("POST /api/v1/profiles/{name}/set-default", s.wrap(s.handleAPIProfileSetDefault))
 	s.mux.Handle("POST /api/v1/profiles/{name}/reorder", s.wrap(s.handleAPIProfileReorder))
 	// The Setup surface's game half (api_games.go): the chooser's listing,

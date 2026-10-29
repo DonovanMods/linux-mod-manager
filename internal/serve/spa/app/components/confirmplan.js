@@ -26,6 +26,7 @@ import { Modal } from "./modal.js";
 import { ErrorDetails } from "./errordetails.js";
 import { planRendererFor } from "./planrenderers.js";
 import { VersionPrompt } from "./plan_update_from_archive.js";
+import { copyReplaces } from "./plan_mod_copy.js";
 import { codeSpans } from "../errortext.js";
 
 /**
@@ -87,6 +88,10 @@ export function ConfirmPlanModal({ modal, state, actions }) {
     kind === "update_from_archive" &&
     status === "ready" &&
     Boolean(plan?.refusal);
+  // Issue 437: a copy with nothing to copy (an all-copy whose every mod was
+  // skipped) has nothing for Confirm to start.
+  const emptyCopyPlan =
+    kind === "mod_copy" && status === "ready" && Boolean(plan?.no_changes);
 
   // The type-the-name gate (C-3): a kind listed in typedNameFor keeps
   // Confirm disabled until the user has typed back the thing they are about
@@ -113,7 +118,9 @@ export function ConfirmPlanModal({ modal, state, actions }) {
   // Issue 530: an archive that is not the file the update check advertised
   // is a question this click answers - main.js#confirmPlan sends
   // accept_mismatch for exactly this plan - so the label says what the
-  // click decides. Issue 535's install from a file asks the same question.
+  // click decides. Issue 535's install from a file asks the same question,
+  // and so does issue 437's copy of a mod into a profile that already lists
+  // it: the click is the replace (main.js#confirmPlan sends it).
   const effectiveConfirmLabel =
     kind === "switch" && plan?.flag_only
       ? "Mark as active"
@@ -121,7 +128,9 @@ export function ConfirmPlanModal({ modal, state, actions }) {
         ? "Update anyway"
         : kind === "import_archive" && plan?.match === "mismatch"
           ? "Install anyway"
-          : confirmLabel;
+          : kind === "mod_copy" && copyReplaces(plan)
+            ? "Replace"
+            : confirmLabel;
 
   const footer =
     status === "error"
@@ -149,7 +158,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
             type="button"
             class="button button--primary"
             data-action="confirm"
-            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || !nameTyped}
+            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || fromFileRefused || emptyCopyPlan || !nameTyped}
             onClick=${actions.confirmPlan}
           >
             ${busy ? "Starting…" : (effectiveConfirmLabel ?? "Confirm")}

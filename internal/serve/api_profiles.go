@@ -5,7 +5,8 @@
 // of a surface whose read half is api.go's GET /api/v1/profiles.
 //
 // Every route here is one of the SANCTIONED single-step mutations: a
-// reorder, a create, a delete, a set-default and a rename each write once
+// reorder, a create, a delete, a set-default, a rename and a duplicate
+// (#438) each write once
 // and have nothing to preview, exactly like EnableMod/DisableMod and the
 // lock/policy writes (api_mod_settings.go's own doc comment). They are
 // therefore not jobs and not plans - they answer synchronously with the
@@ -126,12 +127,13 @@ func (s *Server) reorderErrorStatus(err error) int {
 	}
 }
 
-// profileNameRequest is the one-member body two routes share: POST
-// /api/v1/profiles (the name of the profile to create) and POST
-// /api/v1/profiles/{name}/rename (the name to rename it TO). They are one
-// type rather than two identical ones because they are one wire shape - a
-// profile name and nothing else - and a second copy would pin the same
-// bytes twice.
+// profileNameRequest is the one-member body three routes share: POST
+// /api/v1/profiles (the name of the profile to create), POST
+// /api/v1/profiles/{name}/rename (the name to rename it TO) and POST
+// /api/v1/profiles/{name}/duplicate (the name of the copy, #438). They are
+// one type rather than three identical ones because they are one wire
+// shape - a profile name and nothing else - and a second copy would pin
+// the same bytes twice.
 type profileNameRequest struct {
 	Name string `json:"name"`
 }
@@ -265,6 +267,35 @@ func (s *Server) handleAPIProfileRename(w http.ResponseWriter, r *http.Request) 
 	name := r.PathValue("name")
 
 	result, err := s.svc.RenameProfile(r.Context(), sel.Game.ID, name, newName)
+	if err != nil {
+		s.writeAPIError(w, s.profileErrorStatus(err), err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+// handleAPIProfileDuplicate answers POST /api/v1/profiles/{name}/duplicate
+// with the ProfileResult of the NEW profile, via the gated
+// core.Service.DuplicateProfile (#438) - which writes the copy's document
+// and a twin of every installed row as one completion chain, none of them
+// deployed (the game directory stays the active profile's).
+//
+// It is rename's twin in every way the wire can see: the same body, the
+// same refusals - a name already taken is a 409, detected inside the gate
+// as core.ErrProfileExists; an unknown source profile a 404; an unusable
+// name a 400 - and the same document.
+func (s *Server) handleAPIProfileDuplicate(w http.ResponseWriter, r *http.Request) {
+	newName, ok := s.decodeProfileName(w, r)
+	if !ok {
+		return
+	}
+	sel, ok := s.resolveGameAPISelection(w, r)
+	if !ok {
+		return
+	}
+	name := r.PathValue("name")
+
+	result, err := s.svc.DuplicateProfile(r.Context(), sel.Game.ID, name, newName)
 	if err != nil {
 		s.writeAPIError(w, s.profileErrorStatus(err), err)
 		return
