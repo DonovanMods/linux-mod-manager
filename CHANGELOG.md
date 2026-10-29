@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Run the web UI in the background (#567).** `lmm serve` can now run as
+  the systemd user service `lmm-serve.service`, started at login (or at
+  boot, with `loginctl enable-linger`, which lmm prints but never runs).
+  The deb, rpm and apk packages and the AUR `PKGBUILD` install it to
+  `/usr/lib/systemd/user`, turned off: `systemctl --user enable --now
+lmm-serve` turns it on. For a tarball, `go install` or `make install`,
+  `lmm service install [--addr host:port]` writes it to
+  `~/.config/systemd/user` pointing at the running binary and starts it,
+  `lmm service uninstall` removes it, and `lmm service status` reports
+  whether it is installed, enabled and running and whether lingering is on
+  (all three take `--json`). A missing `systemctl` or user manager is a
+  clear error. The user guide has a new page, "Run the web UI in the
+  background".
 - **Duplicate a profile (#438).** `lmm profile duplicate <source> <new>`,
   and **Duplicate** in the web UI's Profiles window, clone a profile without
   the export/import round trip: every mod in load order with its version,

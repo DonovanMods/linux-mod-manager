@@ -78,7 +78,7 @@ internal/
 ├── notices/              # THIRD_PARTY_NOTICES generator + drift test (`make notices`, go run ./tools/notices; stdlib only, dev-time, #522)
 ├── safeyaml/             # The one YAML decode every reader uses: a decoder panic is an error, never a crash (#452)
 ├── linker/               # Deploy strategies (symlink, hardlink, copy)
-├── core/                 # Business logic orchestration (flat package, 55 files); frontends never reach past it
+├── core/                 # Business logic orchestration (flat package, 56 files); frontends never reach past it
     ├── service.go         # Service facade: construction, ServiceConfig, the query/mutation concurrency contract
     ├── ops.go             # beginOp: the Service's single mutation-serialization slot
     ├── plan.go            # ErrStalePlan + installedSnapshot: the freshness precondition every Apply re-checks
@@ -138,6 +138,7 @@ internal/
     ├── verify_helpers.go  # verify engine internals: retained-source / mismatch detection
     ├── source_index.go    # the local-index surface (#360/#410): SourceIndexStatus/RefreshSourceIndex, IndexStatus/IndexReport
     ├── source_index_prune.go # ListSourceIndexes/PruneSourceIndexes (`lmm source index --all`/`prune`): the fail-closed prune policy
+    ├── user_units.go      # UserUnits: lmm-serve.service install/uninstall/status behind a systemctl/loginctl seam (`lmm service`, #567); needs no Service
     ├── source_notices.go  # WithSourceNotices: a source's throttle/suspension/cold-build notices as events (#436)
     └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
 └── serve/                # `lmm serve` local web UI: an SPA over /api/v1; imports only app/core/domain (boundary_test.go)
@@ -183,6 +184,8 @@ internal/
     ├── api_mod_files.go   # GET /api/v1/mods/{source}/{id}/{files,versions}
     ├── uploads.go         # streamed archive uploads into the real staging dir (2 GiB cap, 30-min TTL)
     └── api_uploads.go     # POST /api/v1/uploads, DELETE /api/v1/uploads/{id}
+packaging/
+└── systemd/              # lmm-serve.service (#567): the one unit source - nfpm/AUR install it as is, core embeds it (go:embed) for `lmm service install`; systemd_test.go keeps .goreleaser.yaml shipping it
 ```
 
 **Data Flow**: CLI → app.Open → Core Service → Source Registry + Storage → Linker → Game Directory; `lmm serve` → app.Open → Core Service → same Source Registry + Storage → Linker (a second frontend over the identical core)

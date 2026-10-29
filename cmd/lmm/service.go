@@ -96,7 +96,9 @@ func init() {
 // doServiceInstall installs the unit for this binary and prints where it
 // went, the address it serves and, without lingering, the boot-time hint.
 func doServiceInstall(ctx context.Context, cmd *cobra.Command, addr string) error {
-	if addr != "" {
+	// Under --json stderr stays empty (the JSON contract), so the warning
+	// is printed only for a person at a terminal.
+	if addr != "" && !jsonOutput {
 		if err := warnIfNonLoopback(cmd, addr); err != nil {
 			return err
 		}
