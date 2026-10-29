@@ -1,13 +1,13 @@
 // profilesmodal.js - the profiles modal: list (default marked, mod counts),
-// create, rename, delete, set-default, export, import
+// create, rename, duplicate, delete, set-default, export, import
 // (docs/plans/2026-08-31-serve-spa-design.md §Modals: "profiles (list/
 // create/rename/delete/export/import/set-default)"), issue 332.
 //
 // Every mutation here but Import is one of api_profiles.go's SANCTIONED
-// single-step writes - a create/delete/rename/set-default answers
+// single-step writes - a create/delete/rename/duplicate/set-default answers
 // synchronously with the profile it produced, so this component calls
-// api.js directly rather than through the confirm-plan framework. Delete
-// and rename confirm INLINE, in place on the row, rather than as a second
+// api.js directly rather than through the confirm-plan framework. Delete,
+// rename and duplicate confirm INLINE, in place on the row, rather than as a second
 // modal: "modals stack at most one deep" (design doc §Modals) leaves no
 // room for a nested confirm dialog.
 //
@@ -30,6 +30,7 @@ import { codeSpans } from "../errortext.js";
 import {
   createProfile,
   deleteProfile,
+  duplicateProfile,
   renameProfile,
   setDefaultProfile,
   profileExportURL,
@@ -119,7 +120,8 @@ export function ProfilesModal({ modal, state, actions }) {
  * exactly the substitute for a nested confirm modal this file's header
  * comment explains. */
 function ProfileRow({ profile, context, actions, afterMutation }) {
-  const [mode, setMode] = useState("view"); // "view" | "renaming" | "deleting"
+  // "view" | "renaming" | "duplicating" | "deleting"
+  const [mode, setMode] = useState("view");
   const [nameInput, setNameInput] = useState(profile.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -140,6 +142,31 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
     setError(null);
     try {
       await renameProfile(profile.name, nameInput, context);
+      await afterMutation();
+      reset();
+    } catch (err) {
+      setError(err?.message ?? String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** startDuplicate opens the row's inline duplicate form on a suggested
+   * name (issue 438) - one the user edits, never one submitted unseen. */
+  function startDuplicate() {
+    setNameInput(`${profile.name}-copy`);
+    setError(null);
+    setMode("duplicating");
+  }
+
+  async function submitDuplicate(e) {
+    e.preventDefault();
+    const name = nameInput.trim();
+    if (!name) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await duplicateProfile(profile.name, name, context);
       await afterMutation();
       reset();
     } catch (err) {
@@ -248,6 +275,48 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
     `;
   }
 
+  if (mode === "duplicating") {
+    // Issue 438: the copy keeps every mod, in order, with its version, lock
+    // and off markers, and is installed from the moment it exists - but
+    // none of it is deployed, because the game directory is the active
+    // profile's. The note says so before the click.
+    return html`
+      <li class="profiles-row" data-testid="profile-duplicate-row">
+        <form class="profiles-row__rename-form" onSubmit=${submitDuplicate}>
+          <input
+            type="text"
+            name="duplicate-name"
+            value=${nameInput}
+            aria-label=${`Duplicate ${profile.name} as`}
+            disabled=${busy}
+            onInput=${(e) => setNameInput(e.currentTarget.value)}
+          />
+          <button
+            type="submit"
+            class="button button--primary"
+            data-action="confirm-duplicate"
+            disabled=${busy || !nameInput.trim()}
+          >
+            ${busy ? "Duplicating…" : "Duplicate"}
+          </button>
+          <button
+            type="button"
+            class="button"
+            disabled=${busy}
+            onClick=${reset}
+          >
+            Cancel
+          </button>
+        </form>
+        <p class="profiles-row__note empty-state__hint">
+          A copy of <span class="mono">${profile.name}</span>'s mods, load order
+          and settings. Nothing is deployed until you switch to it.
+        </p>
+        ${error && html`<p class="modal__error">${error}</p>`}
+      </li>
+    `;
+  }
+
   if (mode === "renaming") {
     return html`
       <li class="profiles-row">
@@ -315,6 +384,16 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
           onClick=${() => setMode("renaming")}
         >
           Rename
+        </button>
+        <button
+          type="button"
+          class="button button--small"
+          data-action="duplicate-profile"
+          data-profile=${profile.name}
+          disabled=${busy}
+          onClick=${startDuplicate}
+        >
+          Duplicate
         </button>
         <button
           type="button"

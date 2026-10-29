@@ -30,6 +30,7 @@ const phasePrefixes = [
   ["adopt_", ""],
   ["sync_", ""],
   ["relink_", ""],
+  ["mod_copy_", ""],
   ["snapshot_", ""],
   // issue 436: what a source is waiting on - "Retrying" and "Suspended",
   // with core's own sentence as the detail.
@@ -80,6 +81,7 @@ const mutationKindLabels = {
   enable: "Enabling",
   disable: "Disabling",
   snapshot_restore: "Restoring snapshot",
+  mod_copy: "Copying to profile",
 };
 
 /** mutationLabel names a running job's KIND in words, falling back to the

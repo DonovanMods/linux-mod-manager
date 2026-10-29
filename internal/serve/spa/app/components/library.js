@@ -32,6 +32,7 @@ import { ModPageLink } from "./modpagelink.js";
 import { ManualBadge, UpdateFromFileButton } from "./updatefromfile.js";
 import { ListedOffList, listedOffRefs } from "./listedoff.js";
 import { InlineJob } from "./jobprogress.js";
+import { copyTargets, openCopyToProfile } from "./plan_mod_copy.js";
 
 const FILTER_LABELS = {
   all: "All",
@@ -655,6 +656,31 @@ export function Library({
             }}
           >
             Re-link…
+          </button>`
+        }
+        ${
+          // issue 437: the mod, from the cache, into another profile of this
+          // game. Offered only when there is one to copy into; an EXTERNAL
+          // row is game-global - every profile has it while Steam does - so
+          // core refuses it, and the menu does not offer what core refuses.
+          !row.external &&
+          copyTargets(state.status, state.route.profile).length > 0 &&
+          html`<button
+            type="button"
+            class="menu-item row-menu__item"
+            data-action="copy-to-profile"
+            onClick=${() => {
+              setMenuKey(null);
+              openCopyToProfile({
+                actions,
+                status: state.status,
+                from: state.route.profile,
+                mod: row,
+                origin: origin("copy"),
+              });
+            }}
+          >
+            Copy to profile…
           </button>`
         }
         <button

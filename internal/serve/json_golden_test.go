@@ -407,6 +407,22 @@ func TestServeJSONGoldens(t *testing.T) {
 			modRelinkApplyRequest{Name: "Renamed", Version: "2.0", Author: "Somebody"},
 		},
 		{
+			// #437's mod copy: WHERE to copy is plan time (it is what the
+			// plan describes - the destination, the mod or all, already
+			// listed or not); Replace is apply time, the answer to an
+			// already-listed destination (core.CopyModOptions).
+			"mod_copy_plan_request",
+			modCopyPlanRequest{To: "survival", SourceID: "fake", ModID: "m1"},
+		},
+		{
+			"mod_copy_plan_request_all",
+			modCopyPlanRequest{To: "survival", All: true},
+		},
+		{
+			"mod_copy_apply_request",
+			modCopyApplyRequest{Replace: true},
+		},
+		{
 			// The two profile flows' plan requests. Neither has an apply
 			// request with anything in it - ApplyProfileSwitch and
 			// ProfileApplyOptions both take no options - so their empty

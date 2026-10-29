@@ -1,0 +1,31 @@
+{
+  "game_id": "g1",
+  "from": "default",
+  "to": "exp",
+  "all": true,
+  "mods": [
+    {
+      "source_id": "src",
+      "mod_id": "a",
+      "name": "Mod A",
+      "version": "1.0",
+      "locked": true,
+      "disabled": false,
+      "already_listed": false
+    },
+    {
+      "source_id": "src",
+      "mod_id": "b",
+      "name": "Mod B",
+      "version": "1.0",
+      "locked": false,
+      "disabled": false,
+      "already_listed": false
+    }
+  ],
+  "destination_active": false,
+  "link_method": "symlink",
+  "source_link_method": "symlink",
+  "link_method_differs": false,
+  "no_changes": false
+}

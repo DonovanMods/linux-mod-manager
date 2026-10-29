@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
@@ -53,7 +52,7 @@ type ProfileApplyPlan struct {
 	// it comes from. The apply deploys it from the cache and gives Profile
 	// a row of its own, rather than fetching the mod (#445 audit): Profile's
 	// link method, the notify policy and no update history, whatever the
-	// other profile's row says (copyRowToProfile).
+	// other profile's row says (copyRowToProfile, internal/core/row_copy.go).
 	ToEnable []domain.InstalledMod `json:"to_enable"`
 
 	// ToInstall is the (re)install list, in the order doProfileApply built
@@ -827,7 +826,11 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			// Another profile's row (cachedRowElsewhere): this profile gets
 			// its own copy, enabled and deployed, as a switch mints one
 			// (#60) and an import copies one (#371).
-			for _, msg := range s.copyRowToProfile(ctx, game, im, plan.Profile, installer.linker.Method()) {
+			msgs, err := s.copyRowToProfile(ctx, game, im, plan.Profile, rowCopy{enabled: true, deployed: true, method: installer.linker.Method()})
+			if err != nil {
+				msgs = append(msgs, fmt.Sprintf("could not record %s under %s: %v", im.Name, plan.Profile, err))
+			}
+			for _, msg := range msgs {
 				warn(scope, SwitchInstallWarning, msg)
 			}
 		} else if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.Profile, true); err != nil {
@@ -1020,36 +1023,4 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 	s.takeCaptureWarnings(game.ID, OpProfileApply, SwitchInstallWarning, &result.Warnings, nil)
 
 	return result, nil
-}
-
-// copyRowToProfile saves the mod of row - another profile's - as
-// profile's own, enabled and deployed with method, with row's file IDs and
-// checksums (rowChecksums). The row is built fresh, as importCachedMod
-// builds one (#445 final gate F-D): what row says about ITS profile - its
-// link method, its update policy, its update history - is not profile's.
-// ManualDownload is a fact about the mod, so it is kept. What goes wrong
-// comes back as messages without a "Warning: " prefix, the form the flow's
-// Warnings take.
-func (s *Service) copyRowToProfile(ctx context.Context, game *domain.Game, row domain.InstalledMod, profile string, method domain.LinkMethod) []string {
-	checksums, read := s.rowChecksums(ctx, game, row)
-	msgs := make([]string, 0, len(read))
-	for _, msg := range read {
-		msgs = append(msgs, strings.TrimPrefix(msg, "Warning: "))
-	}
-	mod := row.Mod
-	mod.GameID = game.ID
-	copied := &domain.InstalledMod{
-		Mod:            mod,
-		ProfileName:    profile,
-		UpdatePolicy:   domain.UpdateNotify,
-		Enabled:        true,
-		Deployed:       true,
-		LinkMethod:     method,
-		FileIDs:        row.FileIDs,
-		ManualDownload: row.ManualDownload,
-	}
-	if err := s.saveInstalledMod(ctx, copied); err != nil {
-		return append(msgs, fmt.Sprintf("could not record %s under %s: %v", row.Name, profile, err))
-	}
-	return append(msgs, s.recordFileChecksums(ctx, row.SourceID, row.ID, game.ID, profile, checksums)...)
 }

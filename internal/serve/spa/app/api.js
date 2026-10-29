@@ -278,6 +278,12 @@ export const deleteProfile = (name, context) =>
 export const renameProfile = (name, newName, context) =>
   post(scoped(`${profilePath(name)}/rename`, context), { name: newName });
 
+/** Duplicates a profile as newName (issue 438): the copy's document and a
+ * twin of every installed row, none deployed. Returns core.ProfileResult
+ * for the new profile; 409 if newName is taken. */
+export const duplicateProfile = (name, newName, context) =>
+  post(scoped(`${profilePath(name)}/duplicate`, context), { name: newName });
+
 /** Marks a profile as the game's default. Returns core.ProfileResult,
  * re-read after the write - callers should refetch listProfiles too, since
  * SetDefault clears the flag on every OTHER profile server-side. */
