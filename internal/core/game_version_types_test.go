@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -238,4 +239,19 @@ func TestResolveGameVersionTypes_EditRemovesTheMapping(t *testing.T) {
 		map[string]string{"plain": "x"}, []string{"517"})
 	require.NoError(t, err)
 	assert.Equal(t, []int{517}, ids)
+}
+
+// The source refusing the game's identifier is the game's configuration:
+// a *GameIdentifierError naming the game, the source and the value.
+func TestGameVersionTypes_SourceRefusingTheIdentifierIsTyped(t *testing.T) {
+	svc := newVersionTypeService(t, &versionTypeSource{
+		listErr: fmt.Errorf("no game with id 1: %w", source.ErrGameIdentifierInvalid),
+	})
+	_, err := svc.GameVersionTypes(context.Background(), "wow-classic", "versioned")
+	var idErr *core.GameIdentifierError
+	require.ErrorAs(t, err, &idErr)
+	assert.Equal(t, core.GameIdentifierError{GameID: "wow-classic", Source: "versioned", Value: "1"},
+		core.GameIdentifierError{GameID: idErr.GameID, Source: idErr.Source, Value: idErr.Value})
+	assert.True(t, core.IsGameIdentifierInvalid(err))
+	assert.Contains(t, err.Error(), "no game with id 1")
 }

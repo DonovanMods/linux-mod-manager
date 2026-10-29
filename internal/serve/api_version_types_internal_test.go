@@ -7,6 +7,7 @@ package serve
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -77,6 +78,7 @@ func TestAPIVersionTypes_Statuses(t *testing.T) {
 		{"unknown game", nil, "/api/v1/sources/versioned/version-types?game=nope", http.StatusNotFound},
 		{"source publishes none", nil, "/api/v1/sources/nexusmods/version-types?game=wow-classic", http.StatusNotFound},
 		{"no key", domain.ErrAuthRequired, "/api/v1/sources/versioned/version-types?game=wow-classic", http.StatusUnauthorized},
+		{"source has no such game", fmt.Errorf("CurseForge has no game with id 1: %w", source.ErrGameIdentifierInvalid), "/api/v1/sources/versioned/version-types?game=wow-classic", http.StatusBadRequest},
 		{"upstream failure", assert.AnError, "/api/v1/sources/versioned/version-types?game=wow-classic", http.StatusBadGateway},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

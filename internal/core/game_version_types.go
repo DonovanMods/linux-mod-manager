@@ -79,6 +79,15 @@ func (s *Service) gameVersionTypes(ctx context.Context, gameID, sourceID string,
 	}
 
 	rows, err := lister.ListGameVersionTypes(source.WithGame(ctx, game), identifier)
+	if err != nil && errors.Is(err, source.ErrGameIdentifierInvalid) {
+		// The source refused the identifier itself (CurseForge has no such
+		// game): the game's configuration, typed like a missing mapping.
+		return nil, &GameIdentifierError{
+			GameID: gameID, Source: sourceID, Value: identifier,
+			Err: fmt.Errorf("game %q maps source %q to %q, which it cannot use; set it with 'lmm game edit %s --source %s=<identifier>': %w",
+				gameID, sourceID, identifier, gameID, sourceID, err),
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("listing %s game version types for %s: %w", src.Name(), gameID, err)
 	}
