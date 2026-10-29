@@ -138,7 +138,7 @@ func TestE2E_GameEditor_PicksCurseForgeVersionTypesByName(t *testing.T) {
 		clickWhenSettled(editorSel(`[data-action="save-game"]`)),
 		chromedp.WaitVisible(editorSel(`[data-testid="game-saved"]`), chromedp.ByQuery),
 	)
-	assert.Equal(t, "WoW Classic wow-classic|WoW Mists of Pandaria Classic wow-mists-of-pandaria-classic|WoW Retail game|12345 (not in CurseForge's list)", names)
+	assert.Equal(t, "WoW Classic|WoW Mists of Pandaria Classic|WoW Retail|12345 (not in CurseForge's list)", names)
 	assert.False(t, hasIDField, "with the list in, there is no id field")
 	assert.True(t, unlistedTicked)
 	assert.True(t, classicTicked)
@@ -252,4 +252,67 @@ func TestE2E_GameEditor_CurseForgeRetickIsNotAChange(t *testing.T) {
 	)
 	assert.True(t, saveDisabled, "the same set in another order is not dirty")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// e2eWoWVersionTypesSource lists World of Warcraft's real version types,
+// as CurseForge answered on 2026-10-28: enough of them, with long enough
+// names, to show how the checklist lays out.
+type e2eWoWVersionTypesSource struct{ *fakeSource }
+
+func (s *e2eWoWVersionTypesSource) ListGameVersionTypes(context.Context, string) ([]source.GameVersionType, error) {
+	return []source.GameVersionType{
+		{ID: 79434, Name: "WoW Mists of Pandaria Classic", Slug: "wow-mists-of-pandaria-classic"},
+		{ID: 67408, Name: "WoW Classic", Slug: "wow-classic"},
+		{ID: 517, Name: "WoW Retail", Slug: "game"},
+		{ID: 77522, Name: "WoW Cataclysm Classic", Slug: "wow-cataclysm-classic"},
+		{ID: 73713, Name: "WoW Wrath of the Lich King Classic", Slug: "wow-wrath-classic"},
+		{ID: 81212, Name: "WoW Wrath Titan Reforged", Slug: "wow-wrath-titan"},
+		{ID: 73246, Name: "WoW Burning Crusade Classic", Slug: "wow-burning-crusade-classic"},
+		{ID: 88568, Name: "WoW Forever", Slug: "wow-forever"},
+	}, nil
+}
+
+var _ source.GameVersionTypeLister = (*e2eWoWVersionTypesSource)(nil)
+
+// #563 follow-up: the checklist reads as a list, however wide the editor.
+// It names each type and nothing else (a slug is the CLI's spelling), it
+// never spreads past three columns, and each checkbox sits on the first
+// line of its label rather than floating between two.
+func TestE2E_GameEditor_CurseForgePickerReadsAsAList(t *testing.T) {
+	f := newE2EFixtureWithSetupGames(t)
+	f.Svc.RegisterSource(&e2eWoWVersionTypesSource{fakeSource: newFakeSource("curseforge")})
+
+	var layout struct {
+		Labels  []string `json:"labels"`
+		Columns int      `json:"columns"`
+		Floats  []string `json:"floats"`
+	}
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1920, 1000),
+		chromedp.Navigate(f.SetupPath("games")),
+		setupGamesReady(),
+		openEditor("drive"),
+		chromedp.WaitVisible(typeBox("67408"), chromedp.ByQuery),
+		chromedp.Evaluate(`(() => {
+			const labels = [...document.querySelectorAll('[data-testid="curseforge-types-picker"] label')];
+			const floats = [];
+			for (const l of labels) {
+				const box = l.querySelector('input').getBoundingClientRect();
+				const line = parseFloat(getComputedStyle(l).lineHeight);
+				const middle = box.top + box.height / 2 - l.getBoundingClientRect().top;
+				if (middle > line * 0.75) floats.push(l.textContent.trim());
+			}
+			return {
+				labels: labels.map((l) => l.textContent.replace(/\s+/g, " ").trim()),
+				columns: new Set(labels.map((l) => Math.round(l.getBoundingClientRect().left))).size,
+				floats,
+			};
+		})()`, &layout),
+	)
+	assert.Equal(t, []string{
+		"WoW Burning Crusade Classic", "WoW Cataclysm Classic", "WoW Classic", "WoW Forever",
+		"WoW Mists of Pandaria Classic", "WoW Retail", "WoW Wrath of the Lich King Classic", "WoW Wrath Titan Reforged",
+	}, layout.Labels, "names only, sorted")
+	assert.LessOrEqual(t, layout.Columns, 3, "the checklist spreads no wider than three columns")
+	assert.Empty(t, layout.Floats, "every checkbox sits on its label's first line")
 }
