@@ -7,13 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.1.0] - 2026-10-29
-
-Profiles can be duplicated and mods copied between them, a CurseForge game
-can be limited to its own flavor (World of Warcraft Classic or Retail),
-picked by name, and saving a game no longer rewrites the rest of
-`games.yaml`.
-
 ### Added
 
 - **Run the web UI in the background (#567).** `lmm serve` can now run as
@@ -29,6 +22,16 @@ lmm-serve` turns it on. For a tarball, `go install` or `make install`,
   (all three take `--json`). A missing `systemctl` or user manager is a
   clear error. The user guide has a new page, "Run the web UI in the
   background".
+
+## [2.1.0] - 2026-10-29
+
+Profiles can be duplicated and mods copied between them, a CurseForge game
+can be limited to its own flavor (World of Warcraft Classic or Retail),
+picked by name, and saving a game no longer rewrites the rest of
+`games.yaml`.
+
+### Added
+
 - **Duplicate a profile (#438).** `lmm profile duplicate <source> <new>`,
   and **Duplicate** in the web UI's Profiles window, clone a profile without
   the export/import round trip: every mod in load order with its version,
