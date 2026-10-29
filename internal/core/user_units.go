@@ -466,9 +466,9 @@ func RenderServeUnit(exe string, opts ServiceInstallOptions) ([]byte, error) {
 // expands neither a specifier nor a variable, and a word with whitespace,
 // quotes or backslashes is double-quoted with those escaped.
 func systemdQuote(s string) string {
-	s = strings.NewReplacer("%", "%%", "$", "$$").Replace(s)
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "%", "%%"), "$", "$$")
 	if !strings.ContainsAny(s, " \t\"'\\;") {
 		return s
 	}
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+	return `"` + strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), `"`, `\"`) + `"`
 }
