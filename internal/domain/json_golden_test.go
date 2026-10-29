@@ -297,6 +297,27 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #544's curseforge block on its own.
+			"game_curse_forge",
+			domain.GameCurseForge{GameVersionTypes: []int{67408, 77522}},
+		},
+		{
+			// #544: a CurseForge game that accepts only some of the
+			// source's game version types (WoW Classic under CurseForge's
+			// one WoW game id). game.golden is the unset case, and stays
+			// byte-identical to what it was before this field existed.
+			"game_curseforge",
+			domain.Game{
+				ID:          "wow-classic",
+				Name:        "World of Warcraft Classic",
+				InstallPath: "/home/user/Games/wow/_classic_era_",
+				ModPath:     "/home/user/Games/wow/_classic_era_/Interface/AddOns",
+				SourceIDs:   map[string]string{"curseforge": "1"},
+				LinkMethod:  domain.LinkSymlink,
+				CurseForge:  &domain.GameCurseForge{GameVersionTypes: []int{67408}},
+			},
+		},
+		{
 			// A CURATED candidate: every field the known-games entry
 			// supplies, plus #206's "known": true.
 			"detected_game",

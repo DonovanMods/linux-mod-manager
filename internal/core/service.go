@@ -2407,6 +2407,9 @@ func copyGame(game *domain.Game) *domain.Game {
 		loader := *game.Loader
 		copy.Loader = &loader
 	}
+	if game.CurseForge != nil {
+		copy.CurseForge = &domain.GameCurseForge{GameVersionTypes: append([]int(nil), game.CurseForge.GameVersionTypes...)}
+	}
 	return &copy
 }
 
