@@ -114,9 +114,5 @@ func (c *Config) Save(configDir string) error {
 	}
 
 	configPath := filepath.Join(configDir, "config.yaml")
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
-		return fmt.Errorf("writing config: %w", err)
-	}
-
-	return nil
+	return replaceFile(configPath, data, 0644, "config")
 }
