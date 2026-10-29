@@ -2274,6 +2274,36 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #563: one version type, the row both documents below carry.
+			"game_version_type",
+			core.GameVersionType{ID: 67408, Name: "WoW Classic", Slug: "wow-classic"},
+		},
+		{
+			// #563: `lmm game version-types --json` - a source's version
+			// types for one game, sorted by name, each by id, name and slug.
+			"game_version_types_report",
+			core.GameVersionTypesReport{
+				GameID: "wow-classic", SourceID: "curseforge",
+				Types: []core.GameVersionType{
+					{ID: 67408, Name: "WoW Classic", Slug: "wow-classic"},
+					{ID: 517, Name: "WoW Retail", Slug: "game"},
+				},
+			},
+		},
+		{
+			// #563: a --curseforge-version-type naming no type, with every
+			// valid type in the envelope's details.
+			"game_version_type_error",
+			core.GameVersionTypeError{
+				GameID: "wow-classic", SourceID: "curseforge", Value: "classic",
+				Reason: core.GameVersionTypeUnknown,
+				Types: []core.GameVersionType{
+					{ID: 67408, Name: "WoW Classic", Slug: "wow-classic"},
+					{ID: 517, Name: "WoW Retail", Slug: "game"},
+				},
+			},
+		},
+		{
 			// #333's source-removal refusal: the games that still map the
 			// source, so a frontend names them instead of saying "in use".
 			"source_in_use_error",
