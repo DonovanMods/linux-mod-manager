@@ -75,6 +75,44 @@ from under them. It tells you what to do first: take the mods out of the
 game folder, change the folder, then put them back. The message lists each
 step.
 
+## Pick a CurseForge game flavor
+
+Some games come in several flavors that CurseForge files under one game.
+World of Warcraft is the common case: Retail, Classic and the other Classic
+versions are all CurseForge game `1`, and an addon can have a different
+file for each. Tell lmm which flavor a game is, or it may offer a Classic
+install the Retail file.
+
+CurseForge marks every file with a *game version type*, a number. Give the
+game the numbers it accepts. For World of Warcraft, Retail is `517` and
+Classic is `67408`:
+
+```bash
+lmm game edit wow-classic --curseforge-version-type 67408
+```
+
+Repeat the flag to accept more than one, and run
+`lmm game edit wow-classic --curseforge-version-type ""` to go back to every
+file. In the browser, the same setting is the **CurseForge game version
+types** field in the game's editor (it appears once the game uses
+CurseForge).
+
+From then on, search only shows addons that have a file for that flavor,
+and installs and updates only use those files. An addon with no file for the
+flavor is reported as having no installable file for this game.
+
+To find the number for another flavor or another game, ask CurseForge for
+the game's list of version types with your API key (the game id is the one
+in the game's `curseforge` source, `1` for World of Warcraft):
+
+```bash
+curl -s -H "x-api-key: $CURSEFORGE_API_KEY" \
+  https://api.curseforge.com/v1/games/1/version-types
+```
+
+Each entry's `id` is a version type, and its `name` says which flavor it
+is.
+
 ## Games from other stores
 
 Automatic detection for Battle.net games is planned. Until then, and for
