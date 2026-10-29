@@ -282,7 +282,7 @@ type CopyModOutcome struct {
 	Deployed bool `json:"deployed"`
 	// Replaced is true when the copy overwrote the destination's own
 	// entry for the mod (CopyModOptions.Replace).
-	Replaced bool `json:"replaced,omitempty"`
+	Replaced bool `json:"replaced,omitzero"`
 }
 
 // CopyModResult reports the outcome of ApplyCopyMod.
