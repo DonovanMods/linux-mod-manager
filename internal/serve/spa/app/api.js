@@ -611,3 +611,8 @@ export function uploadArchive(file, { onProgress, signal } = {}) {
 /** Cancels a staged upload nobody imported: 204, no document. */
 export const deleteUpload = (uploadID) =>
   del(`/api/v1/uploads/${encodeURIComponent(uploadID)}`);
+
+/** getLmmRelease reads GET /api/v1/updates/lmm: core.ReleaseStatus, the
+ * server's cached answer about a newer lmm (never a request to GitHub of its
+ * own, and never scoped to a game). */
+export const getLmmRelease = () => get("/api/v1/updates/lmm");

@@ -421,9 +421,16 @@ func (f e2eMultiGameFixture) runInBrowser(t *testing.T, actions ...chromedp.Acti
 // proxy-backed fixtures before this ordering was made explicit.
 func startE2EServer(t *testing.T, svc *core.Service) string {
 	t.Helper()
+	return startE2EServerWithReleases(t, svc, nil)
+}
+
+// startE2EServerWithReleases is startE2EServer with an injected release
+// checker (#568); nil is "no checker", which every other fixture uses.
+func startE2EServerWithReleases(t *testing.T, svc *core.Service, rc *core.ReleaseChecker) string {
+	t.Helper()
 
 	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler),
-		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: e2eShutdownGrace, Version: e2eLmmVersion})
+		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: e2eShutdownGrace, Version: e2eLmmVersion, ReleaseChecker: rc})
 	addr, err := srv.Listen()
 	require.NoError(t, err)
 

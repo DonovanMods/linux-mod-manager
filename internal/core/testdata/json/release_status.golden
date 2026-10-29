@@ -1,0 +1,16 @@
+{
+  "current": "2.0.1",
+  "latest": "2.1.0",
+  "update_available": true,
+  "release_url": "https://github.com/DonovanMods/linux-mod-manager/releases/tag/v2.1.0",
+  "checked_at": "2026-10-01T12:00:00Z",
+  "check_error": "GitHub answered 403 Forbidden",
+  "check_enabled": true,
+  "dev": true,
+  "install": {
+    "method": "package",
+    "manager": "dpkg",
+    "package": "lmm",
+    "upgrade_command": "sudo apt install --only-upgrade lmm"
+  }
+}

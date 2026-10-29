@@ -1,0 +1,9 @@
+{
+  "current": "2.0.1",
+  "update_available": false,
+  "check_enabled": false,
+  "dev": false,
+  "install": {
+    "method": "self-managed"
+  }
+}

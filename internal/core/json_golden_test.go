@@ -2304,6 +2304,31 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #567: one systemd user unit's state, as `lmm service status`
+			// reports it.
+			"unit_status",
+			core.UnitStatus{
+				Name: "lmm-serve.service", Installed: true, Origin: core.UnitOriginUser,
+				Path:    "/home/user/.config/systemd/user/lmm-serve.service",
+				Enabled: true, Active: true, EnabledState: "enabled", ActiveState: "active",
+			},
+		},
+		{
+			// #567: `lmm service install|uninstall|status`'s document. The
+			// units list is a list so #569's timer joins it without a new
+			// shape.
+			"service_report",
+			core.ServiceReport{
+				Changed: true,
+				Units: []core.UnitStatus{{
+					Name: "lmm-serve.service", Installed: true, Origin: core.UnitOriginPackage,
+					Path:         "/usr/lib/systemd/user/lmm-serve.service",
+					EnabledState: "disabled", ActiveState: "inactive",
+				}},
+				Linger: false,
+			},
+		},
+		{
 			// #333's source-removal refusal: the games that still map the
 			// source, so a frontend names them instead of saying "in use".
 			"source_in_use_error",
@@ -2930,6 +2955,45 @@ func TestJSONGoldens(t *testing.T) {
 				&domain.Game{ID: "lethal-company"}, "Skinwalkers",
 				domain.LoaderKindBepInEx, "5.4.2100",
 				"the package depends on BepInEx-BepInExPack-5.4.2100"),
+		},
+		{
+			// `lmm version --json` and GET /api/v1/updates/lmm (#568): a
+			// cached failure beside what the last success learned, so
+			// every field is on the wire at once.
+			"release_status",
+			core.ReleaseStatus{
+				Current:         "2.0.1",
+				Latest:          "2.1.0",
+				UpdateAvailable: true,
+				ReleaseURL:      "https://github.com/DonovanMods/linux-mod-manager/releases/tag/v2.1.0",
+				CheckedAt:       time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC),
+				CheckError:      "GitHub answered 403 Forbidden",
+				CheckEnabled:    true,
+				Dev:             true,
+				Install: core.InstallMethod{
+					Method:         core.InstallPackage,
+					Manager:        "dpkg",
+					Package:        "lmm",
+					UpgradeCommand: "sudo apt install --only-upgrade lmm",
+				},
+			},
+		},
+		{
+			// A never-checked, self-managed binary: the omitted fields.
+			"release_status_unchecked",
+			core.ReleaseStatus{
+				Current: "2.0.1",
+				Install: core.InstallMethod{Method: core.InstallSelfManaged},
+			},
+		},
+		{
+			"install_method",
+			core.InstallMethod{
+				Method:         core.InstallPackage,
+				Manager:        "pacman",
+				Package:        "lmm",
+				UpgradeCommand: "sudo pacman -Syu",
+			},
 		},
 	}
 

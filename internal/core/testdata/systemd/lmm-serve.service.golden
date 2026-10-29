@@ -1,0 +1,32 @@
+# Written by `lmm service install`; `lmm service uninstall` removes it.
+# lmm's local web UI as a systemd user service (#567). Packages install this
+# file to /usr/lib/systemd/user, disabled; turn it on with
+#   systemctl --user enable --now lmm-serve
+# `lmm service install` writes a copy to ~/.config/systemd/user instead,
+# with ExecStart pointing at the lmm binary that ran it.
+#
+# It starts at login. To start it at boot without a login, run once:
+#   loginctl enable-linger $USER
+
+[Unit]
+Description=lmm web UI (lmm serve)
+Documentation=https://donovanmods.github.io/linux-mod-manager/background.html
+Documentation=man:lmm-serve(1)
+
+[Service]
+Type=simple
+ExecStart=/home/u/go/bin/lmm serve --no-open --addr 127.0.0.1:8080
+Restart=on-failure
+RestartSec=5
+# Light hardening only: lmm deploys mods into game directories anywhere
+# under your home or on other drives, so nothing here may narrow the file
+# system it can write to (no ProtectHome, no ProtectSystem=strict, no
+# PrivateTmp, which a user manager can only provide with user namespaces).
+# NoNewPrivileges does mean a hook script run from the web UI cannot use
+# sudo.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=default.target

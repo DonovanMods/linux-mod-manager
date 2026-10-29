@@ -1,0 +1,10 @@
+{
+  "name": "lmm-serve.service",
+  "installed": true,
+  "origin": "user",
+  "path": "/home/user/.config/systemd/user/lmm-serve.service",
+  "enabled": true,
+  "active": true,
+  "enabled_state": "enabled",
+  "active_state": "active"
+}

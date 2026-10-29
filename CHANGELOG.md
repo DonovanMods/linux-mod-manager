@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Run the web UI in the background (#567).** `lmm serve` can now run as
+  the systemd user service `lmm-serve.service`, started at login (or at
+  boot, with `loginctl enable-linger`, which lmm prints but never runs).
+  The deb, rpm and apk packages and the AUR `PKGBUILD` install it to
+  `/usr/lib/systemd/user`, turned off: `systemctl --user enable --now
+lmm-serve` turns it on. For a tarball, `go install` or `make install`,
+  `lmm service install [--addr host:port]` writes it to
+  the directory the user manager loads units from, pointing at the
+  running binary (the `lmm` on `PATH` when it is the same file) and
+  carrying `--config`/`--data` and any differing `XDG_CONFIG_HOME`/
+  `XDG_DATA_HOME`, and starts it, then checks a moment later that it is
+  still running; `lmm service uninstall` removes it (only a unit file lmm
+  wrote is ever overwritten or removed), and `lmm service status` reports
+  whether it is installed, enabled and running and whether lingering is on
+  (all three take `--json`). A missing `systemctl` or user manager is a
+  clear error. The user guide has a new page, "Run the web UI in the
+  background".
+
+- **lmm says when a new release of itself is out (#568).** After an
+  interactive command, a one-line notice on stderr names the newer version
+  and how to get it: the package manager's upgrade command when one owns the
+  binary (`dpkg`, `rpm`, `apk` or `pacman` is asked), the release page
+  otherwise. `lmm serve` shows a dismissible banner linking the release
+  notes, dismissed per version. The new `lmm version` reports the running
+  version, the newest release and how lmm was installed (`--check` asks now,
+  `--json` for scripts; `GET /api/v1/updates/lmm` serves the same document).
+  lmm asks GitHub at most once a day, sending only an `lmm/<version>`
+  User-Agent, caches the answer (and a failure) under the data dir, backs
+  off to once a day on a network that never answers, ignores drafts and
+  prereleases, and never reports one for a dev build; no notice
+  is printed with `--json` or when stderr is not a terminal. It is on by
+  default and says so the first time; `update_check: false` in
+  `config.yaml` turns it off.
+
 ## [2.1.0] - 2026-10-29
 
 Profiles can be duplicated and mods copied between them, a CurseForge game

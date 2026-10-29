@@ -43,6 +43,9 @@ archives:
       - THIRD_PARTY_NOTICES
       - CHANGELOG.md
       - docs/man/man1/**
+      # The systemd user unit (#567), at its repo path: the AUR package()
+      # below installs it from this tarball.
+      - packaging/systemd/lmm-serve.service
 
 nfpms:
   - id: lmm
@@ -96,6 +99,12 @@ nfpms:
       # libraries need their notices to accompany every binary package.
       - src: THIRD_PARTY_NOTICES
         dst: /usr/share/doc/lmm/THIRD_PARTY_NOTICES
+      # lmm serve as a systemd user service (#567). Shipped disabled - no
+      # install script enables it; a user opts in with
+      # `systemctl --user enable --now lmm-serve`. The same file is embedded
+      # into lmm for `lmm service install`, so the two cannot drift.
+      - src: packaging/systemd/lmm-serve.service
+        dst: /usr/lib/systemd/user/lmm-serve.service
     # .7z and .rar mod archives are extracted by shelling out to the system
     # tool; .zip is native Go. Soft dependencies, never hard ones - lmm is
     # fully usable without them, and each ecosystem names them differently.
@@ -139,6 +148,7 @@ aurs:
       install -Dm644 "./THIRD_PARTY_NOTICES" "${pkgdir}/usr/share/licenses/lmm-bin/THIRD_PARTY_NOTICES"
       install -Dm644 "./README.md" "${pkgdir}/usr/share/doc/lmm/README.md"
       install -Dm644 "./CHANGELOG.md" "${pkgdir}/usr/share/doc/lmm/CHANGELOG.md"
+      install -Dm644 "./packaging/systemd/lmm-serve.service" "${pkgdir}/usr/lib/systemd/user/lmm-serve.service"
 
       for page in ./docs/man/man1/*.1; do
         install -Dm644 "$page" "${pkgdir}/usr/share/man/man1/$(basename "$page")"
