@@ -1458,6 +1458,41 @@ CLI over SSH, which drives the same flows. It still installs nothing: Preact and
 repo at pinned versions and embedded in the binary, so `go build` remains
 the entire build and the UI never fetches anything from the network.
 
+### Running it in the background
+
+`lmm serve` can run as a systemd **user** service, `lmm-serve.service`, so
+the web UI is there whenever you are logged in without a terminal left open
+(#567). It is a user unit rather than a system one because everything lmm
+keeps - config, database, credentials - lives under your home directory.
+
+- **From a package** (deb, rpm, apk, or the AUR `PKGBUILD`), the unit is
+  already installed at `/usr/lib/systemd/user/lmm-serve.service`, turned
+  off. Turn it on with `systemctl --user enable --now lmm-serve`.
+- **From a tarball, `go install` or `make install`**, run
+  `lmm service install` (add `--addr host:port` to listen somewhere other
+  than `127.0.0.1:7420`). It writes
+  `$XDG_CONFIG_HOME/systemd/user/lmm-serve.service` (default
+  `~/.config/systemd/user`) with `ExecStart` pointing at the lmm binary that
+  ran it, symlinks resolved, then reloads the user manager and enables and
+  starts the service. Running it again rewrites the unit and restarts the
+  service. If a package already installed the unit, it writes nothing and
+  prints the `systemctl` command that turns the packaged one on.
+
+`lmm service status` shows whether the unit is installed (and by whom),
+enabled and running, and whether lingering is on; `lmm service uninstall`
+stops, disables and removes the unit `lmm service install` wrote (never a
+package's). All three take `--json` (a `core.ServiceReport`), and on a
+machine with no `systemctl`, or no user manager for the session, they fail
+with a clear error instead.
+
+The service starts at login. To start it at boot without logging in, turn
+on lingering once with `loginctl enable-linger $USER`; lmm prints that
+command but never runs it, since it is a system setting. The unit is
+hardened only lightly (`NoNewPrivileges=yes` and friends): nothing in it
+narrows where lmm may write, because a deploy writes into game directories
+anywhere on disk. `NoNewPrivileges` does mean a hook script run by the
+service cannot use `sudo`. Its log is `journalctl --user -u lmm-serve`.
+
 ### Screens
 
 **Mission Control** (`/g/{game}/{profile}`) is home. Its top bar carries the
@@ -2427,6 +2462,9 @@ under its issue number:
 | `lmm source remove <id>`                                  | Remove a user-defined source (refused while a game still maps it)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `lmm serve`                                               | Start the local web UI — the second frontend — on `127.0.0.1:7420` and open a browser (see [Web UI](#web-ui-lmm-serve))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `lmm serve --addr <host:port>` / `--no-open`              | Bind somewhere other than the default, or don't open a browser                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `lmm service install [--addr <host:port>]`                | Run `lmm serve` in the background as the systemd user service `lmm-serve.service`, pointing at this binary (see [Running it in the background](#running-it-in-the-background))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `lmm service uninstall`                                   | Stop, disable and remove the unit `lmm service install` wrote                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `lmm service status`                                      | Show whether `lmm-serve.service` is installed (by lmm or a package), enabled and running, and whether lingering is on                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 `lmm install --version <version>` resolves the exact version against the mod's full file list — archived/old files are searched automatically, no `--show-archived` needed — and the matching file(s) become the pool for `--file`/`-y`/the interactive prompt; when the mod has dependencies, `--version` and `--file` apply to the named mod only (`--file` picks from the version's matches when both are given, and the whole install aborts up front if either fails to resolve) — dependencies are unaffected, still installing at latest with their primary file auto-selected. An unknown version fails with an error listing the versions the source actually has (`version not found: version "..." (available: ...)`). A source whose files carry no version information fails with the standard "not supported" gap instead, same as any other missing capability — this is decided dynamically from the actual file data returned for that mod, not from the source's advertised `versions` capability flag (a source can declare `versions` support and still hit this gap for a mod whose files happen to lack version strings). Omitting `--version` installs the latest, unchanged.
 

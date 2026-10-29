@@ -1,0 +1,16 @@
+{
+  "changed": true,
+  "units": [
+    {
+      "name": "lmm-serve.service",
+      "installed": true,
+      "origin": "package",
+      "path": "/usr/lib/systemd/user/lmm-serve.service",
+      "enabled": false,
+      "active": false,
+      "enabled_state": "disabled",
+      "active_state": "inactive"
+    }
+  ],
+  "linger": false
+}
