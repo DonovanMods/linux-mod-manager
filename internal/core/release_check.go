@@ -195,26 +195,31 @@ func (r *ReleaseChecker) Status(ctx context.Context) ReleaseStatus {
 // the status's CheckError; a caller that only shows a notice ignores it.
 func (r *ReleaseChecker) Check(ctx context.Context, force bool) (ReleaseStatus, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	st := r.load()
 	now := r.opts.Now()
 	if !force {
-		if r.opts.Dev || !r.Enabled() {
-			return r.status(ctx, st), nil
-		}
-		if age := now.Sub(st.CheckedAt); !st.CheckedAt.IsZero() && age >= 0 && age < ReleaseCheckInterval {
+		if age := now.Sub(st.CheckedAt); r.opts.Dev || !r.Enabled() ||
+			(!st.CheckedAt.IsZero() && age >= 0 && age < ReleaseCheckInterval) {
+			r.mu.Unlock()
 			return r.status(ctx, st), nil
 		}
 	}
-
 	// The attempt is recorded BEFORE the request, as a failure: a CLI run
 	// that exits before the answer arrives still counts as today's one
 	// request, so a slow network is not asked again on every command.
 	st.CheckedAt = now
 	st.Error = "the check did not finish"
 	_ = r.save(st)
+	r.mu.Unlock()
 
+	// Unlocked while the request is out: a Status read (a page load in
+	// `lmm serve`) answers from the cache instead of waiting on GitHub.
 	latest, url, err := r.fetch(ctx)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st = r.load()
+	st.CheckedAt = now
 	if err != nil {
 		st.Error = err.Error()
 	} else {

@@ -59,6 +59,12 @@ type Options struct {
 	// running (N-5, epic re-review). Empty renders no <meta> content, which
 	// only happens in a test that does not set it.
 	Version string
+
+	// ReleaseChecker answers GET /api/v1/updates/lmm and, while Serve
+	// runs, refreshes its cache under its own once-a-day rule (#568). nil
+	// - every test that does not set one - reports the check off and makes
+	// no request, which is what keeps this package's tests off GitHub.
+	ReleaseChecker *core.ReleaseChecker
 }
 
 // Server is the lmm serve HTTP server: an *http.Server wired to a
@@ -130,6 +136,10 @@ type Server struct {
 	// version is Options.Version, stamped into the SPA shell (spa.go's
 	// shellData) so the browser can say what it is running.
 	version string
+
+	// releases is Options.ReleaseChecker (api_release.go); nil when the
+	// server was built without one.
+	releases *core.ReleaseChecker
 }
 
 // New builds a Server over svc. log receives request-level diagnostics at
@@ -174,6 +184,7 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		gameRows:       svc.ListGameEntries,
 		draining:       make(chan struct{}),
 		version:        opts.Version,
+		releases:       opts.ReleaseChecker,
 	}
 	s.httpServer = &http.Server{
 		Addr: opts.Addr,
@@ -239,6 +250,9 @@ func (s *Server) Close() error {
 func (s *Server) Serve(ctx context.Context) error {
 	if s.ln == nil {
 		return errors.New("serve: Listen must be called before Serve")
+	}
+	if s.releases != nil {
+		go s.refreshReleases(ctx)
 	}
 	err := serveGraceful(ctx, s.httpServer, s.ln, s.shutdownGrace, s.jobs.shutdown)
 	// Staged uploads are large; an orderly shutdown takes them with it
