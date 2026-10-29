@@ -21,7 +21,9 @@ import (
 // waiting at most releaseNoticeGrace for an answer still in flight, and
 // spending at most releaseNoticeBudget on the whole exit path - the wait
 // and the notice's install-method lookup, which core normally answers from
-// its cache without running a package manager. Almost every command
+// its cache without running a package manager (the background check
+// detects it beside the command, so a slow first detection is cached by a
+// command that outlasts it). Almost every command
 // outlasts the request, so the usual cost is nothing; the worst case is
 // releaseNoticeBudget. A check that has not answered by then is abandoned -
 // core records the attempt before it asks, so an abandoned check holds off
@@ -113,6 +115,13 @@ func startReleaseCheck(cmd *cobra.Command) {
 	go func() {
 		defer close(p.done)
 		_ = rc.Refresh(ctx) // a failure is cached; a notice never fails a command
+		// Detect the install method here too, on this goroutine's deadline:
+		// a cold dpkg -S or rpm -qf can outlast what is left of the exit
+		// budget, and an answer cut short is never cached, so detection
+		// only on the exit path might never finish. PendingUpdate asks a
+		// package manager only when there is an update to word, and caches
+		// what it learns for the exit path and every later run.
+		_, _ = rc.PendingUpdate(ctx)
 	}()
 }
 

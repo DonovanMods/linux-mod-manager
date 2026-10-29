@@ -300,3 +300,52 @@ func TestReleaseNotice_CtrlCEndsTheWait(t *testing.T) {
 	finishReleaseCheck(ctx, io.Discard)
 	assert.Less(t, time.Since(start), releaseNoticeGrace)
 }
+
+// TestReleaseNotice_ASlowDetectionCompletesBesideTheCommand: a cold package
+// manager query (dpkg -S, rpm -qf) can outlast the exit path's budget, and
+// an answer cut short is never cached - so detection also runs in the
+// background check, on its own deadline, beside the command. A command
+// that outlasts it gets the upgrade command, and so does every later run,
+// from the cache.
+func TestReleaseNotice_ASlowDetectionCompletesBesideTheCommand(t *testing.T) {
+	cliReleaseServer(t, "v2.1.0")
+	_, _ = runLMM(t, "version", "--check")
+	exe := filepath.Join(t.TempDir(), "lmm")
+	require.NoError(t, os.WriteFile(exe, []byte("binary"), 0o755))
+	var runs atomic.Int32
+	releaseInstallProbe = &core.InstallProbe{
+		Executable: func() (string, error) { return exe, nil },
+		LookPath:   func(name string) (string, error) { return "/usr/bin/" + name, nil },
+		Run: func(ctx context.Context, name string, _ ...string) ([]byte, error) {
+			runs.Add(1)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(2 * releaseNoticeBudget):
+			}
+			if name == "dpkg" {
+				return []byte("lmm:amd64: " + exe + "\n"), nil
+			}
+			return nil, os.ErrNotExist
+		},
+	}
+	armReleaseNotice(t, true)
+	runLMM(t, "game", "list")
+	p := pendingRelease
+	require.NotNil(t, p)
+	select { // the command runs on for longer than the detection takes
+	case <-p.done:
+	case <-time.After(releaseNoticeDeadline):
+		t.Fatal("the background check did not finish")
+	}
+
+	var notice bytes.Buffer
+	finishReleaseCheck(context.Background(), &notice)
+	assert.Contains(t, notice.String(), "upgrade with: sudo apt install --only-upgrade lmm\n")
+
+	asked := runs.Load()
+	notice.Reset()
+	notice.WriteString(afterCommand(t, "game", "list"))
+	assert.Contains(t, notice.String(), "upgrade with: sudo apt install --only-upgrade lmm\n")
+	assert.Equal(t, asked, runs.Load(), "a later run answers from the cache")
+}
