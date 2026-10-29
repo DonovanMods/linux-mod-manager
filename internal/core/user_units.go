@@ -191,19 +191,39 @@ type ServiceInstallOptions struct {
 	// differ from the user manager's, so the service reads what the CLI
 	// does.
 	Environment []string
+	// AutoUpdate also installs lmm-update.timer and lmm-update.service
+	// (#569), which run `lmm self-update --auto` daily. Once installed they
+	// are kept, and rewritten, by every later install; uninstall removes
+	// them.
+	AutoUpdate bool
 }
 
-// userUnit is one systemd user unit lmm manages. lmm-serve.service is the
-// only one today; a second (#569's update timer) is another entry in
-// managedUnits.
+// userUnit is one systemd user unit lmm manages.
 type userUnit struct {
 	name   string
 	render func(exe string, opts ServiceInstallOptions) ([]byte, error)
+	// autoUpdate marks a unit `lmm service install` writes only with
+	// --auto-update, or when it is already installed.
+	autoUpdate bool
+	// static marks a unit with no [Install] section, which another unit
+	// starts: install only writes it, and uninstall stops it rather than
+	// disabling it.
+	static bool
 }
 
-// managedUnits is every unit lmm manages, in report order.
+// UpdateServiceName and UpdateTimerName are the unattended self-update's
+// units (#569): the timer starts the oneshot service once a day.
+const (
+	UpdateServiceName = "lmm-update.service"
+	UpdateTimerName   = "lmm-update.timer"
+)
+
+// managedUnits is every unit lmm manages, in report order. The timer comes
+// before the service it starts, so uninstall stops the timer first.
 var managedUnits = []userUnit{
 	{name: systemd.ServeUnitName, render: RenderServeUnit},
+	{name: UpdateTimerName, render: RenderUpdateTimer, autoUpdate: true},
+	{name: UpdateServiceName, render: RenderUpdateService, autoUpdate: true, static: true},
 }
 
 // packagedUnitDirs is every system-wide directory the user manager loads
@@ -413,9 +433,18 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 	}
 	opts.Environment = append(u.shellEnvironment(mgr), opts.Environment...)
 
-	rendered := make([][]byte, len(managedUnits))
-	for i, unit := range managedUnits {
+	var install []userUnit
+	var rendered [][]byte
+	for _, unit := range managedUnits {
 		path := filepath.Join(dir, unit.name)
+		if unit.autoUpdate && !opts.AutoUpdate {
+			// Kept and rewritten when lmm installed it before; a file of
+			// the user's own is no business of an install that did not
+			// ask for the timer.
+			if own, err := checkOwnUnit(path, false); err != nil || !own {
+				continue
+			}
+		}
 		exists, err := checkOwnUnit(path, false)
 		if err != nil {
 			return ServiceReport{}, err
@@ -425,13 +454,15 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 				return ServiceReport{}, &PackagedUnitError{Unit: unit.name, Path: pkg}
 			}
 		}
-		if rendered[i], err = unit.render(exe, opts); err != nil {
+		data, err := unit.render(exe, opts)
+		if err != nil {
 			return ServiceReport{}, err
 		}
+		install, rendered = append(install, unit), append(rendered, data)
 	}
 
 	anyChanged := false
-	for i, unit := range managedUnits {
+	for i, unit := range install {
 		changed, err := writeUnitFile(filepath.Join(dir, unit.name), rendered[i])
 		if err != nil {
 			return ServiceReport{}, err
@@ -441,7 +472,10 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 	if _, err := u.systemctl(ctx, "daemon-reload"); err != nil {
 		return ServiceReport{}, fmt.Errorf("systemctl --user daemon-reload: %w", err)
 	}
-	for _, unit := range managedUnits {
+	for _, unit := range install {
+		if unit.static {
+			continue
+		}
 		steps := [][]string{{"enable", "--now", unit.name}}
 		if u.query(ctx, "is-active", unit.name, "inactive") == "active" {
 			steps = [][]string{{"enable", unit.name}, {"restart", unit.name}}
@@ -455,7 +489,7 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 	if u.Sleep != nil {
 		u.Sleep(ctx, settleTime)
 	}
-	return u.report(ctx, dir, anyChanged), nil
+	return u.report(ctx, dir, anyChanged, nil), nil
 }
 
 // Uninstall disables, stops and removes every unit `lmm service install`
@@ -487,18 +521,23 @@ func (u *UserUnits) Uninstall(ctx context.Context) (ServiceReport, error) {
 		}
 	}
 	removed := false
+	gone := map[string]bool{}
 	for i, unit := range managedUnits {
 		if !present[i] {
 			continue
 		}
 		path := filepath.Join(dir, unit.name)
-		if _, err := u.systemctl(ctx, "disable", "--now", unit.name); err != nil {
-			return ServiceReport{}, fmt.Errorf("systemctl --user disable --now %s: %w", unit.name, err)
+		step := []string{"disable", "--now", unit.name}
+		if unit.static {
+			step = []string{"stop", unit.name}
+		}
+		if _, err := u.systemctl(ctx, step...); err != nil {
+			return ServiceReport{}, fmt.Errorf("systemctl --user %s: %w", strings.Join(step, " "), err)
 		}
 		if err := os.Remove(path); err != nil {
 			return ServiceReport{}, fmt.Errorf("removing %s: %w", path, err)
 		}
-		removed = true
+		removed, gone[unit.name] = true, true
 	}
 	if removed {
 		if _, err := u.systemctl(ctx, "daemon-reload"); err != nil {
@@ -507,7 +546,7 @@ func (u *UserUnits) Uninstall(ctx context.Context) (ServiceReport, error) {
 	} else if refusal != nil {
 		return ServiceReport{}, refusal
 	}
-	return u.report(ctx, dir, removed), nil
+	return u.report(ctx, dir, removed, gone), nil
 }
 
 // Status reports every managed unit and whether lingering is on.
@@ -519,14 +558,33 @@ func (u *UserUnits) Status(ctx context.Context) (ServiceReport, error) {
 	if err != nil {
 		return ServiceReport{}, err
 	}
-	return u.report(ctx, mgr.unitDir(), false), nil
+	return u.report(ctx, mgr.unitDir(), false, nil), nil
+}
+
+// RestartServeIfActive restarts lmm-serve.service with try-restart when it
+// is running, so it runs the binary `lmm self-update` just installed (#569),
+// and reports whether it did. A host without systemd, or a service that is
+// not running, is nothing to restart and no error.
+func (u *UserUnits) RestartServeIfActive(ctx context.Context) (bool, error) {
+	if err := u.checkSystemd(ctx); err != nil {
+		return false, nil
+	}
+	if u.query(ctx, "is-active", systemd.ServeUnitName, "inactive") != "active" {
+		return false, nil
+	}
+	if _, err := u.systemctl(ctx, "try-restart", systemd.ServeUnitName); err != nil {
+		return false, fmt.Errorf("systemctl --user try-restart %s: %w", systemd.ServeUnitName, err)
+	}
+	return true, nil
 }
 
 // report reads the state of every managed unit, with the user's own
-// units in dir. Its queries cannot fail in
+// units in dir: lmm-serve.service always, and the auto-update units when
+// they are installed or are among removed, the ones this call just took
+// out. Its queries cannot fail in
 // a way worth stopping for: is-enabled and is-active exit non-zero for any
 // state but the positive one, and still print it.
-func (u *UserUnits) report(ctx context.Context, dir string, changed bool) ServiceReport {
+func (u *UserUnits) report(ctx context.Context, dir string, changed bool, removed map[string]bool) ServiceReport {
 	r := ServiceReport{Changed: changed, Units: make([]UnitStatus, 0, len(managedUnits))}
 	for _, unit := range managedUnits {
 		s := UnitStatus{Name: unit.name}
@@ -534,6 +592,9 @@ func (u *UserUnits) report(ctx context.Context, dir string, changed bool) Servic
 			s.Installed, s.Origin, s.Path = true, UnitOriginUser, path
 		} else if pkg := u.packagedPath(unit.name); pkg != "" {
 			s.Installed, s.Origin, s.Path = true, UnitOriginPackage, pkg
+		}
+		if unit.autoUpdate && !s.Installed && !removed[unit.name] {
+			continue
 		}
 		s.EnabledState = u.query(ctx, "is-enabled", unit.name, "not-found")
 		s.ActiveState = u.query(ctx, "is-active", unit.name, "inactive")
@@ -693,8 +754,9 @@ func writeUnitFile(path string, data []byte) (bool, error) {
 // without it is not lmm's to overwrite or remove.
 const unitHeaderMark = "# Written by `lmm service install`"
 
-// serveUnitHeader is the line RenderServeUnit puts above the shipped unit,
-// so a reader of ~/.config/systemd/user knows where the file came from.
+// serveUnitHeader is the line every unit `lmm service install` writes
+// starts with, so a reader of ~/.config/systemd/user knows where the file
+// came from and lmm knows the file is its own.
 const serveUnitHeader = unitHeaderMark + "; `lmm service uninstall` removes it.\n"
 
 // RenderServeUnit returns lmm-serve.service for the lmm binary at exe: the
@@ -704,38 +766,13 @@ const serveUnitHeader = unitHeaderMark + "; `lmm service uninstall` removes it.\
 // the directories must be absolute, and a newline in any of them is refused
 // rather than written into the unit.
 func RenderServeUnit(exe string, opts ServiceInstallOptions) ([]byte, error) {
-	if !filepath.IsAbs(exe) {
-		return nil, fmt.Errorf("the lmm binary path %q is not absolute", exe)
-	}
-	args := []string{exe, "serve", "--no-open"}
+	args := []string{"serve", "--no-open"}
 	if opts.Addr != "" {
 		args = append(args, "--addr", opts.Addr)
 	}
-	for _, d := range []struct{ flag, dir string }{{"--config", opts.ConfigDir}, {"--data", opts.DataDir}} {
-		if d.dir == "" {
-			continue
-		}
-		if !filepath.IsAbs(d.dir) {
-			return nil, fmt.Errorf("the %s directory %q is not absolute", d.flag, d.dir)
-		}
-		args = append(args, d.flag, d.dir)
-	}
-	var env strings.Builder
-	for _, kv := range opts.Environment {
-		if k, _, ok := strings.Cut(kv, "="); !ok || k == "" {
-			return nil, fmt.Errorf("%q is not a KEY=value environment entry", kv)
-		}
-		if strings.ContainsAny(kv, "\n\r") {
-			return nil, fmt.Errorf("%q cannot be written into a unit file: it contains a line break", kv)
-		}
-		env.WriteString("Environment=" + systemdQuoteEnv(kv) + "\n")
-	}
-	words := make([]string, len(args))
-	for i, a := range args {
-		if strings.ContainsAny(a, "\n\r") {
-			return nil, fmt.Errorf("%q cannot be written into a unit file: it contains a line break", a)
-		}
-		words[i] = systemdQuote(a)
+	execLine, err := renderExecStart(exe, args, opts)
+	if err != nil {
+		return nil, err
 	}
 
 	const directive = "ExecStart="
@@ -744,7 +781,7 @@ func RenderServeUnit(exe string, opts ServiceInstallOptions) ([]byte, error) {
 	found := false
 	for line := range strings.SplitAfterSeq(string(systemd.ServeUnit), "\n") {
 		if strings.HasPrefix(line, directive) {
-			line = env.String() + directive + strings.Join(words, " ") + "\n"
+			line = execLine
 			found = true
 		}
 		out.WriteString(line)
@@ -753,6 +790,108 @@ func RenderServeUnit(exe string, opts ServiceInstallOptions) ([]byte, error) {
 		return nil, errors.New("the embedded lmm-serve.service has no ExecStart line")
 	}
 	return out.Bytes(), nil
+}
+
+// RenderUpdateService returns lmm-update.service (#569) for the lmm binary
+// at exe: a oneshot that runs `lmm self-update --auto`, which does nothing
+// unless config.yaml says auto_update: true. opts.ConfigDir, opts.DataDir
+// and opts.Environment reach it as they reach lmm-serve.service.
+//
+// A run that fails - the network not up yet after a resume, most often - is
+// retried by systemd itself, Restart=on-failure five minutes apart and at
+// most four starts an hour, rather than by a retry loop inside lmm: each
+// attempt is its own journal entry, a failure that persists ends in the
+// unit's failed state where `systemctl --user status` shows it, and a
+// manual `lmm self-update` has no backoff to wait through. It names no
+// network-online.target, which a user manager does not have. It sets no
+// PrivateTmp=: in a user manager that needs unprivileged user namespaces,
+// which some distributions turn off, and the unit would then not start.
+func RenderUpdateService(exe string, opts ServiceInstallOptions) ([]byte, error) {
+	execLine, err := renderExecStart(exe, []string{"self-update", "--auto"}, opts)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(serveUnitHeader + `# lmm's unattended self-update (#569). lmm-update.timer starts it once a
+# day; it installs a new lmm release only while config.yaml says
+#   auto_update: true
+# and otherwise exits at once, so that setting turns updates off without
+# touching this file.
+
+[Unit]
+Description=lmm unattended self-update
+Documentation=https://donovanmods.github.io/linux-mod-manager/updates.html
+Documentation=man:lmm-self-update(1)
+# A failed run (most often a network that is not up yet) is tried again
+# five minutes later, up to three more times.
+StartLimitIntervalSec=1h
+StartLimitBurst=4
+
+[Service]
+Type=oneshot
+` + execLine + `Restart=on-failure
+RestartSec=5min
+NoNewPrivileges=yes
+`), nil
+}
+
+// RenderUpdateTimer returns lmm-update.timer (#569): lmm-update.service
+// once a day at a random time in the first hour, and at the next boot or
+// login when the machine was off at that time.
+func RenderUpdateTimer(string, ServiceInstallOptions) ([]byte, error) {
+	return []byte(serveUnitHeader + `# Starts lmm-update.service once a day (#569).
+
+[Unit]
+Description=Daily lmm self-update
+Documentation=https://donovanmods.github.io/linux-mod-manager/updates.html
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target
+`), nil
+}
+
+// renderExecStart returns the Environment= lines and the ExecStart= line
+// that run the lmm binary at exe with args, then opts.ConfigDir and
+// opts.DataDir as --config and --data. exe and the directories must be
+// absolute, and a line break anywhere is refused rather than written into
+// the unit.
+func renderExecStart(exe string, args []string, opts ServiceInstallOptions) (string, error) {
+	if !filepath.IsAbs(exe) {
+		return "", fmt.Errorf("the lmm binary path %q is not absolute", exe)
+	}
+	args = append([]string{exe}, args...)
+	for _, d := range []struct{ flag, dir string }{{"--config", opts.ConfigDir}, {"--data", opts.DataDir}} {
+		if d.dir == "" {
+			continue
+		}
+		if !filepath.IsAbs(d.dir) {
+			return "", fmt.Errorf("the %s directory %q is not absolute", d.flag, d.dir)
+		}
+		args = append(args, d.flag, d.dir)
+	}
+	var out strings.Builder
+	for _, kv := range opts.Environment {
+		if k, _, ok := strings.Cut(kv, "="); !ok || k == "" {
+			return "", fmt.Errorf("%q is not a KEY=value environment entry", kv)
+		}
+		if strings.ContainsAny(kv, "\n\r") {
+			return "", fmt.Errorf("%q cannot be written into a unit file: it contains a line break", kv)
+		}
+		out.WriteString("Environment=" + systemdQuoteEnv(kv) + "\n")
+	}
+	words := make([]string, len(args))
+	for i, a := range args {
+		if strings.ContainsAny(a, "\n\r") {
+			return "", fmt.Errorf("%q cannot be written into a unit file: it contains a line break", a)
+		}
+		words[i] = systemdQuote(a)
+	}
+	out.WriteString("ExecStart=" + strings.Join(words, " ") + "\n")
+	return out.String(), nil
 }
 
 // systemdQuote escapes one ExecStart word: % and $ are doubled so systemd

@@ -111,6 +111,11 @@ type ReleaseStatus struct {
 	// It is self-managed - the release page, never a wrong place to send
 	// someone - when detection did not finish in the caller's time.
 	Install InstallMethod `json:"install"`
+	// Installed is the version of the lmm binary now on disk when it is
+	// newer than Current: `lmm serve` sets it (InstalledNewer) once its
+	// binary has been replaced under it, and is running the old one until
+	// it restarts (#569). Empty otherwise, and always from the CLI.
+	Installed string `json:"installed,omitempty"`
 }
 
 // ReleaseCheckOptions configures a ReleaseChecker.
@@ -150,6 +155,21 @@ type ReleaseChecker struct {
 	install      InstallMethod // the detected answer, once installKnown
 	installKnown bool
 	installDone  chan struct{} // closed when the detection under way ends; nil when none is
+
+	diskMu      sync.Mutex // guards the fields below
+	startedAs   time.Time  // the executable's mod time at RememberRunningBinary; zero when unknown
+	diskModTime time.Time  // the mod time diskVersion was read at
+	diskVersion string     // InstalledNewer's answer for diskModTime
+	diskFailMod time.Time  // the mod time whose `--version` last failed
+	diskFailAt  time.Time  // when it failed, which holds off another run for installedVersionBackoff
+	diskRun     *diskRun   // the `--version` run under way; nil when none is
+}
+
+// diskRun is one `<exe> --version` run InstalledNewer's callers share.
+type diskRun struct {
+	modTime time.Time
+	done    chan struct{} // closed once version is set
+	version string
 }
 
 // releaseCheckState is the cache file's document.
@@ -210,7 +230,7 @@ func NewReleaseChecker(opts ReleaseCheckOptions) *ReleaseChecker {
 	if hc == nil {
 		hc = &http.Client{Timeout: releaseCheckTimeout}
 	}
-	return &ReleaseChecker{
+	r := &ReleaseChecker{
 		opts: opts,
 		client: httpclient.New(httpclient.Options{
 			HTTPClient:       hc,
@@ -227,6 +247,145 @@ func NewReleaseChecker(opts ReleaseCheckOptions) *ReleaseChecker {
 			},
 		}),
 	}
+	return r
+}
+
+// RememberRunningBinary records the running executable's modification time,
+// which InstalledNewer compares against. `lmm serve` calls it as it starts;
+// a checker that never does answers InstalledNewer with "". Nothing else
+// pays for it: the CLI's checks never touch the binary.
+func (r *ReleaseChecker) RememberRunningBinary() {
+	if r.opts.Dev {
+		return
+	}
+	t, _ := r.executableModTime()
+	r.diskMu.Lock()
+	r.startedAs = t
+	r.diskMu.Unlock()
+}
+
+// executableModTime is the running executable's path, symlinks resolved,
+// and the modification time of the file there now.
+func (r *ReleaseChecker) executableModTime() (time.Time, string) {
+	probe := DefaultInstallProbe()
+	if r.opts.Probe != nil {
+		probe = *r.opts.Probe
+	}
+	exe, err := probe.Executable()
+	if err != nil || exe == "" {
+		return time.Time{}, ""
+	}
+	modTime := probe.ModTime
+	if modTime == nil {
+		modTime = fileModTime
+	}
+	t, err := modTime(exe)
+	if err != nil {
+		return time.Time{}, ""
+	}
+	return t, exe
+}
+
+// installedVersionTimeout bounds `<exe> --version`.
+const installedVersionTimeout = 5 * time.Second
+
+// installedVersionBackoff is how long a failed `<exe> --version` is
+// remembered for the file it was about, so a binary that hangs or fails is
+// not run again on every page load.
+const installedVersionBackoff = 5 * time.Minute
+
+// InstalledNewer is the version of the lmm binary now at the running
+// executable's path when it is newer than the running one, and "" otherwise
+// - what tells a `lmm serve` started by hand that `lmm self-update` (or a
+// package upgrade, or `make install`) has replaced its binary (#569). It
+// runs `<exe> --version` only once the file's modification time differs
+// from RememberRunningBinary's, and once per such change; until then it
+// runs nothing. A dev build, on either side, never answers.
+//
+// The run holds no lock: concurrent callers share the one under way, each
+// returning "" once its own ctx ends, and the run itself is bounded only by
+// installedVersionTimeout. A run that fails is not repeated for the same
+// file until installedVersionBackoff has passed.
+//
+// The file is asked rather than a marker `lmm self-update` leaves behind,
+// because every way of replacing the binary changes the file and only one
+// of them would write the marker.
+func (r *ReleaseChecker) InstalledNewer(ctx context.Context) string {
+	if r.opts.Dev {
+		return ""
+	}
+	mtime, exe := r.executableModTime()
+	r.diskMu.Lock()
+	if r.startedAs.IsZero() || mtime.IsZero() || mtime.Equal(r.startedAs) {
+		r.diskMu.Unlock()
+		return ""
+	}
+	if mtime.Equal(r.diskModTime) {
+		v := r.diskVersion
+		r.diskMu.Unlock()
+		return v
+	}
+	if mtime.Equal(r.diskFailMod) && r.opts.Now().Sub(r.diskFailAt) < installedVersionBackoff {
+		r.diskMu.Unlock()
+		return ""
+	}
+	run := r.diskRun
+	if run == nil || !run.modTime.Equal(mtime) {
+		run = &diskRun{modTime: mtime, done: make(chan struct{})}
+		r.diskRun = run
+		go r.runInstalledVersion(ctx, run, exe)
+	}
+	r.diskMu.Unlock()
+
+	select {
+	case <-run.done:
+		return run.version
+	case <-ctx.Done():
+		return ""
+	}
+}
+
+// runInstalledVersion runs `<exe> --version` for run and records its
+// answer, or its failure. It is detached from the caller's ctx that
+// started it - the other callers waiting on it have their own - and is
+// bounded by installedVersionTimeout.
+func (r *ReleaseChecker) runInstalledVersion(ctx context.Context, run *diskRun, exe string) {
+	probe := DefaultInstallProbe()
+	if r.opts.Probe != nil {
+		probe = *r.opts.Probe
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), installedVersionTimeout)
+	defer cancel()
+	out, err := probe.Run(ctx, exe, "--version")
+
+	r.diskMu.Lock()
+	defer r.diskMu.Unlock()
+	if err != nil {
+		r.diskFailMod, r.diskFailAt = run.modTime, r.opts.Now()
+	} else {
+		run.version = newerVersionLine(string(out), r.opts.Version)
+		r.diskModTime, r.diskVersion = run.modTime, run.version
+	}
+	if r.diskRun == run {
+		r.diskRun = nil
+	}
+	close(run.done)
+}
+
+// newerVersionLine reads `lmm --version`'s "lmm version X" and returns X
+// when it is a release version newer than current; "" for anything else,
+// a dev build's "(dev: ...)" line included.
+func newerVersionLine(out, current string) string {
+	fields := strings.Fields(out)
+	if len(fields) != 3 || fields[0] != "lmm" || fields[1] != "version" {
+		return ""
+	}
+	got, ok := parseSemver(fields[2])
+	cur, okCur := parseSemver(current)
+	if !ok || !okCur || got.pre != "" || !cur.less(got) {
+		return ""
+	}
+	return strings.TrimPrefix(fields[2], "v")
 }
 
 // Enabled reports config.yaml's update_check. A config.yaml lmm cannot read

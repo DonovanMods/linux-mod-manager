@@ -643,3 +643,154 @@ func TestReleaseChecker_AnInconclusiveDetectionIsNotCached(t *testing.T) {
 		})
 	}
 }
+
+// A `lmm serve` started by hand keeps running the binary it started from
+// after `lmm self-update` replaces it (#569). InstalledNewer is how it
+// notices: only once the file at its executable's path has changed since
+// the checker was made does it run `<exe> --version`, and it reports that
+// version when it is newer than the running one.
+func TestReleaseChecker_InstalledNewer(t *testing.T) {
+	exe := filepath.Join(t.TempDir(), "lmm")
+	require.NoError(t, os.WriteFile(exe, []byte("2.0.1"), 0o755))
+	old := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(exe, old, old))
+
+	var runs atomic.Int32
+	answer := "lmm version 2.1.0\n"
+	rs := newReleaseServer(t, releaseV210)
+	rc, _ := newChecker(t, rs, &fakeClock{now: time.Now()}, func(o *core.ReleaseCheckOptions) {
+		o.Probe.Executable = func() (string, error) { return exe, nil }
+		o.Probe.Run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name != exe || len(args) != 1 || args[0] != "--version" {
+				return nil, errors.New("unexpected command")
+			}
+			runs.Add(1)
+			return []byte(answer), nil
+		}
+	})
+	ctx := context.Background()
+	require.NoError(t, os.WriteFile(exe, []byte("2.1.0"), 0o755))
+	assert.Empty(t, rc.InstalledNewer(ctx), "nothing to compare with before RememberRunningBinary")
+	require.NoError(t, os.Chtimes(exe, old, old))
+	rc.RememberRunningBinary()
+	assert.Empty(t, rc.InstalledNewer(ctx), "the binary has not changed")
+	assert.Zero(t, runs.Load(), "and nothing was run to find that out")
+
+	require.NoError(t, os.WriteFile(exe, []byte("2.1.0"), 0o755))
+	assert.Equal(t, "2.1.0", rc.InstalledNewer(ctx))
+	assert.Equal(t, "2.1.0", rc.InstalledNewer(ctx))
+	assert.EqualValues(t, 1, runs.Load(), "one run per change of the file")
+
+	for _, out := range []string{"lmm version 2.0.1\n", "lmm version 1.9.0\n", "garbage", "lmm version 2.2.0 (dev: v2.1.0-3-gabc)\n"} {
+		answer = out
+		later := time.Now().Add(time.Duration(runs.Load()) * time.Minute)
+		require.NoError(t, os.Chtimes(exe, later, later))
+		assert.Empty(t, rc.InstalledNewer(ctx), out)
+	}
+}
+
+func TestReleaseChecker_InstalledNewerNeverForADevBuild(t *testing.T) {
+	rs := newReleaseServer(t, releaseV210)
+	rc, _ := newChecker(t, rs, &fakeClock{now: time.Now()}, func(o *core.ReleaseCheckOptions) { o.Dev = true })
+	rc.RememberRunningBinary()
+	assert.Empty(t, rc.InstalledNewer(context.Background()))
+}
+
+// Concurrent page loads share one `<exe> --version` run, and the run holds
+// no lock a caller waits on: a caller whose context ends returns at once.
+func TestReleaseChecker_InstalledNewerRunsOnceForConcurrentCallers(t *testing.T) {
+	exe := filepath.Join(t.TempDir(), "lmm")
+	require.NoError(t, os.WriteFile(exe, []byte("2.0.1"), 0o755))
+	old := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(exe, old, old))
+
+	var runs atomic.Int32
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	rs := newReleaseServer(t, releaseV210)
+	rc, _ := newChecker(t, rs, &fakeClock{now: time.Now()}, func(o *core.ReleaseCheckOptions) {
+		o.Probe.Executable = func() (string, error) { return exe, nil }
+		o.Probe.Run = func(context.Context, string, ...string) ([]byte, error) {
+			runs.Add(1)
+			started <- struct{}{}
+			<-release
+			return []byte("lmm version 2.1.0\n"), nil
+		}
+	})
+	rc.RememberRunningBinary()
+	require.NoError(t, os.WriteFile(exe, []byte("2.1.0"), 0o755))
+
+	var wg sync.WaitGroup
+	got := make([]string, 8)
+	for i := range got {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got[i] = rc.InstalledNewer(context.Background())
+		}()
+	}
+	<-started
+
+	// A caller that gives up returns without waiting for the run, and
+	// RememberRunningBinary is not held up by it either.
+	short, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.Empty(t, rc.InstalledNewer(short))
+
+	close(release)
+	wg.Wait()
+	for _, v := range got {
+		assert.Equal(t, "2.1.0", v)
+	}
+	assert.EqualValues(t, 1, runs.Load(), "one run, shared")
+}
+
+// A binary whose `--version` fails (or hangs to its timeout) is not run
+// again on every page load: the failure is remembered for that file for a
+// few minutes, then asked again.
+func TestReleaseChecker_InstalledNewerBacksOffAfterAFailure(t *testing.T) {
+	exe := filepath.Join(t.TempDir(), "lmm")
+	require.NoError(t, os.WriteFile(exe, []byte("2.0.1"), 0o755))
+	old := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(exe, old, old))
+
+	var runs atomic.Int32
+	fail := true
+	clock := &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+	rs := newReleaseServer(t, releaseV210)
+	rc, _ := newChecker(t, rs, clock, func(o *core.ReleaseCheckOptions) {
+		o.Probe.Executable = func() (string, error) { return exe, nil }
+		o.Probe.Run = func(context.Context, string, ...string) ([]byte, error) {
+			runs.Add(1)
+			if fail {
+				return nil, context.DeadlineExceeded
+			}
+			return []byte("lmm version 2.1.0\n"), nil
+		}
+	})
+	rc.RememberRunningBinary()
+	require.NoError(t, os.WriteFile(exe, []byte("2.1.0"), 0o755))
+	ctx := context.Background()
+
+	assert.Empty(t, rc.InstalledNewer(ctx))
+	assert.Empty(t, rc.InstalledNewer(ctx))
+	clock.now = clock.now.Add(4 * time.Minute)
+	assert.Empty(t, rc.InstalledNewer(ctx))
+	assert.EqualValues(t, 1, runs.Load(), "a failure is not retried inside the backoff")
+
+	fail = false
+	clock.now = clock.now.Add(2 * time.Minute)
+	assert.Equal(t, "2.1.0", rc.InstalledNewer(ctx), "and is asked again after it")
+	assert.EqualValues(t, 2, runs.Load())
+
+	// A failure is about one file: a newer one is asked at once.
+	fail = true
+	later := time.Now().Add(time.Minute)
+	require.NoError(t, os.Chtimes(exe, later, later))
+	assert.Empty(t, rc.InstalledNewer(ctx))
+	fail = false
+	later = later.Add(time.Minute)
+	require.NoError(t, os.Chtimes(exe, later, later))
+	assert.Equal(t, "2.1.0", rc.InstalledNewer(ctx))
+	assert.EqualValues(t, 4, runs.Load())
+}

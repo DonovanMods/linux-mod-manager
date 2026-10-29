@@ -161,6 +161,28 @@ aurs:
 checksum:
   name_template: checksums.txt
 
+# checksums.txt is signed with the release key (#569): lmm self-update
+# verifies checksums.txt.sig against the public keys compiled into lmm, and
+# only then the tarball against its line in checksums.txt. The private key is
+# the LMM_RELEASE_SIGNING_KEY Actions secret; docs/release-signing.md covers
+# it and its rotation. The command inherits GoReleaser's whole environment,
+# which is how it gets the key: there is deliberately no `env:` entry, since
+# GoReleaser templates a sign's env against that list alone, where
+# {{ .Env.LMM_RELEASE_SIGNING_KEY }} does not exist and fails the release.
+signs:
+  - id: checksums
+    artifacts: checksum
+    cmd: go
+    args:
+      - run
+      - ./tools/releasekey
+      - sign
+      - -in
+      - ${artifact}
+      - -out
+      - ${signature}
+    signature: "${artifact}.sig"
+
 # Never `disable: true`: GoReleaser applies --release-notes inside its
 # changelog pipe, so disabling the pipe also drops the notes the release
 # workflow extracts from CHANGELOG.md, and the release body comes out

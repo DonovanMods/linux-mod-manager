@@ -23,9 +23,17 @@ const releaseRefreshEvery = time.Hour
 // the answer names the release page rather than a package's command.
 const releaseStatusInstallWait = 250 * time.Millisecond
 
+// releaseStatusVersionWait is the most a status request waits on running
+// `<exe> --version`, which happens once per replacement of the binary
+// (core.ReleaseChecker.InstalledNewer); past it, the banner waits for the
+// next page load.
+const releaseStatusVersionWait = 2 * time.Second
+
 // handleAPIReleaseStatus answers GET /api/v1/updates/lmm from the checker's
 // cache - never a request of its own, so a page load cannot reach GitHub.
-// A server without a checker reports the check off.
+// Its installed field is a newer lmm binary replaced under this server
+// (#569), which it runs the old one of until it restarts. A server without
+// a checker reports the check off.
 func (s *Server) handleAPIReleaseStatus(w http.ResponseWriter, r *http.Request) {
 	if s.releases == nil {
 		s.writeJSON(w, http.StatusOK, core.ReleaseStatus{Current: s.version})
@@ -33,7 +41,11 @@ func (s *Server) handleAPIReleaseStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), releaseStatusInstallWait)
 	defer cancel()
-	s.writeJSON(w, http.StatusOK, s.releases.Status(ctx))
+	st := s.releases.Status(ctx)
+	vctx, vcancel := context.WithTimeout(r.Context(), releaseStatusVersionWait)
+	defer vcancel()
+	st.Installed = s.releases.InstalledNewer(vctx)
+	s.writeJSON(w, http.StatusOK, st)
 }
 
 // refreshReleases runs for as long as Serve does: an unforced check now,

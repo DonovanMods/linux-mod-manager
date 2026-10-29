@@ -210,3 +210,40 @@ func TestServer_ServeSaysItChecksTheFirstTime(t *testing.T) {
 	assert.Equal(t, int32(1), hits.Load())
 	assert.Empty(t, run(), "once per data dir")
 }
+
+// replacedBinaryProbe is a probe whose executable is a real temp file
+// that `<exe> --version` reports as 2.2.0, and a function that replaces
+// the file - what `lmm self-update` does under a running `lmm serve`.
+func replacedBinaryProbe(t *testing.T) (*core.InstallProbe, func()) {
+	t.Helper()
+	exe := t.TempDir() + "/lmm"
+	require.NoError(t, os.WriteFile(exe, []byte("2.0.1"), 0o755))
+	old := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(exe, old, old))
+	probe := &core.InstallProbe{
+		Executable: func() (string, error) { return exe, nil },
+		LookPath:   func(string) (string, error) { return "", os.ErrNotExist },
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == exe && len(args) == 1 && args[0] == "--version" {
+				return []byte("lmm version 2.2.0\n"), nil
+			}
+			return nil, os.ErrNotExist
+		},
+	}
+	replace := func() { require.NoError(t, os.WriteFile(exe, []byte("2.2.0"), 0o755)) }
+	return probe, replace
+}
+
+// TestAPIReleaseStatus_ReportsANewerInstalledBinary (#569): once the
+// binary a hand-started server runs from is replaced on disk by a newer
+// lmm, the status says so, so the banner can ask for a restart.
+func TestAPIReleaseStatus_ReportsANewerInstalledBinary(t *testing.T) {
+	probe, replace := replacedBinaryProbe(t)
+	rc, _ := newReleaseFixtureWith(t, probe)
+	srv := serve.New(t.Context(), newFixtureService(t), slog.New(slog.DiscardHandler),
+		serve.Options{Addr: testAddr, ReleaseChecker: rc})
+
+	assert.Empty(t, getReleaseStatus(t, srv.Handler()).Installed, "the binary is the one the server started from")
+	replace()
+	assert.Equal(t, "2.2.0", getReleaseStatus(t, srv.Handler()).Installed)
+}

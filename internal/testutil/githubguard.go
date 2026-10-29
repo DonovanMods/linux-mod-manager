@@ -6,16 +6,17 @@ import (
 	"sync"
 )
 
-// githubAPIHost is the host the release check (#568) asks in production.
-const githubAPIHost = "api.github.com"
+// githubHosts are the hosts lmm reaches GitHub at in production: the API
+// the release check (#568) and `lmm self-update` ask, and the host release
+// assets download from (#569).
+var githubHosts = map[string]bool{"api.github.com": true, "github.com": true}
 
-// ErrGitHubRefused is the error a guarded request to api.github.com fails
-// with.
-var ErrGitHubRefused = errors.New("testutil: the test suite must never reach api.github.com")
+// ErrGitHubRefused is the error a guarded request to GitHub fails with.
+var ErrGitHubRefused = errors.New("testutil: the test suite must never reach GitHub")
 
 // GuardGitHub wraps http.DefaultTransport so that any request to
-// api.github.com fails with ErrGitHubRefused before it is sent, and returns
-// a function listing every such attempt ("METHOD URL").
+// api.github.com or github.com fails with ErrGitHubRefused before it is
+// sent, and returns a function listing every such attempt ("METHOD URL").
 //
 // lmm's release check is on by default, so a test binary whose code path
 // reaches the real checker would otherwise call GitHub from every
@@ -36,9 +37,9 @@ type githubGuard struct {
 	attempts []string
 }
 
-// RoundTrip refuses api.github.com and passes everything else through.
+// RoundTrip refuses GitHub and passes everything else through.
 func (g *githubGuard) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Hostname() == githubAPIHost {
+	if githubHosts[req.URL.Hostname()] {
 		g.mu.Lock()
 		g.attempts = append(g.attempts, req.Method+" "+req.URL.String())
 		g.mu.Unlock()

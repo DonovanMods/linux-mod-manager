@@ -38,6 +38,25 @@ type fakeSystemd struct {
 	failVerb string            // a systemctl verb that fails
 	env      map[string]string // what show-environment prints
 	unitPath string            // what show -p UnitPath --value prints
+	// others is the enabled/active state of every unit but
+	// lmm-serve.service, whose state is enabled and active above (#569).
+	others map[string]*[2]bool
+}
+
+// state returns the enabled and active flags the verb's unit argument
+// names: lmm-serve.service's own fields, or its entry in others.
+func (f *fakeSystemd) state(args []string) (enabled, active *bool) {
+	unit := args[len(args)-1]
+	if unit == systemd.ServeUnitName || (!strings.HasSuffix(unit, ".service") && !strings.HasSuffix(unit, ".timer")) {
+		return &f.enabled, &f.active
+	}
+	if f.others == nil {
+		f.others = map[string]*[2]bool{}
+	}
+	if f.others[unit] == nil {
+		f.others[unit] = &[2]bool{}
+	}
+	return &f.others[unit][0], &f.others[unit][1]
 }
 
 func (f *fakeSystemd) run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -67,6 +86,7 @@ func (f *fakeSystemd) run(_ context.Context, name string, args ...string) ([]byt
 		return nil, fmt.Errorf("exit status 1: %s failed", verb)
 	}
 	now := len(args) > 2 && args[2] == "--now"
+	enabled, active := f.state(args)
 	switch verb {
 	case "show":
 		if len(args) > 3 && args[2] == "-p" && args[3] == "UnitPath" {
@@ -85,20 +105,23 @@ func (f *fakeSystemd) run(_ context.Context, name string, args ...string) ([]byt
 		return []byte(b.String()), nil
 	case "daemon-reload":
 	case "enable":
-		f.enabled = true
-		f.active = f.active || now
+		*enabled = true
+		*active = *active || now
 	case "disable":
-		f.enabled = false
-		f.active = f.active && !now
+		*enabled = false
+		*active = *active && !now
 	case "start", "restart":
-		f.active = true
+		*active = true
+	case "stop":
+		*active = false
+	case "try-restart":
 	case "is-enabled":
-		if f.enabled {
+		if *enabled {
 			return []byte("enabled\n"), nil
 		}
 		return []byte("disabled\n"), errors.New("exit status 1")
 	case "is-active":
-		if f.active {
+		if *active {
 			return []byte("active\n"), nil
 		}
 		return []byte("inactive\n"), errors.New("exit status 3")
@@ -597,4 +620,163 @@ func TestUserUnits_LeavesAUnitItDidNotWriteAlone(t *testing.T) {
 			assert.Empty(t, fake.verbs(), "nothing is disabled, reloaded or started")
 		})
 	}
+}
+
+// --auto-update (#569) adds lmm-update.timer and the oneshot
+// lmm-update.service it starts. The timer is enabled and started; the
+// service is only written, since the timer is what runs it.
+func TestUserUnits_InstallAutoUpdateAddsTheTimer(t *testing.T) {
+	fake := &fakeSystemd{}
+	units, servePath := newTestUserUnits(t, fake, "/home/u/.local/bin/lmm")
+	dir := filepath.Dir(servePath)
+	ctx := context.Background()
+
+	report, err := units.Install(ctx, core.ServiceInstallOptions{AutoUpdate: true, ConfigDir: "/home/u/cfg"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"daemon-reload", "enable --now " + systemd.ServeUnitName, "enable --now lmm-update.timer"}, fake.verbs())
+
+	svc, err := os.ReadFile(filepath.Join(dir, "lmm-update.service"))
+	require.NoError(t, err)
+	assert.Contains(t, string(svc), "\nType=oneshot\n")
+	assert.Contains(t, string(svc), "\nExecStart=/home/u/.local/bin/lmm self-update --auto --config /home/u/cfg\n")
+	assert.True(t, strings.HasPrefix(string(svc), "# Written by `lmm service install`"), "the ownership header")
+	timer, err := os.ReadFile(filepath.Join(dir, "lmm-update.timer"))
+	require.NoError(t, err)
+	for _, want := range []string{"\nOnCalendar=daily\n", "\nPersistent=true\n", "\nRandomizedDelaySec=1h\n", "\nWantedBy=timers.target\n"} {
+		assert.Contains(t, string(timer), want)
+	}
+	assert.True(t, strings.HasPrefix(string(timer), "# Written by `lmm service install`"))
+
+	var names []string
+	for _, u := range report.Units {
+		names = append(names, u.Name)
+		assert.True(t, u.Installed, u.Name)
+	}
+	assert.Equal(t, []string{systemd.ServeUnitName, "lmm-update.timer", "lmm-update.service"}, names)
+
+	// A later install without the flag keeps them, rewritten for the
+	// binary it runs from.
+	units.Executable = func() (string, error) { return "/opt/lmm/lmm", nil }
+	_, err = units.Install(ctx, core.ServiceInstallOptions{})
+	require.NoError(t, err)
+	svc, err = os.ReadFile(filepath.Join(dir, "lmm-update.service"))
+	require.NoError(t, err)
+	assert.Contains(t, string(svc), "\nExecStart=/opt/lmm/lmm self-update --auto\n")
+
+	// Uninstall stops and removes all three.
+	fake.calls = nil
+	report, err = units.Uninstall(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"disable --now " + systemd.ServeUnitName,
+		"disable --now lmm-update.timer",
+		"stop lmm-update.service",
+		"daemon-reload",
+	}, fake.verbs())
+	for _, name := range []string{systemd.ServeUnitName, "lmm-update.timer", "lmm-update.service"} {
+		assert.NoFileExists(t, filepath.Join(dir, name))
+	}
+	assert.Len(t, report.Units, 3, "the removed units are reported")
+}
+
+// Without --auto-update, and with no timer installed before, the report
+// and the unit directory hold only lmm-serve.service.
+func TestUserUnits_InstallWithoutAutoUpdateWritesNoTimer(t *testing.T) {
+	fake := &fakeSystemd{}
+	units, servePath := newTestUserUnits(t, fake, "/home/u/.local/bin/lmm")
+	report, err := units.Install(context.Background(), core.ServiceInstallOptions{})
+	require.NoError(t, err)
+	assert.Len(t, report.Units, 1)
+	assert.NoFileExists(t, filepath.Join(filepath.Dir(servePath), "lmm-update.timer"))
+	assert.NoFileExists(t, filepath.Join(filepath.Dir(servePath), "lmm-update.service"))
+}
+
+// A timer file lmm did not write is refused like a serve unit is.
+func TestUserUnits_InstallAutoUpdateLeavesAForeignTimerAlone(t *testing.T) {
+	fake := &fakeSystemd{}
+	units, servePath := newTestUserUnits(t, fake, "/home/u/.local/bin/lmm")
+	timer := filepath.Join(filepath.Dir(servePath), "lmm-update.timer")
+	require.NoError(t, os.MkdirAll(filepath.Dir(timer), 0o755))
+	require.NoError(t, os.WriteFile(timer, []byte("[Timer]\nOnCalendar=hourly\n"), 0o644))
+
+	_, err := units.Install(context.Background(), core.ServiceInstallOptions{AutoUpdate: true})
+	var foreign *core.ForeignUnitError
+	require.ErrorAs(t, err, &foreign)
+	assert.NoFileExists(t, servePath, "nothing is written")
+}
+
+func TestRenderUpdateUnits_Golden(t *testing.T) {
+	opts := core.ServiceInstallOptions{DataDir: "/home/u/data", Environment: []string{"XDG_CONFIG_HOME=/home/u/cfg"}}
+	for name, render := range map[string]func(string, core.ServiceInstallOptions) ([]byte, error){
+		"lmm-update.service": core.RenderUpdateService,
+		"lmm-update.timer":   core.RenderUpdateTimer,
+	} {
+		got, err := render("/home/u/go/bin/lmm", opts)
+		require.NoError(t, err)
+		path := filepath.Join("testdata", "systemd", name+".golden")
+		if *updateUnitGoldens {
+			require.NoError(t, os.WriteFile(path, got, 0o644))
+		}
+		want, err := os.ReadFile(path)
+		require.NoError(t, err, "run with -update-unit-goldens to record it")
+		assert.Equal(t, string(want), string(got))
+	}
+}
+
+// After a self-update, a running lmm-serve.service is restarted onto the
+// new binary with try-restart; one that is not running is left stopped,
+// and a host without systemd is not an error.
+func TestUserUnits_RestartServeIfActive(t *testing.T) {
+	ctx := context.Background()
+
+	fake := &fakeSystemd{active: true}
+	units, _ := newTestUserUnits(t, fake, "/home/u/.local/bin/lmm")
+	restarted, err := units.RestartServeIfActive(ctx)
+	require.NoError(t, err)
+	assert.True(t, restarted)
+	assert.Equal(t, []string{"try-restart " + systemd.ServeUnitName}, fake.verbs())
+
+	fake = &fakeSystemd{}
+	units, _ = newTestUserUnits(t, fake, "/home/u/.local/bin/lmm")
+	restarted, err = units.RestartServeIfActive(ctx)
+	require.NoError(t, err)
+	assert.False(t, restarted)
+	assert.Empty(t, fake.verbs())
+
+	fake = &fakeSystemd{missing: true}
+	units, _ = newTestUserUnits(t, fake, "/home/u/.local/bin/lmm")
+	restarted, err = units.RestartServeIfActive(ctx)
+	require.NoError(t, err)
+	assert.False(t, restarted)
+
+	fake = &fakeSystemd{active: true, failVerb: "try-restart"}
+	units, _ = newTestUserUnits(t, fake, "/home/u/.local/bin/lmm")
+	restarted, err = units.RestartServeIfActive(ctx)
+	require.Error(t, err)
+	assert.False(t, restarted)
+}
+
+// lmm-update.service retries a run that fails - a network that is not up
+// yet, most often - a few times, five minutes apart, rather than waiting a
+// day for the timer. network-online.target is not named: a user manager
+// has no such target to order against, so it would do nothing. Nor is
+// PrivateTmp=: in a user manager it needs unprivileged user namespaces,
+// which some distributions turn off, and the unit would then fail to start.
+func TestRenderUpdateService_RetriesAndHardening(t *testing.T) {
+	got, err := core.RenderUpdateService("/home/u/go/bin/lmm", core.ServiceInstallOptions{})
+	require.NoError(t, err)
+	unit := string(got)
+	for _, line := range []string{
+		"Restart=on-failure",
+		"RestartSec=5min",
+		"StartLimitIntervalSec=1h",
+		"StartLimitBurst=4",
+		"NoNewPrivileges=yes",
+	} {
+		assert.Contains(t, unit, "\n"+line+"\n")
+	}
+	assert.NotContains(t, unit, "network-online.target")
+	assert.NotContains(t, unit, "PrivateTmp")
+	unitSection, _, _ := strings.Cut(unit, "[Service]")
+	assert.Contains(t, unitSection, "StartLimitBurst=", "the start limit belongs in [Unit]")
 }

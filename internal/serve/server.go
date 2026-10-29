@@ -213,6 +213,11 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 	// more than once and each call runs the callbacks again.
 	s.httpServer.RegisterOnShutdown(func() { s.drainingOnce.Do(func() { close(s.draining) }) })
 	s.routes()
+	if s.releases != nil {
+		// The binary this server runs from, as it is now: the release
+		// status reports a newer one installed over it later (#569).
+		s.releases.RememberRunningBinary()
+	}
 	return s
 }
 

@@ -77,8 +77,9 @@ internal/
 │   └── cache/            # Central mod file cache
 ├── notices/              # THIRD_PARTY_NOTICES generator + drift test (`make notices`, go run ./tools/notices; stdlib only, dev-time, #522)
 ├── safeyaml/             # The one YAML decode every reader uses: a decoder panic is an error, never a crash (#452)
+├── releasesig/           # ed25519 sign/verify of a release's checksums.txt (#569); tools/releasekey is its maintainer CLI, docs/release-signing.md the key
 ├── linker/               # Deploy strategies (symlink, hardlink, copy)
-├── core/                 # Business logic orchestration (flat package, 56 files); frontends never reach past it
+├── core/                 # Business logic orchestration (flat package, 57 files); frontends never reach past it
     ├── service.go         # Service facade: construction, ServiceConfig, the query/mutation concurrency contract
     ├── ops.go             # beginOp: the Service's single mutation-serialization slot
     ├── plan.go            # ErrStalePlan + installedSnapshot: the freshness precondition every Apply re-checks
@@ -140,7 +141,8 @@ internal/
     ├── verify_helpers.go  # verify engine internals: retained-source / mismatch detection
     ├── source_index.go    # the local-index surface (#360/#410): SourceIndexStatus/RefreshSourceIndex, IndexStatus/IndexReport
     ├── source_index_prune.go # ListSourceIndexes/PruneSourceIndexes (`lmm source index --all`/`prune`): the fail-closed prune policy
-    ├── user_units.go      # UserUnits: lmm-serve.service install/uninstall/status behind a systemctl/loginctl seam (`lmm service`, #567); needs no Service
+    ├── user_units.go      # UserUnits: lmm-serve.service (+ #569's lmm-update.timer/.service under --auto-update) install/uninstall/status behind a systemctl/loginctl seam (`lmm service`, #567); needs no Service
+    ├── self_update.go     # SelfUpdater: `lmm self-update` (#569) - trusted release keys, signature then checksum verification, atomic binary replace, serve restart; needs no Service
     ├── source_notices.go  # WithSourceNotices: a source's throttle/suspension/cold-build notices as events (#436)
     └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
 └── serve/                # `lmm serve` local web UI: an SPA over /api/v1; imports only app/core/domain (boundary_test.go)
@@ -180,7 +182,7 @@ internal/
     ├── api_games.go       # game add/detect/set-default (#307/#333) + PUT /api/v1/games/{id} sources (#326)
     ├── api_auth.go        # per-source credential store + the live re-key (restart_required)
     ├── api_sources.go     # the custom-source editor: list/definition/validate/save/delete
-    ├── api_release.go     # GET /api/v1/updates/lmm (core.ReleaseStatus) + the running server's background release refresh (#568)
+    ├── api_release.go     # GET /api/v1/updates/lmm (core.ReleaseStatus, + #569's installed: a newer binary replaced under this server) + the running server's background release refresh (#568)
     ├── api_version_types.go # GET /api/v1/sources/{id}/version-types?game=: the game editor's CurseForge picker (#563)
     ├── api_source_index.go # the local-index routes (#410): GET/POST /api/v1/sources/{id}/index, GET /api/v1/indexes, POST /api/v1/indexes/prune
     ├── api_mod_settings.go # mod lock/unlock/update-policy/convert - single DB writes, no job

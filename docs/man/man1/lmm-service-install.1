@@ -29,14 +29,27 @@ tells you the systemctl command that turns it on. A unit file lmm did not
 write is left alone.
 
 .PP
+--auto-update also installs lmm-update.timer, which runs 'lmm self-update
+--auto' once a day. That installs a new lmm release only while config.yaml
+says 'auto_update: true', so the setting turns updates on and off without
+touching the units. Later installs keep the timer; 'lmm service uninstall'
+removes it. It is refused for an lmm a package manager installed, which
+\&'lmm self-update' never replaces.
+
+.PP
 Examples:
   lmm service install
   lmm service install --addr 127.0.0.1:8080
+  lmm service install --auto-update
 
 
 .SH OPTIONS
 \fB--addr\fP=""
 	address 'lmm serve' listens on (host:port; default 127.0.0.1:7420)
+
+.PP
+\fB--auto-update\fP[=false]
+	also install lmm-update.timer, which runs 'lmm self-update' daily while auto_update is true in config.yaml
 
 .PP
 \fB-h\fP, \fB--help\fP[=false]

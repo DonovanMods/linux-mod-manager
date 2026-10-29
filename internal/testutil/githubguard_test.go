@@ -27,3 +27,18 @@ func TestGuardGitHub_RefusesBeforeTheNetwork(t *testing.T) {
 	require.ErrorIs(t, err, testutil.ErrGitHubRefused)
 	assert.Equal(t, []string{"GET https://api.github.com/repos/DonovanMods/linux-mod-manager/releases/latest"}, attempts())
 }
+
+// TestGuardGitHub_RefusesReleaseDownloads: `lmm self-update` (#569)
+// downloads from github.com, which the guard refuses as it does the API.
+func TestGuardGitHub_RefusesReleaseDownloads(t *testing.T) {
+	prev := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = prev })
+
+	attempts := testutil.GuardGitHub()
+	resp, err := http.Get("https://github.com/DonovanMods/linux-mod-manager/releases/download/v2.1.0/checksums.txt")
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	require.ErrorIs(t, err, testutil.ErrGitHubRefused)
+	assert.Len(t, attempts(), 1)
+}

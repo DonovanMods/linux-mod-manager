@@ -60,6 +60,13 @@ lmm service install --addr 127.0.0.1:8080
 Running `lmm service install` again, say with a new address, or after you
 move the `lmm` program, rewrites the service file and restarts the service.
 
+To have lmm also install new versions of itself once a day, add
+`--auto-update` (see [Update lmm automatically](updates.md#update-lmm-automatically)):
+
+```bash
+lmm service install --auto-update
+```
+
 To take the service out again:
 
 ```bash

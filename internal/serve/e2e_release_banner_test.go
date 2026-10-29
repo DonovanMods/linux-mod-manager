@@ -22,6 +22,17 @@ import (
 // already learned latest (current is 2.0.1); "" means no checker at all.
 func newE2EFixtureWithRelease(t *testing.T, latest string) e2eFixture {
 	t.Helper()
+	return newE2EFixtureWithReleaseProbe(t, latest, &core.InstallProbe{
+		Executable: func() (string, error) { return "/home/u/.local/bin/lmm", nil },
+		LookPath:   func(string) (string, error) { return "", os.ErrNotExist },
+		Run:        func(context.Context, string, ...string) ([]byte, error) { return nil, os.ErrNotExist },
+	})
+}
+
+// newE2EFixtureWithReleaseProbe is newE2EFixtureWithRelease with the
+// checker's install probe given.
+func newE2EFixtureWithReleaseProbe(t *testing.T, latest string, probe *core.InstallProbe) e2eFixture {
+	t.Helper()
 	sandboxE2EEnv(t)
 	svc, game := newFixtureServiceWithSource(t, newFakeSource("fake"))
 
@@ -36,11 +47,7 @@ func newE2EFixtureWithRelease(t *testing.T, latest string) e2eFixture {
 			DataDir:   t.TempDir(),
 			Version:   "2.0.1",
 			APIBase:   gh.URL,
-			Probe: &core.InstallProbe{
-				Executable: func() (string, error) { return "/home/u/.local/bin/lmm", nil },
-				LookPath:   func(string) (string, error) { return "", os.ErrNotExist },
-				Run:        func(context.Context, string, ...string) ([]byte, error) { return nil, os.ErrNotExist },
-			},
+			Probe:     probe,
 		})
 		_, err := rc.Check(t.Context(), true)
 		require.NoError(t, err)
@@ -114,4 +121,29 @@ func TestE2E_ReleaseBannerAbsentWhenNothingNewer(t *testing.T) {
 			assert.Empty(t, f.BrowserErrors())
 		})
 	}
+}
+
+// TestE2E_ReleaseBannerAsksForARestartOnceANewerLmmIsInstalled (#569): a
+// hand-started `lmm serve` whose binary `lmm self-update` replaced keeps
+// running the old one, and the banner says to restart it - ahead of the
+// "available" notice, which the installed version already answers.
+func TestE2E_ReleaseBannerAsksForARestartOnceANewerLmmIsInstalled(t *testing.T) {
+	probe, replace := replacedBinaryProbe(t)
+	f := newE2EFixtureWithReleaseProbe(t, "2.2.0", probe)
+	replace()
+
+	var text string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`[data-testid="release-banner"][data-state="installed"]`, chromedp.ByQuery),
+		textContent(`[data-testid="release-banner"]`, &text),
+	)
+	assert.Contains(t, text, "lmm v2.2.0 is installed; restart lmm serve to use it")
+	assert.NotContains(t, text, "is available")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="dismiss-release-banner"]`, chromedp.ByQuery),
+		waitGone(`[data-testid="release-banner"]`),
+	)
+	assert.Empty(t, f.BrowserErrors())
 }
