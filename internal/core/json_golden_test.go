@@ -2304,6 +2304,31 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #567: one systemd user unit's state, as `lmm service status`
+			// reports it.
+			"unit_status",
+			core.UnitStatus{
+				Name: "lmm-serve.service", Installed: true, Origin: core.UnitOriginUser,
+				Path:    "/home/user/.config/systemd/user/lmm-serve.service",
+				Enabled: true, Active: true, EnabledState: "enabled", ActiveState: "active",
+			},
+		},
+		{
+			// #567: `lmm service install|uninstall|status`'s document. The
+			// units list is a list so #569's timer joins it without a new
+			// shape.
+			"service_report",
+			core.ServiceReport{
+				Changed: true,
+				Units: []core.UnitStatus{{
+					Name: "lmm-serve.service", Installed: true, Origin: core.UnitOriginPackage,
+					Path:         "/usr/lib/systemd/user/lmm-serve.service",
+					EnabledState: "disabled", ActiveState: "inactive",
+				}},
+				Linger: false,
+			},
+		},
+		{
 			// #333's source-removal refusal: the games that still map the
 			// source, so a frontend names them instead of saying "in use".
 			"source_in_use_error",
