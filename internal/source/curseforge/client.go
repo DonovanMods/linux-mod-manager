@@ -223,8 +223,9 @@ func requestSortField(sort domain.SearchSort) (int, bool) {
 
 // SearchMods searches for mods with the given parameters. Every known sort
 // is sent as sortField plus sortOrder=desc so the API pages by it; relevance
-// asks for Popularity (requestSortField).
-func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categoryID int, pageSize, index int, sort domain.SearchSort) ([]Mod, *Pagination, error) {
+// asks for Popularity (requestSortField). A positive gameVersionTypeID keeps
+// only mods with files of that game version type (#544).
+func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categoryID, gameVersionTypeID int, pageSize, index int, sort domain.SearchSort) ([]Mod, *Pagination, error) {
 	pageSize = clampSearchPageSize(pageSize)
 
 	params := url.Values{}
@@ -234,6 +235,9 @@ func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categ
 	}
 	if categoryID > 0 {
 		params.Set("categoryId", strconv.Itoa(categoryID))
+	}
+	if gameVersionTypeID > 0 {
+		params.Set("gameVersionTypeId", strconv.Itoa(gameVersionTypeID))
 	}
 	if field, ok := requestSortField(sort); ok {
 		params.Set("sortField", strconv.Itoa(field))

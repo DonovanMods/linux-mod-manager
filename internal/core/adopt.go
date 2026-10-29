@@ -370,7 +370,7 @@ func (s *Service) matchUntracked(ctx context.Context, game *domain.Game, r *Scan
 	// FileName match only - a name-search match is not strong enough
 	// evidence for a version-based guess. Non-fatal: failure keeps the
 	// marker-less adoption.
-	file, ferr := s.resolveImportedFile(ctx, matched.SourceID, matched, r.FileName, r.Mod.Version, false)
+	file, ferr := s.resolveImportedFile(ctx, game, matched.SourceID, matched, r.FileName, r.Mod.Version, false)
 	if ferr != nil {
 		m.FileError = ferr.Error()
 		return

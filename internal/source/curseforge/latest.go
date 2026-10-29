@@ -93,6 +93,18 @@ func fileFlavors(data Mod, vocab flavorSet) map[int]flavorSet {
 	return out
 }
 
+// unionOf is a new set holding every id of a and b.
+func unionOf(a, b idSet) idSet {
+	out := make(idSet, len(a)+len(b))
+	for id := range a {
+		out[id] = struct{}{}
+	}
+	for id := range b {
+		out[id] = struct{}{}
+	}
+	return out
+}
+
 // wildcard reports whether the set constrains nothing: no loader is known, or
 // one of them is "Any".
 func (s loaderSet) wildcard() bool {
@@ -294,11 +306,16 @@ func installedFileIDs(ids []string) []int {
 // latestFiles entry whose version compares newer than the installed one (an
 // index-only file, which has no flavor or loader to be matched on, is not
 // guessed at).
-func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.InstalledMod) (*File, error) {
+//
+// types are the game version types the game accepts (#544), nil for every
+// one. When set, they REPLACE the installed file's flavor as the flavor a
+// candidate must have: a game configured for Classic is offered only Classic
+// files, whatever an install from before the setting existed was.
+func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.InstalledMod, types flavorSet) (*File, error) {
 	installed := installedFileIDs(inst.FileIDs)
 	if len(installed) == 0 {
 		var newer []File
-		for _, f := range installableFiles(data.LatestFiles) {
+		for _, f := range installableFiles(latestFilesOfTypes(data, types)) {
 			if v := fileVersion(f); v != "" && domain.IsNewerVersion(inst.Version, v) {
 				newer = append(newer, f)
 			}
@@ -313,7 +330,7 @@ func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.Ins
 	}
 
 	vocab := flavorVocabulary(data)
-	flavors := fileFlavors(data, vocab)
+	flavors := fileFlavors(data, unionOf(vocab, types))
 
 	// The loader dimension exists only for a mod whose index names real loaders.
 	loaderVocab := loaderVocabulary(data)
@@ -381,6 +398,10 @@ func (c *CurseForge) latestUpdate(ctx context.Context, data Mod, inst domain.Ins
 			wantLoaders = namedLoaders(*f)
 		}
 		installedRelease = f.ReleaseType
+	}
+
+	if len(types) > 0 {
+		want, restrict = types, true
 	}
 
 	var candidates []File

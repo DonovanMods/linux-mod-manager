@@ -301,13 +301,13 @@ func TestModToDomain_VersionIsTheNewestFileNotTheFirst(t *testing.T) {
 	cur := wowFile(30, "Thing-11.0.0", ReleaseTypeRelease, "2026-01-01T00:00:00Z", typeRetail)
 	mid := wowFile(20, "Thing-10.0.0", ReleaseTypeRelease, "2024-01-01T00:00:00Z", typeCata)
 
-	got := modToDomain(Mod{ID: 1, Name: "Thing", LatestFiles: []File{old, cur, mid}}, "1")
+	got := modToDomain(Mod{ID: 1, Name: "Thing", LatestFiles: []File{old, cur, mid}}, "1", nil)
 	assert.Equal(t, "11.0.0", got.Version)
 
 	// Same date: the higher file id is the newer upload.
 	a := wowFile(40, "Tie-1.0.0", ReleaseTypeRelease, "2026-01-01T00:00:00Z", typeRetail)
 	b := wowFile(41, "Tie-1.0.1", ReleaseTypeRelease, "2026-01-01T00:00:00Z", typeClassic)
-	got = modToDomain(Mod{ID: 2, Name: "Tie", LatestFiles: []File{b, a}}, "1")
+	got = modToDomain(Mod{ID: 2, Name: "Tie", LatestFiles: []File{b, a}}, "1", nil)
 	assert.Equal(t, "1.0.1", got.Version)
 }
 

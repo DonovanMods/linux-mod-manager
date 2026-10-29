@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it: nothing is fetched, the copy keeps the source's version and lock, and
   an active destination gets the files deployed by its own link method.
   Steam Workshop items are refused: every profile already has them.
+- **A CurseForge game can name the flavor it is (#544).** CurseForge serves
+  every World of Warcraft flavor as one game, so a Classic install could be
+  offered, installed or updated to an addon's Retail file. A game's
+  `games.yaml` entry may now carry a `curseforge: game_version_types:` list
+  of the CurseForge game version type ids it accepts (`67408` for Classic Era,
+  `517` for Retail); set it with `lmm game edit <id>
+--curseforge-version-type <type-id>` (repeatable, `""` clears it) or the
+  web UI's game editor. With it, search hides addons with no file of those
+  types, and version resolution, the file an install picks and the update
+  check consider only files of those types; an addon with none is reported
+  as having no installable file for this game. A game without the setting
+  behaves exactly as before. The user guide's "Pick a CurseForge game
+  flavor" says how to find the ids.
 
 ### Fixed
 

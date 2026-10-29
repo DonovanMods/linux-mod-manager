@@ -124,6 +124,17 @@ type GameConfig struct {
 	// no loader gains no `loader:` key when an unrelated write re-marshals
 	// the whole file.
 	Loader *GameLoaderYAML `yaml:"loader,omitempty"`
+	// CurseForge is #544's optional block. A POINTER, like Loader, so a
+	// game that sets nothing gains no `curseforge:` key on a re-marshal.
+	CurseForge *GameCurseForgeYAML `yaml:"curseforge,omitempty"`
+}
+
+// GameCurseForgeYAML is the YAML representation of a game's CurseForge
+// settings (#544) - games.yaml's `curseforge:` block.
+type GameCurseForgeYAML struct {
+	// GameVersionTypes are the CurseForge gameVersionTypeIds the game
+	// accepts.
+	GameVersionTypes []int `yaml:"game_version_types,omitempty"`
 }
 
 // GamesFile is the top-level games.yaml structure
@@ -206,6 +217,12 @@ func parseGames(gamesPath string, data []byte) (map[string]*domain.Game, error) 
 		if err != nil {
 			return nil, err
 		}
+		var curseForge *domain.GameCurseForge
+		if cfg.CurseForge != nil {
+			if curseForge, err = domain.NewGameCurseForge(cfg.CurseForge.GameVersionTypes); err != nil {
+				return nil, fmt.Errorf("games.yaml: game %q: curseforge.game_version_types: %w", id, err)
+			}
+		}
 		games[id] = &domain.Game{
 			ID:                  id,
 			Name:                cfg.Name,
@@ -220,6 +237,7 @@ func parseGames(gamesPath string, data []byte) (map[string]*domain.Game, error) 
 			ConvertPaks:         convertPaks,
 			ConvertPaksExplicit: convertExplicit,
 			Loader:              loader,
+			CurseForge:          curseForge,
 			Hooks: domain.GameHooks{
 				Install: domain.HookConfig{
 					BeforeAll:  ExpandPath(cfg.Hooks.Install.BeforeAll),
@@ -379,6 +397,10 @@ func gameConfigOf(game *domain.Game) GameConfig {
 			Runtime:   game.Loader.Runtime.String(),
 			Bootstrap: game.Loader.Bootstrap.String(),
 		}
+	}
+	// Only write curseforge: for a game that sets version types.
+	if types := game.CurseForgeVersionTypes(); len(types) > 0 {
+		cfg.CurseForge = &GameCurseForgeYAML{GameVersionTypes: types}
 	}
 	return cfg
 }

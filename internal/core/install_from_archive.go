@@ -80,7 +80,7 @@ func (s *Service) identifyInstallArchive(ctx context.Context, game *domain.Game,
 
 	var matched *domain.DownloadableFile
 	if srcMod != nil {
-		files, err := s.GetModFiles(ctx, opts.SourceID, srcMod)
+		files, err := s.GetModFiles(ctx, game, opts.SourceID, srcMod)
 		if err != nil {
 			warn("could not fetch %s's files from %s: %v", plan.Mod.Name, opts.SourceID, err)
 		} else {

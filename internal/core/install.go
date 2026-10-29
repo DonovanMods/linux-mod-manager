@@ -405,7 +405,7 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 		}
 	}
 
-	files, err := s.GetModFiles(ctx, sourceID, mod)
+	files, err := s.GetModFiles(ctx, game, sourceID, mod)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mod files: %w", err)
 	}
@@ -552,7 +552,7 @@ func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profil
 			continue
 		}
 
-		files, err := s.GetModFiles(ctx, mod.SourceID, mod)
+		files, err := s.GetModFiles(ctx, game, mod.SourceID, mod)
 		if err != nil {
 			entry.FetchError = fmt.Sprintf("failed to get mod files: %v", err)
 			continue
@@ -626,7 +626,7 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID, game
 		stack[key] = true
 		defer delete(stack, key)
 
-		modDeps, err := s.GetDependencies(ctx, sourceID, mod)
+		modDeps, err := s.GetDependencies(source.WithGame(ctx, s.gameOrNil(gameID)), sourceID, mod)
 		if err != nil {
 			// Degrade to "no dependencies for this mod" either way - but
 			// only a REAL failure (not a plain capability gap) is worth
@@ -1156,7 +1156,7 @@ func (s *Service) resolveInstallTargetVersion(ctx context.Context, plan *Install
 	}
 
 	primary := plan.Mod // local, addressable copy - distinct from plan.Mod
-	pool, err := s.resolveInstallCandidatePool(ctx, primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
+	pool, err := s.resolveInstallCandidatePool(ctx, s.gameOrNil(plan.GameID), primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
 	if err != nil {
 		return "", false
 	}
@@ -1179,8 +1179,8 @@ func (s *Service) resolveInstallTargetVersion(ctx context.Context, plan *Install
 // by ApplyInstall's up-front primary resolution on both paths (#140) and the
 // #143 lock gate's dry-run derivation, so the gate can never judge a
 // different selection than the install performs.
-func (s *Service) resolveInstallCandidatePool(ctx context.Context, sourceID string, mod *domain.Mod, showArchived bool, targetVersion string) ([]domain.DownloadableFile, error) {
-	files, err := s.GetModFiles(ctx, sourceID, mod)
+func (s *Service) resolveInstallCandidatePool(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod, showArchived bool, targetVersion string) ([]domain.DownloadableFile, error) {
+	files, err := s.GetModFiles(ctx, game, sourceID, mod)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mod files: %w", err)
 	}
@@ -1308,7 +1308,7 @@ func (s *Service) resolveStrictInstallFiles(ctx context.Context, plan *InstallPl
 		return nil, nil
 	}
 	primary := plan.Mod // local, addressable copy - distinct from plan.Mod
-	pool, err := s.resolveInstallCandidatePool(ctx, plan.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
+	pool, err := s.resolveInstallCandidatePool(ctx, s.gameOrNil(plan.GameID), plan.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -1455,7 +1455,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 	var primaryOverrideFiles []domain.DownloadableFile
 	if len(plan.Dependencies) > 0 && (opts.TargetVersion != "" || len(opts.TargetFileIDs) > 0) {
 		primary := plan.Mod // local, addressable copy - distinct from plan.Mod
-		pool, err := s.resolveInstallCandidatePool(ctx, primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
+		pool, err := s.resolveInstallCandidatePool(ctx, game, primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
 		if err != nil {
 			return result, err
 		}
@@ -1848,7 +1848,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 			selected[i] = &overrideFiles[i]
 		}
 	} else {
-		files, err := s.GetModFiles(ctx, mod.SourceID, mod)
+		files, err := s.GetModFiles(ctx, game, mod.SourceID, mod)
 		if err != nil {
 			skip("Error", fmt.Sprintf("failed to get mod files: %v", err))
 			return nil

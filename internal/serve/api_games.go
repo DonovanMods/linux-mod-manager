@@ -268,6 +268,12 @@ type gameSourcesRequest struct {
 	// present, Loader nil then means "remove the declaration".
 	Loader    *core.LoaderSpec `json:"loader,omitempty"`
 	LoaderSet bool             `json:"loader_set,omitzero"`
+	// CurseForge, when present, REPLACES the game's
+	// curseforge.game_version_types (#544) - `lmm game edit
+	// --curseforge-version-type` - and an empty game_version_types clears
+	// it. The member is the games document's own shape, so the editor sends
+	// back what it read.
+	CurseForge *domain.GameCurseForge `json:"curseforge,omitempty"`
 }
 
 // handleAPIGameSources answers PUT /api/v1/games/{id} with the game's own
@@ -303,8 +309,12 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 		Name: req.Name, Sources: req.Sources, Adapter: req.Adapter, ModPath: req.ModPath, InstallPath: req.InstallPath,
 		Loader: req.Loader, LoaderSet: req.Loader != nil || req.LoaderSet,
 	}
+	if req.CurseForge != nil {
+		types := append([]int{}, req.CurseForge.GameVersionTypes...)
+		edit.CurseForgeVersionTypes = &types
+	}
 	if edit.Name == nil && edit.Sources == nil && edit.Adapter == nil && edit.ModPath == nil &&
-		edit.InstallPath == nil && !edit.LoaderSet {
+		edit.InstallPath == nil && !edit.LoaderSet && edit.CurseForgeVersionTypes == nil {
 		edit.Sources = map[string]string{}
 	}
 	entry, err := s.svc.EditGame(r.Context(), r.PathValue("id"), edit)

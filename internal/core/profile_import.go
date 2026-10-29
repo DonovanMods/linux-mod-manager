@@ -727,7 +727,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		}
 		scope.ModName = mod.Name
 
-		files, err := s.GetModFiles(ctx, ref.SourceID, mod)
+		files, err := s.GetModFiles(ctx, game, ref.SourceID, mod)
 		if err != nil {
 			fail(fmt.Sprintf("failed to get files: %v", err))
 			continue
