@@ -21,7 +21,7 @@ func duplicateFixture(t *testing.T) (*core.Service, *domain.Game) {
 	t.Helper()
 	svc := newFlowsTestService(t)
 	ctx := context.Background()
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	game := &domain.Game{ID: "g1", Name: "Game", InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 	require.NoError(t, svc.SaveGame(ctx, game))
 
 	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{"a.esp": []byte("A")})

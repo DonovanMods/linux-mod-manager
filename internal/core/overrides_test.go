@@ -57,3 +57,19 @@ func TestApplyProfileOverrides_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "hello", string(content))
 }
+
+// TestApplyProfileOverrides_RefusesAGameWithNoInstallPath: filepath.Abs("")
+// is the working directory, so a game with no install_path wrote its
+// overrides there - a test's cfg/game.ini once landed in internal/core.
+func TestApplyProfileOverrides_RefusesAGameWithNoInstallPath(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	game := &domain.Game{ID: "g1"}
+	profile := &domain.Profile{Overrides: map[string][]byte{"cfg/game.ini": []byte("[x]\n")}}
+
+	err := applyProfileOverrides(game, profile, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "install path")
+	_, statErr := os.Stat(filepath.Join(cwd, "cfg"))
+	assert.True(t, os.IsNotExist(statErr), "nothing is written to the working directory")
+}
