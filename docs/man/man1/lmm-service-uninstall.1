@@ -2,7 +2,7 @@
 .TH "LMM" "1" "Oct 2026" "lmm 2.1.0" "User Commands"
 
 .SH NAME
-lmm-service-uninstall - Stop, disable and remove the lmm-serve.service that 'lmm service install' wrote
+lmm-service-uninstall - Stop, disable and remove the units that 'lmm service install' wrote
 
 
 .SH SYNOPSIS
@@ -10,8 +10,9 @@ lmm-service-uninstall - Stop, disable and remove the lmm-serve.service that 'lmm
 
 
 .SH DESCRIPTION
-Stop and disable lmm-serve.service, remove the unit file 'lmm service
-install' wrote, and reload the user manager. A unit a package installed is
+Stop and disable lmm-serve.service, and lmm-update.timer and
+lmm-update.service when --auto-update installed them, remove the unit files
+\&'lmm service install' wrote, and reload the user manager. A unit a package installed is
 left alone; lmm tells you the systemctl command that turns it off.
 
 .PP

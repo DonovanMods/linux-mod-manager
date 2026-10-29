@@ -43,6 +43,29 @@ lmm-serve` turns it on. For a tarball, `go install` or `make install`,
   default and says so the first time; `update_check: false` in
   `config.yaml` turns it off.
 
+- **`lmm self-update` installs a new release of itself, verified (#569).**
+  For an lmm you manage yourself (the release tarball, `go install`,
+  `make install`), `lmm self-update` downloads the latest release into the
+  staging directory, verifies `checksums.txt` against an ed25519 signature
+  by the release key built into lmm (a missing or invalid signature is
+  refused), then the tarball against its line there, extracts only the
+  `lmm` binary and renames it over the running one, keeping its mode; if
+  `lmm-serve.service` is running it is restarted onto the new version.
+  `--check` only reports, `--yes` skips the question, and `--json` never
+  asks: without `--yes` it prints the plan. A package-owned binary is
+  refused with its package manager's upgrade command, a dev build is
+  refused, and a directory you cannot write is a clear error that never
+  suggests `sudo`. Already up to date does nothing. Unattended updates are
+  opt-in: `lmm service install --auto-update` adds `lmm-update.timer`
+  (daily, `Persistent=true`, up to an hour's random delay) running
+  `lmm self-update --auto`, which installs nothing unless `config.yaml`
+  says `auto_update: true`; `lmm service uninstall` removes it. A
+  `lmm serve` started by hand, whose binary was replaced under it, shows
+  "lmm vX is installed; restart `lmm serve` to use it" in its banner
+  (`GET /api/v1/updates/lmm` gains `installed`). Releases now publish
+  `checksums.txt.sig`, signed in the release workflow;
+  `docs/release-signing.md` covers the key and its rotation.
+
 ## [2.1.0] - 2026-10-29
 
 Profiles can be duplicated and mods copied between them, a CurseForge game
