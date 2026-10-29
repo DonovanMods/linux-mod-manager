@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   active profile; its mods are recorded as installed under it and deployed
   when you switch to it.
 - **Copy a mod to another profile (#437).** `lmm mod copy <mod> --to
-  <profile>` (`--all` for every mod of the profile, `--replace` to
+<profile>` (`--all` for every mod of the profile, `--replace` to
   overwrite one the destination already lists, `--dry-run` to preview), and
   **Copy to profile…** in the web UI's mod menu and mod panel, copy an
   installed mod into another profile of the same game without re-installing
@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as having no installable file for this game. A game without the setting
   behaves exactly as before. The user guide's "Pick a CurseForge game
   flavor" says how to find the ids.
+- **Pick a CurseForge game's version types by name (#563).** lmm now reads
+  a game's version types (name, slug and id) from CurseForge itself, so
+  nobody has to look up #544's ids. The web UI's game editor lists them as
+  a checklist by name, the stored ones ticked; it falls back to the id
+  field, with a link to the guide, when the list cannot load.
+  `lmm game edit --curseforge-version-type` takes a slug (`wow-classic`) as
+  well as an id, and a value that names no version type fails listing the
+  game's valid ones. `lmm game version-types <game>` (and `--json`) lists
+  them, and `GET /api/v1/sources/{id}/version-types?game=<game>` serves the
+  list to the web UI. `games.yaml` still stores ids.
 
 ### Fixed
 
