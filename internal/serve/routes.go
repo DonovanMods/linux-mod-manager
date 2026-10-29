@@ -95,6 +95,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/sources/{id}/index", s.wrap(s.handleAPISourceIndexRefresh))
 	s.mux.Handle("GET /api/v1/indexes", s.wrap(s.handleAPIIndexes))
 	s.mux.Handle("POST /api/v1/indexes/prune", s.wrap(s.handleAPIIndexesPrune))
+	// #563: a source's version types for one game, for the game editor's
+	// CurseForge picker (api_version_types.go).
+	s.mux.Handle("GET /api/v1/sources/{id}/version-types", s.wrap(s.handleAPISourceVersionTypes))
 	// The Setup surface's credential half (api_auth.go). All three answer
 	// the same app.AuthStatusReport document `lmm auth status --json`
 	// emits - the writes with it RE-READ, so a mutation never needs a
