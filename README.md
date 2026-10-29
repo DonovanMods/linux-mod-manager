@@ -2693,8 +2693,10 @@ runs it says that it checks, and how to stop it — after the command, or in
   and adds at most a fraction of a second to one: it runs beside the
   command, and is abandoned if it has not answered within moments of the
   command finishing. An abandoned check is tried again a few minutes later,
-  not the next day. How lmm was installed is cached there too, so the
-  notice does not ask the package manager every time.
+  not the next day; one abandoned after another (a network that drops the
+  request without refusing it) waits an hour, then a day. How lmm was
+  installed is cached there too, so the notice does not ask the package
+  manager every time.
 - No notice is printed with `--json`, when stderr is not a terminal, or for
   `lmm serve` and `lmm version` themselves.
 - `update_check: false` in `config.yaml` turns the automatic check off.
