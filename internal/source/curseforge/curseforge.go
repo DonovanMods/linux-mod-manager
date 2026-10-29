@@ -405,7 +405,7 @@ func (c *CurseForge) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain
 	if types := gameVersionTypes(ctx); len(types) > 0 {
 		fileList = filesOfTypes(fileList, types)
 		if len(fileList) == 0 {
-			return nil, noFileForGame(modID, ctx)
+			return nil, noFileForGame(ctx, modID)
 		}
 	}
 

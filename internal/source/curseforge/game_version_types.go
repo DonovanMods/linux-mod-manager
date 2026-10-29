@@ -98,7 +98,7 @@ func publishedFor(data Mod, want flavorSet) bool {
 }
 
 // noFileForGame is the ErrNoFileForGame for modID, naming the game's types.
-func noFileForGame(modID int, ctx context.Context) error {
+func noFileForGame(ctx context.Context, modID int) error {
 	types := source.GameFromContext(ctx).CurseForgeVersionTypes()
 	names := make([]string, len(types))
 	for i, t := range types {
