@@ -84,8 +84,15 @@ file for each. Tell lmm which flavor a game is, or it may offer a Classic
 install the Retail file.
 
 CurseForge marks every file with a *game version type*, a number. Give the
-game the numbers it accepts. For World of Warcraft, Retail is `517` and
-Classic is `67408`:
+game the numbers it accepts. For World of Warcraft they are:
+
+| Flavor                    | Install folder  | Number  |
+| ------------------------- | --------------- | ------- |
+| Retail                    | `_retail_`      | `517`   |
+| Classic Era               | `_classic_era_` | `67408` |
+| Mists of Pandaria Classic | `_classic_`     | `79434` |
+
+For a Classic Era install:
 
 ```bash
 lmm game edit wow-classic --curseforge-version-type 67408
