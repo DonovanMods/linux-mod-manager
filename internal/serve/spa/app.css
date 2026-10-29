@@ -4068,3 +4068,23 @@ a.row-menu__item.mod-page-link {
   padding: var(--space-3);
   color: var(--text-muted);
 }
+
+/* The game editor's CurseForge version-type checklist (issue 563): one
+   option per type CurseForge lists, by name with its slug beside it. */
+.version-types {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0;
+}
+
+.version-types__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.version-types__slug {
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}

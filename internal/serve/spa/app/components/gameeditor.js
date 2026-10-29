@@ -10,8 +10,15 @@
 // names ONE field, and this panel marks that field - the panel never guesses
 // which input was at fault from a sentence.
 
-import { html, useLayoutEffect, useRef } from "../render.js";
+import {
+  html,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "../render.js";
 import { codeSpans } from "../errortext.js";
+import { ApiError, getSourceVersionTypes } from "../api.js";
 import { SourcesMapEditor } from "./sourcesmap.js";
 import {
   GameLoaderEditor,
@@ -44,6 +51,33 @@ export function curseForgeTypes(text) {
     .split(/[\s,]+/)
     .filter((t) => t !== "")
     .map((t) => (/^\d+$/.test(t) ? Number(t) : 0));
+}
+
+/** curseForgeGuideURL is the guide's section on picking a flavor: where the
+ * id field sends someone when lmm could not load CurseForge's list. */
+export const curseForgeGuideURL =
+  "https://donovanmods.github.io/linux-mod-manager/add-a-game.html#pick-a-curseforge-game-flavor";
+
+/** pickerRows is the checklist for a game's CurseForge version types (issue
+ * 563): every type CurseForge lists, by name, then every id the draft holds
+ * that the list does not - shown by id rather than dropped, so a save never
+ * loses one silently. */
+export function pickerRows(types, ticked) {
+  const listed = new Set(types.map((t) => t.id));
+  return [
+    ...types.map((t) => ({ ...t, checked: ticked.includes(t.id) })),
+    ...ticked
+      .filter((id) => id > 0 && !listed.has(id))
+      .map((id) => ({ id, name: "", slug: "", checked: true })),
+  ];
+}
+
+/** toggleType is the draft's ids text with id ticked or unticked: kept in
+ * the order the user gave them, a newly ticked one last. */
+export function toggleType(text, id, checked) {
+  const ids = curseForgeTypes(text).filter((t) => t !== id);
+  if (checked) ids.push(id);
+  return ids.join(", ");
 }
 
 const sameMap = (a, b) => {
@@ -134,6 +168,135 @@ function FieldError({ id, error }) {
   return html`<p class="modal__error" id=${id} data-testid="game-field-error">
     ${codeSpans(error.message)}
   </p>`;
+}
+
+/**
+ * CurseForgeTypesPicker reads the game's version types from CurseForge and
+ * renders them as a checklist by name (issue 563). The ticks ARE the draft's
+ * ids text, so saving is the same PUT as the id field's. Until the list is
+ * in, and whenever it cannot be had (no key, offline, the game not saved
+ * with a curseforge source yet), `fallback` - the id field - is shown
+ * instead, with a link to the guide.
+ */
+function CurseForgeTypesPicker({
+  game,
+  draft,
+  busy,
+  error,
+  errorID,
+  patch,
+  fallback,
+}) {
+  const mapped = Object.hasOwn(game.source_ids ?? {}, "curseforge");
+  const [list, setList] = useState(null);
+  const [failure, setFailure] = useState(null);
+
+  useEffect(() => {
+    if (!mapped) return undefined;
+    let live = true;
+    setList(null);
+    setFailure(null);
+    getSourceVersionTypes("curseforge", game.id)
+      .then((report) => live && setList(report.types ?? []))
+      .catch(
+        (err) =>
+          live &&
+          setFailure(err instanceof ApiError ? err.message : String(err)),
+      );
+    return () => {
+      live = false;
+    };
+  }, [game.id, mapped]);
+
+  if (mapped && !list && !failure) {
+    return html`<p
+      class="empty-state__hint"
+      data-testid="curseforge-types-loading"
+    >
+      Reading CurseForge's version types for this game…
+    </p>`;
+  }
+  if (!list) {
+    return html`<div
+      class="game-editor__fields"
+      data-testid="curseforge-types-editor"
+    >
+      ${fallback(
+        html`${
+            failure &&
+            html`<span data-testid="curseforge-types-unavailable"
+              >Couldn't load CurseForge's list: ${failure}.${" "}</span
+            >`
+          }Enter
+          ids separated by commas, or leave it blank to accept every
+          file.${" "}<a
+            href=${curseForgeGuideURL}
+            target="_blank"
+            rel="noopener noreferrer"
+            >How to find the ids</a
+          >`,
+      )}
+    </div>`;
+  }
+
+  const rows = pickerRows(list, curseForgeTypes(draft.curseforge_types));
+  const hintID = `curseforge-types-${game.id}-hint`;
+  return html`
+    <fieldset
+      class="game-editor__group"
+      data-testid="curseforge-types-picker"
+      aria-describedby=${error ? errorID : hintID}
+    >
+      <legend class="plan__control">CurseForge game version types</legend>
+      <p class="empty-state__hint" id=${hintID}>
+        Tick the flavors this game is; lmm then offers only their files. None
+        ticked accepts every file.
+      </p>
+      ${
+        rows.length === 0
+          ? html`<p class="empty-state__hint">
+              CurseForge lists none for this game.
+            </p>`
+          : html`<div class="version-types">
+              ${rows.map(
+                (row) => html`
+                  <label class="version-types__option" key=${row.id}>
+                    <input
+                      type="checkbox"
+                      name="curseforge-type"
+                      value=${row.id}
+                      checked=${row.checked}
+                      disabled=${busy}
+                      onChange=${(e) =>
+                        patch({
+                          curseforge_types: toggleType(
+                            draft.curseforge_types,
+                            row.id,
+                            e.currentTarget.checked,
+                          ),
+                        })}
+                    />
+                    ${
+                      row.name
+                        ? html`${row.name}${" "}<span
+                              class="mono version-types__slug"
+                              >${row.slug}</span
+                            >`
+                        : html`<span class="mono">${row.id}</span>${" "}<span
+                              class="version-types__slug"
+                              >(not in CurseForge's list)</span
+                            >`
+                    }
+                  </label>
+                `,
+              )}
+            </div>`
+      }
+      <div class="game-editor__answer" role="status">
+        <${FieldError} id=${errorID} error=${error} />
+      </div>
+    </fieldset>
+  `;
 }
 
 /**
@@ -301,18 +464,22 @@ export function GameEditor({
 
       ${
         showCurseForge &&
-        html`<div
-          class="game-editor__fields"
-          data-testid="curseforge-types-editor"
-        >
-          ${textField(
-            "curseforge_types",
-            "CurseForge game version types",
-            null,
-            "curseforge-types",
-            "The CurseForge game version type ids this game accepts, separated by commas - 67408 for World of Warcraft Classic, which shares CurseForge's one WoW game with Retail. lmm then offers, installs and updates only files of those types. Leave it blank to accept every file.",
-          )}
-        </div>`
+        html`<${CurseForgeTypesPicker}
+          game=${game}
+          draft=${draft}
+          busy=${busy}
+          error=${fieldError("curseforge_types")}
+          errorID=${`${ids.curseforge_types}-error`}
+          patch=${patch}
+          fallback=${(hint) =>
+            textField(
+              "curseforge_types",
+              "CurseForge game version types",
+              null,
+              "curseforge-types",
+              hint,
+            )}
+        />`
       }
 
       <fieldset class="game-editor__group">

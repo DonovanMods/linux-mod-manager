@@ -5,12 +5,15 @@ package serve_test
 // Asserted against games.yaml, the end state.
 
 import (
+	"context"
 	"testing"
 
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -28,6 +31,8 @@ func TestE2E_GameEditor_SetsAndClearsCurseForgeVersionTypes(t *testing.T) {
 		clickWhenSettled(editorSel(`[data-action="cancel-edit-game"]`)),
 		pollUntil(`!document.querySelector('[data-testid="game-editor"]')`),
 		openEditor("drive"),
+		// The id field once the version-type list has failed to load.
+		chromedp.WaitVisible(field, chromedp.ByQuery),
 		typeInto(field, "67408, 77522"),
 		clickWhenSettled(editorSel(`[data-action="save-game"]`)),
 		chromedp.WaitVisible(editorSel(`[data-testid="game-saved"]`), chromedp.ByQuery),
@@ -68,6 +73,7 @@ func TestE2E_GameEditor_ACurseForgeTypoMarksTheField(t *testing.T) {
 		chromedp.Navigate(f.SetupPath("games")),
 		setupGamesReady(),
 		openEditor("drive"),
+		chromedp.WaitVisible(field, chromedp.ByQuery),
 		typeInto(field, "classic"),
 		clickWhenSettled(editorSel(`[data-action="save-game"]`)),
 		chromedp.WaitVisible(editorSel(`[data-testid="game-field-error"]`), chromedp.ByQuery),
@@ -78,5 +84,98 @@ func TestE2E_GameEditor_ACurseForgeTypoMarksTheField(t *testing.T) {
 	onDisk, err := config.LoadGames(f.Svc.ConfigDir())
 	require.NoError(t, err)
 	assert.Nil(t, onDisk["drive"].CurseForge)
-	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/games/drive")
+	// The fixture's curseforge publishes no version types (a 404), which
+	// is what leaves the id field in place (#563).
+	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/games/drive", "/api/v1/sources/curseforge/version-types")
+}
+
+// e2eVersionTypesSource is a curseforge that lists its game version types
+// (#563), or fails to with listErr.
+type e2eVersionTypesSource struct {
+	*fakeSource
+	listErr error
+}
+
+func (s *e2eVersionTypesSource) ListGameVersionTypes(context.Context, string) ([]source.GameVersionType, error) {
+	return []source.GameVersionType{
+		{ID: 517, Name: "WoW Retail", Slug: "game"},
+		{ID: 67408, Name: "WoW Classic", Slug: "wow-classic"},
+		{ID: 79434, Name: "WoW Mists of Pandaria Classic", Slug: "wow-mists-of-pandaria-classic"},
+	}, s.listErr
+}
+
+var _ source.GameVersionTypeLister = (*e2eVersionTypesSource)(nil)
+
+// typeBox is the picker's checkbox for one version type id.
+func typeBox(id string) string {
+	return editorSel(`[data-testid="curseforge-types-picker"] input[name="curseforge-type"][value="` + id + `"]`)
+}
+
+// #563: with CurseForge's list in, the editor is a checklist by name:
+// ticking a name stores its id, the stored ones arrive ticked, and an id
+// the list does not carry is still shown - by id - and kept.
+func TestE2E_GameEditor_PicksCurseForgeVersionTypesByName(t *testing.T) {
+	f := newE2EFixtureWithSetupGames(t)
+	f.Svc.RegisterSource(&e2eVersionTypesSource{fakeSource: newFakeSource("curseforge")})
+	game, err := f.Svc.GetGame("drive")
+	require.NoError(t, err)
+	game.CurseForge = &domain.GameCurseForge{GameVersionTypes: []int{12345}}
+	require.NoError(t, f.Svc.SaveGame(t.Context(), game))
+
+	var names string
+	var classicTicked, unlistedTicked, hasIDField bool
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1280, 900),
+		chromedp.Navigate(f.SetupPath("games")),
+		setupGamesReady(),
+		openEditor("drive"),
+		chromedp.WaitVisible(typeBox("67408"), chromedp.ByQuery),
+		chromedp.Evaluate(`[...document.querySelectorAll('[data-testid="curseforge-types-picker"] label')].map((l) => l.textContent.replace(/\s+/g, " ").trim()).join("|")`, &names),
+		chromedp.Evaluate(`document.querySelector('[data-testid="game-editor"] input[name="curseforge-types"]') !== null`, &hasIDField),
+		chromedp.Evaluate(`document.querySelector('`+typeBox("12345")+`').checked`, &unlistedTicked),
+		clickWhenSettled(typeBox("67408")),
+		chromedp.Evaluate(`document.querySelector('`+typeBox("67408")+`').checked`, &classicTicked),
+		clickWhenSettled(editorSel(`[data-action="save-game"]`)),
+		chromedp.WaitVisible(editorSel(`[data-testid="game-saved"]`), chromedp.ByQuery),
+	)
+	assert.Equal(t, "WoW Classic wow-classic|WoW Mists of Pandaria Classic wow-mists-of-pandaria-classic|WoW Retail game|12345 (not in CurseForge's list)", names)
+	assert.False(t, hasIDField, "with the list in, there is no id field")
+	assert.True(t, unlistedTicked)
+	assert.True(t, classicTicked)
+
+	onDisk, err := config.LoadGames(f.Svc.ConfigDir())
+	require.NoError(t, err)
+	require.NotNil(t, onDisk["drive"].CurseForge)
+	assert.Equal(t, []int{12345, 67408}, onDisk["drive"].CurseForge.GameVersionTypes, "ids, as before; the unlisted one is kept")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// #563: when the list cannot be had - here, no CurseForge key - the editor
+// is the id field again, saying why and linking to the guide's section.
+func TestE2E_GameEditor_CurseForgePickerFallsBackToTheIDField(t *testing.T) {
+	f := newE2EFixtureWithSetupGames(t)
+	f.Svc.RegisterSource(&e2eVersionTypesSource{fakeSource: newFakeSource("curseforge"), listErr: domain.ErrAuthRequired})
+	field := editorSel(`input[name="curseforge-types"]`)
+
+	var why, guide string
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1280, 900),
+		chromedp.Navigate(f.SetupPath("games")),
+		setupGamesReady(),
+		openEditor("drive"),
+		chromedp.WaitVisible(field, chromedp.ByQuery),
+		chromedp.Text(editorSel(`[data-testid="curseforge-types-unavailable"]`), &why, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('[data-testid="curseforge-types-editor"] a').href`, &guide),
+		typeInto(field, "67408"),
+		clickWhenSettled(editorSel(`[data-action="save-game"]`)),
+		chromedp.WaitVisible(editorSel(`[data-testid="game-saved"]`), chromedp.ByQuery),
+	)
+	assert.Contains(t, why, "Couldn't load CurseForge's list")
+	assert.Contains(t, guide, "#pick-a-curseforge-game-flavor")
+
+	onDisk, err := config.LoadGames(f.Svc.ConfigDir())
+	require.NoError(t, err)
+	require.NotNil(t, onDisk["drive"].CurseForge)
+	assert.Equal(t, []int{67408}, onDisk["drive"].CurseForge.GameVersionTypes)
+	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/sources/curseforge/version-types")
 }
