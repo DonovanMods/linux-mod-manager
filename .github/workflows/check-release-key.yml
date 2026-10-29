@@ -1,0 +1,50 @@
+# Proves the LMM_RELEASE_SIGNING_KEY secret is the private half of a public
+# key compiled into lmm (#569): it signs a throwaway file with the secret and
+# verifies the signature against each key `releasekey trusted` prints. Run it
+# by hand after setting or rotating the secret; docs/release-signing.md has
+# the procedure. It prints OK or FAIL and nothing else - never the key.
+name: Check release signing key
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Sign a throwaway file and verify it against lmm's keys
+        env:
+          LMM_RELEASE_SIGNING_KEY: ${{ secrets.LMM_RELEASE_SIGNING_KEY }}
+        # Every command's own output goes to /dev/null: the script's only
+        # output is its verdict. An empty secret, a secret that cannot
+        # sign, and one no compiled-in key verifies all print FAIL.
+        run: |
+          tool="${RUNNER_TEMP}/releasekey"
+          probe="${RUNNER_TEMP}/key-check.txt"
+          if [ -z "${LMM_RELEASE_SIGNING_KEY}" ] ||
+            ! go build -o "$tool" ./tools/releasekey >/dev/null 2>&1 ||
+            ! printf 'lmm release signing key check, run %s\n' "${GITHUB_RUN_ID}" > "$probe" ||
+            ! "$tool" sign -in "$probe" -out "$probe.sig" >/dev/null 2>&1; then
+            echo "FAIL"
+            exit 1
+          fi
+          for pub in $("$tool" trusted 2>/dev/null); do
+            if "$tool" verify -pub "$pub" -in "$probe" -sig "$probe.sig" >/dev/null 2>&1; then
+              echo "OK"
+              exit 0
+            fi
+          done
+          echo "FAIL"
+          exit 1

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,4 +60,12 @@ func TestSign_NeedsTheKeyInTheEnvironment(t *testing.T) {
 	err := run([]string{"sign", "-in", in, "-out", in + ".sig"}, &bytes.Buffer{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), envKey)
+}
+
+// TestTrusted_PrintsTheKeysCompiledIntoLmm: the signing-key check workflow
+// verifies the secret against each of these, one per line (#569).
+func TestTrusted_PrintsTheKeysCompiledIntoLmm(t *testing.T) {
+	var out bytes.Buffer
+	require.NoError(t, run([]string{"trusted"}, &out))
+	assert.Equal(t, strings.Join(core.TrustedReleaseKeys(), "\n")+"\n", out.String())
 }

@@ -10,6 +10,10 @@
 //	    Signs with the private key in $LMM_RELEASE_SIGNING_KEY; the release
 //	    workflow runs this.
 //	go run ./tools/releasekey verify -pub <base64> -in checksums.txt -sig checksums.txt.sig
+//	go run ./tools/releasekey trusted
+//	    Prints the public keys compiled into lmm, one per line: the keys
+//	    lmm self-update verifies a release under. The "Check release
+//	    signing key" workflow verifies the secret against each.
 //
 // Standard library only; see internal/releasesig.
 package main
@@ -22,6 +26,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/releasesig"
 )
 
@@ -37,7 +42,7 @@ func main() {
 
 func run(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: releasekey generate|public|sign|verify [flags]")
+		return errors.New("usage: releasekey generate|public|sign|verify|trusted [flags]")
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	switch args[0] {
@@ -101,8 +106,18 @@ func run(args []string, stdout io.Writer) error {
 		}
 		_, err = fmt.Fprintln(stdout, "OK")
 		return err
+	case "trusted":
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		for _, key := range core.TrustedReleaseKeys() {
+			if _, err := fmt.Fprintln(stdout, key); err != nil {
+				return err
+			}
+		}
+		return nil
 	default:
-		return fmt.Errorf("unknown command %q: want generate, public, sign or verify", args[0])
+		return fmt.Errorf("unknown command %q: want generate, public, sign, verify or trusted", args[0])
 	}
 }
 

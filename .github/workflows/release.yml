@@ -17,6 +17,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      # GoReleaser signs checksums.txt with this key (#569), and lmm
+      # self-update refuses a release without a valid signature: a release
+      # published unsigned would be one no self-managed lmm could install.
+      - name: Require the release signing key
+        env:
+          LMM_RELEASE_SIGNING_KEY: ${{ secrets.LMM_RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "${LMM_RELEASE_SIGNING_KEY}" ]; then
+            echo "::error::The LMM_RELEASE_SIGNING_KEY secret is not set; see docs/release-signing.md" >&2
+            exit 1
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
@@ -81,3 +93,6 @@ jobs:
           # aurs[0].skip_upload reads as "skip": the release still publishes
           # the tarballs and the deb/rpm/apk, it just does not push to the AUR.
           AUR_KEY: ${{ secrets.AUR_KEY }}
+          # Signs checksums.txt into checksums.txt.sig (.goreleaser.yaml's
+          # signs section, #569).
+          LMM_RELEASE_SIGNING_KEY: ${{ secrets.LMM_RELEASE_SIGNING_KEY }}
