@@ -246,7 +246,7 @@ func TestDownloadMod_ExactFileSizerMismatchIsAHardFailure(t *testing.T) {
 	svc, game := fetchTestGame(t, src, "g1")
 
 	mod := &domain.Mod{ID: "m1", SourceID: src.ID(), Version: "1.0", GameID: game.ID}
-	files, err := svc.GetModFiles(context.Background(), src.ID(), mod)
+	files, err := svc.GetModFiles(context.Background(), nil, src.ID(), mod)
 	require.NoError(t, err)
 
 	_, err = svc.DownloadModForTest(context.Background(), src.ID(), game, mod, &files[0], nil)
@@ -268,7 +268,7 @@ func TestDownloadMod_DeclaredSizeIsAdvisoryForOrdinarySources(t *testing.T) {
 	svc, game := fetchTestGame(t, src, "g1")
 
 	mod := &domain.Mod{ID: "m1", SourceID: src.ID(), Version: "1.0", GameID: game.ID}
-	files, err := svc.GetModFiles(context.Background(), src.ID(), mod)
+	files, err := svc.GetModFiles(context.Background(), nil, src.ID(), mod)
 	require.NoError(t, err)
 
 	_, err = svc.DownloadModForTest(context.Background(), src.ID(), game, mod, &files[0], nil)

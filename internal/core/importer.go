@@ -450,8 +450,8 @@ func matchImportedFile(files []domain.DownloadableFile, archiveFilename, version
 // error only reports a failed source listing - callers treat it as
 // non-fatal and keep the import marker-less. Unexported with the archive-
 // import lift (#291): PlanAdopt and ImportArchive are its only callers.
-func (s *Service) resolveImportedFile(ctx context.Context, sourceID string, sourceMod *domain.Mod, archiveFilename, version string, allowVersionFallback bool) (*domain.DownloadableFile, error) {
-	files, err := s.GetModFiles(ctx, sourceID, sourceMod)
+func (s *Service) resolveImportedFile(ctx context.Context, game *domain.Game, sourceID string, sourceMod *domain.Mod, archiveFilename, version string, allowVersionFallback bool) (*domain.DownloadableFile, error) {
+	files, err := s.GetModFiles(ctx, game, sourceID, sourceMod)
 	if err != nil {
 		return nil, fmt.Errorf("listing source files: %w", err)
 	}
