@@ -16,8 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/usr/lib/systemd/user`, turned off: `systemctl --user enable --now
 lmm-serve` turns it on. For a tarball, `go install` or `make install`,
   `lmm service install [--addr host:port]` writes it to
-  `~/.config/systemd/user` pointing at the running binary and starts it,
-  `lmm service uninstall` removes it, and `lmm service status` reports
+  the directory the user manager loads units from, pointing at the
+  running binary (the `lmm` on `PATH` when it is the same file) and
+  carrying `--config`/`--data` and any differing `XDG_CONFIG_HOME`/
+  `XDG_DATA_HOME`, and starts it, then checks a moment later that it is
+  still running; `lmm service uninstall` removes it (only a unit file lmm
+  wrote is ever overwritten or removed), and `lmm service status` reports
   whether it is installed, enabled and running and whether lingering is on
   (all three take `--json`). A missing `systemctl` or user manager is a
   clear error. The user guide has a new page, "Run the web UI in the
