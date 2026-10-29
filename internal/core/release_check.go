@@ -194,6 +194,34 @@ func (r *ReleaseChecker) Status(ctx context.Context) ReleaseStatus {
 // asks. The returned error is the request's own failure, also recorded in
 // the status's CheckError; a caller that only shows a notice ignores it.
 func (r *ReleaseChecker) Check(ctx context.Context, force bool) (ReleaseStatus, error) {
+	st, err := r.refresh(ctx, force)
+	return r.status(ctx, st), err
+}
+
+// Refresh is the unforced Check for a caller that wants only the cache
+// brought up to date - a background refresh, which has no use for the
+// status and should not pay for detecting the install method.
+func (r *ReleaseChecker) Refresh(ctx context.Context) error {
+	_, err := r.refresh(ctx, false)
+	return err
+}
+
+// PendingUpdate is the cached status when it reports an update, and false
+// otherwise - the CLI's after-command notice, which runs after every
+// interactive command and so asks a package manager about the binary only
+// on the runs that have an update to word.
+func (r *ReleaseChecker) PendingUpdate(ctx context.Context) (ReleaseStatus, bool) {
+	r.mu.Lock()
+	st := r.load()
+	r.mu.Unlock()
+	if !r.updateAvailable(st) {
+		return ReleaseStatus{}, false
+	}
+	return r.status(ctx, st), true
+}
+
+// refresh is Check without the status.
+func (r *ReleaseChecker) refresh(ctx context.Context, force bool) (releaseCheckState, error) {
 	r.mu.Lock()
 	st := r.load()
 	now := r.opts.Now()
@@ -201,7 +229,7 @@ func (r *ReleaseChecker) Check(ctx context.Context, force bool) (ReleaseStatus, 
 		if age := now.Sub(st.CheckedAt); r.opts.Dev || !r.Enabled() ||
 			(!st.CheckedAt.IsZero() && age >= 0 && age < ReleaseCheckInterval) {
 			r.mu.Unlock()
-			return r.status(ctx, st), nil
+			return st, nil
 		}
 	}
 	// The attempt is recorded BEFORE the request, as a failure: a CLI run
@@ -226,7 +254,7 @@ func (r *ReleaseChecker) Check(ctx context.Context, force bool) (ReleaseStatus, 
 		st.Latest, st.URL, st.Error = latest, url, ""
 	}
 	_ = r.save(st)
-	return r.status(ctx, st), err
+	return st, err
 }
 
 // FirstRunNoticeDue reports whether the one-time "lmm checks GitHub for
@@ -280,12 +308,19 @@ func (r *ReleaseChecker) status(ctx context.Context, st releaseCheckState) Relea
 		Dev:          r.opts.Dev,
 		Install:      r.installMethod(ctx),
 	}
-	if !r.opts.Dev && st.Latest != "" {
-		cur, okCur := parseSemver(r.opts.Version)
-		lat, okLat := parseSemver(st.Latest)
-		out.UpdateAvailable = okCur && okLat && cur.less(lat)
-	}
+	out.UpdateAvailable = r.updateAvailable(st)
 	return out
+}
+
+// updateAvailable is st's latest release newer than the running version,
+// by semver; never for a dev build.
+func (r *ReleaseChecker) updateAvailable(st releaseCheckState) bool {
+	if r.opts.Dev || st.Latest == "" {
+		return false
+	}
+	cur, okCur := parseSemver(r.opts.Version)
+	lat, okLat := parseSemver(st.Latest)
+	return okCur && okLat && cur.less(lat)
 }
 
 // installMethod is DetectInstallMethod's answer, asked once per checker: the

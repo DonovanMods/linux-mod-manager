@@ -106,9 +106,15 @@ FILES
 	// PersistentPreRun(E), so cobra never skips this one in favor of a
 	// nearer override. newCLILogger's returned logger is discarded here;
 	// initServiceWith re-validates (idempotently) when it builds the real one.
+	//
+	// It also starts the after-command release check (release_notice.go),
+	// which does nothing unless Execute armed it.
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-		_, err := newCLILogger(logLevel, io.Discard)
-		return err
+		if _, err := newCLILogger(logLevel, io.Discard); err != nil {
+			return err
+		}
+		startReleaseCheck(cmd)
+		return nil
 	},
 }
 
@@ -339,6 +345,7 @@ func Execute() {
 	ctx = withSourceNotices(ctx)
 
 	rawArgs = os.Args[1:]
+	releaseNoticeArmed = true
 	if err := runRoot(ctx); err != nil {
 		switch exitCodeIn(ctx, err) {
 		case exitCancelled:
@@ -346,9 +353,11 @@ func Execute() {
 			os.Exit(exitCancelled)
 		default:
 			reportError(err)
+			finishReleaseCheck(os.Stderr)
 			os.Exit(exitError)
 		}
 	}
+	finishReleaseCheck(os.Stderr)
 }
 
 // lmm's documented exit codes - `lmm --help`'s EXIT CODES block.

@@ -301,3 +301,34 @@ func TestNewReleaseChecker_RequiresAnAPIBase(t *testing.T) {
 	}, "no default: a caller that forgets it must not reach GitHub by accident")
 	assert.Equal(t, "https://api.github.com", core.GitHubAPIBase)
 }
+
+// TestReleaseChecker_RefreshAndPendingUpdateAskNoPackageManager: the CLI's
+// after-command path refreshes in the background and reads PendingUpdate,
+// and neither runs an owner query unless there is an update to word.
+func TestReleaseChecker_RefreshAndPendingUpdateAskNoPackageManager(t *testing.T) {
+	rs := newReleaseServer(t, `{"tag_name":"v2.0.1","html_url":"https://github.com/x"}`)
+	clock := &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+	var probed atomic.Int32
+	rc, opts := newChecker(t, rs, clock, func(o *core.ReleaseCheckOptions) {
+		o.Probe.Executable = func() (string, error) { probed.Add(1); return "/usr/bin/lmm", nil }
+	})
+	ctx := context.Background()
+
+	require.NoError(t, rc.Refresh(ctx))
+	require.NoError(t, rc.Refresh(ctx))
+	assert.Equal(t, int32(1), rs.hits.Load(), "Refresh is the unforced check")
+	_, ok := rc.PendingUpdate(ctx)
+	assert.False(t, ok, "up to date")
+	assert.Zero(t, probed.Load())
+
+	rs.body = releaseV210
+	clock.now = clock.now.Add(ReleaseDay)
+	require.NoError(t, core.NewReleaseChecker(opts).Refresh(ctx))
+	st, ok := rc.PendingUpdate(ctx)
+	require.True(t, ok)
+	assert.Equal(t, "2.1.0", st.Latest)
+	assert.Equal(t, int32(1), probed.Load(), "the install method is asked once there is an update to word")
+}
+
+// ReleaseDay is one ReleaseCheckInterval, for readability above.
+const ReleaseDay = core.ReleaseCheckInterval

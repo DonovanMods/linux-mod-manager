@@ -36,7 +36,7 @@ func (s *Server) refreshReleases(ctx context.Context) {
 	tick := time.NewTicker(releaseRefreshEvery)
 	defer tick.Stop()
 	for {
-		if _, err := s.releases.Check(ctx, false); err != nil && ctx.Err() == nil {
+		if err := s.releases.Refresh(ctx); err != nil && ctx.Err() == nil {
 			s.log.Debug("lmm release check failed", "error", err)
 		}
 		select {
