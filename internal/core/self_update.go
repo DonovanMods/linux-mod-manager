@@ -78,8 +78,12 @@ const (
 )
 
 // selfUpdateTimeout bounds the release document request; the downloads are
-// bounded by the caller's context and their size caps.
+// bounded by the caller's context, their size caps and selfUpdateStall.
 const selfUpdateTimeout = 30 * time.Second
+
+// selfUpdateStall fails a download that goes this long without a byte, so
+// an unattended run (lmm-update.timer) cannot hang on a dead connection.
+const selfUpdateStall = time.Minute
 
 // ErrDevBuild refuses `lmm self-update` for a development build, which has
 // no release to update to.
@@ -240,8 +244,9 @@ type SelfUpdateOptions struct {
 	// host releases download from (GitHubDownloadBase); an httptest server
 	// for both in a test. Required.
 	APIBase, DownloadBase string
-	// HTTPClient carries the requests; nil uses http.DefaultTransport with
-	// no overall timeout (the caller's context bounds a download).
+	// HTTPClient carries the requests; nil uses http.DefaultTransport,
+	// failing a transfer that stalls for selfUpdateStall, with no overall
+	// timeout (the caller's context bounds a download).
 	HTTPClient *http.Client
 	// Probe answers how lmm was installed and where its binary is; nil is
 	// DefaultInstallProbe.
@@ -323,7 +328,7 @@ func NewSelfUpdater(opts SelfUpdateOptions) *SelfUpdater {
 	}
 	hc := opts.HTTPClient
 	if hc == nil {
-		hc = &http.Client{}
+		hc = &http.Client{Transport: &httpclient.IdleTimeout{Timeout: selfUpdateStall}}
 	}
 	client := func(base string, maxBytes int64) *httpclient.Client {
 		return httpclient.New(httpclient.Options{
