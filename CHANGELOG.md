@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **lmm says when a new release of itself is out (#568).** After an
+  interactive command, a one-line notice on stderr names the newer version
+  and how to get it: the package manager's upgrade command when one owns the
+  binary (`dpkg`, `rpm`, `apk` or `pacman` is asked), the release page
+  otherwise. `lmm serve` shows a dismissible banner linking the release
+  notes, dismissed per version. The new `lmm version` reports the running
+  version, the newest release and how lmm was installed (`--check` asks now,
+  `--json` for scripts; `GET /api/v1/updates/lmm` serves the same document).
+  lmm asks GitHub at most once a day, sending only an `lmm/<version>`
+  User-Agent, caches the answer (and a failure) under the data dir, ignores
+  drafts and prereleases, and never reports one for a dev build; no notice
+  is printed with `--json` or when stderr is not a terminal. It is on by
+  default and says so the first time; `update_check: false` in
+  `config.yaml` turns it off.
 - **Duplicate a profile (#438).** `lmm profile duplicate <source> <new>`,
   and **Duplicate** in the web UI's Profiles window, clone a profile without
   the export/import round trip: every mod in load order with its version,
