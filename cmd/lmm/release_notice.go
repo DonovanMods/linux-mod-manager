@@ -28,11 +28,13 @@ import (
 // user never hearing about a release, which is the case the notice exists
 // for.
 
-// releaseNoticeArmed is set by Execute alone, so the after-command check
-// runs only in the real binary: a test drives commands through runRoot or
-// rootCmd directly and never arms it, which keeps the suite off the network
-// whatever its stderr is.
-var releaseNoticeArmed bool
+// releaseCheckArmed is set by Execute alone, so the release check - the
+// after-command one here and `lmm serve`'s background refresh - runs only
+// in the real binary: a test drives commands through runRoot or rootCmd
+// directly and never arms it, which keeps the suite off the network
+// whatever its stderr is. A test that wants a checker builds one against
+// an httptest server.
+var releaseCheckArmed bool
 
 // stderrIsTerminal reports whether stderr is a terminal. The notice is for
 // a person at a prompt; a script or a pipe gets neither the line nor the
@@ -89,7 +91,7 @@ func releaseNoticeWanted(cmd *cobra.Command) bool {
 // --json, a command the notice may follow, a release build, and the check
 // not turned off in config.yaml.
 func startReleaseCheck(cmd *cobra.Command) {
-	if !releaseNoticeArmed || jsonOutput || !stderrIsTerminal() || isDevBuild() || !releaseNoticeWanted(cmd) {
+	if !releaseCheckArmed || jsonOutput || !stderrIsTerminal() || isDevBuild() || !releaseNoticeWanted(cmd) {
 		return
 	}
 	rc, configPath, err := newReleaseChecker()

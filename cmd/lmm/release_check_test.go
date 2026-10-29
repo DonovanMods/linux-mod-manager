@@ -57,11 +57,11 @@ func cliReleaseServer(t *testing.T, tag string) *atomic.Int32 {
 // after-command check, with stderr reported as a terminal.
 func armReleaseNotice(t *testing.T, tty bool) {
 	t.Helper()
-	oldArmed, oldTTY := releaseNoticeArmed, stderrIsTerminal
-	releaseNoticeArmed = true
+	oldArmed, oldTTY := releaseCheckArmed, stderrIsTerminal
+	releaseCheckArmed = true
 	stderrIsTerminal = func() bool { return tty }
 	t.Cleanup(func() {
-		releaseNoticeArmed, stderrIsTerminal = oldArmed, oldTTY
+		releaseCheckArmed, stderrIsTerminal = oldArmed, oldTTY
 		pendingRelease = nil
 	})
 }
@@ -168,7 +168,7 @@ func TestReleaseNotice_Silent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			hits := cliReleaseServer(t, "v2.1.0")
 			armReleaseNotice(t, tt.tty)
-			releaseNoticeArmed = tt.armed
+			releaseCheckArmed = tt.armed
 			if tt.setup != nil {
 				tt.setup(t)
 			}
@@ -213,4 +213,14 @@ func TestReleaseCheck_TheTestBinaryCannotReachGitHub(t *testing.T) {
 	_, err := rc.Check(context.Background(), true)
 	require.ErrorIs(t, err, testutil.ErrGitHubRefused)
 	assert.Equal(t, []string{"GET https://api.github.com/repos/DonovanMods/linux-mod-manager/releases/latest"}, attempts())
+}
+
+// TestServeReleaseChecker_OnlyInTheArmedBinary: `lmm serve` hands its
+// server a checker only when Execute armed the binary, so the serve tests
+// that run runServe never start a background request.
+func TestServeReleaseChecker_OnlyInTheArmedBinary(t *testing.T) {
+	cliReleaseServer(t, "v2.1.0")
+	assert.Nil(t, serveReleaseChecker())
+	armReleaseNotice(t, false)
+	assert.NotNil(t, serveReleaseChecker())
 }

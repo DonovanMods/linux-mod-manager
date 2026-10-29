@@ -64,8 +64,9 @@ func doServe(ctx context.Context, cmd *cobra.Command, svc *core.Service) error {
 	}
 
 	srv := serve.New(ctx, svc, svc.Logger(), serve.Options{
-		Addr:    serveAddr,
-		Version: computeDisplayVersion(version, buildDescribe),
+		Addr:           serveAddr,
+		Version:        computeDisplayVersion(version, buildDescribe),
+		ReleaseChecker: serveReleaseChecker(),
 	})
 	addr, err := srv.Listen()
 	if err != nil {
@@ -83,6 +84,21 @@ func doServe(ctx context.Context, cmd *cobra.Command, svc *core.Service) error {
 	serveReady(addr.String())
 
 	return srv.Serve(ctx)
+}
+
+// serveReleaseChecker is the checker `lmm serve` refreshes and answers GET
+// /api/v1/updates/lmm from (#568), or nil - the check reported off - in a
+// binary Execute did not arm (every test) or when the paths cannot be
+// resolved, which the service itself would already have refused.
+func serveReleaseChecker() *core.ReleaseChecker {
+	if !releaseCheckArmed {
+		return nil
+	}
+	rc, _, err := newReleaseChecker()
+	if err != nil {
+		return nil
+	}
+	return rc
 }
 
 // warnIfNonLoopback prints the loud, undismissable warning

@@ -345,7 +345,7 @@ func Execute() {
 	ctx = withSourceNotices(ctx)
 
 	rawArgs = os.Args[1:]
-	releaseNoticeArmed = true
+	releaseCheckArmed = true
 	if err := runRoot(ctx); err != nil {
 		switch exitCodeIn(ctx, err) {
 		case exitCancelled:
