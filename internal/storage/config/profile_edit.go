@@ -567,7 +567,7 @@ func writeFile(path string, data []byte, inPlaceFallback bool) (inPlace bool, er
 		}
 		return false, nil
 	}
-	err = renameIntoPlace(target, data, info.Mode().Perm())
+	err = renameIntoPlace(target, data, info.Mode().Perm(), "writing profile")
 	var noTemp *tempFileError
 	if !inPlaceFallback || !errors.As(err, &noTemp) || !errors.Is(err, fs.ErrPermission) {
 		return false, err
@@ -577,13 +577,6 @@ func writeFile(path string, data []byte, inPlaceFallback bool) (inPlace bool, er
 	}
 	return true, nil
 }
-
-// tempFileError is renameIntoPlace failing to create its temporary file -
-// the one failure writeFile's in-place fallback answers.
-type tempFileError struct{ err error }
-
-func (e *tempFileError) Error() string { return "writing profile: " + e.err.Error() }
-func (e *tempFileError) Unwrap() error { return e.err }
 
 // checkDirWritable refuses a directory lmm cannot create a file in.
 func checkDirWritable(dir string) error {
@@ -626,42 +619,6 @@ func checkWritable(path string) error {
 	if err := syscall.Access(target, accessWrite); err != nil {
 		return fmt.Errorf("writing profile: %w", &os.PathError{Op: "access", Path: target, Err: err})
 	}
-	return nil
-}
-
-// renameIntoPlace writes data, with mode, to a temporary file beside target
-// and renames it to target - creating target, or replacing it whole - so a
-// reader never sees a partial file.
-func renameIntoPlace(target string, data []byte, mode os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*.tmp")
-	if err != nil {
-		return &tempFileError{err: err}
-	}
-	renamed := false
-	defer func() {
-		// Whatever stopped the write short - an error, or a panic on its
-		// way to a caller's recover - leaves no temporary file behind.
-		if !renamed {
-			_ = tmp.Close()
-			_ = os.Remove(tmp.Name())
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("writing profile: %w", err)
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		return fmt.Errorf("writing profile: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("writing profile: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("writing profile: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), target); err != nil {
-		return fmt.Errorf("writing profile: %w", err)
-	}
-	renamed = true
 	return nil
 }
 

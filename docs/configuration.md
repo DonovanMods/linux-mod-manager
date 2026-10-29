@@ -161,6 +161,18 @@ hand-written file: `lmm game add`, `lmm game add --from-detected`,
 accept `Data` and store the resolved absolute path, so the file lmm writes
 reads back identically from any working directory.
 
+That resolved value is written for the game being saved only. Adding or
+editing one game rewrites that game's entry and nothing else:
+every other game keeps its text exactly as you wrote it — `~/` paths, a
+relative `mod_path`, comments, blank lines and indentation included — and
+an added game is appended after the last one, in the file's own
+indentation. A `games: {...}` written as one flow mapping is reformatted
+instead, but other games still keep their values as written. Every save
+replaces `games.yaml` atomically (a temporary file renamed over it), so a
+running `lmm serve` never reads half a file and an interrupted save leaves
+the old one in place; a symlinked `games.yaml`'s target is what changes, and
+a read-only one is refused.
+
 A relative `mod_path` needs an `install_path` to resolve against, so an
 entry that carries one without the other is refused — when `games.yaml` is
 read, naming the game and the field, and at the prompt/form/API, where the
