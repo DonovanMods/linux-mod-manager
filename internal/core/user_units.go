@@ -796,6 +796,16 @@ func RenderServeUnit(exe string, opts ServiceInstallOptions) ([]byte, error) {
 // at exe: a oneshot that runs `lmm self-update --auto`, which does nothing
 // unless config.yaml says auto_update: true. opts.ConfigDir, opts.DataDir
 // and opts.Environment reach it as they reach lmm-serve.service.
+//
+// A run that fails - the network not up yet after a resume, most often - is
+// retried by systemd itself, Restart=on-failure five minutes apart and at
+// most four starts an hour, rather than by a retry loop inside lmm: each
+// attempt is its own journal entry, a failure that persists ends in the
+// unit's failed state where `systemctl --user status` shows it, and a
+// manual `lmm self-update` has no backoff to wait through. It names no
+// network-online.target, which a user manager does not have. It sets no
+// PrivateTmp=: in a user manager that needs unprivileged user namespaces,
+// which some distributions turn off, and the unit would then not start.
 func RenderUpdateService(exe string, opts ServiceInstallOptions) ([]byte, error) {
 	execLine, err := renderExecStart(exe, []string{"self-update", "--auto"}, opts)
 	if err != nil {
@@ -811,12 +821,16 @@ func RenderUpdateService(exe string, opts ServiceInstallOptions) ([]byte, error)
 Description=lmm unattended self-update
 Documentation=https://donovanmods.github.io/linux-mod-manager/updates.html
 Documentation=man:lmm-self-update(1)
-Wants=network-online.target
-After=network-online.target
+# A failed run (most often a network that is not up yet) is tried again
+# five minutes later, up to three more times.
+StartLimitIntervalSec=1h
+StartLimitBurst=4
 
 [Service]
 Type=oneshot
-` + execLine + `NoNewPrivileges=yes
+` + execLine + `Restart=on-failure
+RestartSec=5min
+NoNewPrivileges=yes
 `), nil
 }
 

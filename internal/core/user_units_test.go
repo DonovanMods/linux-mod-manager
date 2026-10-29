@@ -755,3 +755,28 @@ func TestUserUnits_RestartServeIfActive(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, restarted)
 }
+
+// lmm-update.service retries a run that fails - a network that is not up
+// yet, most often - a few times, five minutes apart, rather than waiting a
+// day for the timer. network-online.target is not named: a user manager
+// has no such target to order against, so it would do nothing. Nor is
+// PrivateTmp=: in a user manager it needs unprivileged user namespaces,
+// which some distributions turn off, and the unit would then fail to start.
+func TestRenderUpdateService_RetriesAndHardening(t *testing.T) {
+	got, err := core.RenderUpdateService("/home/u/go/bin/lmm", core.ServiceInstallOptions{})
+	require.NoError(t, err)
+	unit := string(got)
+	for _, line := range []string{
+		"Restart=on-failure",
+		"RestartSec=5min",
+		"StartLimitIntervalSec=1h",
+		"StartLimitBurst=4",
+		"NoNewPrivileges=yes",
+	} {
+		assert.Contains(t, unit, "\n"+line+"\n")
+	}
+	assert.NotContains(t, unit, "network-online.target")
+	assert.NotContains(t, unit, "PrivateTmp")
+	unitSection, _, _ := strings.Cut(unit, "[Service]")
+	assert.Contains(t, unitSection, "StartLimitBurst=", "the start limit belongs in [Unit]")
+}
