@@ -27,6 +27,33 @@ lmm update <mod-id>
 `lmm update` on its own lists the mods that have updates. Give it a mod's id
 to update that mod. `lmm list` shows each mod's id.
 
+## Updating lmm itself
+
+Once a day, lmm asks GitHub whether a newer version of lmm is out. The first
+time it does, it tells you so. When there is one:
+
+- the browser shows a notice across the top of the page with a link to the
+  release notes. Close it with its **✕** button: that hides the notice for
+  that version only, and it comes back when an even newer version appears.
+- the terminal prints a one-line notice after a command, with the command
+  that upgrades lmm when your package manager installed it.
+
+To check yourself, and see how lmm was installed:
+
+```bash
+lmm version
+lmm version --check
+```
+
+`--check` asks GitHub right now instead of using the answer from earlier
+today. To turn the daily check off, add this line to `~/.config/lmm/config.yaml`:
+
+```yaml
+update_check: false
+```
+
+`lmm version --check` still works when the daily check is off.
+
 ## Going back to an older version
 
 If an update breaks something, roll it back. In the browser, open the mod

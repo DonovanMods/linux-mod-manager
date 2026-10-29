@@ -22,6 +22,7 @@ import { ProfilesModal } from "./profilesmodal.js";
 import { UninstallBatchModal } from "./uninstallbatchmodal.js";
 import { ShortcutsModal } from "./shortcutsmodal.js";
 import { Toasts } from "./toasts.js";
+import { ReleaseBanner } from "./releasebanner.js";
 import { FromFileInput } from "./updatefromfile.js";
 
 /** The application root: reads the route and dispatches to its screen. The
@@ -105,6 +106,10 @@ export function App({ state, onThemeChange, actions }) {
     ${routeName(route)}
   </p>`;
 
+  // issue 568: page-wide, right under the live region and above every screen's
+  // own top bar, so it is the same node on every route.
+  const releaseBanner = html`<${ReleaseBanner} />`;
+
   const modalType = state.modal?.type;
   const overlays = html`
     ${
@@ -160,7 +165,7 @@ export function App({ state, onThemeChange, actions }) {
     // profile's omnibar text long after its own fan-out had been cleared by
     // main.js#go.
     return html`
-      ${routeAnnouncer}
+      ${routeAnnouncer} ${releaseBanner}
       <${MissionControl}
         key=${`${route.game}:${route.profile}`}
         state=${state}
@@ -173,7 +178,7 @@ export function App({ state, onThemeChange, actions }) {
 
   if (route.view === "mod") {
     return html`
-      ${routeAnnouncer}
+      ${routeAnnouncer} ${releaseBanner}
       <${FullModPage}
         state=${state}
         route=${route}
@@ -186,7 +191,7 @@ export function App({ state, onThemeChange, actions }) {
 
   if (route.view === "search") {
     return html`
-      ${routeAnnouncer}
+      ${routeAnnouncer} ${releaseBanner}
       <${SearchPage}
         state=${state}
         route=${route}
@@ -199,7 +204,7 @@ export function App({ state, onThemeChange, actions }) {
 
   if (route.view === "setup") {
     return html`
-      ${routeAnnouncer}
+      ${routeAnnouncer} ${releaseBanner}
       <${SetupPage}
         state=${state}
         route=${route}
@@ -211,7 +216,7 @@ export function App({ state, onThemeChange, actions }) {
   }
 
   return html`
-    ${routeAnnouncer}
+    ${routeAnnouncer} ${releaseBanner}
     <header class="app-bar app-bar--minimal">
       <span class="app-bar__brand">LMM</span>
       <button
