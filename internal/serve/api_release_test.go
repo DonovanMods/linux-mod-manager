@@ -220,18 +220,18 @@ func replacedBinaryProbe(t *testing.T) (*core.InstallProbe, func()) {
 	require.NoError(t, os.WriteFile(exe, []byte("2.0.1"), 0o755))
 	old := time.Now().Add(-time.Hour)
 	require.NoError(t, os.Chtimes(exe, old, old))
-	return &core.InstallProbe{
-			Executable: func() (string, error) { return exe, nil },
-			LookPath:   func(string) (string, error) { return "", os.ErrNotExist },
-			Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
-				if name == exe && len(args) == 1 && args[0] == "--version" {
-					return []byte("lmm version 2.2.0\n"), nil
-				}
-				return nil, os.ErrNotExist
-			},
-		}, func() {
-			require.NoError(t, os.WriteFile(exe, []byte("2.2.0"), 0o755))
-		}
+	probe := &core.InstallProbe{
+		Executable: func() (string, error) { return exe, nil },
+		LookPath:   func(string) (string, error) { return "", os.ErrNotExist },
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == exe && len(args) == 1 && args[0] == "--version" {
+				return []byte("lmm version 2.2.0\n"), nil
+			}
+			return nil, os.ErrNotExist
+		},
+	}
+	replace := func() { require.NoError(t, os.WriteFile(exe, []byte("2.2.0"), 0o755)) }
+	return probe, replace
 }
 
 // TestAPIReleaseStatus_ReportsANewerInstalledBinary (#569): once the
