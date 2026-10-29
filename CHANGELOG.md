@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version, the newest release and how lmm was installed (`--check` asks now,
   `--json` for scripts; `GET /api/v1/updates/lmm` serves the same document).
   lmm asks GitHub at most once a day, sending only an `lmm/<version>`
-  User-Agent, caches the answer (and a failure) under the data dir, ignores
-  drafts and prereleases, and never reports one for a dev build; no notice
+  User-Agent, caches the answer (and a failure) under the data dir, backs
+  off to once a day on a network that never answers, ignores drafts and
+  prereleases, and never reports one for a dev build; no notice
   is printed with `--json` or when stderr is not a terminal. It is on by
   default and says so the first time; `update_check: false` in
   `config.yaml` turns it off.

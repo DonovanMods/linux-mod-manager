@@ -37,7 +37,7 @@ func (f *fakeProbe) probe() core.InstallProbe {
 			if out, ok := f.owners[name]; ok {
 				return []byte(out), nil
 			}
-			return nil, errors.New("exit status 1")
+			return nil, exitStatus(1)
 		},
 	}
 }

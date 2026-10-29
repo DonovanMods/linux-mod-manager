@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,8 +53,9 @@ type InstallProbe struct {
 	Executable func() (string, error)
 	// LookPath reports whether a tool is on PATH (exec.LookPath).
 	LookPath func(name string) (string, error)
-	// Run runs a tool and returns its standard output; a non-zero exit is
-	// an error, which an owner query uses to say "not mine".
+	// Run runs a tool and returns its standard output. Exit status 1 - an
+	// error with an ExitCode() int method, as *exec.ExitError has - is an
+	// owner query's "not mine"; any other error leaves the owner unknown.
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
 	// ModTime is a file's modification time, which keys the cached answer
 	// to the binary it was about; nil is os.Stat's.
@@ -206,16 +208,22 @@ func DetectInstallMethod(ctx context.Context, probe InstallProbe, dev bool) Inst
 }
 
 // detectInstallMethodAt asks each package manager on PATH about exe. It
-// also reports whether the answer is complete: false when ctx ended before
-// every manager had answered, so a self-managed answer may be one a slower
-// query would have contradicted.
+// also reports whether the answer is definitive: a manager owns exe, or
+// every manager asked said it does not. It is not when ctx ended first, or
+// when a query failed some other way - a locked or corrupt database, a tool
+// that would not start or was killed - so a self-managed answer may be one
+// a working query would have contradicted.
 func detectInstallMethodAt(ctx context.Context, probe InstallProbe, exe string) (InstallMethod, bool) {
+	definitive := true
 	for _, q := range ownerQueries {
 		if _, err := probe.LookPath(q.tool); err != nil {
 			continue
 		}
 		out, err := probe.Run(ctx, q.tool, q.args(exe)...)
 		if err != nil {
+			if !isNotOwned(err) {
+				definitive = false
+			}
 			continue
 		}
 		pkg := strings.TrimSpace(q.parse(strings.TrimSpace(string(out))))
@@ -229,7 +237,17 @@ func detectInstallMethodAt(ctx context.Context, probe InstallProbe, exe string) 
 			UpgradeCommand: upgradeCommand(q.tool, pkg, probe.LookPath),
 		}, true
 	}
-	return InstallMethod{Method: InstallSelfManaged}, ctx.Err() == nil
+	return InstallMethod{Method: InstallSelfManaged}, definitive && ctx.Err() == nil
+}
+
+// isNotOwned reports whether an owner query's error is its "no package
+// owns this file" answer: exit status 1, which dpkg -S, rpm -qf, apk
+// --who-owns and pacman -Qo each exit with for an unowned file. A database
+// error that also exits 1 reads as not owned; nothing in the exit status
+// tells the two apart.
+func isNotOwned(err error) bool {
+	var exit interface{ ExitCode() int }
+	return errors.As(err, &exit) && exit.ExitCode() == 1
 }
 
 // upgradeCommand is the command that upgrades pkg under manager. An rpm

@@ -2,10 +2,12 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -585,4 +587,59 @@ func TestReleaseChecker_RepeatedAbandonedChecksBackOff(t *testing.T) {
 	abandonCheck(t, rc, rs)
 	clock.now = clock.now.Add(11 * time.Minute)
 	assert.True(t, rc.RefreshDue(), "a real failure reset the count")
+}
+
+// exitStatus is a tool's non-zero exit, as *exec.ExitError reports it.
+type exitStatus int
+
+func (e exitStatus) Error() string { return "exit status " + strconv.Itoa(int(e)) }
+func (e exitStatus) ExitCode() int { return int(e) }
+
+// TestReleaseChecker_AnInconclusiveDetectionIsNotCached: only a definitive
+// answer - a manager that owns the binary, or every manager on PATH saying
+// it owns no such file (exit 1) - is cached. A query that failed for any
+// other reason (a locked or corrupt database, a tool that would not start
+// or was killed) says nothing about the owner, so the next process asks
+// again rather than remembering self-managed for good.
+func TestReleaseChecker_AnInconclusiveDetectionIsNotCached(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		cached bool
+	}{
+		{"not owned (exit 1) is definitive", exitStatus(1), true},
+		{"another exit status is not", exitStatus(2), false},
+		{"a tool that did not run is not", errors.New("rpmdb: lock table is out of available locker entries"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := newReleaseServer(t, releaseV210)
+			clock := &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+			exe := filepath.Join(t.TempDir(), "lmm")
+			require.NoError(t, os.WriteFile(exe, []byte("binary"), 0o755))
+			var runs atomic.Int32
+			_, opts := newChecker(t, rs, clock, func(o *core.ReleaseCheckOptions) {
+				o.Probe = &core.InstallProbe{
+					Executable: func() (string, error) { return exe, nil },
+					LookPath: func(name string) (string, error) {
+						if name == "rpm" {
+							return "/usr/bin/rpm", nil
+						}
+						return "", os.ErrNotExist
+					},
+					Run: func(context.Context, string, ...string) ([]byte, error) {
+						runs.Add(1)
+						return nil, tc.err
+					},
+				}
+			})
+			assert.Equal(t, core.InstallSelfManaged, core.NewReleaseChecker(opts).Status(context.Background()).Install.Method)
+			require.Equal(t, int32(1), runs.Load())
+			core.NewReleaseChecker(opts).Status(context.Background())
+			if tc.cached {
+				assert.Equal(t, int32(1), runs.Load(), "a definitive answer is cached")
+			} else {
+				assert.Equal(t, int32(2), runs.Load(), "an inconclusive answer is asked again")
+			}
+		})
+	}
 }
