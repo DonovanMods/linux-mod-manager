@@ -77,7 +77,11 @@ uses the new version straight away. If you started `lmm serve` yourself in a
 terminal, it keeps running the old version, and the browser shows a notice
 asking you to restart it: stop it with **Ctrl+C** and run `lmm serve` again.
 
-`lmm self-update` doesn't work in two cases, and tells you what to do
+Only one update runs at a time. If you start `lmm self-update` while
+another is already running (the automatic one, for example), it says so and
+stops; run it again once the first has finished.
+
+`lmm self-update` doesn't work in these cases, and tells you what to do
 instead:
 
 - **Your package manager installed lmm** (a `.deb`, `.rpm` or `.apk`
@@ -86,6 +90,9 @@ instead:
 - **lmm is in a folder you can't write to**, such as `/usr/local/bin`. lmm
   never asks for your password or uses `sudo`. Move `lmm` into a folder of
   your own, such as `~/.local/bin`, and run `lmm self-update` from there.
+- **lmm can't tell whether your package manager installed it.** This
+  happens when the package manager is busy, for example while another
+  update is running. lmm leaves your copy alone; try again in a minute.
 
 ### Update lmm automatically
 
@@ -106,7 +113,9 @@ auto_update: true
 The timer runs once a day at a random time in the first hour after
 midnight, or the next time you log in if your computer was off. To stop
 automatic updates, change that line to `auto_update: false` or remove it;
-the timer keeps running but does nothing. `lmm service uninstall` removes
+the timer keeps running but does nothing. If an automatic update fails,
+for example because your network isn't up yet, it tries again five minutes
+later, up to three more times. `lmm service uninstall` removes
 the timer along with the background web interface.
 
 ## Going back to an older version

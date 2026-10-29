@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -118,6 +119,23 @@ func runSelfUpdate(ctx context.Context) error {
 		}
 		fmt.Println("auto_update is off in config.yaml; not updating.")
 		return nil
+	}
+	// One run at a time, held from the plan through the install. --check
+	// only reads, so it takes no lock. The timer's run steps aside for one
+	// already under way: that is not a failure for systemd to retry.
+	if !selfUpdate.check {
+		unlock, err := u.Lock()
+		if errors.Is(err, core.ErrSelfUpdateRunning) && selfUpdate.auto {
+			if jsonOutput {
+				return emitJSON(core.SelfUpdateResult{Previous: version, Version: version})
+			}
+			fmt.Println(err.Error() + "; not updating.")
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		defer unlock()
 	}
 	plan, err := u.Plan(ctx)
 	if err != nil {

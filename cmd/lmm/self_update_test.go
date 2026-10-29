@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -232,4 +233,55 @@ func TestJSONGolden_SelfUpdateCheck(t *testing.T) {
 	out := captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
 	out = strings.ReplaceAll(out, "_"+runtime.GOARCH+".tar.gz", "_<ARCH>.tar.gz")
 	assertJSONCLIGolden(t, "self_update_check", out, f.exe, "<LMM-BINARY>")
+}
+
+// A second self-update while one runs is refused, and replaces nothing;
+// the timer's --auto run, which a person's update can overlap, steps aside
+// quietly and exits 0.
+func TestSelfUpdateCmd_AnotherRunHoldsTheLock(t *testing.T) {
+	f := newCLISelfUpdate(t)
+	holder, err := newSelfUpdater()
+	require.NoError(t, err)
+	unlock, err := holder.Lock()
+	require.NoError(t, err)
+	defer unlock()
+
+	selfUpdate.yes = true
+	err = runSelfUpdate(context.Background())
+	require.ErrorIs(t, err, core.ErrSelfUpdateRunning)
+	assert.Equal(t, "old lmm", f.installed(t))
+	assert.Zero(t, f.downloads)
+
+	selfUpdate = selfUpdateFlags{auto: true}
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("auto_update: true\n"), 0o644))
+	out := captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Contains(t, out, "another self-update is running")
+	assert.Equal(t, "old lmm", f.installed(t))
+	assert.Zero(t, f.downloads)
+
+	// --check only reads, so it never waits on the lock.
+	selfUpdate = selfUpdateFlags{check: true}
+	out = captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Contains(t, out, "2.2.0")
+}
+
+// A package database lmm could not get an answer from (locked mid-upgrade,
+// or timed out) is no ground to install a timer that might later replace a
+// package's binary.
+func TestServiceInstall_AutoUpdateRefusesAnUndeterminedInstallMethod(t *testing.T) {
+	f := newCLISelfUpdate(t)
+	unitDir := filepath.Dir(useTestUserUnits(t, f.systemd))
+	releaseInstallProbe.LookPath = func(name string) (string, error) {
+		if name == "dpkg" {
+			return "/usr/bin/dpkg", nil
+		}
+		return "", os.ErrNotExist
+	}
+	releaseInstallProbe.Run = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("dpkg: database is locked")
+	}
+	err := doServiceInstallWith(context.Background(), serviceCmd, "", true)
+	var unknown *core.InstallMethodUnknownError
+	require.ErrorAs(t, err, &unknown)
+	assert.NoFileExists(t, filepath.Join(unitDir, "lmm-update.timer"))
 }

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -107,10 +108,24 @@ func (e *PackageManagedError) Error() string {
 		e.Install.Package, e.Install.Manager, e.Install.UpgradeCommand)
 }
 
+// InstallMethodUnknownError refuses an update when lmm could not tell
+// whether a package manager owns its binary: an owner query failed some
+// other way than "not mine" - a locked database, one mid-upgrade, a query
+// that timed out - or the caller's context ended first. Reading that as
+// self-managed could overwrite a package's file, so nothing is replaced.
+type InstallMethodUnknownError struct {
+	// Executable is the binary lmm asked about.
+	Executable string
+}
+
+// Error says what could not be settled, and to try again.
+func (e *InstallMethodUnknownError) Error() string {
+	return fmt.Sprintf("could not determine whether a package manager owns lmm (%s): a package database query failed or timed out, perhaps while it is in use; try again", e.Executable)
+}
+
 // CheckSelfUpdatable refuses an install method lmm self-update cannot
 // update: a *PackageManagedError for a package's binary, ErrDevBuild for a
-// development build. `lmm service install --auto-update` asks it too, so a
-// timer that could never succeed is not installed.
+// development build.
 func CheckSelfUpdatable(m InstallMethod) error {
 	switch m.Method {
 	case InstallPackage:
@@ -120,6 +135,78 @@ func CheckSelfUpdatable(m InstallMethod) error {
 	}
 	return nil
 }
+
+// CheckSelfUpdateInstall asks how the running binary was installed and
+// refuses one lmm self-update cannot replace, as CheckSelfUpdatable does -
+// and, unlike DetectInstallMethod's never-failing answer, also refuses one
+// it could not determine, with an *InstallMethodUnknownError. SelfUpdater's
+// Plan and `lmm service install --auto-update` both ask it, so neither
+// replaces a binary nor installs a timer on a guess.
+func CheckSelfUpdateInstall(ctx context.Context, probe InstallProbe, dev bool) error {
+	if dev {
+		return ErrDevBuild
+	}
+	exe, err := probe.Executable()
+	if err != nil {
+		return fmt.Errorf("finding the lmm binary: %w", err)
+	}
+	if exe == "" {
+		return errors.New("finding the lmm binary: its path is unknown")
+	}
+	m, definitive := detectInstallMethodAt(ctx, probe, exe)
+	if err := CheckSelfUpdatable(m); err != nil {
+		return err
+	}
+	if !definitive {
+		return &InstallMethodUnknownError{Executable: exe}
+	}
+	return nil
+}
+
+// releaseTagPattern is the only release tag self-update acts on: a plain
+// vMAJOR.MINOR.PATCH, ASCII digits, nothing before or after it.
+var releaseTagPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// ReleaseTagError refuses a latest release whose tag_name is not a plain
+// vX.Y.Z - build metadata, a prerelease suffix, a path, a control byte -
+// before the tag reaches a download URL, a file name or the terminal.
+type ReleaseTagError struct {
+	// Tag is the tag as GitHub sent it.
+	Tag string
+}
+
+// releaseTagShown caps how much of a refused tag the error quotes.
+const releaseTagShown = 64
+
+// Error quotes the tag, escaped and shortened, never raw.
+func (e *ReleaseTagError) Error() string {
+	tag := e.Tag
+	if len(tag) > releaseTagShown {
+		tag = tag[:releaseTagShown] + "..."
+	}
+	return fmt.Sprintf("the latest lmm release's tag %q is not a plain vX.Y.Z version, so self-update will not use it; nothing was installed", tag)
+}
+
+// checkReleaseTag returns tag's version without its "v", or a
+// *ReleaseTagError for a tag that is not exactly vX.Y.Z.
+func checkReleaseTag(tag string) (semver, error) {
+	if !releaseTagPattern.MatchString(tag) {
+		return semver{}, &ReleaseTagError{Tag: tag}
+	}
+	v, ok := parseSemver(tag)
+	if !ok {
+		return semver{}, &ReleaseTagError{Tag: tag}
+	}
+	return v, nil
+}
+
+// ErrSelfUpdateRunning is SelfUpdater.Lock's refusal: another lmm
+// self-update holds the lock on the same data directory.
+var ErrSelfUpdateRunning = errors.New("another self-update is running")
+
+// selfUpdateLockFile is the lock file, in the data directory, that keeps
+// two self-updates from running at once.
+const selfUpdateLockFile = "self-update.lock"
 
 // ReleaseSignatureError refuses a release whose checksums.txt is not signed
 // by a key compiled into lmm: the signature is missing, or it does not
@@ -265,9 +352,10 @@ type SelfUpdateOptions struct {
 // staging directory. Plan reads the latest release and refuses an install
 // it cannot update; Apply downloads, verifies and replaces.
 type SelfUpdater struct {
-	opts   SelfUpdateOptions
-	api    *httpclient.Client
-	assets *httpclient.Client
+	opts       SelfUpdateOptions
+	httpClient *http.Client // carries both clients' requests, with releaseRedirectPolicy
+	api        *httpclient.Client
+	assets     *httpclient.Client
 }
 
 // SelfUpdatePlan is what `lmm self-update --check` (and --json without
@@ -326,10 +414,12 @@ func NewSelfUpdater(opts SelfUpdateOptions) *SelfUpdater {
 	if opts.Arch == "" {
 		opts.Arch = runtime.GOARCH
 	}
-	hc := opts.HTTPClient
-	if hc == nil {
-		hc = &http.Client{Transport: &httpclient.IdleTimeout{Timeout: selfUpdateStall}}
+	hc := &http.Client{Transport: &httpclient.IdleTimeout{Timeout: selfUpdateStall}}
+	if opts.HTTPClient != nil {
+		c := *opts.HTTPClient
+		hc = &c
 	}
+	hc.CheckRedirect = releaseRedirectPolicy
 	client := func(base string, maxBytes int64) *httpclient.Client {
 		return httpclient.New(httpclient.Options{
 			HTTPClient:       hc,
@@ -347,10 +437,58 @@ func NewSelfUpdater(opts SelfUpdateOptions) *SelfUpdater {
 		})
 	}
 	return &SelfUpdater{
-		opts:   opts,
-		api:    client(opts.APIBase, releaseCheckMaxBytes),
-		assets: client(opts.DownloadBase, 0),
+		opts:       opts,
+		httpClient: hc,
+		api:        client(opts.APIBase, releaseCheckMaxBytes),
+		assets:     client(opts.DownloadBase, 0),
 	}
+}
+
+// releaseRedirectMax is how many redirects a request follows, as
+// net/http's default policy.
+const releaseRedirectMax = 10
+
+// releaseRedirectPolicy is the self-update client's CheckRedirect. A
+// release download redirects from github.com to GitHub's object storage;
+// it follows that, and any redirect, only over https to github.com,
+// *.github.com or *.githubusercontent.com on the default port, and refuses
+// everything else - an https->http downgrade included. The signature
+// check makes a tarball from elsewhere useless anyway; this keeps lmm from
+// fetching it at all.
+func releaseRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if len(via) >= releaseRedirectMax {
+		return fmt.Errorf("refusing a redirect: stopped after %d redirects", releaseRedirectMax)
+	}
+	host := strings.ToLower(req.URL.Hostname())
+	gitHub := host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".githubusercontent.com")
+	port := req.URL.Port()
+	if req.URL.Scheme != "https" || !gitHub || (port != "" && port != "443") {
+		return fmt.Errorf("refusing a redirect to %q: lmm downloads releases only from GitHub, over https", req.URL.Scheme+"://"+req.URL.Host)
+	}
+	return nil
+}
+
+// Lock takes the self-update lock, <DataDir>/self-update.lock, which a run
+// holds from its Plan through its Apply so two runs - the timer's and a
+// person's - never replace the binary at once. It does not wait: a lock
+// another process holds is ErrSelfUpdateRunning. The lock is a flock, so a
+// run that dies drops it; unlock is idempotent.
+func (u *SelfUpdater) Lock() (unlock func(), err error) {
+	if err := os.MkdirAll(u.opts.DataDir, 0o755); err != nil {
+		return nil, err
+	}
+	l, err := acquireOpLock(context.Background(), filepath.Join(u.opts.DataDir, selfUpdateLockFile), 0)
+	if err != nil {
+		var held *OperationInProgressError
+		if errors.As(err, &held) {
+			if held.PID != 0 {
+				return nil, fmt.Errorf("%w (pid %d)", ErrSelfUpdateRunning, held.PID)
+			}
+			return nil, ErrSelfUpdateRunning
+		}
+		return nil, err
+	}
+	return l.release, nil
 }
 
 // AutoUpdateEnabled reports config.yaml's auto_update, which the
@@ -369,12 +507,14 @@ func (u *SelfUpdater) probe() InstallProbe {
 	return DefaultInstallProbe()
 }
 
-// Plan refuses a binary self-update cannot replace - a *PackageManagedError
-// or ErrDevBuild - and otherwise reads the latest release and compares it
-// with the running version. Up to date is a plan, not an error.
+// Plan refuses a binary self-update cannot replace - a *PackageManagedError,
+// ErrDevBuild, or an *InstallMethodUnknownError when that could not be
+// settled - and otherwise reads the latest release and compares it with the
+// running version. A latest release whose tag is not a plain vX.Y.Z is a
+// *ReleaseTagError. Up to date is a plan, not an error.
 func (u *SelfUpdater) Plan(ctx context.Context) (SelfUpdatePlan, error) {
 	probe := u.probe()
-	if err := CheckSelfUpdatable(DetectInstallMethod(ctx, probe, u.opts.Dev)); err != nil {
+	if err := CheckSelfUpdateInstall(ctx, probe, u.opts.Dev); err != nil {
 		return SelfUpdatePlan{}, err
 	}
 	exe, err := probe.Executable()
@@ -397,11 +537,14 @@ func (u *SelfUpdater) Plan(ctx context.Context) (SelfUpdatePlan, error) {
 		}
 		return SelfUpdatePlan{}, fmt.Errorf("asking GitHub for the latest lmm release: %w", err)
 	}
-	latest, ok := parseSemver(doc.TagName)
-	if !ok || doc.Draft || doc.Prerelease || latest.pre != "" {
+	latest, err := checkReleaseTag(doc.TagName)
+	if err != nil {
+		return SelfUpdatePlan{}, err
+	}
+	if doc.Draft || doc.Prerelease {
 		return plan, nil
 	}
-	plan.Latest = strings.TrimPrefix(strings.TrimPrefix(doc.TagName, "v"), "V")
+	plan.Latest = strings.TrimPrefix(doc.TagName, "v")
 	plan.ReleaseURL = domain.SafeWebURL(doc.HTMLURL)
 	cur, ok := parseSemver(u.opts.Version)
 	if ok && !cur.less(latest) {
@@ -427,6 +570,13 @@ func (u *SelfUpdater) Apply(ctx context.Context, plan SelfUpdatePlan) (SelfUpdat
 	if plan.Latest == "" || plan.Asset == "" || plan.Executable == "" {
 		return res, errors.New("self-update plan is incomplete")
 	}
+	tag := "v" + plan.Latest
+	if _, err := checkReleaseTag(tag); err != nil {
+		return res, err
+	}
+	if plan.Asset != fmt.Sprintf("lmm_%s_linux_%s.tar.gz", plan.Latest, u.opts.Arch) {
+		return res, fmt.Errorf("self-update plan names asset %q, not this release's tarball for %s", plan.Asset, u.opts.Arch)
+	}
 	dir := filepath.Dir(plan.Executable)
 	if err := checkWritableDir(dir); err != nil {
 		return res, &ExecutableNotWritableError{Executable: plan.Executable, Dir: dir, Err: err}
@@ -438,7 +588,6 @@ func (u *SelfUpdater) Apply(ctx context.Context, plan SelfUpdatePlan) (SelfUpdat
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	tag := "v" + plan.Latest
 	checksums, err := u.download(ctx, tag, checksumsAsset, checksumsMaxBytes, nil)
 	if errors.Is(err, errNoRelease) {
 		return res, &ReleaseAssetError{Version: plan.Latest, Asset: checksumsAsset}

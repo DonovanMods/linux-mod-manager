@@ -150,7 +150,7 @@ func doServiceInstallWith(ctx context.Context, cmd *cobra.Command, addr string, 
 		if releaseInstallProbe != nil {
 			probe = *releaseInstallProbe
 		}
-		if err := core.CheckSelfUpdatable(core.DetectInstallMethod(ctx, probe, isDevBuild())); err != nil {
+		if err := core.CheckSelfUpdateInstall(ctx, probe, isDevBuild()); err != nil {
 			return err
 		}
 	}
