@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,7 +52,18 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	// #568: the release check is on by default, so nothing in this
+	// binary may reach api.github.com - a request is refused before it is
+	// sent, and any attempt fails the run even when the code that made it
+	// swallowed the error (a release check never fails a command).
+	githubAttempts := testutil.GuardGitHub()
+
 	code := m.Run()
+
+	if attempts := githubAttempts(); len(attempts) > 0 {
+		fmt.Fprintf(os.Stderr, "FAIL: the test suite tried to reach GitHub:\n  %s\n", strings.Join(attempts, "\n  "))
+		code = 1
+	}
 
 	_ = os.RemoveAll(cfg)
 	_ = os.RemoveAll(data)

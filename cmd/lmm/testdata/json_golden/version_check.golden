@@ -1,0 +1,12 @@
+{
+  "current": "2.0.0",
+  "latest": "2.1.0",
+  "update_available": true,
+  "release_url": "https://github.com/DonovanMods/linux-mod-manager/releases/tag/v2.1.0",
+  "checked_at": "<TIME>",
+  "check_enabled": true,
+  "dev": false,
+  "install": {
+    "method": "self-managed"
+  }
+}

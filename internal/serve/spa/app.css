@@ -2590,6 +2590,22 @@ a.row-menu__item.mod-page-link {
   color: var(--text-muted);
 }
 
+/* issue 568: the page-wide "newer lmm" notice - the toast's own surface tokens. */
+.release-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-6);
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+}
+
+.release-banner__text {
+  margin: 0;
+}
+
 /* The tool's own output, for a failure lmm could not classify - the same
  * tail the terminal prints under its error line. */
 .job-progress__tool-output {
