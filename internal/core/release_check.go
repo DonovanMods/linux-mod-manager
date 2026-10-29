@@ -26,8 +26,10 @@ import (
 // a day, sending nothing but an lmm/<version> User-Agent. Its answer - and
 // a failure, which is an answer too - is cached in the data dir, so the
 // 24-hour rule holds across processes and a broken network is asked once a
-// day rather than on every command. A user turns it off with
-// `update_check: false` in config.yaml.
+// day rather than on every command. An attempt that never finished (its
+// caller exited, or gave up) is no answer: it holds off another for only
+// releaseRetryAfter. A user turns it off with `update_check: false` in
+// config.yaml.
 
 // GitHubAPIBase is the production ReleaseCheckOptions.APIBase. It is not a
 // default: NewReleaseChecker refuses an empty APIBase, so nothing - a test
@@ -37,6 +39,12 @@ const GitHubAPIBase = "https://api.github.com"
 // ReleaseCheckInterval is how long a check's answer stands before the next
 // unforced check asks GitHub again.
 const ReleaseCheckInterval = 24 * time.Hour
+
+// releaseRetryAfter is how long an attempt that did not finish - abandoned
+// by a CLI command that exited first, or still in flight - holds off the
+// next: long enough that a burst of commands asks once, short enough that a
+// user whose commands are all quick still hears about a release that day.
+const releaseRetryAfter = 10 * time.Minute
 
 // releaseCheckTimeout bounds one request when the caller's context sets no
 // tighter deadline. The CLI's after-command check sets a much tighter one.
@@ -66,7 +74,8 @@ type ReleaseStatus struct {
 	// for a dev build.
 	UpdateAvailable bool `json:"update_available"`
 	// ReleaseURL is Latest's release page (its notes and downloads),
-	// limited to http(s) by domain.SafeWebURL.
+	// limited to http(s) by domain.SafeWebURL - when it is fetched, and
+	// again when it is read back from the cache.
 	ReleaseURL string `json:"release_url,omitempty"`
 	// CheckedAt is when lmm last asked GitHub, successfully or not. Zero
 	// when it never has.
@@ -80,6 +89,8 @@ type ReleaseStatus struct {
 	// Dev is a development build, which never reports an update.
 	Dev bool `json:"dev"`
 	// Install is how this binary was installed, which is how to upgrade it.
+	// It is self-managed - the release page, never a wrong place to send
+	// someone - when detection did not finish in the caller's time.
 	Install InstallMethod `json:"install"`
 }
 
@@ -114,19 +125,45 @@ type ReleaseChecker struct {
 	opts   ReleaseCheckOptions
 	client *httpclient.Client
 
-	mu sync.Mutex // serialises a check's read-modify-write of the cache
+	mu sync.Mutex // serialises this process's reads and writes of the cache
 
-	installOnce sync.Once
-	install     InstallMethod
+	installMu    sync.Mutex    // guards the three fields below
+	install      InstallMethod // the detected answer, once installKnown
+	installKnown bool
+	installDone  chan struct{} // closed when the detection under way ends; nil when none is
 }
 
 // releaseCheckState is the cache file's document.
 type releaseCheckState struct {
-	CheckedAt   time.Time `json:"checked_at"`
-	Latest      string    `json:"latest,omitempty"`
-	URL         string    `json:"url,omitempty"`
-	Error       string    `json:"error,omitempty"`
-	NoticeShown bool      `json:"first_run_notice_shown,omitempty"`
+	// CheckedAt is the last check that finished, with an answer or a
+	// failure; Latest, URL and Error are what it learned.
+	CheckedAt time.Time `json:"checked_at"`
+	Latest    string    `json:"latest,omitempty"`
+	URL       string    `json:"url,omitempty"`
+	Error     string    `json:"error,omitempty"`
+	// AttemptedAt is a check that started and has not finished - in
+	// flight, or abandoned - which holds off another for releaseRetryAfter.
+	AttemptedAt time.Time          `json:"attempted_at,omitzero"`
+	NoticeShown bool               `json:"first_run_notice_shown,omitempty"`
+	Install     *installCacheEntry `json:"install,omitempty"`
+}
+
+// installCacheEntry is a detected install method and the binary it is
+// about: the resolved executable path and its modification time, so a
+// binary replaced in place (an upgrade, a `make install`) is asked about
+// afresh.
+type installCacheEntry struct {
+	Executable string        `json:"executable"`
+	ModTime    time.Time     `json:"mod_time"`
+	Method     InstallMethod `json:"method"`
+}
+
+// releaseAnswer is one finished check's answer: the latest stable release,
+// or none, or skip - a "latest" that is not a stable release this check
+// compares, which says nothing about the one lmm already knows.
+type releaseAnswer struct {
+	latest, url string
+	skip        bool
 }
 
 // errNoRelease is GitHub's 404 for a repository with no published release.
@@ -209,7 +246,8 @@ func (r *ReleaseChecker) Refresh(ctx context.Context) error {
 // PendingUpdate is the cached status when it reports an update, and false
 // otherwise - the CLI's after-command notice, which runs after every
 // interactive command and so asks a package manager about the binary only
-// on the runs that have an update to word.
+// on the runs that have an update to word, and then normally answers from
+// the cached install method. ctx bounds the detection when it must run.
 func (r *ReleaseChecker) PendingUpdate(ctx context.Context) (ReleaseStatus, bool) {
 	r.mu.Lock()
 	st := r.load()
@@ -220,40 +258,67 @@ func (r *ReleaseChecker) PendingUpdate(ctx context.Context) (ReleaseStatus, bool
 	return r.status(ctx, st), true
 }
 
+// RefreshDue reports whether an unforced check would ask GitHub now: the
+// check is on, this is a release build, and no answer (nor an attempt
+// still standing) is recent enough to keep.
+func (r *ReleaseChecker) RefreshDue() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.due(r.load(), r.opts.Now())
+}
+
+// due is RefreshDue against a loaded state.
+func (r *ReleaseChecker) due(st releaseCheckState, now time.Time) bool {
+	if r.opts.Dev || !r.Enabled() {
+		return false
+	}
+	return !within(st.CheckedAt, now, ReleaseCheckInterval) && !within(st.AttemptedAt, now, releaseRetryAfter)
+}
+
+// within reports whether t is set and less than d before now.
+func within(t, now time.Time, d time.Duration) bool {
+	age := now.Sub(t)
+	return !t.IsZero() && age >= 0 && age < d
+}
+
 // refresh is Check without the status.
 func (r *ReleaseChecker) refresh(ctx context.Context, force bool) (releaseCheckState, error) {
 	r.mu.Lock()
 	st := r.load()
 	now := r.opts.Now()
-	if !force {
-		if age := now.Sub(st.CheckedAt); r.opts.Dev || !r.Enabled() ||
-			(!st.CheckedAt.IsZero() && age >= 0 && age < ReleaseCheckInterval) {
-			r.mu.Unlock()
-			return st, nil
-		}
+	if !force && !r.due(st, now) {
+		r.mu.Unlock()
+		return st, nil
 	}
-	// The attempt is recorded BEFORE the request, as a failure: a CLI run
-	// that exits before the answer arrives still counts as today's one
-	// request, so a slow network is not asked again on every command.
-	st.CheckedAt = now
-	st.Error = "the check did not finish"
-	_ = r.save(st)
+	// The attempt is recorded BEFORE the request: a CLI run that exits
+	// before the answer arrives still holds off the next command's attempt
+	// for releaseRetryAfter, so a slow network is not asked on every one.
+	_, _ = r.update(func(s *releaseCheckState) { s.AttemptedAt = now })
 	r.mu.Unlock()
 
 	// Unlocked while the request is out: a Status read (a page load in
 	// `lmm serve`) answers from the cache instead of waiting on GitHub.
-	latest, url, err := r.fetch(ctx)
+	ans, err := r.fetch(ctx)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	st = r.load()
-	st.CheckedAt = now
-	if err != nil {
-		st.Error = err.Error()
-	} else {
-		st.Latest, st.URL, st.Error = latest, url, ""
+	if err != nil && ctx.Err() != nil {
+		// The caller gave up - a CLI command finishing, Ctrl-C, a server
+		// shutting down - which says nothing about GitHub: AttemptedAt
+		// stands, and the last real answer stays the answer.
+		return r.load(), err
 	}
-	_ = r.save(st)
+	st, _ = r.update(func(s *releaseCheckState) {
+		s.CheckedAt, s.AttemptedAt = now, time.Time{}
+		switch {
+		case err != nil:
+			s.Error = err.Error()
+		case ans.skip:
+			s.Error = ""
+		default:
+			s.Latest, s.URL, s.Error = ans.latest, ans.url, ""
+		}
+	})
 	return st, err
 }
 
@@ -269,14 +334,20 @@ func (r *ReleaseChecker) FirstRunNoticeDue() bool {
 func (r *ReleaseChecker) RecordFirstRunNotice() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	st := r.load()
-	st.NoticeShown = true
-	return r.save(st)
+	_, err := r.update(func(s *releaseCheckState) { s.NoticeShown = true })
+	return err
 }
 
-// fetch reads the latest release: its version and page, or "" for both
-// when there is no stable release to report.
-func (r *ReleaseChecker) fetch(ctx context.Context) (string, string, error) {
+// FirstRunNotice is the one-time notice's text, which both frontends show
+// before their first check: that lmm asks GitHub, and how to stop it.
+func (r *ReleaseChecker) FirstRunNotice() string {
+	return "lmm checks GitHub for a new release once a day; to turn this off, set update_check: false in " +
+		filepath.Join(r.opts.ConfigDir, "config.yaml")
+}
+
+// fetch reads the latest release: its version and page, "" for both when
+// none is published, or skip when "latest" is not a stable release.
+func (r *ReleaseChecker) fetch(ctx context.Context) (releaseAnswer, error) {
 	var doc struct {
 		TagName    string `json:"tag_name"`
 		HTMLURL    string `json:"html_url"`
@@ -285,15 +356,18 @@ func (r *ReleaseChecker) fetch(ctx context.Context) (string, string, error) {
 	}
 	if err := r.client.DoJSON(ctx, http.MethodGet, releaseLatestPath, &doc); err != nil {
 		if errors.Is(err, errNoRelease) {
-			return "", "", nil
+			return releaseAnswer{}, nil
 		}
-		return "", "", err
+		return releaseAnswer{}, err
 	}
 	v, ok := parseSemver(doc.TagName)
 	if !ok || doc.Draft || doc.Prerelease || v.pre != "" {
-		return "", "", nil
+		return releaseAnswer{skip: true}, nil
 	}
-	return strings.TrimPrefix(strings.TrimPrefix(doc.TagName, "v"), "V"), domain.SafeWebURL(doc.HTMLURL), nil
+	return releaseAnswer{
+		latest: strings.TrimPrefix(strings.TrimPrefix(doc.TagName, "v"), "V"),
+		url:    domain.SafeWebURL(doc.HTMLURL),
+	}, nil
 }
 
 // status renders a cache state as the wire document.
@@ -301,7 +375,7 @@ func (r *ReleaseChecker) status(ctx context.Context, st releaseCheckState) Relea
 	out := ReleaseStatus{
 		Current:      r.opts.Version,
 		Latest:       st.Latest,
-		ReleaseURL:   st.URL,
+		ReleaseURL:   domain.SafeWebURL(st.URL),
 		CheckedAt:    st.CheckedAt,
 		CheckError:   st.Error,
 		CheckEnabled: r.Enabled(),
@@ -323,17 +397,90 @@ func (r *ReleaseChecker) updateAvailable(st releaseCheckState) bool {
 	return okCur && okLat && cur.less(lat)
 }
 
-// installMethod is DetectInstallMethod's answer, asked once per checker: the
-// binary does not change owner while it runs.
+// PrimeInstallMethod detects the install method now, so a later status
+// read finds it ready - `lmm serve` calls it at start, in the background,
+// so its first GET /api/v1/updates/lmm does not wait on a package manager.
+func (r *ReleaseChecker) PrimeInstallMethod(ctx context.Context) {
+	r.installMethod(ctx)
+}
+
+// installMethod is how the binary was installed, known once per checker:
+// the binary does not change owner while it runs. One caller detects at a
+// time and the rest wait on it, each for no longer than its own ctx
+// allows; a caller out of time gets self-managed, which is not remembered,
+// so the next caller with time to spare detects properly.
 func (r *ReleaseChecker) installMethod(ctx context.Context) InstallMethod {
-	r.installOnce.Do(func() {
-		probe := DefaultInstallProbe()
-		if r.opts.Probe != nil {
-			probe = *r.opts.Probe
+	if r.opts.Dev {
+		return InstallMethod{Method: InstallDev}
+	}
+	for {
+		r.installMu.Lock()
+		if r.installKnown {
+			m := r.install
+			r.installMu.Unlock()
+			return m
 		}
-		r.install = DetectInstallMethod(ctx, probe, r.opts.Dev)
-	})
-	return r.install
+		if wait := r.installDone; wait != nil {
+			r.installMu.Unlock()
+			select {
+			case <-wait:
+				continue
+			case <-ctx.Done():
+				return InstallMethod{Method: InstallSelfManaged}
+			}
+		}
+		done := make(chan struct{})
+		r.installDone = done
+		r.installMu.Unlock()
+
+		m, ok := r.detectInstall(ctx)
+
+		r.installMu.Lock()
+		if ok {
+			r.install, r.installKnown = m, true
+		}
+		r.installDone = nil
+		close(done)
+		r.installMu.Unlock()
+		return m
+	}
+}
+
+// detectInstall answers from the cache file when it is about this very
+// binary, and otherwise asks the package managers and caches a complete
+// answer. The bool is false for an answer ctx cut short.
+func (r *ReleaseChecker) detectInstall(ctx context.Context) (InstallMethod, bool) {
+	probe := DefaultInstallProbe()
+	if r.opts.Probe != nil {
+		probe = *r.opts.Probe
+	}
+	exe, err := probe.Executable()
+	if err != nil || exe == "" {
+		return InstallMethod{Method: InstallSelfManaged}, true
+	}
+	modTime := probe.ModTime
+	if modTime == nil {
+		modTime = fileModTime
+	}
+	mtime, statErr := modTime(exe)
+
+	if statErr == nil {
+		r.mu.Lock()
+		c := r.load().Install
+		r.mu.Unlock()
+		if c != nil && c.Executable == exe && c.ModTime.Equal(mtime) {
+			return c.Method, true
+		}
+	}
+	m, ok := detectInstallMethodAt(ctx, probe, exe)
+	if ok && statErr == nil {
+		r.mu.Lock()
+		_, _ = r.update(func(s *releaseCheckState) {
+			s.Install = &installCacheEntry{Executable: exe, ModTime: mtime, Method: m}
+		})
+		r.mu.Unlock()
+	}
+	return m, ok
 }
 
 // load reads the cache. A missing or unreadable file is an empty state -
@@ -348,6 +495,18 @@ func (r *ReleaseChecker) load() releaseCheckState {
 		return releaseCheckState{}
 	}
 	return st
+}
+
+// update applies change to the cache file as it is NOW - re-read just
+// before the write, so the fields another process wrote since this one
+// last read it survive (a CLI run beside `lmm serve`) - and saves it. The
+// caller holds r.mu. Two processes can still race inside the instant
+// between the read and the rename; the cost is one field one of them
+// re-learns, never a damaged file.
+func (r *ReleaseChecker) update(change func(*releaseCheckState)) (releaseCheckState, error) {
+	st := r.load()
+	change(&st)
+	return st, r.save(st)
 }
 
 // save writes the cache through a temp file and a rename, so a CLI run and

@@ -55,6 +55,9 @@ type InstallProbe struct {
 	// Run runs a tool and returns its standard output; a non-zero exit is
 	// an error, which an owner query uses to say "not mine".
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
+	// ModTime is a file's modification time, which keys the cached answer
+	// to the binary it was about; nil is os.Stat's.
+	ModTime func(path string) (time.Time, error)
 }
 
 // installQueryTimeout bounds one owner query. A package database answers
@@ -73,12 +76,22 @@ func DefaultInstallProbe() InstallProbe {
 			return filepath.EvalSymlinks(exe)
 		},
 		LookPath: exec.LookPath,
+		ModTime:  fileModTime,
 		Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			ctx, cancel := context.WithTimeout(ctx, installQueryTimeout)
 			defer cancel()
 			return exec.CommandContext(ctx, name, args...).Output()
 		},
 	}
+}
+
+// fileModTime is path's modification time, by os.Stat.
+func fileModTime(path string) (time.Time, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return fi.ModTime(), nil
 }
 
 // ownerQuery is one package database's "who owns this file?": the tool,
@@ -95,9 +108,15 @@ type ownerQuery struct {
 // and Fedora), and only the one that owns the file says so.
 var ownerQueries = []ownerQuery{
 	{
-		// "lmm:amd64: /usr/bin/lmm", or "lmm: /usr/bin/lmm".
+		// "lmm:amd64: /usr/bin/lmm", or "lmm: /usr/bin/lmm". dpkg -S
+		// takes a glob, so the path's own metacharacters are escaped: it
+		// must match this one file, not whatever the pattern happens to.
+		// The path is the resolved one, so a binary reached through
+		// /etc/alternatives is asked about by the file the alternative
+		// points at; dpkg owns no alternatives link itself, so a chain lmm
+		// cannot resolve past /etc/alternatives reports self-managed.
 		tool: "dpkg",
-		args: func(p string) []string { return []string{"-S", p} },
+		args: func(p string) []string { return []string{"-S", escapeGlob(p)} },
 		parse: func(out string) string {
 			name, _, _ := strings.Cut(out, ": ")
 			name, _, _ = strings.Cut(name, ":")
@@ -105,9 +124,11 @@ var ownerQueries = []ownerQuery{
 		},
 	},
 	{
+		// One name per line: a file more than one package owns prints
+		// each, and the first is the one named.
 		tool:  "rpm",
-		args:  func(p string) []string { return []string{"-qf", "--queryformat", "%{NAME}", p} },
-		parse: func(out string) string { return out },
+		args:  func(p string) []string { return []string{"-qf", "--queryformat", "%{NAME}\n", p} },
+		parse: firstLine,
 	},
 	{
 		// "lmm-2.0.1-r0": apk prints the package with its version.
@@ -136,6 +157,25 @@ func apkPackageName(id string) string {
 	return strings.Join(parts, "-")
 }
 
+// escapeGlob backslash-escapes the fnmatch metacharacters in path, so a
+// pattern-taking query matches it literally.
+func escapeGlob(path string) string {
+	var b strings.Builder
+	for _, c := range path {
+		if strings.ContainsRune(`*?[]\`, c) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
+}
+
+// firstLine is out up to its first newline.
+func firstLine(out string) string {
+	line, _, _ := strings.Cut(out, "\n")
+	return line
+}
+
 // allDigits reports whether s is a non-empty run of ASCII digits.
 func allDigits(s string) bool {
 	if s == "" {
@@ -161,6 +201,15 @@ func DetectInstallMethod(ctx context.Context, probe InstallProbe, dev bool) Inst
 	if err != nil || exe == "" {
 		return InstallMethod{Method: InstallSelfManaged}
 	}
+	m, _ := detectInstallMethodAt(ctx, probe, exe)
+	return m
+}
+
+// detectInstallMethodAt asks each package manager on PATH about exe. It
+// also reports whether the answer is complete: false when ctx ended before
+// every manager had answered, so a self-managed answer may be one a slower
+// query would have contradicted.
+func detectInstallMethodAt(ctx context.Context, probe InstallProbe, exe string) (InstallMethod, bool) {
 	for _, q := range ownerQueries {
 		if _, err := probe.LookPath(q.tool); err != nil {
 			continue
@@ -178,9 +227,9 @@ func DetectInstallMethod(ctx context.Context, probe InstallProbe, dev bool) Inst
 			Manager:        q.tool,
 			Package:        pkg,
 			UpgradeCommand: upgradeCommand(q.tool, pkg, probe.LookPath),
-		}
+		}, true
 	}
-	return InstallMethod{Method: InstallSelfManaged}
+	return InstallMethod{Method: InstallSelfManaged}, ctx.Err() == nil
 }
 
 // upgradeCommand is the command that upgrades pkg under manager. An rpm

@@ -127,10 +127,29 @@ func TestDetectInstallMethod_AsksAboutTheResolvedExecutable(t *testing.T) {
 	core.DetectInstallMethod(context.Background(), f.probe(), false)
 	assert.Equal(t, []string{
 		"dpkg -S /opt/lmm/bin/lmm",
-		"rpm -qf --queryformat %{NAME} /opt/lmm/bin/lmm",
+		"rpm -qf --queryformat %{NAME}\n /opt/lmm/bin/lmm",
 		"apk info -q --who-owns /opt/lmm/bin/lmm",
 		"pacman -Qqo /opt/lmm/bin/lmm",
 	}, f.ran)
+}
+
+// TestDetectInstallMethod_DpkgMatchesThePathExactly: `dpkg -S` takes a glob
+// pattern, so a path's own metacharacters are escaped - a binary under
+// "/opt/lmm[1]/" must not be matched against some other package's file.
+func TestDetectInstallMethod_DpkgMatchesThePathExactly(t *testing.T) {
+	f := &fakeProbe{exe: `/opt/lmm[1]*?\x/lmm`, tools: map[string]bool{"dpkg": true}}
+	core.DetectInstallMethod(context.Background(), f.probe(), false)
+	assert.Equal(t, []string{`dpkg -S /opt/lmm\[1\]\*\?\\x/lmm`}, f.ran)
+}
+
+// TestDetectInstallMethod_RpmWithMoreThanOneOwner: rpm prints one line per
+// owning package, and the first is the one named.
+func TestDetectInstallMethod_RpmWithMoreThanOneOwner(t *testing.T) {
+	f := &fakeProbe{exe: "/usr/bin/lmm", tools: map[string]bool{"rpm": true, "dnf": true},
+		owners: map[string]string{"rpm": "lmm\nlmm-compat\n"}}
+	got := core.DetectInstallMethod(context.Background(), f.probe(), false)
+	assert.Equal(t, "lmm", got.Package)
+	assert.Equal(t, "sudo dnf upgrade lmm", got.UpgradeCommand)
 }
 
 // TestDetectInstallMethod_DevBuildAsksNothing: a dev build is "dev" whoever

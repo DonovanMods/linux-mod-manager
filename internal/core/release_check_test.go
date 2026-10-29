@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -332,3 +333,198 @@ func TestReleaseChecker_RefreshAndPendingUpdateAskNoPackageManager(t *testing.T)
 
 // ReleaseDay is one ReleaseCheckInterval, for readability above.
 const ReleaseDay = core.ReleaseCheckInterval
+
+// hangingReleaseServer answers nothing until the test ends, so a check
+// against it is abandoned rather than answered.
+func hangingReleaseServer(t *testing.T) *releaseServer {
+	t.Helper()
+	stop := make(chan struct{})
+	rs := &releaseServer{}
+	rs.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rs.hits.Add(1)
+		select {
+		case <-stop:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(stop); rs.Close() })
+	return rs
+}
+
+// TestReleaseChecker_AnAbandonedCheckHoldsOffOnlyBriefly: a check whose
+// caller gave up before the answer (a CLI command that exited, Ctrl-C) is
+// not a day's answer. It holds off another attempt for a few minutes, so
+// a burst of commands does not each ask, but not for 24 hours, and it is
+// not reported as a failure.
+func TestReleaseChecker_AnAbandonedCheckHoldsOffOnlyBriefly(t *testing.T) {
+	rs := hangingReleaseServer(t)
+	clock := &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+	rc, opts := newChecker(t, rs, clock, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		require.Eventually(t, func() bool { return rs.hits.Load() == 1 }, 5*time.Second, 5*time.Millisecond)
+		cancel()
+	}()
+	require.Error(t, rc.Refresh(ctx))
+
+	st := rc.Status(context.Background())
+	assert.Empty(t, st.CheckError, "an abandoned check is not a failed one")
+	assert.True(t, st.CheckedAt.IsZero(), "nor an answer")
+
+	answered := newReleaseServer(t, releaseV210)
+	rc2 := core.NewReleaseChecker(func() core.ReleaseCheckOptions { o := opts; o.APIBase = answered.URL; return o }())
+	clock.now = clock.now.Add(time.Minute)
+	require.NoError(t, rc2.Refresh(context.Background()))
+	assert.Zero(t, answered.hits.Load(), "a minute later the attempt still holds off another")
+
+	clock.now = clock.now.Add(15 * time.Minute)
+	require.NoError(t, rc2.Refresh(context.Background()))
+	assert.Equal(t, int32(1), answered.hits.Load(), "minutes later, not a day later, it asks again")
+	assert.Equal(t, "2.1.0", rc2.Status(context.Background()).Latest)
+}
+
+// TestReleaseChecker_ASkippedLatestKeepsTheKnownRelease: a "latest" that
+// is a prerelease or not a version this check compares says nothing about
+// the stable release lmm already knows, so it does not erase it.
+func TestReleaseChecker_ASkippedLatestKeepsTheKnownRelease(t *testing.T) {
+	for _, body := range []string{
+		`{"tag_name":"v2.2.0-rc.1","html_url":"https://github.com/x/rc"}`,
+		`{"tag_name":"v2.2.0","html_url":"https://github.com/x/rc","prerelease":true}`,
+		`{"tag_name":"nightly","html_url":"https://github.com/x/nightly"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			rs := newReleaseServer(t, releaseV210)
+			clock := &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+			rc, _ := newChecker(t, rs, clock, nil)
+			_, err := rc.Check(context.Background(), true)
+			require.NoError(t, err)
+
+			rs.body = body
+			clock.now = clock.now.Add(time.Hour)
+			st, err := rc.Check(context.Background(), true)
+			require.NoError(t, err)
+			assert.Equal(t, "2.1.0", st.Latest)
+			assert.Equal(t, "https://github.com/DonovanMods/linux-mod-manager/releases/tag/v2.1.0", st.ReleaseURL)
+			assert.Equal(t, clock.now, st.CheckedAt, "it is still an answer")
+			assert.Empty(t, st.CheckError)
+		})
+	}
+}
+
+// TestReleaseChecker_ASaveKeepsAnotherProcessesWrite: two processes share
+// the cache file (a CLI run beside `lmm serve`), so a save merges the
+// fields it owns into the file as it is now, never a copy read earlier.
+func TestReleaseChecker_ASaveKeepsAnotherProcessesWrite(t *testing.T) {
+	rs := newReleaseServer(t, releaseV210)
+	clock := &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+	var other *core.ReleaseChecker
+	var once sync.Once
+	rc, opts := newChecker(t, rs, clock, func(o *core.ReleaseCheckOptions) {
+		// The clock is read after the checker loads the cache and before
+		// it writes it: the other process records its notice in between.
+		o.Now = func() time.Time {
+			once.Do(func() { require.NoError(t, other.RecordFirstRunNotice()) })
+			return clock.now
+		}
+	})
+	other = core.NewReleaseChecker(opts)
+
+	require.NoError(t, rc.Refresh(context.Background()))
+	assert.False(t, rc.FirstRunNoticeDue(), "the other process's notice survived this one's save")
+	assert.Equal(t, "2.1.0", rc.Status(context.Background()).Latest)
+}
+
+// TestReleaseChecker_AnUnsafeCachedURLIsDropped: the cache file is the
+// user's to edit (or damage); a URL in it is held to http(s) on the way out
+// too, so it can never become a javascript: link in the web UI.
+func TestReleaseChecker_AnUnsafeCachedURLIsDropped(t *testing.T) {
+	rs := newReleaseServer(t, releaseV210)
+	clock := &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+	rc, opts := newChecker(t, rs, clock, nil)
+	require.NoError(t, os.WriteFile(filepath.Join(opts.DataDir, "release-check.json"),
+		[]byte(`{"checked_at":"2026-10-01T11:00:00Z","latest":"2.1.0","url":"javascript:alert(1)"}`), 0o644))
+	st := rc.Status(context.Background())
+	assert.Equal(t, "2.1.0", st.Latest)
+	assert.Empty(t, st.ReleaseURL)
+}
+
+// TestReleaseChecker_TheInstallMethodIsCachedPerBinary: detection runs
+// package-manager subprocesses, so its answer is cached beside the release
+// answer, keyed by the binary's path and modification time - a later
+// process asks nothing, and a replaced binary is asked about afresh.
+func TestReleaseChecker_TheInstallMethodIsCachedPerBinary(t *testing.T) {
+	rs := newReleaseServer(t, releaseV210)
+	clock := &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+	exe := filepath.Join(t.TempDir(), "lmm")
+	require.NoError(t, os.WriteFile(exe, []byte("binary"), 0o755))
+	var runs atomic.Int32
+	_, opts := newChecker(t, rs, clock, func(o *core.ReleaseCheckOptions) {
+		o.Probe = &core.InstallProbe{
+			Executable: func() (string, error) { return exe, nil },
+			LookPath:   func(name string) (string, error) { return "/usr/bin/" + name, nil },
+			Run: func(_ context.Context, name string, _ ...string) ([]byte, error) {
+				runs.Add(1)
+				if name == "pacman" {
+					return []byte("lmm\n"), nil
+				}
+				return nil, os.ErrNotExist
+			},
+		}
+	})
+	want := core.InstallMethod{Method: core.InstallPackage, Manager: "pacman", Package: "lmm", UpgradeCommand: "sudo pacman -Syu"}
+
+	assert.Equal(t, want, core.NewReleaseChecker(opts).Status(context.Background()).Install)
+	asked := runs.Load()
+	require.NotZero(t, asked)
+
+	assert.Equal(t, want, core.NewReleaseChecker(opts).Status(context.Background()).Install)
+	assert.Equal(t, asked, runs.Load(), "a later process reads the cached answer")
+
+	later := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(exe, later, later))
+	core.NewReleaseChecker(opts).Status(context.Background())
+	assert.Greater(t, runs.Load(), asked, "a replaced binary is asked about again")
+}
+
+// TestReleaseChecker_AnUnfinishedDetectionFallsBack: detection that runs
+// out of time answers self-managed - the release page, which is never the
+// wrong place to send someone - and is neither remembered nor cached, so
+// the next caller with time to spare asks properly.
+func TestReleaseChecker_AnUnfinishedDetectionFallsBack(t *testing.T) {
+	rs := newReleaseServer(t, releaseV210)
+	clock := &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+	var slow atomic.Bool
+	slow.Store(true)
+	rc, opts := newChecker(t, rs, clock, func(o *core.ReleaseCheckOptions) {
+		o.Probe.LookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+		o.Probe.Run = func(ctx context.Context, name string, _ ...string) ([]byte, error) {
+			if slow.Load() {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(10 * time.Second):
+				}
+			}
+			if name == "pacman" {
+				return []byte("lmm\n"), nil
+			}
+			return nil, os.ErrNotExist
+		}
+	})
+	require.NoError(t, os.WriteFile(filepath.Join(opts.DataDir, "release-check.json"),
+		[]byte(`{"checked_at":"2026-10-01T11:00:00Z","latest":"2.1.0","url":"https://github.com/x"}`), 0o644))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	st, ok := rc.PendingUpdate(ctx)
+	require.True(t, ok)
+	assert.Less(t, time.Since(start), 2*time.Second, "bounded by the caller's context")
+	assert.Equal(t, core.InstallMethod{Method: core.InstallSelfManaged}, st.Install)
+
+	slow.Store(false)
+	st, ok = rc.PendingUpdate(context.Background())
+	require.True(t, ok)
+	assert.Equal(t, "pacman", st.Install.Manager, "the fallback was not remembered")
+}
