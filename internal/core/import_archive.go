@@ -1075,7 +1075,7 @@ func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, arch
 	// asserted the mod identity via --id), so the cache entry can be
 	// marker-stamped and the row records real FileIDs. Non-fatal: an
 	// offline/failed listing keeps today's marker-less import.
-	file, ferr := s.resolveImportedFile(ctx, opts.SourceID, mod, filepath.Base(archivePath), imported.Version, true)
+	file, ferr := s.resolveImportedFile(ctx, game, opts.SourceID, mod, filepath.Base(archivePath), imported.Version, true)
 	if ferr != nil {
 		warn("could not resolve source file for archive: %v", ferr)
 		return mod, nil

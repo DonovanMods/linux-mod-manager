@@ -522,7 +522,7 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 		return
 	}
 
-	files, err := s.GetModFiles(ctx, entry.Ref.SourceID, mod)
+	files, err := s.GetModFiles(ctx, game, entry.Ref.SourceID, mod)
 	if err != nil {
 		entry.Error = fmt.Sprintf("failed to get files: %v", err)
 		return

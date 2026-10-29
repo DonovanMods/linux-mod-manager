@@ -686,7 +686,7 @@ func doInstallFromSource(ctx context.Context, service *core.Service, game *domai
 	// interactive/--file selection below overrides plan.Files with exactly
 	// what the user chose (see InstallPlan.Files' doc comment - ApplyInstall
 	// installs exactly plan.Files, no re-selection).
-	files, err := service.GetModFiles(ctx, installSource, mod)
+	files, err := service.GetModFiles(ctx, game, installSource, mod)
 	if err != nil {
 		return fmt.Errorf("failed to get mod files: %w", err)
 	}

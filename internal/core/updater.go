@@ -105,6 +105,8 @@ func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed
 			continue
 		}
 
+		// #544: the source may offer this game only the files it accepts.
+		ctx := source.WithGame(ctx, game)
 		if game != nil {
 			if mappedID, ok := game.SourceIDs[sourceID]; ok && mappedID != "" {
 				translated := make([]domain.InstalledMod, len(mods))

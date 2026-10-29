@@ -1,6 +1,8 @@
 // gameeditor.js - the Setup page's one editor for a configured game (issue
 // 527): every field a Games row edits - name, install path (issue 528), mod
-// path, sources and loader - in one panel, with one Save and one Cancel.
+// path, sources, loader and, for a CurseForge game, the CurseForge game
+// version types it accepts (issue 544) - in one panel, with one Save and one
+// Cancel.
 //
 // One Save is one request: PUT /api/v1/games/{id} carries every changed
 // field, and core (Service.EditGame) checks all of them against the game
@@ -29,7 +31,19 @@ export function gameDraft(game) {
     mod_path: game.mod_path ?? "",
     sources: { ...(game.source_ids ?? {}) },
     loader: loaderDraft(game.loader),
+    curseforge_types: (game.curseforge?.game_version_types ?? []).join(", "),
   };
+}
+
+/** curseForgeTypes reads the CurseForge game version types field: ids
+ * separated by commas or spaces. Anything that is not a whole number goes as
+ * 0, which core refuses on the field - so a typo is marked there, not
+ * dropped. */
+export function curseForgeTypes(text) {
+  return text
+    .split(/[\s,]+/)
+    .filter((t) => t !== "")
+    .map((t) => (/^\d+$/.test(t) ? Number(t) : 0));
 }
 
 const sameMap = (a, b) => {
@@ -60,6 +74,14 @@ export function gameEditBody(game, draft) {
     body.loader = loaderSpec(draft.loader) ?? undefined;
     body.loader_set = true;
   }
+  if (
+    curseForgeTypes(draft.curseforge_types).join() !==
+    curseForgeTypes(was.curseforge_types).join()
+  ) {
+    body.curseforge = {
+      game_version_types: curseForgeTypes(draft.curseforge_types),
+    };
+  }
   return body;
 }
 
@@ -81,6 +103,7 @@ export function gameEditErrorField(details) {
   if (!details || typeof details !== "object") return "";
   if (typeof details.field === "string") {
     if (details.field.startsWith("loader")) return "loader";
+    if (details.field.startsWith("curseforge")) return "curseforge_types";
     return ["name", "install_path", "mod_path", "sources"].includes(
       details.field,
     )
@@ -139,6 +162,7 @@ export function GameEditor({
     name: `game-name-${game.id}`,
     install_path: `install-path-${game.id}`,
     mod_path: `mod-path-${game.id}`,
+    curseforge_types: `curseforge-types-${game.id}`,
   };
   const nameRef = useRef(null);
   const modPathRef = useRef(null);
@@ -206,6 +230,11 @@ export function GameEditor({
     `;
   };
 
+  // Only a game that maps CurseForge (or still carries the setting) has a
+  // CurseForge flavor to pick.
+  const showCurseForge =
+    Object.hasOwn(draft.sources, "curseforge") ||
+    (game.curseforge?.game_version_types ?? []).length > 0;
   const modPathErr = fieldError("mod_path");
   const sourcesErr = fieldError("sources");
   const loaderErr = fieldError("loader");
@@ -269,6 +298,22 @@ export function GameEditor({
           </p>
         </div>
       </div>
+
+      ${
+        showCurseForge &&
+        html`<div
+          class="game-editor__fields"
+          data-testid="curseforge-types-editor"
+        >
+          ${textField(
+            "curseforge_types",
+            "CurseForge game version types",
+            null,
+            "curseforge-types",
+            "The CurseForge game version type ids this game accepts, separated by commas - 67408 for World of Warcraft Classic, which shares CurseForge's one WoW game with Retail. lmm then offers, installs and updates only files of those types. Leave it blank to accept every file.",
+          )}
+        </div>`
+      }
 
       <fieldset class="game-editor__group">
         <legend class="plan__control">Sources</legend>

@@ -662,7 +662,7 @@ func (s *Service) searchSource(ctx context.Context, sourceID, gameID, query stri
 		return source.SearchResult{}, err
 	}
 
-	result, err := src.Search(ctx, source.SearchQuery{
+	result, err := src.Search(source.WithGame(ctx, s.gameOrNil(gameID)), source.SearchQuery{
 		GameID:   sourceGameID,
 		Query:    query,
 		Category: category,
@@ -1431,6 +1431,7 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 		if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
 			sourceGameID = id
 		}
+		ctx = source.WithGame(ctx, game) // #544
 	}
 
 	mod, err := src.GetMod(ctx, sourceGameID, modID)
@@ -1443,21 +1444,32 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 	return mod, nil
 }
 
-// GetModFiles retrieves available download files for a mod
-func (s *Service) GetModFiles(ctx context.Context, sourceID string, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+// GetModFiles retrieves available download files for a mod. game is the
+// configured game the files are for, nil for none: a source may offer a game
+// only the files it accepts (source.WithGame, #544), so a frontend listing
+// files to choose from passes the game it will install into.
+func (s *Service) GetModFiles(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod) ([]domain.DownloadableFile, error) {
 	src, err := s.registry.Get(sourceID)
 	if err != nil {
 		return nil, err
 	}
 
-	return src.GetModFiles(ctx, mod)
+	return src.GetModFiles(source.WithGame(ctx, game), mod)
+}
+
+// gameOrNil is the configured game id names, nil when there is none.
+func (s *Service) gameOrNil(id string) *domain.Game {
+	if game, ok := s.game(id); ok {
+		return game
+	}
+	return nil
 }
 
 // ResolveModVersion fetches mod's raw file list from sourceID and resolves
 // version against it via ResolveVersionFiles (#96). The list is deliberately
 // unfiltered - archived files are exactly what a version pin usually names.
-func (s *Service) ResolveModVersion(ctx context.Context, sourceID string, mod *domain.Mod, version string) ([]domain.DownloadableFile, error) {
-	files, err := s.GetModFiles(ctx, sourceID, mod)
+func (s *Service) ResolveModVersion(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod, version string) ([]domain.DownloadableFile, error) {
+	files, err := s.GetModFiles(ctx, game, sourceID, mod)
 	if err != nil {
 		return nil, fmt.Errorf("listing files for version resolution: %w", err)
 	}
@@ -1483,8 +1495,8 @@ var ErrSourceVersionsUnsupported = source.ErrNotSupported
 // legitimately need - `lmm serve`'s intended consumer, same reasoning as
 // ScanLocal - so it is kept by ruling (Phase 3 Ruling 10) rather than
 // unexported (2 sites / 1 file as of Unit R).
-func (s *Service) AvailableModVersions(ctx context.Context, sourceID string, mod *domain.Mod) ([]string, error) {
-	files, err := s.GetModFiles(ctx, sourceID, mod)
+func (s *Service) AvailableModVersions(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod) ([]string, error) {
+	files, err := s.GetModFiles(ctx, game, sourceID, mod)
 	if err != nil {
 		return nil, fmt.Errorf("listing files for version resolution: %w", err)
 	}
@@ -2406,6 +2418,9 @@ func copyGame(game *domain.Game) *domain.Game {
 	if game.Loader != nil {
 		loader := *game.Loader
 		copy.Loader = &loader
+	}
+	if game.CurseForge != nil {
+		copy.CurseForge = &domain.GameCurseForge{GameVersionTypes: append([]int(nil), game.CurseForge.GameVersionTypes...)}
 	}
 	return &copy
 }

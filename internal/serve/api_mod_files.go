@@ -89,7 +89,7 @@ func (s *Server) handleAPIModVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	versions, err := s.svc.AvailableModVersions(r.Context(), sourceID, core.SourceMappedMod(sel.Game, mod))
+	versions, err := s.svc.AvailableModVersions(r.Context(), sel.Game, sourceID, core.SourceMappedMod(sel.Game, mod))
 	if errors.Is(err, core.ErrSourceVersionsUnsupported) {
 		s.writeJSON(w, http.StatusOK, modVersionsDocument{Versions: []string{}, Supported: false})
 		return

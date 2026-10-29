@@ -299,7 +299,7 @@ func TestService_GetModFiles(t *testing.T) {
 		GameID:   "skyrim",
 	}
 
-	files, err := svc.GetModFiles(context.Background(), "test", mod)
+	files, err := svc.GetModFiles(context.Background(), nil, "test", mod)
 	require.NoError(t, err)
 	assert.Len(t, files, 1)
 	assert.Equal(t, "Main File", files[0].Name)
@@ -325,7 +325,7 @@ func TestService_GetModFiles_SourceNotFound(t *testing.T) {
 		GameID:   "skyrim",
 	}
 
-	_, err = svc.GetModFiles(context.Background(), "nonexistent", mod)
+	_, err = svc.GetModFiles(context.Background(), nil, "nonexistent", mod)
 	require.Error(t, err)
 }
 

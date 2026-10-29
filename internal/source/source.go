@@ -316,6 +316,14 @@ var ErrInvalidReference = errors.New("reference not recognised by this source")
 // gracefully (hide the action, show a notice) rather than treat it as a failure.
 var ErrNotSupported = errors.New("operation not supported by this source")
 
+// ErrNoFileForGame reports a mod that has files, none of which the game the
+// call was made for accepts (#544: a Retail-only CurseForge addon asked for
+// by a game configured for WoW Classic). It is a fact about the mod and the
+// game, not a failure of the source: the source never substitutes a file the
+// game does not accept. Branch with errors.Is; the wrapping error names the
+// game's setting.
+var ErrNoFileForGame = errors.New("no installable file for this game")
+
 // ErrManualDownload classifies a download a source will not serve through
 // its API - a mod author who has opted out of third-party distribution, for
 // one - so the file has to be fetched by hand from the mod's page (#513).

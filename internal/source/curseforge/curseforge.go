@@ -185,14 +185,28 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) (sour
 		}
 	}
 
-	results, pagination, err := c.client.SearchMods(ctx, gameID, query.Query, categoryID, pageSize, index, query.Sort)
+	// #544: a game that accepts only some of the game's version types
+	// sees only mods published for one of them. CurseForge filters on ONE
+	// type server-side, which keeps a page full; any hit still carrying
+	// none (or every hit, for two or more types) is dropped here.
+	types := gameVersionTypes(ctx)
+	versionType := 0
+	if len(types) == 1 {
+		for t := range types {
+			versionType = t
+		}
+	}
+
+	results, pagination, err := c.client.SearchMods(ctx, gameID, query.Query, categoryID, versionType, pageSize, index, query.Sort)
 	if err != nil {
 		return source.SearchResult{}, err
 	}
 
-	mods := make([]domain.Mod, len(results))
-	for i, r := range results {
-		mods[i] = modToDomain(r, query.GameID)
+	mods := make([]domain.Mod, 0, len(results))
+	for _, r := range results {
+		if publishedFor(r, types) {
+			mods = append(mods, modToDomain(r, query.GameID, types))
+		}
 	}
 
 	// Relevance only: prioritize name matches over description/tag matches.
@@ -247,13 +261,14 @@ func (c *CurseForge) exactNameHit(ctx context.Context, gameID int, query source.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
-	if err != nil || hit == nil || !nameMatchesQuery(hit.Name, query.Query) {
+	types := gameVersionTypes(ctx)
+	if err != nil || hit == nil || !nameMatchesQuery(hit.Name, query.Query) || !publishedFor(*hit, types) {
 		return nil, nil
 	}
 	if slices.ContainsFunc(page, func(m domain.Mod) bool { return m.ID == strconv.Itoa(hit.ID) }) {
 		return nil, nil
 	}
-	mod := modToDomain(*hit, query.GameID)
+	mod := modToDomain(*hit, query.GameID, types)
 	return &mod, nil
 }
 
@@ -316,7 +331,7 @@ func (c *CurseForge) GetMod(ctx context.Context, gameID, modID string) (*domain.
 		return nil, err
 	}
 
-	mod := modToDomain(*data, gameID)
+	mod := modToDomain(*data, gameID, gameVersionTypes(ctx))
 	return &mod, nil
 }
 
@@ -333,6 +348,8 @@ func (c *CurseForge) GetDependencies(ctx context.Context, mod *domain.Mod) ([]do
 		return nil, fmt.Errorf("fetching files: %w", err)
 	}
 
+	// #544: the newest file the game accepts, not another flavor's.
+	files = filesOfTypes(files, gameVersionTypes(ctx))
 	if len(files) == 0 {
 		return nil, nil
 	}
@@ -381,6 +398,15 @@ func (c *CurseForge) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain
 	fileList, err := c.client.GetAllModFiles(ctx, modID)
 	if err != nil {
 		return nil, fmt.Errorf("getting mod files: %w", err)
+	}
+	// #544: only the files the game accepts - so a version, the primary
+	// file and an update's advertised file id all resolve among them - and
+	// none at all is ErrNoFileForGame, never another flavor's file.
+	if types := gameVersionTypes(ctx); len(types) > 0 {
+		fileList = filesOfTypes(fileList, types)
+		if len(fileList) == 0 {
+			return nil, noFileForGame(ctx, modID)
+		}
 	}
 
 	files := make([]domain.DownloadableFile, len(fileList))
@@ -438,6 +464,7 @@ func (c *CurseForge) CheckUpdates(ctx context.Context, installed []domain.Instal
 // could make and names the ones it could not, as before.
 func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
 	var updates []domain.Update
+	types := gameVersionTypes(ctx) // #544
 	// skipped holds ONE reason per mod that could not be checked - never
 	// two for the same mod, and never the whole batch error repeated per
 	// mod (Track C review, finding 8).
@@ -503,7 +530,7 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 			continue
 		}
 
-		latest, err := c.latestUpdate(ctx, data, inst)
+		latest, err := c.latestUpdate(ctx, data, inst, types)
 		if err != nil {
 			if cerr := ctx.Err(); cerr != nil {
 				return updates, cerr
@@ -548,8 +575,10 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 	return updates, nil
 }
 
-// modToDomain converts a CurseForge Mod to domain.Mod
-func modToDomain(data Mod, gameID string) domain.Mod {
+// modToDomain converts a CurseForge Mod to domain.Mod. types are the game
+// version types the game accepts (#544), nil for every one: the version shown
+// is the newest of those files'.
+func modToDomain(data Mod, gameID string, types flavorSet) domain.Mod {
 	var author string
 	if len(data.Authors) > 0 {
 		author = data.Authors[0].Name
@@ -568,7 +597,7 @@ func modToDomain(data Mod, gameID string) domain.Mod {
 	// The version shown is the newest file's, not latestFiles' first entry:
 	// that list is the newest file per game flavor in no promised order (#504).
 	version := ""
-	if newest := newestFile(installableFiles(data.LatestFiles)); newest != nil {
+	if newest := newestFile(installableFiles(latestFilesOfTypes(data, types))); newest != nil {
 		version = fileVersion(*newest)
 	}
 

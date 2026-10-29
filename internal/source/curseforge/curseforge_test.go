@@ -774,7 +774,7 @@ func TestCurseForge_ListGames_PropagatesAuthRequired(t *testing.T) {
 // both rendered the same paragraph twice. When the source has no description,
 // the field must stay empty.
 func TestModToDomain_DescriptionNotAliasedToSummary(t *testing.T) {
-	mod := modToDomain(Mod{ID: 1, Name: "JEI", Summary: "View Items and Recipes"}, "432")
+	mod := modToDomain(Mod{ID: 1, Name: "JEI", Summary: "View Items and Recipes"}, "432", nil)
 
 	assert.Equal(t, "View Items and Recipes", mod.Summary)
 	assert.Empty(t, mod.Description, "Description must not be a copy of Summary (#235)")

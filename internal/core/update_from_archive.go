@@ -352,7 +352,7 @@ func (s *Service) identifyUpdateArchive(ctx context.Context, game *domain.Game, 
 		return
 	}
 	plan.sourceManualOnly = srcMod.ManualOnly
-	files, err := s.GetModFiles(ctx, mod.SourceID, srcMod)
+	files, err := s.GetModFiles(ctx, game, mod.SourceID, srcMod)
 	if err != nil {
 		warn("could not fetch %s's files from %s: %v", mod.Name, mod.SourceID, err)
 		return
