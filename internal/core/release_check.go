@@ -77,7 +77,8 @@ type ReleaseStatus struct {
 	// limited to http(s) by domain.SafeWebURL - when it is fetched, and
 	// again when it is read back from the cache.
 	ReleaseURL string `json:"release_url,omitempty"`
-	// CheckedAt is when lmm last asked GitHub, successfully or not. Zero
+	// CheckedAt is when lmm last asked GitHub and heard back, an answer or
+	// a failure; a check abandoned before either does not move it. Zero
 	// when it never has.
 	CheckedAt time.Time `json:"checked_at,omitzero"`
 	// CheckError is why the last check failed; empty when it succeeded.
