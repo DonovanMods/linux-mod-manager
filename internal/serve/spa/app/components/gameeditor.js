@@ -88,6 +88,15 @@ const sameMap = (a, b) => {
   );
 };
 
+/* The version types are a set: the same ids in another order (an untick and
+ * a re-tick moves one last) are no change, so nothing is sent and the stored
+ * order stands. */
+const sameTypeSet = (a, b) => {
+  const set = (text) =>
+    [...new Set(curseForgeTypes(text))].sort((x, y) => x - y).join();
+  return set(a) === set(b);
+};
+
 const sameLoader = (a, b) =>
   ["kind", "version", "runtime", "bootstrap"].every((k) => a[k] === b[k]);
 
@@ -108,10 +117,7 @@ export function gameEditBody(game, draft) {
     body.loader = loaderSpec(draft.loader) ?? undefined;
     body.loader_set = true;
   }
-  if (
-    curseForgeTypes(draft.curseforge_types).join() !==
-    curseForgeTypes(was.curseforge_types).join()
-  ) {
+  if (!sameTypeSet(draft.curseforge_types, was.curseforge_types)) {
     body.curseforge = {
       game_version_types: curseForgeTypes(draft.curseforge_types),
     };
@@ -188,14 +194,18 @@ function CurseForgeTypesPicker({
   fallback,
 }) {
   const mapped = Object.hasOwn(game.source_ids ?? {}, "curseforge");
+  // The list belongs to the SAVED CurseForge game: a save that re-points
+  // the identifier reads the new game's list, and one that drops the
+  // mapping drops the list for the id field.
+  const identifier = mapped ? game.source_ids.curseforge : null;
   const [list, setList] = useState(null);
   const [failure, setFailure] = useState(null);
 
   useEffect(() => {
-    if (!mapped) return undefined;
-    let live = true;
     setList(null);
     setFailure(null);
+    if (!mapped) return undefined;
+    let live = true;
     getSourceVersionTypes("curseforge", game.id)
       .then((report) => live && setList(report.types ?? []))
       .catch(
@@ -206,7 +216,7 @@ function CurseForgeTypesPicker({
     return () => {
       live = false;
     };
-  }, [game.id, mapped]);
+  }, [game.id, mapped, identifier]);
 
   if (mapped && !list && !failure) {
     return html`<p

@@ -179,3 +179,77 @@ func TestE2E_GameEditor_CurseForgePickerFallsBackToTheIDField(t *testing.T) {
 	assert.Equal(t, []int{67408}, onDisk["drive"].CurseForge.GameVersionTypes)
 	assertOnlyExpectedErrors(t, f.BrowserErrors(), "/api/v1/sources/curseforge/version-types")
 }
+
+// e2ePerGameVersionTypesSource lists different version types for each
+// CurseForge game identifier, as CurseForge does.
+type e2ePerGameVersionTypesSource struct {
+	*fakeSource
+}
+
+func (s *e2ePerGameVersionTypesSource) ListGameVersionTypes(_ context.Context, sourceGameID string) ([]source.GameVersionType, error) {
+	if sourceGameID == "432" {
+		return []source.GameVersionType{{ID: 68441, Name: "Forge", Slug: "forge"}}, nil
+	}
+	return []source.GameVersionType{{ID: 67408, Name: "WoW Classic", Slug: "wow-classic"}}, nil
+}
+
+var _ source.GameVersionTypeLister = (*e2ePerGameVersionTypesSource)(nil)
+
+// #563 review: a save that re-points the game's curseforge identifier
+// re-reads the list for the game it now names, so a tick saves an id of
+// THAT game rather than one from the list the panel opened with.
+func TestE2E_GameEditor_CurseForgePickerFollowsTheSavedIdentifier(t *testing.T) {
+	f := newE2EFixtureWithSetupGames(t)
+	f.Svc.RegisterSource(&e2ePerGameVersionTypesSource{fakeSource: newFakeSource("curseforge")})
+
+	var stale bool
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1280, 900),
+		chromedp.Navigate(f.SetupPath("games")),
+		setupGamesReady(),
+		openEditor("drive"),
+		chromedp.WaitVisible(typeBox("67408"), chromedp.ByQuery),
+		typeInto(editorSel(`input[name="identifier-curseforge"]`), "432"),
+		clickWhenSettled(editorSel(`[data-action="save-game"]`)),
+		chromedp.WaitVisible(editorSel(`[data-testid="game-saved"]`), chromedp.ByQuery),
+		chromedp.WaitVisible(typeBox("68441"), chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('`+typeBox("67408")+`') !== null`, &stale),
+		clickWhenSettled(typeBox("68441")),
+		clickWhenSettled(editorSel(`[data-action="save-game"]`)),
+		chromedp.WaitVisible(editorSel(`[data-testid="game-saved"]`), chromedp.ByQuery),
+	)
+	assert.False(t, stale, "the old CurseForge game's list is gone")
+
+	onDisk, err := config.LoadGames(f.Svc.ConfigDir())
+	require.NoError(t, err)
+	assert.Equal(t, "432", onDisk["drive"].SourceIDs["curseforge"])
+	require.NotNil(t, onDisk["drive"].CurseForge)
+	assert.Equal(t, []int{68441}, onDisk["drive"].CurseForge.GameVersionTypes)
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// #563 review: unticking a stored type and ticking it again is no change,
+// so there is nothing to save.
+func TestE2E_GameEditor_CurseForgeRetickIsNotAChange(t *testing.T) {
+	f := newE2EFixtureWithSetupGames(t)
+	f.Svc.RegisterSource(&e2eVersionTypesSource{fakeSource: newFakeSource("curseforge")})
+	game, err := f.Svc.GetGame("drive")
+	require.NoError(t, err)
+	game.CurseForge = &domain.GameCurseForge{GameVersionTypes: []int{67408, 517}}
+	require.NoError(t, f.Svc.SaveGame(t.Context(), game))
+
+	var saveDisabled bool
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1280, 900),
+		chromedp.Navigate(f.SetupPath("games")),
+		setupGamesReady(),
+		openEditor("drive"),
+		chromedp.WaitVisible(typeBox("67408"), chromedp.ByQuery),
+		clickWhenSettled(typeBox("67408")),
+		clickWhenSettled(typeBox("67408")),
+		pollUntil(`document.querySelector('`+typeBox("67408")+`').checked`),
+		chromedp.Evaluate(`document.querySelector('[data-testid="game-editor"] [data-action="save-game"]').disabled`, &saveDisabled),
+	)
+	assert.True(t, saveDisabled, "the same set in another order is not dirty")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
