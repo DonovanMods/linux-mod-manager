@@ -19,18 +19,18 @@ import (
 // The check runs BESIDE the command, not after it: PersistentPreRunE starts
 // it in a goroutine and Execute collects it once the command is done,
 // waiting at most releaseNoticeGrace for an answer still in flight, and
-// spending at most releaseNoticeBudget on the whole exit path - the wait
-// and the notice's install-method lookup, which core normally answers from
-// its cache without running a package manager (the background check
-// detects it beside the command, so a slow first detection is cached by a
-// command that outlasts it). Almost every command
-// outlasts the request, so the usual cost is nothing; the worst case is
-// releaseNoticeBudget. A check that has not answered by then is abandoned -
-// core records the attempt before it asks, so an abandoned check holds off
-// the following commands' attempts for a few minutes rather than each one
-// asking. The alternative, refreshing only from `lmm serve` and `lmm
-// version --check`, would leave a CLI-only user never hearing about a
-// release, which is the case the notice exists for.
+// spending at most releaseNoticeBudget on the whole exit path - the wait and
+// the notice's install-method lookup, which core normally answers from its
+// cache without running a package manager (the background check detects it
+// beside the command, so a slow first detection is cached by a command that
+// outlasts it). Almost every command outlasts the request, so the usual cost
+// is nothing; the worst case is releaseNoticeBudget. A check that has not
+// answered by then is abandoned - core records the attempt before it asks,
+// so an abandoned check holds off the following commands' attempts for a few
+// minutes rather than each one asking, and a run of them backs off to a day.
+// The alternative, refreshing only from `lmm serve` and `lmm version
+// --check`, would leave a CLI-only user never hearing about a release, which
+// is the case the notice exists for.
 
 // releaseCheckArmed is set by Execute alone, so the release check - the
 // after-command one here and `lmm serve`'s background refresh - runs only

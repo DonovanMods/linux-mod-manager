@@ -28,7 +28,8 @@ import (
 // 24-hour rule holds across processes and a broken network is asked once a
 // day rather than on every command. An attempt that never finished (its
 // caller exited, or gave up) is no answer: it holds off another for only
-// releaseRetryAfter. A user turns it off with `update_check: false` in
+// releaseRetryAfter, backing off to a day as such attempts repeat (a
+// network that drops the request rather than refusing it). A user turns it off with `update_check: false` in
 // config.yaml.
 
 // GitHubAPIBase is the production ReleaseCheckOptions.APIBase. It is not a
@@ -45,6 +46,23 @@ const ReleaseCheckInterval = 24 * time.Hour
 // next: long enough that a burst of commands asks once, short enough that a
 // user whose commands are all quick still hears about a release that day.
 const releaseRetryAfter = 10 * time.Minute
+
+// releaseRetryBackoff is how long an unfinished attempt holds off the next
+// when it is the nth in a row without an answer: releaseRetryAfter for the
+// first, an hour for the second, then a day. A network that drops the
+// request (a blackhole, a captive portal that hangs) never answers and
+// never fails, so without it every attempt would cost a CLI user the exit
+// wait, every releaseRetryAfter, for good.
+func releaseRetryBackoff(attempts int) time.Duration {
+	switch {
+	case attempts <= 1:
+		return releaseRetryAfter
+	case attempts == 2:
+		return time.Hour
+	default:
+		return ReleaseCheckInterval
+	}
+}
 
 // releaseCheckTimeout bounds one request when the caller's context sets no
 // tighter deadline. The CLI's after-command check sets a much tighter one.
@@ -143,8 +161,13 @@ type releaseCheckState struct {
 	URL       string    `json:"url,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	// AttemptedAt is a check that started and has not finished - in
-	// flight, or abandoned - which holds off another for releaseRetryAfter.
-	AttemptedAt time.Time          `json:"attempted_at,omitzero"`
+	// flight, or abandoned - which holds off another for
+	// releaseRetryBackoff(Attempts).
+	AttemptedAt time.Time `json:"attempted_at,omitzero"`
+	// Attempts counts the checks started since the last that finished,
+	// AttemptedAt's among them. It is counted when a check starts, not
+	// when it is abandoned: a CLI run may exit before it could record that.
+	Attempts    int                `json:"attempts,omitempty"`
 	NoticeShown bool               `json:"first_run_notice_shown,omitempty"`
 	Install     *installCacheEntry `json:"install,omitempty"`
 }
@@ -273,7 +296,7 @@ func (r *ReleaseChecker) due(st releaseCheckState, now time.Time) bool {
 	if r.opts.Dev || !r.Enabled() {
 		return false
 	}
-	return !within(st.CheckedAt, now, ReleaseCheckInterval) && !within(st.AttemptedAt, now, releaseRetryAfter)
+	return !within(st.CheckedAt, now, ReleaseCheckInterval) && !within(st.AttemptedAt, now, releaseRetryBackoff(st.Attempts))
 }
 
 // within reports whether t is set and less than d before now.
@@ -293,8 +316,8 @@ func (r *ReleaseChecker) refresh(ctx context.Context, force bool) (releaseCheckS
 	}
 	// The attempt is recorded BEFORE the request: a CLI run that exits
 	// before the answer arrives still holds off the next command's attempt
-	// for releaseRetryAfter, so a slow network is not asked on every one.
-	_, _ = r.update(func(s *releaseCheckState) { s.AttemptedAt = now })
+	// for a while, so a slow network is not asked on every one.
+	_, _ = r.update(func(s *releaseCheckState) { s.AttemptedAt, s.Attempts = now, s.Attempts+1 })
 	r.mu.Unlock()
 
 	// Unlocked while the request is out: a Status read (a page load in
@@ -305,12 +328,12 @@ func (r *ReleaseChecker) refresh(ctx context.Context, force bool) (releaseCheckS
 	defer r.mu.Unlock()
 	if err != nil && ctx.Err() != nil {
 		// The caller gave up - a CLI command finishing, Ctrl-C, a server
-		// shutting down - which says nothing about GitHub: AttemptedAt
-		// stands, and the last real answer stays the answer.
+		// shutting down - which says nothing about GitHub: AttemptedAt and
+		// Attempts stand, and the last real answer stays the answer.
 		return r.load(), err
 	}
 	st, _ = r.update(func(s *releaseCheckState) {
-		s.CheckedAt, s.AttemptedAt = now, time.Time{}
+		s.CheckedAt, s.AttemptedAt, s.Attempts = now, time.Time{}, 0
 		switch {
 		case err != nil:
 			s.Error = err.Error()

@@ -528,3 +528,61 @@ func TestReleaseChecker_AnUnfinishedDetectionFallsBack(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "pacman", st.Install.Manager, "the fallback was not remembered")
 }
+
+// abandonCheck runs one unforced check against rs that its caller gives up
+// on once the request is out, as a CLI command exiting first does.
+func abandonCheck(t *testing.T, rc *core.ReleaseChecker, rs *releaseServer) {
+	t.Helper()
+	before := rs.hits.Load()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		require.Eventually(t, func() bool { return rs.hits.Load() > before }, 5*time.Second, 5*time.Millisecond)
+		cancel()
+	}()
+	require.Error(t, rc.Refresh(ctx))
+}
+
+// TestReleaseChecker_RepeatedAbandonedChecksBackOff: a network that drops
+// the request rather than refusing it (a blackhole, a captive portal that
+// hangs) never answers and never fails, so every attempt is abandoned.
+// Consecutive abandoned attempts back off - 10 minutes, then an hour, then
+// a day - so such a user stops paying the exit wait every few minutes; any
+// real answer resets the count.
+func TestReleaseChecker_RepeatedAbandonedChecksBackOff(t *testing.T) {
+	rs := hangingReleaseServer(t)
+	clock := &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+	rc, opts := newChecker(t, rs, clock, nil)
+
+	abandonCheck(t, rc, rs) // 1st: holds off 10 minutes
+	clock.now = clock.now.Add(11 * time.Minute)
+	require.True(t, rc.RefreshDue(), "after the first abandoned attempt, 10 minutes")
+
+	abandonCheck(t, rc, rs) // 2nd: an hour
+	clock.now = clock.now.Add(11 * time.Minute)
+	assert.False(t, rc.RefreshDue(), "after the second, not 10 minutes")
+	clock.now = clock.now.Add(50 * time.Minute)
+	require.True(t, rc.RefreshDue(), "but an hour")
+
+	abandonCheck(t, rc, rs) // 3rd: a day
+	clock.now = clock.now.Add(2 * time.Hour)
+	assert.False(t, rc.RefreshDue(), "after the third, not an hour")
+	clock.now = clock.now.Add(22 * time.Hour)
+	require.True(t, rc.RefreshDue(), "but a day")
+
+	abandonCheck(t, rc, rs) // 4th: still a day
+	clock.now = clock.now.Add(23 * time.Hour)
+	assert.False(t, rc.RefreshDue(), "the back-off stays at a day")
+	clock.now = clock.now.Add(2 * time.Hour)
+	require.True(t, rc.RefreshDue())
+
+	// A real failure resets it: the day rule applies, and the next
+	// abandoned attempt starts again at 10 minutes.
+	failing := newReleaseServer(t, releaseV210)
+	failing.status = http.StatusInternalServerError
+	rcFail := core.NewReleaseChecker(func() core.ReleaseCheckOptions { o := opts; o.APIBase = failing.URL; return o }())
+	require.Error(t, rcFail.Refresh(context.Background()))
+	clock.now = clock.now.Add(25 * time.Hour)
+	abandonCheck(t, rc, rs)
+	clock.now = clock.now.Add(11 * time.Minute)
+	assert.True(t, rc.RefreshDue(), "a real failure reset the count")
+}
