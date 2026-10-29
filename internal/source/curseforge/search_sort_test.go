@@ -109,7 +109,7 @@ func TestClient_SearchMods_SortParams(t *testing.T) {
 			stub := &searchStub{}
 			cf := newSearchStubSource(t, stub)
 
-			_, _, err := cf.client.SearchMods(context.Background(), 432, "x", 0, 20, 0, tt.sort)
+			_, _, err := cf.client.SearchMods(context.Background(), 432, "x", 0, 0, 20, 0, tt.sort)
 			require.NoError(t, err)
 			require.Len(t, stub.queries, 1)
 			q := stub.queries[0]
