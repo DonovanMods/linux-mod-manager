@@ -239,6 +239,11 @@ func TestE2E_Tooltip_ShowsOnHoverAndOnKeyboardFocusAndStaysInView(t *testing.T) 
 				focusByKeyboard(pencilSel("edit-game", "skyrim")),
 				chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).matches(":focus-visible")`, pencilSel("edit-game", "skyrim")), &focusVisible),
 				pollUntil(`document.querySelector(".tooltip")?.dataset.visible === "true"`),
+				// And it STAYS up (#572): at 700px the table is wider than the
+				// page, so focus scrolls it sideways, and the scroll event that
+				// follows a frame later must not take the tooltip back down. A
+				// poll alone lands inside that frame on a fast machine.
+				settleEffects(),
 				chromedp.Evaluate(tooltipStateJS, &focus),
 				// Escape dismisses it without moving focus (WCAG 1.4.13).
 				chromedp.KeyEvent(kb.Escape),
