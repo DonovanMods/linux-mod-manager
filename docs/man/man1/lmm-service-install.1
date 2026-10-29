@@ -10,14 +10,23 @@ lmm-service-install - Install, enable and start lmm-serve.service for this lmm b
 
 
 .SH DESCRIPTION
-Write lmm-serve.service to $XDG_CONFIG_HOME/systemd/user (default
-~/.config/systemd/user) with ExecStart pointing at this lmm binary, then
-reload the user manager and enable and start the service.
+Write lmm-serve.service to the directory the systemd user manager loads
+units from ($XDG_CONFIG_HOME/systemd/user as the user manager sees it,
+default ~/.config/systemd/user) with ExecStart pointing at this lmm binary,
+then reload the user manager and enable and start the service.
+
+.PP
+The service reads the same config and data as this command: --config and
+--data are passed on to it, and so are XDG_CONFIG_HOME and XDG_DATA_HOME
+when they differ from the user manager's. It runs with the user manager's
+PATH, not your shell's (see: systemctl --user show-environment), so 7z,
+unrar and steamcmd must be on that one.
 
 .PP
 Running it again rewrites the unit (say, with a new --addr) and restarts the
 service. If a package already installed the unit, nothing is written: lmm
-tells you the systemctl command that turns it on.
+tells you the systemctl command that turns it on. A unit file lmm did not
+write is left alone.
 
 .PP
 Examples:

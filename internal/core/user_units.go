@@ -6,11 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/packaging/systemd"
 )
@@ -62,6 +66,73 @@ func (e *PackagedUnitError) Error() string {
 	return fmt.Sprintf("%s is already installed by your lmm package (%s); turn it on with: systemctl --user enable --now %s", e.Unit, e.Path, e.Unit)
 }
 
+// ForeignUnitError refuses to overwrite or remove a unit file lmm did not
+// write (#567): a symlink, or a file without the header `lmm service
+// install` puts on its own. It is the user's, so lmm leaves it to them.
+type ForeignUnitError struct {
+	// Path is the unit file.
+	Path string
+	// Symlink is true when Path is a symlink rather than a file.
+	Symlink bool
+	// Uninstall is true for the uninstall refusal, false for install's.
+	Uninstall bool
+}
+
+// Error names the file and says to change it by hand.
+func (e *ForeignUnitError) Error() string {
+	what := "was not written by lmm service install"
+	if e.Symlink {
+		what = "is a symlink, not a file lmm service install wrote"
+	}
+	if e.Uninstall {
+		return fmt.Sprintf("%s %s, so lmm will not remove it; disable and remove it by hand", e.Path, what)
+	}
+	return fmt.Sprintf("%s %s, so lmm will not overwrite it; edit or remove it by hand", e.Path, what)
+}
+
+// UnitPathError refuses to write a unit into a directory the systemd user
+// manager does not search (#567): it would never load it.
+type UnitPathError struct {
+	// Dir is where lmm would have written the unit.
+	Dir string
+	// UnitPath is the directories the user manager does search.
+	UnitPath []string
+}
+
+// Error names the directory and the ones systemd searches.
+func (e *UnitPathError) Error() string {
+	return fmt.Sprintf("the systemd user manager does not load units from %s (it searches: %s); check XDG_CONFIG_HOME in `systemctl --user show-environment`",
+		e.Dir, strings.Join(e.UnitPath, " "))
+}
+
+// InvalidAddrError is an --addr `lmm serve` could not listen on (#567),
+// refused before a unit is written with it.
+type InvalidAddrError struct {
+	// Addr is the value given.
+	Addr string
+	// Reason says what is wrong with it.
+	Reason string
+}
+
+// Error names the address and what is wrong with it.
+func (e *InvalidAddrError) Error() string {
+	return fmt.Sprintf("invalid --addr %q: %s", e.Addr, e.Reason)
+}
+
+// ValidateServeAddr checks addr is host:port with a numeric port from 1 to
+// 65535; an empty host listens on every interface. It returns an
+// *InvalidAddrError otherwise.
+func ValidateServeAddr(addr string) error {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return &InvalidAddrError{Addr: addr, Reason: "want host:port, e.g. 127.0.0.1:7420"}
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return &InvalidAddrError{Addr: addr, Reason: "the port must be a number from 1 to 65535"}
+	}
+	return nil
+}
+
 // UnitOrigin says who installed a unit file.
 type UnitOrigin string
 
@@ -69,8 +140,8 @@ const (
 	// UnitOriginUser is a unit `lmm service install` wrote under the user's
 	// config directory.
 	UnitOriginUser UnitOrigin = "user"
-	// UnitOriginPackage is a unit a package installed under
-	// /usr/lib/systemd/user.
+	// UnitOriginPackage is a unit a package (or an administrator)
+	// installed system-wide, e.g. under /usr/lib/systemd/user.
 	UnitOriginPackage UnitOrigin = "package"
 )
 
@@ -112,6 +183,14 @@ type ServiceReport struct {
 type ServiceInstallOptions struct {
 	// Addr is passed to `lmm serve --addr`; empty keeps serve's default.
 	Addr string
+	// ConfigDir and DataDir are passed to `lmm serve --config/--data`;
+	// empty passes neither. Each must be absolute.
+	ConfigDir, DataDir string
+	// Environment is KEY=value variables set on the service. Install adds
+	// the installing shell's XDG_CONFIG_HOME and XDG_DATA_HOME where they
+	// differ from the user manager's, so the service reads what the CLI
+	// does.
+	Environment []string
 }
 
 // userUnit is one systemd user unit lmm manages. lmm-serve.service is the
@@ -127,21 +206,37 @@ var managedUnits = []userUnit{
 	{name: systemd.ServeUnitName, render: RenderServeUnit},
 }
 
-// packagedUnitDir is where packages install lmm's user units.
-const packagedUnitDir = "/usr/lib/systemd/user"
+// packagedUnitDirs is every system-wide directory the user manager loads
+// units from, highest precedence first: an administrator's, then a local
+// install's, then a package's.
+var packagedUnitDirs = []string{"/etc/systemd/user", "/usr/local/lib/systemd/user", "/usr/lib/systemd/user"}
+
+// settleTime is how long Install waits after starting a unit before it asks
+// again whether it is running, so a service that exits at once is reported
+// as not running rather than as started.
+const settleTime = time.Second
 
 // UserUnits installs, removes and reports lmm's systemd user units (#567).
 // It needs no Service: it touches no database, only unit files and the
 // user manager. Every field is a seam a test replaces; NewUserUnits fills
 // them from the environment.
 type UserUnits struct {
-	// ConfigHome is $XDG_CONFIG_HOME, or ~/.config; units are written to
-	// ConfigHome/systemd/user.
-	ConfigHome string
-	// PackagedDirs are where a package's units live.
+	// Home is the user's home directory. Units are written to
+	// $XDG_CONFIG_HOME/systemd/user as the user manager's own environment
+	// has it, or Home/.config/systemd/user; the shell's XDG_CONFIG_HOME
+	// plays no part, because systemd never sees it.
+	Home string
+	// PackagedDirs are where a system-wide unit lives.
 	PackagedDirs []string
 	// Executable returns the running lmm binary's path.
 	Executable func() (string, error)
+	// LookPath finds a program on the shell's PATH; nil skips the lookup.
+	LookPath func(file string) (string, error)
+	// Getenv reads the installing shell's environment; nil reads as empty.
+	Getenv func(key string) string
+	// Sleep waits d, or until ctx ends, before Install asks whether a unit
+	// it started is still running; nil does not wait.
+	Sleep func(ctx context.Context, d time.Duration)
 	// Run runs a command and returns its stdout. A command that is not
 	// installed returns an error wrapping exec.ErrNotFound.
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -151,13 +246,9 @@ type UserUnits struct {
 
 // NewUserUnits returns UserUnits for this user and machine.
 func NewUserUnits() (*UserUnits, error) {
-	configHome := os.Getenv("XDG_CONFIG_HOME")
-	if configHome == "" || !filepath.IsAbs(configHome) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("home directory: %w", err)
-		}
-		configHome = filepath.Join(home, ".config")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("home directory: %w", err)
 	}
 	name := os.Getenv("USER")
 	if name == "" {
@@ -166,12 +257,25 @@ func NewUserUnits() (*UserUnits, error) {
 		}
 	}
 	return &UserUnits{
-		ConfigHome:   configHome,
-		PackagedDirs: []string{packagedUnitDir},
+		Home:         home,
+		PackagedDirs: slices.Clone(packagedUnitDirs),
 		Executable:   os.Executable,
+		LookPath:     exec.LookPath,
+		Getenv:       os.Getenv,
+		Sleep:        sleepContext,
 		Run:          runCommand,
 		User:         name,
 	}, nil
+}
+
+// sleepContext is UserUnits.Sleep's real implementation.
+func sleepContext(ctx context.Context, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-t.C:
+	}
 }
 
 // runCommand is UserUnits.Run's real implementation: stdout is returned,
@@ -189,9 +293,76 @@ func runCommand(ctx context.Context, name string, args ...string) ([]byte, error
 	return out, err
 }
 
-// UserUnitDir is where `lmm service install` writes units.
-func (u *UserUnits) UserUnitDir() string {
-	return filepath.Join(u.ConfigHome, "systemd", "user")
+// managerDirs is the config and data homes the user manager hands its
+// services, and so the directory it loads a user's own units from.
+type managerDirs struct {
+	configHome, dataHome string
+}
+
+// unitDir is where `lmm service install` writes units.
+func (d managerDirs) unitDir() string {
+	return filepath.Join(d.configHome, "systemd", "user")
+}
+
+// managerDirs asks the user manager for its environment: its
+// XDG_CONFIG_HOME and XDG_DATA_HOME, where absolute, or the defaults under
+// Home. A value systemd prints $'...'-escaped is one lmm does not decode;
+// the default stands, and Install's UnitPath check catches a wrong guess.
+func (u *UserUnits) managerDirs(ctx context.Context) (managerDirs, error) {
+	out, err := u.systemctl(ctx, "show-environment")
+	if err != nil {
+		return managerDirs{}, fmt.Errorf("systemctl --user show-environment: %w", err)
+	}
+	env := map[string]string{}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok && !strings.HasPrefix(v, "$'") {
+			env[k] = v
+		}
+	}
+	dir := func(key string, def ...string) string {
+		if v := env[key]; filepath.IsAbs(v) {
+			return filepath.Clean(v)
+		}
+		return filepath.Join(append([]string{u.Home}, def...)...)
+	}
+	return managerDirs{configHome: dir("XDG_CONFIG_HOME", ".config"), dataHome: dir("XDG_DATA_HOME", ".local", "share")}, nil
+}
+
+// checkUnitPath confirms the user manager loads units from dir. A manager
+// that does not say (an older systemd, or an empty answer) is taken at its
+// word that the default holds.
+func (u *UserUnits) checkUnitPath(ctx context.Context, dir string) error {
+	out, err := u.systemctl(ctx, "show", "-p", "UnitPath", "--value")
+	searched := strings.Fields(string(out))
+	if err != nil || len(searched) == 0 {
+		return nil
+	}
+	for _, d := range searched {
+		if filepath.Clean(d) == dir {
+			return nil
+		}
+	}
+	return &UnitPathError{Dir: dir, UnitPath: searched}
+}
+
+// shellEnvironment returns an Environment= entry for each of the shell's
+// XDG_CONFIG_HOME and XDG_DATA_HOME that is absolute and differs from the
+// user manager's, so the service resolves the same config and data
+// directories as the CLI that installed it.
+func (u *UserUnits) shellEnvironment(mgr managerDirs) []string {
+	if u.Getenv == nil {
+		return nil
+	}
+	var env []string
+	for _, v := range []struct{ key, manager string }{
+		{"XDG_CONFIG_HOME", mgr.configHome},
+		{"XDG_DATA_HOME", mgr.dataHome},
+	} {
+		if val := u.Getenv(v.key); filepath.IsAbs(val) && filepath.Clean(val) != v.manager {
+			env = append(env, v.key+"="+filepath.Clean(val))
+		}
+	}
+	return env
 }
 
 // systemctl runs `systemctl --user args...`.
@@ -210,12 +381,21 @@ func (u *UserUnits) checkSystemd(ctx context.Context) error {
 	return nil
 }
 
-// Install writes every managed unit for the running binary, reloads the
-// user manager and enables and starts each one. A unit whose existing file
-// changed is restarted, so a running service picks up the new ExecStart. A unit a
-// package already installed is a *PackagedUnitError, before anything is
-// written.
+// Install writes every managed unit for the running binary into the
+// directory the user manager loads units from, reloads it and enables and
+// starts each one. A unit that is already running is restarted, so it never
+// keeps a previous ExecStart. A moment later it asks again whether each is
+// running, so one that exited at once is reported as not running. Before
+// anything is written: a bad opts.Addr is an *InvalidAddrError, a unit a
+// package installed a *PackagedUnitError, a unit file lmm did not write a
+// *ForeignUnitError, and a directory systemd does not search a
+// *UnitPathError.
 func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (ServiceReport, error) {
+	if opts.Addr != "" {
+		if err := ValidateServeAddr(opts.Addr); err != nil {
+			return ServiceReport{}, err
+		}
+	}
 	if err := u.checkSystemd(ctx); err != nil {
 		return ServiceReport{}, err
 	}
@@ -223,11 +403,24 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 	if err != nil {
 		return ServiceReport{}, err
 	}
+	mgr, err := u.managerDirs(ctx)
+	if err != nil {
+		return ServiceReport{}, err
+	}
+	dir := mgr.unitDir()
+	if err := u.checkUnitPath(ctx, dir); err != nil {
+		return ServiceReport{}, err
+	}
+	opts.Environment = append(u.shellEnvironment(mgr), opts.Environment...)
 
 	rendered := make([][]byte, len(managedUnits))
 	for i, unit := range managedUnits {
-		userPath := filepath.Join(u.UserUnitDir(), unit.name)
-		if !fileExists(userPath) {
+		path := filepath.Join(dir, unit.name)
+		exists, err := checkOwnUnit(path, false)
+		if err != nil {
+			return ServiceReport{}, err
+		}
+		if !exists {
 			if pkg := u.packagedPath(unit.name); pkg != "" {
 				return ServiceReport{}, &PackagedUnitError{Unit: unit.name, Path: pkg}
 			}
@@ -237,23 +430,20 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 		}
 	}
 
-	changed, replaced := make([]bool, len(managedUnits)), make([]bool, len(managedUnits))
+	anyChanged := false
 	for i, unit := range managedUnits {
-		path := filepath.Join(u.UserUnitDir(), unit.name)
-		existed := fileExists(path)
-		if changed[i], err = writeUnitFile(path, rendered[i]); err != nil {
+		changed, err := writeUnitFile(filepath.Join(dir, unit.name), rendered[i])
+		if err != nil {
 			return ServiceReport{}, err
 		}
-		replaced[i] = existed && changed[i]
+		anyChanged = anyChanged || changed
 	}
 	if _, err := u.systemctl(ctx, "daemon-reload"); err != nil {
 		return ServiceReport{}, fmt.Errorf("systemctl --user daemon-reload: %w", err)
 	}
-	anyChanged := false
-	for i, unit := range managedUnits {
-		anyChanged = anyChanged || changed[i]
+	for _, unit := range managedUnits {
 		steps := [][]string{{"enable", "--now", unit.name}}
-		if replaced[i] {
+		if u.query(ctx, "is-active", unit.name, "inactive") == "active" {
 			steps = [][]string{{"enable", unit.name}, {"restart", unit.name}}
 		}
 		for _, step := range steps {
@@ -262,27 +452,46 @@ func (u *UserUnits) Install(ctx context.Context, opts ServiceInstallOptions) (Se
 			}
 		}
 	}
-	return u.report(ctx, anyChanged), nil
+	if u.Sleep != nil {
+		u.Sleep(ctx, settleTime)
+	}
+	return u.report(ctx, dir, anyChanged), nil
 }
 
 // Uninstall disables, stops and removes every unit `lmm service install`
 // wrote, then reloads the user manager. Nothing to remove is not an error;
-// a unit that only a package installed is a *PackagedUnitError. A unit that
-// fails to disable keeps its file.
+// a unit that only a package installed is a *PackagedUnitError, and a unit
+// file lmm did not write is a *ForeignUnitError, before anything is
+// disabled. A unit that fails to disable keeps its file. Disabling removes
+// the unit's enablement link, which a packaged unit of the same name
+// shares, so that one is disabled too.
 func (u *UserUnits) Uninstall(ctx context.Context) (ServiceReport, error) {
 	if err := u.checkSystemd(ctx); err != nil {
 		return ServiceReport{}, err
 	}
-	removed := false
+	mgr, err := u.managerDirs(ctx)
+	if err != nil {
+		return ServiceReport{}, err
+	}
+	dir := mgr.unitDir()
+	present := make([]bool, len(managedUnits))
 	var refusal error
-	for _, unit := range managedUnits {
-		path := filepath.Join(u.UserUnitDir(), unit.name)
-		if !fileExists(path) {
-			if pkg := u.packagedPath(unit.name); pkg != "" && refusal == nil {
+	for i, unit := range managedUnits {
+		if present[i], err = checkOwnUnit(filepath.Join(dir, unit.name), true); err != nil {
+			return ServiceReport{}, err
+		}
+		if !present[i] && refusal == nil {
+			if pkg := u.packagedPath(unit.name); pkg != "" {
 				refusal = &PackagedUnitError{Unit: unit.name, Path: pkg, Uninstall: true}
 			}
+		}
+	}
+	removed := false
+	for i, unit := range managedUnits {
+		if !present[i] {
 			continue
 		}
+		path := filepath.Join(dir, unit.name)
 		if _, err := u.systemctl(ctx, "disable", "--now", unit.name); err != nil {
 			return ServiceReport{}, fmt.Errorf("systemctl --user disable --now %s: %w", unit.name, err)
 		}
@@ -298,7 +507,7 @@ func (u *UserUnits) Uninstall(ctx context.Context) (ServiceReport, error) {
 	} else if refusal != nil {
 		return ServiceReport{}, refusal
 	}
-	return u.report(ctx, removed), nil
+	return u.report(ctx, dir, removed), nil
 }
 
 // Status reports every managed unit and whether lingering is on.
@@ -306,17 +515,22 @@ func (u *UserUnits) Status(ctx context.Context) (ServiceReport, error) {
 	if err := u.checkSystemd(ctx); err != nil {
 		return ServiceReport{}, err
 	}
-	return u.report(ctx, false), nil
+	mgr, err := u.managerDirs(ctx)
+	if err != nil {
+		return ServiceReport{}, err
+	}
+	return u.report(ctx, mgr.unitDir(), false), nil
 }
 
-// report reads the state of every managed unit. Its queries cannot fail in
+// report reads the state of every managed unit, with the user's own
+// units in dir. Its queries cannot fail in
 // a way worth stopping for: is-enabled and is-active exit non-zero for any
 // state but the positive one, and still print it.
-func (u *UserUnits) report(ctx context.Context, changed bool) ServiceReport {
+func (u *UserUnits) report(ctx context.Context, dir string, changed bool) ServiceReport {
 	r := ServiceReport{Changed: changed, Units: make([]UnitStatus, 0, len(managedUnits))}
 	for _, unit := range managedUnits {
 		s := UnitStatus{Name: unit.name}
-		if path := filepath.Join(u.UserUnitDir(), unit.name); fileExists(path) {
+		if path := filepath.Join(dir, unit.name); fileExists(path) {
 			s.Installed, s.Origin, s.Path = true, UnitOriginUser, path
 		} else if pkg := u.packagedPath(unit.name); pkg != "" {
 			s.Installed, s.Origin, s.Path = true, UnitOriginPackage, pkg
@@ -363,20 +577,74 @@ func (u *UserUnits) packagedPath(name string) string {
 	return ""
 }
 
-// resolveExecutable returns the running binary with symlinks resolved, so
-// the unit keeps working when a symlink it was reached through moves.
+// resolveExecutable returns the lmm binary the unit runs. On Linux
+// os.Executable is already the resolved target, which can be a versioned
+// path an upgrade replaces (a tarball under /opt/lmm-x.y, a nix store path,
+// a mise install), so when the lmm on PATH is the same file its path is
+// used instead, and keeps working when an upgrade repoints it. Otherwise it
+// is os.Executable's. A `go run` build, deleted when it exits, is refused.
 func (u *UserUnits) resolveExecutable() (string, error) {
 	exe, err := u.Executable()
 	if err != nil {
 		return "", fmt.Errorf("finding the lmm binary: %w", err)
 	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
+	if u.LookPath != nil {
+		if found, err := u.LookPath("lmm"); err == nil {
+			if abs, err := filepath.Abs(found); err == nil && sameFile(abs, exe) {
+				exe = abs
+			}
+		}
 	}
-	if strings.Contains(exe, string(filepath.Separator)+"go-build") {
+	if isGoRunBuild(exe) {
 		return "", fmt.Errorf("lmm is running from a temporary `go run` build (%s), which is deleted when it exits; install it (go install, make install) and run lmm service install from there", exe)
 	}
 	return exe, nil
+}
+
+// sameFile reports whether a and b name the same file, through symlinks.
+func sameFile(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	return err == nil && os.SameFile(ai, bi)
+}
+
+// isGoRunBuild reports whether exe is under a go-build<digits> directory,
+// where `go run` puts the binary it deletes on exit.
+func isGoRunBuild(exe string) bool {
+	for part := range strings.SplitSeq(filepath.ToSlash(exe), "/") {
+		digits, ok := strings.CutPrefix(part, "go-build")
+		if ok && digits != "" && strings.Trim(digits, "0123456789") == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// checkOwnUnit reports whether a unit file is at path and, when one is,
+// that lmm wrote it: a regular file, not a symlink, starting with the
+// header RenderServeUnit writes. Anything else is a *ForeignUnitError.
+func checkOwnUnit(path string, uninstall bool) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return true, &ForeignUnitError{Path: path, Symlink: info.Mode()&fs.ModeSymlink != 0, Uninstall: uninstall}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return true, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if !bytes.HasPrefix(data, []byte(unitHeaderMark)) {
+		return true, &ForeignUnitError{Path: path, Uninstall: uninstall}
+	}
+	return true, nil
 }
 
 // fileExists reports whether path names an existing file.
@@ -421,14 +689,20 @@ func writeUnitFile(path string, data []byte) (bool, error) {
 	return true, nil
 }
 
+// unitHeaderMark starts the header line of every unit lmm writes; a file
+// without it is not lmm's to overwrite or remove.
+const unitHeaderMark = "# Written by `lmm service install`"
+
 // serveUnitHeader is the line RenderServeUnit puts above the shipped unit,
 // so a reader of ~/.config/systemd/user knows where the file came from.
-const serveUnitHeader = "# Written by `lmm service install`; `lmm service uninstall` removes it.\n"
+const serveUnitHeader = unitHeaderMark + "; `lmm service uninstall` removes it.\n"
 
 // RenderServeUnit returns lmm-serve.service for the lmm binary at exe: the
-// packaged unit (packaging/systemd) with its ExecStart pointed at exe and
-// opts.Addr passed through. exe must be absolute, and a newline in it or in
-// opts.Addr is refused rather than written into the unit.
+// packaged unit (packaging/systemd) with its ExecStart pointed at exe,
+// opts.Addr, opts.ConfigDir and opts.DataDir passed through as serve flags,
+// and an Environment= line above it for each of opts.Environment. exe and
+// the directories must be absolute, and a newline in any of them is refused
+// rather than written into the unit.
 func RenderServeUnit(exe string, opts ServiceInstallOptions) ([]byte, error) {
 	if !filepath.IsAbs(exe) {
 		return nil, fmt.Errorf("the lmm binary path %q is not absolute", exe)
@@ -436,6 +710,25 @@ func RenderServeUnit(exe string, opts ServiceInstallOptions) ([]byte, error) {
 	args := []string{exe, "serve", "--no-open"}
 	if opts.Addr != "" {
 		args = append(args, "--addr", opts.Addr)
+	}
+	for _, d := range []struct{ flag, dir string }{{"--config", opts.ConfigDir}, {"--data", opts.DataDir}} {
+		if d.dir == "" {
+			continue
+		}
+		if !filepath.IsAbs(d.dir) {
+			return nil, fmt.Errorf("the %s directory %q is not absolute", d.flag, d.dir)
+		}
+		args = append(args, d.flag, d.dir)
+	}
+	var env strings.Builder
+	for _, kv := range opts.Environment {
+		if k, _, ok := strings.Cut(kv, "="); !ok || k == "" {
+			return nil, fmt.Errorf("%q is not a KEY=value environment entry", kv)
+		}
+		if strings.ContainsAny(kv, "\n\r") {
+			return nil, fmt.Errorf("%q cannot be written into a unit file: it contains a line break", kv)
+		}
+		env.WriteString("Environment=" + systemdQuoteEnv(kv) + "\n")
 	}
 	words := make([]string, len(args))
 	for i, a := range args {
@@ -451,7 +744,7 @@ func RenderServeUnit(exe string, opts ServiceInstallOptions) ([]byte, error) {
 	found := false
 	for line := range strings.SplitAfterSeq(string(systemd.ServeUnit), "\n") {
 		if strings.HasPrefix(line, directive) {
-			line = directive + strings.Join(words, " ") + "\n"
+			line = env.String() + directive + strings.Join(words, " ") + "\n"
 			found = true
 		}
 		out.WriteString(line)
@@ -471,4 +764,12 @@ func systemdQuote(s string) string {
 		return s
 	}
 	return `"` + strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), `"`, `\"`) + `"`
+}
+
+// systemdQuoteEnv double-quotes one Environment= assignment: % is doubled
+// so systemd expands no specifier, and backslashes and quotes are escaped.
+// Environment= expands no $ variables, so $ stays as it is.
+func systemdQuoteEnv(kv string) string {
+	kv = strings.ReplaceAll(kv, "%", "%%")
+	return `"` + strings.ReplaceAll(strings.ReplaceAll(kv, `\`, `\\`), `"`, `\"`) + `"`
 }

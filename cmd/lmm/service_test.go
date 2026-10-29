@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 
@@ -51,23 +52,32 @@ func (f *cliSystemd) run(_ context.Context, name string, args ...string) ([]byte
 	return nil, nil
 }
 
-// useTestUserUnits points `lmm service` at a temp config home and fake
-// for the rest of the test, and returns the unit file it would write.
-func useTestUserUnits(t *testing.T, fake *cliSystemd) string {
+// useTestUserUnits points `lmm service` at a temp home and fake for the
+// rest of the test, and returns the unit file it would write. A test that
+// wants to change the UserUnits further passes edit.
+func useTestUserUnits(t *testing.T, fake *cliSystemd, edit ...func(*core.UserUnits)) string {
 	t.Helper()
-	configHome := t.TempDir()
+	home := t.TempDir()
 	old := newUserUnits
 	newUserUnits = func() (*core.UserUnits, error) {
-		return &core.UserUnits{
-			ConfigHome:   configHome,
-			PackagedDirs: []string{filepath.Join(configHome, "no-package")},
+		u := &core.UserUnits{
+			Home:         home,
+			PackagedDirs: []string{filepath.Join(home, "no-package")},
 			Executable:   func() (string, error) { return "/opt/lmm/bin/lmm", nil },
 			Run:          fake.run,
 			User:         "u",
-		}, nil
+		}
+		for _, e := range edit {
+			e(u)
+		}
+		return u, nil
 	}
-	t.Cleanup(func() { newUserUnits = old })
-	return filepath.Join(configHome, "systemd", "user", "lmm-serve.service")
+	// The --config/--data globals reach the unit; another test may have
+	// left them set.
+	oldConfig, oldData := configDir, dataDir
+	configDir, dataDir = "", ""
+	t.Cleanup(func() { newUserUnits, configDir, dataDir = old, oldConfig, oldData })
+	return filepath.Join(home, ".config", "systemd", "user", "lmm-serve.service")
 }
 
 func TestServiceInstall_WritesUnitAndPrintsLingerHint(t *testing.T) {
@@ -126,4 +136,58 @@ func TestServiceStatus_NoSystemd(t *testing.T) {
 	err := doServiceStatus(context.Background())
 	require.ErrorIs(t, err, core.ErrSystemdUnavailable)
 	assert.Contains(t, err.Error(), "systemctl is not installed")
+}
+
+// A service that exits straight after it starts is not reported as running
+// at its address.
+func TestServiceInstall_ReportsAServiceThatDidNotStayUp(t *testing.T) {
+	fake := &cliSystemd{}
+	useTestUserUnits(t, fake, func(u *core.UserUnits) {
+		u.Sleep = func(context.Context, time.Duration) { fake.active = false }
+	})
+
+	out := captureStdout(t, func() error { return doServiceInstall(context.Background(), serviceCmd, "") })
+	assert.Contains(t, out, "started but is not running")
+	assert.Contains(t, out, "journalctl --user -u lmm-serve")
+	assert.NotContains(t, out, "running at")
+}
+
+// A bad --addr is the typed error, and no unit is written.
+func TestServiceInstall_RefusesABadAddr(t *testing.T) {
+	unitPath := useTestUserUnits(t, &cliSystemd{})
+	err := doServiceInstall(context.Background(), serviceCmd, "127.0.0.1:99999")
+	var bad *core.InvalidAddrError
+	require.ErrorAs(t, err, &bad)
+	assert.NoFileExists(t, unitPath)
+}
+
+// The --config and --data globals reach the service as serve flags, made
+// absolute, since the service does not start in this directory.
+func TestServiceInstall_PassesConfigAndDataDirs(t *testing.T) {
+	unitPath := useTestUserUnits(t, &cliSystemd{})
+	configDir, dataDir = "rel/cfg", "/abs/data"
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+
+	captureStdout(t, func() error { return doServiceInstall(context.Background(), serviceCmd, "") })
+	raw, err := os.ReadFile(unitPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "ExecStart=/opt/lmm/bin/lmm serve --no-open --config "+filepath.Join(wd, "rel/cfg")+" --data /abs/data\n")
+}
+
+// Disabling removes the enablement link a packaged lmm-serve.service
+// shares, and both the help and the output say so.
+func TestServiceUninstall_SaysAPackagedUnitIsDisabledToo(t *testing.T) {
+	assert.Contains(t, serviceUninstallCmd.Long, "packaged")
+	fake := &cliSystemd{}
+	var packaged string
+	unitPath := useTestUserUnits(t, fake, func(u *core.UserUnits) { packaged = u.PackagedDirs[0] })
+	captureStdout(t, func() error { return doServiceInstall(context.Background(), serviceCmd, "") })
+	require.NoError(t, os.MkdirAll(packaged, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(packaged, "lmm-serve.service"), []byte("[Unit]\n"), 0o644))
+
+	out := captureStdout(t, func() error { return doServiceUninstall(context.Background()) })
+	assert.NoFileExists(t, unitPath)
+	assert.Contains(t, out, "Removed")
+	assert.Contains(t, out, "systemctl --user enable --now lmm-serve", "how to turn the packaged one back on")
 }

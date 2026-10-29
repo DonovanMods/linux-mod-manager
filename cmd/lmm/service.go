@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 
@@ -39,13 +41,21 @@ run 'loginctl enable-linger $USER' once; lmm never runs it for you.`,
 var serviceInstallCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install, enable and start lmm-serve.service for this lmm binary",
-	Long: `Write lmm-serve.service to $XDG_CONFIG_HOME/systemd/user (default
-~/.config/systemd/user) with ExecStart pointing at this lmm binary, then
-reload the user manager and enable and start the service.
+	Long: `Write lmm-serve.service to the directory the systemd user manager loads
+units from ($XDG_CONFIG_HOME/systemd/user as the user manager sees it,
+default ~/.config/systemd/user) with ExecStart pointing at this lmm binary,
+then reload the user manager and enable and start the service.
+
+The service reads the same config and data as this command: --config and
+--data are passed on to it, and so are XDG_CONFIG_HOME and XDG_DATA_HOME
+when they differ from the user manager's. It runs with the user manager's
+PATH, not your shell's (see: systemctl --user show-environment), so 7z,
+unrar and steamcmd must be on that one.
 
 Running it again rewrites the unit (say, with a new --addr) and restarts the
 service. If a package already installed the unit, nothing is written: lmm
-tells you the systemctl command that turns it on.
+tells you the systemctl command that turns it on. A unit file lmm did not
+write is left alone.
 
 Examples:
   lmm service install
@@ -62,6 +72,10 @@ var serviceUninstallCmd = &cobra.Command{
 	Long: `Stop and disable lmm-serve.service, remove the unit file 'lmm service
 install' wrote, and reload the user manager. A unit a package installed is
 left alone; lmm tells you the systemctl command that turns it off.
+
+Disabling removes the enablement link in ~/.config/systemd/user, which a
+packaged lmm-serve.service shares: if your lmm package also installed the
+unit, it is turned off too, and lmm prints the command that turns it on.
 
 Examples:
   lmm service uninstall`,
@@ -96,18 +110,39 @@ func init() {
 // doServiceInstall installs the unit for this binary and prints where it
 // went, the address it serves and, without lingering, the boot-time hint.
 func doServiceInstall(ctx context.Context, cmd *cobra.Command, addr string) error {
-	// Under --json stderr stays empty (the JSON contract), so the warning
-	// is printed only for a person at a terminal.
-	if addr != "" && !jsonOutput {
-		if err := warnIfNonLoopback(cmd, addr); err != nil {
+	if addr != "" {
+		if err := core.ValidateServeAddr(addr); err != nil {
 			return err
 		}
+		// Under --json stderr stays empty (the JSON contract), so the
+		// warning is printed only for a person at a terminal.
+		if !jsonOutput {
+			if err := warnIfNonLoopback(cmd, addr); err != nil {
+				return err
+			}
+		}
+	}
+	// The service does not start in this directory, so a relative
+	// --config or --data is made absolute here.
+	opts := core.ServiceInstallOptions{Addr: addr}
+	for _, d := range []struct {
+		from string
+		to   *string
+	}{{configDir, &opts.ConfigDir}, {dataDir, &opts.DataDir}} {
+		if d.from == "" {
+			continue
+		}
+		abs, err := filepath.Abs(d.from)
+		if err != nil {
+			return err
+		}
+		*d.to = abs
 	}
 	units, err := newUserUnits()
 	if err != nil {
 		return err
 	}
-	report, err := units.Install(ctx, core.ServiceInstallOptions{Addr: addr})
+	report, err := units.Install(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -126,7 +161,7 @@ func doServiceInstall(ctx context.Context, cmd *cobra.Command, addr string) erro
 		if u.Active {
 			fmt.Printf("  The web UI is running at %s\n", colorBold("http://"+addr+"/"))
 		} else {
-			fmt.Printf("  %s it is not running (%s); see: journalctl --user -u %s\n", colorYellow("!"), u.ActiveState, u.Name)
+			fmt.Printf("  %s it started but is not running (%s); see: journalctl --user -u %s\n", colorYellow("!"), u.ActiveState, strings.TrimSuffix(u.Name, ".service"))
 		}
 	}
 	printLingerHint(report.Linger, units.User)
@@ -152,6 +187,11 @@ func doServiceUninstall(ctx context.Context) error {
 	}
 	for _, u := range report.Units {
 		fmt.Printf("Removed %s; it is stopped and will not start again.\n", colorBold(u.Name))
+		// Disabling removed the enablement link the packaged unit shares.
+		if u.Origin == core.UnitOriginPackage {
+			fmt.Printf("  Your lmm package's %s (%s) is disabled too; turn it on with: systemctl --user enable --now %s\n",
+				u.Name, u.Path, strings.TrimSuffix(u.Name, ".service"))
+		}
 	}
 	return nil
 }

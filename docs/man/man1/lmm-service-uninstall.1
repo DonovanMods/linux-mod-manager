@@ -15,6 +15,11 @@ install' wrote, and reload the user manager. A unit a package installed is
 left alone; lmm tells you the systemctl command that turns it off.
 
 .PP
+Disabling removes the enablement link in ~/.config/systemd/user, which a
+packaged lmm-serve.service shares: if your lmm package also installed the
+unit, it is turned off too, and lmm prints the command that turns it on.
+
+.PP
 Examples:
   lmm service uninstall
 
