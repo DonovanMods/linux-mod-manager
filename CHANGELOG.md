@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-29
+
+Profiles can be duplicated and mods copied between them, a CurseForge game
+can be limited to its own flavor (World of Warcraft Classic or Retail),
+picked by name, and saving a game no longer rewrites the rest of
+`games.yaml`.
+
 ### Added
 
 - **Duplicate a profile (#438).** `lmm profile duplicate <source> <new>`,
@@ -6242,7 +6249,8 @@ lmm source list --all` when there is more to show. `lmm game edit --help`
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.1...v2.0.0
 [1.30.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.0...v1.30.1
