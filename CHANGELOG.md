@@ -57,6 +57,10 @@ picked by name, and saving a game no longer rewrites the rest of
 
 ### Fixed
 
+- **A game with no install path no longer writes profile overrides into the
+  working directory.** A deploy resolved the empty path to wherever lmm was
+  run from and wrote the profile's config overrides there; it now refuses
+  with an error naming the game.
 - **A web-UI plan refused for a Steam Workshop item answers 409, not 500
   (#437).** `lmm serve` classified the typed external-mod refusal as an
   unexpected server error; it is a conflict with the mod's state.
