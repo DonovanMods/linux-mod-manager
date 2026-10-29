@@ -136,7 +136,7 @@ func TestGameVersionTypes_SourceErrorPropagates(t *testing.T) {
 func TestResolveGameVersionTypes_NumbersNeedNoLookup(t *testing.T) {
 	lister := &versionTypeSource{listErr: errors.New("offline")}
 	svc := newVersionTypeService(t, lister)
-	ids, err := svc.ResolveGameVersionTypes(context.Background(), "unmapped", "versioned", []string{"67408", " 517 "})
+	ids, err := svc.ResolveGameVersionTypes(context.Background(), "unmapped", "versioned", nil, []string{"67408", " 517 "})
 	require.NoError(t, err)
 	assert.Equal(t, []int{67408, 517}, ids)
 	assert.Zero(t, lister.calls)
@@ -147,7 +147,7 @@ func TestResolveGameVersionTypes_NumbersNeedNoLookup(t *testing.T) {
 func TestResolveGameVersionTypes_Slugs(t *testing.T) {
 	lister := &versionTypeSource{types: wowTypes()}
 	svc := newVersionTypeService(t, lister)
-	ids, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned",
+	ids, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned", nil,
 		[]string{"wow-classic", "517", "WoW-Mists-Of-Pandaria-Classic"})
 	require.NoError(t, err)
 	assert.Equal(t, []int{67408, 517, 79434}, ids)
@@ -157,7 +157,7 @@ func TestResolveGameVersionTypes_Slugs(t *testing.T) {
 // A wrong guess fails with the answer: every valid type's name, slug and id.
 func TestResolveGameVersionTypes_UnknownListsTheValidTypes(t *testing.T) {
 	svc := newVersionTypeService(t, &versionTypeSource{types: wowTypes()})
-	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned", []string{"classic"})
+	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned", nil, []string{"classic"})
 	var typeErr *core.GameVersionTypeError
 	require.ErrorAs(t, err, &typeErr)
 	assert.Equal(t, "classic", typeErr.Value)
@@ -172,7 +172,7 @@ func TestResolveGameVersionTypes_UnknownListsTheValidTypes(t *testing.T) {
 // A partial slug is not a match: "wow" names no type.
 func TestResolveGameVersionTypes_PrefixIsNotAMatch(t *testing.T) {
 	svc := newVersionTypeService(t, &versionTypeSource{types: wowTypes()})
-	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned", []string{"wow"})
+	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned", nil, []string{"wow"})
 	var typeErr *core.GameVersionTypeError
 	require.ErrorAs(t, err, &typeErr)
 	assert.Equal(t, core.GameVersionTypeUnknown, typeErr.Reason)
@@ -182,7 +182,7 @@ func TestResolveGameVersionTypes_PrefixIsNotAMatch(t *testing.T) {
 func TestResolveGameVersionTypes_AmbiguousSlugFails(t *testing.T) {
 	types := append(wowTypes(), source.GameVersionType{ID: 999, Name: "Another Classic", Slug: "wow-classic"})
 	svc := newVersionTypeService(t, &versionTypeSource{types: types})
-	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned", []string{"wow-classic"})
+	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned", nil, []string{"wow-classic"})
 	var typeErr *core.GameVersionTypeError
 	require.ErrorAs(t, err, &typeErr)
 	assert.Equal(t, core.GameVersionTypeAmbiguous, typeErr.Reason)
@@ -193,7 +193,49 @@ func TestResolveGameVersionTypes_AmbiguousSlugFails(t *testing.T) {
 // A slug needs the list, so the lookup's own failure is the answer.
 func TestResolveGameVersionTypes_SlugLookupFailure(t *testing.T) {
 	svc := newVersionTypeService(t, &versionTypeSource{listErr: domain.ErrAuthRequired})
-	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned", []string{"wow-classic"})
+	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned", nil, []string{"wow-classic"})
 	assert.ErrorIs(t, err, domain.ErrAuthRequired)
 	assert.Contains(t, err.Error(), `"wow-classic"`)
+}
+
+// An edit that re-points the source resolves its slugs against the mapping
+// it will save, not the one games.yaml holds now (#563 review).
+func TestResolveGameVersionTypes_UsesTheEditsMapping(t *testing.T) {
+	lister := &versionTypeSource{types: wowTypes()}
+	svc := newVersionTypeService(t, lister)
+	ids, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned",
+		map[string]string{"versioned": "432"}, []string{"wow-classic"})
+	require.NoError(t, err)
+	assert.Equal(t, []int{67408}, ids)
+	assert.Equal(t, "432", lister.askedGame)
+}
+
+// An edit that adds the mapping can name slugs in the same run.
+func TestResolveGameVersionTypes_EditAddsTheMapping(t *testing.T) {
+	lister := &versionTypeSource{types: wowTypes()}
+	svc := newVersionTypeService(t, lister)
+	ids, err := svc.ResolveGameVersionTypes(context.Background(), "unmapped", "versioned",
+		map[string]string{"nexusmods": "y", "versioned": "1"}, []string{"wow-classic"})
+	require.NoError(t, err)
+	assert.Equal(t, []int{67408}, ids)
+	assert.Equal(t, "1", lister.askedGame)
+}
+
+// An edit that drops the mapping has nothing to look a slug up in: refused,
+// saying so, without asking the source.
+func TestResolveGameVersionTypes_EditRemovesTheMapping(t *testing.T) {
+	lister := &versionTypeSource{types: wowTypes()}
+	svc := newVersionTypeService(t, lister)
+	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned",
+		map[string]string{"plain": "x"}, []string{"wow-classic"})
+	var idErr *core.GameIdentifierError
+	require.ErrorAs(t, err, &idErr)
+	assert.Contains(t, err.Error(), "removes")
+	assert.Zero(t, lister.calls)
+
+	// Ids still need no mapping.
+	ids, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "versioned",
+		map[string]string{"plain": "x"}, []string{"517"})
+	require.NoError(t, err)
+	assert.Equal(t, []int{517}, ids)
 }

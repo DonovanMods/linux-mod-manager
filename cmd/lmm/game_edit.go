@@ -272,13 +272,14 @@ func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapt
 		edit.InstallPath = &gameEditInstallPath
 	}
 	// #544: core validates the ids and owns replace/clear. #563: a slug
-	// is resolved against CurseForge's list for the game; ids need no call.
+	// is resolved against CurseForge's list for the game this edit maps
+	// (edit.Sources, nil when the sources are untouched); ids need no call.
 	if gameEditCurseForgeTypesSet {
 		values, err := curseForgeTypesFromFlags(gameEditCurseForgeTypes)
 		if err != nil {
 			return err
 		}
-		ids, err := service.ResolveGameVersionTypes(ctx, gameID, curseForgeSourceID, values)
+		ids, err := service.ResolveGameVersionTypes(ctx, gameID, curseForgeSourceID, edit.Sources, values)
 		if err != nil {
 			if errors.Is(err, domain.ErrAuthRequired) {
 				return fmt.Errorf("--curseforge-version-type: a slug needs CurseForge's list of the game's version types: %w", authPromptError(curseForgeSourceID))

@@ -20,10 +20,12 @@ type mockVersionTypeSource struct {
 	types   []source.GameVersionType
 	listErr error
 	calls   int
+	asked   string
 }
 
-func (m *mockVersionTypeSource) ListGameVersionTypes(context.Context, string) ([]source.GameVersionType, error) {
+func (m *mockVersionTypeSource) ListGameVersionTypes(_ context.Context, sourceGameID string) ([]source.GameVersionType, error) {
 	m.calls++
+	m.asked = sourceGameID
 	return m.types, m.listErr
 }
 
@@ -143,9 +145,56 @@ func TestDoGameEdit_CurseForgeVersionTypeSlugNeedsAuth(t *testing.T) {
 	assert.Contains(t, err.Error(), "lmm auth login curseforge")
 }
 
+// A run that re-points --source curseforge resolves its slugs against the
+// CurseForge game it is setting, not the saved one (#563 review).
+func TestDoGameEdit_CurseForgeVersionTypeSlugUsesTheNewMapping(t *testing.T) {
+	svc, cf := setupVersionTypeTest(t, nil)
+	resetGameEditFlags(t)
+	gameEditSources = []string{"curseforge=432"}
+	setCurseForgeTypeFlags(t, "game")
+
+	captureStdout(t, func() error {
+		return doGameEdit(context.Background(), svc, "wow-classic", false)
+	})
+	assert.Equal(t, "432", cf.asked)
+	game, err := svc.GetGame("wow-classic")
+	require.NoError(t, err)
+	assert.Equal(t, "432", game.SourceIDs["curseforge"])
+	assert.Equal(t, []int{517}, game.CurseForgeVersionTypes())
+}
+
+// A run that adds the CurseForge mapping can name slugs in the same breath.
+func TestDoGameEdit_CurseForgeVersionTypeSlugWithTheMappingAdded(t *testing.T) {
+	svc, cf := setupVersionTypeTest(t, nil)
+	resetGameEditFlags(t)
+	gameEditSources = []string{"curseforge=1"}
+	setCurseForgeTypeFlags(t, "wow-classic")
+
+	captureStdout(t, func() error {
+		return doGameEdit(context.Background(), svc, "skyrim-se", false)
+	})
+	assert.Equal(t, "1", cf.asked)
+	game, err := svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, []int{67408}, game.CurseForgeVersionTypes())
+}
+
+// A run that removes the mapping has nothing to look a slug up in.
+func TestDoGameEdit_CurseForgeVersionTypeSlugWithTheMappingRemoved(t *testing.T) {
+	svc, cf := setupVersionTypeTest(t, nil)
+	resetGameEditFlags(t)
+	gameEditRemove = []string{"curseforge"}
+	setCurseForgeTypeFlags(t, "wow-classic")
+
+	err := doGameEdit(context.Background(), svc, "wow-classic", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "removes")
+	assert.Zero(t, cf.calls)
+}
+
 func TestReportError_JSON_GameVersionTypeError(t *testing.T) {
 	svc, _ := setupVersionTypeTest(t, nil)
-	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "curseforge", []string{"classic"})
+	_, err := svc.ResolveGameVersionTypes(context.Background(), "wow-classic", "curseforge", nil, []string{"classic"})
 	require.Error(t, err)
 	withJSONOutput(t)
 

@@ -48,6 +48,14 @@ type GameVersionTypesReport struct {
 // ErrNoGameVersionTypes; and the source's own failure (a missing key is
 // domain.ErrAuthRequired) is returned wrapped but intact.
 func (s *Service) GameVersionTypes(ctx context.Context, gameID, sourceID string) (*GameVersionTypesReport, error) {
+	return s.gameVersionTypes(ctx, gameID, sourceID, nil)
+}
+
+// gameVersionTypes is GameVersionTypes asked with the source map sources in
+// place of the game's saved one; nil means the saved one. It is how
+// ResolveGameVersionTypes answers for an edit that changes the mapping in
+// the same run.
+func (s *Service) gameVersionTypes(ctx context.Context, gameID, sourceID string, sources map[string]string) (*GameVersionTypesReport, error) {
 	src, err := s.GetSource(sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("looking up source %s: %w", sourceID, err)
@@ -60,7 +68,12 @@ func (s *Service) GameVersionTypes(ctx context.Context, gameID, sourceID string)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", domain.ErrGameNotFound, gameID)
 	}
-	identifier, err := s.indexGameID(src, gameID)
+	var identifier string
+	if sources == nil {
+		identifier, err = s.indexGameID(src, gameID)
+	} else {
+		identifier, err = editedGameIdentifier(src, game, sources)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -128,14 +141,17 @@ func (e *GameVersionTypeError) Error() string {
 func (e *GameVersionTypeError) Details() any { return e }
 
 // ResolveGameVersionTypes turns version-type values - each an id or a
-// type's slug - into ids, in order. A value of digits is an id as it stands
+// type's slug - into ids, in order. sources is the source map the game
+// will have once the caller's edit is saved - an edit that adds, re-points
+// or removes sourceID resolves its slugs against that, not the saved
+// mapping - and nil means the game's saved map. A value of digits is an id as it stands
 // and asks nothing of the source, so ids alone work offline and for a game
 // that does not map it; whether an id is valid is EditGame's question, as
 // it always was. A slug is matched exactly (case aside) against
 // GameVersionTypes' list, fetched once: no match, or more than one, is a
 // *GameVersionTypeError, and a failure to fetch the list is returned
 // naming the slug that needed it.
-func (s *Service) ResolveGameVersionTypes(ctx context.Context, gameID, sourceID string, values []string) ([]int, error) {
+func (s *Service) ResolveGameVersionTypes(ctx context.Context, gameID, sourceID string, sources map[string]string, values []string) ([]int, error) {
 	var report *GameVersionTypesReport
 	ids := make([]int, 0, len(values))
 	for _, v := range values {
@@ -146,7 +162,7 @@ func (s *Service) ResolveGameVersionTypes(ctx context.Context, gameID, sourceID 
 		}
 		if report == nil {
 			var err error
-			if report, err = s.GameVersionTypes(ctx, gameID, sourceID); err != nil {
+			if report, err = s.gameVersionTypes(ctx, gameID, sourceID, sources); err != nil {
 				return nil, fmt.Errorf("looking up game version type %q: %w", v, err)
 			}
 		}
@@ -173,4 +189,28 @@ func (s *Service) ResolveGameVersionTypes(ctx context.Context, gameID, sourceID 
 		return nil, typeErr
 	}
 	return ids, nil
+}
+
+// editedGameIdentifier is indexGameID for a game whose source map an edit
+// is about to replace with sources: the identifier src will know the game
+// by once it is saved. An edit that drops a mapping the game has is refused
+// in its own words, since the saved mapping it would otherwise name is the
+// one being removed.
+func editedGameIdentifier(src source.ModSource, game *domain.Game, sources map[string]string) (string, error) {
+	sourceID := src.ID()
+	if _, mapped := sources[sourceID]; !mapped {
+		reason := fmt.Sprintf("game %q does not use source %q; add it with 'lmm game edit %s --source %s=<identifier>'",
+			game.ID, sourceID, game.ID, sourceID)
+		if _, had := game.SourceIDs[sourceID]; had {
+			reason = fmt.Sprintf("this edit removes source %q from game %q, so there is no %s game to look a version type up in; keep the mapping, or give the version types by id",
+				sourceID, game.ID, src.Name())
+		}
+		return "", &GameIdentifierError{
+			GameID: game.ID, Source: sourceID,
+			Err: fmt.Errorf("%s: %w", reason, source.ErrGameIdentifierInvalid),
+		}
+	}
+	edited := *game
+	edited.SourceIDs = sources
+	return gameSourceID(src, &edited)
 }
