@@ -12,16 +12,18 @@
 // process's mutation leaves the work to the next check.
 //
 // The job's own completion re-reads the updates (the SPA re-hydrates after
-// every job), so an update that FAILED would otherwise be retried by the
-// very check its failure caused, and again, for ever. autoUpdater
-// remembers each failed target version and holds it back until the source
-// offers a newer one or the user asks for a fresh check (?refresh=1); it
-// stays on the card for the user meanwhile, and the failed job is in the
-// tray.
+// every job), so an update still offered after the job - one that failed,
+// was skipped, or applied and is somehow offered again - would otherwise be
+// retried by the very check that job caused, and again, for ever.
+// autoUpdater remembers each target version a job attempted and holds it
+// back until the source offers a newer one or the user asks for a fresh
+// check (?refresh=1); it stays on the card for the user meanwhile, and the
+// job's result is in the tray.
 package serve
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 
@@ -35,9 +37,9 @@ type autoUpdater struct {
 	mu sync.Mutex
 	// running is the automatic job in flight per autoUpdateKey.
 	running map[string]autoUpdateJob
-	// failed is, per autoUpdateKey and then domain.ModKey, the target
-	// version an automatic update failed to reach.
-	failed map[string]map[string]string
+	// attempted is, per autoUpdateKey and then domain.ModKey, the target
+	// version an automatic job already tried.
+	attempted map[string]map[string]string
 }
 
 // autoUpdateJob is one automatic job in flight.
@@ -49,47 +51,49 @@ type autoUpdateJob struct {
 // autoUpdateKey is the game/profile pair a pass is for.
 func autoUpdateKey(gameID, profile string) string { return gameID + "\x00" + profile }
 
-// retryable returns the updates not held back by a recorded failure at the
+// retryable returns the updates not held back by a recorded attempt at the
 // same target version. refresh - the user's explicit "check for updates" -
 // forgets the record first.
 func (a *autoUpdater) retryable(key string, updates []domain.Update, refresh bool) []domain.Update {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if refresh {
-		delete(a.failed, key)
+		delete(a.attempted, key)
 	}
-	failed := a.failed[key]
+	attempted := a.attempted[key]
 	return slices.DeleteFunc(slices.Clone(updates), func(u domain.Update) bool {
-		v, ok := failed[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)]
+		v, ok := attempted[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)]
 		return ok && v == u.NewVersion
 	})
 }
 
-// recordOutcome remembers what an automatic job could not apply: each
-// failed item at its target version, or - for a job that failed outright -
-// everything it planned.
+// recordOutcome ends key's automatic job and remembers what it attempted:
+// every item it reached - applied, skipped or failed - at the target
+// version the check offered, or, for a job that failed outright, every
+// item it planned.
 func (a *autoUpdater) recordOutcome(key string, planned []domain.Update, result *core.UpdateBatchResult, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	delete(a.running, key)
-	if a.failed == nil {
-		a.failed = map[string]map[string]string{}
+	if a.attempted == nil {
+		a.attempted = map[string]map[string]string{}
 	}
-	record := func(mod, version string) {
-		if a.failed[key] == nil {
-			a.failed[key] = map[string]string{}
-		}
-		a.failed[key][mod] = version
+	if a.attempted[key] == nil {
+		a.attempted[key] = map[string]string{}
 	}
-	if err != nil {
-		for _, u := range planned {
-			record(domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID), u.NewVersion)
-		}
-		return
-	}
+	reached := map[string]bool{}
 	if result != nil {
+		for _, r := range slices.Concat(result.Applied, result.Skipped) {
+			reached[domain.ModKey(r.Mod.SourceID, r.Mod.ModID)] = true
+		}
 		for _, f := range result.Failed {
-			record(f.Mod, f.ToVersion)
+			reached[f.Mod] = true
+		}
+	}
+	for _, u := range planned {
+		mod := domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)
+		if err != nil || reached[mod] {
+			a.attempted[key][mod] = u.NewVersion
 		}
 	}
 }
@@ -168,9 +172,19 @@ func (s *Server) autoApplyModUpdates(ctx context.Context, game *domain.Game, pro
 	planned := slices.DeleteFunc(slices.Clone(updates), func(u domain.Update) bool {
 		return !slices.Contains(plan.Mods, domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID))
 	})
-	id, err := s.jobs.startWithOrigin("updates", jobOriginAuto, func(ctx context.Context, sink core.EventSink) (any, error) {
-		result, err := run.Apply(ctx, sink)
-		a.recordOutcome(key, planned, result, err)
+	id, err := s.jobs.startWithOrigin("updates", jobOriginAuto, func(ctx context.Context, sink core.EventSink) (_ any, err error) {
+		var result *core.UpdateBatchResult
+		// Deferred, so a panic - which the registry recovers one level up -
+		// still ends the job here: left running, it would report a dead job
+		// as applying on every check until a restart.
+		defer func() {
+			if p := recover(); p != nil {
+				a.recordOutcome(key, planned, nil, errors.New("automatic update panicked"))
+				panic(p)
+			}
+			a.recordOutcome(key, planned, result, err)
+		}()
+		result, err = run.Apply(ctx, sink)
 		return result, err
 	})
 	if err != nil {

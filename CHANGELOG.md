@@ -217,9 +217,10 @@ self-update --auto` and exits as it would have; a script or a pipe never
   running job (the next check tries again), never retries a failed update
   until a newer version or an explicit check, leaves locked, manual-only
   and Steam Workshop mods alone, and never updates a profile other than
-  the deployed one. While the game is running (its `lmm launch` unit is
-  active, or a process from the game's folder is running, Wine and Proton
-  games included) the update waits, and the Updates card says "waiting for
+  the deployed one. While the game is running (a process from the game's
+  folder is running, in its `lmm launch` unit or not, Wine and Proton
+  games included; a launcher left open, such as Battle.net or Steam, does
+  not count) the update waits, and the Updates card says "waiting for
   <game> to close". Nothing checks in the background, and `lmm update` is
   unchanged. The update check document gains `auto_update`, and a job's
   summary gains `origin: "auto"`.

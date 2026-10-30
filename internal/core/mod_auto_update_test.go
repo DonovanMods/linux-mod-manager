@@ -180,11 +180,8 @@ func TestBeginAutoUpdate_ACheckOlderThanTheLastChangeStepsAside(t *testing.T) {
 func TestPlanAutoUpdate_GameRunningPostpones(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game, installed, updates := autoBatchFixture(t, svc)
-	svc.SetGameProbe(&core.GameProbe{
-		Run: func(context.Context, string, ...string) ([]byte, error) {
-			return []byte("lmm-launch-g1-0a1b2c3d.service loaded active running lmm: Game\n"), nil
-		},
-	})
+	game.InstallPath = "/games/Thing"
+	svc.SetGameProbe(launchedGameProbe("lmm-launch-g1-0a1b2c3d.service", "/games/Thing/thing"))
 
 	plan, err := svc.PlanAutoUpdate(context.Background(), game, "default", installed, updates)
 	require.NoError(t, err)
@@ -200,6 +197,25 @@ func TestPlanAutoUpdate_GameRunningPostpones(t *testing.T) {
 	assert.Equal(t, "1.0", one.Version, "nothing moves while the game runs")
 }
 
+// launchedGameProbe is a GameProbe that sees unit active, holding one
+// process, pid 500, whose executable is exe.
+func launchedGameProbe(unit, exe string) *core.GameProbe {
+	return &core.GameProbe{
+		Run: func(context.Context, string, ...string) ([]byte, error) {
+			return []byte(unit + " loaded active running lmm: Game\n"), nil
+		},
+		UnitPIDs: func(_ context.Context, u string) ([]int, error) {
+			if u != unit {
+				return nil, errors.New("no such unit")
+			}
+			return []int{500}, nil
+		},
+		Processes: func() ([]core.ProcessInfo, error) {
+			return []core.ProcessInfo{{PID: 500, Exe: exe, Cmdline: []string{exe}}}, nil
+		},
+	}
+}
+
 // TestGameRunning covers the probe's two signals and its fall-throughs.
 func TestGameRunning(t *testing.T) {
 	ctx := context.Background()
@@ -211,13 +227,16 @@ func TestGameRunning(t *testing.T) {
 		assert.False(t, svc.GameRunning(ctx, game).Running)
 	})
 
-	t.Run("an active launch unit of this game", func(t *testing.T) {
+	t.Run("the game's own process in an active launch unit of this game", func(t *testing.T) {
 		svc := newFlowsTestService(t)
+		probe := launchedGameProbe("lmm-launch-g1-deadbeef.service", "/games/Thing/bin/thing")
 		var args []string
-		svc.SetGameProbe(&core.GameProbe{Run: func(_ context.Context, name string, a ...string) ([]byte, error) {
+		run := probe.Run
+		probe.Run = func(ctx context.Context, name string, a ...string) ([]byte, error) {
 			args = append([]string{name}, a...)
-			return []byte("lmm-launch-g1-deadbeef.service loaded active running lmm: Game\n"), nil
-		}})
+			return run(ctx, name, a...)
+		}
+		svc.SetGameProbe(probe)
 		got := svc.GameRunning(ctx, game)
 		assert.True(t, got.Running)
 		assert.Equal(t, core.GameRunningLaunchUnit, got.Signal)
@@ -227,11 +246,19 @@ func TestGameRunning(t *testing.T) {
 		assert.Contains(t, args, "lmm-launch-g1-*")
 	})
 
+	t.Run("a launcher left alone in the unit after the game exited is not the game", func(t *testing.T) {
+		// Battle.net, or a Steam client lmm launch started, outlives the game
+		// in its unit; it must not hold updates back.
+		svc := newFlowsTestService(t)
+		svc.SetGameProbe(launchedGameProbe("lmm-launch-g1-deadbeef.service", "/opt/battlenet/Battle.net.exe"))
+		assert.False(t, svc.GameRunning(ctx, game).Running)
+	})
+
 	t.Run("another game's unit sharing the prefix does not count", func(t *testing.T) {
 		svc := newFlowsTestService(t)
-		svc.SetGameProbe(&core.GameProbe{Run: func(context.Context, string, ...string) ([]byte, error) {
-			return []byte("lmm-launch-g1-extra-deadbeef.service loaded active running lmm: Other\n"), nil
-		}})
+		probe := launchedGameProbe("lmm-launch-g1-extra-deadbeef.service", "/games/Thing/thing")
+		probe.Processes = func() ([]core.ProcessInfo, error) { return nil, nil }
+		svc.SetGameProbe(probe)
 		assert.False(t, svc.GameRunning(ctx, game).Running)
 	})
 
@@ -266,6 +293,18 @@ func TestGameRunning(t *testing.T) {
 		assert.Equal(t, core.GameRunningProcess, got.Signal)
 	})
 
+	t.Run("a game inside a Wine prefix is found by its C: path", func(t *testing.T) {
+		svc := newFlowsTestService(t)
+		prefixed := &domain.Game{ID: "d2r", InstallPath: "/home/u/Games/bnet/drive_c/Program Files (x86)/Diablo II Resurrected"}
+		svc.SetGameProbe(&core.GameProbe{Run: noUnits, Processes: func() ([]core.ProcessInfo, error) {
+			return []core.ProcessInfo{
+				{PID: 21, Exe: "/usr/bin/wine64-preloader", Cmdline: []string{`C:\Program Files (x86)\Diablo II Resurrected\D2R.exe`}},
+			}, nil
+		}})
+		assert.True(t, svc.GameRunning(ctx, prefixed).Running)
+		assert.False(t, svc.GameRunning(ctx, game).Running, "a C: path means nothing for a game outside a prefix")
+	})
+
 	t.Run("a sibling directory sharing the name prefix is not under the install path", func(t *testing.T) {
 		svc := newFlowsTestService(t)
 		svc.SetGameProbe(&core.GameProbe{Run: noUnits, Processes: func() ([]core.ProcessInfo, error) {
@@ -290,4 +329,30 @@ func TestGameRunning(t *testing.T) {
 		}})
 		assert.False(t, svc.GameRunning(ctx, game).Running)
 	})
+}
+
+// TestBeginAutoUpdate_ARowNoLongerOnAutoIsDropped: a user who moves a mod
+// off the auto policy while a check runs has decided; the pass, begun
+// after, applies only what is still on auto - and nothing at all when
+// nothing is.
+func TestBeginAutoUpdate_ARowNoLongerOnAutoIsDropped(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game, installed, updates := autoBatchFixture(t, svc)
+	ctx := context.Background()
+
+	plan, err := svc.PlanAutoUpdate(ctx, game, "default", installed, updates)
+	require.NoError(t, err)
+	_, err = svc.SetModUpdatePolicy(ctx, "src", "mod1", game.ID, "default", domain.UpdateNotify)
+	require.NoError(t, err)
+
+	_, err = svc.BeginAutoUpdate(ctx, game, plan, core.UpdateBatchOptions{})
+	require.ErrorIs(t, err, core.ErrStalePlan)
+	one, err := svc.GetInstalledMod(ctx, "src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", one.Version)
+
+	// The slot was given back: a second try is refused for the same
+	// reason, not because the first still holds it.
+	_, err = svc.BeginAutoUpdate(ctx, game, plan, core.UpdateBatchOptions{})
+	require.ErrorIs(t, err, core.ErrStalePlan)
 }

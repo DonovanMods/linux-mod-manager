@@ -173,7 +173,39 @@ func (s *Service) BeginAutoUpdate(ctx context.Context, game *domain.Game, plan *
 		release()
 		return nil, fmt.Errorf("automatic update: %w", err)
 	}
-	return &AutoUpdateRun{s: s, game: game, plan: plan.batch, opts: opts, release: release}, nil
+	// The snapshot is versions and enabled state only. A mod moved off the
+	// auto policy since the check is the user's decision, so it is dropped
+	// here, under the slot, where no further change can slip in.
+	batch, err := s.stillOnAuto(ctx, plan.batch)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return &AutoUpdateRun{s: s, game: game, plan: batch, opts: opts, release: release}, nil
+}
+
+// stillOnAuto returns batch narrowed to the mods whose installed row is
+// still on the auto policy, or ErrStalePlan when none is.
+func (s *Service) stillOnAuto(ctx context.Context, batch *UpdateBatchPlan) (*UpdateBatchPlan, error) {
+	rows, err := s.GetInstalledMods(ctx, batch.GameID, batch.Profile)
+	if err != nil {
+		return nil, fmt.Errorf("automatic update: %w", err)
+	}
+	auto := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		auto[domain.ModKey(r.SourceID, r.ID)] = r.UpdatePolicy == domain.UpdateAuto
+	}
+	narrowed := *batch
+	narrowed.Updates = nil
+	for _, u := range batch.Updates {
+		if auto[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)] {
+			narrowed.Updates = append(narrowed.Updates, u)
+		}
+	}
+	if len(narrowed.Updates) == 0 {
+		return nil, fmt.Errorf("automatic update: %w: no mod in it is on the auto policy any more", ErrStalePlan)
+	}
+	return &narrowed, nil
 }
 
 // Apply runs the begun pass - ApplyUpdateBatch's body, under the slot

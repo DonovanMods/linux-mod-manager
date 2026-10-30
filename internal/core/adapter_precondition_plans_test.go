@@ -130,6 +130,18 @@ var gatedPlans = []gatedPlan{
 		_, err := svc.PlanUpdateBatchFrom(context.Background(), g, "default", []domain.Update{fx.update}, nil)
 		return err
 	}},
+	{"PlanAutoUpdate", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
+		// #587: the automatic pass's plan holds the snapshot of the set its
+		// check read, built where every other snapshot is.
+		installed, err := svc.GetInstalledMods(context.Background(), g.ID, "default")
+		if err != nil {
+			return err
+		}
+		auto := fx.update
+		auto.InstalledMod.UpdatePolicy = domain.UpdateAuto
+		_, err = svc.PlanAutoUpdate(context.Background(), g, "default", installed, []domain.Update{auto})
+		return err
+	}},
 	{"PlanWorkshopAdopt", func(t *testing.T, svc *core.Service, g *domain.Game, fx planFixture) error {
 		_, err := svc.PlanWorkshopAdopt(context.Background(), g, "default", core.WorkshopAdoptOptions{})
 		return err

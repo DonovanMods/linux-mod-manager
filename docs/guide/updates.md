@@ -232,9 +232,10 @@ leave the card. A few things hold it back:
   replaces files the game is using. The card then says, for example,
   "1 automatic update waiting for World of Warcraft to close". The first
   check after the game closes installs it. lmm knows a game is running when
-  you started it with **Play** or `lmm launch`, or when a program from the
-  game's folder is running (Steam, Proton and Wine games included). When lmm
-  can't tell, it installs the update.
+  a program from the game's folder is running, whether you started it with
+  **Play**, `lmm launch` or anything else (Steam, Proton and Wine games
+  included). A launcher left open after the game closes, such as Battle.net
+  or Steam, doesn't count. When lmm can't tell, it installs the update.
 - **Something else is running.** If a deploy, install or other job is under
   way, lmm leaves the update for the next check rather than queueing it.
 - **The update failed.** lmm doesn't keep retrying a failed update. It stays

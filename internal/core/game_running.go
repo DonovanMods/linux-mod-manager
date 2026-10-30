@@ -12,6 +12,8 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -59,20 +61,26 @@ type ProcessInfo struct {
 
 // GameProbe is how GameRunning looks at the machine: every field is a seam
 // a test replaces, like Launcher's. NewGameProbe fills them from the
-// machine; a nil field skips its check.
+// machine; a nil field skips the check that needs it.
 type GameProbe struct {
 	// Run runs a command and returns its stdout - systemctl, here.
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
 	// Processes lists the running processes.
 	Processes func() ([]ProcessInfo, error)
+	// UnitPIDs lists the processes in a user unit's control group.
+	UnitPIDs func(ctx context.Context, unit string) ([]int, error)
 }
 
 // NewGameProbe returns a GameProbe for this machine: systemctl for the
-// launch units, /proc for the processes.
+// launch units, /proc for the processes, and the unified cgroup hierarchy
+// for a unit's own processes.
 func NewGameProbe() *GameProbe {
 	return &GameProbe{
 		Run:       runCommand,
 		Processes: func() ([]ProcessInfo, error) { return procProcesses("/proc") },
+		UnitPIDs: func(ctx context.Context, unit string) ([]int, error) {
+			return unitPIDs(ctx, runCommand, "/sys/fs/cgroup", unit)
+		},
 	}
 }
 
@@ -83,40 +91,61 @@ func (s *Service) SetGameProbe(p *GameProbe) {
 	s.gameProbePtr.Store(p)
 }
 
-// GameRunning reports whether game is running, reading the launch units
-// first and the processes second. Every failure to look is "could not
-// tell", which is not running: the caller then does what it would have
-// done without the check.
+// GameRunning reports whether game is running: a process of the game in
+// one of its active lmm-launch units first, then any process of the game.
+// "A process of the game" is one whose executable, or a path its command
+// line names, is under the game's install path - so a launcher `lmm
+// launch` started in the unit (Battle.net, or a Steam client that was not
+// already running) keeps nothing waiting once the game itself has exited.
+// Every failure to look is "could not tell", which is not running: the
+// caller then does what it would have done without the check.
 func (s *Service) GameRunning(ctx context.Context, game *domain.Game) GameRunningStatus {
 	p := s.gameProbePtr.Load()
-	if p == nil || game == nil {
+	if p == nil || game == nil || p.Processes == nil {
 		return GameRunningStatus{}
 	}
-	if p.Run != nil {
-		if unit, ok := activeLaunchUnit(ctx, p.Run, game.ID); ok {
-			return GameRunningStatus{Running: true, Signal: GameRunningLaunchUnit, Detail: unit}
+	root, ok := installRoot(game.InstallPath)
+	if !ok {
+		return GameRunningStatus{}
+	}
+	procs, err := p.Processes()
+	if err != nil {
+		return GameRunningStatus{}
+	}
+	if p.Run != nil && p.UnitPIDs != nil {
+		for _, unit := range activeLaunchUnits(ctx, p.Run, game.ID) {
+			pids, err := p.UnitPIDs(ctx, unit)
+			if err != nil {
+				continue
+			}
+			inUnit := make(map[int]bool, len(pids))
+			for _, pid := range pids {
+				inUnit[pid] = true
+			}
+			if _, ok := processUnder(procs, root, func(pid int) bool { return inUnit[pid] }); ok {
+				return GameRunningStatus{Running: true, Signal: GameRunningLaunchUnit, Detail: unit}
+			}
 		}
 	}
-	if p.Processes != nil {
-		if path, ok := processUnder(p.Processes, game.InstallPath); ok {
-			return GameRunningStatus{Running: true, Signal: GameRunningProcess, Detail: path}
-		}
+	if path, ok := processUnder(procs, root, func(int) bool { return true }); ok {
+		return GameRunningStatus{Running: true, Signal: GameRunningProcess, Detail: path}
 	}
 	return GameRunningStatus{}
 }
 
-// activeLaunchUnit returns the first active lmm-launch-<gameID>-<suffix>
-// service. The glob alone is not enough - game "g1"'s pattern also matches
+// activeLaunchUnits returns the active lmm-launch-<gameID>-<suffix>
+// services. The glob alone is not enough - game "g1"'s pattern also matches
 // game "g1-extra"'s units - so each name is held to launchUnitName's exact
 // shape: the game's own prefix, then one hex suffix as randomUnitSuffix
 // makes it.
-func activeLaunchUnit(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), gameID string) (string, bool) {
+func activeLaunchUnits(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), gameID string) []string {
 	prefix := launchUnitName(gameID, "")
 	out, err := run(ctx, "systemctl", "--user", "list-units", "--type=service", "--state=active",
 		"--plain", "--no-legend", "--no-pager", prefix+"*")
 	if err != nil {
-		return "", false
+		return nil
 	}
+	var units []string
 	for line := range strings.Lines(string(out)) {
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
@@ -125,10 +154,43 @@ func activeLaunchUnit(ctx context.Context, run func(context.Context, string, ...
 		name := fields[0]
 		suffix, ok := strings.CutPrefix(strings.TrimSuffix(name, ".service"), prefix)
 		if ok && isHexSuffix(suffix) {
-			return name, true
+			units = append(units, name)
 		}
 	}
-	return "", false
+	return units
+}
+
+// unitPIDs lists the processes in unit's control group, and in any group
+// below it, under cgroupRoot (the unified hierarchy's mount).
+func unitPIDs(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), cgroupRoot, unit string) ([]int, error) {
+	out, err := run(ctx, "systemctl", "--user", "show", "--property=ControlGroup", "--value", unit)
+	if err != nil {
+		return nil, err
+	}
+	group := strings.TrimSpace(string(out))
+	if group == "" {
+		return nil, fmt.Errorf("unit %s has no control group", unit)
+	}
+	var pids []int
+	err = filepath.WalkDir(filepath.Join(cgroupRoot, group), func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || d.Name() != "cgroup.procs" {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, field := range strings.Fields(string(raw)) {
+			if pid, err := strconv.Atoi(field); err == nil {
+				pids = append(pids, pid)
+			}
+		}
+		return nil
+	})
+	return pids, err
 }
 
 // isHexSuffix reports whether s is a non-empty run of lowercase hex digits
@@ -145,26 +207,29 @@ func isHexSuffix(s string) bool {
 	return true
 }
 
-// processUnder returns the path of the first process whose executable, or
-// a path its command line names, is under installPath. An install path
-// that is not absolute, or is the root, would match everything and so
-// tells nothing.
-func processUnder(list func() ([]ProcessInfo, error), installPath string) (string, bool) {
+// installRoot is the install path GameRunning matches processes against,
+// and false when it cannot tell anything: empty, relative, or the root,
+// which would match every process.
+func installRoot(installPath string) (string, bool) {
 	root := filepath.Clean(installPath)
 	if installPath == "" || !filepath.IsAbs(root) || root == "/" {
 		return "", false
 	}
-	procs, err := list()
-	if err != nil {
-		return "", false
-	}
+	return root, true
+}
+
+// processUnder returns the path of the first process, among those pick
+// accepts, whose executable or a path its command line names is under
+// root. lmm's own process is never one.
+func processUnder(procs []ProcessInfo, root string, pick func(pid int) bool) (string, bool) {
 	self := os.Getpid()
+	driveC := prefixDriveC(root)
 	for _, p := range procs {
-		if p.PID == self {
+		if p.PID == self || !pick(p.PID) {
 			continue
 		}
 		for _, candidate := range append([]string{p.Exe}, p.Cmdline...) {
-			if path := unixPathOf(candidate); path != "" && pathUnder(path, root) {
+			if path := unixPathOf(candidate, driveC); path != "" && pathUnder(path, root) {
 				return path, true
 			}
 		}
@@ -172,16 +237,37 @@ func processUnder(list func() ([]ProcessInfo, error), installPath string) (strin
 	return "", false
 }
 
+// prefixDriveC is the drive_c directory of the Wine prefix root is inside,
+// or "" when root is not inside one. A game installed in a prefix (#545's
+// Battle.net games) runs with Windows paths on its command line, C:\
+// meaning that directory.
+func prefixDriveC(root string) string {
+	if i := strings.Index(root+"/", "/drive_c/"); i >= 0 {
+		return root[:i] + "/drive_c"
+	}
+	return ""
+}
+
 // unixPathOf reads a process's executable or argument as a path: a Unix
 // path as it is, a Wine "Z:\..." path (Wine's Z: is the Unix root) as the
-// Unix path it names, and anything else - a flag, a C:\ path inside a
-// prefix - as no path at all.
-func unixPathOf(s string) string {
+// Unix path it names, a "C:\..." path as the one under driveC when the
+// game lives in a prefix, and anything else - a flag, another drive - as no
+// path at all.
+func unixPathOf(s, driveC string) string {
 	if strings.HasPrefix(s, "/") {
 		return s
 	}
-	if len(s) > 2 && (s[0] == 'Z' || s[0] == 'z') && s[1] == ':' && (s[2] == '\\' || s[2] == '/') {
-		return strings.ReplaceAll(s[2:], `\`, "/")
+	if len(s) < 3 || s[1] != ':' || (s[2] != '\\' && s[2] != '/') {
+		return ""
+	}
+	rest := strings.ReplaceAll(s[2:], `\`, "/")
+	switch s[0] {
+	case 'Z', 'z':
+		return rest
+	case 'C', 'c':
+		if driveC != "" {
+			return driveC + rest
+		}
 	}
 	return ""
 }

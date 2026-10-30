@@ -115,14 +115,27 @@ func TestAPIFlow_AutoUpdates_WaitForTheGameToClose(t *testing.T) {
 	s, svc, game := newAutoUpdatesFixtureServer(t)
 	running := true
 	var mu sync.Mutex
-	svc.SetGameProbe(&core.GameProbe{Run: func(context.Context, string, ...string) ([]byte, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		if !running {
-			return nil, nil
-		}
-		return []byte("lmm-launch-g1-0a1b2c3d.service loaded active running lmm: Fixture Game\n"), nil
-	}})
+	const unit = "lmm-launch-g1-0a1b2c3d.service"
+	svc.SetGameProbe(&core.GameProbe{
+		Run: func(context.Context, string, ...string) ([]byte, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if !running {
+				return nil, nil
+			}
+			return []byte(unit + " loaded active running lmm: Fixture Game\n"), nil
+		},
+		UnitPIDs: func(context.Context, string) ([]int, error) { return []int{500}, nil },
+		Processes: func() ([]core.ProcessInfo, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if !running {
+				return nil, nil
+			}
+			exe := game.InstallPath + "/game.bin"
+			return []core.ProcessInfo{{PID: 500, Exe: exe, Cmdline: []string{exe}}}, nil
+		},
+	})
 
 	report := getUpdatesReport(t, s, game)
 	require.NotNil(t, report.AutoUpdate)
@@ -170,32 +183,34 @@ func TestAPIFlow_AutoUpdates_ConcurrentChecksApplyOnce(t *testing.T) {
 	assert.Equal(t, 1, status.status().Tally.Applied)
 }
 
-// TestAutoUpdater_AFailedUpdateIsNotRetriedUntilAskedTo: a failed
-// automatic update is left for the user rather than retried by every
-// check - the job's own completion re-reads the updates, so a retry on
-// every check would be a loop. A new version, or an explicit refresh,
-// tries again.
-func TestAutoUpdater_AFailedUpdateIsNotRetriedUntilAskedTo(t *testing.T) {
+// TestAutoUpdater_AnAttemptedUpdateIsNotRetriedUntilAskedTo: an update the
+// automatic pass already tried at a version - failed, skipped, or applied
+// and still offered - is left for the user rather than tried by every
+// check: the job's own completion re-reads the updates, so a retry on every
+// check would be a loop. A new version, or an explicit refresh, tries again.
+func TestAutoUpdater_AnAttemptedUpdateIsNotRetriedUntilAskedTo(t *testing.T) {
 	var a autoUpdater
 	key := autoUpdateKey("g1", "default")
 	update := func(id, version string) domain.Update {
 		return domain.Update{InstalledMod: domain.InstalledMod{Mod: domain.Mod{ID: id, SourceID: "src"}, UpdatePolicy: domain.UpdateAuto}, NewVersion: version}
 	}
-	planned := []domain.Update{update("a", "2"), update("b", "2")}
+	planned := []domain.Update{update("a", "2"), update("b", "2"), update("c", "2"), update("d", "2")}
 
 	a.recordOutcome(key, planned, &core.UpdateBatchResult{
-		Failed: []core.UpdateBatchFailure{{Mod: "src:a", ToVersion: "2", Error: "boom"}},
+		Failed:  []core.UpdateBatchFailure{{Mod: "src:a", ToVersion: "2", Error: "boom"}},
+		Skipped: []core.UpdateApplyResult{{Mod: domain.ModReference{SourceID: "src", ModID: "b"}}},
+		Applied: []core.UpdateApplyResult{{Mod: domain.ModReference{SourceID: "src", ModID: "c"}}},
 	}, nil)
-	got := a.retryable(key, []domain.Update{update("a", "2"), update("b", "2")}, false)
-	assert.Equal(t, []string{"b"}, updateIDs(got), "the failed one is held back; the rest are not")
+	got := a.retryable(key, planned, false)
+	assert.Equal(t, []string{"d"}, updateIDs(got), "failed, skipped and applied are held back; the one never reached is not")
 
 	got = a.retryable(key, []domain.Update{update("a", "3")}, false)
 	assert.Equal(t, []string{"a"}, updateIDs(got), "a newer version is a new attempt")
 
 	a.recordOutcome(key, planned, nil, errors.New("whole job failed"))
 	assert.Empty(t, a.retryable(key, planned, false), "a job that failed outright holds back all it planned")
-	assert.Len(t, a.retryable(key, planned, true), 2, "an explicit refresh asks again")
-	assert.Len(t, a.retryable(key, planned, false), 2, "and the refresh cleared the record")
+	assert.Len(t, a.retryable(key, planned, true), 4, "an explicit refresh asks again")
+	assert.Len(t, a.retryable(key, planned, false), 4, "and the refresh cleared the record")
 }
 
 // TestAPIFlow_AutoUpdates_NeverForAnotherProfile is decision 3 over HTTP:

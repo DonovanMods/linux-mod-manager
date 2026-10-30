@@ -145,12 +145,22 @@ func TestE2E_AutoUpdateShowsItsJobThenLeavesTheCard(t *testing.T) {
 // with the game running (a launch unit the probe reports as active), the
 // card says what it is waiting for, and nothing is applied.
 func TestE2E_AutoUpdateWaitsForTheGameToClose(t *testing.T) {
+	// The game's own process, pid 500, in its active launch unit. Its path
+	// is read off the game once the fixture has made it, so the probe asks
+	// for it lazily.
+	var installPath string
 	f := newE2EFixtureWithAnAutoUpdate(t, nil, &core.GameProbe{
 		Run: func(context.Context, string, ...string) ([]byte, error) {
 			return []byte("lmm-launch-g1-0a1b2c3d.service loaded active running lmm: Fixture Game\n"), nil
 		},
+		UnitPIDs: func(context.Context, string) ([]int, error) { return []int{500}, nil },
+		Processes: func() ([]core.ProcessInfo, error) {
+			exe := installPath + "/game.bin"
+			return []core.ProcessInfo{{PID: 500, Exe: exe, Cmdline: []string{exe}}}, nil
+		},
 	})
 
+	installPath = f.Game.InstallPath
 	var waiting, card string
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
