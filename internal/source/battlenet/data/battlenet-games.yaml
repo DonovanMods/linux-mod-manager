@@ -54,16 +54,19 @@ wow_classic_era:
     curseforge: "1"
   curseforge:
     game_version_types: [67408]
-# wowf is the _forever_ flavor (a 1.x client). Its CurseForge game version
-# type is not known yet, so it takes every file: set
-# `lmm game edit <game> --curseforge-version-type <id>` once one exists.
+# wowf is the _forever_ flavor (a 1.x client). Its name is Blizzard's own,
+# from the game's page, https://worldofwarcraft.blizzard.com/en-gb/forever.
+# Its product code and CurseForge game version type (88568, "WoW Forever")
+# are VERIFIED from a real install, unlike #546's entries below.
 wowf:
   slug: wow-forever
-  name: World of Warcraft - Forever
+  name: "World of Warcraft: Forever"
   install_dir: _forever_
   mod_path: Interface/AddOns
   sources:
     curseforge: "1"
+  curseforge:
+    game_version_types: [88568]
 
 # #546. Lmm's owner has none of these three installed, so their product
 # codes (osi, w3, s2), launch codes (OSI, W3, S2) and the NexusMods domains

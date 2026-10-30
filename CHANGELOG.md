@@ -31,7 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loads one. The product codes, the launch codes (`OSI`, `W3`, `S2`) and
   the Warcraft III and StarCraft II NexusMods ids are unverified until
   someone with a real install confirms them. Diablo III, Diablo IV and
-  StarCraft: Remastered stay out.
+  StarCraft: Remastered stay out. World of Warcraft's Forever flavor
+  (`wowf`, `wow-forever`) is now named "World of Warcraft: Forever", as
+  Blizzard names it, and carries its CurseForge flavor, `88568`, verified
+  from a real install, so it is offered only Forever addons.
 - **Battle.net games are detected, World of Warcraft first (#545).**
   `lmm game detect`, `lmm game add --from-detected`, `lmm init` and the web
   UI's Setup → Games find Battle.net games installed under Wine or Proton:

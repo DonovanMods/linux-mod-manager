@@ -156,14 +156,11 @@ with a subfolder for each, and each flavor you have is its own game:
 | Retail      | `_retail_`       | `wow-retail`      | `517`             |
 | Classic     | `_classic_`      | `wow-classic`     | `79434`           |
 | Classic Era | `_classic_era_`  | `wow-classic-era` | `67408`           |
-| Forever     | `_forever_`      | `wow-forever`     | not set yet       |
+| Forever     | `_forever_`      | `wow-forever`     | `88568`           |
 
 Each one's mods go in its own `Interface/AddOns` folder and come from
 CurseForge, already set to the [game flavor](#pick-a-curseforge-game-flavor),
-so a Classic game is never offered a Retail addon. The Forever flavor
-doesn't have a CurseForge flavor id yet, so it takes every file; set one
-with `lmm game edit wow-forever --curseforge-version-type <id>` when you
-know it.
+so a Classic game is never offered a Retail addon.
 
 In the terminal, a Battle.net game is named by `battlenet:` and its product
 code, where a Steam game shows its app id:
