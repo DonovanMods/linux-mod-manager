@@ -132,5 +132,16 @@ you trust: anyone who can reach the address can manage your mods.
   file under `~/.config/environment.d/`, which takes effect the next time
   you log in; or, for now, `systemctl --user set-environment PATH=...`
   followed by `systemctl --user restart lmm-serve`.
+- The service doesn't see API keys you `export` in your shell, such as
+  `CURSEFORGE_API_KEY` or `NEXUSMODS_API_KEY`. It sees keys you stored with
+  `lmm auth login <source>` or in the web interface (**Setup** >
+  **Authentication**), and variables set in a file under
+  `~/.config/environment.d/`. Without a key, a source such as CurseForge
+  can't check for updates or verify versions. `lmm service install` and
+  `lmm service status` warn about each key that comes only from your shell,
+  and the web interface offers **Add API key…** wherever a source asks for
+  one. After storing a key, run `systemctl --user restart lmm-serve`. lmm
+  never copies a key into the service file, which anyone who can read your
+  files could read.
 - If your computer doesn't use systemd, `lmm service` says so and changes
   nothing. Run `lmm serve` in a terminal instead.

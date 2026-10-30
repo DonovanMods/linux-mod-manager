@@ -32,6 +32,12 @@ lmm verify
 lmm verify --fix
 ```
 
+If a source needs an API key that lmm doesn't have, the Health card says so
+for each of its mods, with an **Add API key…** button that opens
+**Setup** > **Authentication** at that source. In the terminal, `lmm verify`
+names the command that stores the key, such as
+`lmm auth login curseforge`.
+
 ## Turn one mod off
 
 Not sure which mod is causing trouble? Turn mods off one at a time with the

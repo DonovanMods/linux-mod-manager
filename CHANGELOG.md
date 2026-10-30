@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A source that needs an API key says so, and links to where it goes
+  (#582).** `lmm-serve.service` doesn't inherit a login shell's
+  environment, so a key exported only there (`CURSEFORGE_API_KEY`,
+  `NEXUSMODS_API_KEY`) never reached it, and the web UI's Health card
+  reported each CurseForge mod as "could not check version: ... authentication
+  required" and "Not fixable". `lmm service install` and `lmm service
+status` now warn about each source whose key comes only from its
+  environment variable, naming `lmm auth login <source>` and the web UI's
+  Setup > Authentication (their `--json` documents carry the list as
+  `env_only_credentials`); lmm never writes a key into the unit file. In
+  the web UI, the Health card's row reads "<Source> needs an API key" with
+  an **Add API key…** button, and the Updates card (which showed nothing
+  for a refused check), search warnings and the search page's
+  skipped-source notice offer the same button; it opens Setup >
+  Authentication focused on that source. `lmm verify` prints `could not
+check version: CurseForge needs an API key (run: lmm auth login
+curseforge)` instead of "source unreachable". On the wire,
+  `VerifyFinding.auth_source`, `UpdateCheckReport.auth_required` and
+  `SourceWarning.auth_required` carry the refusing source.
+
 ## [2.2.0] - 2026-10-29
 
 The web UI can run in the background as a systemd user service, lmm says
