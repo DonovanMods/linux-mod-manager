@@ -574,6 +574,10 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 		result.Warnings = append(result.Warnings, "launching anyway: "+drift.drift()+"; "+strings.Join(drift.remedies(), "; "))
 	}
 
+	// #546: a game that loads its mods only when started a way lmm cannot
+	// arrange says how, on every launch.
+	result.Warnings = append(result.Warnings, s.launchAdvice(ctx, game, profile)...)
+
 	// A command starts in the game's folder, as a Wine or EXE-style
 	// command expects; Steam needs no directory.
 	var gameEnv []string

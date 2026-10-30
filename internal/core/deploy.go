@@ -991,6 +991,14 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		s.recordMergeOutcome(ctx, game, profileName, OpDeploy, result, emit)
 	}
 
+	// #546: what the user must still do for the deployed mods to load -
+	// Diablo II: Resurrected's -mod argument - at default verbosity, as a
+	// warning, in both frontends.
+	for _, w := range s.launchAdvice(ctx, game, profileName) {
+		result.Warnings = append(result.Warnings, w)
+		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: w})
+	}
+
 	// Review finding 5: any capture the deploy loop or the overrides above
 	// could not take becomes a result warning here - visible at default
 	// verbosity, in the CLI and in the SPA, rather than only in a log the
