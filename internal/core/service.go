@@ -146,10 +146,15 @@ type Service struct {
 	launchMethods []LaunchMethod
 	// verifyMemo caches the last verify answer per (game, profile, tier),
 	// keyed on a cheap fingerprint of what a run actually reads (#336). Any
-	// mutation drops it - beginOp does that - and VerifyOptions.Force
+	// mutation invalidates it - beginOp does that - and VerifyOptions.Force
 	// bypasses it. See verify_memo.go for the fingerprint's own limits.
+	//
+	// opGen counts mutations begun in this process (#588): the gate bumps
+	// it, under verifyMemoMu, as it invalidates the memo. A verify that
+	// sees it move while it walked knows a mutation overlapped the walk.
 	verifyMemoMu sync.Mutex
 	verifyMemo   map[string]verifyMemoEntry
+	opGen        uint64
 	downloader   *Downloader
 	extractor    *Extractor
 	log          *slog.Logger     // Diagnostics logger; nil means discard (see logger()).
@@ -218,6 +223,13 @@ type Service struct {
 	// completeProfileWrite. Test-only seam (export_test.go's
 	// SetAfterInstallSaveForTest); always nil in production.
 	afterInstallSave func()
+
+	// afterDeployLink, when non-nil, runs after the Installer has placed a
+	// file in the game directory and before it records the deployed_files
+	// row for it - the half-written window a read-only verify must never
+	// judge (#588). Test-only seam (export_test.go's
+	// SetAfterDeployLinkForTest); always nil in production.
+	afterDeployLink func(file string)
 
 	// nestedTreeHook, when non-nil, runs with "classify" just before
 	// verify classifies the BepInEx/ trees nested in BepInEx/plugins/, and
@@ -2605,6 +2617,7 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	installer.otherGames = s.otherGamesRecording
 	// #466 review F1: a link into the game's cache is lmm's.
 	installer.cacheRoots = s.cacheRoots(game)
+	installer.afterLink = s.afterDeployLink
 	// #353: and every Installer routes its deployable files through the
 	// game's adapter. A resolution failure is reported by the flow's own
 	// AdapterFor call (every flow that reaches an Installer makes one);

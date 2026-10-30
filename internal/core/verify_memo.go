@@ -45,6 +45,38 @@ func (s *Service) verifyMemoLookup(key, fingerprint string) *VerifyResult {
 	return entry.result
 }
 
+// verifyMemoLast returns a copy of the last answer stored under key,
+// whether or not it still matches the installation, or nil (#588): what a
+// check deferred by a running mutation shows as "the last check".
+func (s *Service) verifyMemoLast(key string) *VerifyResult {
+	s.verifyMemoMu.Lock()
+	defer s.verifyMemoMu.Unlock()
+	entry, ok := s.verifyMemo[key]
+	if !ok {
+		return nil
+	}
+	return cloneVerifyResult(entry.result)
+}
+
+// verifyMemoStoreUnlessMutated is verifyMemoStore for a run that began at
+// gen (#588): it stores nothing, and reports false, when a mutation has
+// begun in this process since. The test and the store share verifyMemoMu
+// with invalidateVerifyMemo, so a mutation cannot begin between them and
+// leave this run's answer standing as a match for an installation it
+// never saw.
+func (s *Service) verifyMemoStoreUnlessMutated(key, fingerprint string, result *VerifyResult, gen uint64) bool {
+	s.verifyMemoMu.Lock()
+	defer s.verifyMemoMu.Unlock()
+	if s.opGen != gen {
+		return false
+	}
+	if s.verifyMemo == nil {
+		s.verifyMemo = map[string]verifyMemoEntry{}
+	}
+	s.verifyMemo[key] = verifyMemoEntry{fingerprint: fingerprint, result: cloneVerifyResult(result)}
+	return true
+}
+
 // verifyMemoStore records result under key for this fingerprint.
 //
 // It stores a COPY (#366). The miss path used to file the very
@@ -75,10 +107,29 @@ func cloneVerifyResult(r *VerifyResult) *VerifyResult {
 	return &c
 }
 
-// dropVerifyMemo forgets every memoised verify answer. beginOp calls it, so
-// EVERY mutation invalidates them - by the gate rather than by a per-flow
-// guess about what a given flow could have touched, which is the only
-// version of this that cannot be got wrong by a flow added later.
+// invalidateVerifyMemo makes every memoised verify answer match nothing,
+// and counts a mutation begun (opGen). beginOp calls it, so EVERY mutation
+// invalidates them - by the gate rather than by a per-flow guess about what
+// a given flow could have touched, which is the only version of this that
+// cannot be got wrong by a flow added later.
+//
+// The answers themselves stay (#588), as verifyMemoLast's "last check": a
+// cleared fingerprint is "", which no computed fingerprint (a hex digest)
+// equals, so verifyMemoLookup never serves one again.
+func (s *Service) invalidateVerifyMemo() {
+	s.verifyMemoMu.Lock()
+	defer s.verifyMemoMu.Unlock()
+	s.opGen++
+	for key, entry := range s.verifyMemo {
+		entry.fingerprint = ""
+		s.verifyMemo[key] = entry
+	}
+}
+
+// dropVerifyMemo forgets every memoised verify answer outright, last checks
+// included: ReloadGames calls it when a game's record changed under it, so
+// an answer about the directory a game used to point at is not shown even
+// as the last check.
 func (s *Service) dropVerifyMemo() {
 	s.verifyMemoMu.Lock()
 	defer s.verifyMemoMu.Unlock()

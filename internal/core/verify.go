@@ -325,7 +325,29 @@ type VerifyResult struct {
 	// produced before this field existed is byte-identical to what it is
 	// now.
 	Cached bool `json:"cached,omitzero"`
+
+	// Deferred is set when the check did not walk the installation because
+	// a mutation was changing it (#588): a deploy, update or switch in this
+	// process, or another lmm holding the cross-process operation lock. A
+	// tree walked halfway through a deploy holds files lmm has placed but
+	// not yet recorded, and verify would report lmm's own new files as
+	// "not deployed - lmm did not put what is there".
+	//
+	// The only value is VerifyDeferredJobRunning. With it, Findings and the
+	// counts are the last completed check of the same game, profile and tier
+	// - CheckedAt says when it ran - or, with no such check, empty with a
+	// zero CheckedAt. Either way nothing in it was read off the disk now; a
+	// surface says the check is waiting for the job and asks again once it
+	// is done. A walk a mutation overlapped is answered the same way and is
+	// never memoised.
+	//
+	// omitzero: a check that ran carries no key at all.
+	Deferred string `json:"deferred,omitzero"`
 }
+
+// VerifyDeferredJobRunning is VerifyResult.Deferred's one value: a mutation
+// was changing the installation, so the check did not walk it (#588).
+const VerifyDeferredJobRunning = "job_running"
 
 // VerifyEventKind identifies what a VerifyEvent carries.
 type VerifyEventKind int
@@ -632,15 +654,32 @@ func staleCompileRefusal(fixing bool) string {
 // Unexported (final review, Important #3 / #301): VerifyReport is the only
 // production entry point (cmd/lmm/verify.go calls it, not this), and core's
 // own tests drive verify through it too.
+//
+// #588: "concurrently with a mutation" must not mean "walking a tree the
+// mutation is half way through writing". A plain run therefore looks
+// before it walks - the in-process slot, and the cross-process lock by a
+// probe that never waits - and does not walk while a mutation is running;
+// it answers deferredVerify instead. It looks again afterwards, and a walk
+// a mutation overlapped is discarded the same way, never memoised.
 func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
+	var quiet func() bool
 	if opts.Fix {
 		release, err := s.beginOp(ctx)
 		if err != nil {
 			return nil, err
 		}
 		defer release()
+	} else {
+		before, busy := s.mutationMark()
+		if busy {
+			return s.deferredVerify(game.ID, profile, opts), nil
+		}
+		quiet = func() bool {
+			after, busy := s.mutationMark()
+			return !busy && after == before
+		}
 	}
-	result, err := s.verifyMemoized(ctx, game, profile, opts, sink)
+	result, err := s.verifyMemoized(ctx, game, profile, opts, sink, quiet)
 	if opts.Fix {
 		// A --fix repair removes and deploys through the Installer, which
 		// reports a file it left as the user's (#466) - and a path another
@@ -684,16 +723,29 @@ func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile st
 // A fingerprint that cannot be computed (an unreadable directory, a failed
 // DB read) is not a match and not an error: the run simply happens, which
 // is the behaviour that existed before the memo.
-func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
+//
+// quiet, when non-nil (every run but Fix, which holds the slot itself),
+// reports whether no mutation has begun since the caller looked (#588). A
+// run it denies is answered by deferredVerify instead, and not memoised.
+func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink, quiet func() bool) (*VerifyResult, error) {
+	key := verifyMemoKey(game.ID, profile, opts.Tier)
+	// walk is verify, unless a mutation overlapped it.
+	walk := func() (*VerifyResult, error) {
+		result, err := s.verify(ctx, game, profile, opts, sink)
+		if err == nil && quiet != nil && !quiet() {
+			return s.deferredVerify(game.ID, profile, opts), nil
+		}
+		return result, err
+	}
 	if opts.Fix || opts.ModFilter != "" || (sink != nil && !opts.observe) {
-		return s.verify(ctx, game, profile, opts, sink)
+		return walk()
 	}
 
-	key := verifyMemoKey(game.ID, profile, opts.Tier)
+	gen := s.verifyMemoGen()
 	fingerprint, err := s.verifyFingerprint(ctx, game, profile)
 	if err != nil {
 		s.logger().Debug("verify memo disabled for this run", "game", game.ID, "profile", profile, "err", err)
-		return s.verify(ctx, game, profile, opts, sink)
+		return walk()
 	}
 
 	if !opts.Force {
@@ -712,12 +764,68 @@ func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile
 		}
 	}
 
-	result, err := s.verify(ctx, game, profile, opts, sink)
-	if err != nil {
-		return result, err // a partial (e.g. cancelled) result is never memoised
+	result, err := walk()
+	if err != nil || result.Deferred != "" {
+		return result, err // a partial (e.g. cancelled) or deferred result is never memoised
 	}
-	s.verifyMemoStore(key, fingerprint, result)
+	// The generation is read before the fingerprint, so a mutation that
+	// began anywhere from there to here - the fingerprint's own walk
+	// included - keeps this answer out of the memo even when quiet (a
+	// separate look, outside the memo's lock) passed it a moment ago.
+	if !s.verifyMemoStoreUnlessMutated(key, fingerprint, result, gen) {
+		return s.deferredVerify(game.ID, profile, opts), nil
+	}
 	return result, nil
+}
+
+// mutationMark is where mutations stand as a plain verify run begins and
+// ends (#588): mark identifies the last one begun - in this process
+// (opGen) and, by the lock file's stamp, in any process - and busy says
+// one is running now. Two marks that are equal and not busy bracket a walk
+// no mutation touched.
+func (s *Service) mutationMark() (mark mutationMark, busy bool) {
+	mark.gen = s.verifyMemoGen()
+	// A Service built as a struct literal (some internal tests) has no
+	// slot, so nothing can be running in it.
+	if s.opSem != nil && len(s.opSem) > 0 {
+		return mark, true
+	}
+	if s.opLockPath != "" {
+		busy, mark.lock = probeOpLock(s.opLockPath)
+	}
+	return mark, busy
+}
+
+// mutationMark is mutationMark's comparable answer.
+type mutationMark struct {
+	gen  uint64
+	lock string
+}
+
+// verifyMemoGen is opGen, read under the lock the gate bumps it under.
+func (s *Service) verifyMemoGen() uint64 {
+	s.verifyMemoMu.Lock()
+	defer s.verifyMemoMu.Unlock()
+	return s.opGen
+}
+
+// deferredVerify is a plain verify's answer while a mutation is changing
+// the installation (#588): the last check of this game, profile and tier,
+// marked deferred and dated when it ran, or an empty deferred result when
+// there is none - always empty for a single-mod run, which the
+// whole-profile answer cannot stand in for. It reads nothing off the disk,
+// and nothing that can block behind the mutation.
+func (s *Service) deferredVerify(gameID, profile string, opts VerifyOptions) *VerifyResult {
+	var result *VerifyResult
+	if opts.ModFilter == "" {
+		result = s.verifyMemoLast(verifyMemoKey(gameID, profile, opts.Tier))
+	}
+	if result == nil {
+		result = &VerifyResult{}
+	}
+	result.Cached = false
+	result.Deferred = VerifyDeferredJobRunning
+	return result
 }
 
 // verify runs the verify engine for game/profile per opts, reporting

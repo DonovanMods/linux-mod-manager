@@ -124,7 +124,12 @@ func (s *Service) acquireOpWithin(ctx context.Context, wait time.Duration) (rele
 	// mutation could have changed is a guess a flow added later gets wrong,
 	// and a stale health verdict is exactly the kind of wrong that looks
 	// right.
-	s.dropVerifyMemo()
+	//
+	// #588: it invalidates rather than forgets. The last answer stays, no
+	// longer matching any installation, for a check that lands while this
+	// mutation runs to show as "the last check" instead of walking a
+	// half-written tree.
+	s.invalidateVerifyMemo()
 
 	var lock *opLock
 	if s.opLockPath != "" {
