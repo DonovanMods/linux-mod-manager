@@ -31,6 +31,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and its meaning too; `manual_only` is still the "download it by hand"
   fact.
 
+- **The web UI says what it is waiting for (#583).** Mission Control used
+  to wait for its slowest read before anything changed on screen, and the
+  update check and the Health card's verify ask every mod's source, which
+  took up to twelve seconds on a real setup, so switching game or profile
+  looked frozen, and for that whole time the page kept showing the
+  previous profile's mods under the new profile's name. Now each part of
+  the page appears as soon as its own read answers. The previous context's
+  documents, and the lines naming its reads still out, are dropped the
+  moment you switch. Each slow read still running
+  names itself in place, with how far it has got once the server says:
+  "Checking 42 mods for updates (17/42)…", "Verifying 14 mods (3/14)…". A
+  read that answers within 180 ms shows nothing, and a loading line, once
+  shown, stays at least 300 ms so it doesn't flicker. The region is marked
+  `aria-busy`, a polite live region says when a slow read starts and
+  finishes, and focus is never moved. A job's control says what is running
+  from its first frame ("Starting…", then "Deploying…") instead of
+  "Working…", and a finished job's toast no longer waits on a second read
+  unless the job's result can hold a next step. On the wire,
+  `GET /api/v1/updates` and `GET /api/v1/health` take an optional
+  `?progress=<token>`, and a read that names one publishes `read_progress`
+  frames carrying it on `GET /api/v1/events`. Without a token they behave
+  as before, and the Health card's verify is still answered from the
+  unchanged-installation memo (#336).
+
+- **The web UI's Health card shows each finding in full, without the
+  CLI's "Not fixable" sentence (#585).** A row read "Not fixable: …", which
+  explained what `lmm verify --fix` would not do. Nobody can run that from a
+  browser, and the sentence took most of the row. The subject and the finding
+  were each cut to one line, so a loader-stale row read "loader stale l…"
+  and lost its remedy ("launch the game once to confirm…"). A row now wraps
+  so its whole text can be read, and it offers an action only where it has
+  one (**Repair**, **Set mod path…**, **Add API key…**). The engine's
+  reason stays on the wire as `fixable_reason`, stays in `lmm verify`'s
+  output, and shows as the row's tooltip.
+
 ### Fixed
 
 - **lmm refuses a database a newer lmm has migrated (#516).** This

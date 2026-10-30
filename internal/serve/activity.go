@@ -139,7 +139,7 @@ func (r *jobRegistry) listLocked() []jobSummary {
 // tray follows while it is closed - the design's "quick path inline, full
 // path one click away", applied to progress.
 //
-// Four frame names, and no others. Every one is a `data:` line holding one
+// Five frame names, and no others. Every one is a `data:` line holding one
 // JSON document, framed by sse.go exactly like the per-job stream's:
 //
 //	event: snapshot     data: a jobsIndex - EVERY retained job, newest
@@ -172,6 +172,14 @@ func (r *jobRegistry) listLocked() []jobSummary {
 //	                    failed. The result document is NOT here; read
 //	                    GET /api/v1/jobs/{id} for it.
 //
+//	event: read_progress data: a readProgressFrame (read_progress.go) - how
+//	                    far one in-flight READ has got (#583): the update
+//	                    check or the Health card's verify, published only
+//	                    for a GET that named a ?progress= token, and
+//	                    carrying it. Not a job: there is no job id, no
+//	                    snapshot entry and no terminal frame - the GET's
+//	                    own response is the end of it.
+//
 // The stream itself never ends of its own accord - there is no "done"
 // frame for the stream, only for individual jobs. It ends when the client
 // goes away or the server drains.
@@ -190,6 +198,8 @@ const (
 	activityStartedEvent  = "job_started"
 	activityProgressEvent = "job_progress"
 	activityDoneEvent     = "job_done"
+	// activityReadProgressEvent names a read_progress frame (#583).
+	activityReadProgressEvent = "read_progress"
 )
 
 // activityWatcherBuffer is how many frames a session stream may fall behind

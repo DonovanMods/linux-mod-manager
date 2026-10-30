@@ -49,24 +49,21 @@ const PROFILE_APPLY_ORIGIN = "profile:apply";
 // PROFILE_SYNC_ORIGIN is the Profile card's "Sync…" control (C-3).
 const PROFILE_SYNC_ORIGIN = "profile:sync";
 
-/** notFixableReason names why a finding's own Repair is absent.
+/** rowReason is a Health row's tooltip: why the row offers no Repair, in
+ * the engine's own words (core.VerifyFinding.FixableReason, issue 334) - or
+ * nothing, for a row that does offer one.
  *
- * Since issue 334 this is the ENGINE's own sentence, read straight off the
- * finding (core.VerifyFinding.FixableReason), which replaced the
- * hand-maintained status->sentence table and the locked/unlocked guess that
- * used to live here. That guess read the lock off a separate library fetch
- * and could not see the local-source case at all, so a version_mismatch on
- * a locally imported mod got the generic sentence; the engine knows which
- * of its own decision points refused the repair and says so.
- *
- * The generic fallback survives for a row the engine had nothing to add
- * about - and for a finding decoded from an older document that carries no
- * such key. */
-function notFixableReason(f) {
-  return (
-    f.fixable_reason ||
-    "A verify --fix run would not attempt a repair for this finding"
-  );
+ * Issue 585 took this sentence out of the row's text. It explains what a
+ * `lmm verify --fix` run would or would not attempt, which is the right
+ * sentence for `lmm verify` and no use as body text to a person in a
+ * browser, who cannot run it - and it took most of the row, cutting off
+ * the finding's own remedy. It stays on the wire, and here, for whoever
+ * hovers to ask why there is no button. */
+function rowReason(f) {
+  // An auth row's visible text already IS its fixable_reason (issue 582);
+  // its detail carries the source's error chain as its own title instead.
+  if (f.fixable || f.auth_source) return undefined;
+  return f.fixable_reason || undefined;
 }
 
 /** repairOrigin is one finding's own per-mod "Repair" control - shared by
@@ -675,10 +672,11 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                   (f, i) => html`
                     <li
                       key=${(f.mod_id || f.status) + "/" + (f.file_id || i)}
-                      class="card__row"
+                      class="card__row card__row--finding"
                       data-status=${f.status}
+                      title=${rowReason(f)}
                     >
-                      <span class="card__row-name" title=${findingSubject(f)}
+                      <span class="card__row-name"
                         >${findingSubject(f)}${
                           f.external &&
                           html` <span
@@ -688,7 +686,9 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                           >`
                         }</span
                       >
-                      <span class="card__row-detail" title=${findingLabel(f)}
+                      <span
+                        class="card__row-detail"
+                        title=${f.auth_source ? findingLabel(f) : undefined}
                         >${
                           // issue 582: a refused-for-want-of-a-key row
                           // says only that - the source's error chain is
@@ -738,11 +738,11 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                                   state=${state}
                                   sourceID=${f.auth_source}
                                 />`
-                              : html`<span
-                                  class="card__row-detail"
-                                  title=${notFixableReason(f)}
-                                  >Not fixable: ${notFixableReason(f)}</span
-                                >`
+                              : // issue 585: nothing. "Not fixable: ..."
+                                // said what `lmm verify --fix` would not
+                                // do, which a person here cannot run - the
+                                // finding's own words are what to act on.
+                                ""
                       }
                     </li>
                   `,

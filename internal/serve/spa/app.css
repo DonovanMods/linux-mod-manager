@@ -1008,6 +1008,31 @@ input[type="search"]::-webkit-search-decoration {
   margin-bottom: var(--space-6);
 }
 
+/* Issue 583: Mission Control's slow reads, named while they are out
+ * (pendingreads.js). One quiet line each - the card it becomes is what
+ * carries weight - with the inline job readout's own bar, so a read and a
+ * job look like the same kind of progress. */
+.pending-reads {
+  margin-bottom: var(--space-4);
+}
+
+.pending-reads__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pending-read {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
 .card {
   display: flex;
   flex-direction: column;
@@ -1167,6 +1192,36 @@ input[type="search"]::-webkit-search-decoration {
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--text-secondary);
+}
+
+/* issue 585: a Health row is read in full. Its subject and the finding's own
+ * words wrap instead of being cut to one line - the remedy ("launch the game
+ * once to confirm...") is the part the ellipsis took, and a status standing
+ * in for a mod name read "loader stale l...". The row's action keeps the
+ * right edge, on the first line when it fits and its own when it does not. */
+.card__row--finding {
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.card__row--finding > .card__row-name,
+.card__row--finding > .card__row-detail {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+.card__row--finding > .card__row-name {
+  flex: 0 1 auto;
+}
+
+.card__row--finding > .card__row-detail {
+  flex: 1 1 12rem;
+}
+
+.card__row--finding > :last-child:not(span) {
+  margin-left: auto;
 }
 
 /* issue 542: the quiet "N skipped updates" line under the attention cards.

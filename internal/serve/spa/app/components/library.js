@@ -12,6 +12,7 @@
 // rather than computing it.
 
 import { html, useEffect, useMemo, useRef, useState } from "../render.js";
+import { useShownWhile } from "../loading.js";
 import { navigate } from "../router.js";
 import { ApiError } from "../api.js";
 import {
@@ -714,6 +715,12 @@ export function Library({
     [selected],
   );
 
+  // issue 583: the library's own loading line follows the same timing as
+  // every other loading state (loading.js) - the library read usually
+  // answers in milliseconds, and a line painted for one frame of that is a
+  // flash, not information. A hook, so it is called above the returns.
+  const loadingShown = useShownWhile(mods === null && !error);
+
   if (mods === null) {
     if (error) {
       return html`
@@ -733,8 +740,13 @@ export function Library({
       `;
     }
     return html`
-      <section class="library">
-        <p class="app-booting">Loading your library…</p>
+      <section class="library" aria-busy="true">
+        ${
+          loadingShown &&
+          html`<p class="app-booting" data-testid="library-loading">
+            Loading your library…
+          </p>`
+        }
       </section>
     `;
   }

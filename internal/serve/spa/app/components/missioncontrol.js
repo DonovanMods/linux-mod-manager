@@ -25,6 +25,7 @@ import { ModPanel } from "./modpanel.js";
 import { OmnibarResults } from "./omnibarresults.js";
 import { SnapshotsCard } from "./snapshots.js";
 import { ModPathWarning } from "./modpath.js";
+import { PendingReads } from "./pendingreads.js";
 
 /** goToChooser is the error state's escape hatch: a click, not just advice
  * to edit the URL bar, back to a context that does resolve. */
@@ -131,12 +132,17 @@ export function MissionControl({ state, onThemeChange, actions }) {
       : "";
 
   // issue 498: hydrated means the home view's reads have SETTLED, not merely
-  // that status arrived. main.js commits mods/updates/health/conflicts/
-  // snapshots together, after status, so a settled mods read (a list, or its
-  // failure) is the proof the whole batch landed. Raising the marker on
-  // status alone let a test - or a fast user - act on a top bar whose layout
-  // was still about to change when the mod list arrived.
-  const homeSettled = mods !== null || Boolean(fetchErrors?.mods);
+  // that status arrived. Raising the marker on status alone let a test - or
+  // a fast user - act on a top bar whose layout was still about to change
+  // when the mod list arrived. Since issue 583 each read lands on its own,
+  // so settled means every one of them has: a document, or its failure.
+  const homeSettled = [
+    "mods",
+    "updates",
+    "health",
+    "conflicts",
+    "snapshots",
+  ].every((key) => state[key] !== null || Boolean(fetchErrors?.[key]));
 
   return html`
     <div
@@ -193,6 +199,12 @@ export function MissionControl({ state, onThemeChange, actions }) {
           gameID=${route.game}
           route=${route}
         />
+        ${
+          /* issue 583: every slow read still out names itself here, in
+          place of the card it will become - rather than the page saying
+          nothing until the slowest has answered. */ ""
+        }
+        <${PendingReads} state=${state} mods=${mods} />
         <${AttentionCards}
           state=${state}
           updates=${updates}

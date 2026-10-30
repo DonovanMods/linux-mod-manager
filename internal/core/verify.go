@@ -73,6 +73,12 @@ type VerifyOptions struct {
 	// sets it for Re-verify and leaves it off for a plain hydrate, which is
 	// the case the memo exists for.
 	Force bool `json:"force,omitempty"`
+
+	// observe makes a non-nil sink a watcher of whatever run happens rather
+	// than a reason to run: the memo still answers (and stores) as if there
+	// were no sink, and a hit reports nothing. Set only by
+	// Service.VerifyReportWithProgress (#583).
+	observe bool
 }
 
 // VerifyFinding is one reported row - a per-file or per-mod outcome from a
@@ -671,13 +677,15 @@ func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile st
 //   - ModFilter: a single-mod run is not the whole-profile answer, and
 //     storing it under the same key would let it stand in for one.
 //   - A non-nil sink: a memo hit has no run, so it has no progress events
-//     to emit. A caller that asked to watch gets something to watch.
+//     to emit. A caller that asked to watch gets something to watch -
+//     unless it asked only to observe a run that happens anyway
+//     (VerifyReportWithProgress, #583), which keeps the memo.
 //
 // A fingerprint that cannot be computed (an unreadable directory, a failed
 // DB read) is not a match and not an error: the run simply happens, which
 // is the behaviour that existed before the memo.
 func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
-	if opts.Fix || opts.ModFilter != "" || sink != nil {
+	if opts.Fix || opts.ModFilter != "" || (sink != nil && !opts.observe) {
 		return s.verify(ctx, game, profile, opts, sink)
 	}
 

@@ -154,6 +154,28 @@ export function readoutHasNextStep(summary, read) {
   return summary?.kind === "switch" && read.warnings.length > 0;
 }
 
+/**
+ * resultMayHoldNextStep says whether readoutHasNextStep could need the job's
+ * RESULT to answer for summary - a purge's or a repair's own outcome, a
+ * switch's recovery notice, an update batch's failed items - rather than
+ * the summary alone. A batch's failures are on its tally already, so this
+ * only ever saves a read; it never changes the answer (issue 583: the
+ * toast for every other kind no longer waits on a second round trip).
+ */
+export function resultMayHoldNextStep(summary) {
+  // A tally answers for its batch either way: failures are counted on it.
+  if (summary?.tally) return false;
+  return RESULT_NEXT_STEP_KINDS.has(summary?.kind);
+}
+
+// RESULT_NEXT_STEP_KINDS is every kind readResult reads a next step from.
+const RESULT_NEXT_STEP_KINDS = new Set([
+  "purge",
+  "verify_fix",
+  "switch",
+  "updates",
+]);
+
 function useJobResultRead(jobID, jobState) {
   const [read, setRead] = useState(() => readCache.get(jobID) ?? null);
 

@@ -111,6 +111,17 @@ export function initialState() {
     // "install:fake/123") to the job id it started, which is what lets the
     // control that was clicked morph into that job's progress and no other.
     origins: {},
+    // loading names every Mission Control read still in flight (issue 583),
+    // keyed by its slice ("mods", "updates", "health", "conflicts",
+    // "snapshots"): {token}, where token is that load's own id - and, for
+    // the update check and the verify, the ?progress= token its
+    // read_progress frames carry. Only the newest load of a slice holds its
+    // entry, so an older one settling never clears a newer one's.
+    loading: {},
+    // readProgress is the newest read_progress frame per token
+    // (internal/serve/read_progress.go): how far an in-flight read has got.
+    // Written only for a token `loading` holds, and dropped with it.
+    readProgress: {},
     // toggleRequests is toggleack.js's ledger: every enable/disable a user
     // has asked for and not yet seen settled, keyed by context and mod. The
     // controls render the requested value from here while an entry exists.

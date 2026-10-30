@@ -226,6 +226,21 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// One read_progress frame (#583): how far a GET that named a
+			// ?progress= token has got - the update check here, the Health
+			// card's verify the other Read value.
+			"read_progress_frame",
+			readProgressFrame{
+				Token:   "r1a2b3",
+				Read:    readUpdates,
+				GameID:  "g1",
+				Profile: "default",
+				ModName: "Mod One",
+				Index:   17,
+				Total:   42,
+			},
+		},
+		{
 			"plan_response",
 			planResponse{
 				PlanID: "0123456789abcdef0123456789abcdef",

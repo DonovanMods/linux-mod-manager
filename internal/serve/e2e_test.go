@@ -3837,18 +3837,18 @@ func TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_HealthCard_NotFixableRowNamesTheReason is m3's own scenario (unit
-// 6 gate review): "Not fixable" used to say only that, with a tooltip that
-// restated the same bare sentence. A LOCKED ref's version_mismatch is the
-// most common not-fixable case in practice (verify.go's own Fixable table:
-// "a non-local source AND an UNLOCKED ref").
+// TestE2E_HealthCard_NotFixableRowNamesTheReason began as m3's own scenario
+// (unit 6 gate review), when a not-fixable row read "Not fixable: <the
+// engine's FixableReason>". A LOCKED ref's version_mismatch is the most
+// common not-fixable case in practice (verify.go's own Fixable table: "a
+// non-local source AND an UNLOCKED ref").
 //
-// Issue 334 moved the sentence to where the decision is made: the card
-// renders core.VerifyFinding.FixableReason verbatim, instead of the
-// hand-maintained table plus a lock guess cross-referenced from the
-// already-fetched library rows. So this asserts the ENGINE's wording now -
-// which names the locked version, something the client-side guess never
-// could.
+// Issue 585 took that text out of the web UI: FixableReason explains what
+// `lmm verify --fix` would or would not do, which a person in a browser
+// cannot run. The row now says the finding, and offers an action only where
+// it has one; the engine's sentence stays on the wire (and in `lmm verify`),
+// and here only as the row's tooltip - so this asserts it is there, and
+// nowhere a reader has to read past it.
 func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
 	src := newFakeSource("fake")
 	src.addMod(fakeSourceMod{
@@ -3877,11 +3877,15 @@ func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.card--health`, chromedp.ByQuery),
 	)
-	var rowText string
-	f.runInBrowser(t, textContent(`.card--health .card__row`, &rowText))
-	assert.Contains(t, rowText, "Not fixable", "a locked ref's version_mismatch must still say it is not fixable")
-	assert.Contains(t, rowText, "locked at v1.0", "and now say WHY, in the engine's own words - the finding IS a locked version_mismatch")
-	assert.Contains(t, rowText, "unlock it first")
+	var rowText, rowTitle string
+	f.runInBrowser(t,
+		textContent(`.card--health .card__row`, &rowText),
+		chromedp.AttributeValue(`.card--health .card__row`, "title", &rowTitle, nil, chromedp.ByQuery),
+	)
+	assert.Contains(t, rowText, "version mismatch", "the row says the finding")
+	assert.NotContains(t, rowText, "Not fixable", "issue 585: the CLI's --fix verdict is not body text in the web UI")
+	assert.NotContains(t, rowText, "--fix")
+	assert.Contains(t, rowTitle, "locked at v1.0", "the engine's own reason survives as the row's tooltip")
 	assert.NotContains(t, rowText, "Repair", "no Repair control may render for a not-fixable row")
 
 	assert.Empty(t, f.BrowserErrors())
@@ -5614,21 +5618,23 @@ func TestE2E_SlideOverFindingsReadAsProse(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_HealthCardTruncatesTheDetailBeforeTheName is M3 of the unit-8
+// TestE2E_HealthCardTruncatesNeitherHalfOfARow is M3 of the unit-8
 // gate review. Both halves of a card row shrank at the same rate, so at
 // 1280px a Health row read "Better …  version mismatch (recorded 1.0, so…"
 // - both cut. The name is the identifier: a truncated detail still explains
-// a mod you can name, while a truncated name explains nothing at all. Only
-// the not-fixable branch carried a title, so a fixable row's cut text was
-// unrecoverable without resizing the window.
+// a mod you can name, while a truncated name explains nothing at all.
+//
+// Issue 585 went the rest of the way: a Health row now wraps rather than
+// cutting either half, so neither needs a tooltip to be read - the detail
+// is where the remedy was, and the ellipsis was taking exactly that.
 //
 // Measured in the browser rather than asserted against the stylesheet: a
 // truncation is what a layout engine DOES with a rule, and scrollWidth
 // versus clientWidth is the only place that fact exists.
-func TestE2E_HealthCardTruncatesTheDetailBeforeTheName(t *testing.T) {
+func TestE2E_HealthCardTruncatesNeitherHalfOfARow(t *testing.T) {
 	f := newE2EFixtureWithAttention(t)
 
-	var nameCut, detailPresent, titled bool
+	var nameCut, detailCut, detailPresent bool
 	f.runInBrowser(t,
 		chromedp.EmulateViewport(1280, 900),
 		chromedp.Navigate(f.HomePath()),
@@ -5638,18 +5644,13 @@ func TestE2E_HealthCardTruncatesTheDetailBeforeTheName(t *testing.T) {
 			return n.scrollWidth > n.clientWidth;
 		})()`, &nameCut),
 		chromedp.Evaluate(`Boolean(document.querySelector(".card--health .card__row-detail"))`, &detailPresent),
-		chromedp.Evaluate(`(() => {
-			const row = document.querySelector(".card--health .card__row");
-			return Array.from(row.querySelectorAll(".card__row-name, .card__row-detail"))
-				.every((el) => (el.title ?? "") !== "");
-		})()`, &titled),
+		chromedp.Evaluate(`[...document.querySelectorAll(".card--health .card__row-detail")]
+			.some((d) => d.scrollWidth > d.clientWidth)`, &detailCut),
 	)
 
 	assert.True(t, detailPresent, "the row must actually carry both halves, or this proves nothing")
-	assert.False(t, nameCut,
-		"at 1280px the mod name must not be truncated - the detail gives up the room first")
-	assert.True(t, titled,
-		"both halves must carry their own full text as a title, so nothing cut is unrecoverable")
+	assert.False(t, nameCut, "at 1280px the mod name must not be truncated")
+	assert.False(t, detailCut, "issue 585: the finding's own words wrap rather than being cut")
 	assert.Empty(t, f.BrowserErrors())
 }
 

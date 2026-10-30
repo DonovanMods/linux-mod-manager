@@ -358,7 +358,7 @@ func TestAPIEvents_DrainingServerClosesTheStream(t *testing.T) {
 }
 
 // TestActivityFrameNames_ArePinned: every test in this file refers to the
-// four frame-name constants, never their literal strings, so renaming one
+// five frame-name constants, never their literal strings, so renaming one
 // is invisible to the whole suite - while the README, CLAUDE.md and Unit 3
 // all depend on the literals themselves (task-2-review.md Minor 1). Unit 3
 // consumes these names verbatim; changing any value here is a wire break.
@@ -372,6 +372,7 @@ func TestActivityFrameNames_ArePinned(t *testing.T) {
 		{"job_started", activityStartedEvent, "job_started"},
 		{"job_progress", activityProgressEvent, "job_progress"},
 		{"job_done", activityDoneEvent, "job_done"},
+		{"read_progress", activityReadProgressEvent, "read_progress"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, tc.value)

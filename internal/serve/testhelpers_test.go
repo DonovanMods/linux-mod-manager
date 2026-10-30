@@ -279,7 +279,7 @@ var _ source.ChangelogProvider = (*fakeSource)(nil)
 // newFixtureService plus the registered source and resolvable
 // default game/profile those pages' resolveSelection (and its underlying
 // core calls: ModDetail, Search, CheckGameUpdates) need.
-func newFixtureServiceWithSource(t *testing.T, src *fakeSource) (*core.Service, *domain.Game) {
+func newFixtureServiceWithSource(t *testing.T, src source.ModSource) (*core.Service, *domain.Game) {
 	t.Helper()
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(),

@@ -41,7 +41,11 @@ import {
 } from "./api.js";
 import { updateFromFileInputID } from "./components/updatefromfile.js";
 import { copyReplaces } from "./components/plan_mod_copy.js";
-import { fetchJobResult, readoutHasNextStep } from "./jobresult.js";
+import {
+  fetchJobResult,
+  readoutHasNextStep,
+  resultMayHoldNextStep,
+} from "./jobresult.js";
 import {
   succeededOriginReleaseMillis,
   toastDismissMillis,
@@ -247,6 +251,11 @@ async function hydrate(route, { rehydrate = false } = {}) {
   }
 
   const context = { game: route.game, profile: route.profile };
+  // The full mod page reads (and writes) the same slices for its own
+  // context, so arriving on one drops another context's just the same.
+  if ((route.view === "home" || route.view === "mod") && !rehydrate) {
+    dropStaleHomeSlices(context);
+  }
   const statusClaim = slices.claim(["status", "games"]);
   try {
     const [status, allStatus] = await Promise.all([
@@ -299,6 +308,14 @@ async function hydrate(route, { rehydrate = false } = {}) {
   // snapshot of every retained job and maintains it from there
   // (activity.js), so a per-route poll could only ever disagree with the
   // live stream about what the machine is doing.
+  //
+  // Issue 583: each document is committed the moment IT answers, not once
+  // the slowest has. The update check and the verify behind the Health
+  // card walk the profile's mods against their sources and took up to
+  // twelve seconds on a real setup, while the library answered in three
+  // milliseconds - and until the slowest answered, nothing changed on
+  // screen at all. (A context change has already dropped the previous
+  // context's documents: dropStaleHomeSlices, above.)
   const homeClaim = slices.claim([
     "mods",
     "updates",
@@ -306,36 +323,161 @@ async function hydrate(route, { rehydrate = false } = {}) {
     "conflicts",
     "snapshots",
   ]);
-  const [mods, updates, health, conflicts, snapshots] =
-    await Promise.allSettled([
-      get(scoped("/api/v1/mods", context)),
-      get(scoped("/api/v1/updates", context)),
-      get(scoped("/api/v1/health", context)),
-      get(scoped("/api/v1/conflicts", context)),
-      // issue 350: the Snapshots card's own read. Fetched here rather than
-      // lazily on card mount for the reason every other card's document
-      // is - one hydrate, one set of fetchErrors, and a card that can
-      // tell "no snapshots" from "couldn't list them".
-      get(scoped("/api/v1/snapshots", context)),
-    ]);
-  commitSlices(
-    seq,
-    homeClaim,
-    {
-      mods: settled(mods),
-      updates: settled(updates),
-      health: settled(health),
-      conflicts: settled(conflicts),
-      snapshots: settled(snapshots),
+  const load = (key, path, opts) =>
+    loadSlice(seq, homeClaim, key, path, context, {
+      ...opts,
+      // A failure here is the slice's answer (a card's explicit error
+      // state), so the document it replaces goes with it.
+      dropOnFailure: true,
+    });
+  await Promise.all([
+    load("mods", "/api/v1/mods"),
+    load("updates", "/api/v1/updates", { progress: true }),
+    load("health", "/api/v1/health", { progress: true }),
+    load("conflicts", "/api/v1/conflicts"),
+    // issue 350: the Snapshots card's own read. Fetched here rather than
+    // lazily on card mount for the reason every other card's document
+    // is - one hydrate, one set of fetchErrors, and a card that can
+    // tell "no snapshots" from "couldn't list them".
+    load("snapshots", "/api/v1/snapshots"),
+  ]);
+}
+
+// homeContext is the "game:profile" whose documents the home slices hold
+// (issue 583) - what tells hydrate() that it has arrived in a different
+// context and must not show the last one's documents meanwhile. Mission
+// Control and the full mod page both read those slices, so both claim it.
+let homeContext;
+
+/**
+ * dropStaleHomeSlices empties the home documents when they belong to a
+ * context other than `context` (issue 583). Left in place they rendered as
+ * this context's - another profile's mods under this profile's name, with
+ * the page marked settled - for as long as the slowest read took. Called
+ * before hydrate's first await, so not even the status round trip shows
+ * them.
+ *
+ * Their loading entries go too: the left context's reads are still out,
+ * and their lines ("Checking 42 mods for updates (17/42)…") would
+ * otherwise stay until this context's own loads replaced them - never, if
+ * it does not reach them (its status read failing, a redirect) - and keep
+ * taking that read's progress frames, which activity.js accepts only for a
+ * token still held here. The left loads' own settleLoad then finds a
+ * newer owner, or none, and leaves the entry alone.
+ */
+function dropStaleHomeSlices(context) {
+  const gameProfile = `${context.game}:${context.profile}`;
+  if (homeContext === gameProfile) return;
+  homeContext = gameProfile;
+  const { loading, readProgress } = store.get();
+  const keptLoading = { ...loading };
+  const keptProgress = { ...readProgress };
+  for (const key of TRACKED_LOADS) {
+    const token = keptLoading[key]?.token;
+    if (token) delete keptProgress[token];
+    delete keptLoading[key];
+  }
+  store.set({
+    loading: keptLoading,
+    readProgress: keptProgress,
+    mods: null,
+    updates: null,
+    health: null,
+    conflicts: null,
+    snapshots: null,
+    fetchErrors: {
+      ...store.get().fetchErrors,
+      mods: null,
+      updates: null,
+      health: null,
+      conflicts: null,
+      snapshots: null,
     },
-    {
-      mods: failureMessage(mods),
-      updates: failureMessage(updates),
-      health: failureMessage(health),
-      conflicts: failureMessage(conflicts),
-      snapshots: failureMessage(snapshots),
-    },
-  );
+  });
+}
+
+/** settleLoad drops a finished load's progress, and its loading entry while
+ * it is still the slice's newest - a newer load owns it otherwise. */
+function settleLoad(key, token) {
+  const { loading, readProgress } = store.get();
+  const patch = {};
+  if (token in readProgress) {
+    patch.readProgress = { ...readProgress };
+    delete patch.readProgress[token];
+  }
+  if (loading[key]?.token === token) {
+    patch.loading = { ...loading };
+    delete patch.loading[key];
+  }
+  if (Object.keys(patch).length > 0) store.set(patch);
+}
+
+// TRACKED_LOADS is every slice loadSlice holds a loading entry for: the
+// documents Mission Control's loading lines and settled marker read.
+const TRACKED_LOADS = new Set([
+  "mods",
+  "updates",
+  "health",
+  "conflicts",
+  "snapshots",
+]);
+
+// loadSeq numbers every slice load, so each has its own id (loading.js).
+let loadSeq = 0;
+
+/** withQueryParam is path with name=value added to its query string. */
+function withQueryParam(path, name, value) {
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set(name, value);
+  return url.pathname + url.search;
+}
+
+/**
+ * loadSlice fetches one of Mission Control's documents into `key`, under
+ * both fences (commitSlices), and holds `loading[key]` while it is out so
+ * the page can say what it is waiting for (issue 583).
+ *
+ * progress asks the read to report how far it has got (the update check
+ * and the verify only: internal/serve/read_progress.go) - its token rides
+ * on the request and on every read_progress frame for it. dropOnFailure
+ * writes null over the slice when the read fails (hydrate's rule: the
+ * failure IS the answer); without it a failure leaves the document that
+ * was there (a retry's rule).
+ */
+async function loadSlice(
+  seq,
+  claim,
+  key,
+  path,
+  context,
+  { progress = false, dropOnFailure = false } = {},
+) {
+  loadSeq += 1;
+  const token = `r${loadSeq}-${Date.now().toString(36)}`;
+  // Only Mission Control's own documents name themselves while they load.
+  // Any other slice (the profiles modal's listing) is left out on purpose:
+  // its reload runs from a mount effect, where a synchronous store write
+  // re-renders the modal mid-commit and re-fires that same effect.
+  const tracked = TRACKED_LOADS.has(key);
+  if (tracked) {
+    store.set({ loading: { ...store.get().loading, [key]: { token } } });
+  }
+  try {
+    const value = await get(
+      scoped(
+        progress ? withQueryParam(path, "progress", token) : path,
+        context,
+      ),
+    );
+    commitSlices(seq, claim, { [key]: value }, { [key]: null });
+  } catch (err) {
+    const message = err instanceof ApiError ? err.message : String(err);
+    commitSlices(seq, claim, dropOnFailure ? { [key]: null } : {}, {
+      [key]: message,
+    });
+  } finally {
+    if (tracked) settleLoad(key, token);
+  }
 }
 
 /**
@@ -559,13 +701,11 @@ async function reload(key, path) {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
-  try {
-    const value = await get(scoped(path, context));
-    commitSlices(seq, claim, { [key]: value }, { [key]: null });
-  } catch (err) {
-    const message = err instanceof ApiError ? err.message : String(err);
-    commitSlices(seq, claim, {}, { [key]: message });
-  }
+  // issue 583: the update check and the verify report how far they have
+  // got, the explicit "Check for updates" and "Re-verify" included.
+  await loadSlice(seq, claim, key, path, context, {
+    progress: key === "updates" || key === "health",
+  });
 }
 
 /**
@@ -2170,7 +2310,15 @@ async function onJobDone(summary) {
   // A job that succeeded can still have failed items (issue 531), and then
   // its toast is the failure's only trace once the page has moved on: it
   // reads as one - the tally in its detail, and no timer taking it away.
-  const read = await fetchJobResult(summary.id);
+  //
+  // Issue 583: the result document is read only for a kind whose RESULT can
+  // hold a next step the summary cannot show (resultMayHoldNextStep). A
+  // batch's failed items are already in its tally (issue 364), so every
+  // other toast goes up the moment the job ends instead of after a second
+  // round trip.
+  const read = resultMayHoldNextStep(summary)
+    ? await fetchJobResult(summary.id)
+    : null;
   const held = readoutHasNextStep(summary, read);
   const tally = summary.tally;
   pushToast({

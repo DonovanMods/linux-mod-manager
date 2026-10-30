@@ -1763,11 +1763,11 @@ GET  /api/v1/mods/{source}/{id}
 GET  /api/v1/mods/{source}/{id}/files
 GET  /api/v1/mods/{source}/{id}/versions
 GET  /api/v1/search?q=&page=&page_size=&limit=&category=&source=&tag=
-GET  /api/v1/updates
+GET  /api/v1/updates?refresh=&progress=
 GET  /api/v1/updates/lmm
 GET  /api/v1/profiles
 GET  /api/v1/profiles/{name}/export
-GET  /api/v1/health
+GET  /api/v1/health?force=&progress=
 GET  /api/v1/conflicts?order=
 GET  /api/v1/games
 GET  /api/v1/games/catalog?source=&q=
@@ -2085,6 +2085,17 @@ download's ticks are coalesced to whole percents; open the per-job stream
 above for the full detail. The job index and the `job_done` frame both
 carry a failed job's `{"error", "details"}` envelope, but never its result
 document — read `GET /api/v1/jobs/{id}` for that.
+
+The same stream also carries `event: read_progress` frames, which belong to
+no job: they report how far an in-flight `GET /api/v1/updates` or
+`GET /api/v1/health` has got, for a request that named a
+`?progress=<token>` (1-64 letters, digits, `-` or `_`). Each frame is
+`{"token", "read", "game_id", "profile", "mod_name", "index", "total"}`,
+with `read` either `updates` or `health`, and at most one is sent per whole
+percent of a read. The GET's own response is the end of it. A request
+without a token publishes nothing, and asking to watch the verify never
+bypasses its unchanged-installation memo: an answer from the memo has no
+run to report.
 
 ### Security posture
 
