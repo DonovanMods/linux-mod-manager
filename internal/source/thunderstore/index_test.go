@@ -238,6 +238,7 @@ func TestBuildIsCancellable(t *testing.T) {
 // TestFailedColdBuildIsUnavailable pins that a source with no index and no
 // upstream is an ERROR, not an empty result: lmm could not ask.
 func TestFailedColdBuildIsUnavailable(t *testing.T) {
+	thunderstore.SkipRetryBackoffForTest(t) // a closed server fails every attempt
 	srv := newIndexServer(t, fixtureDocument(t))
 	src, _, _ := newSource(t, srv)
 	srv.Close()

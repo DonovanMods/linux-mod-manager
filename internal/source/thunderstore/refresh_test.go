@@ -279,6 +279,7 @@ func TestCorruptOrStaleOnDiskStatesReadAsCold(t *testing.T) {
 // unguessable rule at the implementation: upstream being down does not take
 // a working index away from the user.
 func TestAFailedRefreshServesTheStaleIndex(t *testing.T) {
+	thunderstore.SkipRetryBackoffForTest(t) // the refresh after the server closes fails every attempt
 	srv := newIndexServer(t, fixtureDocument(t))
 	src, cacheDir, clock := newSource(t, srv)
 	_, err := src.RefreshIndex(t.Context(), testCommunity, false, nil)

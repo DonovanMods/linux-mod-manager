@@ -266,7 +266,10 @@ func (n *scrubNotice) gaveUp() {
 // pathological lock hold `lmm` open indefinitely. Exceeding it fails the
 // open with scrubFailure's message - the file, the step and the remedy,
 // wrapping the context error - rather than waiting on.
-const scrubBudget = 45 * time.Second
+//
+// It and scrubRetryPause are vars, not consts, only so the contention
+// tests can scale them down with busyTimeout (#576).
+var scrubBudget = 45 * time.Second
 
 // scrubAttempts is how many times each scrub step is tried before the open
 // fails. Each attempt already waits out the 5 s busy_timeout, so this is a
@@ -274,7 +277,7 @@ const scrubBudget = 45 * time.Second
 const scrubAttempts = 3
 
 // scrubRetryPause is the gap between attempts, doubling each time.
-const scrubRetryPause = 250 * time.Millisecond
+var scrubRetryPause = 250 * time.Millisecond
 
 // retryUntilUncontended runs step until it succeeds, giving a transient
 // reader time to finish, and turns a persistent failure into the error that

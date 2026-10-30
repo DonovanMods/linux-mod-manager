@@ -308,10 +308,12 @@ func captureStderrErr(t *testing.T, fn func() error) (string, error) {
 //
 // Reproduces the scenario: a forced (--force) uninstall.before_each hook
 // failure is recorded as a Warning, then UninstallMod hits a genuinely
-// fatal DeleteInstalledMod failure - forced deterministically by holding a
-// write lock on the same SQLite file for the call's duration (see
+// fatal DeleteInstalledMod failure - forced deterministically by a trigger
+// on the same SQLite file that aborts the delete at once (see
 // TestService_UninstallMod_FatalErrorAfterAccumulatedDiagnostic_ReturnsPartialResult
-// in internal/core/flows_test.go for why this is not a timing race).
+// in internal/core/uninstall_test.go, which does the same; a held write
+// lock used to stand in for it, at the cost of 10 s of real busy_timeout
+// waits, #576).
 func TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr(t *testing.T) {
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
@@ -354,28 +356,21 @@ func TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr(t *testing.T) {
 		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks = oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks
 	})
 
-	// Hold a real write lock on the DB for the call's duration so
-	// DeleteInstalledMod fails deterministically after the before_each
-	// Warning has already been recorded. A dedicated connection issues
-	// "BEGIN IMMEDIATE" directly - a plain sql.Tx's default deferred BEGIN
-	// does NOT take a lock until its first statement runs, so it doesn't
-	// work here (see the core-level test for the same finding).
-	dbPath := filepath.Join(dataDir, "lmm.db")
-	locker, err := sql.Open("sqlite", dbPath)
+	// Make DeleteInstalledMod fail deterministically, after the before_each
+	// Warning has already been recorded: a trigger installed over a second
+	// connection aborts every delete from installed_mods.
+	refuser, err := sql.Open("sqlite", filepath.Join(dataDir, "lmm.db"))
 	require.NoError(t, err)
-	defer func() { require.NoError(t, locker.Close(), "closing database locker") }()
-	locker.SetMaxOpenConns(1)
-	conn, err := locker.Conn(context.Background())
+	_, err = refuser.ExecContext(context.Background(), `
+		CREATE TRIGGER refuse_installed_mod_deletes BEFORE DELETE ON installed_mods
+		BEGIN SELECT RAISE(ABORT, 'deletes refused by the test'); END`)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, conn.Close(), "closing database connection") }()
-	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
-	require.NoError(t, err)
-	defer conn.ExecContext(context.Background(), "ROLLBACK") //nolint:errcheck // best-effort cleanup
+	require.NoError(t, refuser.Close(), "closing the trigger's connection")
 
 	stderr, cmdErr := captureStderrErr(t, func() error {
 		return doUninstall(context.Background(), svc, game, "1")
 	})
-	require.Error(t, cmdErr, "DeleteInstalledMod must fail while another writer holds the file lock")
+	require.Error(t, cmdErr, "DeleteInstalledMod must fail while the database refuses the delete")
 	assert.Contains(t, cmdErr.Error(), "failed to remove mod record")
 	assert.Contains(t, stderr, "Warning: uninstall.before_each hook failed (forced): ", "the accumulated Warning must still reach stderr despite the command failing")
 }
