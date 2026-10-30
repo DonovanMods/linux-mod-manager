@@ -301,3 +301,22 @@ func TestResolveAPIKeyDoesNotReadTheStoreWhenTheEnvironmentSuppliesTheKey(t *tes
 	require.NoError(t, err, "the store is not consulted once the environment has answered")
 	assert.Equal(t, "envkey1234567890", key)
 }
+
+// TestEnvOnlyCredentials (#582): the sources whose ONLY key is an
+// environment variable - the ones `lmm serve` under its systemd unit will
+// not see, since a user service does not inherit the login shell. A stored
+// key, shadowed or not, reaches the service; no key at all is not a key
+// the service is missing compared to this shell.
+func TestEnvOnlyCredentials(t *testing.T) {
+	report := &AuthStatusReport{Sources: []AuthSourceStatus{
+		{ID: "curseforge", Name: "CurseForge", Authenticated: true, Via: "env", EnvVar: "CURSEFORGE_API_KEY"},
+		{ID: "nexusmods", Name: "Nexus Mods", Authenticated: true, Via: "env", EnvVar: "NEXUSMODS_API_KEY", StoredKeyShadowed: true},
+		{ID: "steamworkshop", Name: "Steam Workshop", Authenticated: true, Via: "stored", EnvVar: "STEAM_API_KEY"},
+		{ID: "thunderstore", Name: "Thunderstore", EnvVar: "THUNDERSTORE_API_KEY"},
+	}}
+	assert.Equal(t, []core.EnvOnlyCredential{
+		{SourceID: "curseforge", Name: "CurseForge", EnvVar: "CURSEFORGE_API_KEY"},
+	}, EnvOnlyCredentials(report))
+	assert.Nil(t, EnvOnlyCredentials(&AuthStatusReport{}))
+	assert.Nil(t, EnvOnlyCredentials(nil))
+}

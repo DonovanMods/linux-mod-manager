@@ -71,6 +71,9 @@ export function parseLocation(url = window.location) {
     // Games section with that game's mod-path editor open, prefilled with
     // the value lmm suggests when it has one.
     route.editModPath = params.get("edit_mod_path") || "";
+    // issue 582: an "Add API key…" action anywhere in the app lands on the
+    // Authentication section with that source's row in view and focused.
+    route.authSource = params.get("source") || "";
     route.suggestedModPath = params.get("suggested_mod_path") || "";
     return route;
   }
@@ -128,6 +131,13 @@ export function contextPath(game, profile) {
 export function setupPath(game, profile, section = "") {
   const base = `${contextPath(game, profile)}/setup`;
   return section ? `${base}?section=${encodeURIComponent(section)}` : base;
+}
+
+/** Builds the Setup > Authentication URL focused on sourceID's row (issue
+ * 582) - where a source that refused for want of a key gets one. */
+export function authSetupPath(game, profile, sourceID) {
+  const params = new URLSearchParams({ section: "auth", source: sourceID });
+  return `${contextPath(game, profile)}/setup?${params}`;
 }
 
 /** Builds the Setup > Games URL with gameID's mod-path editor open (issue

@@ -588,6 +588,44 @@ func AuthRequiredSource(err error) string {
 	return ""
 }
 
+// AuthRequiredSources reports the source id of EVERY SourceAuthError in
+// err's tree, sorted and without repeats, or nil when there is none (#582):
+// a multi-source update check can be refused by more than one source, and
+// UpdateCheckReport.AuthRequired names each so a frontend can link every
+// one to its key settings. errors.As stops at the first match, so this
+// walks the Unwrap() []error branches errors.Join leaves itself.
+func AuthRequiredSources(err error) []string {
+	seen := map[string]bool{}
+	var walk func(error)
+	walk = func(e error) {
+		if e == nil {
+			return
+		}
+		if authErr, ok := e.(*SourceAuthError); ok {
+			seen[authErr.SourceID] = true
+			return
+		}
+		switch u := e.(type) {
+		case interface{ Unwrap() []error }:
+			for _, inner := range u.Unwrap() {
+				walk(inner)
+			}
+		case interface{ Unwrap() error }:
+			walk(u.Unwrap())
+		}
+	}
+	walk(err)
+	if len(seen) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // ErrNotAMod is the sentinel an adapter's ingest refusal carries: this
 // archive is the loader, the framework or the base game rather than a mod
 // for it (adapter.ErrNotAMod, re-exported so a frontend can errors.Is it

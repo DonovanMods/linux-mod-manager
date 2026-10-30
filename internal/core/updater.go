@@ -290,6 +290,13 @@ type UpdateCheckReport struct {
 	// <new-id>` if the mod moved, or `lmm uninstall`, is the remedy.
 	// omitempty.
 	CatalogMissing []CatalogModRef `json:"catalog_missing,omitempty"`
+
+	// AuthRequired names every source that refused the check for want of a
+	// credential (#582), sorted - the sources ErrorMessage's text mentions
+	// as "authentication required", as data, so a frontend can link each
+	// to where its key is configured. A key set only in a login shell is
+	// the usual cause under `lmm serve`'s systemd unit. omitempty.
+	AuthRequired []string `json:"auth_required,omitempty"`
 }
 
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
@@ -425,6 +432,7 @@ func (s *Service) CheckGameUpdateReport(ctx context.Context, game *domain.Game, 
 	report.Skipped.Updates = len(res.skipped)
 	if checkErr != nil {
 		report.ErrorMessage = checkErr.Error()
+		report.AuthRequired = AuthRequiredSources(checkErr)
 	}
 	return report, checkErr
 }

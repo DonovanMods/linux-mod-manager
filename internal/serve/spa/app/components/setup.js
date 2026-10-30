@@ -156,7 +156,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
             suggestedModPath=${route.suggestedModPath}
           />`
         }
-        ${section === "auth" && html`<${SetupAuth} />`}
+        ${section === "auth" && html`<${SetupAuth} focusSource=${route.authSource} />`}
         ${section === "sources" && html`<${SetupSources} />`}
         ${
           section === "archive" &&

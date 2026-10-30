@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 
 	"github.com/spf13/cobra"
@@ -120,6 +122,44 @@ func init() {
 	rootCmd.AddCommand(serviceCmd)
 }
 
+// serviceEnvOnlyCredentials reads which sources' keys this shell holds only
+// in an environment variable (#582), for the warning install and status
+// print. It is a variable so a test never opens a real installation.
+var serviceEnvOnlyCredentials = realServiceEnvOnlyCredentials
+
+// realServiceEnvOnlyCredentials is serviceEnvOnlyCredentials' real
+// implementation. A failure to read them is not the command's failure -
+// the units are what it is about - so it reports none.
+func realServiceEnvOnlyCredentials(ctx context.Context) []core.EnvOnlyCredential {
+	svc, err := initServiceWith(ctx, app.Options{WarnWriter: io.Discard})
+	if err != nil {
+		return nil
+	}
+	defer closeService(svc)
+	report, err := app.AuthStatus(ctx, svc)
+	if err != nil {
+		return nil
+	}
+	return app.EnvOnlyCredentials(report)
+}
+
+// serviceMissingCredentials is every source whose key this shell has only
+// in an environment variable that the user manager does not hand
+// lmm-serve.service either (#582).
+func serviceMissingCredentials(ctx context.Context, units *core.UserUnits) []core.EnvOnlyCredential {
+	return units.WithoutManagerEnvironment(ctx, serviceEnvOnlyCredentials(ctx))
+}
+
+// printEnvOnlyCredentials warns once per source whose key lmm-serve will
+// not see (#582): the unit does not inherit this shell's exports, and lmm
+// never writes a key into the unit file.
+func printEnvOnlyCredentials(creds []core.EnvOnlyCredential) {
+	for _, c := range creds {
+		fmt.Printf("%s %s's key comes only from $%s, which lmm-serve.service will not see.\n", colorYellow("!"), c.Name, c.EnvVar)
+		fmt.Printf("  Store it with: lmm auth login %s (or the web UI's Setup > Authentication), then: systemctl --user restart lmm-serve\n", c.SourceID)
+	}
+}
+
 // doServiceInstall installs lmm-serve.service alone, as before
 // --auto-update existed.
 func doServiceInstall(ctx context.Context, cmd *cobra.Command, addr string) error {
@@ -176,6 +216,7 @@ func doServiceInstallWith(ctx context.Context, cmd *cobra.Command, addr string, 
 	if err != nil {
 		return err
 	}
+	report.EnvOnlyCredentials = serviceMissingCredentials(ctx, units)
 	if jsonOutput {
 		return emitJSON(report)
 	}
@@ -202,6 +243,7 @@ func doServiceInstallWith(ctx context.Context, cmd *cobra.Command, addr string, 
 		}
 	}
 	printLingerHint(report.Linger, units.User)
+	printEnvOnlyCredentials(report.EnvOnlyCredentials)
 	return nil
 }
 
@@ -243,6 +285,7 @@ func doServiceStatus(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	report.EnvOnlyCredentials = serviceMissingCredentials(ctx, units)
 	if jsonOutput {
 		return emitJSON(report)
 	}
@@ -267,10 +310,11 @@ func doServiceStatus(ctx context.Context) error {
 	}
 	if report.Linger {
 		fmt.Println("lingering:    on - your user services start at boot")
-		return nil
+	} else {
+		fmt.Println("lingering:    off - your user services start when you log in")
+		printLingerHint(false, units.User)
 	}
-	fmt.Println("lingering:    off - your user services start when you log in")
-	printLingerHint(false, units.User)
+	printEnvOnlyCredentials(report.EnvOnlyCredentials)
 	return nil
 }
 

@@ -780,3 +780,28 @@ func TestRenderUpdateService_RetriesAndHardening(t *testing.T) {
 	unitSection, _, _ := strings.Cut(unit, "[Service]")
 	assert.Contains(t, unitSection, "StartLimitBurst=", "the start limit belongs in [Unit]")
 }
+
+// TestUserUnits_WithoutManagerEnvironment (#582): a key exported only in
+// the shell is still one lmm-serve has when the user manager's own
+// environment carries the variable too (environment.d, a uwsm env file,
+// `systemctl --user import-environment`), so `lmm service` does not warn
+// about it. A variable the manager has set to nothing is no key at all,
+// and a manager that cannot be asked leaves every warning standing.
+func TestUserUnits_WithoutManagerEnvironment(t *testing.T) {
+	creds := []core.EnvOnlyCredential{
+		{SourceID: "curseforge", Name: "CurseForge", EnvVar: "CURSEFORGE_API_KEY"},
+		{SourceID: "nexusmods", Name: "Nexus Mods", EnvVar: "NEXUSMODS_API_KEY"},
+		{SourceID: "steamworkshop", Name: "Steam Workshop", EnvVar: "STEAM_API_KEY"},
+	}
+	fake := &fakeSystemd{env: map[string]string{"CURSEFORGE_API_KEY": "secret", "STEAM_API_KEY": "", "HOME": "/home/u"}}
+	u, _ := newTestUserUnits(t, fake, "/opt/lmm/bin/lmm")
+	assert.Equal(t, creds[1:], u.WithoutManagerEnvironment(context.Background(), creds))
+
+	names, err := u.ManagerEnvironmentNames(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"CURSEFORGE_API_KEY": true, "HOME": true}, names, "names only, and only those with a value")
+
+	u, _ = newTestUserUnits(t, &fakeSystemd{noBus: errors.New("no bus")}, "/opt/lmm/bin/lmm")
+	assert.Equal(t, creds, u.WithoutManagerEnvironment(context.Background(), creds), "a failure falls back to warning")
+	assert.Nil(t, u.WithoutManagerEnvironment(context.Background(), nil))
+}

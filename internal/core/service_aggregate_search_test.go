@@ -387,6 +387,7 @@ func TestSearchAllSources_EnvironmentKeyedSourceStillWarnsOnAuthFailure(t *testi
 	require.Len(t, res.Warnings, 1)
 	assert.Equal(t, "needskey", res.Warnings[0].SourceID)
 	assert.ErrorIs(t, res.Warnings[0].Err, domain.ErrAuthRequired)
+	assert.True(t, res.Warnings[0].AuthRequired, "#582: the refusal is marked, so a frontend can link to the key's settings")
 	assert.Empty(t, res.SkippedUnauthenticated, "a key WAS supplied - this is not a sign-in skip")
 }
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
@@ -246,6 +247,29 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// verifyAuthEnvVars maps each source whose active key is its environment
+// variable to that variable, for the remedy a refused version check prints
+// (#582). doVerify fills it once per text-mode run.
+var verifyAuthEnvVars map[string]string
+
+// authEnvVars picks out of report every source whose active key comes from
+// its environment variable, or nil when there is none.
+func authEnvVars(report *app.AuthStatusReport) map[string]string {
+	if report == nil {
+		return nil
+	}
+	var out map[string]string
+	for _, row := range report.Sources {
+		if row.Via == "env" && row.EnvVar != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[row.ID] = row.EnvVar
+		}
+	}
+	return out
+}
+
 // doVerify is a thin renderer over the core verify engine (#224 Task 7):
 // it resolves the profile/mod-filter, calls svc.Verify, and either streams
 // core.VerifyEvent progress through renderVerifyEvent (text mode) or maps
@@ -274,6 +298,12 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 	// even for the shape that would otherwise qualify. The memo exists for
 	// the web UI's repeated hydrates, not for a typed command.
 	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter, Force: true}
+	verifyAuthEnvVars = nil
+	if !jsonOutput {
+		if auth, authErr := app.AuthStatus(ctx, svc); authErr == nil {
+			verifyAuthEnvVars = authEnvVars(auth)
+		}
+	}
 	report, err := svc.VerifyReport(ctx, game, profile, opts, func(e core.Event) {
 		ev, ok := e.(core.VerifyEvent)
 		if !ok {
@@ -676,6 +706,18 @@ func renderVerifySkipped(f core.VerifyFinding) {
 	// (originally doVerify's "Unknown mod %s - SKIPPED").
 	case f.Note == "" && f.FileID != "":
 		fmt.Printf("? Unknown mod %s - SKIPPED\n", f.ModID)
+
+	// versionPass: the source refused GetModFiles for want of a key
+	// (#582) - name the key and the command that stores one, not
+	// "unreachable", which it was not.
+	// A key from the source's environment variable outranks a stored
+	// one, so for it the fix is the variable, not auth login.
+	case f.AuthSource != "":
+		remedy := "run: lmm auth login " + f.AuthSource
+		if envVar := verifyAuthEnvVars[f.AuthSource]; envVar != "" {
+			remedy = "check $" + envVar
+		}
+		fmt.Printf("%s %s - could not check version: %s (%s)\n", colorYellow("?"), f.ModName, f.FixableReason, remedy)
 
 	// versionPass: GetModFiles failed (source unreachable) - text mode
 	// deliberately drops the error detail; --json's Note carries it.

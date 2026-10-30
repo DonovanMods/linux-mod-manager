@@ -568,6 +568,16 @@ func (s *Service) GetSource(id string) (source.ModSource, error) {
 	return s.registry.Get(id)
 }
 
+// sourceDisplayName is a registered source's own Name(), or id itself when
+// the source is not registered or names itself nothing - for a sentence
+// read by a person, where "CurseForge" says more than "curseforge".
+func (s *Service) sourceDisplayName(id string) string {
+	if src, err := s.registry.Get(id); err == nil && src.Name() != "" {
+		return src.Name()
+	}
+	return id
+}
+
 // ValidateInstallFileSelection rejects an install selection that mixes a
 // merge-compiling game's exmodz variant with any other file (#211): the two
 // are alternate forms of the same mod, and installing both double-applies
@@ -818,13 +828,17 @@ type SourceWarning struct {
 	SourceID     string `json:"source_id"`
 	Err          error  `json:"-"`
 	ErrorMessage string `json:"error,omitempty"` // Err.Error(), when Err is set
+	// AuthRequired marks a failure that wraps domain.ErrAuthRequired (#582):
+	// the source refused for want of a credential, or rejected the one it
+	// has, so a frontend can link to where SourceID's key is configured.
+	AuthRequired bool `json:"auth_required,omitzero"`
 }
 
 // newSourceWarning builds a SourceWarning with ErrorMessage and Err paired
 // from a single error, so a construction site can't emit one without the
 // other (final review, Minor #1 / #282).
 func newSourceWarning(id string, err error) SourceWarning {
-	return SourceWarning{SourceID: id, ErrorMessage: err.Error(), Err: err}
+	return SourceWarning{SourceID: id, ErrorMessage: err.Error(), Err: err, AuthRequired: errors.Is(err, domain.ErrAuthRequired)}
 }
 
 // AggregateSearchResult is the merged outcome of searching every source
