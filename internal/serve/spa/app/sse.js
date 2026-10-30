@@ -126,6 +126,7 @@ export function followActivity({
   onStarted,
   onProgress,
   onDone,
+  onReadProgress,
   onError,
 } = {}) {
   let source = null;
@@ -144,6 +145,9 @@ export function followActivity({
     on("job_started", onStarted);
     on("job_progress", onProgress);
     on("job_done", onDone);
+    // issue 583: how far an in-flight READ has got (the update check, the
+    // verify) - not a job, so no other frame ever names it.
+    on("read_progress", onReadProgress);
 
     const opened = source;
     opened.onerror = () => {

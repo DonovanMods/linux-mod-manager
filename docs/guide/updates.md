@@ -17,6 +17,14 @@ Each mod in the library also gets an **Update** button when it has one
 waiting. **Check for updates** in the library toolbar asks the mod sites
 again right away.
 
+Checking asks each mod's site in turn, so on a big profile it can take a
+few seconds. The rest of the page doesn't wait for it. While the check
+runs, a line above the cards says what it is doing and how far it has got,
+for example "Checking 42 mods for updates (17/42)…". The Updates card
+appears when the check finishes. The verify behind the **Health** card
+shows the same kind of line ("Verifying 42 mods…"). Switching game or
+profile shows these lines too, under the new profile's own library.
+
 In the terminal:
 
 ```bash

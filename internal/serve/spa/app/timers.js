@@ -43,3 +43,16 @@ export const unreadRereadDelayMillis = 3_000 * uiTimerScale;
  * it is opened again - EventSource's own customary reconnection delay, so a
  * refused stream is retried no more eagerly than a dropped one. */
 export const activityReopenMillis = 3000 * uiTimerScale;
+
+// The two loading-state timers below (issue 583) are deliberately NOT
+// scaled: they are not something a user waits out but what keeps a fast
+// read from flashing a loading line, and a scenario proving that needs the
+// real window.
+
+/** loadingShowDelayMillis is how long a read must be in flight before its
+ * loading state is painted - a read that answers sooner shows nothing. */
+export const loadingShowDelayMillis = 180;
+
+/** loadingMinShownMillis is how long a painted loading state stays at least,
+ * so one that appears just before its read answers does not flicker. */
+export const loadingMinShownMillis = 300;

@@ -1008,6 +1008,31 @@ input[type="search"]::-webkit-search-decoration {
   margin-bottom: var(--space-6);
 }
 
+/* Issue 583: Mission Control's slow reads, named while they are out
+ * (pendingreads.js). One quiet line each - the card it becomes is what
+ * carries weight - with the inline job readout's own bar, so a read and a
+ * job look like the same kind of progress. */
+.pending-reads {
+  margin-bottom: var(--space-4);
+}
+
+.pending-reads__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pending-read {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
 .card {
   display: flex;
   flex-direction: column;

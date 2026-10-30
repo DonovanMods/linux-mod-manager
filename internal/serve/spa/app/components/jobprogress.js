@@ -19,6 +19,7 @@ import {
   progressText,
   progressFraction,
   jobStateLabel,
+  mutationLabel,
   resultTallyLabel,
   resultTallyTone,
 } from "../progress.js";
@@ -311,9 +312,14 @@ export function JobProgress({
 const NO_NOTICES = [];
 
 /** startingLabel is what a running job with nothing to report yet says.
- * "Queued" rather than "Working" when the job has emitted no event at all,
- * which is the closest an unqueued registry can honestly get (progress.js's
- * jobStateLabel). */
+ * "Queued" rather than the job's name when the job has emitted no event at
+ * all, which is the closest an unqueued registry can honestly get
+ * (progress.js's jobStateLabel). Issue 583: otherwise it names the job
+ * ("Deploying…") - a bare "Working…" said something was happening without
+ * saying what - and before even the job's summary has arrived, the click
+ * has still been taken: "Starting…". */
 function startingLabel(summary) {
-  return jobStateLabel(summary) === "queued" ? "Queued…" : "Working…";
+  if (!summary) return "Starting…";
+  if (jobStateLabel(summary) === "queued") return "Queued…";
+  return `${mutationLabel(summary.kind)}…`;
 }
