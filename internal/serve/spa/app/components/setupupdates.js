@@ -18,7 +18,8 @@ import { getLmmRelease, putAutoUpdate } from "../api.js";
 
 /** INSTALL_LABELS names core.InstallKind for a person. */
 const INSTALL_LABELS = {
-  "self-managed": "Self-managed (a release download, go install or make install)",
+  "self-managed":
+    "Self-managed (a release download, go install or make install)",
   package: "Package",
   dev: "Development build",
 };
@@ -112,7 +113,12 @@ export function SetupUpdates() {
             ${latestLabel(status)}
             ${
               status.release_url &&
-              html` <a href=${status.release_url} target="_blank" rel="noopener noreferrer">Release notes</a>`
+              html` <a
+                href=${status.release_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                >Release notes</a
+              >`
             }
           </dd>
         </div>
@@ -164,10 +170,15 @@ export function SetupUpdates() {
         />
         Update automatically
       </label>
-      <p class="empty-state__hint" id=${reasonID} data-testid="setup-updates-reason">
+      <p
+        class="empty-state__hint"
+        id=${reasonID}
+        data-testid="setup-updates-reason"
+      >
         ${
           !applicable
-            ? auto?.reason || "lmm cannot tell how it was installed, so it does not update itself."
+            ? auto?.reason ||
+              "lmm cannot tell how it was installed, so it does not update itself."
             : !enabled
               ? "Off: lmm tells you about a new release but leaves installing it to you (auto_update: false in config.yaml)."
               : status.check_enabled
