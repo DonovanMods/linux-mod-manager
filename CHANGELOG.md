@@ -239,6 +239,19 @@ self-update --auto` and exits as it would have; a script or a pipe never
   stays, since another profile may still use the old ID. A re-link that
   also changes the recorded version copies nothing, because the old files
   are not that version's; it says to run `lmm verify --fix` instead.
+- **Updating the Icarus merged pak from the Updates card no longer fails
+  with "mod not found" (#589).** The card's recompile row (`[recompile]`
+  in `lmm update`) stands for the profile's merged pak, not an installed
+  mod, but the update batch behind the card and `lmm update --all` looked
+  it up as one and failed it. It now goes straight to the rebuild, which
+  reads every member from the cache and asks no source, so it works with a
+  member that has left its catalog, and is reported under the name the
+  card offered. A member whose cached files are missing stops the rebuild,
+  instead of being left out of the pak, with an error naming the mod and
+  the fix (`lmm verify --fix`, or `lmm update <id> --from-file`). The
+  Health card's **Repair** for a stale merged pak runs the same rebuild and
+  stops the same way.
+
 - **The Health card no longer reports lmm's own files as "not deployed"
   while a job is writing them (#588).** A health check that landed during
   a deploy, update or switch - routine since the automatic updates (#587)

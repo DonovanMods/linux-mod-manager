@@ -1354,7 +1354,20 @@ func externalContentPresent(path string) bool {
 // non-DeployCompile game, so this dials it unconditionally under --fix.
 // Only called when opts.Fix - a plain verify pass makes no changes for a
 // sync to react to.
+//
+// It is the Health card's Repair for a stale merged artifact, and the
+// Updates card's recompile is the same rebuild (applyMergedPakRegen), so it
+// refuses the same way while a member's cache entry is missing (#589),
+// rather than rebuilding without the member.
 func (r *verifyRun) syncMergedPakPass() {
+	if r.game.DeployMode == domain.DeployCompile {
+		if mc, err := r.svc.adapterCompiler(r.game); err == nil {
+			if err := r.svc.checkMergeMembersCached(r.ctx, r.game, r.profile, mc); err != nil {
+				r.emitEv(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: fmt.Sprintf("could not sync merged pak: %v", err)})
+				return
+			}
+		}
+	}
 	syncWarnings, err := r.svc.syncMergedPak(r.ctx, r.game, r.profile)
 	if err != nil {
 		r.emitEv(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: fmt.Sprintf("could not sync merged pak: %v", err)})
