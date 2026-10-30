@@ -1876,3 +1876,42 @@ func TestE2E_SetupGamesDetect_RepairNoticeIsRendered(t *testing.T) {
 	assert.Error(t, err, "the curated slug must not become a second game at the same install path")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_ManualAdd_PickInstalledBattleNetGame is #545's web half end to
+// end: a World of Warcraft flavor in a Wine prefix is offered in the
+// installed-game picker, the prefill names it as a Battle.net game, and
+// the add - which sends its from_detected reference, as it has no Steam
+// app id - writes the catalog's source and CurseForge flavor.
+func TestE2E_ManualAdd_PickInstalledBattleNetGame(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	t.Setenv("STEAM_ROOT", t.TempDir())
+	f.Svc.RegisterSource(newFakeSource("curseforge"))
+	prefix := filepath.Join(os.Getenv("HOME"), "Games", "battlenet")
+	root := filepath.Join(prefix, "drive_c", "Program Files (x86)", "World of Warcraft")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "_classic_", "Interface", "AddOns"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(prefix, "system.reg"), []byte("WINE REGISTRY Version 2\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".build.info"),
+		[]byte("Branch!STRING:0|Active!DEC:1|Product!STRING:0\nus|1|wow_classic\n"), 0o644))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="pick-installed"]`),
+		chromedp.WaitVisible(`[data-action="pick-installed-row"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll('[data-action="pick-installed-row"]')).find(b => b.textContent.includes("World of Warcraft Classic")).click()`, nil),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+	var bannerText string
+	f.runInBrowser(t, chromedp.Text(`[data-testid="setup-add-detected"]`, &bannerText, chromedp.ByQuery))
+	assert.Contains(t, bannerText, "World of Warcraft Classic (Battle.net wow_classic)")
+
+	f.runInBrowser(t,
+		clickWhenSettled(`[data-action="add-game"]`),
+		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
+	)
+	got, err := f.Svc.GetGame("wow-classic")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"curseforge": "1"}, got.SourceIDs)
+	assert.Equal(t, []int{79434}, got.CurseForgeVersionTypes())
+	assert.Empty(t, f.BrowserErrors())
+}

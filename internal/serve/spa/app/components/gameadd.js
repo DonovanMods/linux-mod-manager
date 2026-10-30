@@ -209,7 +209,7 @@ export function GameDetectSection({ actions, onAdded, onAddWithDetails }) {
           <ul class="setup-detect__list">
             ${games.map(
               (g) => html`
-                <li key=${g.steam_app_id} class="setup-detect__row">
+                <li key=${detectedRef(g)} class="setup-detect__row">
                   ${
                     g.known
                       ? html`
@@ -341,6 +341,22 @@ function authRequiredMessage(sourceName, game, profile) {
       }}
       >Authentication section</a
     >.`;
+}
+
+// detectedRef is a detect row's identity, "<detector>:<detector_id>"
+// (issue 545) - a list key that is unique across Steam and Battle.net rows,
+// and what POST /api/v1/games' from_detected takes. A row from an older
+// server, with only a Steam app id, is a Steam row.
+export function detectedRef(g) {
+  if (g.detector && g.detector_id) return `${g.detector}:${g.detector_id}`;
+  return `steam:${g.steam_app_id}`;
+}
+
+// detectedLabel names where a detect row came from, for the prefill note.
+function detectedLabel(g) {
+  if (g.steam_app_id) return `Steam app ${g.steam_app_id}`;
+  if (g.detector === "battlenet") return `Battle.net ${g.detector_id}`;
+  return detectedRef(g);
 }
 
 // KNOWN_FIELD_ERRORS is every GameSpecError.Field errorFor() below actually
@@ -670,7 +686,12 @@ export function GameAddForm({
         // name/install path/mod path/game id/source map itself
         // (GameSpecFromDetected). Only fields the user actually changed
         // from what was prefilled ride along as overrides.
-        const body = { from_steam_app_id: detectedRow.steam_app_id };
+        // issue 545: a Battle.net row has no app id; it is named by its
+        // detector reference instead. A Steam row keeps the field it always
+        // sent.
+        const body = detectedRow.steam_app_id
+          ? { from_steam_app_id: detectedRow.steam_app_id }
+          : { from_detected: detectedRef(detectedRow) };
         // An empty source pair is omitted rather than sent blank: on a
         // curated row it is genuinely absent (issue 341), and core reads a
         // named source_id with no identifier as an error, not as "none".
@@ -724,7 +745,8 @@ export function GameAddForm({
       // retyped value.
       if (
         err instanceof ApiError &&
-        err.details?.field === "from_steam_app_id"
+        (err.details?.field === "from_steam_app_id" ||
+          err.details?.field === "from_detected")
       ) {
         setStaleDetected(true);
         setFormError(err.details.reason || err.message);
@@ -812,7 +834,7 @@ export function GameAddForm({
                 <ul class="setup-detect__list">
                   ${pickerGames.map(
                     (g) => html`
-                      <li key=${g.steam_app_id} class="setup-detect__row">
+                      <li key=${detectedRef(g)} class="setup-detect__row">
                         <span class="setup-detect__name">
                           <button
                             type="button"
@@ -844,8 +866,8 @@ export function GameAddForm({
         detectedRow &&
         html`
           <div class="plan__note" data-testid="setup-add-detected">
-            Prefilled from <strong>${detectedRow.name}</strong> (Steam app${" "}
-            ${detectedRow.steam_app_id}).${" "}
+            Prefilled from <strong>${detectedRow.name}</strong>${" "}
+            (${detectedLabel(detectedRow)}).${" "}
             <button
               type="button"
               class="button button--small"
