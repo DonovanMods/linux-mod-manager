@@ -425,27 +425,61 @@ func TestE2E_Loading_ASwitchDropsTheLeftContextsLoadingLine(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_Loading_AFastSwitchFlashesNothing is case (c): when every read
-// answers inside the show delay, no loading state is ever painted.
+// TestE2E_Loading_AFastSwitchFlashesNothing is case (c): a read that
+// answers inside the show delay never paints a loading state.
+//
+// Asserted as the component's own decision rather than against the wall
+// clock: on a loaded runner (-race, two vCPUs, other runs alongside) a
+// read can genuinely take longer than the delay, and painting its line is
+// then exactly right. So every loading state painted after the switch is
+// matched to its read's Resource Timing entry, on the page's own clock, and
+// must belong to a read that was still out when the delay ran out. The
+// delay is read from timers.js, not restated here. On a machine where the
+// reads are quick - the usual case - that is "nothing painted at all".
 func TestE2E_Loading_AFastSwitchFlashesNothing(t *testing.T) {
 	f := newE2ELoadingFixture(t)
 
 	var seen []loadingAppearance
 	var names []string
+	var mark, showDelay float64
+	var answered map[string]float64
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(hydrated, chromedp.ByQuery),
+		chromedp.Evaluate(`import("/static/app/timers.js").then((t) => t.loadingShowDelayMillis)`, &showDelay, awaitPromise),
 		chromedp.Evaluate(recordLoadingAppearancesJS, nil),
 		chromedp.Click(`[data-picker="profile"]`, chromedp.ByQuery),
+		chromedp.Evaluate(markJS, nil),
 		chromedp.Click(`li[data-profile="other"] .picker__item`, chromedp.ByQuery),
 		pollUntil(`(document.querySelector(".mission-control h1")?.textContent ?? "").includes("other")`),
 		chromedp.WaitVisible(hydrated, chromedp.ByQuery),
 		chromedp.Evaluate(`[...document.querySelectorAll("tr.mod-row")].map((el) => el.textContent)`, &names),
 		chromedp.Evaluate(`window.__loadingSeen`, &seen),
+		chromedp.Evaluate(`window.__loadMark`, &mark),
+		// When each of the switch's reads answered, ms after the switch.
+		chromedp.Evaluate(`Object.fromEntries(performance.getEntriesByType("resource")
+			.filter((e) => e.startTime >= window.__loadMark && new URL(e.name).searchParams.get("profile") === "other")
+			.map((e) => [new URL(e.name).pathname.replace("/api/v1/", ""), e.responseEnd - window.__loadMark]))`, &answered),
 	)
 
+	// Read from the page so it is not restated - but a delay shrunk to
+	// nothing would let every flash through, so the rule's floor is pinned.
+	require.GreaterOrEqual(t, showDelay, 100.0, "a loading state waits out a real show delay")
 	assert.Contains(t, fmt.Sprint(names), "Delta Mod")
-	assert.Empty(t, seen, "a switch whose reads all answer inside the delay paints no loading state")
+	for _, s := range seen {
+		if s.At < mark {
+			continue
+		}
+		read := s.Read
+		if read == "library" {
+			read = "mods"
+		}
+		took, ok := answered[read]
+		require.True(t, ok, "a loading state for a read the switch never issued: %+v (answered: %v)", s, answered)
+		assert.GreaterOrEqual(t, took, showDelay,
+			"a read that answered inside the %vms show delay painted a loading state: %+v (answered: %v)", showDelay, s, answered)
+	}
+	t.Logf("show delay %vms; the switch's reads answered at %v; painted after the switch: %+v", showDelay, answered, seen)
 	assert.Empty(t, f.BrowserErrors())
 }
 

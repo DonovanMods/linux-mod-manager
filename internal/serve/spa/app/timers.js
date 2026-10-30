@@ -46,8 +46,9 @@ export const activityReopenMillis = 3000 * uiTimerScale;
 
 // The two loading-state timers below (issue 583) are deliberately NOT
 // scaled: they are not something a user waits out but what keeps a fast
-// read from flashing a loading line, and a scenario proving that needs the
-// real window.
+// read from flashing a loading line. The scale can only shorten them, and a
+// shorter window is the one a slow runner's reads overrun; the E2E proving
+// it instead checks each painted line against when its read answered.
 
 /** loadingShowDelayMillis is how long a read must be in flight before its
  * loading state is painted - a read that answers sooner shows nothing. */
