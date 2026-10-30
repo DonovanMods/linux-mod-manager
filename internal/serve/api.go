@@ -414,30 +414,19 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
-	// #538: record the revision Steam has installed for every tracked
-	// Workshop item first, so the library and the mod page read the real
-	// one. Never waits behind a running job and never fails the request:
-	// the check below reads Steam's manifest itself, so its answer is right
-	// either way, and the next hydrate reconciles. Logged, not surfaced.
-	if _, err := s.svc.ReconcileExternalMods(ctx, sel.Game, sel.Profile); err != nil {
-		s.log.Debug("serve: reconciling external revisions", "game", sel.Game.ID, "profile", sel.Profile, "err", err)
-	}
-
-	installed, err := s.svc.GetInstalledMods(ctx, sel.Game.ID, sel.Profile)
-	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, err)
-		return
-	}
-
 	// ?refresh=1 bypasses a source's own metadata cache (#269): the Steam
 	// Workshop source caches Valve's keyless answers for hours, so the web
 	// UI's explicit refresh action needs a way to say "ask again".
 	opts := core.UpdateCheckOptions{Refresh: r.URL.Query().Get("refresh") == "1"}
 	// ?progress= (#583) asks for read_progress frames as the check walks the
-	// mods (read_progress.go).
-	report, _ := s.svc.CheckGameUpdateReport(ctx, sel.Game, sel.Profile, installed,
+	// mods (read_progress.go). The check also applies the auto-policy
+	// updates it finds (#587, auto_updates.go).
+	report, err := s.checkModUpdates(r.Context(), sel.Game, sel.Profile,
 		s.readProgressSink(token, readUpdates, sel), opts)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
 	s.writeJSON(w, http.StatusOK, report)
 }
 
