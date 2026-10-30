@@ -245,7 +245,7 @@ func TestE2E_OnlyOnePickerDropdownOpenAtATime(t *testing.T) {
 	// half is asserted.
 	var afterOutsideClick int
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 		settleEffects(),
 		chromedp.Evaluate(`document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))`, nil),
@@ -1286,7 +1286,7 @@ func TestE2E_TrayShowsARunningJobWithProgress(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.job-progress__bar:not(.job-progress__bar--indeterminate)`, chromedp.ByQuery),
 		textContent(`.activity-bell__count`, &badge),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="running"]`, chromedp.ByQuery),
 		textContent(`.tray__row[data-state="running"] .tray__kind`, &kind),
 		textContent(`.tray__row[data-state="running"] .tray__detail`, &detail),
@@ -1340,7 +1340,7 @@ func TestE2E_QueuedJobDoesNotRenderRunningProgress(t *testing.T) {
 			jobID = startEnableFromAnotherClient(t, f, "fake", "c")
 			return nil
 		}),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="queued"]`, chromedp.ByQuery),
 	)
 
@@ -1386,9 +1386,16 @@ func TestE2E_TrayEntryExpandsToTheEventStream(t *testing.T) {
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		// #584: both clicks are spelled clickWhenSettled. The tray drops in
+		// (menu-drop) and re-places itself as it grows, and the page re-reads
+		// its documents once the deploy is done - a click measured before
+		// any of that moves the row and dispatched after it lands beside it,
+		// with no error. The aria-expanded wait then names a click that did
+		// not take, rather than leaving the events wait to time out on it.
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="succeeded"] .tray__summary`, chromedp.ByQuery),
-		chromedp.Click(`.tray__row[data-state="succeeded"] .tray__summary`, chromedp.ByQuery),
+		clickWhenSettled(`.tray__row[data-state="succeeded"] .tray__summary`),
+		chromedp.WaitVisible(`.tray__row[data-state="succeeded"] .tray__summary[aria-expanded="true"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.tray__event:not(.tray__event--empty)`, chromedp.ByQuery),
 		chromedp.Evaluate(`Array.from(document.querySelectorAll(".tray__event")).map(e => e.textContent.trim())`, &events),
 	)
@@ -1465,7 +1472,7 @@ func TestE2E_FailedJobSurfacesInPlaceAndInTheTray(t *testing.T) {
 		chromedp.WaitVisible(`.job-progress[data-state="failed"]`, chromedp.ByQuery),
 		textContent(`.job-progress__text`, &inline),
 		textContent(`.activity-bell__count`, &badge),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="failed"]`, chromedp.ByQuery),
 		textContent(`.tray__failure-message`, &trayMessage),
 		chromedp.Evaluate(`document.querySelectorAll('[data-action="overwrite"]').length`, &overwrites),
@@ -2740,7 +2747,7 @@ func TestE2E_ConflictOverwriteRoundTripSucceeds(t *testing.T) {
 	assert.Equal(t, "alpha content", string(current), "a refused conflict must not have touched the deployed file")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
 		chromedp.Click(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
@@ -2825,7 +2832,7 @@ func TestE2E_OverwriteButtonAfterReloadIsHonestlyDisabled(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		waitGone(`.modal`),
 		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
 	)
 
@@ -2841,7 +2848,7 @@ func TestE2E_OverwriteButtonAfterReloadIsHonestlyDisabled(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Reload(),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
 	)
 
@@ -3602,7 +3609,7 @@ func TestE2E_UpdatesCard_FailedBatchReportsAnHonestTally(t *testing.T) {
 	assert.Contains(t, cardText, "1.0 → 2.0", "the update must still be listed as pending - it was never actually applied")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 	)
 	var trayText string
@@ -4392,7 +4399,7 @@ mods:
 	}, 5*time.Second, 20*time.Millisecond, "the import job must succeed and save the profile even though nothing was installed")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 	)
 	var trayText string
@@ -4499,7 +4506,7 @@ mods:
 	assert.Empty(t, list.Mods, "no_install must have stopped anything from actually installing, even though Install was checked")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 	)
 	var trayText string
@@ -4578,7 +4585,7 @@ mods: []
 	}, 5*time.Second, 20*time.Millisecond, "the import job must succeed and save the profile")
 
 	f.runInBrowser(t,
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 	)
 	var trayText string
@@ -5347,7 +5354,7 @@ func TestE2E_LockedUpdateIsReportedAsASkipNotAsDone(t *testing.T) {
 		// would be that bug back (TestE2E_JobTerminalLabelIsTheTallyOnItsFirstFrame
 		// pins it frame by frame).
 		textContent(`.card--updates .job-progress__text`, &inline),
-		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		clickWhenSettled(`.activity-bell__trigger`),
 		chromedp.WaitVisible(`.tray__row .tray__skips`, chromedp.ByQuery),
 		textContent(`.tray__row .tray__state`, &trayState),
 		textContent(`.tray__row .tray__skips`, &traySkips),
@@ -6379,7 +6386,7 @@ func TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp(t *testing.T) {
 		f.runInBrowser(t,
 			chromedp.Navigate(route.path),
 			chromedp.WaitVisible(route.ready, chromedp.ByQuery),
-			chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+			clickWhenSettled(`.activity-bell__trigger`),
 			chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
 			chromedp.Evaluate(`document.querySelectorAll('[data-action="shortcuts"]').length`, &shortcutsButtons),
 			// Escape closes it and hands the keyboard back to the trigger -
