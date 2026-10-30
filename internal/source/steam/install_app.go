@@ -3,7 +3,10 @@ package steam
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
+	"time"
 )
 
 // InstalledApp is the Steam app a game's install directory belongs to
@@ -50,18 +53,109 @@ func flatpakSteamBase() string {
 // <installdir> - with symlinks resolved on both sides, so ~/.steam/steam
 // and ~/.local/share/Steam spellings agree. Anything unreadable is passed
 // over: a library lmm cannot read is one it cannot launch from.
+//
+// Every call scans every manifest; InstallAppIndex is the cached form.
 func AppIDForInstallPath(installPath string) (InstalledApp, bool) {
+	var idx InstallAppIndex
+	return idx.Lookup(installPath)
+}
+
+// InstallAppIndex is AppIDForInstallPath with the scan kept between calls
+// (#501): GameStatus asks for every game on every read, which is the web
+// UI's hot path. The scan is reused while nothing it read has changed - the
+// Steam roots found, each root's libraryfolders.vdf, and each library's
+// steamapps directory, whose mtime moves when Steam adds, removes or
+// rewrites (by rename) an appmanifest. The zero value is ready to use and
+// safe for concurrent use.
+type InstallAppIndex struct {
+	mu     sync.Mutex
+	built  bool
+	roots  []steamRoot
+	stamps []pathStamp
+	apps   map[string]InstalledApp // realDir(install dir) -> app
+	scans  int                     // full scans, for tests
+}
+
+// steamRoot is one Steam installation root, and whether it is the
+// Flatpak's.
+type steamRoot struct {
+	path    string
+	flatpak bool
+}
+
+// pathStamp is what a scan saw of one path: its mtime, or that it was
+// missing.
+type pathStamp struct {
+	path    string
+	exists  bool
+	modTime time.Time
+}
+
+// stampPath stats path.
+func stampPath(path string) pathStamp {
+	info, err := os.Stat(path)
+	if err != nil {
+		return pathStamp{path: path}
+	}
+	return pathStamp{path: path, exists: true, modTime: info.ModTime()}
+}
+
+// Lookup is AppIDForInstallPath, scanning only when the libraries changed
+// since the last scan.
+func (x *InstallAppIndex) Lookup(installPath string) (InstalledApp, bool) {
 	if installPath == "" {
 		return InstalledApp{}, false
 	}
 	want := realDir(installPath)
-	type steamRoot struct {
-		path    string
-		flatpak bool
+	roots := currentSteamRoots()
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if !x.built || !slices.Equal(roots, x.roots) || x.stale() {
+		x.rebuild(roots)
 	}
+	app, ok := x.apps[want]
+	return app, ok
+}
+
+// stale reports whether any path the last scan read has changed.
+func (x *InstallAppIndex) stale() bool {
+	for _, st := range x.stamps {
+		if stampPath(st.path) != st {
+			return true
+		}
+	}
+	return false
+}
+
+// rebuild scans every manifest of every library of roots, in search order;
+// the first manifest naming a directory wins.
+func (x *InstallAppIndex) rebuild(roots []steamRoot) {
+	x.scans++
+	x.built, x.roots, x.stamps = true, roots, nil
+	x.apps = map[string]InstalledApp{}
+	for _, root := range roots {
+		x.stamps = append(x.stamps, stampPath(filepath.Join(root.path, "steamapps", "libraryfolders.vdf")))
+		libraries, err := GetLibraryPaths(root.path)
+		if err != nil {
+			continue
+		}
+		for _, lib := range libraries {
+			steamapps := filepath.Join(lib, "steamapps")
+			x.stamps = append(x.stamps, stampPath(steamapps))
+			for dir, appID := range appsInLibrary(steamapps) {
+				if _, taken := x.apps[dir]; !taken {
+					x.apps[dir] = InstalledApp{AppID: appID, Flatpak: root.flatpak}
+				}
+			}
+		}
+	}
+}
+
+// currentSteamRoots is every Steam root, native first and then the
+// Flatpak's. A native-looking root (~/.steam/steam) can be a symlink into
+// the Flatpak's data; it is the Flatpak Steam all the same.
+func currentSteamRoots() []steamRoot {
 	var roots []steamRoot
-	// A native-looking root (~/.steam/steam) can be a symlink into the
-	// Flatpak's data; it is the Flatpak Steam all the same.
 	flatpakBase := realDir(flatpakSteamBase()) + string(filepath.Separator)
 	for _, r := range FindSteamRoots() {
 		roots = append(roots, steamRoot{r, strings.HasPrefix(realDir(r)+string(filepath.Separator), flatpakBase)})
@@ -69,28 +163,18 @@ func AppIDForInstallPath(installPath string) (InstalledApp, bool) {
 	for _, r := range FlatpakSteamRoots() {
 		roots = append(roots, steamRoot{r, true})
 	}
-	for _, root := range roots {
-		libraries, err := GetLibraryPaths(root.path)
-		if err != nil {
-			continue
-		}
-		for _, lib := range libraries {
-			if appID, ok := appInLibrary(lib, want); ok {
-				return InstalledApp{AppID: appID, Flatpak: root.flatpak}, true
-			}
-		}
-	}
-	return InstalledApp{}, false
+	return roots
 }
 
-// appInLibrary returns the app id of the manifest in lib whose install
-// directory is want (already resolved by realDir).
-func appInLibrary(lib, want string) (string, bool) {
-	steamapps := filepath.Join(lib, "steamapps")
+// appsInLibrary maps the install directory (resolved by realDir) of every
+// readable manifest in steamapps to its app id, the first manifest in
+// directory order winning a directory two of them name.
+func appsInLibrary(steamapps string) map[string]string {
 	entries, err := os.ReadDir(steamapps)
 	if err != nil {
-		return "", false
+		return nil
 	}
+	apps := map[string]string{}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasPrefix(name, "appmanifest_") || !strings.HasSuffix(name, ".acf") {
@@ -104,11 +188,12 @@ func appInLibrary(lib, want string) (string, bool) {
 		if err != nil || m.AppID == "" || m.InstallDir == "" {
 			continue
 		}
-		if realDir(filepath.Join(steamapps, "common", m.InstallDir)) == want {
-			return m.AppID, true
+		dir := realDir(filepath.Join(steamapps, "common", m.InstallDir))
+		if _, taken := apps[dir]; !taken {
+			apps[dir] = m.AppID
 		}
 	}
-	return "", false
+	return apps
 }
 
 // realDir is p cleaned, with symlinks resolved where it exists.

@@ -3,6 +3,7 @@ package steam
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -119,4 +120,61 @@ func TestAppIDForInstallPath_NativeRootLinkedIntoTheFlatpak(t *testing.T) {
 	app, ok := AppIDForInstallPath(filepath.Join(home, ".steam", "steam", "steamapps", "common", "Valheim"))
 	require.True(t, ok)
 	assert.Equal(t, InstalledApp{AppID: "892970", Flatpak: true}, app)
+}
+
+// The index keeps its scan while the libraries are unchanged - GameStatus
+// asks on every read - and rescans when Steam adds a manifest or a library.
+func TestInstallAppIndex_CachesUntilTheLibrariesChange(t *testing.T) {
+	home := installAppHome(t)
+	root := filepath.Join(home, ".local", "share", "Steam")
+	second := filepath.Join(home, "games", "SteamLibrary")
+	steamLibrary(t, root, "appmanifest_892970.acf")
+	libraryFolders(t, root, root)
+
+	var idx InstallAppIndex
+	valheim := filepath.Join(root, "steamapps", "common", "Valheim")
+	app, ok := idx.Lookup(valheim)
+	require.True(t, ok)
+	assert.Equal(t, "892970", app.AppID)
+	_, ok = idx.Lookup(filepath.Join(root, "steamapps", "common", "Icarus"))
+	assert.False(t, ok)
+	assert.Equal(t, 1, idx.scans, "a second lookup reuses the scan")
+
+	// A new manifest in a known library.
+	steamLibrary(t, root, "appmanifest_1149460.acf")
+	app, ok = idx.Lookup(filepath.Join(root, "steamapps", "common", "Icarus"))
+	require.True(t, ok)
+	assert.Equal(t, "1149460", app.AppID)
+	assert.Equal(t, 2, idx.scans)
+
+	// A new library in libraryfolders.vdf.
+	steamLibrary(t, second, "appmanifest_228980.acf")
+	libraryFolders(t, root, root, second)
+	app, ok = idx.Lookup(filepath.Join(second, "steamapps", "common", "Steamworks Shared"))
+	require.True(t, ok, "the new library is scanned")
+	assert.Equal(t, "228980", app.AppID)
+	assert.Equal(t, 3, idx.scans)
+
+	// A removed manifest.
+	require.NoError(t, os.Remove(filepath.Join(root, "steamapps", "appmanifest_892970.acf")))
+	_, ok = idx.Lookup(valheim)
+	assert.False(t, ok)
+}
+
+// One index serves concurrent readers (lmm serve's request goroutines).
+func TestInstallAppIndex_ConcurrentLookups(t *testing.T) {
+	home := installAppHome(t)
+	root := filepath.Join(home, ".local", "share", "Steam")
+	steamLibrary(t, root, "appmanifest_892970.acf")
+	var idx InstallAppIndex
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			app, ok := idx.Lookup(filepath.Join(root, "steamapps", "common", "Valheim"))
+			assert.True(t, ok)
+			assert.Equal(t, "892970", app.AppID)
+		})
+	}
+	wg.Wait()
+	assert.Equal(t, 1, idx.scans)
 }
