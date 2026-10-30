@@ -370,6 +370,10 @@ type GameStatus struct {
 	ConvertPaks        *bool      `json:"convert_paks,omitzero"`
 	// ModPathError is GameListEntry.ModPathError, for the same game (#427).
 	ModPathError string `json:"mod_path_error,omitempty"`
+	// Launch is how the game would launch for its active profile, or why
+	// it cannot (#501) - what the web UI's Play button reads. omitzero: a
+	// Service with no Launcher registered (SetLauncher) says nothing.
+	Launch LaunchInfo `json:"launch,omitzero"`
 }
 
 // Status summarizes every configured game, ordered by ID (ListGames').
@@ -485,6 +489,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		}
 		// No default profile: an ordinary state (a freshly added game), and
 		// the only thing it costs is the per-profile detail below.
+		s.stampLaunch(ctx, status, game, "")
 		return status, nil
 	}
 
@@ -528,7 +533,16 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		}
 	}
 
+	s.stampLaunch(ctx, status, game, active.Name)
 	return status, nil
+}
+
+// stampLaunch sets status.Launch from ResolveLaunch, when this Service
+// has a Launcher; with none it leaves the member absent.
+func (s *Service) stampLaunch(ctx context.Context, status *GameStatus, game *domain.Game, profile string) {
+	if info, _, err := s.ResolveLaunch(ctx, game, profile); err == nil {
+		status.Launch = *info
+	}
 }
 
 // SearchHit is one search result plus whether it is already installed in

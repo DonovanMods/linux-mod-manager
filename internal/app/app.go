@@ -52,6 +52,7 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 		return nil, err
 	}
 	RegisterAdapters(svc)
+	RegisterLaunchers(svc)
 	warnAdapterConfig(svc, warnWriter(opts), opts.OmitAdapterWarnings)
 	registerSources(ctx, svc, p, warnWriter(opts))
 	// #431: the one-time backfill of the profile documents' `disabled:`

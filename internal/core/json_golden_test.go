@@ -1452,6 +1452,21 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #501: GameStatus with the launch member a Service with a
+			// Launcher stamps - the Play button's source.
+			"game_status_launch",
+			core.GameStatus{
+				Game:                jsonGoldenGame,
+				LinkMethod:          domain.LinkSymlink,
+				EffectiveLinkMethod: domain.LinkSymlink,
+				LinkMethodSource:    "global",
+				ResolvedCachePath:   "/home/user/.local/share/lmm",
+				Profiles:            []core.ProfileSummary{{Name: "default", ModCount: 0, IsDefault: true}},
+				ActiveProfile:       "default",
+				Launch:              core.LaunchInfo{Method: "steam"},
+			},
+		},
+		{
 			"search_hit",
 			core.SearchHit{Mod: jsonGoldenMod, Installed: true},
 		},
@@ -2392,6 +2407,48 @@ func TestJSONGoldens(t *testing.T) {
 			// UpdateGameSources was asked to drop from the map.
 			"game_source_in_use_error",
 			core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}},
+		},
+		{
+			// #501: `lmm launch --json` for a Steam game started as a
+			// transient systemd user service, with a Force launch's drift
+			// warning - every optional key populated.
+			"launch_result",
+			core.LaunchResult{
+				Game: "valheim", Profile: "default", Method: "steam",
+				Argv: []string{"/usr/bin/steam", "steam://rungameid/892970"},
+				Command: []string{"systemd-run", "--user", "--collect", "--unit=lmm-launch-valheim-abcd1234", "--description=lmm: Valheim",
+					"--setenv=DISPLAY=:0", "--", "/usr/bin/steam", "steam://rungameid/892970"},
+				Unit: "lmm-launch-valheim-abcd1234", Requested: true, Undeployed: 2,
+				Warnings: []string{"launching anyway: 2 mod change(s) in profile \"default\" of valheim are not deployed"},
+			},
+		},
+		{
+			// #501: a dry run of a launch.command game started detached
+			// (no systemd): no unit, Command is Argv, nothing requested.
+			"launch_result_dry_run_detached",
+			core.LaunchResult{
+				Game: "wow", Profile: "default", Method: "command",
+				Argv:    []string{"/usr/bin/lutris", "lutris:rungame/wow"},
+				Command: []string{"/usr/bin/lutris", "lutris:rungame/wow"},
+				DryRun:  true,
+			},
+		},
+		{
+			// #501: GameStatus.launch for a game that can launch.
+			"launch_info",
+			core.LaunchInfo{Method: "steam"},
+		},
+		{
+			// #501: GameStatus.launch for one that cannot: the reason is
+			// the Play button's tooltip.
+			"launch_info_reason",
+			core.LaunchInfo{Reason: "it has no launch.command in games.yaml and lmm found no Steam app id for it"},
+		},
+		{
+			// #501: the drift refusal's Details - what the web UI's
+			// Deploy & launch choice renders from.
+			"launch_drift_error",
+			core.LaunchDriftError{GameID: "valheim", Profile: "default", Undeployed: 2, ModPathError: "mod_path /g/mods does not exist"},
 		},
 		{
 			// #427: a mod_path lmm deployed into that has gone, with the
