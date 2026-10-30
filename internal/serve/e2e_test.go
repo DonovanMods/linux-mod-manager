@@ -1208,19 +1208,18 @@ func TestE2E_ProgressVocabularyIsHumanized(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_ResultTallyReadsAnOmittedFailedList pins progress.js#resultTally
-// against the wire shape core actually emits, in the browser (the only
-// runner this application has).
+// TestE2E_ResultTallyLabelReadsTheWireTally pins progress.js's
+// resultTallyLabel/resultTallyTone against the tally document the server
+// actually emits on a job summary (jobtally.go's jobTally, issue 364), in
+// the browser (the only runner this application has).
 //
-// The bug this exists for: resultTally discriminated a batch result on
-// `applied` AND `failed` both being arrays, while
-// core.UpdateBatchResult.Failed is `json:"failed,omitzero"` - so the exact
-// document a locked-skip batch produces (applied rows, skipped rows, NO
-// `failed` key at all) fell through to null, and the control that started
-// the batch said a bare "Done" over a mod the engine had refused. The
-// discriminator is `applied` alone: `json:"applied"` exists on no other
-// core or serve type, and both omitzero lists default to 0.
-func TestE2E_ResultTallyReadsAnOmittedFailedList(t *testing.T) {
+// Which results tally at all - including the locked-skip document with no
+// `failed` key that once fell through to a bare "Done" (I1, unit 8 gate
+// review) - is decided server-side now and pinned by TestTallyOfResult.
+// What stays here is the reading: a kind-specific count is omitted on the
+// wire when it is zero (`applied`, `installed`, `warnings` are omitzero), so
+// an absent one must read as 0 rather than as "undefined applied".
+func TestE2E_ResultTallyLabelReadsTheWireTally(t *testing.T) {
 	f := newE2EFixture(t)
 
 	var got []string
@@ -1228,41 +1227,41 @@ func TestE2E_ResultTallyReadsAnOmittedFailedList(t *testing.T) {
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`(async () => {
-			const { resultTally, resultTallyLabel, resultTallyTone } =
+			const { resultTallyLabel, resultTallyTone } =
 				await import("/static/app/progress.js");
-			// The shape cmd/lmm/testdata/json_golden/update_bulk_all.golden
-			// carries: one applied row, one locked skip, and no "failed" key.
+			// testdata/json/job_summary_tally.golden's shape: one applied
+			// row and one locked skip.
 			const lockedSkip = {
-				applied: [{ name: "Mod B", status: "updated" }],
-				skipped: [{ name: "Mod A", status: "skipped", reason: "Mod A is locked at v1.0" }],
+				kind: "updates", applied: 1, failed: 0, skipped: 1,
+				skipped_notes: ["Mod A — Mod A is locked at v1.0"],
 			};
-			const allApplied = { applied: [{ name: "Mod B", status: "updated" }] };
-			const oneFailed = {
-				applied: [],
-				failed: [{ mod: "test-src:modA", name: "Mod A", error: "boom" }],
-			};
-			const notABatch = { deployed: 3 };
-			const describe = (r) => {
-				const tally = resultTally(r);
-				if (!tally) return "null";
-				const notes = (tally.skippedNotes ?? []).join("; ");
-				return resultTallyLabel(tally) + " [" + resultTallyTone(tally) + "] {" + notes + "}";
-			};
-			return [describe(lockedSkip), describe(allApplied), describe(oneFailed), describe(notABatch)];
+			const allApplied = { kind: "updates", applied: 1, failed: 0, skipped: 0 };
+			// applied omitted: zero.
+			const oneFailed = { kind: "updates", failed: 1, skipped: 0 };
+			const mixed = { kind: "updates", applied: 2, failed: 1, skipped: 1, skipped_notes: ["x"] };
+			// installed omitted: the flow's own default, every pending mod skipped.
+			const importSkipped = { kind: "profile_import", failed: 0, skipped: 2 };
+			const importFailed = { kind: "profile_import", installed: 1, failed: 1, skipped: 0, warnings: 1 };
+			const describe = (tally) =>
+				resultTallyLabel(tally) + " [" + resultTallyTone(tally) + "]";
+			return [lockedSkip, allApplied, oneFailed, mixed, importSkipped, importFailed].map(describe);
 		})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
 			return p.WithAwaitPromise(true)
 		}),
 	)
 
-	require.Len(t, got, 4)
-	assert.Equal(t, "1 applied / 1 skipped [succeeded] {Mod A — Mod A is locked at v1.0}", got[0],
-		"a batch with no `failed` key must still tally, must call a lock a SKIP rather than a failure, and must carry the engine's own refusal sentence")
-	assert.Equal(t, "1 applied / 0 failed [succeeded] {}", got[1],
-		"an all-success batch reads exactly as it did before this fix")
-	assert.Equal(t, "0 applied / 1 failed [failed] {}", got[2],
-		"a real failure is still a failure, and a batch that applied nothing is not `mixed`")
-	assert.Equal(t, "null", got[3],
-		"a result that is not a batch at all still says Done rather than inventing a tally")
+	require.Len(t, got, 6)
+	assert.Equal(t, "1 applied / 1 skipped [succeeded]", got[0],
+		"a lock is a SKIP, not a failure, and pairs with no \"0 failed\"")
+	assert.Equal(t, "1 applied / 0 failed [succeeded]", got[1],
+		"an all-success batch reads exactly as it always has")
+	assert.Equal(t, "0 applied / 1 failed [failed]", got[2],
+		"an omitted applied count is zero, and a batch that applied nothing is not `mixed`")
+	assert.Equal(t, "2 applied / 1 failed / 1 skipped [mixed]", got[3],
+		"a batch that both failed and skipped names all three counts")
+	assert.Equal(t, "0 installed · 2 skipped [succeeded]", got[4],
+		"an import that installed nothing by the flow's own default is not a failure")
+	assert.Equal(t, "1 installed · 0 skipped · 1 failed · 1 warnings [mixed]", got[5])
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -4517,10 +4516,10 @@ mods:
 // read as a tally-shaped
 // result, replacing the tray's usual bare state word with an honest-looking
 // but empty "0 installed · 0 skipped" - worse copy for a batch that did
-// not, in truth, batch anything. resultTally now returns null for an
-// all-zero result, same as a kind with no tally shape at all, so every
-// caller's own existing "no tally" fallback applies - the tray's own bare
-// state word here (jobprogress.js's InlineJob, the only surface that
+// not, in truth, batch anything. The job summary carries no tally for an
+// all-zero result (jobtally.go's tallyOfResult, since issue 364), same as
+// a kind with no tally shape at all, so every caller's own existing "no
+// tally" fallback applies - the tray's own bare state word here (jobprogress.js's InlineJob, the only surface that
 // renders the literal word "Done", never mounts for profile_import: it has
 // no owning mod row to attach to).
 // It used to reach that all-zero result by importing a profile whose every
@@ -5337,29 +5336,12 @@ func TestE2E_LockedUpdateIsReportedAsASkipNotAsDone(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		waitGone(`.modal`),
 		chromedp.WaitVisible(`.card--updates .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
-		// issue 344: the terminal STATE and the terminal LABEL do not arrive
-		// together. jobprogress.js renders the outcome the instant the job
-		// summary says "succeeded", while the tally behind "1 applied / 1
-		// skipped" is a SECOND read (jobresult.js -> GET
-		// /api/v1/jobs/{id}), so the control carries a bare "Done" for the
-		// frames in between. Reading the text straight after the state wait
-		// therefore sampled whichever label happened to be there, which is
-		// what made this test fail once in a full -race suite run.
-		//
-		// The label is waited out rather than the render deferred: holding
-		// the terminal render until the tally settles was tried, and it
-		// loses the outcome entirely on any control whose CONTAINER
-		// unmounts on completion (Mission Control's profile attention card
-		// disappears the moment the profile is applied). Carrying the tally
-		// on the job SUMMARY - so the first terminal render already has it -
-		// is the regression-free fix, and is filed as #364 (post-v2.0).
-		chromedp.Poll(
-			`(() => {
-				const el = document.querySelector(".card--updates .job-progress__text");
-				return Boolean(el) && el.textContent.trim() !== "" && el.textContent.trim() !== "Done";
-			})()`, nil,
-			chromedp.WithPollingInterval(50*time.Millisecond),
-		),
+		// issue 344 waited the label out here, because the terminal STATE
+		// arrived before the tally behind its LABEL (a second read of the
+		// job's result). Since issue 364 the tally is on the job summary,
+		// so the label is read straight after the state wait: a "Done" here
+		// would be that bug back (TestE2E_JobTerminalLabelIsTheTallyOnItsFirstFrame
+		// pins it frame by frame).
 		textContent(`.card--updates .job-progress__text`, &inline),
 		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.tray__row .tray__skips`, chromedp.ByQuery),

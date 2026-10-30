@@ -25,7 +25,6 @@ import {
 import {
   useJobResultFailures,
   useJobResultPurge,
-  useJobResultTally,
   useJobResultVerify,
   useJobResultWarnings,
 } from "../jobresult.js";
@@ -143,10 +142,13 @@ export function JobProgress({
   onDismiss,
 }) {
   const state = summary?.state ?? "running";
+  // Issue 364: the outcome tally is the summary's own, so the first
+  // terminal render already says "1 applied / 1 skipped" rather than a
+  // "Done" a second read corrects a frame later.
+  const tally = summary?.tally ?? null;
   // Called unconditionally, before either branch below - C1 (unit 6 fix
   // wave)'s own rule applies here too: a hook called only on one side of a
   // conditional is exactly the pattern that let a stale value survive.
-  const tally = useJobResultTally(jobID, state);
   const resultWarnings = useJobResultWarnings(jobID, state);
   const purgeResult = useJobResultPurge(jobID, state);
   const repairResult = useJobResultVerify(jobID, state);
@@ -201,7 +203,7 @@ export function JobProgress({
   // into a collapsed "Details" under the way out.
   const headed = Boolean(download?.manual);
   // I3, unit 6 fix wave: a batch job's own `state` is "succeeded" even when
-  // every item inside it failed (progress.js#resultTally's own doc
+  // every item inside it failed (internal/serve/jobtally.go's own doc
   // comment) - the tone class follows the TALLY, not the bare state, for
   // exactly the cases that disagree with it.
   const tone = !failed && tally ? resultTallyTone(tally) : state;
@@ -222,7 +224,7 @@ export function JobProgress({
     >
       <span
         class="job-progress__text"
-        title=${(tally?.skippedNotes ?? []).join("; ") || undefined}
+        title=${(tally?.skipped_notes ?? []).join("; ") || undefined}
       >
         ${
           headed

@@ -164,6 +164,7 @@ internal/
     ├── api_jobs.go        # POST /api/v1/plans/{kind}, POST /api/v1/jobs, GET .../jobs/{id}[/events]
     ├── activity.go        # the tray's surface: jobSummary/jobsIndex/jobProgressFrame + the registry's activity bus & frame vocabulary
     ├── api_activity.go    # GET /api/v1/jobs (index), GET /api/v1/events (one multiplexed lifecycle stream)
+    ├── jobtally.go        # jobTally: a finished batch job's outcome count (updates/profile_import), carried on jobSummary/jobStatus (#364)
     ├── plans.go           # Server-side plan store: single-use Take, ~10-min TTL sweep
     ├── jobs.go            # Job registry: goroutine-per-Apply on the server's own ctx, event ring buffer, SSE fanout
     ├── sse.go             # SSE framing: one JSON frame per core event, ~15s heartbeats, terminal "done" frame

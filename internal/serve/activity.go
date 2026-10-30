@@ -26,10 +26,13 @@ import (
 // job_started / job_done frames: everything the activity tray renders
 // without opening anything.
 //
-// It is jobStatus without Result. A failed job DOES carry its error
-// envelope here, typed details included, because the tray's job is to offer
-// the next step in place (a conflict's "Overwrite?"), and an envelope is
-// small and bounded where a result document is neither.
+// It is jobStatus without Result. A finished batch job DOES carry its
+// outcome Tally, computed from that result (issue 364), because the control
+// that started the job renders it the moment the job is terminal. A failed
+// job DOES carry its error envelope here, typed details included, because
+// the tray's job is to offer the next step in place (a conflict's
+// "Overwrite?"), and an envelope is small and bounded where a result
+// document is neither.
 //
 // State is the registry's own word for the job, which is running,
 // succeeded or failed - there is no "queued". core's beginOp serialises
@@ -46,6 +49,10 @@ type jobSummary struct {
 	State     jobState  `json:"state"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
+
+	// Tally is jobStatus's Tally unchanged: a finished batch job's outcome
+	// count (jobtally.go), nil for every other job.
+	Tally *jobTally `json:"tally,omitempty"`
 
 	// Error is the failure envelope, identical to the one jobStatus
 	// carries. Nil unless State is jobFailed.
@@ -80,6 +87,7 @@ func summarizeJobStatus(status jobStatus) jobSummary {
 		State:         status.State,
 		StartedAt:     status.StartedAt,
 		EndedAt:       status.EndedAt,
+		Tally:         status.Tally,
 		Error:         status.Error,
 		EventCount:    status.EventCount,
 		DroppedEvents: status.DroppedEvents,

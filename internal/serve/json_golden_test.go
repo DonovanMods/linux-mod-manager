@@ -134,6 +134,51 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Issue 364: a finished update batch's index row carries its
+			// outcome tally, so the control that started it renders the
+			// count on the same frame that says it is over. Succeeded, and
+			// still not all good - the reason the tally exists at all.
+			"job_summary_tally",
+			jobSummary{
+				ID:        "0123456789abcdef0123456789abcdef",
+				Kind:      "updates",
+				State:     jobSucceeded,
+				StartedAt: goldenTime,
+				EndedAt:   goldenTime.Add(2 * time.Second),
+				Tally: &jobTally{
+					Kind:         "updates",
+					Applied:      1,
+					Skipped:      1,
+					SkippedNotes: []string{"Better Boots — Better Boots is locked at v1.0; run lmm mod unlock to update it"},
+				},
+				EventCount: 6,
+			},
+		},
+		{
+			// The updates shape: applied/failed/skipped and the skipped
+			// items' own sentences.
+			"job_tally",
+			jobTally{
+				Kind:         "updates",
+				Applied:      2,
+				Failed:       1,
+				Skipped:      1,
+				SkippedNotes: []string{"Workshop Map — Steam updates this item itself"},
+			},
+		},
+		{
+			// The profile_import shape: installed/failed/skipped and a
+			// warnings count, with no applied member at all.
+			"job_tally_profile_import",
+			jobTally{
+				Kind:      "profile_import",
+				Installed: 3,
+				Failed:    1,
+				Skipped:   2,
+				Warnings:  1,
+			},
+		},
+		{
 			// GET /api/v1/jobs, newest first: one running job above one
 			// finished one, so the golden pins both row shapes and the
 			// order in the same document.

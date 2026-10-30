@@ -89,6 +89,11 @@ type jobStatus struct {
 	// same core document the equivalent CLI command emits under --json.
 	Result any `json:"result,omitempty"`
 
+	// Tally is a finished batch job's outcome count (jobtally.go), computed
+	// once from Result when the job finished. Nil for a running or failed
+	// job and for a result that is not a batch.
+	Tally *jobTally `json:"tally,omitempty"`
+
 	// Error is the failure envelope, typed details included (a failed
 	// install carries details.conflicts, a failed profile switch carries
 	// details.warnings). Nil unless State is jobFailed.
@@ -127,6 +132,7 @@ type job struct {
 	state    jobState
 	ended    time.Time
 	result   any
+	tally    *jobTally
 	err      error
 	envelope *apiErrorEnvelope
 
@@ -170,6 +176,7 @@ func (j *job) status() jobStatus {
 		StartedAt:     j.started,
 		EndedAt:       j.ended,
 		Result:        j.result,
+		Tally:         j.tally,
 		Error:         j.envelope,
 		EventCount:    j.count,
 		DroppedEvents: j.dropped,
@@ -347,6 +354,7 @@ func (j *job) finish(result any, err error, at time.Time) {
 	} else {
 		j.state = jobSucceeded
 		j.result = result
+		j.tally = tallyOfResult(result)
 	}
 
 	for key, s := range j.subs {

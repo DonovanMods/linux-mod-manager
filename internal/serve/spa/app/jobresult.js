@@ -1,30 +1,34 @@
-// jobresult.js - fetching a finished job's own RESULT document for an
-// honest outcome tally (I3, unit 6 fix wave).
+// jobresult.js - fetching a finished job's own RESULT document for the
+// details a readout shows beneath its outcome: a switch's warnings, a
+// purge's or a repair's own outcome, a batch's failed items.
 //
 // jobSummary (activity.go's own doc comment: "jobStatus without Result...
 // fifty result documents in one poll would make the cheapest request in
 // the application the most expensive one") never carries a job's Result -
-// so a control that wants progress.js#resultTally's "n applied / m failed"
-// instead of a bare "Done" has to make its OWN read of the full document
-// (api.js#jobStatus), same as jobhistory.js already does for a different
-// reason. Kept out of progress.js on purpose: that module stays pure and
-// fetch-free, rendering only what it is handed.
+// so a control that wants those details has to make its OWN read of the
+// full document (api.js#jobStatus), same as jobhistory.js already does for
+// a different reason. The outcome TALLY ("n applied / m failed") is not
+// one of them: it is on the summary itself (activity.go's jobSummary.Tally,
+// issue 364), because a label that waited for this second read said "Done"
+// for the frames in between. Kept out of progress.js on purpose: that
+// module stays pure and fetch-free, rendering only what it is handed.
 import { useEffect, useState } from "./render.js";
 import { jobStatus } from "./api.js";
-import { resultTally, resultTallyTone } from "./progress.js";
+import { resultTallyTone } from "./progress.js";
 import { repairOutcome } from "./verify.js";
 import { batchFailuresFor } from "./failures.js";
 
-// tallyCache is a page-lifetime Map from job id to its own (possibly null)
-// read of the result - {tally, warnings} - so the SAME finished job showing in two places at once (a row's
-// own InlineJob AND the tray's entry for it) fetches its result exactly
-// once, and neither ever re-fetches on a later re-render.
-const tallyCache = new Map();
+// readCache is a page-lifetime Map from job id to its own (possibly null)
+// read of the result - readResult's shape - so the SAME finished job
+// showing in two places at once (a row's own InlineJob AND the tray's entry
+// for it) fetches its result exactly once, and neither ever re-fetches on a
+// later re-render.
+const readCache = new Map();
 
 // pendingReads is a job id's in-flight read, while one is outstanding.
-// useJobResultTally and useJobResultWarnings are two SEPARATE hooks called
+// useJobResultWarnings and useJobResultPurge are two SEPARATE hooks called
 // on the SAME jobID in the SAME render (jobprogress.js's JobProgress), so
-// their effects both fire before either's fetch has resolved - tallyCache
+// their effects both fire before either's fetch has resolved - readCache
 // alone is not enough, since it is only filled once a fetch's .then runs.
 // Caching the promise itself closes that window: the second hook finds the
 // first's request already in flight and awaits it instead of starting its
@@ -32,23 +36,13 @@ const tallyCache = new Map();
 const pendingReads = new Map();
 
 /**
- * useJobResultTally returns jobID's own resultTally, or null while the job
- * is still running, its result hasn't been fetched yet, or its result
- * carries no tally-shaped outcome at all.
- *
- * Called UNCONDITIONALLY - every caller's own render must reach this before
- * any early return, the same rule C1 (unit 6 fix wave) exists to enforce
- * everywhere else in this application.
- */
-export function useJobResultTally(jobID, jobState) {
-  return useJobResultRead(jobID, jobState)?.tally ?? null;
-}
-
-/**
  * useJobResultWarnings returns the finished job's own result warnings - the
  * sentences a result carries for the user to act on (issue 463: a flag-only
- * profile switch's recovery notice) - or an empty list. Same fetch, same
- * cache, same unconditional-call rule as useJobResultTally.
+ * profile switch's recovery notice) - or an empty list.
+ *
+ * Called UNCONDITIONALLY, like every reader here - every caller's own
+ * render must reach this before any early return, the same rule C1 (unit 6
+ * fix wave) exists to enforce everywhere else in this application.
  */
 export function useJobResultWarnings(jobID, jobState) {
   return useJobResultRead(jobID, jobState)?.warnings ?? NO_WARNINGS;
@@ -109,7 +103,7 @@ function readResult(status) {
       : null;
   const failures =
     status?.kind === "updates" ? batchFailuresFor(result) : NO_FAILURES;
-  return { tally: resultTally(result), warnings, purge, verify, failures };
+  return { warnings, purge, verify, failures };
 }
 
 /**
@@ -120,7 +114,7 @@ function readResult(status) {
  * request when a readout is also showing the job.
  */
 export function fetchJobResult(jobID) {
-  if (tallyCache.has(jobID)) return Promise.resolve(tallyCache.get(jobID));
+  if (readCache.has(jobID)) return Promise.resolve(readCache.get(jobID));
   let read = pendingReads.get(jobID);
   if (!read) {
     read = jobStatus(jobID).then(
@@ -134,7 +128,7 @@ export function fetchJobResult(jobID) {
     );
     pendingReads.set(jobID, read);
     read.then((computed) => {
-      tallyCache.set(jobID, computed);
+      readCache.set(jobID, computed);
       pendingReads.delete(jobID);
     });
   }
@@ -144,8 +138,8 @@ export function fetchJobResult(jobID) {
 /**
  * readoutHasNextStep says whether a SUCCEEDED job's readout is carrying
  * something the user may still need to act on or read: a batch whose items
- * failed (the job's own state is "succeeded" all the same - progress.js
- * #resultTally), each failed update's entry and its download way out ("Open
+ * failed (the job's own state is "succeeded" all the same - the summary's
+ * own tally says so), each failed update's entry and its download way out ("Open
  * on <source>", "Update from file…"), a purge's or a repair's own outcome, a
  * profile switch's recovery notice. Such a readout waits for the user, as a
  * failed job's does (main.js#releaseSucceededOrigin); only a bare "Done" is
@@ -153,14 +147,15 @@ export function fetchJobResult(jobID) {
  * result to look at) holds nothing, as before.
  */
 export function readoutHasNextStep(summary, read) {
+  const tally = summary?.tally;
+  if (tally && resultTallyTone(tally) !== "succeeded") return true;
   if (!read) return false;
-  if (read.tally && resultTallyTone(read.tally) !== "succeeded") return true;
   if (read.failures.length > 0 || read.purge || read.verify) return true;
   return summary?.kind === "switch" && read.warnings.length > 0;
 }
 
 function useJobResultRead(jobID, jobState) {
-  const [read, setRead] = useState(() => tallyCache.get(jobID) ?? null);
+  const [read, setRead] = useState(() => readCache.get(jobID) ?? null);
 
   useEffect(() => {
     if (!jobID || jobState === "running") return;

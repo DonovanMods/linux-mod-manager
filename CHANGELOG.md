@@ -47,6 +47,15 @@ curseforge)` instead of "source unreachable"; a key the source refused
   a stored key, instead of `lmm auth login`. On the wire,
   `VerifyFinding.auth_source`, `UpdateCheckReport.auth_required` and
   `SourceWarning.auth_required` carry the refusing source.
+- **A finished update batch's control no longer flashes "Done" before its
+  outcome (#364).** The web UI's job readout showed "Done" for a frame
+  and then corrected itself to the batch's real outcome ("1 applied / 1
+  skipped"), because that outcome came from a second request after the
+  job had ended. The server now carries the outcome count on the job
+  summary itself (`jobSummary.tally` on `GET /api/v1/jobs` and the
+  `/api/v1/events` stream, and `tally` on `GET /api/v1/jobs/{id}`), so an
+  update batch's or a profile import's control, its tray row and its toast
+  read it the moment the job finishes.
 
 - **`man lmm` lists `--version` (#581).** The root page's OPTIONS now
   include `--version`, which `lmm --version` has always accepted; the page
