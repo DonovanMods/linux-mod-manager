@@ -83,7 +83,8 @@ import (
 //   - withholdStarted: drop every job_started frame too - with withholdDone,
 //     a job whose whole life passes unheard;
 //   - killStreams: hang up every open stream, as a restart or a lagging
-//     watcher does; EventSource reconnects on its own;
+//     watcher does; EventSource reconnects on its own, after the
+//     e2eStreamRetry every stream the wire answers opens with;
 //   - forget: answer a (re)connect with an empty snapshot and every
 //     GET /api/v1/jobs/{id} with the server's own 404 - a server that no
 //     longer knows the page's jobs;
@@ -91,6 +92,20 @@ import (
 //     up for good (readyState CLOSED).
 //
 // connects counts every stream request, answered or refused.
+// e2eStreamRetry is the reconnection time the wire hands EventSource at the
+// top of every stream it answers (the SSE `retry:` field), instead of the
+// browser's own ~3s, so a scenario that hangs a stream up does not wait out
+// a real reconnect delay (#576). lmm serve itself sends no `retry:`; nothing
+// a scenario asserts is about how long the browser waits, only about what
+// the page does once it is back.
+const e2eStreamRetry = 100 * time.Millisecond
+
+// writeStreamRetry opens a stream with e2eStreamRetry.
+func writeStreamRetry(rw http.ResponseWriter) error {
+	_, err := fmt.Fprintf(rw, "retry: %d\n\n", e2eStreamRetry.Milliseconds())
+	return err
+}
+
 type toggleWire struct {
 	backend *url.URL
 	proxy   *httputil.ReverseProxy
@@ -297,6 +312,7 @@ func (w *toggleWire) serveEvents(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("Content-Type", "text/event-stream")
 		rw.Header().Set("Cache-Control", "no-cache")
 		rw.WriteHeader(http.StatusOK)
+		_ = writeStreamRetry(rw)
 		_, _ = io.WriteString(rw, "event: snapshot\ndata: {\"jobs\":[]}\n\n")
 		rw.(http.Flusher).Flush()
 		<-ctx.Done()
@@ -321,6 +337,9 @@ func (w *toggleWire) relayEvents(ctx context.Context, rw http.ResponseWriter) {
 		rw.Header()[name] = values
 	}
 	rw.WriteHeader(resp.StatusCode)
+	if err := writeStreamRetry(rw); err != nil {
+		return
+	}
 	flusher := rw.(http.Flusher)
 	flusher.Flush()
 
@@ -857,6 +876,7 @@ func TestE2E_ActivityStream_IsReopenedAfterTheServerRefusesIt(t *testing.T) {
 
 	wire.withholdDone.Store(true)
 	f.runInBrowser(t,
+		scaleUITimers(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
 		pollUntil(`document.querySelectorAll(".mod-row").length === 2`),

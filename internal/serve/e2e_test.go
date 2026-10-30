@@ -5750,13 +5750,15 @@ func TestE2E_ASlowStaleHydrationCannotRepaintTheProfileSwitchedTo(t *testing.T) 
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// succeededOriginReleaseBudget is main.js#succeededOriginReleaseMillis, as
+// succeededOriginReleaseBudget is timers.js#succeededOriginReleaseMillis, as
 // the two I-2 scenarios below need to reason about it: long enough that a
 // pinned failure is provably pinned, short enough that a released success
-// does not stretch the suite. Kept as a Go constant rather than read out of
+// does not stretch the suite. Kept as a Go value rather than read out of
 // the module, because a scenario that derived its own budget from the code
-// under test could not fail if that code changed.
-const succeededOriginReleaseBudget = 4 * time.Second
+// under test could not fail if that code changed. Both scenarios run the
+// page's timers at scaleUITimers' scale, so the budget is scaled with them
+// (#576).
+var succeededOriginReleaseBudget = scaledUITimer(4 * time.Second)
 
 // searchRefreshedAfterTheJob is the poll every C-2 scenario uses to sample
 // the toast decision at a point where it has definitely been made.
@@ -5855,6 +5857,7 @@ func TestE2E_SucceededDeployReleasesTheButtonOnItsOwn(t *testing.T) {
 	f := newE2EFixtureWithDeployableMods(t)
 
 	f.runInBrowser(t,
+		scaleUITimers(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
@@ -5883,6 +5886,7 @@ func TestE2E_FailedDeployStaysPinnedUntilDismissed(t *testing.T) {
 
 	var stillFailed, deployButtonBack bool
 	f.runInBrowser(t,
+		scaleUITimers(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),

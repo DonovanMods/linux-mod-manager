@@ -27,8 +27,13 @@ import (
 
 // dialogSurvivalWait is the one deliberate long wait: well past every timer
 // the page owns (the 4s success release, the 3s unread re-read, the 8s toast,
-// the 15s SSE heartbeat is deliberately not waited out).
-const dialogSurvivalWait = 12 * time.Second
+// the 15s SSE heartbeat is deliberately not waited out), at the scale
+// scaleUITimers runs them at (#576).
+var dialogSurvivalWait = scaledUITimer(12 * time.Second)
+
+// toastSurvivalWait is past the 8s a success toast is dismissed after, at the
+// same scale.
+var toastSurvivalWait = scaledUITimer(12 * time.Second)
 
 // fileChooser is an intercepted native file chooser.
 type fileChooser struct {
@@ -181,6 +186,7 @@ func survivesEveryTimer(t *testing.T, f e2eSearchFixture, reach chromedp.Action,
 	chooser := &fileChooser{}
 
 	f.runInBrowser(t,
+		scaleUITimers(),
 		interceptFileChooser(f.Ctx, chooser),
 		reach,
 		chromedp.Evaluate(tagFileInput, nil),
@@ -293,6 +299,7 @@ func TestE2E_UpdateFromFile_PartialUpdateAllToastOutlastsItsTimer(t *testing.T) 
 	f := newE2EFixtureWithAPartialUpdate(t)
 
 	f.runInBrowser(t,
+		scaleUITimers(),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.card--updates [data-action="update-all"]`, chromedp.ByQuery),
 		pollUntil(`document.querySelector('.card--updates [data-action="update-all"]').textContent.includes("(2)")`),
@@ -312,6 +319,6 @@ func TestE2E_UpdateFromFile_PartialUpdateAllToastOutlastsItsTimer(t *testing.T) 
 	f.runInBrowser(t, textContent(`.toast.toast--failure .toast__detail`, &detail))
 	assert.Equal(t, "1 applied / 1 failed", detail)
 
-	holdsFor(t, f.Ctx, 10*time.Second, "the failure toast", `document.querySelector('.toast.toast--failure') !== null`)
+	holdsFor(t, f.Ctx, toastSurvivalWait, "the failure toast", `document.querySelector('.toast.toast--failure') !== null`)
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
