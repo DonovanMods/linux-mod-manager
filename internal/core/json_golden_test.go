@@ -106,7 +106,7 @@ var (
 			LinkMethod: domain.LinkSymlink,
 			Adapter:    "bepinx",
 		},
-		AdapterError: `game "valheim": unknown adapter "bepinx" (registered: bepinex, generic-files, icarus)`,
+		AdapterError: `game "valheim": unknown adapter "bepinx" (registered: bepinex, d2r, generic-files, icarus)`,
 	}
 
 	goldenGameDetailEntry = core.GameListEntry{
