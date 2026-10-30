@@ -701,7 +701,7 @@ func (s *Service) adoptScannedMod(ctx context.Context, game *domain.Game, r Scan
 		Enabled:        true,
 		Deployed:       true,
 		LinkMethod:     linkMethod,
-		ManualDownload: true, // Adopted mods require manual download
+		AdoptedInPlace: true, // #516: lmm never downloaded it; verify reads this
 		FileIDs:        fileIDs,
 	}
 	if err := s.saveInstalledMod(ctx, installedMod); err != nil {

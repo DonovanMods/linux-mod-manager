@@ -333,7 +333,7 @@ func TestRunImportScan_Force_SkipsConfirmPrompt_ImportsAndWritesCache(t *testing
 	require.Len(t, mods, 1)
 	installed := mods[0]
 	assert.Equal(t, domain.SourceLocal, installed.SourceID)
-	assert.True(t, installed.ManualDownload, "scanned imports always require manual download")
+	assert.True(t, installed.AdoptedInPlace, "scanned imports are always adopted in place")
 	assert.Empty(t, installed.FileIDs, "no source match means no resolved file ID")
 
 	cachePath := svc.GlobalCacheDir()

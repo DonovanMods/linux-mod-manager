@@ -77,7 +77,7 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 // A re-download is the usual way, but a file its source will not serve
 // (source.ErrManualDownload - a CurseForge author's third-party opt-out) can
 // never be re-downloaded, so the warning could never clear (#514). For such
-// a file - a row already flagged ManualDownload, or one whose re-download
+// a file - a row already flagged (see cacheFirst), or one whose re-download
 // was just refused that way - the checksum is computed from the mod's own
 // cache entry instead (fillChecksumFromCache). verify only ever checks a
 // checksum's presence, so a cache-derived value is as good as a download's.
@@ -88,13 +88,17 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 // Filling from the recorded version's own cache entry moves nothing, so it
 // is allowed for a LOCKED ref too; only the download carries #325's gate.
 func (r *verifyRun) populateChecksum(mod *domain.InstalledMod, fileID string, ref *domain.ModReference) (persisted, fromCache bool, err error) {
-	if mod.ManualDownload {
+	// #516: the flag #514 read was installed_mods.manual_download, which
+	// only ever meant "adopted in place"; that row keeps the cache-first
+	// fill it had.
+	cacheFirst := mod.AdoptedInPlace
+	if cacheFirst {
 		if filled, ferr := r.fillChecksumFromCache(mod, fileID); filled || ferr != nil {
 			return filled, filled, ferr
 		}
 	}
 	persisted, err = r.redownloadModFile(r.ctx, mod, fileID, ref)
-	if mod.ManualDownload || !errors.Is(err, source.ErrManualDownload) {
+	if cacheFirst || !errors.Is(err, source.ErrManualDownload) {
 		return persisted, false, err
 	}
 	filled, ferr := r.fillChecksumFromCache(mod, fileID)

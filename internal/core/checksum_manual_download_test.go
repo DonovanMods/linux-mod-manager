@@ -116,7 +116,7 @@ func (s *manualOnlySource) GetDownloadURL(ctx context.Context, mod *domain.Mod, 
 // writes its cache entry the way an import does - content plus the file's
 // completion marker with its member manifest; otherwise the entry holds the
 // content alone, with no marker vouching for it.
-func seedManualOnlyMod(t *testing.T, manualFlag, complete bool) (*core.Service, *domain.Game, *manualOnlySource) {
+func seedManualOnlyMod(t *testing.T, adoptedInPlace, complete bool) (*core.Service, *domain.Game, *manualOnlySource) {
 	t.Helper()
 	svc, game := newFixTestGame(t)
 	src := &manualOnlySource{mockSource: newMockSource("msrc")}
@@ -131,7 +131,7 @@ func seedManualOnlyMod(t *testing.T, manualFlag, complete bool) (*core.Service, 
 	}
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod: mod, ProfileName: "default", Enabled: true, FileIDs: []string{"1"},
-		UpdatePolicy: domain.UpdateNotify, ManualDownload: manualFlag,
+		UpdatePolicy: domain.UpdateNotify, AdoptedInPlace: adoptedInPlace,
 	}))
 	return svc, game, src
 }
@@ -173,18 +173,41 @@ func TestVerifyFix_NoChecksum_SourceRefusesDownload_FillsFromCache(t *testing.T)
 	assert.Zero(t, again.Warnings, "the fill is durable: the next verify is clean")
 }
 
-// A row already flagged manual-download is filled from its cache without
-// asking the source at all.
-func TestVerifyFix_NoChecksum_ManualDownloadMod_FillsWithoutDownloading(t *testing.T) {
+// A row adopted in place (the installed_mods column once named
+// manual_download, #516) is filled from its cache without asking the
+// source at all - as it was before the column was renamed.
+func TestVerifyFix_NoChecksum_AdoptedInPlaceMod_FillsWithoutDownloading(t *testing.T) {
 	svc, game, src := seedManualOnlyMod(t, true, true)
 
 	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, nil)
 	require.NoError(t, err)
 
-	assert.Zero(t, src.urlCalls.Load(), "a manual-download mod is never re-downloaded")
+	assert.Zero(t, src.urlCalls.Load(), "an adopted-in-place mod is never re-downloaded")
 	assert.Zero(t, result.Warnings)
 	assert.Equal(t, "ok", findingFor(t, result, "8939586").Status)
 	assert.NotEmpty(t, storedChecksum(t, svc, game.ID, "msrc", "8939586", "1"))
+}
+
+// #516: the split must not make a manual-only mod read as adopted in place.
+// It has a real cache entry and a queryable source, so verify still calls a
+// gone entry missing - the silent loss #516 was filed to prevent. The row
+// has no file record, which is the case adoptedInPlace's exemption covers.
+func TestVerify_ManualOnlyMod_StillReportsMissingCache(t *testing.T) {
+	svc, game, src := seedManualOnlyMod(t, false, false)
+	ctx := context.Background()
+	_, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Fix: true}, nil)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), src.urlCalls.Load())
+	row, err := svc.GetInstalledMod(ctx, "msrc", "8939586", game.ID, "default")
+	require.NoError(t, err)
+	require.True(t, row.ManualOnly)
+	row.FileIDs = nil
+	require.NoError(t, svc.SaveInstalledMod(ctx, row))
+
+	require.NoError(t, svc.GetGameCache(game).Delete(game.ID, "msrc", "8939586", "1.0"))
+	result, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.NotNil(t, findingWithStatus(result, "missing_cache"), "statuses were %v", findingStatuses(result))
 }
 
 // Without a complete cache entry there is nothing to fill from, so the

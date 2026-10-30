@@ -37,7 +37,7 @@ type rowCopy struct {
 // recordFileChecksums has to run after it. A checksum that cannot be read
 // or written is a message without a "Warning: " prefix - never fatal, the
 // files are correct either way - and the save's own failure is the error.
-// ManualDownload, External and ExternalPath are facts about the mod, so a
+// AdoptedInPlace, External and ExternalPath are facts about the mod, so a
 // fresh row keeps them too.
 func (s *Service) copyRowToProfile(ctx context.Context, game *domain.Game, row domain.InstalledMod, profile string, c rowCopy) ([]string, error) {
 	checksums, read := s.rowChecksums(ctx, game, row)
@@ -60,7 +60,7 @@ func (s *Service) copyRowToProfile(ctx context.Context, game *domain.Game, row d
 			UpdatePolicy:   domain.UpdateNotify,
 			LinkMethod:     c.method,
 			FileIDs:        row.FileIDs,
-			ManualDownload: row.ManualDownload,
+			AdoptedInPlace: row.AdoptedInPlace,
 			External:       row.External,
 			ExternalPath:   row.ExternalPath,
 		}
