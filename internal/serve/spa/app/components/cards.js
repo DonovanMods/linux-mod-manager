@@ -60,7 +60,9 @@ const PROFILE_SYNC_ORIGIN = "profile:sync";
  * the finding's own remedy. It stays on the wire, and here, for whoever
  * hovers to ask why there is no button. */
 function rowReason(f) {
-  if (f.fixable) return undefined;
+  // An auth row's visible text already IS its fixable_reason (issue 582);
+  // its detail carries the source's error chain as its own title instead.
+  if (f.fixable || f.auth_source) return undefined;
   return f.fixable_reason || undefined;
 }
 
@@ -684,7 +686,9 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                           >`
                         }</span
                       >
-                      <span class="card__row-detail"
+                      <span
+                        class="card__row-detail"
+                        title=${f.auth_source ? findingLabel(f) : undefined}
                         >${
                           // issue 582: a refused-for-want-of-a-key row
                           // says only that - the source's error chain is

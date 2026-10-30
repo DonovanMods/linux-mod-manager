@@ -82,12 +82,13 @@ func TestE2E_AuthHint_HealthRowLinksToTheSourcesKey(t *testing.T) {
 	f := newE2EFixtureWithAKeylessSource(t)
 
 	const row = `.card--health [data-status="skipped"]`
-	var rowText, path, search string
+	var rowText, detailTitle, path, search string
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		pollUntil(fmt.Sprintf(`document.querySelector(%q) !== null`, row+` [data-action="add-api-key"]`)),
 		textContent(row, &rowText),
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).getAttribute("title") || ""`, row+` .card__row-detail`), &detailTitle),
 		clickWhenSettled(row+` [data-action="add-api-key"]`),
 		pollUntil(focusedKeylessKeyInput),
 		chromedp.Evaluate(`location.pathname`, &path),
@@ -98,6 +99,11 @@ func TestE2E_AuthHint_HealthRowLinksToTheSourcesKey(t *testing.T) {
 	assert.Contains(t, rowText, "Keyless Source rejected its API key")
 	assert.Contains(t, rowText, "Add API key…")
 	assert.NotContains(t, rowText, "Not fixable")
+	// The row's text is the short sentence; the source's own error chain -
+	// what a person debugging the key actually needs - is the detail's
+	// title, and nowhere else on the card.
+	assert.Contains(t, detailTitle, "API key required",
+		"the source's error chain must stay reachable as the detail's tooltip")
 	assert.Equal(t, f.ContextPath()+"/setup", path)
 	assert.Contains(t, search, "section=auth")
 	assert.Contains(t, search, "source=keyless")

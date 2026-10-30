@@ -5618,7 +5618,7 @@ func TestE2E_SlideOverFindingsReadAsProse(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_HealthCardTruncatesTheDetailBeforeTheName is M3 of the unit-8
+// TestE2E_HealthCardTruncatesNeitherHalfOfARow is M3 of the unit-8
 // gate review. Both halves of a card row shrank at the same rate, so at
 // 1280px a Health row read "Better …  version mismatch (recorded 1.0, so…"
 // - both cut. The name is the identifier: a truncated detail still explains
@@ -5631,7 +5631,7 @@ func TestE2E_SlideOverFindingsReadAsProse(t *testing.T) {
 // Measured in the browser rather than asserted against the stylesheet: a
 // truncation is what a layout engine DOES with a rule, and scrollWidth
 // versus clientWidth is the only place that fact exists.
-func TestE2E_HealthCardTruncatesTheDetailBeforeTheName(t *testing.T) {
+func TestE2E_HealthCardTruncatesNeitherHalfOfARow(t *testing.T) {
 	f := newE2EFixtureWithAttention(t)
 
 	var nameCut, detailCut, detailPresent bool
