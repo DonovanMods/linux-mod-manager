@@ -35,6 +35,16 @@ lmm update <mod-id>
 `lmm update` on its own lists the mods that have updates. Give it a mod's id
 to update that mod. `lmm list` shows each mod's id.
 
+In Icarus, lmm merges your mods into one pak. When the game patches its
+own pak, or you change which mods are on, the Updates card lists that
+merged pak (**Icarus Merged Pak**) and `lmm update` marks it
+`[recompile]`. Updating it rebuilds the pak from the mod files lmm already
+has, without asking any mod site, so it works even for a mod the site no
+longer lists. The Health card's **Repair** for the same pak does the same
+rebuild. If a mod's files are missing from lmm's cache, the rebuild stops
+and names that mod: run `lmm verify --fix` to download it again, or
+reinstall it from a downloaded file with `lmm update <mod-id> --from-file`.
+
 ## Updating lmm itself
 
 Once a day, lmm asks GitHub whether a newer version of lmm is out. The first
