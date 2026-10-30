@@ -577,6 +577,83 @@ func TestDetectGames_DocumentsModPath_SymlinkedDocuments(t *testing.T) {
 	assert.Equal(t, filepath.Join(real, "Warcraft III", "Maps"), games["warcraft3"].ModPath)
 }
 
+// Older Wine and Proton prefixes name the folder "My Documents", and
+// user.reg's Personal says so: the whole path it names - user AND folder -
+// is the Documents folder.
+func TestDetectGames_DocumentsModPath_UserRegNamesMyDocuments(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix, "steamuser", "Public")
+	users := filepath.Join(prefix, "drive_c", "users")
+	require.NoError(t, os.MkdirAll(filepath.Join(users, "dyoung", "My Documents"), 0o755))
+	writeFile(t, filepath.Join(prefix, "user.reg"), shellFolders(`C:\users\dyoung\My Documents`))
+
+	games, warnings := detectBySlug(t)
+	assert.Empty(t, warnings)
+	assert.Equal(t, filepath.Join(users, "dyoung", "My Documents", "Warcraft III", "Maps"), games["warcraft3"].ModPath)
+}
+
+// With nothing in user.reg, a user's game folder is looked for under both
+// names, and a prefix with only "My Documents" uses that.
+func TestDetectGames_DocumentsModPath_MyDocumentsProbed(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix, "Public")
+	users := filepath.Join(prefix, "drive_c", "users")
+	require.NoError(t, os.MkdirAll(filepath.Join(users, "alice", "My Documents"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(users, "bob", "My Documents", "Warcraft III"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(users, "bob", "Documents"), 0o755))
+
+	games, warnings := detectBySlug(t)
+	assert.Equal(t, filepath.Join(users, "bob", "My Documents", "Warcraft III", "Maps"), games["warcraft3"].ModPath,
+		"the user whose My Documents holds the game folder")
+	assert.NotContains(t, games, "starcraft2", "alice and bob, neither has StarCraft II yet")
+	assert.Len(t, warnings, 1)
+
+	home = sandbox(t)
+	prefix = filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix, "Public")
+	users = filepath.Join(prefix, "drive_c", "users")
+	require.NoError(t, os.MkdirAll(filepath.Join(users, "alice", "My Documents"), 0o755))
+	games, warnings = detectBySlug(t)
+	assert.Empty(t, warnings)
+	assert.Equal(t, filepath.Join(users, "alice", "My Documents", "StarCraft II", "Maps"), games["starcraft2"].ModPath)
+}
+
+// A user's Documents that resolves outside both the prefix and the home
+// directory is refused with a scan warning: lmm deploys there, and a link
+// the prefix carries is no reason to write anywhere on the machine. The
+// usual Wine link to the home directory itself still works.
+func TestDetectGames_DocumentsModPath_SymlinkOutsideRefused(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix)
+	elsewhere := t.TempDir()
+	user := filepath.Join(prefix, "drive_c", "users", "alice")
+	require.NoError(t, os.MkdirAll(user, 0o755))
+	require.NoError(t, os.Symlink(elsewhere, filepath.Join(user, "Documents")))
+
+	games, warnings := detectBySlug(t)
+	assert.NotContains(t, games, "warcraft3")
+	assert.NotContains(t, games, "starcraft2")
+	require.Len(t, warnings, 2)
+	for _, w := range warnings {
+		assert.Contains(t, w, "outside")
+	}
+
+	home = sandbox(t)
+	prefix = filepath.Join(home, ".wine")
+	mapGamePrefix(t, prefix)
+	user = filepath.Join(prefix, "drive_c", "users", "alice")
+	require.NoError(t, os.MkdirAll(user, 0o755))
+	require.NoError(t, os.Symlink(home, filepath.Join(user, "Documents")))
+	games, warnings = detectBySlug(t)
+	assert.Empty(t, warnings)
+	real, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(real, "Warcraft III", "Maps"), games["warcraft3"].ModPath)
+}
+
 // Diablo II: Resurrected (#546) deploys into <install>/mods through the d2r
 // adapter, from NexusMods, and is launched as OSI.
 func TestDetectGames_DiabloIIResurrected(t *testing.T) {

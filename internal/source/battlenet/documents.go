@@ -28,6 +28,11 @@ func documentsGameFolder(modPath string) string {
 	return first
 }
 
+// documentsNames are the names a prefix user's Documents folder has had:
+// Wine and Proton make "Documents" today; older prefixes made "My
+// Documents" and kept it.
+var documentsNames = []string{"Documents", "My Documents"}
+
 // documentsDir is the Documents folder of the prefix user who plays the
 // game whose folder in Documents is gameFolder (#546), resolved through
 // any symlink - Wine may link it to the host's ~/Documents - since the
@@ -42,9 +47,16 @@ func documentsGameFolder(modPath string) string {
 //     steamuser in a Proton prefix;
 //  3. the only user left.
 //
+// A user's Documents is the folder user.reg's Personal names when it names
+// one of that user's (an older prefix's "My Documents"); otherwise the
+// documentsNames folder that holds gameFolder, or the first that exists.
+//
 // Public is never a candidate: it is the profile every user shares, never
 // the one a game writes its Documents into. Anything else is ambiguous,
-// and an error naming the candidates - lmm does not guess.
+// and an error naming the candidates - lmm does not guess. So is a
+// Documents that resolves outside both the prefix and the home directory:
+// lmm deploys there, and a link inside a prefix is no reason to write
+// anywhere else on the machine.
 func documentsDir(prefix, gameFolder string) (string, error) {
 	usersDir := filepath.Join(prefix, "drive_c", "users")
 	var users []string
@@ -56,12 +68,28 @@ func documentsDir(prefix, gameFolder string) (string, error) {
 	if len(users) == 0 {
 		return "", fmt.Errorf("%s has no user profile but Public", usersDir)
 	}
-	docs := func(user string) string { return filepath.Join(usersDir, user, "Documents") }
+	regUser, regFolder := registryDocuments(prefix)
+	docs := func(user string) string {
+		if user == regUser && isDir(filepath.Join(usersDir, user, regFolder)) {
+			return filepath.Join(usersDir, user, regFolder)
+		}
+		for _, name := range documentsNames {
+			if isDir(filepath.Join(usersDir, user, name, gameFolder)) {
+				return filepath.Join(usersDir, user, name)
+			}
+		}
+		for _, name := range documentsNames {
+			if isDir(filepath.Join(usersDir, user, name)) {
+				return filepath.Join(usersDir, user, name)
+			}
+		}
+		return filepath.Join(usersDir, user, documentsNames[0])
+	}
 
 	candidates := users
 	var withGame []string
 	for _, u := range users {
-		if st, err := os.Stat(filepath.Join(docs(u), gameFolder)); err == nil && st.IsDir() {
+		if isDir(filepath.Join(docs(u), gameFolder)) {
 			withGame = append(withGame, u)
 		}
 	}
@@ -72,8 +100,8 @@ func documentsDir(prefix, gameFolder string) (string, error) {
 	switch {
 	case len(candidates) == 1:
 		pick = candidates[0]
-	case slices.Contains(candidates, registryUser(prefix)):
-		pick = registryUser(prefix)
+	case slices.Contains(candidates, regUser):
+		pick = regUser
 	case isProtonPrefix(prefix) && slices.Contains(candidates, protonUser):
 		pick = protonUser
 	default:
@@ -84,23 +112,46 @@ func documentsDir(prefix, gameFolder string) (string, error) {
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
+	if !within(dir, prefix) && !within(dir, os.Getenv("HOME")) {
+		return "", fmt.Errorf("%s resolves to %s, outside both the prefix and your home directory; lmm will not deploy there - add the game with lmm game add and the mod path you mean", docs(pick), dir)
+	}
 	return dir, nil
 }
 
-// registryUser is the user whose Documents the prefix's user.reg names as
-// its Personal shell folder ("C:\users\dyoung\Documents" -> "dyoung"), or
-// "" when user.reg says nothing lmm can read.
-func registryUser(prefix string) string {
+// within reports whether path is root or inside it, both resolved through
+// any symlink. An empty root holds nothing.
+func within(path, root string) bool {
+	if root == "" {
+		return false
+	}
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// isDir reports whether path is a directory, through any symlink.
+func isDir(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
+}
+
+// registryDocuments is the user and folder the prefix's user.reg names as
+// its Personal shell folder ("C:\users\dyoung\My Documents" -> "dyoung",
+// "My Documents"), or "" for both when user.reg names nothing lmm can read
+// inside drive_c's users.
+func registryDocuments(prefix string) (user, folder string) {
 	personal, _ := readShellFolder(filepath.Join(prefix, "user.reg"), "Personal")
 	path := strings.ReplaceAll(personal, `\`, "/")
-	if len(path) < 2 || path[1] != ':' {
-		return ""
+	if len(path) < 2 || path[1] != ':' || !strings.EqualFold(path[:1], "c") {
+		return "", ""
 	}
 	parts := strings.Split(strings.Trim(path[2:], "/"), "/")
-	if len(parts) < 2 || !strings.EqualFold(parts[0], "users") {
-		return ""
+	if len(parts) < 3 || !strings.EqualFold(parts[0], "users") || slices.Contains(parts[1:], "..") || slices.Contains(parts[1:], ".") {
+		return "", ""
 	}
-	return parts[1]
+	return parts[1], filepath.Join(parts[2:]...)
 }
 
 // readShellFolder reads one value of user.reg's Shell Folders key.
