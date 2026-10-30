@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **lmm refuses a database a newer lmm has migrated (#516).** This
+  release and every later one guard against a downgrade; an lmm before it
+  opened such a database anyway, skipping the migrations it didn't know, so a
+  later schema change could break every command with an error like
+  "no such column". Now every command, `lmm serve` included, stops at
+  startup and says the database was written by a newer lmm and to upgrade
+  lmm. A database at the current schema opens as before.
 - **`lmm verify --fix` fills a manual-only mod's missing checksum from the
   cache without asking the source again (#516).** #514's cache-first fill
   keyed on the adopted-in-place flag. A mod the source has refused to serve

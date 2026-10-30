@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -58,7 +59,10 @@ func (d *DB) migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if version >= len(migrations) {
+	if version > len(migrations) {
+		return d.schemaTooNew(version, len(migrations))
+	}
+	if version == len(migrations) {
 		return nil
 	}
 
@@ -90,6 +94,10 @@ func (d *DB) migrate(ctx context.Context) error {
 	if version, err = schemaVersion(ctx, conn); err != nil {
 		return err
 	}
+	if version > len(migrations) {
+		// A newer lmm migrated it while this one waited for the lock.
+		return d.schemaTooNew(version, len(migrations))
+	}
 	if version < len(migrations) {
 		d.log.Debug("running migrations", "from", version, "to", len(migrations))
 	}
@@ -108,6 +116,33 @@ func (d *DB) migrate(ctx context.Context) error {
 	}
 	committed = true
 	return nil
+}
+
+// ErrSchemaTooNew is what a *SchemaTooNewError matches with errors.Is.
+var ErrSchemaTooNew = errors.New("database schema is newer than this lmm")
+
+// SchemaTooNewError refuses a database whose recorded schema version is
+// past every migration this lmm knows: a newer lmm migrated it, and this
+// one (a downgrade, or an older copy still installed) cannot know what
+// those migrations changed. Carrying on would surface later as a query
+// against a column or table that no longer looks the way this binary
+// expects, so Open refuses it up front.
+type SchemaTooNewError struct {
+	Path      string // the database file
+	Version   int    // the schema version the database records
+	Supported int    // the newest schema version this lmm knows
+}
+
+func (e *SchemaTooNewError) Error() string {
+	return fmt.Sprintf("the database at %s was written by a newer lmm (schema version %d; this lmm reads up to %d): upgrade lmm to open it",
+		e.Path, e.Version, e.Supported)
+}
+
+// Is makes errors.Is(err, ErrSchemaTooNew) true for a *SchemaTooNewError.
+func (e *SchemaTooNewError) Is(target error) bool { return target == ErrSchemaTooNew }
+
+func (d *DB) schemaTooNew(version, supported int) error {
+	return &SchemaTooNewError{Path: d.path, Version: version, Supported: supported}
 }
 
 // schemaVersion is the highest migration recorded, read through q.
