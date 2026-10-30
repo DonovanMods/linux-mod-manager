@@ -49,9 +49,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/log"
 	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/assert"
@@ -80,6 +82,9 @@ import (
 // restored, the reconnect this grace existed to absorb no longer happens:
 // 5s held green over 3 consecutive full `-race` E2E runs (unit3 fix wave,
 // #329) with room to spare (~37-38s total each), so it came back down.
+// Since #577 a test closes a tab and its browser context rather than a whole
+// browser (the suite shares one), and the wait for the page to be gone is
+// openE2ETab's closeTab.
 //
 // It is a TEST allowance and nothing else: Shutdown still returns the
 // instant the connection really closes (microseconds, in the ordinary
@@ -587,16 +592,81 @@ func newE2EFixtureWithFailingPath(t *testing.T, failPath string) (e2eFixture, fu
 	}, setFailing
 }
 
-// newE2EBrowser starts a headless browser and returns its chromedp context
-// plus an accessor for everything the browser has complained about.
+// e2eSharedBrowser is the one Chromium the package's browser tests share
+// (#577). Every test used to launch its own and wait for it to exit - about
+// 1.2s a test, eight minutes across the suite - when what a test actually
+// needs from "its own browser" is isolation, which a fresh browser context
+// gives: its own cookies, storage, cache and targets, disposed with it.
 //
-// The Log domain is enabled explicitly: a Content-Security-Policy refusal
-// is a `log.entryAdded` entry with source "security", NOT a
-// `Runtime.consoleAPICalled`, so without it the one browser-only failure
-// this harness exists to catch would be invisible to it.
-func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
+// It is started lazily, by the first test that asks for a browser, so a run
+// that selects no E2E test never launches one; and it is closed once every
+// test has finished (serve.RunAfterTests, main_test.go). A browser that has
+// died - Chromium does crash now and then under a loaded -race run - is
+// replaced by the next test that asks, so one crash costs at most the test
+// it happened in, never every test after it.
+type e2eSharedBrowser struct {
+	mu sync.Mutex
+	// ctx is the browser's root chromedp context: the browser exists once
+	// the first Run on it returns. nil until the first test asks.
+	ctx    context.Context
+	cancel context.CancelFunc
+	// home is the sandboxed HOME/XDG_* tree the browser runs under, since it
+	// outlives any one test's sandboxE2EEnv.
+	home string
+	// closeRegistered is set once close has been handed to RunAfterTests.
+	closeRegistered bool
+}
+
+// e2eBrowser is the package's shared browser.
+var e2eBrowser e2eSharedBrowser
+
+// browserAlive reports whether ctx's browser can still be driven: its
+// context is live and its DevTools connection has not dropped.
+func browserAlive(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	c := chromedp.FromContext(ctx)
+	if c == nil || c.Browser == nil {
+		return false
+	}
+	select {
+	case <-c.Browser.LostConnection:
+		return false
+	default:
+		return true
+	}
+}
+
+// acquire returns the shared browser's root context, starting the browser
+// if there is none yet or if the one there was has died.
+func (b *e2eSharedBrowser) acquire(t *testing.T, binary string) context.Context {
 	t.Helper()
-	binary := chromeBinary(t)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.ctx != nil && browserAlive(b.ctx) {
+		return b.ctx
+	}
+	b.closeLocked()
+	if !b.closeRegistered {
+		serve.RunAfterTests(b.close)
+		b.closeRegistered = true
+	}
+
+	home, err := os.MkdirTemp("", "lmm-e2e-browser-")
+	require.NoError(t, err)
+	// The same sandbox sandboxE2EEnv gives a test, for the browser that
+	// outlives it: nothing Chromium writes under HOME or XDG_* may reach the
+	// developer's real profile. FONTCONFIG_FILE and the rest of the
+	// environment still pass through, which is how a run reproduces CI's
+	// fonts.
+	env := []string{"HOME=" + home}
+	for _, key := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
+		dir := filepath.Join(home, strings.ToLower(key))
+		require.NoError(t, os.Mkdir(dir, 0o700))
+		env = append(env, key+"="+dir)
+	}
 
 	// A window the product actually supports (issue 334). Headless Chrome
 	// defaults to 800x600, which is BELOW this UI's own declared baseline -
@@ -607,7 +677,8 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 	// activity bell at the left, where its right-anchored tray hangs off
 	// the side. 1280 is comfortably inside the supported range and still
 	// below the 1440px step at which the library reveals its extra
-	// columns, so every existing column assertion is unchanged.
+	// columns, so every existing column assertion is unchanged. A target
+	// created in a new browser context opens at the same size.
 	//
 	// WSURLReadTimeout (issue 508): chromedp gives Chromium 20s to print its
 	// DevTools WebSocket URL, and a hosted runner busy with the -race serve
@@ -616,41 +687,81 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 	// takes longer to fail.
 	opts := append(slices.Clone(chromedp.DefaultExecAllocatorOptions[:]),
 		chromedp.ExecPath(binary), chromedp.WindowSize(1280, 900),
-		chromedp.WSURLReadTimeout(e2eBrowserLaunchTimeout))
-	// WithoutCancel, same reasoning as startE2EServer:331. t.Context() is
-	// cancelled when the test FUNCTION returns, which is BEFORE t.Cleanup
-	// runs - so deriving the allocator from it directly cancels ctx (below)
-	// before the cleanup's chromedp.Cancel(ctx) call ever runs. chromedp
-	// v0.16.0's Cancel takes its graceful path only when ctx is still live;
-	// on an already-cancelled ctx its first act (closing the browser)
-	// returns context.Canceled immediately, BEFORE the wait for the process
-	// to actually exit that is the entire reason to call Cancel instead of
-	// the bare context cancel - silently falling back to the non-waiting
-	// path it was meant to replace.
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.WithoutCancel(t.Context()), opts...)
-	t.Cleanup(cancelAlloc)
-
+		chromedp.WSURLReadTimeout(e2eBrowserLaunchTimeout),
+		chromedp.Env(env...))
+	// Background, not a test's context: the browser outlives every test
+	// that uses it, and a test's context is cancelled when that test ends.
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
-	t.Cleanup(func() {
+	cancel := func() {
 		// chromedp.Cancel, not the bare context cancel: it closes the
-		// browser AND WAITS for the process to exit. Neither cancelCtx nor
-		// cancelAlloc waits (both return in microseconds), which leaves
-		// Chrome alive while the cleanups below shut the server down - and
-		// a live Chrome re-establishes the SPA's session-long EventSource
-		// (activity.js) every few seconds, so http.Server.Shutdown keeps
-		// finding an active request and eventually runs out its grace. That
-		// was the cause of an intermittent "shutting down: context deadline
-		// exceeded" across the browser fixtures.
+		// browser AND WAITS for the process to exit, so nothing of it is
+		// left running once the test binary is done with it.
 		if err := chromedp.Cancel(ctx); err != nil {
 			cancelCtx()
 		}
-	})
+		cancelAlloc()
+		_ = os.RemoveAll(home)
+	}
+	// The FIRST Run is what allocates the browser, and chromedp ties the
+	// browser's lifetime to the context that Run was given - so this one
+	// must be the long-lived ctx, never a timeout-wrapped child.
+	if err := chromedp.Run(ctx); err != nil {
+		cancel()
+		require.NoError(t, err, "starting %s", binary)
+	}
+	b.ctx, b.cancel, b.home = ctx, cancel, home
+	return ctx
+}
+
+// discard drops dead as the shared browser, if it still is, so the next
+// acquire starts another. A test whose tab could not be opened calls it;
+// anything else keeps the browser for the tests after it.
+func (b *e2eSharedBrowser) discard(dead context.Context) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.ctx == dead {
+		b.closeLocked()
+	}
+}
+
+// close shuts the shared browser down, if one is running.
+func (b *e2eSharedBrowser) close() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closeLocked()
+}
+
+// closeLocked is close with mu already held.
+func (b *e2eSharedBrowser) closeLocked() {
+	if b.cancel != nil {
+		b.cancel()
+	}
+	b.ctx, b.cancel, b.home = nil, nil, ""
+}
+
+// newE2EBrowser opens a tab for t in a fresh browser context of the shared
+// browser, and returns its chromedp context plus an accessor for everything
+// the browser has complained about in it.
+//
+// Fresh per test, and closed at its end: what one test stored, cached or
+// left open is gone before the next one starts, and the error log below
+// listens to this test's tab only, so nothing one test's page logs can be
+// charged to another's.
+//
+// The Log domain is enabled explicitly: a Content-Security-Policy refusal
+// is a `log.entryAdded` entry with source "security", NOT a
+// `Runtime.consoleAPICalled`, so without it the one browser-only failure
+// this harness exists to catch would be invisible to it.
+func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
+	t.Helper()
+	binary := chromeBinary(t)
 
 	var (
 		mu     sync.Mutex
 		errors []string
 	)
-	chromedp.ListenTarget(ctx, func(ev any) {
+	listen := func(ev any) {
 		var message string
 		switch e := ev.(type) {
 		case *runtime.EventExceptionThrown:
@@ -666,22 +777,94 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 		mu.Lock()
 		errors = append(errors, message)
 		mu.Unlock()
-	})
+	}
 
-	// The FIRST Run is what allocates the browser, and chromedp ties the
-	// browser's lifetime to the context that Run was given - so this one
-	// must be the long-lived ctx, never a timeout-wrapped child. Wrapping
-	// it kills the browser the instant the wrapper's cancel fires, which
-	// shows up as "context canceled" on the NEXT Run, several frames away
-	// from the cause. Per-action timeouts start from runInBrowser, once the
-	// browser exists.
-	require.NoError(t, chromedp.Run(ctx, log.Enable()), "starting %s", binary)
+	// Two attempts: a browser that died since the last test (or dies while
+	// this tab is opened) is replaced once, and only a second failure -
+	// which is no longer one unlucky crash - fails the test.
+	var ctx context.Context
+	for attempt := 1; ; attempt++ {
+		browserCtx := e2eBrowser.acquire(t, binary)
+		tabCtx, closeTab, err := openE2ETab(browserCtx, listen)
+		if err == nil {
+			// Closed before the server's own cleanup, registered earlier,
+			// shuts it down: the page - and the session-long EventSource it
+			// holds on GET /api/v1/events (activity.js) - is gone by then
+			// (startE2EServer's CLEANUP ORDER).
+			t.Cleanup(closeTab)
+			ctx = tabCtx
+			break
+		}
+		e2eBrowser.discard(browserCtx)
+		if attempt == 2 {
+			require.NoError(t, err, "opening a tab in %s", binary)
+		}
+		t.Logf("opening a tab failed (%v); restarting the shared browser", err)
+	}
 
 	return ctx, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
 		return slices.Clone(errors)
 	}
+}
+
+// openE2ETab opens a tab in a new browser context of browserCtx's browser,
+// with listen attached to its events, and returns its chromedp context and
+// what closes it again: the tab, then the browser context with everything
+// the test's page stored in it.
+//
+// The context and target are created here rather than through chromedp's
+// WithNewBrowserContext, which asks for the target without a window of its
+// own: headless Chromium refuses that ("Failed to open new tab - no browser
+// is open") for any browser context but the default one. A target created
+// with newWindow opens at the browser's own window size, the same viewport
+// the browser's first tab has.
+func openE2ETab(browserCtx context.Context, listen func(any)) (context.Context, func(), error) {
+	browser := cdp.WithExecutor(browserCtx, chromedp.FromContext(browserCtx).Browser)
+	// Bounded, because a browser that accepts the connection and never
+	// answers would otherwise hang the test until the binary's own timeout.
+	setup, cancelSetup := context.WithTimeout(browser, e2eBrowserLaunchTimeout)
+	defer cancelSetup()
+
+	browserContext, err := target.CreateBrowserContext().Do(setup)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating a browser context: %w", err)
+	}
+	dispose := func() {
+		// The tab's context is already gone by the time this runs, and the
+		// browser's may be too (a crashed browser): a short budget of its
+		// own, so a dead browser cannot stall the cleanup.
+		done, cancel := context.WithTimeout(cdp.WithExecutor(context.Background(), chromedp.FromContext(browserCtx).Browser), time.Second)
+		defer cancel()
+		_ = target.DisposeBrowserContext(browserContext).Do(done)
+	}
+	targetID, err := target.CreateTarget("about:blank").
+		WithBrowserContextID(browserContext).WithNewWindow(true).Do(setup)
+	if err != nil {
+		dispose()
+		return nil, nil, fmt.Errorf("creating a tab: %w", err)
+	}
+
+	tabCtx, cancelTab := chromedp.NewContext(browserCtx, chromedp.WithTargetID(targetID))
+	chromedp.ListenTarget(tabCtx, listen)
+	// The first Run on tabCtx attaches to the tab, and chromedp ties the
+	// session to the context that Run was given - so, as for the browser
+	// itself, it must be tabCtx, never a timeout-wrapped child; a stuck
+	// attach is bounded by cancelling tabCtx instead.
+	stuck := time.AfterFunc(e2eBrowserLaunchTimeout, cancelTab)
+	err = chromedp.Run(tabCtx, log.Enable())
+	stuck.Stop()
+	// cancelTab detaches from the tab, closes it and waits for both.
+	closeTab := func() {
+		cancelTab()
+		dispose()
+	}
+	if err != nil {
+		closeTab()
+		return nil, nil, fmt.Errorf("attaching to the tab: %w", err)
+	}
+	return tabCtx, closeTab, nil
 }
 
 // ignorableBrowserError filters the one error every Chrome logs against a
