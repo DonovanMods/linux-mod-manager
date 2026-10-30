@@ -63,6 +63,7 @@ func TestInstallCmd_NoGame(t *testing.T) {
 
 // TestInstallCmd_NoQueryOrID tests install without query or --id
 func TestInstallCmd_NoQueryOrID(t *testing.T) {
+	restoreFlags(t)
 	gameID = "test-game"
 	installModID = ""
 
@@ -104,6 +105,7 @@ func TestInstallCmd_DefaultFlags(t *testing.T) {
 
 // TestInstallCmd_GameNotFound tests install with non-existent game
 func TestInstallCmd_GameNotFound(t *testing.T) {
+	restoreFlags(t)
 	// Use temp directories
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
@@ -137,6 +139,7 @@ func TestInstallCmd_GameNotFound(t *testing.T) {
 // configured game/source, which this command-level test deliberately does
 // not).
 func TestInstallCmd_VersionFlag_NoLongerRejected(t *testing.T) {
+	restoreFlags(t)
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 	gameID = ""

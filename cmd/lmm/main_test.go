@@ -58,7 +58,18 @@ func TestMain(m *testing.M) {
 	// swallowed the error (a release check never fails a command).
 	githubAttempts := testutil.GuardGitHub()
 
+	// #581: --config/--data are exempt - they are this function's own
+	// sandbox floor, and tests point them at their own temp dirs freely.
+	flagsBefore := snapshotFlags(rootCmd)
+
 	code := m.Run()
+
+	if leaks := leakedFlags(flagsBefore, snapshotFlags(rootCmd),
+		rootCmd.PersistentFlags().Lookup("config"), rootCmd.PersistentFlags().Lookup("data")); len(leaks) > 0 {
+		fmt.Fprintf(os.Stderr, "FAIL: tests left command flags changed (#581) - restore them with setFlag or t.Cleanup:\n  %s\n",
+			strings.Join(leaks, "\n  "))
+		code = 1
+	}
 
 	if attempts := githubAttempts(); len(attempts) > 0 {
 		fmt.Fprintf(os.Stderr, "FAIL: the test suite tried to reach GitHub:\n  %s\n", strings.Join(attempts, "\n  "))

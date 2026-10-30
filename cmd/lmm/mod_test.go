@@ -44,6 +44,7 @@ func TestModSetUpdateCmd_Structure(t *testing.T) {
 }
 
 func TestModSetUpdateCmd_NoGame(t *testing.T) {
+	restoreFlags(t)
 	gameID = ""
 
 	cmd := &cobra.Command{Use: "test"}
@@ -63,6 +64,7 @@ func TestModSetUpdateCmd_NoGame(t *testing.T) {
 }
 
 func TestModSetUpdateCmd_NoPolicy(t *testing.T) {
+	restoreFlags(t)
 	gameID = "test-game"
 	modSetAuto = false
 	modSetNotify = false
@@ -92,6 +94,7 @@ func TestModSetUpdateCmd_NoPolicy(t *testing.T) {
 }
 
 func TestModSetUpdateCmd_MultiplePolicies(t *testing.T) {
+	restoreFlags(t)
 	gameID = "test-game"
 	// Reset flags before test
 	modSetAuto = false
@@ -175,6 +178,7 @@ func TestModDisableCmd_NoGame(t *testing.T) {
 }
 
 func TestModEnableCmd_NoModID(t *testing.T) {
+	restoreFlags(t)
 	gameID = "test-game"
 
 	cmd := &cobra.Command{Use: "test"}
@@ -194,6 +198,7 @@ func TestModEnableCmd_NoModID(t *testing.T) {
 }
 
 func TestModDisableCmd_NoModID(t *testing.T) {
+	restoreFlags(t)
 	gameID = "test-game"
 
 	cmd := &cobra.Command{Use: "test"}

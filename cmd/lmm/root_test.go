@@ -127,6 +127,7 @@ func TestPrintCancelledNotice_PlainVsJSON(t *testing.T) {
 // bad --log-level is never reached by ParseFlags itself, and
 // logLevelFlagErrorFunc must fall back to scanning rawArgs to find it.
 func TestRoot_LogLevel_InvalidErrorTextIsExactEverywhere(t *testing.T) {
+	restoreFlags(t)
 	const wantErrText = `invalid --log-level "loud": expected off, error, warn, info, or debug`
 	wantPlain := "Error: " + wantErrText + "\n"
 

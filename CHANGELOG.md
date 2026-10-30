@@ -34,6 +34,11 @@ curseforge)` instead of "source unreachable"; a key the source refused
   `VerifyFinding.auth_source`, `UpdateCheckReport.auth_required` and
   `SourceWarning.auth_required` carry the refusing source.
 
+- **`man lmm` lists `--version` (#581).** The root page's OPTIONS now
+  include `--version`, which `lmm --version` has always accepted; the page
+  generator only picked it up when something had already run `lmm` in the
+  same process, which `make man` never had.
+
 ## [2.2.0] - 2026-10-29
 
 The web UI can run in the background as a systemd user service, lmm says

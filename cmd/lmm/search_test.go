@@ -119,6 +119,7 @@ func TestSearchCmd_NoGame(t *testing.T) {
 
 // TestSearchCmd_NoQuery tests search without query argument
 func TestSearchCmd_NoQuery(t *testing.T) {
+	restoreFlags(t)
 	gameID = "test-game"
 
 	cmd := &cobra.Command{Use: "test"}

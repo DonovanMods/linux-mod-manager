@@ -50,6 +50,7 @@ func TestStatusCmd_NoGames(t *testing.T) {
 
 // TestStatusCmd_WithGameFlag_NoGamesConfigured tests status with game flag when no games exist
 func TestStatusCmd_WithGameFlag_NoGamesConfigured(t *testing.T) {
+	restoreFlags(t)
 	// Use temp directories (empty, no games configured)
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
@@ -86,6 +87,7 @@ func TestStatusCmd_WithGameFlag_NoGamesConfigured(t *testing.T) {
 // because nothing can un-cache a cobra command's flag set short of
 // ResetFlags(), which would also wipe the command's own real flags.
 func TestStatusCmd_AcceptsGameFlag(t *testing.T) {
+	restoreFlags(t)
 	// Reset state
 	configDir = t.TempDir()
 	dataDir = t.TempDir()

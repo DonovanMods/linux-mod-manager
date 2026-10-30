@@ -78,6 +78,7 @@ func TestDoUpdate_ReportsSkippedLocalCount(t *testing.T) {
 // source as well as ID, so a local mod reported "not found in profile" — with
 // exit 1 — for a mod that is plainly in the profile.
 func TestDoUpdate_SingleLocalMod_SaysLocalNotNotFound(t *testing.T) {
+	restoreFlags(t)
 	svc, game := localUpdateGame(t)
 	seedLocalMod(t, svc, game, "localA", "Local A")
 
@@ -95,6 +96,7 @@ func TestDoUpdate_SingleLocalMod_SaysLocalNotNotFound(t *testing.T) {
 // TestDoUpdate_SingleUnknownMod_StillErrors guards the other direction: a mod
 // genuinely absent from the profile must still be an error.
 func TestDoUpdate_SingleUnknownMod_StillErrors(t *testing.T) {
+	restoreFlags(t)
 	svc, game := localUpdateGame(t)
 	seedLocalMod(t, svc, game, "localA", "Local A")
 
@@ -152,6 +154,7 @@ func TestDoUpdate_CheckFailed_DoesNotClaimUpToDate(t *testing.T) {
 // a source, so a profile can hold the same ID twice. Reporting one arbitrarily
 // as "belongs to source X" would name whichever happened to come last.
 func TestDoUpdate_SingleMod_AmbiguousAcrossSources(t *testing.T) {
+	restoreFlags(t)
 	svc, game := localUpdateGame(t)
 	seedLocalMod(t, svc, game, "12345", "Local Twin")
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
@@ -172,6 +175,7 @@ func TestDoUpdate_SingleMod_AmbiguousAcrossSources(t *testing.T) {
 // relevant when a candidate actually is local; on a purely remote ambiguity it
 // is noise.
 func TestDoUpdate_AmbiguousRemoteOnly_OmitsLocalCaveat(t *testing.T) {
+	restoreFlags(t)
 	svc, game := localUpdateGame(t)
 	for _, src := range []string{"nexusmods", "curseforge"} {
 		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
