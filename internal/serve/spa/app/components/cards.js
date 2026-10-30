@@ -115,6 +115,9 @@ export function AttentionCards({
   const findings = (health?.result?.findings ?? []).filter(
     (f) => f.status !== "ok",
   );
+  // issue 588: the check did not walk the game because a job was changing
+  // it. The card says so, calmly, instead of reading as a clean bill.
+  const healthDeferred = Boolean(health?.result?.deferred);
   const conflictRows = conflicts?.conflicts ?? [];
   const hasError = Boolean(errors.updates || errors.health || errors.conflicts);
   // The profile count comes from status, but the installed set arrives in
@@ -131,6 +134,7 @@ export function AttentionCards({
     skippedRows.length === 0 &&
     authRequired.length === 0 &&
     findings.length === 0 &&
+    !healthDeferred &&
     conflictRows.length === 0 &&
     notInstalled === 0 &&
     notListed === 0 &&
@@ -162,7 +166,7 @@ export function AttentionCards({
         />`
       }
       ${
-        (findings.length > 0 || errors.health) &&
+        (findings.length > 0 || errors.health || healthDeferred) &&
         html`<${HealthCard}
           state=${state}
           findings=${findings}
@@ -707,12 +711,46 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
 
   const coverage = verifyCoverage(result);
 
+  // issue 588: core.VerifyResult.deferred says the check did not walk the
+  // game, because a job was changing it - a walk then reads lmm's own
+  // half-placed files as someone else's. With the last check's findings to
+  // show, they are shown as that, without the controls that act on them
+  // (the job may be changing exactly those files); with none, the card is
+  // one calm line. Either way the page asks again: main.js re-reads health
+  // when a job ends, and on a timer while it stays deferred.
+  const deferred = Boolean(result?.deferred);
+  if (deferred && findings.length === 0 && !error) {
+    return html`
+      <div class="card card--health" data-deferred="true">
+        <h2 class="card__title">Health</h2>
+        <p class="card__meta" data-testid="health-deferred">
+          Checking after the current job finishes…
+        </p>
+      </div>
+    `;
+  }
+
   return html`
-    <div class="card card--health">
+    <div
+      class="card card--health"
+      data-deferred=${deferred ? "true" : undefined}
+    >
       <h2 class="card__title">
         ⚠ Health${result ? ` (${result.issues + result.warnings})` : ""}
       </h2>
       ${
+        deferred &&
+        !error &&
+        html`<p class="card__meta" data-testid="health-deferred">
+          ${
+            checked
+              ? `Showing the last check (${checked}) — a job is changing this game`
+              : "Showing the last check — a job is changing this game"
+          }
+        </p>`
+      }
+      ${
+        !deferred &&
         lastVerified &&
         html`<p class="card__meta" data-testid="health-last-verified">
           ${lastVerified}
@@ -764,86 +802,91 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                         }</span
                       >
                       ${
-                        f.fixable
-                          ? html`<${InlineJob}
-                              origin=${repairOrigin(f.mod_id)}
-                              state=${state}
-                              actions=${actions}
-                            >
-                              <button
-                                type="button"
-                                class="button button--small"
-                                data-action="repair"
-                                onClick=${() => repair(f.mod_id, f.mod_name)}
+                        deferred
+                          ? ""
+                          : f.fixable
+                            ? html`<${InlineJob}
+                                origin=${repairOrigin(f.mod_id)}
+                                state=${state}
+                                actions=${actions}
                               >
-                                Repair
-                              </button>
-                            <//>`
-                          : f.status === "mod_path_missing"
-                            ? html`<button
-                                type="button"
-                                class="button button--small"
-                                data-action="set-mod-path"
-                                onClick=${() =>
-                                  navigate(
-                                    modPathEditPath(
-                                      state.route.game,
-                                      state.route.profile,
-                                      state.route.game,
-                                    ),
-                                  )}
-                              >
-                                Set mod path…
-                              </button>`
-                            : f.auth_source
-                              ? // issue 582: the source refused for want
-                                // of a key. Go to it - "Not fixable" was
-                                // true of --fix and no help to a person.
-                                html`<${AddAPIKeyButton}
-                                  state=${state}
-                                  sourceID=${f.auth_source}
-                                />`
-                              : f.status === "loader_stale_log"
-                                ? // issue 501: the finding asks for the
-                                  // game to be launched once - so offer it.
-                                  html`<${PlayButton}
+                                <button
+                                  type="button"
+                                  class="button button--small"
+                                  data-action="repair"
+                                  onClick=${() => repair(f.mod_id, f.mod_name)}
+                                >
+                                  Repair
+                                </button>
+                              <//>`
+                            : f.status === "mod_path_missing"
+                              ? html`<button
+                                  type="button"
+                                  class="button button--small"
+                                  data-action="set-mod-path"
+                                  onClick=${() =>
+                                    navigate(
+                                      modPathEditPath(
+                                        state.route.game,
+                                        state.route.profile,
+                                        state.route.game,
+                                      ),
+                                    )}
+                                >
+                                  Set mod path…
+                                </button>`
+                              : f.auth_source
+                                ? // issue 582: the source refused for want
+                                  // of a key. Go to it - "Not fixable" was
+                                  // true of --fix and no help to a person.
+                                  html`<${AddAPIKeyButton}
                                     state=${state}
-                                    status=${state.status}
-                                    actions=${actions}
-                                    action="play-loader"
-                                    small
+                                    sourceID=${f.auth_source}
                                   />`
-                                : // issue 585: nothing. "Not fixable: ..."
-                                  // said what `lmm verify --fix` would not
-                                  // do, which a person here cannot run - the
-                                  // finding's own words are what to act on.
-                                  ""
+                                : f.status === "loader_stale_log"
+                                  ? // issue 501: the finding asks for the
+                                    // game to be launched once - so offer it.
+                                    html`<${PlayButton}
+                                      state=${state}
+                                      status=${state.status}
+                                      actions=${actions}
+                                      action="play-loader"
+                                      small
+                                    />`
+                                  : // issue 585: nothing. "Not fixable: ..."
+                                    // said what `lmm verify --fix` would not
+                                    // do, which a person here cannot run - the
+                                    // finding's own words are what to act on.
+                                    ""
                       }
                     </li>
                   `,
                 )}
               </ul>
-              <div class="card__actions">
-                <button type="button" class="button" onClick=${onReverify}>
-                  Re-verify
-                </button>
-                <${InlineJob}
-                  origin=${HEALTH_REPAIR_ALL_ORIGIN}
-                  state=${state}
-                  actions=${actions}
-                  keepControl
-                >
-                  <button
-                    type="button"
-                    class="button"
-                    data-action="repair-all"
-                    disabled=${!findings.some((f) => f.fixable)}
-                    onClick=${repairAll}
-                  >
-                    Repair all
+              ${
+                !deferred &&
+                html`<div class="card__actions">
+                  <button type="button" class="button" onClick=${onReverify}>
+                    Re-verify
                   </button>
-                <//>
-              </div>
+                  <${InlineJob}
+                    origin=${HEALTH_REPAIR_ALL_ORIGIN}
+                    state=${state}
+                    actions=${actions}
+                    keepControl
+                  >
+                    <button
+                      type="button"
+                      class="button"
+                      data-action="repair-all"
+                      disabled=${!findings.some((f) => f.fixable)}
+                      onClick=${repairAll}
+                    >
+                      Repair all
+                    </button>
+                  <//>
+                </div>`
+              }
             `
       }
     </div>

@@ -141,8 +141,11 @@ export function buildRows(mods, updates, findings, conflicts, verified) {
   const updateByKey = new Map(
     (updates ?? []).map((u) => [modKey(u.installed_mod), u]),
   );
+  // issue 588: findings without `verified` are a deferred check's last
+  // answer, read before the running job changed things - they make no row
+  // "issues", so they offer no Repair and match no "Unhealthy" filter.
   const problems = new Map();
-  for (const f of findings ?? []) {
+  for (const f of verified ? (findings ?? []) : []) {
     if (f.status === "ok") continue;
     problems.set(f.mod_id, (problems.get(f.mod_id) ?? 0) + 1);
   }

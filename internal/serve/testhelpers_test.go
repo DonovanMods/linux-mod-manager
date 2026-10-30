@@ -281,11 +281,20 @@ var _ source.ChangelogProvider = (*fakeSource)(nil)
 // core calls: ModDetail, Search, CheckGameUpdates) need.
 func newFixtureServiceWithSource(t *testing.T, src source.ModSource) (*core.Service, *domain.Game) {
 	t.Helper()
+	return newFixtureServiceWithLock(t, src, "")
+}
+
+// newFixtureServiceWithLock is newFixtureServiceWithSource over a
+// cross-process operation lock at lockPath ("" for none), for a scenario
+// that plays another lmm process holding it (#588).
+func newFixtureServiceWithLock(t *testing.T, src source.ModSource, lockPath string) (*core.Service, *domain.Game) {
+	t.Helper()
 	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
-		CacheDir:  t.TempDir(),
-		Logger:    slog.New(slog.DiscardHandler),
+		ConfigDir:  t.TempDir(),
+		DataDir:    t.TempDir(),
+		CacheDir:   t.TempDir(),
+		Logger:     slog.New(slog.DiscardHandler),
+		OpLockPath: lockPath,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })

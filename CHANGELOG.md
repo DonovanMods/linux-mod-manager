@@ -206,6 +206,29 @@ self-update --auto` and exits as it would have; a script or a pipe never
 
 ### Fixed
 
+- **The Health card no longer reports lmm's own files as "not deployed"
+  while a job is writing them (#588).** A health check that landed during
+  a deploy, update or switch - routine since the automatic updates (#587)
+  start from the same page load - walked the game folder halfway through
+  it, found files placed but not yet recorded, and reported each as "not
+  deployed - lmm did not put what is there"; the answer was then
+  remembered, so the false finding outlived the job. A check now looks for
+  a running mutation first - in this process, or another lmm holding the
+  operation lock, probed without waiting - and does not walk: the web UI
+  says **Checking after the current job finishes…**, or shows the last
+  check with a note that a job is changing the game, and checks again when
+  the job ends (or, for another process, a few seconds later - on the full
+  mod page too). Those last-check findings are labelled **Last check** in
+  the mod panel and on the full mod page, and offer no **Repair…** and match
+  no **Unhealthy** filter in the library. A walk a mutation overlapped is
+  discarded the same way and never remembered, and **Repair** waits for the
+  job too; a background step that tried for the lock and was refused does
+  not count as one. `/api/v1/health` carries it as
+  `"deferred": "job_running"`. `lmm verify` (with or without `--json`)
+  stops with the usual "another lmm operation is in progress" error, naming
+  the process, while one is running; if one only overlapped the check and
+  has finished, it says so and checks again.
+
 - **Mods set to update automatically are updated when the web UI checks
   (#587).** Until now only `lmm update` in a terminal applied an Auto
   mod's update; `lmm serve` listed it on the Updates card for a hand

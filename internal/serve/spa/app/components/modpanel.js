@@ -50,6 +50,16 @@ export function findingsFor(health, modID) {
   );
 }
 
+/** findingsHeading is the Findings section's heading for count findings:
+ * while health is deferred behind a running job (issue 588) they are the
+ * last check's, not this moment's, and the heading says so. Shared with the
+ * full mod page. */
+export function findingsHeading(health, count) {
+  return health?.result?.deferred
+    ? `Last check: findings (${count})`
+    : `Findings (${count})`;
+}
+
 /** conflictsFor returns the ProfileConflict rows that name row's key, either
  * as the current owner or as one of the other providers. Shared with the
  * full mod page since I-5 (epic live review). */
@@ -580,8 +590,14 @@ export function ModPanel({
         ${
           findings.length > 0 &&
           html`
-            <section class="slide-over__section">
-              <h3 class="plan__heading">Findings (${findings.length})</h3>
+            <section
+              class="slide-over__section"
+              data-testid="mod-findings"
+              data-deferred=${state.health?.result?.deferred ? "true" : undefined}
+            >
+              <h3 class="plan__heading">
+                ${findingsHeading(state.health, findings.length)}
+              </h3>
               <ul class="plan__paths">
                 ${
                   // M1, unit 8 gate review: this printed the raw status slug

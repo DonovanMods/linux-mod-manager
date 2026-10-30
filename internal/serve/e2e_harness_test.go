@@ -317,6 +317,14 @@ func newE2EFixtureWithLibrarySample(t *testing.T) e2eFixture {
 // library and the cards both have real, non-trivial documents to render.
 func newE2EFixtureWithAttention(t *testing.T) e2eFixture {
 	t.Helper()
+	return newE2EFixtureWithAttentionLocked(t, "")
+}
+
+// newE2EFixtureWithAttentionLocked is newE2EFixtureWithAttention over a
+// cross-process operation lock at lockPath ("" for none) - #588's other lmm
+// process, holding it while the page reads health.
+func newE2EFixtureWithAttentionLocked(t *testing.T, lockPath string) e2eFixture {
+	t.Helper()
 	sandboxE2EEnv(t)
 
 	src := newFakeSource("fake")
@@ -324,7 +332,7 @@ func newE2EFixtureWithAttention(t *testing.T) e2eFixture {
 		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
 		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
 	})
-	svc, game := newFixtureServiceWithSource(t, src)
+	svc, game := newFixtureServiceWithLock(t, src, lockPath)
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))

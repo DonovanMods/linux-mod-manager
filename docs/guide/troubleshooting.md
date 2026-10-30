@@ -32,6 +32,18 @@ lmm verify
 lmm verify --fix
 ```
 
+While a job is changing the game's files (an install, an update, a
+deploy, or the automatic updates), the Health card doesn't check them
+half-written: it says **Checking after the current job finishes…**, or
+shows the last check and says a job is changing the game, and checks again
+once the job is done. Until then the mod panel and the full mod page head
+those findings **Last check**, and the library doesn't offer **Repair…**
+or count them under the **Unhealthy** filter. `lmm verify` run while
+another lmm, such as `lmm serve`, is changing the files stops with a
+message naming that process instead of a report; run it again when that
+finishes. If the other lmm only changed the files during the check and has
+already finished, `lmm verify` says so and checks them again by itself.
+
 If a source needs an API key that lmm doesn't have, the Health card says so
 for each of its mods, with an **Add API key…** button that opens
 **Setup** > **Authentication** at that source. In the terminal, `lmm verify`

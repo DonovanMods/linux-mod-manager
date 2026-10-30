@@ -50,6 +50,7 @@ import {
   resultMayHoldNextStep,
 } from "./jobresult.js";
 import {
+  deferredHealthRetryMillis,
   succeededOriginReleaseMillis,
   toastDismissMillis,
   unreadRereadDelayMillis,
@@ -222,6 +223,9 @@ function commitSlices(seq, claim, patch, errors) {
  */
 async function hydrate(route, { rehydrate = false } = {}) {
   const seq = beginHydration();
+  // A pending re-read of deferred health belongs to the page it was armed
+  // on; the reads below arm a fresh one if this route's answer is deferred.
+  cancelDeferredHealthRetry();
   // A read that can settle this context's toggle requests begins here - the
   // status pair below is part of it (toggleack.js#rereading).
   toggles.rereading(route);
@@ -473,6 +477,7 @@ async function loadSlice(
       ),
     );
     commitSlices(seq, claim, { [key]: value }, { [key]: null });
+    if (key === "health") retryDeferredHealth(value);
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
     commitSlices(seq, claim, dropOnFailure ? { [key]: null } : {}, {
@@ -481,6 +486,41 @@ async function loadSlice(
   } finally {
     if (tracked) settleLoad(key, token);
   }
+}
+
+// deferredHealthRetry is the pending re-read of a deferred health answer.
+let deferredHealthRetry;
+
+/**
+ * retryDeferredHealth asks for health again, after a while, when the answer
+ * just committed is deferred behind a running job (issue 588) - and cancels
+ * a pending re-read when it is not. A job in this server ends with
+ * onJobDone's re-hydrate anyway; the timer is for a change no job here
+ * announces (another lmm process holding the operation lock), so the card
+ * is never left waiting for an event that will not come. A re-read that
+ * finds the answer replaced, or Mission Control left, does nothing.
+ */
+function retryDeferredHealth(value) {
+  cancelDeferredHealthRetry();
+  if (!value?.result?.deferred || store.get().health !== value) return;
+  deferredHealthRetry = setTimeout(() => {
+    deferredHealthRetry = undefined;
+    const { route, health } = store.get();
+    if (health !== value || !healthRetryViews.has(route.view)) return;
+    reload("health", "/api/v1/health");
+  }, deferredHealthRetryMillis);
+}
+
+// healthRetryViews are the routes that show health: Mission Control, and
+// the full mod page's findings (issue 588 review), which loads health
+// through hydrateModPage rather than loadSlice.
+const healthRetryViews = new Set(["home", "mod"]);
+
+/** cancelDeferredHealthRetry drops a pending re-read of deferred health -
+ * on every navigation (hydrate), so it never outlives its page. */
+function cancelDeferredHealthRetry() {
+  clearTimeout(deferredHealthRetry);
+  deferredHealthRetry = undefined;
 }
 
 /**
@@ -677,6 +717,9 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
       conflicts: failureMessage(conflicts),
     },
   );
+  // issue 588 review: the same bounded re-read Mission Control's loadSlice
+  // arms, for a deferred answer this page committed.
+  retryDeferredHealth(settled(health));
 }
 
 /**

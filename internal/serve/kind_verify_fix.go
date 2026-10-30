@@ -111,6 +111,12 @@ func planVerifyFixKind(ctx context.Context, s *Server, sel selection, opts any) 
 	if err != nil {
 		return nil, nil, err
 	}
+	// #588: a job is changing the game, so the dry run did not look at it.
+	// A preview of the last check's repairs would offer to fix what the
+	// job may be fixing, so the plan is refused (409) until it is done.
+	if report.Result.Deferred != "" {
+		return nil, nil, fmt.Errorf("%w, changing this game's files - repair it once that finishes", core.ErrOperationInProgress)
+	}
 	return report, &pendingVerifyFix{
 		Game: sel.Game, Profile: sel.Profile, ModFilter: req.ModFilter, Report: report,
 	}, nil

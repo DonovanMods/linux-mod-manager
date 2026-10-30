@@ -93,6 +93,13 @@ func LinkOrCopyFileForTest(src, dst string) error {
 	return linkOrCopyFile(src, dst)
 }
 
+// SetAfterDeployLinkForTest arms the Installer's seam between placing a
+// deployed file and recording its deployed_files row (#588), so a test can
+// look at the game directory while a deploy is half-written.
+func (s *Service) SetAfterDeployLinkForTest(fn func(file string)) {
+	s.afterDeployLink = fn
+}
+
 // SetAfterInstallSaveForTest arms the BATCH install engine's
 // post-SaveInstalledMod hook so a test can cancel the ctx after the DB row
 // lands but before ensureProfileExists's own read (the NEW-6 race).

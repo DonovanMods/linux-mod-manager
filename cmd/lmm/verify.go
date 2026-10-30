@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -304,18 +305,23 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 			verifyAuthEnvVars = authEnvVars(auth)
 		}
 	}
-	report, err := svc.VerifyReport(ctx, game, profile, opts, func(e core.Event) {
-		ev, ok := e.(core.VerifyEvent)
-		if !ok {
-			return
-		}
-		if jsonOutput {
-			if ev.Kind == core.VerifyEvSyncWarning {
-				fmt.Fprintf(os.Stderr, "Warning: %s\n", ev.Detail) // stderr never corrupts the JSON document
+	walk := func() (*core.VerifyReport, error) {
+		return svc.VerifyReport(ctx, game, profile, opts, func(e core.Event) {
+			ev, ok := e.(core.VerifyEvent)
+			if !ok {
+				return
 			}
-			return // rows come from result.Findings below
-		}
-		renderVerifyEvent(ev)
+			if jsonOutput {
+				if ev.Kind == core.VerifyEvSyncWarning {
+					fmt.Fprintf(os.Stderr, "Warning: %s\n", ev.Detail) // stderr never corrupts the JSON document
+				}
+				return // rows come from result.Findings below
+			}
+			renderVerifyEvent(ev)
+		})
+	}
+	report, err := verifySettled(walk, svc.MutationInProgress, func() {
+		fmt.Fprintln(os.Stderr, "Another lmm operation changed this game's files during the check; checking them again.")
 	})
 	if err != nil {
 		return err
@@ -444,6 +450,36 @@ func fixHintFor(result *core.VerifyResult) string {
 		return "Run with --fix to " + repairs[0] + "."
 	default:
 		return "Run with --fix to " + strings.Join(repairs[:len(repairs)-1], ", ") + " and " + repairs[len(repairs)-1] + "."
+	}
+}
+
+// verifySettled runs walk - one verify - and answers what it found, unless
+// core deferred it because another lmm process was changing this
+// installation (#588). Waiting is no answer - a deploy holds the lock for as
+// long as it takes - and reporting is worse: a half-written tree reads
+// lmm's own newly placed files as ones it "did not put", and no finding
+// class is safe from a file mid-replacement, so filtering some out would
+// only make a wrong answer look clean.
+//
+// So a mutation still running (inProgress) is refused as a CLI mutation is
+// refused there (#317): the standard OperationInProgressError, naming the
+// holder, which --json carries as details. One that merely overlapped the
+// walk and has finished leaves a settled tree, so the walk runs once more
+// (announced by onRetry, since text mode has printed rows from the first);
+// only a second overlap is refused, without claiming anything is running.
+func verifySettled(walk func() (*core.VerifyReport, error), inProgress func() error, onRetry func()) (*core.VerifyReport, error) {
+	for attempt := 0; ; attempt++ {
+		report, err := walk()
+		if err != nil || report.Result.Deferred == "" {
+			return report, err
+		}
+		if err := inProgress(); err != nil {
+			return nil, err
+		}
+		if attempt > 0 {
+			return nil, errors.New("other lmm operations kept changing this game's files while verify checked them; run `lmm verify` again once they finish")
+		}
+		onRetry()
 	}
 }
 

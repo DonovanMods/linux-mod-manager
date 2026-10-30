@@ -1196,6 +1196,19 @@ func TestJSONGoldens(t *testing.T) {
 			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime, Cached: true},
 		},
 		{
+			// #588: a check deferred while a mutation runs, with no last
+			// check to show - nothing walked, so no checked_at either.
+			"verify_result_deferred",
+			core.VerifyResult{Deferred: core.VerifyDeferredJobRunning},
+		},
+		{
+			// #588: the same, showing the last check - dated when it ran,
+			// and not "cached": the installation is changing.
+			"verify_result_deferred_last_check",
+			core.VerifyResult{Issues: 1, Checked: 4, HasFiles: true, Mods: 2, CheckedAt: fixedTime, Deferred: core.VerifyDeferredJobRunning,
+				Findings: []core.VerifyFinding{{ModID: "42", ModName: "Example", FileID: "Data/a.esp", Status: "missing", Note: "Data/a.esp: missing"}}},
+		},
+		{
 			// #429: a profile with nothing checksummed is not empty - the
 			// counts say what the run covered, and a present Workshop item
 			// is named by an external "ok" row.

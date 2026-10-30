@@ -192,3 +192,58 @@ func readOpLockHolder(path string) (pid int, startedAt time.Time) {
 	}
 	return pid, startedAt
 }
+
+// probeOpLock reports whether another descriptor holds the lock at path -
+// another lmm mid-mutation, or this process's own - without waiting for it
+// and without creating the file (#588). stamp summarises the file's last
+// change: every holder rewrites it as it acquires (stampOpLockHolder), so a
+// stamp that moved between two probes means a mutation took the lock in
+// between, even one that has already let it go.
+//
+// The probe TAKES the lock for the instant between its two flock calls,
+// because flock has no test-only form. A mutation trying for it in that
+// instant with no wait at all (tryAcquireOp: the background backfill, the
+// automatic update pass) is refused as if one were running - the "not this
+// time" those callers already handle. Every other mutation polls through
+// it (acquireOpLock).
+func probeOpLock(path string) (held bool, stamp string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, "absent"
+	}
+	stamp = fmt.Sprintf("%d\x1f%d", info.ModTime().UnixNano(), info.Size())
+	file, err := os.Open(path)
+	if err != nil {
+		return false, stamp
+	}
+	defer func() { _ = file.Close() }()
+	switch err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); {
+	case err == nil:
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		return false, stamp
+	case errors.Is(err, syscall.EWOULDBLOCK):
+		return true, stamp
+	default:
+		return false, stamp
+	}
+}
+
+// MutationInProgress reports a mutation running right now - in this
+// process, or in another lmm holding the operation lock - as the standard
+// *OperationInProgressError, naming the lock's holder as far as its stamp
+// says, or nil when none is (#588 review). It never waits. A frontend asks
+// it after a check came back deferred, to tell a mutation still running
+// (refuse, saying who) from one that overlapped the walk and has since
+// finished (nothing is running: check again).
+func (s *Service) MutationInProgress() error {
+	if s.opLockPath != "" {
+		if held, _ := probeOpLock(s.opLockPath); held {
+			pid, startedAt := readOpLockHolder(s.opLockPath)
+			return &OperationInProgressError{PID: pid, StartedAt: startedAt, Path: s.opLockPath}
+		}
+	}
+	if s.opHeld.Load() {
+		return &OperationInProgressError{PID: os.Getpid()}
+	}
+	return nil
+}

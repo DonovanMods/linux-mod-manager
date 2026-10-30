@@ -39,6 +39,12 @@ export const succeededOriginReleaseMillis = 4000 * uiTimerScale;
  * until some unrelated read. */
 export const unreadRereadDelayMillis = 3_000 * uiTimerScale;
 
+/** deferredHealthRetryMillis is how long the page waits to ask for health
+ * again while the answer is deferred behind a running job (issue 588). A job
+ * in this server re-reads it as it ends anyway; this is for a change no job
+ * here announces - another lmm process holding the operation lock. */
+export const deferredHealthRetryMillis = 5_000 * uiTimerScale;
+
 /** activityReopenMillis is how long a closed activity stream waits before
  * it is opened again - EventSource's own customary reconnection delay, so a
  * refused stream is retried no more eagerly than a dropped one. */
