@@ -119,16 +119,30 @@ func documentsDir(prefix, gameFolder string) (string, error) {
 }
 
 // within reports whether path is root or inside it, both resolved through
-// any symlink. An empty root holds nothing.
+// any symlink - as far as they exist: a Documents folder the game has not
+// made yet is judged by the folders above it. An empty root holds nothing.
 func within(path, root string) bool {
 	if root == "" {
 		return false
 	}
-	if real, err := filepath.EvalSymlinks(root); err == nil {
-		root = real
-	}
-	rel, err := filepath.Rel(root, path)
+	rel, err := filepath.Rel(resolveExisting(root), resolveExisting(path))
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// resolveExisting is path with its longest existing ancestor resolved
+// through any symlink and the rest appended as written.
+func resolveExisting(path string) string {
+	path = filepath.Clean(path)
+	tail := ""
+	for dir := path; ; dir = filepath.Dir(dir) {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(real, tail)
+		}
+		if parent := filepath.Dir(dir); parent == dir {
+			return path
+		}
+		tail = filepath.Join(filepath.Base(dir), tail)
+	}
 }
 
 // isDir reports whether path is a directory, through any symlink.

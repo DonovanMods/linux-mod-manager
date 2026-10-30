@@ -701,3 +701,21 @@ func TestLoadKnownGames_Issue546Entries(t *testing.T) {
 	_, err = LoadKnownGames(dir)
 	assert.ErrorContains(t, err, "mod_path", "a Documents-relative mod path must name the game's folder")
 }
+
+// A prefix outside the home directory, reached through a symlink
+// (/games -> another disk), whose user has no Documents yet is inside the
+// prefix all the same: the containment check resolves the part of the
+// path that exists.
+func TestDetectGames_DocumentsModPath_PrefixThroughASymlink(t *testing.T) {
+	sandbox(t)
+	base, disk := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Symlink(disk, filepath.Join(base, "Games")))
+	prefix := filepath.Join(base, "Games", "battlenet")
+	t.Setenv("WINEPREFIX", prefix)
+	mapGamePrefix(t, prefix)
+	require.NoError(t, os.MkdirAll(filepath.Join(prefix, "drive_c", "users", "alice"), 0o755))
+
+	games, warnings := detectBySlug(t)
+	assert.Empty(t, warnings)
+	assert.Equal(t, filepath.Join(prefix, "drive_c", "users", "alice", "Documents", "Warcraft III", "Maps"), games["warcraft3"].ModPath)
+}

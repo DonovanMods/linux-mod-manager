@@ -163,7 +163,7 @@ func (*Adapter) LaunchAdvice(g *domain.Game, mods []adapter.DeployedMod, previou
 	}
 	args := "-mod " + folder + " -txt"
 	instead := ""
-	if previous != "" && previous != args {
+	if previous != "" && !strings.EqualFold(previous, args) {
 		instead = ", in place of " + previous
 	}
 	lines := []string{fmt.Sprintf("%s loads %s only when started with %q: in Battle.net, open the game's settings (the gear beside Play) > Game Settings, tick \"Additional command line arguments\" and enter: %s%s",
