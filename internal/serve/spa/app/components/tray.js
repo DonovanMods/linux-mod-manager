@@ -233,7 +233,9 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         aria-expanded=${expanded ? "true" : "false"}
         onClick=${onToggle}
       >
-        <span class="tray__kind">${job.kind}</span>
+        <span class="tray__kind" data-origin=${job.origin || null}
+          >${job.origin === "auto" ? `${job.kind} (automatic)` : job.kind}</span
+        >
         <span class="tray__state tray__state--${tone}">${stateText}</span>
         <span class="tray__caret">${expanded ? "▾" : "▸"}</span>
       </button>

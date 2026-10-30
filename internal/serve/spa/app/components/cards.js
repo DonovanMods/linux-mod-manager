@@ -108,6 +108,9 @@ export function AttentionCards({
   // report's error was never rendered, so a refusal left the card silent;
   // each now names its source and links to its key.
   const authRequired = updates?.auth_required ?? [];
+  // issue 587: what the server is doing about the auto-policy updates -
+  // applying them in a job, or waiting for the game to close.
+  const autoUpdate = updates?.auto_update ?? null;
   const findings = (health?.result?.findings ?? []).filter(
     (f) => f.status !== "ok",
   );
@@ -150,6 +153,7 @@ export function AttentionCards({
           missing=${missingRows}
           gone=${goneRows}
           authRequired=${authRequired}
+          autoUpdate=${autoUpdate}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
           onRefresh=${actions.refreshUpdates}
@@ -287,12 +291,25 @@ function AuthRequiredNote({ sourceID }) {
   return `${name} needs an API key, so its mods were not checked.`;
 }
 
+/** autoUpdateNote is the updates card's line for issue 587's auto_update:
+ * the auto-policy updates the server is applying now, or holding until the
+ * game closes. Nothing for the user to do either way - it says why those
+ * rows are still listed. */
+function autoUpdateNote(auto) {
+  const n = countOf(auto.mods.length, "automatic update");
+  if (auto.state === "waiting_for_game") {
+    return `${n} waiting for ${auto.game_name || "the game"} to close.`;
+  }
+  return `Applying ${n}…`;
+}
+
 function UpdatesCard({
   state,
   rows,
   missing = [],
   gone = [],
   authRequired = [],
+  autoUpdate = null,
   error,
   onRetry,
   onRefresh,
@@ -366,6 +383,16 @@ function UpdatesCard({
   return html`
     <div class="card card--updates">
       <h2 class="card__title">⬆ Updates (${rows.length})</h2>
+      ${
+        autoUpdate &&
+        html`<p
+          class="card__meta"
+          data-testid="updates-auto"
+          data-state=${autoUpdate.state}
+        >
+          ${autoUpdateNote(autoUpdate)}
+        </p>`
+      }
       ${
         missing.length > 0 &&
         html`<p class="card__meta" data-testid="updates-external-missing">

@@ -215,6 +215,39 @@ lmm mod set-update <mod-id> --notify
 lmm mod set-update <mod-id> --pin
 ```
 
+### When Auto mods update
+
+lmm checks for updates when the main screen loads in the browser, when you
+click **Check for updates**, and when you run `lmm update`. Each of those
+checks installs the updates of your **Auto** mods straight away. Nothing
+checks in the background, so with the browser closed and no `lmm update`
+run, Auto mods wait for the next check.
+
+In the browser, the update runs like any other job. The **Updates** card says
+"Applying 1 automatic update…" while it works, and the activity tray lists it
+as an automatic update, with what it applied. When it is done, those mods
+leave the card. A few things hold it back:
+
+- **The game is running.** lmm waits until the game closes, so it never
+  replaces files the game is using. The card then says, for example,
+  "1 automatic update waiting for World of Warcraft to close". The first
+  check after the game closes installs it. lmm knows a game is running when
+  you started it with **Play** or `lmm launch`, or when a program from the
+  game's folder is running (Steam, Proton and Wine games included). When lmm
+  can't tell, it installs the update.
+- **Something else is running.** If a deploy, install or other job is under
+  way, lmm leaves the update for the next check rather than queueing it.
+- **The update failed.** lmm doesn't keep retrying a failed update. It stays
+  on the card for you to update by hand. lmm tries it again when a newer
+  version comes out, or when you click **Check for updates**.
+- **Locked, manual-download or Steam Workshop mods** are never updated
+  automatically, whatever their setting.
+- **Only the active profile** is updated: the one whose mods are in the game
+  folder. Looking at another profile's updates never installs them.
+
+`lmm update` in a terminal installs Auto mods' updates as it always has, with
+or without the game running.
+
 ## Skipping one update
 
 Not ready for a particular update? Skip it. lmm stops mentioning that version

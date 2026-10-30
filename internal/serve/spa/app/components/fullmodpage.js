@@ -855,7 +855,8 @@ function JobHistorySection({ state, sourceID, modID }) {
                   ${history.jobs.map(
                     (job) =>
                       html`<li key=${job.id}>
-                        ${mutationLabel(job.kind)} — ${jobStateLabel(job)}
+                        ${mutationLabel(job.kind, job.origin)} —
+                        ${jobStateLabel(job)}
                         ${job.ended_at ? ` (${new Date(job.ended_at).toLocaleString()})` : ""}
                       </li>`,
                   )}

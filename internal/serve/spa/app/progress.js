@@ -89,7 +89,10 @@ const mutationKindLabels = {
  * hasn't seen - the same "still renders, just not humanized" safety
  * humanizePhase gives an unrecognized phase, so a kind added later needs no
  * matching SPA release to show something sensible. */
-export function mutationLabel(kind) {
+export function mutationLabel(kind, origin) {
+  // issue 587: the automatic update pass is an ordinary updates job that
+  // no one clicked for, so it says so.
+  if (kind === "updates" && origin === "auto") return "Updating automatically";
   return mutationKindLabels[kind] ?? humanizePhase(kind);
 }
 

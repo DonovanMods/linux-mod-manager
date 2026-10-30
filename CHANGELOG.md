@@ -206,6 +206,24 @@ self-update --auto` and exits as it would have; a script or a pipe never
 
 ### Fixed
 
+- **Mods set to update automatically are updated when the web UI checks
+  (#587).** Until now only `lmm update` in a terminal applied an Auto
+  mod's update; `lmm serve` listed it on the Updates card for a hand
+  install, which contradicted the guide. Every check the web UI makes (the
+  main screen loading, **Check for updates**) now applies them through the
+  same batch `lmm update` uses, as an ordinary job in the activity tray
+  marked automatic, with its result. The server decides, so two open tabs
+  or overlapping checks apply an update once. It never queues behind a
+  running job (the next check tries again), never retries a failed update
+  until a newer version or an explicit check, leaves locked, manual-only
+  and Steam Workshop mods alone, and never updates a profile other than
+  the deployed one. While the game is running (its `lmm launch` unit is
+  active, or a process from the game's folder is running, Wine and Proton
+  games included) the update waits, and the Updates card says "waiting for
+  <game> to close". Nothing checks in the background, and `lmm update` is
+  unchanged. The update check document gains `auto_update`, and a job's
+  summary gains `origin: "auto"`.
+
 - **A detected game matches the game configured at its folder before the
   one sharing its id (#545).** A detect row whose slug is one game's id and
   whose install path is another's is now the second game, so selecting it

@@ -1386,6 +1386,9 @@ type e2eSearchSource struct {
 	// an update to the file it maps to, and a row recording no file ID has
 	// none (#535).
 	fileIDUpdates map[string]string
+	// urlGate, when set, holds every GetDownloadURL until it is closed - a
+	// download a scenario keeps in flight while it looks at the page (#587).
+	urlGate <-chan struct{}
 }
 
 func newE2ESearchSource(t *testing.T, id string) *e2eSearchSource {
@@ -1481,8 +1484,15 @@ func (s *e2eSearchSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]dom
 // GetDownloadURL is the counted call: downloadModToCache asks for a URL only
 // when it has decided to actually fetch the file, so this counter is the
 // cache-warm oracle the conflict-overwrite scenario asserts on.
-func (s *e2eSearchSource) GetDownloadURL(_ context.Context, mod *domain.Mod, fileID string) (string, error) {
+func (s *e2eSearchSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	s.urlRequests.Add(1)
+	if s.urlGate != nil {
+		select {
+		case <-s.urlGate:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	if err := s.urlErrs[mod.ID]; err != nil {
 		return "", err
 	}
