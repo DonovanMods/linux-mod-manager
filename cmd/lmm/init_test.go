@@ -396,6 +396,6 @@ func TestInit_AConfiguredBattleNetGameIsMarkedConfigured(t *testing.T) {
 	}))
 
 	out := runInitWith(t, svc, "y\nnone\nn\nn\nn\nn\n")
-	assert.Contains(t, out, "World of Warcraft - Forever (wow-forever) [already configured]")
+	assert.Contains(t, out, "World of Warcraft: Forever (wow-forever) [already configured]")
 	assert.Contains(t, out, "Nothing to add.")
 }

@@ -1021,6 +1021,14 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 	// #445 gate 2, G2-1: the files it left for another game, and any
 	// original it could not put back, are this flow's to report.
 	s.takeCaptureWarnings(game.ID, OpProfileApply, SwitchInstallWarning, &result.Warnings, nil)
+	// #546: this deployed the profile, so it ends with what a deploy says
+	// the user must still do for the mods to load (Diablo II: Resurrected's
+	// -mod argument): in the result for the CLI, which prints Warnings, and
+	// as an event for the web UI's job stream, as a deploy's is.
+	for _, w := range s.launchAdvice(ctx, game, plan.Profile, true) {
+		result.Warnings = append(result.Warnings, w)
+		emit(WarningEvent{Scope: Scope{Op: OpProfileApply}, Phase: SwitchInstallWarning, Message: w})
+	}
 
 	return result, nil
 }

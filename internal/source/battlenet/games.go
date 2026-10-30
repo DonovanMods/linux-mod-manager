@@ -30,8 +30,18 @@ type GameInfo struct {
 	// the game's install path, so every flavor is its own game. "" is the
 	// root itself.
 	InstallDir string
-	// ModPath is relative to InstallDir; "" is InstallDir itself.
+	// ModPathBase is what ModPath is relative to: ModPathBaseInstall
+	// (InstallDir, the default) or ModPathBaseDocuments, the prefix user's
+	// Documents folder (#546).
+	ModPathBase string
+	// ModPath is relative to ModPathBase; "" is that folder itself. Under
+	// ModPathBaseDocuments its first element is the game's own folder in
+	// Documents ("Warcraft III"), which is how the detector tells which of
+	// a prefix's users plays the game.
 	ModPath string
+	// Adapter is the generated games.yaml entry's `adapter:` (#353), ""
+	// for the default.
+	Adapter string
 	// Sources is the generated games.yaml entry's complete source map.
 	Sources map[string]string
 	// CurseForgeVersionTypes is #544's flavor setting; nil accepts every
@@ -42,17 +52,26 @@ type GameInfo struct {
 	LaunchCode string
 }
 
+// ModPathBaseInstall and ModPathBaseDocuments are mod_path_base's values.
+const (
+	ModPathBaseInstall   = ""
+	ModPathBaseDocuments = "documents"
+)
+
 // gamesYAML is the on-disk format: product code -> entry.
 type gamesYAML map[string]gameYAML
 
 // gameYAML is one entry of that format.
 type gameYAML struct {
-	Slug       string            `yaml:"slug"`
-	Name       string            `yaml:"name"`
-	InstallDir string            `yaml:"install_dir,omitempty"`
-	ModPath    string            `yaml:"mod_path"`
-	Sources    map[string]string `yaml:"sources,omitempty"`
-	CurseForge *struct {
+	Slug       string `yaml:"slug"`
+	Name       string `yaml:"name"`
+	InstallDir string `yaml:"install_dir,omitempty"`
+	ModPath    string `yaml:"mod_path"`
+	// ModPathBase is "install" (or absent) or "documents".
+	ModPathBase string            `yaml:"mod_path_base,omitempty"`
+	Adapter     string            `yaml:"adapter,omitempty"`
+	Sources     map[string]string `yaml:"sources,omitempty"`
+	CurseForge  *struct {
 		GameVersionTypes []int `yaml:"game_version_types"`
 	} `yaml:"curseforge,omitempty"`
 	LaunchCode string `yaml:"launch_code,omitempty"`
@@ -75,7 +94,17 @@ func (e gameYAML) gameInfo(origin, code string) (GameInfo, error) {
 	}
 	info := GameInfo{
 		Slug: e.Slug, Name: e.Name, InstallDir: e.InstallDir, ModPath: e.ModPath,
-		Sources: e.Sources, LaunchCode: e.LaunchCode,
+		Adapter: e.Adapter, Sources: e.Sources, LaunchCode: e.LaunchCode,
+	}
+	switch strings.ToLower(strings.TrimSpace(e.ModPathBase)) {
+	case "", "install":
+	case ModPathBaseDocuments:
+		info.ModPathBase = ModPathBaseDocuments
+		if documentsGameFolder(e.ModPath) == "" {
+			return GameInfo{}, fmt.Errorf("%s: product %q: mod_path must name the game's folder in Documents when mod_path_base is documents", origin, code)
+		}
+	default:
+		return GameInfo{}, fmt.Errorf("%s: product %q: mod_path_base %q must be install or documents", origin, code, e.ModPathBase)
 	}
 	if e.CurseForge != nil {
 		info.CurseForgeVersionTypes = e.CurseForge.GameVersionTypes

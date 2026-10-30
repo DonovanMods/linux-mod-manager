@@ -136,8 +136,9 @@ ask for it with your API key (the game id is the one in the game's
 ## Battle.net games
 
 lmm finds Battle.net games installed under Wine or Proton, and lists them
-with your Steam games in **⚙ Setup → Games** and in `lmm game detect`. For
-now that means **World of Warcraft**.
+with your Steam games in **⚙ Setup → Games** and in `lmm game detect`:
+**World of Warcraft**, **Diablo II: Resurrected**, **Warcraft III:
+Reforged** and **StarCraft II**.
 
 lmm looks in every Wine prefix it can find:
 
@@ -155,14 +156,11 @@ with a subfolder for each, and each flavor you have is its own game:
 | Retail      | `_retail_`       | `wow-retail`      | `517`             |
 | Classic     | `_classic_`      | `wow-classic`     | `79434`           |
 | Classic Era | `_classic_era_`  | `wow-classic-era` | `67408`           |
-| Forever     | `_forever_`      | `wow-forever`     | not set yet       |
+| Forever     | `_forever_`      | `wow-forever`     | `88568`           |
 
 Each one's mods go in its own `Interface/AddOns` folder and come from
 CurseForge, already set to the [game flavor](#pick-a-curseforge-game-flavor),
-so a Classic game is never offered a Retail addon. The Forever flavor
-doesn't have a CurseForge flavor id yet, so it takes every file; set one
-with `lmm game edit wow-forever --curseforge-version-type <id>` when you
-know it.
+so a Classic game is never offered a Retail addon.
 
 In the terminal, a Battle.net game is named by `battlenet:` and its product
 code, where a Steam game shows its app id:
@@ -176,6 +174,66 @@ If you already added the game by hand, lmm recognises it by its folder and
 marks it **configured** rather than offering it twice, whatever you called
 it. Only the folder counts: a game you named `wow` for the Forever flavor is
 Forever, and Retail beside it is still offered as a new game.
+
+### Diablo II: Resurrected
+
+Diablo II: Resurrected (game id `diablo2resurrected`) takes its mods from
+NexusMods, into the `mods` folder of the install. The game loads a mod from
+`mods/<name>/<name>.mpq/`, so lmm puts each mod there, however its archive
+was packed: already in that shape, inside a `mods/` folder, or as the bare
+`<name>.mpq` folder. An archive with no `.mpq` folder, or with several, is
+deployed as packaged, with a warning. An archive whose `<name>` has a space
+in it (`Loot v2.mpq`) is refused: Battle.net splits its arguments on
+spaces, so no `-mod` could ever name it. Repack it with both folders
+renamed without the space (`Loot_v2/Loot_v2.mpq/`) and add it with
+[`lmm import`](manual-mods.md).
+
+The game loads a mod only when it is started with `-mod <name> -txt`, and
+Battle.net can't be asked to pass that on. So after each deploy, and each
+time you launch the game from lmm, lmm tells you exactly what to enter in
+Battle.net: see [Diablo II: Resurrected](launch.md#diablo-ii-resurrected)
+on the launching page.
+
+### Warcraft III: Reforged and StarCraft II
+
+These two read custom maps from the `Documents` folder of the Wine user
+that plays them, not from the install: `Documents/Warcraft III/Maps` and
+`Documents/StarCraft II/Maps` (game ids `warcraft3` and `starcraft2`). A
+prefix can hold several users, such as the one Wine made, Proton's
+`steamuser` and the shared `Public`, so lmm picks the one that plays the
+game:
+
+1. the user whose `Documents` already has the game's folder (the game
+   makes it the first time it runs);
+2. otherwise the prefix's own user: the one whose Documents folder its
+   `user.reg` names, or `steamuser` in a Proton prefix;
+3. otherwise the only user there is.
+
+`Public` is never picked. If lmm still can't tell, it doesn't guess: the
+game isn't offered, and detection says why. Run the game once so it makes
+its folder, then detect again, or add the game by hand with
+[`lmm game add`](#in-the-terminal). Older prefixes call the folder
+`My Documents`; lmm uses whichever one `user.reg` names, and otherwise
+looks in both. When `Documents` is a link to your own `~/Documents` (or
+your home folder), as Wine makes it, lmm saves the real folder. A link
+that leads anywhere outside the prefix and your home folder is refused,
+with a detection warning: add the game by hand if you mean it.
+
+Both games come with their NexusMods source, but most custom maps are on
+community sites lmm has no source for, such as Hive Workshop and
+SC2Mapster. Download the map and add it with `lmm import <file>`: a single
+`.w3x` or `.SC2Map` file is copied into the maps folder as it is, and a
+`.zip` is unpacked there.
+
+{: .note }
+lmm's authors don't have these three games installed, so their product
+codes (`osi`, `w3`, `s2`), launch codes and the NexusMods ids for Warcraft
+III and StarCraft II haven't been checked against a real install yet. If
+lmm doesn't find one of them, or finds the wrong folder, please open an
+issue, and correct the entry in your own `battlenet-games.yaml` (below)
+meanwhile.
+
+### Starting a Battle.net game
 
 A game lmm adds this way can also be started from lmm, through Battle.net:
 see [Battle.net games](launch.md#battlenet-games) on the launching page.
@@ -202,7 +260,24 @@ wow_classic:
 
 An entry may also set `launch_code`, the code Battle.net's
 `--exec="launch <code>"` takes, so Play launches the game rather than
-opening the Battle.net client (see the launching page).
+opening the Battle.net client (see the launching page), and `adapter`, the
+game's adapter (`d2r` for Diablo II: Resurrected).
+
+A game that keeps its mods in the player's `Documents` sets
+`mod_path_base: documents`. Its `mod_path` is then relative to that folder,
+and must start with the game's own folder there, which is how lmm picks the
+prefix user:
+
+```yaml
+w3:
+  slug: warcraft3
+  name: "Warcraft III: Reforged"
+  mod_path_base: documents
+  mod_path: Warcraft III/Maps   # relative to the user's Documents
+  sources:
+    nexusmods: warcraft3reforged
+  launch_code: W3
+```
 
 ## Games from other stores
 

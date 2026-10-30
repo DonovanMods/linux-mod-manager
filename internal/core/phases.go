@@ -210,7 +210,10 @@ const (
 	// ProfileApplyResult.Warnings / SwitchResult.Warnings, which is where
 	// the CLI prints it from (`fmt.Fprintf(os.Stderr, "Warning: %s\n", w)`)
 	// - a frontend that renders this event live must therefore not print
-	// Warnings too, or every refusal appears twice.
+	// Warnings too, or every refusal appears twice. Since #546 it also
+	// carries the game adapter's launch advice at the end of both flows
+	// (a WarningEvent, Message the advice), appended to Warnings the same
+	// way.
 	SwitchInstallWarning
 
 	// --- Phase 5b Task 2: ApplyInstall progress events, restored to

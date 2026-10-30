@@ -32,6 +32,7 @@ under `internal/adapter/` and one registration line — and *nothing* in
 | `generic-files` | the default — an absent `adapter:` key | The identity. An archive lands exactly where it was extracted, every file is deployed by the linker, and nothing extra is checked. This is what every game lmm managed before adapters existed. |
 | `icarus` | `adapter: icarus`, or derived from `deploy_mode: compile` | Icarus's compile path: every enabled mod's `.EXMODZ` table diffs (and, with `convert_paks`, its prebuilt `.pak` artifacts) merge against the installed game's own `data.pak` into one artifact. |
 | `bepinex` | `adapter: bepinex`, or derived from a game whose `mod_path` is its install path and that declares `loader: kind: bepinex` **or** has BepInEx installed in its directory | Plugin archive layout, `BepInEx/config/**` seeding, the "this game has no BepInEx" refusal, and verify's loader-installation tier. |
+| `d2r` | `adapter: d2r` only, which Battle.net detection's Diablo II: Resurrected entry sets (#546) | Lays every archive out as `<name>/<name>.mpq/` under the game's `mods` folder, and names the `-mod <name> -txt` the deployed profile needs (`LaunchAdvisor`). |
 
 `lmm game list` always names what *this* build actually ships, and
 `lmm game add --adapter` / `lmm game edit --adapter` validate against the
@@ -158,6 +159,7 @@ adapter.
 | `Verifier` | `Verify(ctx, req) ([]Finding, error)` | `bepinex` | appends adapter findings to `lmm verify`'s result |
 | `MergeCompiler` | 11 methods | `icarus` | the whole merged-artifact compile path |
 | `Preconditioner` | `CheckPreconditions(g, mods) error` | *(none yet)* | refuses a flow before it starts |
+| `LaunchAdvisor` | `LaunchAdvice(g, mods, previous) Advice` | `d2r` | shows the advice as a warning after a deploy (a switch's and an apply's too) and on a launch |
 
 ### FileRouter
 
@@ -273,6 +275,35 @@ rendered; it was dropped before 2.0 (#443), with every sentence it held
 folded into `LoaderStatus`, since no second loader adapter is planned for
 2.0. A future adapter with advice of its own should extend `LoaderStatus`'s
 answer rather than add a parallel channel.
+
+### LaunchAdvisor
+
+What the user must do outside lmm for the DEPLOYED mods to load, when lmm
+cannot arrange it itself (#546). Diablo II: Resurrected loads a mod only
+when started with `-mod <name> -txt`, Battle.net's `--exec` cannot pass
+game arguments on, and the name depends on which mods the profile has
+deployed and in what order. So `d2r`'s advice names the folder of the mod
+last in load order, says when mods in other folders compete (the game
+loads one), and when several mods share that folder (merged, loaded
+together).
+
+Core hands it the profile's enabled, deployed mods in load order, each
+with its deployable files (mod-path-relative, slash-separated), and
+`previous`: the `Advice.Args` it last returned for the game, which core
+records under `<DataDir>/launch-args/<game-id>` after every deploy. That
+is how a deploy that drops the last mod can say to remove the `-mod` line.
+Core appends `Advice.Lines` to `DeployResult.Warnings` (with a
+`DeployWarning` event), to `SwitchResult.Warnings` and
+`ProfileApplyResult.Warnings` (with a `SwitchInstallWarning` event), so
+both frontends show it, and to `LaunchResult.Warnings`; a launch reads the
+record but never writes it. Advice never fails a flow: anything core
+cannot read is skipped.
+
+This is not the setup advice the section above rules out. That advice is
+about the game's INSTALLATION (is the loader there, which launch option
+does it need), which `LoaderStatus` computes once per game. This advice is
+about the PROFILE: it changes with every deploy, so it is said where the
+profile's mods change and where the game starts.
 
 ### MergeCompiler
 
