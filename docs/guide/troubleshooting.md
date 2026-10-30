@@ -101,6 +101,14 @@ Your mods stay in lmm's library, so getting them back is one step:
 lmm deploy
 ```
 
+## "Written by a newer lmm"
+
+If you go back to an older lmm, for example by downgrading the package, it
+may refuse to start and say the database was written by a newer lmm. A
+newer lmm changed the database in a way the older one can't read, so the
+older one stops instead of getting your mods wrong. Install the newer lmm
+again; your mods and profiles are still there.
+
 ## Still stuck?
 
 Search the [issue tracker](https://github.com/DonovanMods/linux-mod-manager/issues),

@@ -319,7 +319,7 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 				mod.Summary = fetched.Summary
 				mod.SourceURL = fetched.SourceURL
 				mod.PictureURL = fetched.PictureURL
-				mod.ManualDownload = false // now linked, updates may work
+				mod.AdoptedInPlace = false // now linked, updates may work
 				sourceManualOnly = fetched.ManualOnly
 			}
 		}

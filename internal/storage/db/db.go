@@ -227,10 +227,16 @@ func OpenWithOptions(path string, opts Options) (*DB, error) {
 	}
 
 	if err := database.migrate(openCtx); err != nil {
-		if closeErr := sqlDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("running migrations: %w (closing database: %v)", err, closeErr)
+		closeErr := sqlDB.Close()
+		// A newer schema is a refusal, not a migration that failed: its
+		// own sentence is the whole answer.
+		if !errors.Is(err, ErrSchemaTooNew) {
+			err = fmt.Errorf("running migrations: %w", err)
 		}
-		return nil, fmt.Errorf("running migrations: %w", err)
+		if closeErr != nil {
+			return nil, fmt.Errorf("%w (closing database: %v)", err, closeErr)
+		}
+		return nil, err
 	}
 
 	// #431: whether the profile-document backfill is owed, read once here

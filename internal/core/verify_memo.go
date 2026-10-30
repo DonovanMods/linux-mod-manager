@@ -121,7 +121,7 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 		m := &installed[i]
 		rows = append(rows, fmt.Sprintf("mod\x1f%s\x1f%s\x1f%s\x1f%t\x1f%t\x1f%s\x1f%s\x1f%t",
 			m.SourceID, m.ID, m.Version, m.Enabled, m.Deployed,
-			m.UpdatePolicy, strings.Join(m.FileIDs, ","), m.ManualDownload))
+			m.UpdatePolicy, strings.Join(m.FileIDs, ","), m.AdoptedInPlace))
 		if m.External {
 			// #269 x #336: the ONE thing verify reads that nothing else in
 			// this fingerprint can see. See externalStatToken.

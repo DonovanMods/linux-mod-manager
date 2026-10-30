@@ -89,7 +89,7 @@ func (r *verifyRun) recordsPass(installedMods []domain.InstalledMod, files []Dep
 // only).
 func adoptedInPlace(game *domain.Game, mod domain.InstalledMod) bool {
 	return mod.SourceID == domain.SourceLocal || mod.Version == "" ||
-		(mod.ManualDownload && game.DeployMode != domain.DeployCopy)
+		(mod.AdoptedInPlace && game.DeployMode != domain.DeployCopy)
 }
 
 // recordsPassTolerant runs recordsPass, reporting a failure as a "skipped"

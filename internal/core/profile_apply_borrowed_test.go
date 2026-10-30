@@ -50,7 +50,7 @@ func borrowedFixture(t *testing.T, game *domain.Game, svc *core.Service, altExtr
 		LinkMethod:      domain.LinkCopy,
 		PreviousVersion: "1.0",
 		PreviousFileIDs: []string{"s-1.0.zip"},
-		ManualDownload:  true,
+		AdoptedInPlace:  true,
 	}))
 	return f
 }
@@ -83,7 +83,7 @@ func TestProfileApply_ABorrowedRowIsThisProfilesOwn(t *testing.T) {
 			assert.Equal(t, domain.UpdateNotify, row.UpdatePolicy, "survival's auto policy is survival's")
 			assert.Empty(t, row.PreviousVersion, "alt has no update history for it")
 			assert.Empty(t, row.PreviousFileIDs)
-			assert.True(t, row.ManualDownload, "a fact about the mod, not the profile")
+			assert.True(t, row.AdoptedInPlace, "a fact about the mod, not the profile")
 			assert.True(t, row.Enabled)
 			assert.True(t, row.Deployed)
 

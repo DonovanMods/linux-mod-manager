@@ -1676,13 +1676,13 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		if r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter {
 			continue
 		}
-		// Nothing to check against: local imports and manual downloads have
-		// no source to query, and a mod with no recorded file IDs predates
+		// Nothing to check against: local imports and mods adopted in place
+		// (#516) have no source to query, and a mod with no recorded file IDs predates
 		// even the buggy stamping this check exists to catch.
 		// #269: an external mod has no source file list to check a recorded
 		// version against - and no lmm-owned cache entry a repair could act
 		// on. Its own check is externalPresencePass.
-		if mod.SourceID == domain.SourceLocal || mod.ManualDownload || mod.External || len(mod.FileIDs) == 0 {
+		if mod.SourceID == domain.SourceLocal || mod.AdoptedInPlace || mod.External || len(mod.FileIDs) == 0 {
 			continue
 		}
 

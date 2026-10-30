@@ -240,8 +240,20 @@ type InstalledMod struct {
 	PreviousFileIDs []string     `json:"previous_file_ids,omitempty"` // File IDs before last update (for rollback)
 	LinkMethod      LinkMethod   `json:"link_method"`                 // How the mod was deployed (symlink, hardlink, copy)
 	FileIDs         []string     `json:"file_ids,omitempty"`          // Source-specific file IDs that were downloaded
-	ManualDownload  bool         `json:"manual_download"`             // Adopted in place by `lmm import` scan mode (verify reads it so); the "source will not serve the file" fact is Mod.ManualOnly (#543)
-	ConvertPaks     bool         `json:"convert_paks"`                // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
+	// AdoptedInPlace marks a mod `lmm import` scan mode adopted where it
+	// sat in the game directory (#516): lmm never downloaded it, so on a
+	// game not in copy mode it has no cache entry, and verify neither calls
+	// that entry missing nor checks its version against the source. It is
+	// not "the source will not serve this file" - that is Mod.ManualOnly
+	// (#543).
+	//
+	// The wire name and the installed_mods column both keep the historical
+	// name manual_download, so every --json document and /api/v1 reader
+	// sees what it did before the Go rename, and an older lmm can still
+	// read the database.
+	AdoptedInPlace bool `json:"manual_download"`
+
+	ConvertPaks bool `json:"convert_paks"` // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
 
 	// External marks a mod lmm TRACKS but never deploys: another agent
 	// (today, the Steam client for a Workshop item) owns its files where

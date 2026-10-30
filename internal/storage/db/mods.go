@@ -92,6 +92,8 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 		return err
 	}
 
+	// The manual_download column holds mod.AdoptedInPlace: it keeps its
+	// historical name so an older lmm can still read the database (#516).
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, external, external_path, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -110,7 +112,7 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 			external = excluded.external,
 			external_path = excluded.external_path,
 			updated_at = excluded.updated_at
-	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, formatTime(d.clock()), prevVersion, prevFileIDs, mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL, mod.External, mod.ExternalPath, updatedAtValue(mod))
+	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, formatTime(d.clock()), prevVersion, prevFileIDs, mod.LinkMethod, mod.AdoptedInPlace, mod.Summary, mod.SourceURL, mod.External, mod.ExternalPath, updatedAtValue(mod))
 	if err != nil {
 		return fmt.Errorf("saving installed mod: %w", err)
 	}
@@ -180,7 +182,7 @@ func (d *DB) RelinkInstalledMod(ctx context.Context, oldSourceID, oldModID strin
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?`,
 		mod.SourceID, mod.ID, mod.Name, mod.Version, mod.Author,
 		mod.Enabled, mod.Deployed, prevVersion, prevFileIDs,
-		mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL,
+		mod.LinkMethod, mod.AdoptedInPlace, mod.Summary, mod.SourceURL,
 		mod.External, mod.ExternalPath, updatedAtValue(mod),
 		oldSourceID, oldModID, mod.GameID, mod.ProfileName)
 	if err != nil {
@@ -235,7 +237,7 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 		err := rows.Scan(
 			&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 			&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
-			&mod.Enabled, &mod.Deployed, &installedAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
+			&mod.Enabled, &mod.Deployed, &installedAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.AdoptedInPlace,
 			&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath, &updatedAt, &skipped,
 		)
 		if err != nil {
@@ -522,7 +524,7 @@ func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profi
 	`, sourceID, modID, gameID, profileName).Scan(
 		&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 		&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
-		&mod.Enabled, &mod.Deployed, &installedAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
+		&mod.Enabled, &mod.Deployed, &installedAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.AdoptedInPlace,
 		&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath, &updatedAt, &skipped,
 	)
 	if err != nil {

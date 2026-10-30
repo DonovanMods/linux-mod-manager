@@ -21,8 +21,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `THIRD_PARTY_NOTICES`, and the AUR package's license list now names
   `OFL-1.1`. The binary is about 0.9 MB larger.
 
+- **The installed-mod "adopted in place" flag is named for what it means
+  (#516).** `InstalledMod.ManualDownload` is now `AdoptedInPlace`: it was
+  only ever read as "adopted in place by `lmm import` scan mode, so it may
+  have no cache entry", while its name said "the source won't serve this
+  file", which is #543's separate manual-only record. The database column
+  keeps its historical name, `manual_download`, so an older lmm can still
+  read the database, and the `--json` and `/api/v1` field keeps that name
+  and its meaning too; `manual_only` is still the "download it by hand"
+  fact.
+
 ### Fixed
 
+- **lmm refuses a database a newer lmm has migrated (#516).** This
+  release and every later one guard against a downgrade; an lmm before it
+  opened such a database anyway, skipping the migrations it didn't know, so a
+  later schema change could break every command with an error like
+  "no such column". Now every command, `lmm serve` included, stops at
+  startup and says the database was written by a newer lmm and to upgrade
+  lmm. A database at the current schema opens as before.
+- **`lmm verify --fix` fills a manual-only mod's missing checksum from the
+  cache without asking the source again (#516).** #514's cache-first fill
+  keyed on the adopted-in-place flag. A mod the source has refused to serve
+  (`manual_only`) now gets it too, instead of a download the source refuses
+  every time.
 - **A source that needs an API key says so, and links to where it goes
   (#582).** `lmm-serve.service` doesn't inherit a login shell's
   environment, so a key exported only there (`CURSEFORGE_API_KEY`,

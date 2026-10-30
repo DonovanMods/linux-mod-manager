@@ -199,12 +199,12 @@ func TestVerify_AModAdoptedInPlaceIsNotMissingItsCache(t *testing.T) {
 			installed, err := svc.GetInstalledMods(ctx, game.ID, "default")
 			require.NoError(t, err)
 			require.NotEmpty(t, installed, "the adoption must record the mod")
-			// A source-matched adoption is in place too: ManualDownload with
+			// A source-matched adoption is in place too: AdoptedInPlace with
 			// a real source and version, still no cache entry.
 			require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 				Mod:         domain.Mod{ID: "42", SourceID: "acme", Name: "Matched", Version: "1.0", GameID: game.ID},
 				ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, Deployed: true,
-				ManualDownload: true,
+				AdoptedInPlace: true,
 			}))
 
 			report, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Force: true}, nil)

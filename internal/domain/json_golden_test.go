@@ -155,7 +155,7 @@ func TestJSONGoldens(t *testing.T) {
 				PreviousFileIDs: []string{"file-0"},
 				LinkMethod:      domain.LinkHardlink,
 				FileIDs:         []string{"file-1"},
-				ManualDownload:  true,
+				AdoptedInPlace:  true,
 				ConvertPaks:     true,
 			},
 		},

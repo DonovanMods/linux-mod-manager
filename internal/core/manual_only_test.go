@@ -255,7 +255,7 @@ func TestApplyAdopt_SourceClassifiesTheModManualOnly_RecordsIt(t *testing.T) {
 	installed, err := svc.GetInstalledMod(context.Background(), "acme-source", "42", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, installed.ManualOnly)
-	assert.True(t, installed.ManualDownload, "adopt's own flag is unchanged")
+	assert.True(t, installed.AdoptedInPlace, "adopt's own flag is unchanged")
 }
 
 // An adoption whose source says nothing is not manual-only: adopt's
@@ -279,7 +279,7 @@ func TestApplyAdopt_SourceServesTheMod_NotManualOnly(t *testing.T) {
 	installed, err := svc.GetInstalledMod(context.Background(), "acme-source", "42", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, installed.ManualOnly)
-	assert.True(t, installed.ManualDownload)
+	assert.True(t, installed.AdoptedInPlace)
 }
 
 // The detail view says so too - before any row exists, since the install
