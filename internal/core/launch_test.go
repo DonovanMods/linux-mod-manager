@@ -5,11 +5,13 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,6 +56,14 @@ func (f *fakeLauncher) launcher() *core.Launcher {
 			return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
 		},
 		Getenv: func(key string) string { return f.env[key] },
+		Environ: func() []string {
+			var kv []string
+			for k, v := range f.env {
+				kv = append(kv, k+"="+v)
+			}
+			slices.Sort(kv)
+			return kv
+		},
 		ManagerEnv: func(context.Context) (map[string]bool, error) {
 			if f.noUser {
 				return nil, errors.New("Failed to connect to bus")
@@ -118,7 +128,7 @@ func TestLaunch_SteamGameRunsUnderSystemdRun(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, f.runs, 1)
-	assert.Equal(t, []string{"systemd-run", "--user", "--collect", "--unit=lmm-launch-valheim-abcd1234", "--description=lmm: Valheim",
+	assert.Equal(t, []string{"systemd-run", "--user", "--collect", "--service-type=exec", "--unit=lmm-launch-valheim-abcd1234", "--description=lmm: Valheim",
 		"--setenv=DISPLAY=:0", "--setenv=XDG_RUNTIME_DIR=/run/user/1000",
 		"--", "/usr/bin/steam", "steam://rungameid/892970"}, f.runs[0])
 	assert.Equal(t, "steam", res.Method)
@@ -345,16 +355,20 @@ func TestLaunch_Drift(t *testing.T) {
 	_, err := svc.Launch(ctx, game, core.LaunchOptions{})
 	var drift *core.LaunchDriftError
 	require.ErrorAs(t, err, &drift)
-	assert.Equal(t, &core.LaunchDriftError{GameID: "g", Profile: "default", Undeployed: 2}, drift)
+	assert.Equal(t, &core.LaunchDriftError{GameID: "g", Profile: "default", Undeployed: 2, StillDeployed: 1}, drift)
+	assert.False(t, drift.DeployClears, "a deploy leaves a disabled mod deployed")
+	assert.Contains(t, err.Error(), "lmm profile apply --game g")
+	assert.NotContains(t, err.Error(), "--deploy")
 	assert.Same(t, drift, drift.Details())
-	assert.Contains(t, err.Error(), "2")
+	assert.Contains(t, err.Error(), "1 enabled mod(s)")
+	assert.Contains(t, err.Error(), "1 disabled mod(s)")
 	assert.Empty(t, f.runs)
 
 	res, err := svc.Launch(ctx, game, core.LaunchOptions{Force: true})
 	require.NoError(t, err)
 	assert.Equal(t, 2, res.Undeployed)
 	require.Len(t, res.Warnings, 1)
-	assert.Contains(t, res.Warnings[0], "2")
+	assert.Contains(t, res.Warnings[0], "1 disabled mod(s) in profile \"default\" of g are still deployed")
 	assert.Len(t, f.runs, 1)
 }
 
@@ -461,6 +475,11 @@ func TestLaunch_RunFailure(t *testing.T) {
 	_, err := svc.Launch(context.Background(), mustGame(t, svc, "g"), core.LaunchOptions{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Unit already exists")
+	// Type=exec makes systemd-run fail when the program cannot start, so
+	// the error says which program and which unit to look at.
+	assert.Contains(t, err.Error(), "/usr/bin/steam")
+	assert.Contains(t, err.Error(), "lmm-launch-g-abcd1234")
+	assert.Contains(t, err.Error(), "journalctl --user -u lmm-launch-g-abcd1234")
 }
 
 // A game id with characters a unit name cannot carry still makes a valid
@@ -504,18 +523,20 @@ func TestGameStatus_Launch(t *testing.T) {
 	assert.Equal(t, core.LaunchInfo{Method: "steam"}, st.Launch)
 }
 
-// systemd expands $VAR in a service's command line; lmm passes the argv as
-// written, so every "$" reaches systemd-run doubled. Argv keeps the
-// user's own spelling.
+// systemd expands $VAR in a service's arguments; lmm passes the argv as
+// written, so every "$" in an argument reaches systemd-run doubled. The
+// program itself is not expanded - systemd-run looks it up as written, and
+// a doubled "$" there is a path that does not exist - so it goes as is.
+// Argv keeps the user's own spelling.
 func TestLaunch_DollarSignsSurviveSystemd(t *testing.T) {
 	g := launchGame("g")
-	g.Launch = &domain.GameLaunch{Command: []string{"/bin/sh", "-c", `exec "$0" "$@"`, "/opt/$game"}}
+	g.Launch = &domain.GameLaunch{Command: []string{"/opt/$game/sh", "-c", `exec "$0" "$@"`, "/opt/$game"}}
 	svc, f := launchFixture(t, g)
 	res, err := svc.Launch(context.Background(), mustGame(t, svc, "g"), core.LaunchOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/bin/sh", "-c", `exec "$0" "$@"`, "/opt/$game"}, res.Argv)
+	assert.Equal(t, []string{"/opt/$game/sh", "-c", `exec "$0" "$@"`, "/opt/$game"}, res.Argv)
 	require.Len(t, f.runs, 1)
-	assert.Equal(t, []string{"--", "/bin/sh", "-c", `exec "$$0" "$$@"`, "/opt/$$game"}, f.runs[0][len(f.runs[0])-5:])
+	assert.Equal(t, []string{"--", "/opt/$game/sh", "-c", `exec "$$0" "$$@"`, "/opt/$$game"}, f.runs[0][len(f.runs[0])-5:])
 }
 
 // A command starts in the game's install folder - what a Wine or EXE-style
@@ -545,4 +566,146 @@ func TestLaunch_SteamScanOnlyWhenNeeded(t *testing.T) {
 	_, _, err := svc.ResolveLaunch(context.Background(), mustGame(t, svc, "g"), "default")
 	require.NoError(t, err)
 	assert.Zero(t, f.scans)
+}
+
+// launchKeySource is a source whose API key can come from the environment:
+// from its own variable (source.EnvKeyProvider) when key is set, as
+// NexusMods' NEXUSMODS_API_KEY does, else from LMM_<ID>_API_KEY.
+type launchKeySource struct{ id string }
+
+func (s launchKeySource) ID() string    { return s.id }
+func (s launchKeySource) Name() string  { return s.id }
+func (launchKeySource) AuthURL() string { return "" }
+func (launchKeySource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, nil
+}
+func (launchKeySource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{}, nil
+}
+func (launchKeySource) GetMod(context.Context, string, string) (*domain.Mod, error) {
+	return nil, domain.ErrModNotFound
+}
+func (launchKeySource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, nil
+}
+func (launchKeySource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, nil
+}
+func (launchKeySource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", nil
+}
+func (launchKeySource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, nil
+}
+
+// keyedSource is a launchKeySource with its own variable.
+type keyedSource struct {
+	launchKeySource
+	key string
+}
+
+func (s keyedSource) EnvKey() string { return s.key }
+
+var _ source.EnvKeyProvider = keyedSource{}
+
+// A game started detached inherits lmm's environment - all of it a game
+// needs - but never an API key: not a source's own variable, and not the
+// LMM_<ID>_API_KEY any source could read. The systemd path forwards only
+// its session variables, so no key reaches it either.
+func TestLaunch_NoCredentialReachesTheGame(t *testing.T) {
+	g := launchGame("g")
+	g.Launch = &domain.GameLaunch{Command: []string{"/bin/run"}}
+	svc, f := launchFixture(t, g)
+	svc.RegisterSource(keyedSource{launchKeySource{"nexusmods"}, "NEXUSMODS_API_KEY"})
+	svc.RegisterSource(keyedSource{launchKeySource{"steamworkshop"}, "STEAM_WEB_API_KEY"})
+	svc.RegisterSource(launchKeySource{"plain"})
+	keys := map[string]string{
+		"NEXUSMODS_API_KEY":      "nx-secret",
+		"STEAM_WEB_API_KEY":      "steam-secret",
+		"LMM_PLAIN_API_KEY":      "plain-secret",
+		"LMM_MY_SRC_API_KEY":     "unregistered-secret",
+		"LMM_CURSEFORGE_API_KEY": "cf-secret",
+	}
+	for k, v := range keys {
+		f.env[k] = v
+	}
+	f.env["PATH"], f.env["HOME"], f.env["LANG"] = "/usr/bin", "/home/u", "en_US.UTF-8"
+	f.env["STEAM_COMPAT_DATA_PATH"] = "/home/u/compat"
+
+	game := mustGame(t, svc, "g")
+	_, err := svc.Launch(context.Background(), game, core.LaunchOptions{})
+	require.NoError(t, err)
+	require.Len(t, f.runs, 1)
+	for _, a := range f.runs[0] {
+		for k, v := range keys {
+			assert.NotContains(t, a, k)
+			assert.NotContains(t, a, v)
+		}
+	}
+
+	delete(f.path, "systemd-run")
+	_, err = svc.Launch(context.Background(), game, core.LaunchOptions{AllowDetached: true})
+	require.NoError(t, err)
+	require.Len(t, f.detEnv, 1)
+	env := f.detEnv[0]
+	for k := range keys {
+		for _, kv := range env {
+			assert.False(t, strings.HasPrefix(kv, k+"="), "%s reached the game", k)
+		}
+	}
+	for _, kv := range []string{"PATH=/usr/bin", "HOME=/home/u", "LANG=en_US.UTF-8", "DISPLAY=:0",
+		"STEAM_COMPAT_DATA_PATH=/home/u/compat", "LMM_GAME_ID=g", "LMM_PROFILE=default"} {
+		assert.Contains(t, env, kv)
+	}
+}
+
+// The drift says what clears it: a deploy for enabled mods not yet
+// deployed - the only kind --deploy answers - and something else for a
+// disabled mod still deployed or a mod_path that needs attention.
+func TestLaunchDriftError_Remedies(t *testing.T) {
+	for name, tt := range map[string]struct {
+		err           core.LaunchDriftError
+		want, notWant []string
+	}{
+		"not deployed": {
+			err:     core.LaunchDriftError{GameID: "g", Profile: "p", Undeployed: 2, DeployClears: true},
+			want:    []string{"2 enabled mod(s) in profile \"p\" of g are not deployed", "lmm launch --deploy"},
+			notWant: []string{"profile apply", "mod-path"},
+		},
+		"still deployed": {
+			err:     core.LaunchDriftError{GameID: "g", Profile: "p", Undeployed: 1, StillDeployed: 1},
+			want:    []string{"1 disabled mod(s) in profile \"p\" of g are still deployed", "lmm profile apply --game g"},
+			notWant: []string{"--deploy", "not deployed"},
+		},
+		"mod path": {
+			err:     core.LaunchDriftError{GameID: "g", Profile: "p", ModPathError: "mod_path /x does not exist; run `lmm game edit g --mod-path <path>`"},
+			want:    []string{"mod_path /x does not exist", "lmm game edit g --mod-path"},
+			notWant: []string{"--deploy", "profile apply"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			msg := tt.err.Error()
+			for _, w := range tt.want {
+				assert.Contains(t, msg, w)
+			}
+			for _, w := range tt.notWant {
+				assert.NotContains(t, msg, w)
+			}
+		})
+	}
+}
+
+// A drift a deploy would clear says so on the wire.
+func TestLaunch_DriftADeployClears(t *testing.T) {
+	svc, f := launchFixture(t, launchGame("g"))
+	f.steam = &core.SteamApp{AppID: "5"}
+	ctx := context.Background()
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "a", SourceID: "src", Name: "a", Version: "1", GameID: "g"},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
+	}))
+	_, err := svc.Launch(ctx, mustGame(t, svc, "g"), core.LaunchOptions{})
+	var drift *core.LaunchDriftError
+	require.ErrorAs(t, err, &drift)
+	assert.Equal(t, &core.LaunchDriftError{GameID: "g", Profile: "default", Undeployed: 1, DeployClears: true}, drift)
 }

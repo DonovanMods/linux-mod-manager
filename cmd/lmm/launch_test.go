@@ -36,6 +36,7 @@ func (f *cliLauncher) launcher() *core.Launcher {
 			return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
 		},
 		Getenv:     func(k string) string { return env[k] },
+		Environ:    func() []string { return []string{"DISPLAY=:0"} },
 		ManagerEnv: func(context.Context) (map[string]bool, error) { return map[string]bool{}, nil },
 		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			f.runs = append(f.runs, append([]string{name}, args...))
@@ -96,7 +97,7 @@ func TestDoLaunch_DryRunPrintsTheCommandAndRunsNothing(t *testing.T) {
 	out := captureStdout(t, func() error { return doLaunch(context.Background(), svc, game) })
 	assert.Empty(t, f.runs)
 	assert.Contains(t, out, "Would launch Valheim (profile default) via steam:\n")
-	assert.Contains(t, out, "systemd-run --user --collect '--unit=lmm-launch-g1-abcd1234' '--description=lmm: Valheim' '--setenv=DISPLAY=:0' -- /usr/bin/steam 'steam://rungameid/892970'\n")
+	assert.Contains(t, out, "systemd-run --user --collect '--service-type=exec' '--unit=lmm-launch-g1-abcd1234' '--description=lmm: Valheim' '--setenv=DISPLAY=:0' -- /usr/bin/steam 'steam://rungameid/892970'\n")
 }
 
 // Undeployed changes warn and launch; --strict refuses with the drift as
@@ -107,7 +108,7 @@ func TestDoLaunch_UndeployedChanges(t *testing.T) {
 
 	stdout, stderr, err := captureStdoutAndStderr(t, func() error { return doLaunch(context.Background(), svc, game) })
 	require.NoError(t, err)
-	assert.Contains(t, stderr, "Warning: launching anyway: 1 mod change(s)")
+	assert.Contains(t, stderr, "Warning: launching anyway: 1 enabled mod(s) in profile \"default\" of g1 are not deployed; deploy first (`lmm launch --deploy`)")
 	assert.Contains(t, stdout, "Asked Steam to start")
 	assert.Len(t, f.runs, 1)
 
@@ -145,6 +146,32 @@ func TestDoLaunch_DeployIsSkippedWhenTheLaunchCannotHappen(t *testing.T) {
 	err := doLaunch(context.Background(), svc, game)
 	var unconfigured *core.LaunchUnconfiguredError
 	require.ErrorAs(t, err, &unconfigured)
+	_, statErr := os.Lstat(filepath.Join(game.ModPath, "a.esp"))
+	assert.True(t, os.IsNotExist(statErr), "nothing was deployed")
+	assert.Empty(t, f.runs)
+}
+
+// --deploy --strict refuses BEFORE deploying when the drift is one a
+// deploy cannot clear - a disabled mod still deployed - and the refusal
+// names the fix that does, not --deploy.
+func TestDoLaunch_DeployStrictRefusesDriftADeployCannotClear(t *testing.T) {
+	svc, game, f := setupLaunchTest(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "off", SourceID: "src", Name: "Off", Version: "1.0", GameID: game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: false, Deployed: true,
+	}))
+	launchDeploy, launchStrict = true, true
+
+	var err error
+	out := captureStdout(t, func() error { err = doLaunch(context.Background(), svc, game); return nil })
+	var drift *core.LaunchDriftError
+	require.ErrorAs(t, err, &drift)
+	assert.False(t, drift.DeployClears)
+	assert.Equal(t, 1, drift.StillDeployed)
+	assert.Contains(t, err.Error(), "lmm profile apply --game g1")
+	assert.NotContains(t, err.Error(), "--deploy")
+	assert.NotContains(t, out, "Deployed")
 	_, statErr := os.Lstat(filepath.Join(game.ModPath, "a.esp"))
 	assert.True(t, os.IsNotExist(statErr), "nothing was deployed")
 	assert.Empty(t, f.runs)
@@ -196,15 +223,16 @@ func TestJSONGolden_Launch(t *testing.T) {
 func TestReportError_JSON_LaunchDriftError(t *testing.T) {
 	withJSONOutput(t)
 
-	err := &core.LaunchDriftError{GameID: "valheim", Profile: "default", Undeployed: 2}
+	err := &core.LaunchDriftError{GameID: "valheim", Profile: "default", Undeployed: 2, DeployClears: true}
 	out := captureStdout(t, func() error { reportError(err); return nil })
 
 	assert.Equal(t, "{\n"+
-		"  \"error\": \"2 mod change(s) in profile \\\"default\\\" of valheim are not deployed; deploy first (`lmm launch --deploy`, or `lmm profile apply --game valheim`, which also takes down mods the profile disabled) or launch anyway\",\n"+
+		"  \"error\": \"2 enabled mod(s) in profile \\\"default\\\" of valheim are not deployed; deploy first (`lmm launch --deploy`); or launch anyway\",\n"+
 		"  \"details\": {\n"+
 		"    \"game_id\": \"valheim\",\n"+
 		"    \"profile\": \"default\",\n"+
-		"    \"undeployed\": 2\n"+
+		"    \"undeployed\": 2,\n"+
+		"    \"deploy_clears\": true\n"+
 		"  }\n"+
 		"}\n", out)
 }

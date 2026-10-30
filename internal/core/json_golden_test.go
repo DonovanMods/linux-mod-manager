@@ -2416,10 +2416,10 @@ func TestJSONGoldens(t *testing.T) {
 			core.LaunchResult{
 				Game: "valheim", Profile: "default", Method: "steam",
 				Argv: []string{"/usr/bin/steam", "steam://rungameid/892970"},
-				Command: []string{"systemd-run", "--user", "--collect", "--unit=lmm-launch-valheim-abcd1234", "--description=lmm: Valheim",
+				Command: []string{"systemd-run", "--user", "--collect", "--service-type=exec", "--unit=lmm-launch-valheim-abcd1234", "--description=lmm: Valheim",
 					"--setenv=DISPLAY=:0", "--", "/usr/bin/steam", "steam://rungameid/892970"},
 				Unit: "lmm-launch-valheim-abcd1234", Requested: true, Undeployed: 2,
-				Warnings: []string{"launching anyway: 2 mod change(s) in profile \"default\" of valheim are not deployed"},
+				Warnings: []string{"launching anyway: 2 enabled mod(s) in profile \"default\" of valheim are not deployed; deploy first (`lmm launch --deploy`)"},
 			},
 		},
 		{
@@ -2448,7 +2448,7 @@ func TestJSONGoldens(t *testing.T) {
 			// #501: the drift refusal's Details - what the web UI's
 			// Deploy & launch choice renders from.
 			"launch_drift_error",
-			core.LaunchDriftError{GameID: "valheim", Profile: "default", Undeployed: 2, ModPathError: "mod_path /g/mods does not exist"},
+			core.LaunchDriftError{GameID: "valheim", Profile: "default", Undeployed: 2, StillDeployed: 1, ModPathError: "mod_path /g/mods does not exist"},
 		},
 		{
 			// #427: a mod_path lmm deployed into that has gone, with the

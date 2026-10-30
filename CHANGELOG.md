@@ -17,9 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   systemd user service, so restarting `lmm serve` or closing the terminal
   leaves it running. Undeployed changes print a warning and the game
   launches anyway; `--deploy` deploys the profile first and `--strict`
-  refuses instead. `--dry-run` prints the full command line, and `--json`
+  refuses instead. The refusal names the fix for each kind of drift, and
+  `--deploy --strict` refuses before deploying when a deploy can't clear
+  it (a disabled mod still deployed needs `lmm profile apply`). A program
+  that cannot start fails the launch rather than printing "Started"
+  (systemd-run `--service-type=exec`, so systemd 240 or later). No source's
+  API key variable reaches the game or its mods. `--dry-run` prints the full command line, and `--json`
   emits it as a document. `lmm status --game <id> --json` gains a `launch`
-  member saying how the game would launch, or why it cannot. A Play button
+  member saying how the game would launch, or why it cannot. The Steam
+  library lookup behind it is cached until a library changes. A Play button
   in the web UI follows.
 
 ### Changed

@@ -40,7 +40,9 @@ profile is refused. Make it active first with 'lmm profile switch'.
 .PP
 When the profile has changes that are not deployed - a mod enabled but
 not deployed, or deployed but disabled - lmm warns and launches anyway.
---deploy deploys the profile first; --strict refuses instead.
+--deploy deploys the profile first; --strict refuses instead. A deploy
+does not take down a disabled mod that is still deployed ('lmm profile
+apply' does), so --deploy --strict refuses that before deploying.
 
 .PP
 Use --dry-run to print the method and the full command line without

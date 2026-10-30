@@ -10,6 +10,7 @@
     "systemd-run",
     "--user",
     "--collect",
+    "--service-type=exec",
     "--unit=lmm-launch-valheim-abcd1234",
     "--description=lmm: Valheim",
     "--setenv=DISPLAY=:0",
@@ -21,6 +22,6 @@
   "requested": true,
   "undeployed": 2,
   "warnings": [
-    "launching anyway: 2 mod change(s) in profile \"default\" of valheim are not deployed"
+    "launching anyway: 2 enabled mod(s) in profile \"default\" of valheim are not deployed; deploy first (`lmm launch --deploy`)"
   ]
 }

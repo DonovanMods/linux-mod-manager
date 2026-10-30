@@ -10,6 +10,7 @@
     "systemd-run",
     "--user",
     "--collect",
+    "--service-type=exec",
     "--unit=lmm-launch-g1-abcd1234",
     "--description=lmm: Valheim",
     "--setenv=DISPLAY=:0",

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -46,7 +47,9 @@ profile is refused. Make it active first with 'lmm profile switch'.
 
 When the profile has changes that are not deployed - a mod enabled but
 not deployed, or deployed but disabled - lmm warns and launches anyway.
---deploy deploys the profile first; --strict refuses instead.
+--deploy deploys the profile first; --strict refuses instead. A deploy
+does not take down a disabled mod that is still deployed ('lmm profile
+apply' does), so --deploy --strict refuses that before deploying.
 
 Use --dry-run to print the method and the full command line without
 starting anything.
@@ -88,10 +91,16 @@ func doLaunch(ctx context.Context, service *core.Service, game *domain.Game) err
 		// Everything but the drift is checked before the deploy changes
 		// the game folder: a game that cannot launch is not deployed for
 		// nothing.
+		// So is a --strict launch whose drift a deploy cannot clear (a
+		// disabled mod still deployed, a mod_path that needs the user):
+		// it would refuse after the deploy anyway.
 		check := opts
-		check.Force, check.DryRun = true, true
+		check.Force, check.DryRun = false, true
 		if _, err := service.Launch(ctx, game, check); err != nil {
-			return err
+			var drift *core.LaunchDriftError
+			if !errors.As(err, &drift) || launchStrict && !drift.DeployClears {
+				return err
+			}
 		}
 		if launchDryRun {
 			// The deploy is what answers the drift this dry run would

@@ -62,6 +62,9 @@ Arguments may contain these placeholders, which lmm fills in:
 
 The program also gets `LMM_GAME_ID`, `LMM_GAME_PATH`, `LMM_MOD_PATH` and
 `LMM_PROFILE` in its environment, as a hook does.
+Your API keys are never passed to the game: lmm leaves out
+`NEXUSMODS_API_KEY`, `CURSEFORGE_API_KEY`, `STEAM_WEB_API_KEY` and every
+`LMM_<SOURCE>_API_KEY`, so a game's mods can't read them.
 
 When a game has both a `command` and a Steam app id, lmm runs the command.
 Two more optional settings change that:
@@ -81,6 +84,12 @@ disabled still is. If they don't match, lmm warns you and launches anyway.
 - `lmm launch --deploy` deploys the profile first, then launches.
 - `lmm launch --strict` refuses to launch instead of warning.
 
+A deploy puts enabled mods into the game folder, but it doesn't take out a
+mod you disabled. If a disabled mod is still deployed, run
+`lmm profile apply`, which does both. `lmm launch --deploy --strict`
+refuses that case before it deploys anything. If the mods folder itself
+needs attention, the warning says what to change.
+
 Only the active profile can be launched, because it's the one whose mods
 are in the game folder. To play with another profile, switch to it first
 with `lmm profile switch <name>`.
@@ -97,8 +106,11 @@ prints the launch method and the full command line, and starts nothing.
 
 lmm starts the game as its own background service in your desktop session
 (a systemd user service), not as part of lmm. Closing the terminal, or
-restarting `lmm serve`, leaves the game running. On a system without
-systemd, lmm starts the game on its own instead.
+restarting `lmm serve`, leaves the game running. lmm waits only until
+the program has started. If it can't start (the program is missing, or
+the game folder is gone), `lmm launch` fails and names the unit to check
+with `journalctl --user -u <unit>`. On a system without systemd, lmm
+starts the game on its own instead.
 
 ## "No display to launch the game on"
 

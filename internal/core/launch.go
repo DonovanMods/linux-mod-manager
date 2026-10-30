@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -104,32 +105,60 @@ func (e *LaunchUnconfiguredError) Error() string {
 
 // LaunchDriftError refuses to launch a profile whose deployed files do not
 // match it (#501): Undeployed mods are enabled but not deployed, or
-// deployed but disabled, or the game's mod_path needs attention
-// (ModPathError). A frontend offers to deploy first, or to launch anyway
-// with LaunchOptions.Force.
+// deployed but disabled (StillDeployed of them), or the game's mod_path
+// needs attention (ModPathError). A frontend offers to deploy first when
+// DeployClears, or to launch anyway with LaunchOptions.Force.
 type LaunchDriftError struct {
-	GameID     string `json:"game_id"`
-	Profile    string `json:"profile"`
-	Undeployed int    `json:"undeployed"`
-	// ModPathError is ModPathProblem's sentence, when there is one.
+	GameID  string `json:"game_id"`
+	Profile string `json:"profile"`
+	// Undeployed is every mod out of step, StillDeployed included.
+	Undeployed int `json:"undeployed"`
+	// StillDeployed is the mods disabled but still deployed, which a
+	// deploy leaves where they are (it is not a converge run); `lmm
+	// profile apply` takes them down.
+	StillDeployed int `json:"still_deployed,omitzero"`
+	// ModPathError is ModPathProblem's sentence, when there is one; its
+	// fix is the user's, not a deploy's.
 	ModPathError string `json:"mod_path_error,omitempty"`
+	// DeployClears is true when a deploy alone puts the profile in step:
+	// only enabled mods are undeployed.
+	DeployClears bool `json:"deploy_clears"`
 }
 
-// Error names the drift and both ways on.
+// Error names the drift and the way on that clears it.
 func (e *LaunchDriftError) Error() string {
-	return fmt.Sprintf("%s; deploy first (`lmm launch --deploy`, or `lmm profile apply --game %s`, which also takes down mods the profile disabled) or launch anyway", e.drift(), ShellQuoteArg(e.GameID))
+	return e.drift() + "; " + strings.Join(e.remedies(), "; ") + "; or launch anyway"
 }
 
 // drift is the sentence saying what is out of step.
 func (e *LaunchDriftError) drift() string {
 	var parts []string
-	if e.Undeployed > 0 {
-		parts = append(parts, fmt.Sprintf("%d mod change(s) in profile %q of %s are not deployed", e.Undeployed, e.Profile, e.GameID))
+	if n := e.Undeployed - e.StillDeployed; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d enabled mod(s) in profile %q of %s are not deployed", n, e.Profile, e.GameID))
+	}
+	if e.StillDeployed > 0 {
+		parts = append(parts, fmt.Sprintf("%d disabled mod(s) in profile %q of %s are still deployed", e.StillDeployed, e.Profile, e.GameID))
 	}
 	if e.ModPathError != "" {
 		parts = append(parts, e.ModPathError)
 	}
 	return strings.Join(parts, "; ")
+}
+
+// remedies is each cause's fix: ModPathError's sentence names its own.
+func (e *LaunchDriftError) remedies() []string {
+	var out []string
+	switch {
+	case e.StillDeployed > 0:
+		// profile apply also deploys what is enabled.
+		out = append(out, fmt.Sprintf("run `lmm profile apply --game %s` to take the disabled mods down", ShellQuoteArg(e.GameID)))
+	case e.Undeployed > 0:
+		out = append(out, "deploy first (`lmm launch --deploy`)")
+	}
+	if e.ModPathError != "" {
+		out = append(out, "fix the mod_path as above")
+	}
+	return out
 }
 
 // Details is the --json envelope's and the web API's data: the counts a
@@ -165,6 +194,9 @@ type Launcher struct {
 	LookPath func(file string) (string, error)
 	// Getenv reads lmm's own environment.
 	Getenv func(key string) string
+	// Environ is lmm's whole environment, as KEY=VALUE - what a detached
+	// game inherits, less every API key (launchEnviron).
+	Environ func() []string
 	// ManagerEnv returns the names of the variables the systemd user
 	// manager hands its services (UserUnits.ManagerEnvironmentNames). An
 	// error means no user manager answers.
@@ -173,8 +205,8 @@ type Launcher struct {
 	// the unit has started.
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
 	// Detach starts argv in its own session with stdio on /dev/null, with
-	// env added to lmm's environment, in dir when it is not empty, and
-	// does not wait for it.
+	// env as its whole environment, in dir when it is not empty, and does
+	// not wait for it.
 	Detach func(argv, env []string, dir string) error
 	// SteamApp finds the Steam app installed at an install path; nil finds
 	// none.
@@ -190,6 +222,7 @@ func NewLauncher(steamApp func(installPath string) (SteamApp, bool)) *Launcher {
 	return &Launcher{
 		LookPath: exec.LookPath,
 		Getenv:   os.Getenv,
+		Environ:  os.Environ,
 		ManagerEnv: func(ctx context.Context) (map[string]bool, error) {
 			units := &UserUnits{Run: runCommand}
 			return units.ManagerEnvironmentNames(ctx)
@@ -209,7 +242,7 @@ func detach(argv, env []string, dir string) error {
 	}
 	defer devNull.Close() //nolint:errcheck // the child has its own copy
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = env
 	cmd.Dir = dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devNull, devNull, devNull
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -437,6 +470,37 @@ func (s *Service) ResolveLaunch(ctx context.Context, game *domain.Game, profile 
 // cookie somewhere other than ~/.Xauthority: DISPLAY alone cannot connect.
 var launchForwardedEnv = []string{"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_CURRENT_DESKTOP", "XAUTHORITY"}
 
+// isCredentialEnv reports whether the environment variable name can carry a
+// mod source's API key, which no game - nor any of its mods' code - is
+// given: the LMM_<ID>_API_KEY any source reads (app.EnvKeyForSourceID), or
+// a registered source's own variable (source.EnvKeyProvider, such as
+// NEXUSMODS_API_KEY).
+func (s *Service) isCredentialEnv() func(name string) bool {
+	own := map[string]bool{}
+	for _, src := range s.ListSources() {
+		if p, ok := src.(source.EnvKeyProvider); ok && p.EnvKey() != "" {
+			own[p.EnvKey()] = true
+		}
+	}
+	return func(name string) bool {
+		return own[name] || strings.HasPrefix(name, "LMM_") && strings.HasSuffix(name, "_API_KEY")
+	}
+}
+
+// launchEnviron is a detached game's environment: lmm's own - the PATH,
+// HOME, display, locale and Steam/Proton variables a game needs, which an
+// allow-list could not name - less every credential variable, plus extra.
+func launchEnviron(environ []string, isCredential func(string) bool, extra []string) []string {
+	env := make([]string, 0, len(environ)+len(extra))
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if !isCredential(name) {
+			env = append(env, kv)
+		}
+	}
+	return append(env, extra...)
+}
+
 // launchDisplayEnv are the variables of which at least one must reach the
 // game.
 var launchDisplayEnv = []string{"DISPLAY", "WAYLAND_DISPLAY"}
@@ -495,7 +559,7 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 			return nil, drift
 		}
 		result.Undeployed = drift.Undeployed
-		result.Warnings = append(result.Warnings, "launching anyway: "+drift.drift())
+		result.Warnings = append(result.Warnings, "launching anyway: "+drift.drift()+"; "+strings.Join(drift.remedies(), "; "))
 	}
 
 	// A command starts in the game's folder, as a Wine or EXE-style
@@ -515,21 +579,27 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 		return nil, &LaunchEnvironmentError{Missing: slices.Clone(launchDisplayEnv)}
 	}
 
+	isCredential := s.isCredentialEnv()
 	if systemdErr != nil {
 		result.Command = r.argv
 		if opts.DryRun {
 			return result, nil
 		}
-		if err := l.Detach(r.argv, gameEnv, dir); err != nil {
+		if err := l.Detach(r.argv, launchEnviron(l.Environ(), isCredential, gameEnv), dir); err != nil {
 			return nil, fmt.Errorf("starting %s: %w", r.argv[0], err)
 		}
 		return result, nil
 	}
 
 	result.Unit = launchUnitName(game.ID, l.UnitSuffix())
-	args := []string{"--user", "--collect", "--unit=" + result.Unit, "--description=lmm: " + game.Name}
+	// Type=exec (systemd 240) has systemd-run return once the program has
+	// really been executed, not at fork: a program that cannot start, or a
+	// working directory that is gone, is systemd-run failing - and this
+	// launch failing - rather than "Started" over a unit that died. It
+	// still never waits for the game.
+	args := []string{"--user", "--collect", "--service-type=exec", "--unit=" + result.Unit, "--description=lmm: " + game.Name}
 	for _, k := range launchForwardedEnv {
-		if v := l.Getenv(k); v != "" {
+		if v := l.Getenv(k); v != "" && !isCredential(k) {
 			args = append(args, "--setenv="+k+"="+v)
 		}
 	}
@@ -539,10 +609,14 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 	if dir != "" {
 		args = append(args, "--working-directory="+dir)
 	}
-	// The service manager expands $VAR in a unit's command line; "$$" is
-	// a literal "$", so the game gets its argv as games.yaml wrote it.
-	args = append(args, "--")
-	for _, a := range r.argv {
+	// The service manager expands $VAR in a unit's arguments; "$$" is a
+	// literal "$", so the game gets its argv as games.yaml wrote it. The
+	// program is not expanded: systemd-run looks it up as written (a "$$"
+	// there names a file that does not exist) and the manager executes
+	// that path. Escaping works on every systemd, where
+	// --expand-environment=no needs 254.
+	args = append(args, "--", r.argv[0])
+	for _, a := range r.argv[1:] {
 		args = append(args, strings.ReplaceAll(a, "$", "$$"))
 	}
 	result.Command = append([]string{"systemd-run"}, args...)
@@ -550,7 +624,7 @@ func (s *Service) Launch(ctx context.Context, game *domain.Game, opts LaunchOpti
 		return result, nil
 	}
 	if _, err := l.Run(ctx, "systemd-run", args...); err != nil {
-		return nil, fmt.Errorf("starting %s with systemd-run: %w", game.Name, err)
+		return nil, fmt.Errorf("starting %s (%s) as systemd user unit %s: %w; see `journalctl --user -u %s`", game.Name, r.argv[0], result.Unit, err, result.Unit)
 	}
 	return result, nil
 }
@@ -613,7 +687,16 @@ func (s *Service) launchDrift(ctx context.Context, game *domain.Game, profile st
 	if n == 0 && modPathErr == "" {
 		return nil, nil
 	}
-	return &LaunchDriftError{GameID: game.ID, Profile: profile, Undeployed: n, ModPathError: modPathErr}, nil
+	still := 0
+	for _, m := range mods {
+		if !m.External && m.Deployed && !m.Enabled {
+			still++
+		}
+	}
+	return &LaunchDriftError{
+		GameID: game.ID, Profile: profile, Undeployed: n, StillDeployed: still, ModPathError: modPathErr,
+		DeployClears: still == 0 && modPathErr == "",
+	}, nil
 }
 
 // CountUndeployed counts the mods whose desired state (Enabled) disagrees
