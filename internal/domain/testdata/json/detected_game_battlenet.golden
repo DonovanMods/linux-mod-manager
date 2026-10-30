@@ -1,0 +1,18 @@
+{
+  "detector": "battlenet",
+  "detector_id": "wow_classic",
+  "slug": "wow-classic",
+  "name": "World of Warcraft Classic",
+  "install_path": "/home/user/Games/battlenet/drive_c/Program Files (x86)/World of Warcraft/_classic_",
+  "mod_path": "/home/user/Games/battlenet/drive_c/Program Files (x86)/World of Warcraft/_classic_/Interface/AddOns",
+  "sources": {
+    "curseforge": "1"
+  },
+  "known": true,
+  "wine_prefix": "/home/user/Games/battlenet",
+  "curseforge": {
+    "game_version_types": [
+      79434
+    ]
+  }
+}

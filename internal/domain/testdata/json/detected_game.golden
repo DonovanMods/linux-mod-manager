@@ -1,4 +1,6 @@
 {
+  "detector": "steam",
+  "detector_id": "489830",
   "steam_app_id": "489830",
   "slug": "skyrim-se",
   "name": "Skyrim Special Edition",

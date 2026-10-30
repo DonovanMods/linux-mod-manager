@@ -1,4 +1,6 @@
 {
+  "detector": "steam",
+  "detector_id": "1149460",
   "steam_app_id": "1149460",
   "slug": "icarus",
   "name": "Icarus",

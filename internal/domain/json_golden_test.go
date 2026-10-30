@@ -322,6 +322,8 @@ func TestJSONGoldens(t *testing.T) {
 			// supplies, plus #206's "known": true.
 			"detected_game",
 			domain.DetectedGame{
+				Detector:    domain.DetectorSteam,
+				DetectorID:  "489830",
 				SteamAppID:  "489830",
 				Slug:        "skyrim-se",
 				Name:        "Skyrim Special Edition",
@@ -342,6 +344,8 @@ func TestJSONGoldens(t *testing.T) {
 			// this row must default the mod path itself and say so.
 			"detected_game_unknown",
 			domain.DetectedGame{
+				Detector:    domain.DetectorSteam,
+				DetectorID:  "526870",
 				SteamAppID:  "526870",
 				Slug:        "satisfactory",
 				Name:        "Satisfactory",
@@ -358,6 +362,8 @@ func TestJSONGoldens(t *testing.T) {
 			// goldens above byte-identical.
 			"detected_game_loader",
 			domain.DetectedGame{
+				Detector:    domain.DetectorSteam,
+				DetectorID:  "892970",
 				SteamAppID:  "892970",
 				Slug:        "valheim",
 				Name:        "Valheim",
@@ -380,6 +386,8 @@ func TestJSONGoldens(t *testing.T) {
 			// migration.
 			"detected_game_adapter",
 			domain.DetectedGame{
+				Detector:    domain.DetectorSteam,
+				DetectorID:  "1149460",
 				SteamAppID:  "1149460",
 				Slug:        "icarus",
 				Name:        "Icarus",
@@ -397,6 +405,8 @@ func TestJSONGoldens(t *testing.T) {
 			// to its sources map, and the item count that justified it.
 			"detected_game_workshop",
 			domain.DetectedGame{
+				Detector:      domain.DetectorSteam,
+				DetectorID:    "1133870",
 				SteamAppID:    "1133870",
 				Slug:          "space-engineers-2",
 				Name:          "Space Engineers 2",
@@ -405,6 +415,27 @@ func TestJSONGoldens(t *testing.T) {
 				Sources:       map[string]string{"steamworkshop": "1133870"},
 				Known:         true,
 				WorkshopItems: 30,
+			},
+		},
+		{
+			// #545: a Battle.net row. Its identity is the detector and the
+			// product code - there is no Steam app id, so that member is
+			// absent - and it carries the Wine prefix it was found in and
+			// the catalog's CurseForge flavor (#544). Its launch prefill is
+			// never on the wire (json:"-", like domain.Game's).
+			"detected_game_battlenet",
+			domain.DetectedGame{
+				Detector:    domain.DetectorBattleNet,
+				DetectorID:  "wow_classic",
+				Slug:        "wow-classic",
+				Name:        "World of Warcraft Classic",
+				InstallPath: "/home/user/Games/battlenet/drive_c/Program Files (x86)/World of Warcraft/_classic_",
+				ModPath:     "/home/user/Games/battlenet/drive_c/Program Files (x86)/World of Warcraft/_classic_/Interface/AddOns",
+				Sources:     map[string]string{"curseforge": "1"},
+				Known:       true,
+				WinePrefix:  "/home/user/Games/battlenet",
+				CurseForge:  &domain.GameCurseForge{GameVersionTypes: []int{79434}},
+				Launch:      &domain.GameLaunch{Via: "battlenet"},
 			},
 		},
 		{

@@ -2694,7 +2694,7 @@ func TestJSONGoldens(t *testing.T) {
 			"game_detect_entry",
 			core.GameDetectEntry{
 				DetectedGame: domain.DetectedGame{
-					SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+					Detector: domain.DetectorSteam, DetectorID: "489830", SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
 					InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
 					NexusID: "skyrimspecialedition", Known: true,
 				},
@@ -2711,7 +2711,7 @@ func TestJSONGoldens(t *testing.T) {
 			"game_detect_entry_unknown",
 			core.GameDetectEntry{
 				DetectedGame: domain.DetectedGame{
-					SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory",
+					Detector: domain.DetectorSteam, DetectorID: "526870", SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory",
 					InstallPath: "/games/satisfactory",
 				},
 			},
@@ -2724,7 +2724,7 @@ func TestJSONGoldens(t *testing.T) {
 			core.GameDetectListing{
 				Games: []core.GameDetectEntry{{
 					DetectedGame: domain.DetectedGame{
-						SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+						Detector: domain.DetectorSteam, DetectorID: "489830", SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
 						InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
 						NexusID: "skyrimspecialedition", Known: true,
 					},
@@ -2735,7 +2735,7 @@ func TestJSONGoldens(t *testing.T) {
 					// kinds in scan order; the known rows keep 1..N and the
 					// unknown ones carry no index at all (#206).
 					DetectedGame: domain.DetectedGame{
-						SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory",
+						Detector: domain.DetectorSteam, DetectorID: "526870", SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory",
 						InstallPath: "/games/satisfactory",
 					},
 				}},

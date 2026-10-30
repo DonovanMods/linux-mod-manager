@@ -55,7 +55,33 @@ func GameFromDetected(g domain.DetectedGame) (*domain.Game, error) {
 		DeployMode:  deployMode,
 		Adapter:     g.Adapter,
 		Loader:      cloneDetectedLoader(g.Loader),
+		CurseForge:  cloneCurseForge(g.CurseForge),
+		Launch:      cloneLaunch(g.Launch),
 	}, nil
+}
+
+// cloneCurseForge copies a candidate's CurseForge block (#544, carried by
+// #545's catalog), for cloneDetectedLoader's reason.
+func cloneCurseForge(cf *domain.GameCurseForge) *domain.GameCurseForge {
+	if cf == nil {
+		return nil
+	}
+	return &domain.GameCurseForge{GameVersionTypes: slices.Clone(cf.GameVersionTypes)}
+}
+
+// cloneLaunch copies a candidate's launch prefill (#545), for
+// cloneDetectedLoader's reason.
+func cloneLaunch(launch *domain.GameLaunch) *domain.GameLaunch {
+	if launch == nil {
+		return nil
+	}
+	clone := *launch
+	clone.Command = slices.Clone(launch.Command)
+	if launch.BattleNet != nil {
+		bn := *launch.BattleNet
+		clone.BattleNet = &bn
+	}
+	return &clone
 }
 
 // cloneDetectedLoader copies a candidate's loader declaration (#416) so the
@@ -107,6 +133,9 @@ func cloneDetectedLoader(loader *domain.GameLoader) *domain.GameLoader {
 //     BepInEx game writes the same `loader:` block `game detect` does and
 //     the first plugin install is not refused. An explicit LoaderSpec wins,
 //     the way every other field here does.
+//   - CurseForge and Launch come from the candidate when the caller set
+//     none (#545): a WoW flavor's CurseForge game version type, and a
+//     Battle.net game's launch through its prefix.
 //   - LinkMethod is passed through untouched; its zero value already means
 //     symlink.
 func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
@@ -136,6 +165,12 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 		case d.NexusID != "":
 			spec.Sources = map[string]string{"nexusmods": d.NexusID}
 		}
+	}
+	if spec.CurseForge == nil {
+		spec.CurseForge = cloneCurseForge(d.CurseForge)
+	}
+	if spec.Launch == nil {
+		spec.Launch = cloneLaunch(d.Launch)
 	}
 	if spec.Loader == nil && d.Loader != nil {
 		spec.Loader = &LoaderSpec{
@@ -184,13 +219,28 @@ func ConfiguredGameFor(existing map[string]*domain.Game, detected domain.Detecte
 	if game, ok := existing[detected.Slug]; ok {
 		return game
 	}
-	if detected.InstallPath == "" {
+	if match := configuredAt(existing, detected.InstallPath, func(g *domain.Game) string { return g.InstallPath }); match != nil {
+		return match
+	}
+	// #545: a WoW root holds a folder per flavor, and a game added by hand
+	// before detection may name the ROOT as its install path - then its
+	// mod path is the only thing that says which flavor it is. A mod path
+	// names one game's mods whatever the install path says, so a match
+	// there is that game too.
+	return configuredAt(existing, detected.ModPath, func(g *domain.Game) string { return g.ModPath })
+}
+
+// configuredAt is the games.yaml game whose path (as field reads it)
+// resolves to the same directory as want, the lowest id on a tie; nil when
+// want is empty or no game has it.
+func configuredAt(existing map[string]*domain.Game, want string, field func(*domain.Game) string) *domain.Game {
+	if want == "" {
 		return nil
 	}
-	want := resolvedPath(detected.InstallPath)
+	want = resolvedPath(want)
 	var match *domain.Game
 	for id, game := range existing {
-		if game == nil || game.InstallPath == "" || resolvedPath(game.InstallPath) != want {
+		if game == nil || field(game) == "" || resolvedPath(field(game)) != want {
 			continue
 		}
 		if match == nil || id < match.ID {
@@ -240,29 +290,47 @@ func (s *Service) PrefillGameSpecFromDetected(d domain.DetectedGame, overrides G
 	return spec, nil
 }
 
-// FindDetectedGame resolves a Steam app id against a scan - the value
+// FindDetectedGame resolves a detected game against a scan - the value
 // `lmm game add --from-detected` takes and POST /api/v1/games carries as
-// from_steam_app_id. The miss is a GameSpecError naming that wire field,
-// so a web form marks the offending input and the CLI prints a sentence
-// that names the app id it could not find.
+// from_steam_app_id. It is FindDetectedGameBy naming that wire field: a
+// bare Steam app id, or since #545 "<detector>:<id>".
+func FindDetectedGame(games []domain.DetectedGame, ref string) (domain.DetectedGame, error) {
+	return FindDetectedGameBy(games, "from_steam_app_id", ref)
+}
+
+// FindDetectedGameBy resolves ref - "<detector>:<id>" ("battlenet:wow",
+// "steam:489830") or a bare Steam app id, domain.ParseDetectedRef's two
+// forms - against a scan (#545). A miss, or a ref that is neither form, is
+// a GameSpecError naming field, the request field the caller read ref
+// from, so a web form marks the offending input and the CLI prints a
+// sentence that names the value it could not find.
 //
 // The reason is deliberately frontend-neutral (#206 review Minor 7): both
 // callers already scan with IncludeUnknown:true before reaching this
-// point, so a miss here means the app id genuinely is not installed, or
-// was uninstalled between an earlier scan and this one - not merely that
-// the caller scanned too narrowly. A frontend that has something more
+// point, so a miss here means the game genuinely is not installed, or was
+// uninstalled between an earlier scan and this one - not merely that the
+// caller scanned too narrowly. A frontend that has something more
 // specific to offer (the SPA's stale-scan banner sits beside its own
 // Rescan button) says so itself, rather than getting a baked-in CLI-shaped
 // suggestion in every response.
-func FindDetectedGame(games []domain.DetectedGame, appID string) (domain.DetectedGame, error) {
-	appID = strings.TrimSpace(appID)
+func FindDetectedGameBy(games []domain.DetectedGame, field, ref string) (domain.DetectedGame, error) {
+	ref = strings.TrimSpace(ref)
+	detector, id, err := domain.ParseDetectedRef(ref)
+	if err != nil {
+		return domain.DetectedGame{}, newGameSpecError(field, ref, err.Error())
+	}
+	want := detector + ":" + id
 	for _, g := range games {
-		if g.SteamAppID == appID {
+		if g.Ref() == want {
 			return g, nil
 		}
 	}
-	return domain.DetectedGame{}, newGameSpecError("from_steam_app_id", appID,
-		"no installed Steam game has that app id - it may have been uninstalled since the scan")
+	if detector == domain.DetectorSteam {
+		return domain.DetectedGame{}, newGameSpecError(field, ref,
+			"no installed Steam game has that app id - it may have been uninstalled since the scan")
+	}
+	return domain.DetectedGame{}, newGameSpecError(field, ref,
+		"no installed game was detected as "+want+" - it may have been uninstalled since the scan")
 }
 
 // GameDetectResult is ApplyGameDetect's outcome: which games were written
@@ -841,8 +909,8 @@ func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]dom
 			return nil, err
 		}
 		if !games[idx].Addable() {
-			return nil, fmt.Errorf("%w: %s (Steam app id %s) - it is installed, but nothing tells lmm where it keeps its mods, so it has to be added from the detected game with the source and mod path filled in",
-				ErrUnknownDetectedGame, games[idx].Slug, games[idx].SteamAppID)
+			return nil, fmt.Errorf("%w: %s (detected as %s) - it is installed, but nothing tells lmm where it keeps its mods, so it has to be added from the detected game with the source and mod path filled in",
+				ErrUnknownDetectedGame, games[idx].Slug, games[idx].Ref())
 		}
 		if seen[idx] {
 			return nil, fmt.Errorf("duplicate selection %q", sel)
