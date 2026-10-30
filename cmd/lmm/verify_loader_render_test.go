@@ -84,3 +84,28 @@ func TestRenderVerifySkipped_AnAdapterRowSaysItIsTheAdapter(t *testing.T) {
 	})
 	assert.Equal(t, "? Mod m1 - could not check file count: db locked\n", out)
 }
+
+// TestRenderVerifySkipped_AnAuthRefusalNamesTheKeyAndTheFix (#582): a
+// version check the source refused for want of a key printed "source
+// unreachable" - wrong, and with no next step. It names the missing key
+// and the command that stores one; a genuinely unreachable source keeps
+// its own line.
+func TestRenderVerifySkipped_AnAuthRefusalNamesTheKeyAndTheFix(t *testing.T) {
+	out := captureStdout(t, func() error {
+		renderVerifyFinding(core.VerifyEvent{Finding: core.VerifyFinding{
+			Status: "skipped", ModID: "m1", ModName: "Auctionator",
+			Note:          "could not check version: getting mod files: authentication required: CurseForge API key required",
+			FixableReason: "CurseForge needs an API key", AuthSource: "curseforge",
+		}})
+		return nil
+	})
+	assert.Equal(t, "? Auctionator - could not check version: CurseForge needs an API key (run: lmm auth login curseforge)\n", out)
+
+	out = captureStdout(t, func() error {
+		renderVerifyFinding(core.VerifyEvent{Finding: core.VerifyFinding{
+			Status: "skipped", ModID: "m2", ModName: "Other", Note: "could not check version: boom",
+		}})
+		return nil
+	})
+	assert.Equal(t, "? Other - could not check version (source unreachable)\n", out)
+}

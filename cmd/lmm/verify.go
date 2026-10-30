@@ -677,6 +677,12 @@ func renderVerifySkipped(f core.VerifyFinding) {
 	case f.Note == "" && f.FileID != "":
 		fmt.Printf("? Unknown mod %s - SKIPPED\n", f.ModID)
 
+	// versionPass: the source refused GetModFiles for want of a key
+	// (#582) - name the key and the command that stores one, not
+	// "unreachable", which it was not.
+	case f.AuthSource != "":
+		fmt.Printf("%s %s - could not check version: %s (run: lmm auth login %s)\n", colorYellow("?"), f.ModName, f.FixableReason, f.AuthSource)
+
 	// versionPass: GetModFiles failed (source unreachable) - text mode
 	// deliberately drops the error detail; --json's Note carries it.
 	case strings.HasPrefix(f.Note, "could not check version: "):
