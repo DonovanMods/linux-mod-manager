@@ -378,6 +378,32 @@ function dropStaleHomeSlices(context) {
   });
 }
 
+/** settleLoad drops a finished load's progress, and its loading entry while
+ * it is still the slice's newest - a newer load owns it otherwise. */
+function settleLoad(key, token) {
+  const { loading, readProgress } = store.get();
+  const patch = {};
+  if (token in readProgress) {
+    patch.readProgress = { ...readProgress };
+    delete patch.readProgress[token];
+  }
+  if (loading[key]?.token === token) {
+    patch.loading = { ...loading };
+    delete patch.loading[key];
+  }
+  if (Object.keys(patch).length > 0) store.set(patch);
+}
+
+// TRACKED_LOADS is every slice loadSlice holds a loading entry for: the
+// documents Mission Control's loading lines and settled marker read.
+const TRACKED_LOADS = new Set([
+  "mods",
+  "updates",
+  "health",
+  "conflicts",
+  "snapshots",
+]);
+
 // loadSeq numbers every slice load, so each has its own id (loading.js).
 let loadSeq = 0;
 
@@ -410,7 +436,14 @@ async function loadSlice(
 ) {
   loadSeq += 1;
   const token = `r${loadSeq}-${Date.now().toString(36)}`;
-  store.set({ loading: { ...store.get().loading, [key]: { token } } });
+  // Only Mission Control's own documents name themselves while they load.
+  // Any other slice (the profiles modal's listing) is left out on purpose:
+  // its reload runs from a mount effect, where a synchronous store write
+  // re-renders the modal mid-commit and re-fires that same effect.
+  const tracked = TRACKED_LOADS.has(key);
+  if (tracked) {
+    store.set({ loading: { ...store.get().loading, [key]: { token } } });
+  }
   try {
     const value = await get(
       scoped(
@@ -425,19 +458,7 @@ async function loadSlice(
       [key]: message,
     });
   } finally {
-    // This load's progress goes either way; its loading entry only while
-    // it is still the slice's newest - a newer load owns it otherwise.
-    const { loading, readProgress } = store.get();
-    const patch = {};
-    if (token in readProgress) {
-      patch.readProgress = { ...readProgress };
-      delete patch.readProgress[token];
-    }
-    if (loading[key]?.token === token) {
-      patch.loading = { ...loading };
-      delete patch.loading[key];
-    }
-    if (Object.keys(patch).length > 0) store.set(patch);
+    if (tracked) settleLoad(key, token);
   }
 }
 
