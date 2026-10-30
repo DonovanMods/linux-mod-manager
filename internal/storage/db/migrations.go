@@ -50,7 +50,6 @@ func (d *DB) migrate(ctx context.Context) error {
 		d.migrateV19,
 		migrateV20,
 		migrateV21,
-		migrateV22,
 	}
 
 	// The ordinary open: the schema is current, and finding that out takes
@@ -232,7 +231,6 @@ func migrateV8(ctx context.Context, d migrationExec) error {
 	// Add manual_download column to track mods that require manual download
 	// (e.g., CurseForge mods with API restrictions)
 	// Default 0 = false (can be auto-downloaded)
-	// Only ever read as "adopted in place"; migrateV22 renames it so (#516).
 	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN manual_download INTEGER DEFAULT 0`)
 	return err
 }
@@ -561,26 +559,5 @@ func migrateV21(ctx context.Context, d migrationExec) error {
 			PRIMARY KEY (game_id, source_id, mod_id)
 		)
 	`)
-	return err
-}
-
-// migrateV22 renames installed_mods.manual_download to adopted_in_place
-// (#516). The column was only ever read as "adopted in place by `lmm import`
-// scan mode, so it may never have had a cache entry" (verify's records and
-// version passes), while its name said "the source will not serve this
-// file" - the fact migrateV21's manual_only_mods holds. A rename keeps every
-// row's value, so each row means exactly what it was read as before.
-//
-// Renamed only when the old name is still there, so a schema whose recorded
-// version was rolled back re-applies this cleanly.
-func migrateV22(ctx context.Context, q migrationExec) error {
-	var have int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('installed_mods') WHERE name = 'manual_download'`).Scan(&have); err != nil {
-		return fmt.Errorf("inspecting installed_mods: %w", err)
-	}
-	if have == 0 {
-		return nil
-	}
-	_, err := q.ExecContext(ctx, `ALTER TABLE installed_mods RENAME COLUMN manual_download TO adopted_in_place`)
 	return err
 }

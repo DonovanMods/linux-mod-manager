@@ -247,8 +247,10 @@ type InstalledMod struct {
 	// not "the source will not serve this file" - that is Mod.ManualOnly
 	// (#543).
 	//
-	// The wire name is the column's old one, kept so every --json document
-	// and /api/v1 reader sees exactly what it did before the rename.
+	// The wire name and the installed_mods column both keep the historical
+	// name manual_download, so every --json document and /api/v1 reader
+	// sees what it did before the Go rename, and an older lmm can still
+	// read the database.
 	AdoptedInPlace bool `json:"manual_download"`
 
 	ConvertPaks bool `json:"convert_paks"` // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)

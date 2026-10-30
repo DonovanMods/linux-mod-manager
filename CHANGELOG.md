@@ -9,14 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`installed_mods.manual_download` is renamed `adopted_in_place` (#516).**
-  The column was only ever read as "adopted in place by `lmm import` scan
-  mode, so it may have no cache entry", while its name said "the source
-  won't serve this file", which is #543's separate manual-only record. A
-  database migration renames it and keeps every row's value, so nothing an
-  existing row does changes. The `--json` and `/api/v1` field keeps its old
-  name, `manual_download`, and its meaning; `manual_only` is still the
-  "download it by hand" fact.
+- **The installed-mod "adopted in place" flag is named for what it means
+  (#516).** `InstalledMod.ManualDownload` is now `AdoptedInPlace`: it was
+  only ever read as "adopted in place by `lmm import` scan mode, so it may
+  have no cache entry", while its name said "the source won't serve this
+  file", which is #543's separate manual-only record. The database column
+  keeps its historical name, `manual_download`, so an older lmm can still
+  read the database, and the `--json` and `/api/v1` field keeps that name
+  and its meaning too; `manual_only` is still the "download it by hand"
+  fact.
 
 ### Fixed
 
