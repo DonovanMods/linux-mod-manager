@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -48,11 +49,40 @@ func TestMain(m *testing.M) {
 	// refused before it is sent, and any attempt fails the run.
 	githubAttempts := testutil.GuardGitHub()
 	code := m.Run()
+	runAfterTests()
 	if attempts := githubAttempts(); len(attempts) > 0 {
 		fmt.Fprintf(os.Stderr, "FAIL: the test suite tried to reach GitHub:\n  %s\n", strings.Join(attempts, "\n  "))
 		code = 1
 	}
 	os.Exit(code)
+}
+
+// afterTests are what RunAfterTests registered, run once m.Run returns.
+var (
+	afterTestsMu sync.Mutex
+	afterTests   []func()
+)
+
+// RunAfterTests registers f to run once every test in the binary has
+// finished, before TestMain exits. It is how a resource the external
+// serve_test package shares across tests - the browser E2E suite's one
+// Chromium (#577) - is released: that package cannot reach TestMain, and a
+// test's own t.Cleanup ends with the test that registered it. Exported from
+// a _test.go file, so only the test binary has it.
+func RunAfterTests(f func()) {
+	afterTestsMu.Lock()
+	defer afterTestsMu.Unlock()
+	afterTests = append(afterTests, f)
+}
+
+// runAfterTests runs every RunAfterTests registration, last first.
+func runAfterTests() {
+	afterTestsMu.Lock()
+	defer afterTestsMu.Unlock()
+	for i := len(afterTests) - 1; i >= 0; i-- {
+		afterTests[i]()
+	}
+	afterTests = nil
 }
 
 // TestMain_DisablesCoreDumps pins the limit TestMain sets (#561), so a
