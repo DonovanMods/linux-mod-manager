@@ -34,13 +34,15 @@ Every prompt also has a flag, so the whole command runs non-interactively
 no flag supplied are prompted for, and under --json a missing value is an
 error naming the flag rather than a prompt.
 
-If the game is already installed via Steam, --from-detected with the
-Steam app id prefills nearly everything from the install itself (#206):
-the display name, the install path, the local game id, and either the
-curated mod path and source mapping (for a game in lmm's known-games
-list) or, for one that is not, the default mod path --mod-path
-describes. List the app ids with 'lmm game detect --include-unknown'.
-Every other flag still wins over the prefill, so
+If the game is already installed via Steam or Battle.net, --from-detected
+prefills nearly everything from the install itself (#206, #545): the
+display name, the install path, the local game id, and either the curated
+mod path and source mapping (for a game in lmm's known-games list) or, for
+one that is not, the default mod path --mod-path describes. It takes a
+Steam app id, or a detected reference such as battlenet:wow_classic; list
+them with 'lmm game detect --include-unknown'. A Battle.net game also gets
+its CurseForge flavor and a launch through the Battle.net client in its
+Wine prefix. Every other flag still wins over the prefill, so
 --mod-path/--game-id/--name correct a guess; for a game with no curated
 sources, name one with --source, and either give --id or let the source's
 catalog be searched by the game's own name (--pick chooses among the
@@ -94,7 +96,8 @@ Examples:
   lmm game detect --include-unknown          # list installed app ids
   lmm game add --from-detected 526870 --source curseforge
   # Searches CurseForge for "Satisfactory" and prints the matches
-  lmm game add --from-detected 526870 --source curseforge --pick 1`,
+  lmm game add --from-detected 526870 --source curseforge --pick 1
+  lmm game add --from-detected battlenet:wow_classic`,
 	Args: cobra.NoArgs,
 	RunE: runGameAdd,
 }
@@ -140,7 +143,7 @@ func init() {
 	gameAddCmd.Flags().StringVar(&gameAddLoaderBootstrap, "loader-bootstrap", "",
 		"how the loader is injected: native or proton (default: read from the install directory)")
 	gameAddCmd.Flags().StringVar(&gameAddFromDetected, "from-detected", "",
-		"Steam app id of an installed game to prefill from (list them with 'lmm game detect --include-unknown')")
+		"installed game to prefill from: a Steam app id, or a reference such as battlenet:wow (list them with 'lmm game detect --include-unknown')")
 	gameAddCmd.MarkFlagsMutuallyExclusive("id", "query")
 	markDirectoryFlags(gameAddCmd, "path", "mod-path")
 }
@@ -288,14 +291,14 @@ func resolveGameAddIdentity(ctx context.Context, cmd *cobra.Command, reader *buf
 	}
 }
 
-// detectedGameCandidate resolves --from-detected against a live Steam scan
+// detectedGameCandidate resolves --from-detected against a live scan
 // that INCLUDES unknown games - the whole point of the flag is the games
 // no known-games entry covers. The scan's own warnings go to stderr, never
 // into stdout's one document (Ruling 15); the add's document is the
 // core.GameListEntry row.
 func detectedGameCandidate(ctx context.Context, cmd *cobra.Command, service *core.Service) (domain.DetectedGame, error) {
 	if !jsonOutput {
-		cmd.Println("Scanning Steam libraries...")
+		cmd.Println("Scanning Steam libraries and Wine prefixes...")
 	}
 	// The service's own logger, not a second one built from the same
 	// --log-level (#368 review nit 10): app.Open was handed exactly this

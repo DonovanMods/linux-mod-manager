@@ -374,3 +374,28 @@ func TestInit_NextStepsBlockIsAligned(t *testing.T) {
 		})
 	}
 }
+
+// #545: init's scan lists Battle.net games too, and a WoW flavor the user
+// already configured under another id - the owner's own `wow`, at the
+// _forever_ folder - is marked configured rather than offered as new.
+func TestInit_AConfiguredBattleNetGameIsMarkedConfigured(t *testing.T) {
+	svc := setupInitTest(t)
+	home := os.Getenv("HOME")
+	t.Setenv("WINEPREFIX", "")
+	t.Setenv("STEAM_ROOT", "")
+	prefix := filepath.Join(home, "Games", "battlenet")
+	root := filepath.Join(prefix, "drive_c", "Program Files (x86)", "World of Warcraft")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "_forever_", "Interface", "AddOns"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(prefix, "system.reg"), []byte("WINE REGISTRY Version 2\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".build.info"), []byte("Branch!STRING:0|Active!DEC:1|Product!STRING:0\nus|1|wowf\n"), 0o644))
+	install := filepath.Join(root, "_forever_")
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+		ID: "wow", Name: "World of Warcraft - Forever", InstallPath: install,
+		ModPath: filepath.Join(install, "Interface", "AddOns"), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"curseforge": "1"},
+	}))
+
+	out := runInitWith(t, svc, "y\nnone\nn\nn\nn\nn\n")
+	assert.Contains(t, out, "World of Warcraft - Forever (wow-forever) [already configured]")
+	assert.Contains(t, out, "Nothing to add.")
+}
