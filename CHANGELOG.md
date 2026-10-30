@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI draws its text in the same face on every machine (#523).**
+  It used the host's own `system-ui` font, so the page looked different, and
+  laid out differently, from one machine to the next. `lmm serve` now
+  bundles [Inter](https://github.com/rsms/inter) 4.1 for text and
+  [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) 2.304 for
+  paths, ids and code, embedded in the binary and served from it like the
+  rest of the UI: nothing is fetched from the network or installed into
+  system font directories, and the system faces stay as fallbacks. Both are
+  SIL Open Font License 1.1, shipped unmodified; their license texts are in
+  `THIRD_PARTY_NOTICES`, and the AUR package's license list now names
+  `OFL-1.1`. The binary is about 0.9 MB larger.
+
 ### Fixed
 
 - **A source that needs an API key says so, and links to where it goes

@@ -54,6 +54,21 @@
       the request a browser makes without consulting this element (spa.go).
     -->
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <!--
+      The bundled text face (issue 523), asked for before the stylesheet is even
+      parsed so that, from a local server, it is in hand by first paint and
+      the page does not visibly swap from the fallback. Only the upright
+      Inter: it is the one face every screen uses. crossorigin is required
+      even same-origin - fonts are always fetched in CORS mode, and a preload
+      without it is a second, wasted download.
+    -->
+    <link
+      rel="preload"
+      href="/vendor/InterVariable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>

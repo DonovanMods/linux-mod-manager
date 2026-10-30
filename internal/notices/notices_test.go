@@ -2,8 +2,11 @@ package notices
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -40,6 +43,21 @@ modification, are permitted provided that the following conditions are met:
 const apacheFullText = `                                 Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/`
+
+// oflText is the part of the SIL Open Font License that identifies it, with
+// its grant sentence: that sentence opens with the same words as MIT's, so
+// it is also what proves an OFL font does not read as MIT.
+const oflText = `Copyright (c) 2016 The Example Project Authors
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:`
 
 // TestNotices_MatchesCheckedInFile is the drift test (the man-page test's
 // sibling): regenerating the notices in memory must reproduce the
@@ -107,6 +125,8 @@ func TestDetectSPDX(t *testing.T) {
 		{"bsd-2-clause", bsd2Text, []string{"BSD-2-Clause"}},
 		{"apache-2.0 full text", apacheFullText, []string{"Apache-2.0"}},
 		{"apache-2.0 boilerplate beside MIT", mitText + "\n\nLicensed under the Apache License, Version 2.0 (the \"License\");", []string{"Apache-2.0", "MIT"}},
+		{"ofl-1.1, not MIT", oflText, []string{"OFL-1.1"}},
+		{"ofl-1.1 beside a real MIT text", oflText + "\n\n" + mitText, []string{"MIT", "OFL-1.1"}},
 		{"public domain", "SQLite Is Public Domain\n\nAll of the code has been dedicated to the public domain.", []string{"LicenseRef-PublicDomain"}},
 		{"unknown", "All rights reserved. Do not copy.", []string{}},
 	}
@@ -245,8 +265,60 @@ func TestVendoredTableMatchesFileHeaders(t *testing.T) {
 		assert.Contains(t, header.String(), FileName, de.Name())
 	}
 	for f := range accounted {
+		if strings.HasSuffix(f, ".woff2") {
+			continue // TestVendoredFontsMatchFontsDoc's to check
+		}
 		_, err := os.Stat(filepath.Join(dir, f))
 		assert.NoError(t, err, "VendoredSPA names %s but it is not vendored", f)
+	}
+}
+
+// TestVendoredFontsMatchFontsDoc is TestVendoredTableMatchesFileHeaders for
+// the vendored fonts (#523). A .woff2 cannot carry a header comment, so its
+// provenance lives in FontsDoc instead, and this holds the three in
+// lock-step: every font in the directory has a table entry, every entry's
+// fonts exist, and FontsDoc records the table's version and license and,
+// for each file, the SHA-256 of the bytes actually checked in - so a
+// replaced font fails until its provenance is re-recorded.
+func TestVendoredFontsMatchFontsDoc(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(FontsDoc)))
+	require.NoError(t, err)
+	doc := string(raw)
+
+	accounted := map[string]Vendored{}
+	for _, v := range VendoredSPA {
+		for _, f := range v.Files {
+			if strings.HasSuffix(f, ".woff2") {
+				accounted[f] = v
+			}
+		}
+	}
+
+	dir := filepath.Join(repoRoot, filepath.FromSlash(VendorDir))
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	fonts := 0
+	for _, de := range entries {
+		if !strings.HasSuffix(de.Name(), ".woff2") {
+			continue
+		}
+		fonts++
+		v, ok := accounted[de.Name()]
+		require.True(t, ok, "%s is vendored but has no entry in VendoredSPA", de.Name())
+		delete(accounted, de.Name())
+
+		data, err := os.ReadFile(filepath.Join(dir, de.Name()))
+		require.NoError(t, err)
+		sum := fmt.Sprintf("%x", sha256.Sum256(data))
+		assert.Regexp(t, "(?m)^\\| `"+regexp.QuoteMeta(de.Name())+"` .*`"+sum+"`", doc,
+			"%s records %s's name and the SHA-256 of its checked-in bytes on one table row", FontsDoc, de.Name())
+		assert.Contains(t, doc, "Version: "+v.Version+" (pinned)", de.Name())
+		assert.Contains(t, doc, "License: "+v.SPDX+", Copyright", de.Name())
+		assert.Contains(t, doc, "`"+filepath.Base(v.LicenseFile)+"`", de.Name(), "the doc points at the license file")
+	}
+	assert.Positive(t, fonts, "the UI's fonts are vendored")
+	for f := range accounted {
+		t.Errorf("VendoredSPA names %s but it is not vendored", f)
 	}
 }
 
