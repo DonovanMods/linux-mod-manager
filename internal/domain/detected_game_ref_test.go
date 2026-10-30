@@ -59,3 +59,12 @@ func TestParseDetectedRef(t *testing.T) {
 		})
 	}
 }
+
+// A product code is matched as detection reads it - lower case - however
+// the user typed it; a Steam id is digits either way.
+func TestParseDetectedRef_IDIsLowerCased(t *testing.T) {
+	detector, id, err := domain.ParseDetectedRef("battlenet:WoW_Classic")
+	require.NoError(t, err)
+	assert.Equal(t, "battlenet", detector)
+	assert.Equal(t, "wow_classic", id)
+}

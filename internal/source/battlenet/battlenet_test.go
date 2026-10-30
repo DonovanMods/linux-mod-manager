@@ -292,3 +292,44 @@ func TestLoadKnownGames(t *testing.T) {
 	assert.Equal(t, []int{67408}, games["wowf"].CurseForgeVersionTypes)
 	assert.Contains(t, games, "wow", "the embedded entries are still there")
 }
+
+// A system.reg lmm cannot read still leaves the Program Files scan - the
+// only way WoW is found in the owner's prefix - and says what went wrong.
+func TestDetectGames_UnreadableRegistryStillScansProgramFiles(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, "Games", "battlenet")
+	umuPrefix(t, prefix)
+	writeFile(t, filepath.Join(prefix, "system.reg"), "WINE REGISTRY Version 2\n\""+strings.Repeat("x", 5*1024*1024)+"\n")
+
+	games, warnings, err := DetectGames(t.TempDir(), DetectOptions{})
+	require.NoError(t, err)
+	require.Len(t, games, 1)
+	assert.Equal(t, "wowf", games[0].DetectorID)
+	assert.Len(t, warnings, 1)
+}
+
+// An InstallLocation climbing out of drive_c names nothing in the prefix.
+func TestUnixPath_StaysInTheDrive(t *testing.T) {
+	prefix := t.TempDir()
+	assert.Equal(t, filepath.Join(prefix, "drive_c", "Games", "WoW"), unixPath(prefix, `C:\Games\WoW`))
+	assert.Empty(t, unixPath(prefix, `C:\..\..\etc`))
+	assert.Empty(t, unixPath(prefix, `C:\Games\..\..\..\etc`))
+}
+
+// Under IncludeUnknown, every product a root's .build.info names is a row,
+// not just the first.
+func TestDetectGames_EveryUnknownProductInARoot(t *testing.T) {
+	home := sandbox(t)
+	prefix := filepath.Join(home, ".wine")
+	winePrefix(t, prefix)
+	root := filepath.Join(prefix, "drive_c", "Program Files (x86)", "Some Game")
+	writeFile(t, filepath.Join(root, ".build.info"), "Branch!STRING:0|Active!DEC:1|Product!STRING:0\nus|1|aaa\nus|1|bbb\n")
+
+	games, _, err := DetectGames(t.TempDir(), DetectOptions{IncludeUnknown: true})
+	require.NoError(t, err)
+	var refs []string
+	for _, g := range games {
+		refs = append(refs, g.Ref())
+	}
+	assert.Equal(t, []string{"battlenet:aaa", "battlenet:bbb"}, refs)
+}

@@ -52,6 +52,14 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	// #545: game detection scans $WINEPREFIX, which no per-test HOME
+	// sandbox covers - a developer's own Battle.net prefix must not reach
+	// a detect listing a test asserts on.
+	if err := os.Unsetenv("WINEPREFIX"); err != nil {
+		fmt.Fprintf(os.Stderr, "unsetting WINEPREFIX: %v\n", err)
+		os.Exit(1)
+	}
+
 	// #568: the release check is on by default, so nothing in this
 	// binary may reach api.github.com - a request is refused before it is
 	// sent, and any attempt fails the run even when the code that made it

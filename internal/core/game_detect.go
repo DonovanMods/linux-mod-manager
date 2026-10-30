@@ -224,10 +224,27 @@ func ConfiguredGameFor(existing map[string]*domain.Game, detected domain.Detecte
 	}
 	// #545: a WoW root holds a folder per flavor, and a game added by hand
 	// before detection may name the ROOT as its install path - then its
-	// mod path is the only thing that says which flavor it is. A mod path
-	// names one game's mods whatever the install path says, so a match
-	// there is that game too.
-	return configuredAt(existing, detected.ModPath, func(g *domain.Game) string { return g.ModPath })
+	// mod path is the only thing that says which flavor it is. So a game
+	// whose mod path is the candidate's, and whose install path CONTAINS
+	// the candidate's, is that game. Only then: a game installed elsewhere
+	// that happens to share the mod folder is another game, and selecting
+	// the row would "repair" it into this one.
+	if detected.InstallPath == "" {
+		return nil
+	}
+	install := resolvedPath(detected.InstallPath)
+	return configuredAt(existing, detected.ModPath, func(g *domain.Game) string {
+		if g.InstallPath == "" || !isWithin(install, resolvedPath(g.InstallPath)) {
+			return ""
+		}
+		return g.ModPath
+	})
+}
+
+// isWithin reports whether path is dir or below it.
+func isWithin(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // configuredAt is the games.yaml game whose path (as field reads it)

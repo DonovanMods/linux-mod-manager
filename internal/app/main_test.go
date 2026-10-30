@@ -29,6 +29,12 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	// #545: detection scans $WINEPREFIX, which a HOME sandbox does not
+	// cover; a developer's own prefix must not reach a test's scan.
+	if err := os.Unsetenv("WINEPREFIX"); err != nil {
+		fmt.Fprintf(os.Stderr, "unsetting WINEPREFIX: %v\n", err)
+		os.Exit(1)
+	}
 	os.Exit(m.Run())
 }
 

@@ -167,11 +167,12 @@ type gameRoot struct {
 // without writing an Uninstall key (World of Warcraft, in the prefix #545
 // was built against). The .build.info is what confirms a root; this only
 // proposes them. Each directory comes once.
+//
+// A system.reg it cannot read is returned as the error, beside the roots
+// the Program Files scan still found: that scan needs no registry, and is
+// the one that finds a game with no Uninstall key.
 func gameRoots(prefix string) ([]gameRoot, error) {
-	entries, err := readUninstallEntries(filepath.Join(prefix, "system.reg"))
-	if err != nil {
-		return nil, err
-	}
+	entries, regErr := readUninstallEntries(filepath.Join(prefix, "system.reg"))
 	var out []gameRoot
 	seen := make(map[string]bool)
 	add := func(path, name string) {
@@ -192,7 +193,7 @@ func gameRoots(prefix string) ([]gameRoot, error) {
 			add(dir, "")
 		}
 	}
-	return out, nil
+	return out, regErr
 }
 
 // unixPath maps a Windows path in prefix ("C:\Program Files (x86)\Game")
@@ -206,6 +207,10 @@ func unixPath(prefix, winPath string) string {
 	}
 	letter := strings.ToLower(winPath[:1])
 	rest := filepath.FromSlash(strings.Trim(strings.ReplaceAll(winPath[2:], `\`, "/"), "/"))
+	// A path that climbs out of its drive names nothing in the prefix.
+	if rest == ".." || strings.HasPrefix(filepath.Clean(rest), ".."+string(filepath.Separator)) {
+		return ""
+	}
 	if letter == "c" {
 		return filepath.Join(prefix, "drive_c", rest)
 	}
@@ -252,8 +257,7 @@ func DetectGames(configDir string, opts DetectOptions) (games []domain.DetectedG
 	for _, prefix := range FindPrefixes() {
 		roots, err := gameRoots(prefix)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: %v", prefix, err))
-			continue
+			warnings = append(warnings, fmt.Sprintf("%s: reading system.reg: %v", prefix, err))
 		}
 		for _, root := range roots {
 			products, err := readBuildInfoProducts(filepath.Join(root.path, ".build.info"))
@@ -285,6 +289,11 @@ func DetectGames(configDir string, opts DetectOptions) (games []domain.DetectedG
 				real, err := filepath.EvalSymlinks(g.InstallPath)
 				if err != nil {
 					real = g.InstallPath
+				}
+				if !known {
+					// An unknown product has no folder of its own to tell it
+					// from another in the same root.
+					real += "\x00" + code
 				}
 				if seenInstall[real] || (known && seenSlug[g.Slug]) {
 					opts.logger().Info("skipping a Battle.net game already found in another prefix",

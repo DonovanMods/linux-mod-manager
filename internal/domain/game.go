@@ -317,14 +317,17 @@ func (g DetectedGame) identity() (detector, id string) {
 // bare Steam app id ("489830") - what `lmm game add --from-detected` has
 // taken since #206. The detector is lower-cased; whether it names one that
 // exists is the scan's question, not this one's. A Steam id must be digits.
+// Both halves are lower-cased, as detection reads product codes.
 func ParseDetectedRef(s string) (detector, id string, err error) {
 	s = strings.TrimSpace(s)
 	detector, id, found := strings.Cut(s, ":")
 	if !found {
 		detector, id = DetectorSteam, s
 	}
+	// Both halves lower-cased: detectors name product codes as detection
+	// read them, lower-case, and a Steam id is digits either way.
 	detector = strings.ToLower(strings.TrimSpace(detector))
-	id = strings.TrimSpace(id)
+	id = strings.ToLower(strings.TrimSpace(id))
 	switch {
 	case s == "":
 		return "", "", fmt.Errorf("%w: it is empty", ErrInvalidDetectedRef)

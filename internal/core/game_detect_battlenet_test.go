@@ -118,3 +118,23 @@ func TestGameDetectListing_AConfiguredWoWFlavorIsRecognised(t *testing.T) {
 		})
 	}
 }
+
+// The mod-path match is for a flavor folder under a game configured at the
+// WoW ROOT, and nothing wider: a game elsewhere whose mod path happens to
+// be the same folder is not this candidate, and a selection must not
+// "repair" it into one.
+func TestConfiguredGameFor_ModPathMatchOnlyBelowTheConfiguredInstall(t *testing.T) {
+	root := wowRoot(t, "_classic_")
+	shared := filepath.Join(root, "_classic_", "Interface", "AddOns")
+	elsewhere := t.TempDir()
+	existing := map[string]*domain.Game{
+		"other": {ID: "other", InstallPath: elsewhere, ModPath: shared},
+	}
+	row := battleNetRow(root, "wow_classic", "wow-classic", "_classic_")
+	assert.Nil(t, core.ConfiguredGameFor(existing, row), "an unrelated install sharing a mod folder is another game")
+
+	existing["wow"] = &domain.Game{ID: "wow", InstallPath: root, ModPath: shared}
+	got := core.ConfiguredGameFor(existing, row)
+	require.NotNil(t, got)
+	assert.Equal(t, "wow", got.ID)
+}
