@@ -24,7 +24,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/releasesig"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // self_update.go - `lmm self-update` (#569): replace a self-managed lmm
@@ -320,7 +319,8 @@ type ServeRestarter interface {
 type SelfUpdateOptions struct {
 	// ConfigDir holds config.yaml, whose auto_update AutoUpdateEnabled reads.
 	ConfigDir string
-	// DataDir holds the staging directory the release downloads into.
+	// DataDir holds the staging directory the release downloads into, the
+	// self-update lock and the automatic-update state (auto_update.go).
 	// Required.
 	DataDir string
 	// Version is the running version, the bare release version. Required.
@@ -345,6 +345,9 @@ type SelfUpdateOptions struct {
 	Arch string
 	// Restarter restarts lmm-serve.service after an update; nil skips it.
 	Restarter ServeRestarter
+	// Now is the clock automatic updates record their outcome by; nil is
+	// time.Now.
+	Now func() time.Time
 }
 
 // SelfUpdater updates the running lmm binary to the latest release (#569).
@@ -489,14 +492,6 @@ func (u *SelfUpdater) Lock() (unlock func(), err error) {
 		return nil, err
 	}
 	return l.release, nil
-}
-
-// AutoUpdateEnabled reports config.yaml's auto_update, which the
-// unattended timer's run (`lmm self-update --auto`) obeys. A config.yaml
-// lmm cannot read answers false: an unattended update needs a clear yes.
-func (u *SelfUpdater) AutoUpdateEnabled() bool {
-	cfg, err := config.Load(u.opts.ConfigDir)
-	return err == nil && cfg.AutoUpdate
 }
 
 // probe is the configured InstallProbe, or the real one.

@@ -627,7 +627,8 @@ func (u *UserUnits) Status(ctx context.Context) (ServiceReport, error) {
 // RestartServeIfActive restarts lmm-serve.service with try-restart when it
 // is running, so it runs the binary `lmm self-update` just installed (#569),
 // and reports whether it did. A host without systemd, or a service that is
-// not running, is nothing to restart and no error.
+// not running, is nothing to restart and no error. From inside a unit
+// (INVOCATION_ID set) the restart is queued, not waited on.
 func (u *UserUnits) RestartServeIfActive(ctx context.Context) (bool, error) {
 	if err := u.checkSystemd(ctx); err != nil {
 		return false, nil
@@ -635,7 +636,15 @@ func (u *UserUnits) RestartServeIfActive(ctx context.Context) (bool, error) {
 	if u.query(ctx, "is-active", systemd.ServeUnitName, "inactive") != "active" {
 		return false, nil
 	}
-	if _, err := u.systemctl(ctx, "try-restart", systemd.ServeUnitName); err != nil {
+	args := []string{"try-restart", systemd.ServeUnitName}
+	if u.Getenv != nil && u.Getenv("INVOCATION_ID") != "" {
+		// Run by systemd - lmm-serve.service restarting itself after its
+		// own automatic update (#586), or lmm-update.service: queue the
+		// restart rather than wait on a job that first stops this very
+		// process, or its caller.
+		args = []string{"try-restart", "--no-block", systemd.ServeUnitName}
+	}
+	if _, err := u.systemctl(ctx, args...); err != nil {
 		return false, fmt.Errorf("systemctl --user try-restart %s: %w", systemd.ServeUnitName, err)
 	}
 	return true, nil

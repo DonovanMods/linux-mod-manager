@@ -455,14 +455,6 @@ func TestSelfUpdate_SendsTheLmmUserAgentAndNoCredential(t *testing.T) {
 	}
 }
 
-func TestSelfUpdate_AutoUpdateFollowsConfig(t *testing.T) {
-	f := newSelfUpdateFixture(t)
-	u := core.NewSelfUpdater(withBases(f.opts))
-	assert.False(t, u.AutoUpdateEnabled(), "off by default")
-	require.NoError(t, os.WriteFile(filepath.Join(f.opts.ConfigDir, "config.yaml"), []byte("auto_update: true\n"), 0o644))
-	assert.True(t, u.AutoUpdateEnabled())
-}
-
 func withBases(o core.SelfUpdateOptions) core.SelfUpdateOptions {
 	o.APIBase, o.DownloadBase = "http://127.0.0.1:1", "http://127.0.0.1:1"
 	return o

@@ -3086,7 +3086,31 @@ func TestJSONGoldens(t *testing.T) {
 					UpgradeCommand: "sudo apt install --only-upgrade lmm",
 				},
 				Installed: "2.1.0",
+				AutoUpdate: &core.AutoUpdateStatus{
+					Enabled: true,
+					Reason:  "lmm was installed by the lmm package (dpkg), so your package manager updates it, never lmm itself: sudo apt install --only-upgrade lmm",
+				},
 			},
+		},
+		{
+			// GET /api/v1/updates/lmm's auto_update (#586), with an update
+			// made and a later one that failed, so every field is on the
+			// wire.
+			"auto_update_status",
+			core.AutoUpdateStatus{
+				Enabled:    true,
+				Applicable: true,
+				Last:       &core.AutoUpdateRecord{From: "2.2.0", To: "2.3.0", At: time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC), First: true},
+				Failure:    &core.AutoUpdateFailure{Version: "2.4.0", At: time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC), Error: "lmm 2.4.0 has no signature (checksums.txt.sig), so it cannot be verified; nothing was installed"},
+			},
+		},
+		{
+			"auto_update_record",
+			core.AutoUpdateRecord{From: "2.3.0", To: "2.4.0", At: time.Date(2026, 11, 3, 3, 0, 0, 0, time.UTC)},
+		},
+		{
+			"auto_update_failure",
+			core.AutoUpdateFailure{Version: "2.4.0", At: time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC), Error: "GitHub answered 503 Service Unavailable"},
 		},
 		{
 			// A never-checked, self-managed binary: the omitted fields.

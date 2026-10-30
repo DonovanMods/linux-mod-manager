@@ -756,6 +756,26 @@ func TestUserUnits_RestartServeIfActive(t *testing.T) {
 	assert.False(t, restarted)
 }
 
+// TestUserUnits_RestartServeIfActive_DoesNotWaitOnItself (#586): run from
+// inside a unit - lmm-serve.service restarting itself after its own
+// automatic update, or lmm-update.service - the restart is queued with
+// --no-block, because waiting on a job that first stops the very process
+// waiting would hold the stop for its whole timeout.
+func TestUserUnits_RestartServeIfActive_DoesNotWaitOnItself(t *testing.T) {
+	fake := &fakeSystemd{active: true}
+	units, _ := newTestUserUnits(t, fake, "/home/u/.local/bin/lmm")
+	units.Getenv = func(key string) string {
+		if key == "INVOCATION_ID" {
+			return "0123456789abcdef"
+		}
+		return ""
+	}
+	restarted, err := units.RestartServeIfActive(context.Background())
+	require.NoError(t, err)
+	assert.True(t, restarted)
+	assert.Equal(t, []string{"try-restart --no-block " + systemd.ServeUnitName}, fake.verbs())
+}
+
 // lmm-update.service retries a run that fails - a network that is not up
 // yet, most often - a few times, five minutes apart, rather than waiting a
 // day for the timer. network-online.target is not named: a user manager
