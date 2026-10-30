@@ -2,12 +2,15 @@ package serve_test
 
 // TestE2E_JobProgress_FetchesAFinishedJobsResultOnce is review F5: a
 // finished job now fetches its result document twice. jobprogress.js's
-// JobProgress calls BOTH useJobResultTally and useJobResultWarnings (C1's
-// own unconditional-call rule) for the same jobID in the same render, so
-// both hooks' effects fire together, before either's fetch has resolved -
-// jobresult.js's own tallyCache is filled only inside the fetch's .then, so
-// neither effect sees the other's request in flight. jobresult.js's doc
-// comment already claims "fetches its result exactly once"; this pins it.
+// JobProgress calls several result hooks (useJobResultWarnings,
+// useJobResultPurge, ... - C1's own unconditional-call rule) for the same
+// jobID in the same render, so their effects fire together, before any
+// fetch has resolved - jobresult.js's own readCache is filled only inside
+// the fetch's .then, so no effect sees another's request in flight.
+// jobresult.js's doc comment already claims "fetches its result exactly
+// once"; this pins it. (The outcome tally is no longer one of these reads:
+// it is on the job summary since issue 364, so the signal that the shared
+// read resolved is a switch's result warning instead.)
 
 import (
 	"testing"
@@ -33,8 +36,8 @@ func TestE2E_JobProgress_FetchesAFinishedJobsResultOnce(t *testing.T) {
 				if (url.includes("/api/v1/jobs/fake-job-1")) {
 					window.__jobResultFetches++;
 					return Promise.resolve(new Response(JSON.stringify({
-						id: "fake-job-1", kind: "deploy", state: "succeeded",
-						result: { applied: [{ mod_id: "m", source_id: "s" }], failed: [] },
+						id: "fake-job-1", kind: "switch", state: "succeeded",
+						result: { warnings: ["run lmm deploy to finish the switch"] },
 					}), { status: 200, headers: { "Content-Type": "application/json" } }));
 				}
 				return real(input, init);
@@ -50,21 +53,18 @@ func TestE2E_JobProgress_FetchesAFinishedJobsResultOnce(t *testing.T) {
 
 			render(h(JobProgress, {
 				jobID: "fake-job-1",
-				summary: { id: "fake-job-1", kind: "deploy", state: "succeeded" },
+				summary: { id: "fake-job-1", kind: "switch", state: "succeeded" },
 				frame: {},
 				actions: null,
 				onDismiss: () => {},
 			}), container);
 		})()`, nil, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
-		pollUntil(`(() => {
-			const el = window.__jobProgressContainer.querySelector(".job-progress__text");
-			return Boolean(el) && el.textContent.trim() !== "" && el.textContent.trim() !== "Done";
-		})()`),
-		chromedp.Evaluate(`window.__jobProgressContainer.querySelector(".job-progress__text").textContent`, &text),
+		pollUntil(`window.__jobProgressContainer.querySelector('[data-testid="job-result-warning"]') !== null`),
+		chromedp.Evaluate(`window.__jobProgressContainer.querySelector('[data-testid="job-result-warning"]').textContent`, &text),
 		chromedp.Evaluate(`window.__jobResultFetches`, &fetches),
 		chromedp.Evaluate(`(() => { window.__jobProgressContainer.remove(); })()`, nil),
 	)
-	assert.NotEmpty(t, text, "the tally resolved, so both hooks read the fetch")
+	assert.Contains(t, text, "run lmm deploy", "the shared read resolved, so every hook read the fetch")
 	assert.Equal(t, 1, fetches, "a finished job's result must be fetched exactly once, not once per hook")
 	assert.Empty(t, f.BrowserErrors())
 }
