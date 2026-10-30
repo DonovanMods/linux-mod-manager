@@ -345,6 +345,11 @@ type SelfUpdateOptions struct {
 	Arch string
 	// Restarter restarts lmm-serve.service after an update; nil skips it.
 	Restarter ServeRestarter
+	// OpLockPath is the cross-process mutation lock every lmm mutation
+	// takes (ServiceConfig.OpLockPath): an automatic update neither
+	// installs nor restarts lmm-serve.service while another lmm holds it
+	// (#586). Empty skips that check.
+	OpLockPath string
 	// Now is the clock automatic updates record their outcome by; nil is
 	// time.Now.
 	Now func() time.Time
@@ -558,6 +563,23 @@ func (u *SelfUpdater) Plan(ctx context.Context) (SelfUpdatePlan, error) {
 // lmm-serve.service if it is running; a failure there is reported in the
 // result, not returned, because the update itself succeeded.
 func (u *SelfUpdater) Apply(ctx context.Context, plan SelfUpdatePlan) (SelfUpdateResult, error) {
+	res, err := u.install(ctx, plan)
+	if err != nil || !res.Updated {
+		return res, err
+	}
+	if u.opts.Restarter != nil {
+		restarted, err := u.opts.Restarter.RestartServeIfActive(ctx)
+		res.ServeRestarted = restarted && err == nil
+		if err != nil {
+			res.ServeRestartError = err.Error()
+		}
+	}
+	return res, nil
+}
+
+// install is Apply without the restart: everything up to the renamed
+// binary. RunAuto records the update between the two (auto_update.go).
+func (u *SelfUpdater) install(ctx context.Context, plan SelfUpdatePlan) (SelfUpdateResult, error) {
 	res := SelfUpdateResult{Previous: plan.Current, Version: plan.Current, Executable: plan.Executable}
 	if plan.UpToDate {
 		return res, nil
@@ -628,14 +650,6 @@ func (u *SelfUpdater) Apply(ctx context.Context, plan SelfUpdatePlan) (SelfUpdat
 		return res, err
 	}
 	res.Updated, res.Version = true, plan.Latest
-
-	if u.opts.Restarter != nil {
-		restarted, err := u.opts.Restarter.RestartServeIfActive(ctx)
-		res.ServeRestarted = restarted && err == nil
-		if err != nil {
-			res.ServeRestartError = err.Error()
-		}
-	}
 	return res, nil
 }
 

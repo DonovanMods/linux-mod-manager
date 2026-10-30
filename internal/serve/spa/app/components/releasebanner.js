@@ -12,15 +12,17 @@
 //
 // Its third state (issue 586) is lmm having updated itself: the status's
 // auto_update.last names an automatic update to the version this server
-// runs, and the notice says so once - dismissed as "auto:<version>" - with
-// how to turn automatic updates off after the first one. When the update
-// replaced the binary under a hand-started server, the restart notice says
-// it was automatic instead.
+// runs that no frontend has announced yet (auto_update.noticed), and the
+// notice says so - with how to turn automatic updates off after the first
+// one - and tells the server it was shown, so no other browser, nor the
+// CLI's after-command line, shows it again. When the update replaced the
+// binary under a hand-started server, the restart notice says it was
+// automatic instead, and counts as that announcement too.
 // Every failure (the fetch, unreadable storage) degrades to showing nothing
 // or to a dismissal that lasts only this page view.
 
 import { html, useEffect, useState } from "../render.js";
-import { getLmmRelease } from "../api.js";
+import { getLmmRelease, postAutoUpdateNotice } from "../api.js";
 
 /** RELEASE_BANNER_DISMISSED_KEY holds the dismissed `latest` version. */
 export const RELEASE_BANNER_DISMISSED_KEY = "lmm.release-banner.dismissed";
@@ -57,10 +59,20 @@ export function ReleaseBanner() {
     };
   }, []);
 
+  const last = status?.auto_update?.last;
+  const announcing =
+    !!last &&
+    !status.auto_update.noticed &&
+    (last.to === status.installed ||
+      (!status.installed && last.to === status.current));
+  useEffect(() => {
+    if (announcing) postAutoUpdateNotice().catch(() => {});
+  }, [announcing]);
+
   if (!status) return null;
-  const last = status.auto_update?.last;
   const optOut = last?.first
-    ? html` To turn this off: <code>auto_update: false</code> in config.yaml, or Setup > Updates.`
+    ? html` To turn this off: <code>auto_update: false</code> in config.yaml, or
+        Setup > Updates.`
     : "";
   if (status.installed) {
     const key = `installed:${status.installed}`;
@@ -97,7 +109,7 @@ export function ReleaseBanner() {
       </section>
     `;
   }
-  if (last && last.to === status.current && dismissed !== `auto:${last.to}`) {
+  if (announcing && dismissed !== `auto:${last.to}`) {
     const key = `auto:${last.to}`;
     return html`
       <section
@@ -106,7 +118,9 @@ export function ReleaseBanner() {
         data-testid="release-banner"
         data-state="auto-updated"
       >
-        <p class="release-banner__text">lmm updated itself to v${last.to}.${optOut}</p>
+        <p class="release-banner__text">
+          lmm updated itself to v${last.to}.${optOut}
+        </p>
         <button
           type="button"
           class="button button--quiet button--icon release-banner__dismiss"

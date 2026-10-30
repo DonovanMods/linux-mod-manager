@@ -57,7 +57,7 @@ func TestRunAuto_InstallsAndRecordsTheFirstUpdate(t *testing.T) {
 	f.restarts.restarted = true
 	u := f.updater(newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t))
 
-	out, err := u.RunAuto(context.Background())
+	out, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, out.Skipped)
 	assert.True(t, out.Result.Updated)
@@ -82,7 +82,7 @@ func TestRunAuto_InstallsAndRecordsTheFirstUpdate(t *testing.T) {
 func TestRunAuto_ALaterUpdateGetsTheOneLineNotice(t *testing.T) {
 	f, c := autoFixture(t)
 	u := f.updater(newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t))
-	_, err := u.RunAuto(context.Background())
+	_, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
 	require.NoError(t, err)
 	cfg := core.ServiceConfig{ConfigDir: f.opts.ConfigDir, DataDir: f.opts.DataDir}
 	require.NoError(t, cfg.MarkAutoUpdateNoticed())
@@ -91,7 +91,7 @@ func TestRunAuto_ALaterUpdateGetsTheOneLineNotice(t *testing.T) {
 	c.now = c.now.Add(48 * time.Hour)
 	f.opts.Version = "2.2.0"
 	u = f.updater(newSignedRelease(t, "2.3.0", f.priv, buildTarball(t, tarEntry{name: "lmm", body: "new lmm 2.3.0"})).serve(t))
-	out, err := u.RunAuto(context.Background())
+	out, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
 	require.NoError(t, err)
 	require.True(t, out.Result.Updated)
 	rec, ok := cfg.PendingAutoUpdateNotice()
@@ -105,7 +105,7 @@ func TestRunAuto_DoesNothingWhenTurnedOff(t *testing.T) {
 	writeConfig(t, f.opts.ConfigDir, "auto_update: false\n")
 	rel := newSignedRelease(t, "2.2.0", f.priv, goodTarball(t))
 	u := f.updater(rel.serve(t))
-	out, err := u.RunAuto(context.Background())
+	out, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
 	require.NoError(t, err)
 	assert.Contains(t, out.Skipped, "auto_update is off")
 	assert.False(t, out.Result.Updated)
@@ -123,14 +123,14 @@ func TestRunAuto_StepsAsideForAPackageOrADevBuild(t *testing.T) {
 			return "", os.ErrNotExist
 		}
 		f.opts.Probe.Run = func(context.Context, string, ...string) ([]byte, error) { return []byte("lmm-bin\n"), nil }
-		out, err := f.updater(newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t)).RunAuto(context.Background())
+		out, err := f.updater(newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t)).RunAuto(context.Background(), core.AutoRunOptions{})
 		require.NoError(t, err, "a package's lmm is never auto-updated, and that is no failure")
 		assert.Contains(t, out.Skipped, "pacman")
 	})
 	t.Run("dev", func(t *testing.T) {
 		f, _ := autoFixture(t)
 		f.opts.Dev = true
-		out, err := f.updater(newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t)).RunAuto(context.Background())
+		out, err := f.updater(newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t)).RunAuto(context.Background(), core.AutoRunOptions{})
 		require.NoError(t, err)
 		assert.Contains(t, out.Skipped, "development build")
 	})
@@ -144,7 +144,7 @@ func TestRunAuto_StepsAsideForARunAlreadyUnderWay(t *testing.T) {
 	require.NoError(t, err)
 	defer unlock()
 
-	out, err := f.updater(rel.serve(t)).RunAuto(context.Background())
+	out, err := f.updater(rel.serve(t)).RunAuto(context.Background(), core.AutoRunOptions{})
 	require.NoError(t, err)
 	assert.Contains(t, out.Skipped, core.ErrSelfUpdateRunning.Error())
 	data, _ := os.ReadFile(f.exe)
@@ -157,7 +157,7 @@ func TestRunAuto_BacksOffAFailingVersionForADay(t *testing.T) {
 	delete(rel.assets, "checksums.txt.sig") // unsigned: refused
 	u := f.updater(rel.serve(t))
 
-	_, err := u.RunAuto(context.Background())
+	_, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
 	var sigErr *core.ReleaseSignatureError
 	require.ErrorAs(t, err, &sigErr)
 
@@ -171,7 +171,7 @@ func TestRunAuto_BacksOffAFailingVersionForADay(t *testing.T) {
 	c.now = c.now.Add(2 * time.Hour)
 	assert.False(t, u.AutoUpdateDue("2.2.0"), "the failing version waits a day")
 	assert.True(t, u.AutoUpdateDue("2.2.1"), "a newer release is tried at once")
-	out, err := u.RunAuto(context.Background())
+	out, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
 	require.NoError(t, err, "a backed-off run is no new failure")
 	assert.Contains(t, out.Skipped, "2.2.0")
 	_, ok := cfg.PendingAutoUpdateNotice()
@@ -196,7 +196,7 @@ func TestRunAuto_AnAttemptRecordedByTheCLIDoesNotStopTheRunItStarted(t *testing.
 	f, _ := autoFixture(t)
 	u := f.updater(newSignedRelease(t, "2.2.0", f.priv, goodTarball(t)).serve(t))
 	require.NoError(t, u.RecordAutoUpdateAttempt())
-	out, err := u.RunAuto(context.Background())
+	out, err := u.RunAuto(context.Background(), core.AutoRunOptions{})
 	require.NoError(t, err)
 	assert.True(t, out.Result.Updated)
 }
@@ -223,7 +223,7 @@ func TestRunAuto_ACancelledRunRecordsNoFailure(t *testing.T) {
 		_, _ = io.Copy(w, resp.Body)
 	}))
 	t.Cleanup(srv.Close)
-	_, err := f.updater(srv).RunAuto(ctx)
+	_, err := f.updater(srv).RunAuto(ctx, core.AutoRunOptions{})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.Canceled), "got %v", err)
 	st := core.ServiceConfig{DataDir: f.opts.DataDir, ConfigDir: f.opts.ConfigDir}.AutoUpdateStatus(core.InstallMethod{Method: core.InstallSelfManaged})

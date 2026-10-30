@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -34,7 +35,23 @@ const AutoUpdateLogFile = "auto-update.log"
 // autoUpdateFailureBackoff is how long a release whose automatic update
 // failed is left alone: a release that does not verify, or a binary in a
 // directory this user cannot write, fails the same way on every command.
+// A release check that fails for a reason that will not pass by itself - an
+// install lmm cannot settle, a tag it refuses - waits as long.
 const autoUpdateFailureBackoff = 24 * time.Hour
+
+// autoUpdateCheckBackoff is the first wait after a release check that
+// failed the way a network does - offline, GitHub erroring, a rate limit -
+// doubling with each failure in a row up to autoUpdateFailureBackoff.
+const autoUpdateCheckBackoff = time.Hour
+
+// autoUpdateRestartWait is how long an automatic update waits for a running
+// mutation before restarting lmm-serve.service, when the caller sets no
+// AutoRunOptions.RestartWait: long enough for a large deploy, and once it
+// passes the restart is left to the person (the web UI's banner asks).
+const autoUpdateRestartWait = 10 * time.Minute
+
+// autoUpdateRestartPoll is how often that wait looks again.
+const autoUpdateRestartPoll = time.Second
 
 // autoUpdateAttemptHold is how long a started automatic update holds off
 // the next start, whatever became of it: one that is still downloading, or
@@ -67,12 +84,16 @@ func (r AutoUpdateRecord) Notice() string {
 
 // AutoUpdateFailure is the last automatic update that failed.
 type AutoUpdateFailure struct {
-	// Version is the release it tried to install.
-	Version string `json:"version"`
+	// Version is the release it tried to install; empty when it failed
+	// before it knew of one - the release check itself failed.
+	Version string `json:"version,omitempty"`
 	// At is when it failed.
 	At time.Time `json:"at"`
 	// Error is why.
 	Error string `json:"error"`
+	// RetryAt is when the next automatic update may run: for Version, or
+	// for any release when Version is empty.
+	RetryAt time.Time `json:"retry_at"`
 }
 
 // AutoUpdateStatus is what the web UI's Setup > Updates shows of automatic
@@ -91,13 +112,17 @@ type AutoUpdateStatus struct {
 	// Failure is the last automatic update that failed since the last that
 	// succeeded; nil when there is none.
 	Failure *AutoUpdateFailure `json:"failure,omitempty"`
+	// Noticed is true once a frontend - the CLI's after-command line, or
+	// the web UI's banner - has announced Last, so neither announces it
+	// again.
+	Noticed bool `json:"noticed"`
 }
 
 // AutoUpdateOutcome is what RunAuto did: an update, or the reason it
-// stepped aside - turned off, a package's binary, another run under way,
-// already up to date, a release backed off after a failure. A step aside
-// is not an error: lmm-update.timer must not read one as a failure to
-// retry.
+// stepped aside - turned off, a package's binary, another run or an lmm
+// mutation under way, already up to date, a release backed off after a
+// failure. A step aside is not an error: lmm-update.timer must not read one
+// as a failure to retry.
 type AutoUpdateOutcome struct {
 	// Result is the update, Updated false when there was none.
 	Result SelfUpdateResult
@@ -115,8 +140,25 @@ type autoUpdateState struct {
 	// Updates counts the automatic updates made, which makes the first
 	// one First.
 	Updates int `json:"updates,omitempty"`
-	// Noticed is true once the CLI has shown Last's notice.
+	// Noticed is true once a frontend has shown Last's notice.
 	Noticed bool `json:"noticed,omitempty"`
+	// CheckFailures counts the release checks that failed in a row, which
+	// doubles the next one's back-off.
+	CheckFailures int `json:"check_failures,omitempty"`
+}
+
+// AutoRunOptions is what a frontend adds to RunAuto.
+type AutoRunOptions struct {
+	// Quiesce is `lmm serve`'s: it holds off new jobs in this process and
+	// reports whether none is running, and resume lets them start again.
+	// RunAuto asks it before it installs anything, resuming at once, and
+	// before it restarts lmm-serve.service, resuming only when nothing was
+	// restarted. nil (the CLI, the timer) is a process with no jobs of its
+	// own; the cross-process mutation lock covers the rest.
+	Quiesce func() (resume func(), idle bool)
+	// RestartWait bounds how long the restart waits for running mutations;
+	// zero is autoUpdateRestartWait.
+	RestartWait time.Duration
 }
 
 // loadAutoUpdateState reads dataDir's state; a missing or unreadable file
@@ -208,11 +250,119 @@ func (u *SelfUpdater) autoUpdateBlocked(st autoUpdateState, latest string) strin
 	if st.Last != nil && st.Last.To == latest {
 		return "lmm already updated itself to " + latest
 	}
-	if f := st.Failure; f != nil && f.Version == latest && within(f.At, u.now(), autoUpdateFailureBackoff) {
-		return fmt.Sprintf("the automatic update to %s failed at %s (%s); lmm tries it again a day later",
-			latest, f.At.Local().Format("2006-01-02 15:04"), f.Error)
+	if why := u.checkBackedOff(st); why != "" {
+		return why
+	}
+	if f := st.Failure; f != nil && f.Version == latest && u.now().Before(f.RetryAt) {
+		return fmt.Sprintf("the automatic update to %s failed at %s (%s); lmm tries it again after %s",
+			latest, f.At.Local().Format("2006-01-02 15:04"), f.Error, f.RetryAt.Local().Format("2006-01-02 15:04"))
 	}
 	return ""
+}
+
+// checkBackedOff is why no automatic update may ask GitHub yet: the last
+// release check failed and its back-off has not passed; "" when it may.
+func (u *SelfUpdater) checkBackedOff(st autoUpdateState) string {
+	if f := st.Failure; f != nil && f.Version == "" && u.now().Before(f.RetryAt) {
+		return fmt.Sprintf("the automatic update's release check failed at %s (%s); lmm tries again after %s",
+			f.At.Local().Format("2006-01-02 15:04"), f.Error, f.RetryAt.Local().Format("2006-01-02 15:04"))
+	}
+	return ""
+}
+
+// recordCheckFailure records a release check (Plan) that failed: a day's
+// back-off for a failure that will not pass by itself, otherwise one that
+// starts at an hour and doubles with each failure in a row.
+func (u *SelfUpdater) recordCheckFailure(err error) {
+	at := u.now()
+	var unknown *InstallMethodUnknownError
+	var tagErr *ReleaseTagError
+	permanent := errors.As(err, &unknown) || errors.As(err, &tagErr)
+	_ = updateAutoUpdateState(u.opts.DataDir, func(s *autoUpdateState) {
+		s.CheckFailures++
+		wait := autoUpdateFailureBackoff
+		if !permanent {
+			wait = autoUpdateCheckBackoff
+			for i := 1; i < s.CheckFailures && wait < autoUpdateFailureBackoff; i++ {
+				wait *= 2
+			}
+			wait = min(wait, autoUpdateFailureBackoff)
+		}
+		s.Failure = &AutoUpdateFailure{At: at, Error: err.Error(), RetryAt: at.Add(wait)}
+	})
+}
+
+// mutationsIdle takes the cross-process mutation lock and asks
+// opts.Quiesce, and reports whether both say no lmm mutation is running;
+// release lets both go - the lock always, and Quiesce's hold unless
+// keepHold says this process is about to be restarted. A lock that cannot
+// even be opened answers not idle: nothing is installed or restarted on a
+// guess.
+func (u *SelfUpdater) mutationsIdle(ctx context.Context, opts AutoRunOptions) (release func(keepHold bool), idle bool) {
+	var lock *opLock
+	if u.opts.OpLockPath != "" {
+		l, err := acquireOpLock(ctx, u.opts.OpLockPath, 0)
+		if err != nil {
+			return func(bool) {}, false
+		}
+		lock = l
+	}
+	resume := func() {}
+	if opts.Quiesce != nil {
+		r, ok := opts.Quiesce()
+		if r != nil {
+			resume = r
+		}
+		if !ok {
+			resume()
+			lock.release()
+			return func(bool) {}, false
+		}
+	}
+	return func(keepHold bool) {
+		lock.release()
+		if !keepHold {
+			resume()
+		}
+	}, true
+}
+
+// errMutationRunning is the step aside, and the restart left undone, while
+// an lmm mutation runs.
+var errMutationRunning = fmt.Errorf("%w; the automatic update waits for it to finish", ErrOperationInProgress)
+
+// restartServe restarts lmm-serve.service once no lmm mutation is running,
+// waiting up to opts.RestartWait for one to finish and holding new ones off
+// while it asks; past the wait it restarts nothing, and says so in res.
+func (u *SelfUpdater) restartServe(ctx context.Context, opts AutoRunOptions, res *SelfUpdateResult) {
+	wait := opts.RestartWait
+	if wait <= 0 {
+		wait = autoUpdateRestartWait
+	}
+	poll := min(autoUpdateRestartPoll, wait/4)
+	deadline := time.Now().Add(wait)
+	for {
+		release, idle := u.mutationsIdle(ctx, opts)
+		if idle {
+			restarted, err := u.opts.Restarter.RestartServeIfActive(ctx)
+			res.ServeRestarted = restarted && err == nil
+			if err != nil {
+				res.ServeRestartError = err.Error()
+			}
+			release(res.ServeRestarted)
+			return
+		}
+		if !time.Now().Before(deadline) {
+			res.ServeRestartError = fmt.Sprintf("an lmm operation was still running after %s, so lmm-serve.service was not restarted under it", wait)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			res.ServeRestartError = ctx.Err().Error()
+			return
+		case <-time.After(poll):
+		}
+	}
 }
 
 // RecordAutoUpdateAttempt records that an automatic update is starting,
@@ -227,13 +377,17 @@ func (u *SelfUpdater) RecordAutoUpdateAttempt() error {
 // RunAuto is one automatic update: `lmm self-update --auto` (started by
 // the CLI, or by lmm-update.timer) and `lmm serve`'s background run. It
 // steps aside, with no error, when auto_update is off, another self-update
-// holds the lock, the binary is a package's or a development build, lmm is
-// up to date, or the release is one it already installed or that failed in
-// the last day. Otherwise it installs the release exactly as `lmm
-// self-update --yes` does and records the outcome: an update the
-// frontends announce once, or a failure that backs the release off. A run
-// its context cancelled records no failure.
-func (u *SelfUpdater) RunAuto(ctx context.Context) (AutoUpdateOutcome, error) {
+// holds the lock, an lmm mutation is running (the cross-process mutation
+// lock, and opts.Quiesce in `lmm serve`), the binary is a package's or a
+// development build, lmm is up to date, or the release is one it already
+// installed or that is backed off after a failure. Otherwise it installs
+// the release through the same verified path as `lmm self-update --yes`,
+// records the update the frontends announce once, and only then restarts
+// lmm-serve.service - which may end the very process running this - once
+// no mutation is running (restartServe). A failure, of the install or of
+// the release check before it, is recorded with a back-off; a run its
+// context cancelled records none.
+func (u *SelfUpdater) RunAuto(ctx context.Context, opts AutoRunOptions) (AutoUpdateOutcome, error) {
 	out := AutoUpdateOutcome{Result: SelfUpdateResult{Previous: u.opts.Version, Version: u.opts.Version}}
 	if !u.AutoUpdateEnabled() {
 		out.Skipped = "auto_update is off in config.yaml"
@@ -248,6 +402,16 @@ func (u *SelfUpdater) RunAuto(ctx context.Context) (AutoUpdateOutcome, error) {
 		return out, err
 	}
 	defer unlock()
+	if why := u.checkBackedOff(loadAutoUpdateState(u.opts.DataDir)); why != "" {
+		out.Skipped = why
+		return out, nil
+	}
+	release, idle := u.mutationsIdle(ctx, opts)
+	release(false)
+	if !idle {
+		out.Skipped = errMutationRunning.Error()
+		return out, nil
+	}
 	_ = u.RecordAutoUpdateAttempt()
 
 	plan, err := u.Plan(ctx)
@@ -257,8 +421,17 @@ func (u *SelfUpdater) RunAuto(ctx context.Context) (AutoUpdateOutcome, error) {
 		return out, nil
 	}
 	if err != nil {
+		if ctx.Err() == nil {
+			u.recordCheckFailure(err)
+		}
 		return out, err
 	}
+	_ = updateAutoUpdateState(u.opts.DataDir, func(s *autoUpdateState) {
+		s.CheckFailures = 0
+		if s.Failure != nil && s.Failure.Version == "" {
+			s.Failure = nil
+		}
+	})
 	out.Result.Executable = plan.Executable
 	if plan.UpToDate {
 		out.Skipped = "lmm " + plan.Current + " is up to date"
@@ -269,25 +442,26 @@ func (u *SelfUpdater) RunAuto(ctx context.Context) (AutoUpdateOutcome, error) {
 		return out, nil
 	}
 
-	res, err := u.Apply(ctx, plan)
+	res, err := u.install(ctx, plan)
 	out.Result = res
 	if err != nil {
 		if ctx.Err() == nil {
 			at := u.now()
 			_ = updateAutoUpdateState(u.opts.DataDir, func(s *autoUpdateState) {
-				s.Failure = &AutoUpdateFailure{Version: plan.Latest, At: at, Error: err.Error()}
+				s.Failure = &AutoUpdateFailure{Version: plan.Latest, At: at, Error: err.Error(), RetryAt: at.Add(autoUpdateFailureBackoff)}
 			})
 		}
 		return out, err
 	}
-	if res.Updated {
-		at := u.now()
-		_ = updateAutoUpdateState(u.opts.DataDir, func(s *autoUpdateState) {
-			s.Last = &AutoUpdateRecord{From: res.Previous, To: res.Version, At: at, First: s.Updates == 0}
-			s.Updates++
-			s.Noticed = false
-			s.Failure = nil
-		})
+	at := u.now()
+	_ = updateAutoUpdateState(u.opts.DataDir, func(s *autoUpdateState) {
+		s.Last = &AutoUpdateRecord{From: res.Previous, To: res.Version, At: at, First: s.Updates == 0}
+		s.Updates++
+		s.Noticed = false
+		s.Failure = nil
+	})
+	if u.opts.Restarter != nil {
+		u.restartServe(ctx, opts, &out.Result)
 	}
 	return out, nil
 }
@@ -302,8 +476,8 @@ func (c ServiceConfig) PendingAutoUpdateNotice() (AutoUpdateRecord, bool) {
 	return *st.Last, true
 }
 
-// MarkAutoUpdateNoticed records that the CLI announced the last automatic
-// update.
+// MarkAutoUpdateNoticed records that a frontend announced the last
+// automatic update, which no frontend announces again.
 func (c ServiceConfig) MarkAutoUpdateNoticed() error {
 	return updateAutoUpdateState(c.DataDir, func(s *autoUpdateState) { s.Noticed = true })
 }
@@ -317,6 +491,7 @@ func (c ServiceConfig) AutoUpdateStatus(install InstallMethod) AutoUpdateStatus 
 		Enabled: autoUpdateEnabled(c.ConfigDir),
 		Last:    st.Last,
 		Failure: st.Failure,
+		Noticed: st.Noticed,
 	}
 	switch install.Method {
 	case InstallSelfManaged:
@@ -345,19 +520,30 @@ func (r *ReleaseChecker) AutoUpdateStatus(install InstallMethod) AutoUpdateStatu
 	return ServiceConfig{ConfigDir: r.opts.ConfigDir, DataDir: r.opts.DataDir}.AutoUpdateStatus(install)
 }
 
+// MarkAutoUpdateNoticed is ServiceConfig.MarkAutoUpdateNoticed for the
+// checker's data dir: the web UI showed the notice (POST
+// /api/v1/updates/lmm/notice), so the CLI does not repeat it.
+func (r *ReleaseChecker) MarkAutoUpdateNoticed() error {
+	return ServiceConfig{ConfigDir: r.opts.ConfigDir, DataDir: r.opts.DataDir}.MarkAutoUpdateNoticed()
+}
+
 // SetAutoUpdate writes config.yaml's auto_update - the web UI's "Update
-// automatically" switch - serialized with every other mutation.
+// automatically" switch. It is a config.yaml write, not a mutation of
+// anything a deploy touches, so it takes no mutation slot and never waits
+// behind a running job; configWriteMu keeps it from losing a concurrent
+// config.yaml write in this process.
 func (s *Service) SetAutoUpdate(ctx context.Context, enabled bool) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
 	return saveAutoUpdate(s.configDir, enabled)
 }
 
+// configWriteMu serializes this process's read-modify-writes of
+// config.yaml, which are not all behind the mutation slot.
+var configWriteMu sync.Mutex
+
 // saveAutoUpdate writes auto_update into configDir's config.yaml.
 func saveAutoUpdate(configDir string, enabled bool) error {
+	configWriteMu.Lock()
+	defer configWriteMu.Unlock()
 	cfg, err := config.Load(configDir)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)

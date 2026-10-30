@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 
 	"github.com/spf13/cobra"
@@ -107,6 +108,12 @@ func newSelfUpdater() (*core.SelfUpdater, error) {
 	if units, err := newUserUnits(); err == nil {
 		opts.Restarter = units
 	}
+	// The mutation lock every lmm command and `lmm serve` takes: an
+	// automatic update neither installs nor restarts lmm-serve.service
+	// while it is held (#586).
+	if p, err := app.ResolvePaths(app.Options{ConfigDir: configDir, DataDir: dataDir}); err == nil {
+		opts.OpLockPath = app.OpLockPath(p)
+	}
 	return core.NewSelfUpdater(opts), nil
 }
 
@@ -170,7 +177,7 @@ func runSelfUpdate(ctx context.Context) error {
 // release backed off after a failure - says why and succeeds, so systemd
 // does not retry it.
 func runAutoUpdate(ctx context.Context, u *core.SelfUpdater) error {
-	out, err := u.RunAuto(ctx)
+	out, err := u.RunAuto(ctx, core.AutoRunOptions{})
 	if err != nil {
 		return err
 	}

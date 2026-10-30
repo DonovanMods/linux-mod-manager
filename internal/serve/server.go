@@ -280,11 +280,24 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.ln == nil {
 		return errors.New("serve: Listen must be called before Serve")
 	}
+	refreshed := make(chan struct{})
 	if s.releases != nil {
 		go s.releases.PrimeInstallMethod(ctx)
-		go s.refreshReleases(ctx)
+		go func() {
+			defer close(refreshed)
+			s.refreshReleases(ctx)
+		}()
+	} else {
+		close(refreshed)
 	}
 	err := serveGraceful(ctx, s.httpServer, s.ln, s.shutdownGrace, s.jobs.shutdown)
+	// An automatic update's restart arrives as this shutdown; its run ends
+	// with its context, but is let finish what it records (#586).
+	select {
+	case <-refreshed:
+	case <-time.After(refreshShutdownWait):
+		s.log.Warn("serve: the lmm release refresh did not stop in time")
+	}
 	// Staged uploads are large; an orderly shutdown takes them with it
 	// rather than leaving them for a future start to wonder about. A hard
 	// kill still leaves them, exactly as it does an interrupted download.

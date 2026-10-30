@@ -181,10 +181,15 @@ func TestE2E_ReleaseBannerAnnouncesAnAutomaticUpdateOnce(t *testing.T) {
 	assert.Contains(t, text, "lmm updated itself to v2.0.1.")
 	assert.Contains(t, text, "To turn this off: auto_update: false in config.yaml, or Setup > Updates.")
 
+	// Told once for every frontend, not once per browser: the banner tells
+	// the server it showed it, so a browser with none of this one's storage
+	// - and the CLI (TestAPIAutoUpdateNotice_MarksItToldForEveryFrontend) -
+	// does not show it again, dismissed or not.
 	var present bool
 	f.runInBrowser(t,
-		chromedp.Click(`[data-action="dismiss-release-banner"]`, chromedp.ByQuery),
-		waitGone(`[data-testid="release-banner"]`),
+		pollUntil(`performance.getEntriesByType("resource")
+			.some((e) => new URL(e.name).pathname === "/api/v1/updates/lmm/notice")`),
+		chromedp.Evaluate(`localStorage.clear()`, nil),
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		releaseReadLanded(),

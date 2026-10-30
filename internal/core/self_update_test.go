@@ -73,6 +73,11 @@ func buildTarball(t *testing.T, entries ...tarEntry) []byte {
 type fakeRelease struct {
 	tag    string
 	assets map[string][]byte
+	// latestStatus, when set, is the latest-release document's HTTP status
+	// instead of the document: GitHub failing (#586).
+	latestStatus int
+	// onAsset, when set, runs as an asset is served.
+	onAsset func(name string)
 
 	mu       sync.Mutex
 	requests []string
@@ -109,6 +114,10 @@ func (r *fakeRelease) serve(t *testing.T) *httptest.Server {
 		r.headers = append(r.headers, req.Header.Clone())
 		r.mu.Unlock()
 		if req.URL.Path == "/repos/DonovanMods/linux-mod-manager/releases/latest" {
+			if r.latestStatus != 0 {
+				w.WriteHeader(r.latestStatus)
+				return
+			}
 			_, _ = fmt.Fprintf(w, `{"tag_name":%q,"html_url":"https://github.com/DonovanMods/linux-mod-manager/releases/tag/%s","draft":false,"prerelease":false}`, r.tag, r.tag)
 			return
 		}
@@ -122,6 +131,9 @@ func (r *fakeRelease) serve(t *testing.T) *httptest.Server {
 			http.NotFound(w, req)
 			return
 		}
+		if r.onAsset != nil {
+			r.onAsset(name)
+		}
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
@@ -133,10 +145,15 @@ type fakeRestarter struct {
 	calls     int
 	restarted bool
 	err       error
+	// onRestart, when set, runs as the restart is asked for.
+	onRestart func()
 }
 
 func (f *fakeRestarter) RestartServeIfActive(context.Context) (bool, error) {
 	f.calls++
+	if f.onRestart != nil {
+		f.onRestart()
+	}
 	return f.restarted, f.err
 }
 

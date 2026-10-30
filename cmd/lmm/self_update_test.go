@@ -17,8 +17,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/releasesig"
 
@@ -309,4 +311,35 @@ func TestServiceInstall_AutoUpdateRefusesAnUndeterminedInstallMethod(t *testing.
 	var unknown *core.InstallMethodUnknownError
 	require.ErrorAs(t, err, &unknown)
 	assert.NoFileExists(t, filepath.Join(unitDir, "lmm-update.timer"))
+}
+
+// The detached run and the timer's both step aside while another lmm - a
+// CLI command, or `lmm serve`'s job - holds the mutation lock: lmm is not
+// replaced, nor lmm-serve.service restarted, under a running deploy, and
+// that is no failure to back off from (#586 review).
+func TestSelfUpdateCmd_AutoStepsAsideWhileAnLmmMutationRuns(t *testing.T) {
+	f := newCLISelfUpdate(t)
+	selfUpdate.auto = true
+	p, err := app.ResolvePaths(app.Options{ConfigDir: configDir, DataDir: dataDir})
+	require.NoError(t, err)
+	lock, err := os.OpenFile(app.OpLockPath(p), os.O_RDWR|os.O_CREATE, 0o600)
+	require.NoError(t, err)
+	defer func() { _ = lock.Close() }()
+	require.NoError(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+
+	out := captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Contains(t, out, "another lmm operation is in progress")
+	assert.Contains(t, out, "not updating")
+	assert.Equal(t, "old lmm", f.installed(t))
+	assert.Zero(t, f.downloads)
+	for _, call := range f.systemd.calls {
+		assert.NotContains(t, call, "restart", "nor restarted")
+	}
+	cfg, err := getServiceConfig()
+	require.NoError(t, err)
+	assert.Nil(t, cfg.AutoUpdateStatus(core.InstallMethod{Method: core.InstallSelfManaged}).Failure)
+
+	require.NoError(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_UN))
+	captureStdout(t, func() error { return runSelfUpdate(context.Background()) })
+	assert.Equal(t, "new lmm 2.2.0", f.installed(t))
 }

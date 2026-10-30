@@ -3101,7 +3101,7 @@ func TestJSONGoldens(t *testing.T) {
 				Enabled:    true,
 				Applicable: true,
 				Last:       &core.AutoUpdateRecord{From: "2.2.0", To: "2.3.0", At: time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC), First: true},
-				Failure:    &core.AutoUpdateFailure{Version: "2.4.0", At: time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC), Error: "lmm 2.4.0 has no signature (checksums.txt.sig), so it cannot be verified; nothing was installed"},
+				Failure:    &core.AutoUpdateFailure{Version: "2.4.0", At: time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC), Error: "lmm 2.4.0 has no signature (checksums.txt.sig), so it cannot be verified; nothing was installed", RetryAt: time.Date(2026, 11, 3, 3, 0, 0, 0, time.UTC)},
 			},
 		},
 		{
@@ -3110,7 +3110,8 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{
 			"auto_update_failure",
-			core.AutoUpdateFailure{Version: "2.4.0", At: time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC), Error: "GitHub answered 503 Service Unavailable"},
+			// A release check that failed: no version, an hour's back-off.
+			core.AutoUpdateFailure{At: time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC), Error: "GitHub answered 503 Service Unavailable", RetryAt: time.Date(2026, 11, 2, 4, 0, 0, 0, time.UTC)},
 		},
 		{
 			// A never-checked, self-managed binary: the omitted fields.

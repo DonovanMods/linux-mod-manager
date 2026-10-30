@@ -628,3 +628,8 @@ export const getLmmRelease = () => get("/api/v1/updates/lmm");
  * the same core.ReleaseStatus getLmmRelease reads, after the write. */
 export const putAutoUpdate = (enabled) =>
   put("/api/v1/settings/auto-update", { enabled });
+
+/** postAutoUpdateNotice records that the web UI showed the automatic
+ * update's notice (issue 586), so neither another browser nor the CLI shows
+ * it again. */
+export const postAutoUpdateNotice = () => post("/api/v1/updates/lmm/notice");

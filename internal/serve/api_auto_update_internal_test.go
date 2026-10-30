@@ -34,6 +34,8 @@ type fakeAutoUpdater struct {
 	runs    int
 	outcome core.AutoUpdateOutcome
 	err     error
+	// run, when set, is the run itself, outside mu.
+	run func(context.Context, core.AutoRunOptions) (core.AutoUpdateOutcome, error)
 }
 
 func (f *fakeAutoUpdater) AutoUpdateDue(latest string) bool {
@@ -43,11 +45,15 @@ func (f *fakeAutoUpdater) AutoUpdateDue(latest string) bool {
 	return f.due
 }
 
-func (f *fakeAutoUpdater) RunAuto(context.Context) (core.AutoUpdateOutcome, error) {
+func (f *fakeAutoUpdater) RunAuto(ctx context.Context, opts core.AutoRunOptions) (core.AutoUpdateOutcome, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.runs++
-	return f.outcome, f.err
+	run, outcome, err := f.run, f.outcome, f.err
+	f.mu.Unlock()
+	if run != nil {
+		return run(ctx, opts)
+	}
+	return outcome, err
 }
 
 func (f *fakeAutoUpdater) counts() (asked, runs int) {
@@ -75,12 +81,18 @@ func releaseChecker(t *testing.T, latest string, probe *core.InstallProbe) *core
 // production's checker reads the service's.
 func releaseCheckerIn(t *testing.T, configDir, latest string, probe *core.InstallProbe) *core.ReleaseChecker {
 	t.Helper()
+	return releaseCheckerAt(t, configDir, t.TempDir(), latest, probe)
+}
+
+// releaseCheckerAt is releaseCheckerIn keeping its state in dataDir.
+func releaseCheckerAt(t *testing.T, configDir, dataDir, latest string, probe *core.InstallProbe) *core.ReleaseChecker {
+	t.Helper()
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"tag_name":"v` + latest + `","html_url":"https://github.com/DonovanMods/linux-mod-manager/releases/tag/v` + latest + `"}`))
 	}))
 	t.Cleanup(gh.Close)
 	return core.NewReleaseChecker(core.ReleaseCheckOptions{
-		ConfigDir: configDir, DataDir: t.TempDir(), Version: "2.0.1", APIBase: gh.URL, Probe: probe,
+		ConfigDir: configDir, DataDir: dataDir, Version: "2.0.1", APIBase: gh.URL, Probe: probe,
 	})
 }
 

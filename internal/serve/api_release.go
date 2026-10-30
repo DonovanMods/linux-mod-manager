@@ -87,8 +87,10 @@ type AutoUpdater interface {
 	// AutoUpdateDue reports whether an automatic update to latest should
 	// run now.
 	AutoUpdateDue(latest string) bool
-	// RunAuto runs one: verified, under the self-update lock, recorded.
-	RunAuto(ctx context.Context) (core.AutoUpdateOutcome, error)
+	// RunAuto runs one: verified, under the self-update lock, recorded,
+	// and never under a running mutation - opts.Quiesce is this server's
+	// jobs.
+	RunAuto(ctx context.Context, opts core.AutoRunOptions) (core.AutoUpdateOutcome, error)
 }
 
 // autoUpdate runs an automatic update when the checker's cache knows of a
@@ -96,8 +98,11 @@ type AutoUpdater interface {
 // has not already been replaced, and the updater says one is due. It runs
 // on the refresh goroutine, never a request: when this server is
 // lmm-serve.service, the update's restart of it is queued with systemd and
-// arrives as the shutdown signal Serve already handles gracefully. A
-// server started by hand keeps running, and its banner asks for a restart.
+// arrives as the shutdown signal Serve already handles gracefully. The
+// update neither starts nor asks for that restart while a job runs (the
+// registry's quiesce), and Serve waits for this goroutine before it
+// returns. A server started by hand keeps running, and its banner asks for
+// a restart.
 func (s *Server) autoUpdate(ctx context.Context) {
 	if s.autoUpdater == nil {
 		return
@@ -109,7 +114,7 @@ func (s *Server) autoUpdate(ctx context.Context) {
 	if s.releases.InstalledNewer(ctx) != "" || !s.autoUpdater.AutoUpdateDue(st.Latest) {
 		return
 	}
-	out, err := s.autoUpdater.RunAuto(ctx)
+	out, err := s.autoUpdater.RunAuto(ctx, core.AutoRunOptions{Quiesce: s.jobs.quiesce})
 	switch {
 	case err != nil:
 		if ctx.Err() == nil {
@@ -124,6 +129,26 @@ func (s *Server) autoUpdate(ctx context.Context) {
 		}
 	}
 }
+
+// handleAPIAutoUpdateNotice answers POST /api/v1/updates/lmm/notice: the
+// web UI showed the automatic update's notice, so no frontend - this one
+// in another browser, or the CLI - shows it again (#586).
+func (s *Server) handleAPIAutoUpdateNotice(w http.ResponseWriter, _ *http.Request) {
+	if s.releases == nil {
+		s.writeAPIError(w, http.StatusNotFound, errors.New("this server does not track lmm's own releases"))
+		return
+	}
+	if err := s.releases.MarkAutoUpdateNoticed(); err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// refreshShutdownWait bounds how long Serve waits, after the drain, for
+// the refresh goroutine: an automatic update that just asked for this
+// server's restart is finishing its record and its log lines.
+const refreshShutdownWait = 5 * time.Second
 
 // refreshReleases runs for as long as Serve does: an unforced check now,
 // then one every releaseRefreshEvery, each followed by an automatic update

@@ -34,6 +34,8 @@ func loadDefaultGame(configDir string) (string, error) {
 // always surfaced ("loading config: %w" / "saving config: %w") so callers
 // don't need to (and can't collapse the two into one label by re-wrapping).
 func saveDefaultGame(configDir, id string) error {
+	configWriteMu.Lock()
+	defer configWriteMu.Unlock()
 	cfg, err := config.Load(configDir)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
