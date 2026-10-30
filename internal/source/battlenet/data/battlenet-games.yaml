@@ -1,0 +1,58 @@
+# Battle.net product code -> lmm game info for "lmm game detect" (#545).
+# Add or override entries in ~/.config/lmm/battlenet-games.yaml without
+# rebuilding. Keys are the product codes in the Product column of the
+# game's .build.info (a pipe-delimited file in the game's install root).
+#
+# install_dir is the folder under that root the game lives in. World of
+# Warcraft keeps ONE root with a folder per flavor (_retail_, _classic_,
+# ...), and each flavor is its own game: its own install path, its own
+# AddOns, its own CurseForge files. Empty means the root itself.
+# mod_path is relative to install_dir (empty = install_dir itself).
+# sources is the generated games.yaml entry's complete source map.
+# curseforge.game_version_types is #544's flavor setting: the CurseForge
+# gameVersionTypeIds the game's files must carry, so a Classic install is
+# never given a Retail addon. Omit it to accept every file.
+# launch_code is what Battle.net's --exec="launch <code>" takes. It is NOT
+# the product code, and lmm fills in only the one it knows; without it,
+# Play opens the Battle.net client and you press Play there.
+#
+# Competitive titles with anti-cheat (Overwatch, Hearthstone, Heroes of the
+# Storm, Call of Duty) are never detected, whatever this file says.
+wow:
+  slug: wow
+  name: World of Warcraft
+  install_dir: _retail_
+  mod_path: Interface/AddOns
+  sources:
+    curseforge: "1"
+  curseforge:
+    game_version_types: [517]
+  launch_code: WoW
+wow_classic:
+  slug: wow-classic
+  name: World of Warcraft Classic
+  install_dir: _classic_
+  mod_path: Interface/AddOns
+  sources:
+    curseforge: "1"
+  curseforge:
+    game_version_types: [79434]
+wow_classic_era:
+  slug: wow-classic-era
+  name: World of Warcraft Classic Era
+  install_dir: _classic_era_
+  mod_path: Interface/AddOns
+  sources:
+    curseforge: "1"
+  curseforge:
+    game_version_types: [67408]
+# wowf is the _forever_ flavor (a 1.x client). Its CurseForge game version
+# type is not known yet, so it takes every file: set
+# `lmm game edit <game> --curseforge-version-type <id>` once one exists.
+wowf:
+  slug: wow-forever
+  name: World of Warcraft - Forever
+  install_dir: _forever_
+  mod_path: Interface/AddOns
+  sources:
+    curseforge: "1"

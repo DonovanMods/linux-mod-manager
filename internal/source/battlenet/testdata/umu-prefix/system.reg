@@ -1,0 +1,19 @@
+WINE REGISTRY Version 2
+;; All keys relative to REGISTRY\\Machine
+
+#arch=win64
+
+[Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Battle.net] 1790095745
+#time=1dd4ab2475962f8
+"DisplayIcon"="C:\\Program Files (x86)\\Battle.net\\Battle.net.exe"
+"DisplayName"="Battle.net"
+"InstallLocation"="C:\\Program Files (x86)\\Battle.net"
+"Publisher"="Blizzard Entertainment"
+"UninstallString"="\"C:\\ProgramData\\Battle.net\\Agent\\Blizzard Uninstaller.exe\" --lang=enUS --uid=battle.net --displayname=\"Battle.net\""
+
+[Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{00000000-0000-0000-0000-000000000000}] 1790095745
+#time=1dd4ab2475962f8
+"DisplayName"="Wine Mono Windows Support"
+"InstallLocation"=""
+"Publisher"="The Wine Project"
+"UninstallString"=str(2):"MsiExec.exe /I{00000000-0000-0000-0000-000000000000}"
