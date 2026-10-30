@@ -43,10 +43,10 @@ func waitNotPresentLines(src []byte) []int {
 	}
 }
 
-// TestE2EWaitsForARemovalWithWaitGone fails on any use of
+// TestNoWaitNotPresentInE2E fails on any use of
 // chromedp.WaitNotPresent in this package's Go files; comments and strings
 // that name it are fine.
-func TestE2EWaitsForARemovalWithWaitGone(t *testing.T) {
+func TestNoWaitNotPresentInE2E(t *testing.T) {
 	matches, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

@@ -435,11 +435,11 @@ func TestE2E_SearchWarningSetsABacktickedCommandAsCode(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestCodeSpans_LeavesAnythingItDoesNotUnderstandAlone pins errortext.js's
+// TestE2E_CodeSpans_LeavesAnythingItDoesNotUnderstandAlone pins errortext.js's
 // one safety rule directly (issue 402): a message it cannot read comes
 // through exactly as it was written, so the worst case is the old
 // behaviour rather than a half-transformed sentence.
-func TestCodeSpans_LeavesAnythingItDoesNotUnderstandAlone(t *testing.T) {
+func TestE2E_CodeSpans_LeavesAnythingItDoesNotUnderstandAlone(t *testing.T) {
 	f := newE2EFixture(t)
 
 	// tick is a single backtick. It cannot be written inline: this file's

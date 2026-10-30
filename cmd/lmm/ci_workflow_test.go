@@ -22,6 +22,15 @@ const (
 // (race)".
 var goTestInvocation = regexp.MustCompile(`\bgo test\s+[-.][^\n]*`)
 
+// makeRaceTarget matches a workflow step delegating to a race target:
+// `make test-race`, or one of the halves CI splits it into (#576).
+var makeRaceTarget = regexp.MustCompile(`\bmake (test-race[\w-]*)`)
+
+// makeTargetRecipe returns target's recipe lines in the Makefile, or "".
+func makeTargetRecipe(makefile, target string) string {
+	return regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(target) + `:\n(?:\t[^\n]*\n)+`).FindString(makefile)
+}
+
 // TestCIRaceJobHasATestTimeout is the ratchet behind #374: the Makefile
 // raises Go's 10-minute per-BINARY default to TEST_TIMEOUT because the v2
 // suite has outgrown it (cmd/lmm, internal/core and internal/serve each run
@@ -30,20 +39,23 @@ var goTestInvocation = regexp.MustCompile(`\bgo test\s+[-.][^\n]*`)
 // prevent, reported as "panic: test timed out after 10m0s" with no failing
 // assertion anywhere.
 //
-// Either route satisfies it: `make test-race` (which also picks up the
-// project GOCACHE), in which case the Makefile target must carry the
-// timeout, or an explicit -timeout on the workflow's own command line.
+// Either route satisfies it: a `make test-race*` target (which also picks
+// up the project GOCACHE), in which case every target the workflow names
+// must carry the timeout, or an explicit -timeout on the workflow's own
+// command line.
 func TestCIRaceJobHasATestTimeout(t *testing.T) {
 	workflow, err := os.ReadFile(ciTestWorkflow)
 	require.NoError(t, err, "reading the CI workflow")
 
-	if strings.Contains(string(workflow), "make test-race") {
+	if targets := makeRaceTarget.FindAllStringSubmatch(string(workflow), -1); len(targets) > 0 {
 		makefile, err := os.ReadFile(repoMakefile)
 		require.NoError(t, err, "reading the Makefile")
-		target := regexp.MustCompile(`(?m)^test-race:\n(?:\t[^\n]*\n)+`).FindString(string(makefile))
-		require.NotEmpty(t, target, "%s has no test-race target for %s to run", repoMakefile, ciTestWorkflow)
-		require.Contains(t, target, "-timeout",
-			"%s delegates to `make test-race`, but that target runs without a -timeout", ciTestWorkflow)
+		for _, m := range targets {
+			recipe := makeTargetRecipe(string(makefile), m[1])
+			require.NotEmpty(t, recipe, "%s has no %s target for %s to run", repoMakefile, m[1], ciTestWorkflow)
+			assert.Contains(t, recipe, "-timeout",
+				"%s delegates to `make %s`, but that target runs without a -timeout", ciTestWorkflow, m[1])
+		}
 		return
 	}
 
@@ -57,15 +69,49 @@ func TestCIRaceJobHasATestTimeout(t *testing.T) {
 }
 
 // TestCIRaceJobRunsTheRaceDetector guards the other half of the same step:
-// the timeout fix must not quietly drop -race.
+// the timeout fix must not quietly drop -race, in the workflow or in any
+// Makefile target it delegates to.
 func TestCIRaceJobRunsTheRaceDetector(t *testing.T) {
 	workflow, err := os.ReadFile(ciTestWorkflow)
 	require.NoError(t, err, "reading the CI workflow")
 
 	body := string(workflow)
-	require.True(t,
-		strings.Contains(body, "make test-race") || strings.Contains(body, "go test -race"),
+	targets := makeRaceTarget.FindAllStringSubmatch(body, -1)
+	require.True(t, len(targets) > 0 || strings.Contains(body, "go test -race"),
 		"%s no longer runs the suite under the race detector", ciTestWorkflow)
+
+	makefile, err := os.ReadFile(repoMakefile)
+	require.NoError(t, err, "reading the Makefile")
+	for _, m := range targets {
+		assert.Contains(t, makeTargetRecipe(string(makefile), m[1]), "go test -race",
+			"%s delegates to `make %s`, which does not run the race detector", ciTestWorkflow, m[1])
+	}
+}
+
+// TestCIRunsBothHalvesOfTheE2ESplit is #576: CI runs the serve browser E2E
+// tests in their own job, and everything else in another, so the two run
+// side by side. The halves are only the whole suite together - a workflow
+// that runs one without the other silently drops the rest - and only
+// disjoint and complete if both select on the same pattern, with -run and
+// -skip respectively.
+func TestCIRunsBothHalvesOfTheE2ESplit(t *testing.T) {
+	workflow, err := os.ReadFile(ciTestWorkflow)
+	require.NoError(t, err, "reading the CI workflow")
+	body := string(workflow)
+	runsE2E := strings.Contains(body, "make test-race-e2e")
+	runsRest := strings.Contains(body, "make test-race-no-e2e")
+	if !runsE2E && !runsRest {
+		t.Skip("CI does not split the suite")
+	}
+	require.True(t, runsE2E && runsRest,
+		"%s runs only one half of the E2E split; it needs both `make test-race-e2e` and `make test-race-no-e2e`", ciTestWorkflow)
+
+	makefile, err := os.ReadFile(repoMakefile)
+	require.NoError(t, err, "reading the Makefile")
+	assert.Contains(t, makeTargetRecipe(string(makefile), "test-race-e2e"), "-run '$(E2E_PATTERN)'",
+		"test-race-e2e must select exactly the E2E_PATTERN tests")
+	assert.Contains(t, makeTargetRecipe(string(makefile), "test-race-no-e2e"), "-skip '$(E2E_PATTERN)' ./...",
+		"test-race-no-e2e must run every package, skipping exactly the E2E_PATTERN tests")
 }
 
 // TestCIRaceJobKeepsTheRestoredBuildCache is P1b review F7. Routing the race
@@ -90,6 +136,10 @@ func TestCIRaceJobKeepsTheRestoredBuildCache(t *testing.T) {
 	assert.Regexp(t, `(?m)^GOCACHE_LOCAL \?=`, string(makefile),
 		"GOCACHE_LOCAL must use ?= so CI can point it at the cache setup-go restored")
 
-	assert.Contains(t, body, "GOCACHE_LOCAL=$(go env GOCACHE)",
-		"%s runs `make test-race` without restoring setup-go's build cache, so every run recompiles from cold", ciTestWorkflow)
+	steps := regexp.MustCompile(`(?m)^\s*run: make test-race.*$`).FindAllString(body, -1)
+	require.NotEmpty(t, steps, "%s names make test-race but has no step running it", ciTestWorkflow)
+	for _, line := range steps {
+		assert.Contains(t, line, "GOCACHE_LOCAL=$(go env GOCACHE)",
+			"%s runs %q without restoring setup-go's build cache, so every run recompiles from cold", ciTestWorkflow, strings.TrimSpace(line))
+	}
 }

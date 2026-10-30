@@ -10,12 +10,15 @@ on:
 permissions:
   contents: read
 
+# `make test-race` split three ways so the jobs run side by side (#576): the
+# serve browser E2E tests alone are as long as the rest of the suite under
+# -race, and run in one job the two were summed. Wall time is now the longer
+# of the two test jobs. lint is its own job rather than a step in one of
+# them: it runs in parallel for no wall time, fails in a minute or two
+# instead of after a test job's setup and build, and keeps both test jobs'
+# durations comparable to their make targets.
 jobs:
-  test:
-    # Ubuntu 24.04's AppArmor user-namespace restriction prevents the distro
-    # Chromium package from starting its supported sandbox in hosted CI.
-    # 22.04 provides the same isolated hosted runner without that restriction;
-    # browser tests retain Chromium's sandbox and their full assertions.
+  lint:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -36,15 +39,49 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      # Via the Makefile so the race job and `make check` share one
+  test:
+    # Ubuntu 24.04's AppArmor user-namespace restriction prevents the distro
+    # Chromium package from starting its supported sandbox in hosted CI.
+    # 22.04 provides the same isolated hosted runner without that restriction;
+    # browser tests retain Chromium's sandbox and their full assertions.
+    # (This job skips the TestE2E browser tests, but stays on the same image
+    # as the e2e job so the two halves of the suite see one environment.)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      # Via the Makefile so the race jobs and `make check` share one
       # timeout: Go's 10-minute per-binary default is shorter than the v2
       # suite under -race, and a bare `go test` here fails with
       # "panic: test timed out after 10m0s" and no failing assertion (#374).
+      # The Makefile also owns the TestE2E pattern both jobs split on.
       #
       # GOCACHE_LOCAL is overridden with the cache setup-go just restored:
       # the Makefile's default is a project-local directory for sandboxes
       # with no writable HOME, and taking it here would leave the restored
       # cache unused and recompile the module and its dependencies under
       # -race on every run (P1b review F7).
-      - name: go test (race)
-        run: make test-race GOCACHE_LOCAL=$(go env GOCACHE)
+      - name: go test (race, without browser E2E)
+        run: make test-race-no-e2e GOCACHE_LOCAL=$(go env GOCACHE)
+
+  e2e:
+    # Ubuntu 24.04's AppArmor user-namespace restriction prevents the distro
+    # Chromium package from starting its supported sandbox in hosted CI.
+    # 22.04 provides the same isolated hosted runner without that restriction;
+    # browser tests retain Chromium's sandbox and their full assertions.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      # The same Makefile timeout and GOCACHE_LOCAL override as the test
+      # job above (#374, P1b review F7).
+      - name: go test (race, serve browser E2E)
+        run: make test-race-e2e GOCACHE_LOCAL=$(go env GOCACHE)
