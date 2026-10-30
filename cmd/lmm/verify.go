@@ -322,6 +322,17 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 	}
 	result := report.Result
 
+	// #588: another lmm process was changing this installation, so core
+	// did not walk it. Waiting is no answer - a deploy holds the lock for
+	// as long as it takes - and reporting is worse: a half-written tree
+	// reads lmm's own newly placed files as ones it "did not put", and no
+	// finding class is safe from a file mid-replacement, so filtering some
+	// out would only make a wrong answer look clean. Refusing on the
+	// operation lock is what a CLI mutation already does there (#317).
+	if result.Deferred != "" {
+		return fmt.Errorf("%w, changing this game's files - verify did not check them mid-change; run `lmm verify` again once it finishes", core.ErrOperationInProgress)
+	}
+
 	if jsonOutput {
 		// emitJSON encodes a nil Findings slice as [], so a zero-finding run
 		// (e.g. #217's empty profile with nothing stale) still emits an
