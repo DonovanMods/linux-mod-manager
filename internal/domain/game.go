@@ -115,6 +115,11 @@ type Game struct {
 	// accepts. nil for every game that sets none, so the member is absent
 	// from every document such a game produces, as Loader's is.
 	CurseForge *GameCurseForge `json:"curseforge,omitempty"`
+	// Launch is #501's optional games.yaml `launch:` block. nil for every
+	// game that sets none - which launches through Steam when core finds
+	// its app id. Never on the wire (GameLaunch says why): core.LaunchInfo
+	// is what a document says about launching.
+	Launch *GameLaunch `json:"-"`
 }
 
 // DeployMode determines how downloaded mod archives are handled
