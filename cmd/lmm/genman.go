@@ -77,6 +77,11 @@ func genManTree(dir string) error {
 	// executed rootCmd at all - without this, the page set generated
 	// depends on incidental call order.
 	rootCmd.InitDefaultCompletionCmd()
+	// The same holds for root's --version flag, which cobra adds only when
+	// the root command itself executes - never on the way to gen-man - so
+	// lmm.1 used to list it only when generated after something ran `lmm`
+	// (#581).
+	rootCmd.InitDefaultVersionFlag()
 
 	// Cobra's man doc generator renders each command's Use line (e.g.
 	// "install <query>") through Markdown before emitting roff, and a bare

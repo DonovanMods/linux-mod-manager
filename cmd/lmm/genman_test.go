@@ -77,6 +77,20 @@ func TestGenManTree_MatchesCommittedPages(t *testing.T) {
 	}
 }
 
+// TestGenManTree_RootPageListsVersionFlag pins #581: cobra adds root's
+// --version flag lazily, the first time the root command itself executes,
+// so lmm.1 listed it or not depending on whether anything had run `lmm`
+// before generation - `make man` never had, a test binary that ran
+// `lmm --version` first had. genManTree must add it itself.
+func TestGenManTree_RootPageListsVersionFlag(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, genManTree(dir))
+
+	page, err := os.ReadFile(filepath.Join(dir, "lmm.1"))
+	require.NoError(t, err)
+	assert.Contains(t, string(page), `\fB--version\fP`, "lmm.1 must document lmm --version")
+}
+
 // TestGenManTree_SynopsisPreservesAngleBracketArgs pins the fix for a
 // blackfriday/md2man quirk: Cobra's man doc generator renders each
 // command's Use line through Markdown before emitting roff, and a bare
